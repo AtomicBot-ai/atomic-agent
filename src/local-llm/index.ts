@@ -44,6 +44,7 @@ export {
   resolveModelFilePath,
   resolveMmprojFilePath,
   resolveVersionFilePath,
+  resolveBackendCheckFilePath,
   resolvePidFilePath,
   resolveLogFilePath,
   resolveThroughputFilePath,
@@ -148,6 +149,10 @@ export {
   type LatestReleaseInfo,
 } from "./backend-installer.js";
 export {
+  AUTO_UPDATE_RECHECK_MS,
+  AUTO_UPDATE_RETRY_MS,
+  checkForBackendUpdateForPanel,
+  forgetBackendCheck,
   maybeAutoUpdateBackend,
   type AutoUpdateBackendResult,
 } from "./ensure-latest-backend.js";
@@ -167,8 +172,11 @@ export {
   parseListDevices,
   pickBestDevice,
   listVulkanDevices,
+  deviceTableOnce,
   resolveManagedDevice,
+  sharesSystemMemory,
   type GpuDevice,
+  type ListDevices,
 } from "./gpu-devices.js";
 export {
   resolveGpuBudgetGb,
@@ -194,6 +202,10 @@ export {
   stopChatAndEmbeddingDaemons,
   probeThroughput,
   readThroughputRecord,
+  readReusableThroughput,
+  slotsAllIdle,
+  throughputBasis,
+  THROUGHPUT_REUSE_MAX_AGE_MS,
   writeThroughputRecord,
   readLaunchRecord,
   writeLaunchRecord,

@@ -61,6 +61,13 @@ export interface PartitionState {
    * still the route this partition is running on.
    */
   fallbackServed: boolean;
+  /**
+   * The fallback link that answered last since the chain left the
+   * primary: the route this partition is running on. Null on the primary
+   * and until a fallback answers. Unlike `overrideServed` it survives a
+   * failed probe moving the pointer onto the same link again.
+   */
+  servingId: string | null;
 }
 
 export function freshPartition(): PartitionState {
@@ -71,6 +78,7 @@ export function freshPartition(): PartitionState {
     overrideCause: null,
     overrideServed: false,
     fallbackServed: false,
+    servingId: null,
   };
 }
 
@@ -129,4 +137,5 @@ export function clearOverride(p: PartitionState): void {
   p.overrideCause = null;
   p.overrideServed = false;
   p.fallbackServed = false;
+  p.servingId = null;
 }

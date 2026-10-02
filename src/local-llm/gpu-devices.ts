@@ -143,6 +143,33 @@ export function deviceClassRank(description: string): 0 | 1 | 2 {
 }
 
 /**
+ * GPUs that answer to the discrete patterns (or to none) yet have no
+ * memory of their own: Apple silicon; Intel's Meteor Lake and Lunar Lake
+ * iGPUs, which are named Arc ("Intel(R) Arc(TM) Graphics", "Arc 140V" /
+ * "Arc 130V", unlike the A- and B-series cards); AMD Strix Halo
+ * ("Radeon(TM) 8060S / 8050S Graphics"); and NVIDIA's GB10 (DGX Spark) and
+ * Jetson Orin / Thor modules.
+ */
+const UNIFIED_MEMORY_DEVICE_RE =
+  /\bapple\b|\barc(\(tm\))?\s*(graphics|1[34]0v)\b|radeon(\(tm\))?\s*\d{4}s\b|\bgb10\b|\bjetson\b|\borin\b|\bthor\b/i;
+
+/**
+ * Whether the device's memory is the system's own RAM: Apple silicon's
+ * Metal device (`MTL0: Apple M4 …`), an integrated GPU, or a unified-
+ * memory part named like a card (`UNIFIED_MEMORY_DEVICE_RE`). The free
+ * figure such a device reports is a ceiling on what the GPU may map, not
+ * memory nobody else is using, so the context auto-size also leaves the
+ * system its headroom there (`context-size.ts`). Pure — no IO.
+ */
+export function sharesSystemMemory(device: GpuDevice): boolean {
+  return (
+    /^(MTL|Metal)\d+$/i.test(device.id) ||
+    UNIFIED_MEMORY_DEVICE_RE.test(device.description) ||
+    deviceClassRank(device.description) === 0
+  );
+}
+
+/**
  * Pick the best single device id for offloading, or `null` when there
  * is no usable GPU. Heuristic: drop software rasterizers, prefer a
  * discrete GPU over an integrated one, then break ties by larger VRAM.
@@ -188,6 +215,37 @@ export async function listVulkanDevices(binPath: string): Promise<GpuDevice[]> {
   }
 }
 
+/** A launch's device table, read on demand (`deviceTableOnce`). */
+export type ListDevices = () => Promise<readonly GpuDevice[]>;
+
+/**
+ * `<binPath> --list-devices` for one launch: run the first time something
+ * asks, and that answer handed to everyone after. A managed start reads
+ * the table twice — to pick the device, then for the free memory the
+ * context is fitted into — and each run starts the backend (on Apple
+ * silicon, Metal's device and its shader library), so the second spawn
+ * was pure delay before the model began to load.
+ *
+ * An empty answer is not kept: it is what a run that ran out its 5 s
+ * deadline leaves, and the first start after a llama.cpp install is slow
+ * to start the backend at all (16 s before the server printed its first
+ * line, on a 16 GB Mac). It is asked once more at once, and that answer
+ * stands either way — a machine with no GPU says nothing twice.
+ */
+export function deviceTableOnce(binPath: string): ListDevices {
+  let table: Promise<GpuDevice[]> | null = null;
+  let asked = 0;
+  const ask = (): Promise<GpuDevice[]> => {
+    asked += 1;
+    table = listVulkanDevices(binPath);
+    return table;
+  };
+  return async () => {
+    const devices = await (table ?? ask());
+    return devices.length === 0 && asked < 2 ? ask() : devices;
+  };
+}
+
 /**
  * Resolve the configured device preference into a concrete value for the
  * daemon argv builder:
@@ -207,16 +265,18 @@ export async function listVulkanDevices(binPath: string): Promise<GpuDevice[]> {
  * split.
  *
  * Best-effort and never throws — enumeration failures fall through to
- * `undefined`.
+ * `undefined`. `opts.listDevices` is the launch's own table
+ * (`deviceTableOnce`), so the context fit after it does not enumerate
+ * again; without it the binary is asked here.
  */
 export async function resolveManagedDevice(
   binPath: string,
   configured: string | undefined,
-  opts?: { multiGpu?: boolean },
+  opts?: { multiGpu?: boolean; listDevices?: ListDevices },
 ): Promise<string | undefined> {
   if (configured === "cpu") return "cpu";
   if (configured && configured !== "auto") return configured;
   if (opts?.multiGpu) return undefined;
-  const devices = await listVulkanDevices(binPath);
+  const devices = await (opts?.listDevices ?? (() => listVulkanDevices(binPath)))();
   return pickBestDevice(devices) ?? undefined;
 }

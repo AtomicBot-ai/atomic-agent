@@ -8,7 +8,6 @@ import {
 import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
 import { apiKeyForUrl } from "../../local-llm/managed-api-key.js";
 import {
-  checkForBackendUpdate,
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
   downloadBackend,
@@ -47,6 +46,8 @@ import {
   buildCustomModelDef,
   listLocalModels,
   listVulkanDevices,
+  AUTO_UPDATE_RECHECK_MS,
+  checkForBackendUpdateForPanel,
   maybeAutoUpdateBackend,
   probeNvidiaVramMiB,
   readBackendVersion,
@@ -412,7 +413,9 @@ export class LocalModelsOrchestrator {
       let updateAvailable: boolean | null = null;
       let latestTag: string | null = null;
       try {
-        const u = await checkForBackendUpdate(dataDir);
+        // An update shown here is one the next start asks for too: it
+        // drops the record a start would otherwise trust for hours.
+        const u = await checkForBackendUpdateForPanel(dataDir);
         updateAvailable = u.updateAvailable;
         latestTag = u.latestTag;
       } catch {
@@ -2587,6 +2590,9 @@ export class LocalModelsOrchestrator {
       const result = await maybeAutoUpdateBackend(dataDir, {
         enabled: getConfig().localModels.managed.autoUpdate,
         keepDaemonRunning: opts?.keepDaemonRunning,
+        // A check from the last few hours stands, whichever process made
+        // it (the desktop's `models start`, another TUI).
+        recheckAfterMs: AUTO_UPDATE_RECHECK_MS,
         // The zip is small (27-39 MB) but the link may not be. Without a
         // deadline a stalled-open connection pins the download for the
         // life of the process; the next start retries from scratch.

@@ -1475,7 +1475,7 @@ async function executeStepInner(
         sessionId: ctx.session.id,
         stepIndex: ctx.stepIndex,
         rawLength: completion.content.length,
-        raw: completion.content,
+        rawPreview: logTextPreview(completion.content),
       });
       // Last resort: the model talked instead of emitting a call (small
       // models routinely answer "hi" in plain prose even under the
@@ -1605,7 +1605,10 @@ async function executeStepInner(
       deps.logger?.warn("reply links a URL no tool result holds; held once", {
         sessionId: ctx.session.id,
         stepIndex: ctx.stepIndex,
-        links: unsourced.map((link) => link.url),
+        linkCount: unsourced.length,
+        links: unsourced
+          .slice(0, LOG_LINKS_MAX)
+          .map((link) => logTextPreview(link.url, LOG_LINK_CHARS)),
       });
     }
     if (notices.length > 0) {
@@ -3112,6 +3115,23 @@ export function callArgsSchemaValid(
 }
 
 /**
+ * How much of the model's own text a log line carries. The log is a file
+ * the operator may attach to a support report (the desktop app's "Save
+ * report for support" takes its tail), and a completion can quote
+ * anything the model read — a file's contents, a key that was in one —
+ * so a line gives the text's length and its start, never the whole.
+ */
+const LOG_TEXT_PREVIEW_CHARS = 300;
+/** A held reply's links in its log line: this many, each cut to this length. */
+const LOG_LINKS_MAX = 5;
+const LOG_LINK_CHARS = 200;
+
+/** The first `max` characters of `text`, marked with `…` when cut. */
+function logTextPreview(text: string, max = LOG_TEXT_PREVIEW_CHARS): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
  * Trim a raw completion body to the short preview attached to every
  * `GrammarError` so postmortems can tell grammar misconfiguration apart
  * from truncation or an empty response without digging through streaming
@@ -3304,7 +3324,12 @@ function renderOpenReasoningBlock(
  */
 function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
   if (err instanceof LlmFailure) return err;
-  if (ctx.signal.aborted) {
+  // A stopped step's request that fails the way requests fail (an abort,
+  // a torn socket, a cut-off body) is the stop's doing. An error the
+  // classifier does not recognise — `tool`, the shape a programming error
+  // arrives in — stays what it is whatever the signal says, so it is
+  // reported as a failure, not filed away as a cancel (ATO-137).
+  if (ctx.signal.aborted && classifyFailure(err) !== "tool") {
     return new CancelledError(
       err instanceof Error ? err.message : "operation cancelled",
       { cause: err },

@@ -34,6 +34,8 @@ const HUMANISED_REASONS: ReadonlyArray<readonly [RegExp, string]> = [
  */
 function describeCause(cause: ProviderWaitCause): string | null {
   switch (cause.kind) {
+    case "billing":
+      return "the account is out of funds";
     case "refused":
       return "connection refused";
     case "dropped":

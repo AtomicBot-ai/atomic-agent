@@ -124,6 +124,7 @@ export function createFallbackCompleter(
           deps.fallbackChain,
           (providerId) => attempt(providerId, params),
           params.sessionId,
+          params.signal,
         );
 }
 
@@ -162,6 +163,7 @@ export function createFallbackStreamer(
                 ...(await openStreamOnLink(deps, params, id)),
               }),
               params.sessionId,
+              params.signal,
             );
       const { primed, transport, providerId } = opened;
       let result: CompletionResult;

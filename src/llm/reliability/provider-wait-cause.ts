@@ -1,6 +1,7 @@
 import { readErrnoCode } from "../errno-code.js";
 import { LlamaServerError } from "../llama-server-client.js";
 import {
+  isCreditExhausted,
   isErrorFinishMessage,
   OpenAiHttpError,
 } from "../provider/openai/openai-http.js";
@@ -19,8 +20,15 @@ import { looksLikeMidStreamDrop } from "./network-error.js";
  * (502). Tried 3 times" for a 200 that was never retried. Each kind
  * here carries only facts the error itself holds — a status only when
  * a response had one.
+ *
+ * `billing` is a provider that answered and refused because the account
+ * cannot pay (`isCreditExhausted`: a 402, AI/ML API's 403 "You've run out
+ * of funds", OpenAI's 429 `insufficient_quota`). A turn never waits on
+ * one; it is the cause of a link that failed before the one waited on,
+ * and of an error that ended the turn.
  */
 export type ProviderWaitCause =
+  | { readonly kind: "billing"; readonly status: number }
   | { readonly kind: "refused" }
   | { readonly kind: "dropped" }
   | { readonly kind: "unreachable" }
@@ -30,6 +38,14 @@ export type ProviderWaitCause =
   | { readonly kind: "stream_error"; readonly status: number | null }
   | { readonly kind: "error_finish" }
   | { readonly kind: "unknown" };
+
+/** A chain link that failed before the one a turn waits on, and why. */
+export interface ProviderWaitFailure {
+  readonly providerId: string;
+  /** The failure's own line (`describeReason`), for logs and traces. */
+  readonly reason: string;
+  readonly cause: ProviderWaitCause;
+}
 
 const MAX_CAUSE_DEPTH = 6;
 
@@ -69,6 +85,20 @@ export function classifyProviderWaitCause(err: unknown): ProviderWaitCause {
     if (link instanceof OpenAiHttpError && link.streamError !== undefined) {
       if (isErrorFinishMessage(link.streamError)) return { kind: "error_finish" };
       return { kind: "stream_error", status: link.status };
+    }
+  }
+
+  // An account that cannot pay, read off the provider's own error under
+  // whatever wrapper reached here: the step executor's TransportError
+  // carries the status alone.
+  for (const link of chain) {
+    if (
+      link instanceof OpenAiHttpError &&
+      !link.timedOut &&
+      link.status !== null &&
+      isCreditExhausted(link)
+    ) {
+      return { kind: "billing", status: link.status };
     }
   }
 

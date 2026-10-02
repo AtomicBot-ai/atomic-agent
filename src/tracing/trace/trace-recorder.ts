@@ -2,13 +2,21 @@ import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import type { StepEvent } from "../../agent/step-executor.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
+import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 
 // The module, not the fallback barrel: it has no imports of its own, so
 // tracing does not pull the provider clients in behind it.
 import { summarizeFailedAttempts } from "../../llm/fallback/failed-attempts.js";
+// A leaf for the same reason: the errno walk, without the classifier
+// (`classifyProviderWaitCause`) and the clients it would bring along.
+import { readErrnoCode } from "../../llm/errno-code.js";
 import { readGenerationId } from "../../llm/provider/openai/generation-id.js";
 
-import type { TraceError, TraceEvent } from "./trace-event.js";
+import type {
+  TraceError,
+  TraceEvent,
+  TraceProviderWaiting,
+} from "./trace-event.js";
 import type { TraceSink } from "./trace-bus.js";
 
 /** The `generationId` field of an `error` row, or nothing. */
@@ -23,6 +31,35 @@ function fallbackFailuresOf(
 ): Pick<TraceError, "fallbackFailures"> {
   const failures = summarizeFailedAttempts(error);
   return failures.length > 0 ? { fallbackFailures: failures } : {};
+}
+
+/**
+ * The `causeCode` field of an `error` row, or nothing: the errno a
+ * `transport` failure left on its `cause` chain. Every other category
+ * is left without one — a cancelled request can carry `ABORT_ERR`,
+ * which says nothing about the provider.
+ */
+function causeCodeOf(
+  error: unknown,
+  category: LlmFailureCategory,
+): Pick<TraceError, "causeCode"> {
+  if (category !== "transport") return {};
+  const code = readErrnoCode(error);
+  return code === undefined ? {} : { causeCode: code };
+}
+
+/**
+ * A wait cause as the `provider_waiting` row records it: `kind`, plus
+ * `status` only when it is a number. The event's `stream_error` may hold
+ * `status: null` (the provider reported none); the row leaves it out, as
+ * the SSE frame does, so a reader meets one shape.
+ */
+function waitCauseOf(
+  cause: ProviderWaitCause,
+): NonNullable<TraceProviderWaiting["cause"]> {
+  return "status" in cause && typeof cause.status === "number"
+    ? { kind: cause.kind, status: cause.status }
+    : { kind: cause.kind };
 }
 
 export interface TraceRecorderOptions {
@@ -178,11 +215,15 @@ export function createTraceRecorder(
   // loop can fail outside `executeStep`, and the truncation-retry path
   // swaps in `truncationRetry.original` before emitting. The memo is
   // cleared when a new turn or step begins, so only the failure that
-  // just happened can suppress anything.
+  // just happened can suppress anything. `causeCode` is part of what is
+  // compared because it is part of the row: the same object reads the
+  // same code twice, so the rethrow is still dropped, while a different
+  // failure that happens to share the message is not.
   let lastStepError: {
     message: string;
     stack: string | undefined;
     category: LlmFailureCategory;
+    causeCode: string | undefined;
     stepIndex: number | null;
   } | null = null;
 
@@ -301,11 +342,13 @@ export function createTraceRecorder(
           reason: inner.reason,
         });
         return;
-      case "step_error":
+      case "step_error": {
+        const codeField = causeCodeOf(inner.error, inner.category);
         lastStepError = {
           message: inner.error.message,
           stack: inner.error.stack,
           category: inner.category,
+          causeCode: codeField.causeCode,
           stepIndex: currentStepIndex,
         };
         push({
@@ -318,10 +361,12 @@ export function createTraceRecorder(
           message: inner.error.message,
           ...(inner.error.stack ? { stack: inner.error.stack } : {}),
           category: inner.category,
+          ...codeField,
           ...generationIdOf(inner.error),
           ...fallbackFailuresOf(inner.error),
         });
         return;
+      }
       default:
         return;
     }
@@ -546,6 +591,15 @@ export function createTraceRecorder(
             maxWaitMs: event.maxWaitMs,
             nextRetryMs: event.nextRetryMs,
             reason: event.reason,
+            // `reason` alone was a bare `fetch failed` in the field: a
+            // stopped local server read as a network outage. The kind
+            // and the errno travel with it.
+            ...(event.cause !== undefined
+              ? { cause: waitCauseOf(event.cause) }
+              : {}),
+            ...(event.causeCode !== undefined
+              ? { causeCode: event.causeCode }
+              : {}),
             ...(event.providerId !== undefined
               ? { providerId: event.providerId }
               : {}),
@@ -627,11 +681,13 @@ export function createTraceRecorder(
           });
           return;
         case "loop_failed": {
+          const codeField = causeCodeOf(event.error, event.category);
           const duplicate =
             lastStepError !== null &&
             lastStepError.message === event.error.message &&
             lastStepError.stack === event.error.stack &&
             lastStepError.category === event.category &&
+            lastStepError.causeCode === codeField.causeCode &&
             lastStepError.stepIndex === currentStepIndex;
           lastStepError = null;
           if (duplicate) return;
@@ -647,6 +703,7 @@ export function createTraceRecorder(
             message: event.error.message,
             ...(event.error.stack ? { stack: event.error.stack } : {}),
             category: event.category,
+            ...codeField,
             ...generationIdOf(event.error),
             ...fallbackFailuresOf(event.error),
           });

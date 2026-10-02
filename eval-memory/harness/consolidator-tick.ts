@@ -35,7 +35,7 @@ import {
 import { DistillRunner } from "../../src/memory/consolidator/distill-runner.js";
 import { LlamaServerClient } from "../../src/llm/llama-server-client.js";
 import { createLinkGeneratorRunner } from "../../src/memory/links/link-generator-runner.js";
-import { StructuredLogger, stderrSink } from "../../src/tracing/structured-logger.js";
+import { StructuredLogger, createStderrSink } from "../../src/tracing/structured-logger.js";
 
 export interface ConsolidatorTickInput {
   stateDir: string;
@@ -262,7 +262,7 @@ export async function runLinkSweep(deps: LinkSweepDeps): Promise<LinkSweepStats>
     // we cannot tell whether the model is rejecting the prompt, the
     // parser is dropping malformed output, or we just need to bump
     // the chunk timeout.
-    logger: new StructuredLogger({ level: "debug", sinks: [stderrSink()] }),
+    logger: new StructuredLogger({ level: "debug", sinks: [createStderrSink()] }),
   });
   const sessionId = "eval-link-sweep";
   let chunks = 0;

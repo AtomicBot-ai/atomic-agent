@@ -11,7 +11,9 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { totalmem } from "node:os";
 
+import { readBackendVersion } from "./backend-version.js";
 import {
   resolveEmbeddingLogFilePath,
   resolveEmbeddingPidFilePath,
@@ -25,9 +27,12 @@ import {
 import {
   buildKvLayout,
   estimateContextSize,
+  estimateLaunchKvBytes,
   MANAGED_KV_CACHE_TYPE,
   resolveDeviceFreeVramMiB,
   resolveKvBudgetMiB,
+  resolveUnifiedMemoryHeadroomMiB,
+  UNIFIED_MEMORY_KV_SHARE,
   type KvLayoutSource,
 } from "./context-size.js";
 import {
@@ -36,7 +41,12 @@ import {
   readGgufMetadataSync,
   type GgufMetadata,
 } from "./gguf-metadata.js";
-import { listVulkanDevices, resolveManagedDevice } from "./gpu-devices.js";
+import {
+  deviceTableOnce,
+  resolveManagedDevice,
+  sharesSystemMemory,
+  type ListDevices,
+} from "./gpu-devices.js";
 import {
   resolveSwaFullDecision,
   type SwaFullDecision,
@@ -79,6 +89,13 @@ export interface DaemonStartOptions {
    * value passed here is treated as an explicit override.
    */
   device?: string;
+  /**
+   * The launch's `--list-devices` table (`deviceTableOnce`) when the
+   * caller already asked it to pick `device`: the context fit reads the
+   * free memory from the same answer instead of starting the backend a
+   * second time. Absent: `startDaemon` enumerates, at most once.
+   */
+  listDevices?: ListDevices;
   /**
    * Operator override for the llama-server context window
    * (`localModels.managed.contextSize`). `0` / `undefined` means
@@ -140,7 +157,11 @@ export interface DaemonStartOptions {
    * `true`): one 64-token completion whose `timings.predicted_per_second`
    * is written next to the pid file and shown to the fusion orchestrator
    * as "~N tok/s single stream". Costs a few seconds of readiness — a
-   * 31B model at 3 tok/s spends ~20 s on it. `false` skips it.
+   * 31B model at 3 tok/s spends ~20 s on it, a 4B one 3-5 s on a 16 GB
+   * Mac — so a speed an earlier start measured on the same launch (model,
+   * build, device, context, whole fit) in the last day is carried over
+   * instead (`readReusableThroughput`). `false` skips both and leaves the
+   * speed unknown.
    */
   throughputProbe?: boolean;
   /**
@@ -167,8 +188,60 @@ export interface ThroughputRecord extends ThroughputSample {
   /** Pid of the daemon instance the sample belongs to. */
   pid: number;
   modelId: string;
-  /** Epoch ms of the measurement. */
+  /** Epoch ms of the measurement (kept when a later start carries it over). */
   measuredAt: number;
+  /**
+   * What the speed was measured on (`throughputBasis`: model, llama.cpp
+   * build and install, device, context, whether the model fit the device
+   * whole). Absent on records written before speeds were carried over;
+   * those are never reused.
+   */
+  measuredOn?: string;
+  /**
+   * Whether the probe had the server to itself: it ran on the only slot,
+   * or no slot was busy as it began and as it ended (`slotsAllIdle`). Only
+   * such a figure is carried over. On eight slots, requests that came in
+   * during the probe decoded beside it and it measured 1.1 tok/s, against
+   * 13-22 alone, for the same model on the same Mac.
+   */
+  alone?: boolean;
+}
+
+/**
+ * How long a measured speed is carried over to later starts of the same
+ * launch before it is measured again. Speed is a property of the model,
+ * the machine and how the model sits on it, not of one server process;
+ * re-measuring it on every start kept the model from answering for
+ * another 3-5 s after it had loaded, on every switch back to the local
+ * model. A day, so a figure taken on a bad afternoon (thermal limits,
+ * another app on the GPU) does not outlive it by much.
+ */
+export const THROUGHPUT_REUSE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * What a speed measurement describes: the model, the llama.cpp build on
+ * disk (its tag and when it was installed, so an update or a reinstall
+ * measures again), the device, the launch's context, and whether the
+ * weights and that context's cache fit the device whole (`fitsDevice`) —
+ * when they do not, llama.cpp's `-fit` leaves layers on the CPU and the
+ * model decodes at another speed; `null` when there was no free figure
+ * to tell.
+ */
+export function throughputBasis(
+  dataDir: string,
+  modelId: string,
+  device: string | undefined,
+  launch: { contextSize: number; fitsDevice: boolean | null },
+): string {
+  const backend = readBackendVersion(dataDir);
+  return JSON.stringify([
+    modelId,
+    backend?.tag ?? null,
+    backend?.downloadedAt ?? null,
+    device ?? null,
+    launch.contextSize,
+    launch.fitsDevice,
+  ]);
 }
 
 /** Tokens the probe asks for: enough to average out the first-token cost. */
@@ -349,9 +422,95 @@ export function readThroughputRecord(
       predictedTokens: toFiniteNumber(parsed.predictedTokens) ?? 0,
       promptTokensPerSecond: toFiniteNumber(parsed.promptTokensPerSecond),
       measuredAt: toFiniteNumber(parsed.measuredAt) ?? 0,
+      ...(typeof parsed.measuredOn === "string" ? { measuredOn: parsed.measuredOn } : {}),
+      ...(typeof parsed.alone === "boolean" ? { alone: parsed.alone } : {}),
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * The speed an earlier start measured on this same `basis`
+ * (`throughputBasis`), whichever daemon it was stamped for — `null` when
+ * there is none, it describes another model, build or device, the probe
+ * did not have the server to itself (`alone`), or it is older than
+ * `THROUGHPUT_REUSE_MAX_AGE_MS`. Read before a launch clears the record.
+ */
+export function readReusableThroughput(
+  dataDir: string,
+  basis: string,
+  now: number = Date.now(),
+): ThroughputRecord | null {
+  let parsed: Partial<ThroughputRecord>;
+  try {
+    parsed = JSON.parse(
+      readFileSync(resolveThroughputFilePath(dataDir), "utf-8"),
+    ) as Partial<ThroughputRecord>;
+  } catch {
+    return null;
+  }
+  const tokensPerSecond = toFiniteNumber(parsed.tokensPerSecond);
+  const measuredAt = toFiniteNumber(parsed.measuredAt);
+  if (
+    parsed.measuredOn !== basis ||
+    parsed.alone !== true ||
+    typeof parsed.modelId !== "string" ||
+    typeof parsed.pid !== "number" ||
+    tokensPerSecond === null ||
+    tokensPerSecond <= 0 ||
+    measuredAt === null ||
+    now < measuredAt ||
+    now - measuredAt > THROUGHPUT_REUSE_MAX_AGE_MS
+  ) {
+    return null;
+  }
+  return {
+    pid: parsed.pid,
+    modelId: parsed.modelId,
+    tokensPerSecond,
+    predictedTokens: toFiniteNumber(parsed.predictedTokens) ?? 0,
+    promptTokensPerSecond: toFiniteNumber(parsed.promptTokensPerSecond),
+    measuredAt,
+    measuredOn: basis,
+    alone: true,
+  };
+}
+
+/**
+ * Whether no slot of the server on `port` is busy: `GET /slots` answered
+ * in time and every slot says `is_processing: false`. A busy slot, a
+ * `/slots` that does not answer in time (it hangs while a slot evaluates
+ * a long prompt), a refusal, or a build without the endpoint all answer
+ * `false`. Never throws.
+ */
+export async function slotsAllIdle(opts: {
+  port: number;
+  apiKey?: string | null;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  try {
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (opts.apiKey) headers.authorization = `Bearer ${opts.apiKey}`;
+    const res = await (opts.fetchImpl ?? fetch)(
+      `http://127.0.0.1:${opts.port}/slots`,
+      { headers, signal: AbortSignal.timeout(opts.timeoutMs ?? 1_500) },
+    );
+    if (!res.ok) return false;
+    const slots = (await res.json()) as unknown;
+    return (
+      Array.isArray(slots) &&
+      slots.length > 0 &&
+      slots.every(
+        (slot) =>
+          typeof slot === "object" &&
+          slot !== null &&
+          (slot as { is_processing?: unknown }).is_processing === false,
+      )
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -464,13 +623,24 @@ export function buildLlamaServerArgs(
 /**
  * Resolve the effective `--ctx-size` for a chat daemon launch. Impure
  * glue around the pure `estimateContextSize`: when auto-sizing on a GPU
- * device it enumerates `--list-devices` to read the target device's free
- * VRAM. Best-effort — any enumeration failure degrades to the no-VRAM
- * default. Skips the probe entirely when the operator pinned a value or
- * offload is CPU-only.
+ * device it reads the target device's free VRAM from the launch's
+ * `--list-devices` table, and on a device that shares the system's RAM
+ * (Apple silicon, an integrated GPU) the machine's physical memory too.
+ * Best-effort — any enumeration failure degrades to the no-VRAM default.
+ * Skips the probe entirely when the operator pinned a value or offload
+ * is CPU-only.
+ *
+ * - `kvBudgetBytes`: what the cache may take, within the system's
+ *   headroom on unified memory — the budget `--swa-full` is weighed
+ *   against (not the context's 1/16 share).
+ * - `deviceBudgetBytes`: what is left of the device's own free figure
+ *   after weights, projector and compute buffers (negative when the
+ *   weights alone overflow it), against which a launch's cache says
+ *   whether the model fits the device whole.
+ * - `note`: why a unified-memory machine got less than its free figure
+ *   would fit, for the daemon log.
  */
 async function resolveEffectiveContextSize(
-  binPath: string,
   device: string | undefined,
   model: {
     fileSizeGb: number;
@@ -482,15 +652,26 @@ async function resolveEffectiveContextSize(
     hasMmproj: boolean;
     /** The model's attention layout from its header, when readable. */
     kvLayout?: KvLayoutSource | null;
+    listDevices: ListDevices;
   },
-): Promise<{ contextSize: number; kvBudgetBytes: number | null }> {
+): Promise<{
+  contextSize: number;
+  kvBudgetBytes: number | null;
+  deviceBudgetBytes: number | null;
+  note: string | null;
+}> {
   let freeVramMiB: number | null = null;
+  let systemMemoryMiB: number | null = null;
   if (opts.configured <= 0 && device && device !== "cpu") {
-    const devices = await listVulkanDevices(binPath);
+    const devices = await opts.listDevices();
     freeVramMiB = resolveDeviceFreeVramMiB(devices, device);
+    const target = devices.find((d) => d.id === device);
+    if (freeVramMiB !== null && target && sharesSystemMemory(target)) {
+      systemMemoryMiB = totalmem() / (1024 * 1024);
+    }
   }
   const mmprojSizeGb = opts.hasMmproj ? (model.mmprojFileSizeGb ?? 0) : 0;
-  const contextSize = estimateContextSize({
+  const input = {
     freeVramMiB,
     modelSizeGb: model.fileSizeGb,
     mmprojSizeGb,
@@ -498,21 +679,37 @@ async function resolveEffectiveContextSize(
     configuredContextSize: opts.configured,
     kvLayout: opts.kvLayout ? buildKvLayout(opts.kvLayout) : null,
     cacheType: MANAGED_KV_CACHE_TYPE,
-  });
-  const kvBudgetBytes =
+  };
+  const contextSize = estimateContextSize({ ...input, systemMemoryMiB });
+  let note: string | null = null;
+  if (systemMemoryMiB !== null) {
+    const fits = estimateContextSize(input);
+    if (fits > contextSize) {
+      note =
+        `held to ${Math.round(systemMemoryMiB / 1024)} GB of unified memory: ` +
+        `at most 1/${Math.round(1 / UNIFIED_MEMORY_KV_SHARE)} of it for the KV cache, ` +
+        `${Math.round(resolveUnifiedMemoryHeadroomMiB(systemMemoryMiB) / 1024)} GB left to the system ` +
+        `(${fits} would fit the GPU's free figure)`;
+    }
+  }
+  const budgetBytes = (withSystemMemory: boolean): number | null =>
     freeVramMiB !== null && freeVramMiB > 0
-      ? Math.max(
-          0,
-          resolveKvBudgetMiB({
-            freeVramMiB,
-            modelSizeGb: model.fileSizeGb,
-            mmprojSizeGb,
-          }),
-        ) *
+      ? resolveKvBudgetMiB({
+          freeVramMiB,
+          modelSizeGb: model.fileSizeGb,
+          mmprojSizeGb,
+          systemMemoryMiB: withSystemMemory ? systemMemoryMiB : null,
+        }) *
         1024 *
         1024
       : null;
-  return { contextSize, kvBudgetBytes };
+  const kvBudgetBytes = budgetBytes(true);
+  return {
+    contextSize,
+    kvBudgetBytes: kvBudgetBytes === null ? null : Math.max(0, kvBudgetBytes),
+    deviceBudgetBytes: budgetBytes(false),
+    note,
+  };
 }
 
 /**
@@ -709,24 +906,29 @@ export async function startDaemon(
   // With no pinned device the context auto-sizer has no single VRAM
   // figure to probe and degrades to its conservative no-VRAM default;
   // operators splitting across GPUs can pin `contextSize` explicitly.
+  // One `--list-devices` for the whole launch: the device pick and the
+  // context fit below read the same table (`deviceTableOnce`).
+  const listDevices = opts.listDevices ?? deviceTableOnce(binPath);
   const device = await resolveManagedDevice(binPath, opts.device, {
     multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
+    listDevices,
   });
   // The header says what the KV cache really costs and whether the
   // model's cache can be reused partially — both decide flags below.
   const header = readModelHeader(modelPath);
   const kvLayout = header ? kvLayoutSourceFromMetadata(header) : null;
   const prefixReuse = header ? classifyPrefixReuse(header) : null;
-  const { contextSize, kvBudgetBytes } = await resolveEffectiveContextSize(
-    binPath,
-    device,
-    model,
-    {
-      configured: opts.contextSize ?? 0,
-      hasMmproj: Boolean(opts.mmprojFile),
-      kvLayout,
-    },
-  );
+  const {
+    contextSize,
+    kvBudgetBytes,
+    deviceBudgetBytes,
+    note: contextNote,
+  } = await resolveEffectiveContextSize(device, model, {
+    configured: opts.contextSize ?? 0,
+    hasMmproj: Boolean(opts.mmprojFile),
+    kvLayout,
+    listDevices,
+  });
   const swaFull =
     opts.swaFullFlag !== undefined
       ? {
@@ -751,6 +953,29 @@ export async function startDaemon(
       : swaFull.enabled && !prefixReuse.hybrid
         ? "partial"
         : prefixReuse.prefixReuse;
+  // Whether the weights and this context's cache fit the device whole, or
+  // llama.cpp's `-fit` will leave layers on the CPU — another speed.
+  // Unknown (`null`) with no free figure to weigh them against.
+  const fitsDevice =
+    deviceBudgetBytes === null
+      ? null
+      : estimateLaunchKvBytes({
+          kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+          modelSizeGb: model.fileSizeGb,
+          contextSize,
+          swaFull: swaFull.enabled,
+        }) <= deviceBudgetBytes;
+  // The speed an earlier start measured on this same launch, read before
+  // this one clears the record: carried over, it spares the probe
+  // (`readReusableThroughput`).
+  const speedBasis = throughputBasis(opts.dataDir, model.id, device, {
+    contextSize,
+    fitsDevice,
+  });
+  const knownSpeed =
+    opts.throughputProbe === false
+      ? null
+      : readReusableThroughput(opts.dataDir, speedBasis);
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
   const apiKey =
@@ -787,7 +1012,8 @@ export async function startDaemon(
             ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
             : " (header unreadable)"),
         `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
-          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback"),
+          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
+          (contextNote ? `, ${contextNote}` : ""),
         `[atomic-agent] launch: ${swaFull.reason}`,
         `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
         "",
@@ -822,25 +1048,40 @@ export async function startDaemon(
     // A stale record must never outlive the daemon it described: drop
     // it before the probe so a skipped or failed probe leaves nothing
     // behind that `readThroughputRecord` could mistake (it also checks
-    // the pid, but the file is cheap to clear).
+    // the pid, but the file is cheap to clear). A speed carried over was
+    // read above, and is stamped for this daemon instead of measured.
     try {
       unlinkSync(resolveThroughputFilePath(opts.dataDir));
     } catch {
       /* none recorded */
     }
     let tokensPerSecond: number | null = null;
-    if (opts.throughputProbe !== false) {
+    if (knownSpeed) {
+      tokensPerSecond = knownSpeed.tokensPerSecond;
+      writeThroughputRecord(opts.dataDir, { ...knownSpeed, pid: child.pid });
+    } else if (opts.throughputProbe !== false) {
+      // On the only slot nothing can decode beside the probe. With more, a
+      // turn already running when it starts, or still running when it
+      // ends, shared the GPU with it: such a figure is not carried over.
+      const oneSlot = args[args.indexOf("--parallel") + 1] === "1";
+      const idleBefore =
+        oneSlot || (await slotsAllIdle({ port: opts.port, apiKey }));
       const sample = await probeThroughput({
         port: opts.port,
         apiKey,
       });
       if (sample) {
         tokensPerSecond = sample.tokensPerSecond;
+        const alone =
+          oneSlot ||
+          (idleBefore && (await slotsAllIdle({ port: opts.port, apiKey })));
         writeThroughputRecord(opts.dataDir, {
           ...sample,
           pid: child.pid,
           modelId: model.id,
           measuredAt: Date.now(),
+          measuredOn: speedBasis,
+          alone,
         });
       }
     }

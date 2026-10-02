@@ -9,6 +9,7 @@ import { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import type { ProviderSwitchNotice } from "./provider-fallback-chain.js";
 import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import { GrammarError } from "../reliability/llm-failures.js";
 import {
   classifyFailure,
@@ -382,6 +383,132 @@ describe("runWithFallback", () => {
     });
   });
 
+  /* Item 40: AI/ML API answered 403 "You've run out of funds", DashScope
+     had no key, and the stopped local server's `fetch failed` parked the
+     turn; the window named the local server. An empty account is a
+     refusal like a refused key, wherever on the route it comes from. */
+  describe("an account that cannot pay", () => {
+    const outOfFunds = (label = "aimlapi"): OpenAiHttpError => {
+      const body =
+        '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance or update your payment method to continue"}';
+      return new OpenAiHttpError(
+        `openai provider 403: ${body}`,
+        403,
+        "https://api.aimlapi.com/v1/chat/completions",
+        false,
+        null,
+        label,
+        undefined,
+        { body: parseProviderErrorBody(body) },
+      );
+    };
+    function chainAt(ids: string[], now: () => number): ProviderFallbackChain {
+      return new ProviderFallbackChain({
+        resolve: () => ({ chain: ids, timing: DEFAULT_FALLBACK_TIMING }),
+        now,
+      });
+    }
+
+    it("on the primary, throws its refusal rather than the last link's outage", async () => {
+      const chain = makeChain(["aimlapi", "local"]);
+      const refusal = outOfFunds();
+      await expect(
+        runWithFallback(chain, async (id) => {
+          throw id === "aimlapi" ? refusal : new TypeError("fetch failed");
+        }),
+      ).rejects.toBe(refusal);
+      expect(readFailingLink(refusal)).toBe("aimlapi");
+      expect(readFailedAttempts(refusal)).toEqual([]);
+    });
+
+    it("on the primary, still lets a fallback that answers serve the call", async () => {
+      const chain = makeChain(["aimlapi", "backup"]);
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "aimlapi") throw outOfFunds();
+          return id;
+        }),
+      ).resolves.toBe("backup");
+    });
+
+    it("on the primary, asks it again next call: the stand-in proved nothing", async () => {
+      const chain = chainAt(["aimlapi", "local"], () => 1_000);
+      await expect(
+        runWithFallback(chain, async (id) => {
+          throw id === "aimlapi" ? outOfFunds() : new TypeError("fetch failed");
+        }),
+      ).rejects.toBeInstanceOf(OpenAiHttpError);
+      const seen: string[] = [];
+      await expect(
+        runWithFallback(chain, async (id) => {
+          seen.push(id);
+          return id;
+        }),
+      ).resolves.toBe("aimlapi");
+      expect(seen).toEqual(["aimlapi"]);
+    });
+
+    it("on the fallback that has been serving, throws its refusal with the links before it", async () => {
+      let now = 1_000;
+      const chain = chainAt(["primary", "cloud2", "local"], () => now);
+      // The primary goes down and cloud2 serves: the route in use.
+      await runWithFallback(chain, async (id) => {
+        if (id === "primary") throw http(503);
+        return id;
+      });
+      now += DEFAULT_FALLBACK_TIMING.probeThrottleMs;
+      // A probe finds the primary still down, cloud2's account is now
+      // empty, and the local server is stopped.
+      const refusal = outOfFunds("cloud2");
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "primary") throw http(503);
+          if (id === "cloud2") throw refusal;
+          throw new TypeError("fetch failed");
+        }),
+      ).rejects.toBe(refusal);
+      expect(readFailingLink(refusal)).toBe("cloud2");
+      expect(readFailedAttempts(refusal).map((a) => a.providerId)).toEqual([
+        "primary",
+      ]);
+    });
+
+    it("on a fallback that never served, leaves the last link's error, as before", async () => {
+      const chain = chainAt(["primary", "cloud2", "local"], () => 1_000);
+      const down = new TypeError("fetch failed");
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "primary") throw http(503);
+          if (id === "cloud2") throw outOfFunds("cloud2");
+          throw down;
+        }),
+      ).rejects.toBe(down);
+      expect(readFailedAttempts(down).map((a) => a.providerId)).toEqual([
+        "primary",
+        "cloud2",
+      ]);
+    });
+
+    it("on the primary, leaves the outage path to a fallback that has been serving", async () => {
+      let now = 1_000;
+      const chain = chainAt(["primary", "backup"], () => now);
+      await runWithFallback(chain, async (id) => {
+        if (id === "primary") throw http(503);
+        return id;
+      });
+      now += DEFAULT_FALLBACK_TIMING.probeThrottleMs;
+      const outage = new TypeError("fetch failed");
+      await expect(
+        runWithFallback(chain, async (id) => {
+          throw id === "primary" ? outOfFunds("primary") : outage;
+        }),
+      ).rejects.toBe(outage);
+      expect(readFailedAttempts(outage).map((a) => a.providerId)).toEqual([
+        "primary",
+      ]);
+    });
+  });
+
   it("marks the thrown error with the link that threw it", async () => {
     const chain = makeChain(["cloud", "local"]);
     const last = new TypeError("fetch failed");
@@ -444,6 +571,54 @@ describe("runWithFallback", () => {
       expect(describeFailedAttempts(last)).toBe(
         ' (after "cloud" failed: boom; "cloud2" failed: boom)',
       );
+    });
+
+    it("names the errno the failed link's transport left behind", async () => {
+      const warn = vi.fn();
+      const chain = new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["cloud", "local"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        logger: { warn },
+      });
+      // No response, so no status: without the errno this line reads
+      // the same for a host the network cannot resolve and for one that
+      // refused the connection.
+      const unreachable = new OpenAiHttpError(
+        "fetch failed",
+        null,
+        "http://x",
+        false,
+        null,
+        "p",
+        "ENOTFOUND",
+      );
+
+      await expect(
+        runWithFallback(
+          chain,
+          async (id) => {
+            if (id === "cloud") throw unreachable;
+            return id;
+          },
+          "s-2",
+        ),
+      ).resolves.toBe("local");
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "provider failed; falling over to the next link",
+          {
+            from: "cloud",
+            to: "local",
+            status: null,
+            causeCode: "ENOTFOUND",
+            reason: "fetch failed",
+            sessionId: "s-2",
+          },
+        ],
+      ]);
     });
 
     it("does not warn about a failure that does not advance", async () => {

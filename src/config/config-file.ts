@@ -1,10 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -15,6 +9,7 @@ import {
   USER_CONFIG_VERSION,
   type UserConfigFile,
 } from "./config-schema.js";
+import { writeOwnerOnlyFileAtomicSync } from "./owner-only-file.js";
 
 /** Resolve the absolute path to the user config file inside a state dir. */
 export function getUserConfigPath(stateDir: string): string {
@@ -58,8 +53,9 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
 }
 
 /**
- * Atomically write the user config file: tmp file + rename. Creates
- * the parent directory as needed.
+ * Atomically write the user config file: tmp file + rename, readable
+ * by its owner only (0600, `writeOwnerOnlyFileAtomicSync`). Creates the
+ * parent directory as needed.
  *
  * The written `version` is never lower than the one already on disk. A
  * dozen call sites build their payload by spreading a config object and
@@ -92,9 +88,7 @@ export function writeUserConfigFileSync(
       null,
       2,
     ) + "\n";
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, payload, "utf8");
-  renameSync(tmp, path);
+  writeOwnerOnlyFileAtomicSync(path, payload);
 }
 
 /**

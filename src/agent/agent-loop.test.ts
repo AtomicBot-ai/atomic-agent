@@ -9,11 +9,15 @@ import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
-import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import {
+  humanizeOpenAiHttpError,
+  OpenAiHttpError,
+} from "../llm/provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
+import type { SessionState } from "../session/session-state.js";
 import type {
   CompletionResult,
   LlamaServerClient,
@@ -493,6 +497,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(events[0]!.nextRetryMs).toBe(2_000);
     expect(events[1]!.nextRetryMs).toBe(4_000);
     expect(events[0]!.reason).toBe("fetch failed");
+    // A bare `TransportError` carries no errno anywhere on its chain, so
+    // the event names none rather than guessing one.
+    expect(events[0]).not.toHaveProperty("causeCode");
     // The parked attempts are not steps and replay nothing: one tool
     // step plus the reply, not four steps and two noops.
     expect(noopRuns).toBe(1);
@@ -1365,6 +1372,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // statusless shape and is exactly what the park exists for.
     const registry = buildDefaultToolRegistry();
     const waits: unknown[] = [];
+    const warnings: Array<{
+      message: string;
+      context?: Record<string, unknown>;
+    }> = [];
     let calls = 0;
     const loop = new AgentLoop({
       registry,
@@ -1391,6 +1402,14 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       onEvent: (event) => {
         if (event.type === "provider_waiting") waits.push(event);
       },
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: (message: string, context?: Record<string, unknown>) => {
+          warnings.push({ message, context });
+        },
+        error: () => {},
+      } as never,
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "s-econnrefused", workingDir }),
@@ -1404,6 +1423,73 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
     expect(calls).toBe(2);
+    // The reason is a bare `fetch failed` — the same line a network
+    // outage gives. The errno is what says the server was not running,
+    // and it reaches both the event (and so the trace) and the log.
+    expect(waits[0]).toMatchObject({
+      reason: "fetch failed",
+      cause: { kind: "refused" },
+      causeCode: "ECONNREFUSED",
+    });
+    expect(
+      warnings.find(
+        (w) => w.message === "provider unreachable; parking the turn",
+      )?.context,
+    ).toMatchObject({ error: "fetch failed", causeCode: "ECONNREFUSED" });
+  });
+
+  it("names the errno in the failure log when the turn does not wait", async () => {
+    // The same refused connection with waiting switched off: the turn
+    // fails at once, and `agent loop failed` is the only log line about
+    // it — it must not say only `fetch failed` either.
+    const registry = buildDefaultToolRegistry();
+    const failures: Array<{
+      message: string;
+      context?: Record<string, unknown>;
+    }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new LlamaServerError(
+          "fetch failed",
+          null,
+          "http://127.0.0.1:8080/completion",
+          false,
+          "ECONNREFUSED",
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: (message: string, context?: Record<string, unknown>) => {
+          failures.push({ message, context });
+        },
+      } as never,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-econnrefused-no-wait", workingDir }),
+      {
+        userMessage: "server stopped",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        providerWaitEnabled: false,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(
+      failures.find((f) => f.message === "agent loop failed")?.context,
+    ).toMatchObject({
+      error: "fetch failed",
+      category: "transport",
+      causeCode: "ECONNREFUSED",
+    });
   });
 
   it("still waits out a socket-level ETIMEDOUT, which is the kernel's deadline (issue #490)", async () => {
@@ -1460,8 +1546,24 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
   it("stops the turn resumable when the provider's body says the credit is exhausted (F29)", async () => {
     // The Codex attempt: a 429 carrying `credit_balance_exhausted` was
-    // parked and retried as rate limiting, 42 times per worker.
+    // parked and retried as rate limiting, 42 times per worker. The task
+    // has done a step by then, so there is work to resume (item 40 ends
+    // a turn refused on its first request instead, see below).
     const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
     const events: string[] = [];
     let calls = 0;
     const body = JSON.stringify({
@@ -1479,6 +1581,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async () => {
         calls += 1;
+        if (calls === 1) {
+          return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+        }
         throw new TransportError(
           '"openrouter" is rate-limiting this key (429).',
           429,
@@ -1521,15 +1626,16 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         signal: new AbortController().signal,
       },
     );
-    // One request, no park, no failure: paused where it stood.
-    expect(calls).toBe(1);
+    // One refused request after the step, no park, no failure: paused
+    // where it stood.
+    expect(calls).toBe(2);
     expect(Date.now() - started).toBeLessThan(1_000);
     expect(events).toEqual(["credit_exhausted", "loop_completed"]);
     expect(result.reason).toBe("max_steps");
     expect(result.stopCause).toBe("credit_exhausted");
     expect(result.session.status).toBe("stalled");
     expect(result.session.lastError).toBe(
-      'task_stopped:credit_exhausted: "openrouter" is out of credit after 0 steps',
+      'task_stopped:credit_exhausted: "openrouter" is out of credit after 1 steps',
     );
     const last = result.session.turns.at(-1);
     expect(last?.kind).toBe("assistant_reply");
@@ -1537,6 +1643,121 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       '"openrouter" reports the account is out of credit',
     );
     expect((last as { text: string }).text).toContain("say `continue`");
+  });
+
+  /* Item 40: a provider that refuses the very first request because the
+     account cannot pay leaves nothing to resume. The turn fails at once
+     with the provider's own sentence, as a refused key does, instead of
+     pausing on a "(paused …) after 0 steps" reply or parking on a 429. */
+  describe("a billing refusal on the task's first request", () => {
+    const refusedBy = (status: number, body: string, label: string) => {
+      const http = new OpenAiHttpError(
+        `openai provider ${status}: ${body}`,
+        status,
+        "https://api.aimlapi.com/v1/chat/completions",
+        false,
+        null,
+        label,
+        undefined,
+        { body: parseProviderErrorBody(body) },
+      );
+      return new TransportError(humanizeOpenAiHttpError(http), status, http.url, {
+        cause: http,
+      });
+    };
+
+    async function runRefused(
+      err: TransportError,
+      session: SessionState = createEmptySessionState({ id: "s-billing", workingDir }),
+    ) {
+      const events: AgentLoopEvent[] = [];
+      let calls = 0;
+      const loop = new AgentLoop({
+        registry: buildDefaultToolRegistry(),
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        llmComplete: async () => {
+          calls += 1;
+          throw err;
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        onEvent: (event) => events.push(event),
+      });
+      const started = Date.now();
+      const result = await loop.runTurn(
+        session,
+        {
+          userMessage: "hello",
+          maxSteps: 5,
+          taskMaxSteps: 5,
+          providerWaitEnabled: true,
+          signal: new AbortController().signal,
+        },
+      );
+      return { result, events, calls, elapsedMs: Date.now() - started };
+    }
+
+    const AIML_403 =
+      '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance or update your payment method to continue: https://aimlapi.com/app/billing"}';
+    const SENTENCE =
+      "AI/ML API refused the request: you've run out of funds. Top up your balance with AI/ML API or pick another provider in the Providers panel.";
+
+    it("fails the turn on AI/ML API's 403 with its sentence, without a wait or a pause", async () => {
+      const { result, events, calls, elapsedMs } = await runRefused(
+        refusedBy(403, AIML_403, "aimlapi"),
+      );
+      expect(calls).toBe(1);
+      expect(elapsedMs).toBeLessThan(1_000);
+      expect(result.reason).toBe("failed");
+      expect(result.stopCause).toBeUndefined();
+      const types = events.map((e) => e.type);
+      expect(types).not.toContain("provider_waiting");
+      expect(types).not.toContain("credit_exhausted");
+      const failed = events.find((e) => e.type === "loop_failed");
+      expect(failed?.type === "loop_failed" && failed.error.message).toBe(SENTENCE);
+      // No synthetic "(paused …)" reply: the transcript keeps the failed
+      // turn's own record, and that names the provider and its reason.
+      const replies = result.session.turns
+        .filter((t) => t.kind === "assistant_reply")
+        .map((t) => (t as { text: string }).text);
+      expect(replies.some((text) => text.includes("(paused"))).toBe(false);
+      expect(replies.at(-1)).toContain("AI/ML API refused the request: you've run out of funds");
+      expect(result.session.status).toBe("failed");
+    });
+
+    it("pauses again when the turn resumes a task an earlier turn stopped: the task has work to keep", async () => {
+      // `continue` after "(paused: … out of credit …)", the account still empty.
+      const stopped: SessionState = {
+        ...createEmptySessionState({ id: "s-billing-resumed", workingDir }),
+        status: "stalled",
+      };
+      const { result, events, calls } = await runRefused(
+        refusedBy(403, AIML_403, "aimlapi"),
+        stopped,
+      );
+      expect(calls).toBe(1);
+      expect(result.reason).toBe("max_steps");
+      expect(result.stopCause).toBe("credit_exhausted");
+      const types = events.map((e) => e.type);
+      expect(types).toContain("credit_exhausted");
+      expect(types).not.toContain("loop_failed");
+      expect(types).not.toContain("provider_waiting");
+    });
+
+    it("does not park on a 429 that says the account is empty, though a 429 is otherwise a wait", async () => {
+      const { result, events, calls } = await runRefused(
+        refusedBy(
+          429,
+          '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}',
+          "openai",
+        ),
+      );
+      expect(calls).toBe(1);
+      expect(result.reason).toBe("failed");
+      expect(events.map((e) => e.type)).not.toContain("provider_waiting");
+    });
   });
 
   it("waits as long as the provider asked, on a 402 the outage wait would otherwise refuse (F29)", async () => {

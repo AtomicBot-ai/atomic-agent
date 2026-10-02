@@ -1,5 +1,6 @@
-export { StructuredLogger, stderrSink } from "./structured-logger.js";
+export { StructuredLogger, createStderrSink } from "./structured-logger.js";
 export type {
+  LineWriter,
   LogContext,
   LogRecord,
   LogSink,
