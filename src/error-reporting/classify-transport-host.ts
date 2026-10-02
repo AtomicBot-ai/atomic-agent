@@ -85,7 +85,9 @@ function isPrivate(host: string): boolean {
   }
   if (host.includes(":")) {
     // IPv6: unique-local fc00::/7 and link-local fe80::/10.
-    return /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host);
+    return (
+      /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host)
+    );
   }
   if (!host.includes(".")) return true; // single-label name (`gpu-box`)
   return PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix));

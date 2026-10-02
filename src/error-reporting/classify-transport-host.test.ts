@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_AIMLAPI_BASE } from "../llm/provider/aimlapi/aimlapi-provider.js";
+import {
+  DEFAULT_AIMLAPI_BASE,
+} from "../llm/provider/aimlapi/aimlapi-provider.js";
 import { DEFAULT_GEMINI_BASE } from "../llm/provider/gemini/gemini-provider.js";
-import { DEFAULT_OPENROUTER_BASE } from "../llm/provider/openrouter/openrouter-provider.js";
+import {
+  DEFAULT_OPENROUTER_BASE,
+} from "../llm/provider/openrouter/openrouter-provider.js";
 import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
-import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "../tui/providers/providers-model-options.js";
+import {
+  OPENAI_COMPAT_DEFAULT_BASE_URL,
+} from "../tui/providers/providers-model-options.js";
 import {
   classifyTransportHost,
   KNOWN_CLOUD_HOSTS,

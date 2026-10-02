@@ -884,7 +884,11 @@ export async function createAgentRuntime(
     // Fire the one-time `app_installed` event if it never went out
     // while analytics was disabled (guarded by the state store).
     onEnabled: () =>
-      captureAppInstalled(analytics, analyticsStateStore, appInstalledContext()),
+      captureAppInstalled(
+        analytics,
+        analyticsStateStore,
+        appInstalledContext(),
+      ),
   });
   const setAnalyticsEnabled = async (
     enabled: boolean,
