@@ -462,8 +462,9 @@ try {
   check('a cloud refusal never surfaces as the dead local backend\'s socket error',
     !/turn failed \[transport\]: fetch failed/.test(said), said);
   if (refused) {
+    // Backlog 40: a billing refusal's line names the provider by its name.
     check('the refusal names the provider that refused',
-      /"openrouter"/.test(said), said);
+      /"openrouter"|\bOpenRouter\b/.test(said), said);
   }
 } catch (err) {
   console.log(`\nDRIVER ERROR: ${err.message}`);
