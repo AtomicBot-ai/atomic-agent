@@ -6,6 +6,28 @@ let globalHandlersInstalled = false;
 let stdioGuardsInstalled = false;
 
 /**
+ * What a process does when the reader of its stdout or stderr goes away.
+ *
+ * - `exit` (the default): shut down cleanly, exit 0 — the pipe closed,
+ *   as `head` hanging up. Right for a command whose output is the point
+ *   (`atag run | head`) and for a TUI whose terminal is gone.
+ * - `mute`: stop writing to that stream and carry on. `serve` is a
+ *   server, and its stdio is only its log. A host that died — the desktop
+ *   app, Force Quit — is noticed by serve's orphan watch, which ends it
+ *   through the same teardown SIGTERM takes: the port let go, every
+ *   turn's end written to the session store, the serve record cleared.
+ *   Exiting at the first log line after the host died skipped all of it,
+ *   and once serve's structured log reached stderr there was a line
+ *   within seconds.
+ */
+export type BrokenPipePolicy = "exit" | "mute";
+
+export interface GlobalErrorHandlerOptions {
+  /** See {@link BrokenPipePolicy}. Default `exit`. */
+  brokenPipe?: BrokenPipePolicy;
+}
+
+/**
  * Capture an error through the (possibly `null`) client. No-ops when
  * reporting is disabled. `cancelled` failures are intentionally dropped —
  * they are user-initiated, not defects. Non-`Error` thrown values are
@@ -53,22 +75,26 @@ export function captureError(
  */
 export function installGlobalErrorHandlers(
   getClient: () => SentryClient | null,
+  options: GlobalErrorHandlerOptions = {},
 ): void {
   if (globalHandlersInstalled) return;
   globalHandlersInstalled = true;
 
   const soleUncaughtHandler = process.listenerCount("uncaughtException") === 0;
+  const brokenPipe = options.brokenPipe ?? "exit";
 
-  installStdioErrorGuards(soleUncaughtHandler);
+  installStdioErrorGuards(soleUncaughtHandler, brokenPipe);
 
   process.on("uncaughtException", (err) => {
     const client = getClient();
     captureError(client, err, { source: "uncaughtException" });
     // Belt-and-braces for the synchronous path the stream guards below
     // cannot intercept: a dead pipe is not a crash, so it neither prints
-    // a stack (there is nowhere to print it) nor exits non-zero.
+    // a stack (there is nowhere to print it) nor exits non-zero. Under
+    // `mute` it does not end the process either: that is the orphan
+    // watch's to do, through the teardown.
     if (isBrokenPipeError(err)) {
-      if (soleUncaughtHandler) process.exit(0);
+      if (soleUncaughtHandler && brokenPipe === "exit") process.exit(0);
       return;
     }
     if (soleUncaughtHandler) {
@@ -106,24 +132,63 @@ export function installGlobalErrorHandlers(
  * `ownsProcess` mirrors the `uncaughtException` policy: when this
  * runtime is the top-level process we shut down cleanly (exit 0 — the
  * pipe closed, same as `head` hanging up), and when a host embeds us we
- * only swallow the error and let the host decide. A non-broken-pipe
- * stream error is re-thrown so genuine bugs stay visible.
+ * only swallow the error and let the host decide. Under the `mute`
+ * policy the broken stream is silenced instead and the process goes on
+ * (see {@link BrokenPipePolicy}). A non-broken-pipe stream error is
+ * re-thrown so genuine bugs stay visible.
  */
-export function installStdioErrorGuards(ownsProcess: boolean): void {
+export function installStdioErrorGuards(
+  ownsProcess: boolean,
+  brokenPipe: BrokenPipePolicy = "exit",
+): void {
   if (stdioGuardsInstalled) return;
   stdioGuardsInstalled = true;
 
   for (const stream of [process.stdout, process.stderr]) {
-    stream.on("error", (err: unknown) => {
-      if (!isBrokenPipeError(err)) {
-        queueMicrotask(() => {
-          throw err;
-        });
-        return;
-      }
-      if (ownsProcess) process.exit(0);
-    });
+    guardStdioStream(stream, ownsProcess, brokenPipe);
   }
+}
+
+/** The part of a stdio stream the guard touches. */
+export type GuardedStream = Pick<NodeJS.WriteStream, "on" | "write">;
+
+/** One stream's guard (see `installStdioErrorGuards`); exported for its test. */
+export function guardStdioStream(
+  stream: GuardedStream,
+  ownsProcess: boolean,
+  brokenPipe: BrokenPipePolicy,
+): void {
+  stream.on("error", (err: unknown) => {
+    if (!isBrokenPipeError(err)) {
+      queueMicrotask(() => {
+        throw err;
+      });
+      return;
+    }
+    if (brokenPipe === "mute") {
+      muteStream(stream);
+      return;
+    }
+    if (ownsProcess) process.exit(0);
+  });
+}
+
+/**
+ * Stop writing to a stream whose reader is gone. Node's stdio streams
+ * are never really destroyed (their `_destroy` is a no-op that revives
+ * them), so without this every later write would go to the dead pipe
+ * and fail again. Each write is dropped here instead; its callback, if
+ * any, still runs, so nothing waiting on one is left hanging.
+ */
+function muteStream(stream: GuardedStream): void {
+  const dropped = (...args: unknown[]): boolean => {
+    const callback = args.find(
+      (arg): arg is () => void => typeof arg === "function",
+    );
+    if (callback) process.nextTick(callback);
+    return true;
+  };
+  stream.write = dropped as GuardedStream["write"];
 }
 
 /** Test-only reset of the idempotency guards. */

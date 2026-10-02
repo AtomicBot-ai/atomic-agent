@@ -4,6 +4,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import type { Socket } from "node:net";
 
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ApprovalBus } from "./approval-bus.js";
@@ -153,6 +154,14 @@ export function createHttpServer(
     }
   });
 
+  // Every open connection, so `close()` can wait for each to close
+  // (`closeServer`).
+  const sockets = new Set<Socket>();
+  server.on("connection", (socket: Socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+
   return new Promise<HttpServerHandle>((resolvePromise, rejectPromise) => {
     const onError = (err: Error): void => {
       server.off("listening", onListening);
@@ -172,7 +181,7 @@ export function createHttpServer(
         approvalBus,
         completionRegistry,
         undeliveredSteers,
-        close: () => closeServer(server),
+        close: () => closeServer(server, sockets),
       });
     };
     server.once("error", onError);
@@ -255,10 +264,58 @@ function handleRouteError(res: ServerResponse, err: unknown): void {
   );
 }
 
-function closeServer(server: Server): Promise<void> {
+/**
+ * How long `close()` waits for the connections it destroyed to report
+ * closed. A destroyed socket always does, within a turn of the event
+ * loop; this is only a backstop so teardown can never hang on one.
+ */
+const CLOSE_CONNECTIONS_BACKSTOP_MS = 1_000;
+
+/**
+ * Stop the server, and resolve once every connection it had has closed.
+ *
+ * `server.close()` calls back on the server's own 'close', which Node
+ * emits on the next tick once `closeAllConnections()` has destroyed the
+ * sockets — before any of those sockets has emitted its own 'close',
+ * which comes later, from the handle's close callback. Each response's
+ * 'close' rides its socket's, and that is what tells a running turn its
+ * client is gone (`onClientGone` aborts it). `serve` shuts the runtime
+ * down the moment this resolves, so resolving early meant the session
+ * store closed while those turns had not even been told to stop, and a
+ * turn cancelled by quitting the app lost its end. Waiting for every
+ * socket's 'close' means every request has seen its connection go — and
+ * aborted its turn — by the time the caller moves on.
+ */
+function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
   if (!server.listening) return Promise.resolve();
+  const open = [...sockets];
   return new Promise<void>((resolvePromise) => {
-    server.close(() => resolvePromise());
+    let serverClosed = false;
+    let pending = open.length;
+    let backstop: ReturnType<typeof setTimeout> | undefined;
+    const settle = (): void => {
+      if (!serverClosed || pending > 0) return;
+      clearTimeout(backstop);
+      resolvePromise();
+    };
+    // Registered after each response's own 'close' listener, so by the
+    // time this one runs the request has already been told.
+    for (const socket of open) {
+      socket.once("close", () => {
+        pending -= 1;
+        settle();
+      });
+    }
+    server.close(() => {
+      serverClosed = true;
+      settle();
+    });
     server.closeAllConnections?.();
+    if (pending > 0) {
+      backstop = setTimeout(() => {
+        pending = 0;
+        settle();
+      }, CLOSE_CONNECTIONS_BACKSTOP_MS);
+    }
   });
 }

@@ -1,13 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
+  deviceTableOnce,
   parseListDevices,
   pickBestDevice,
   resolveManagedDevice,
+  sharesSystemMemory,
   type GpuDevice,
 } from "./gpu-devices.js";
 
@@ -312,4 +314,129 @@ describe("resolveManagedDevice", () => {
       },
     );
   });
+});
+
+describe("sharesSystemMemory", () => {
+  const device = (id: string, description: string): GpuDevice => ({
+    id,
+    description,
+    totalMemMiB: 10_922,
+    freeMemMiB: 10_922,
+  });
+
+  it("is true for Apple silicon's Metal device and for an integrated GPU", () => {
+    expect(sharesSystemMemory(device("MTL0", "Apple M4"))).toBe(true);
+    expect(sharesSystemMemory(device("Metal0", "Apple M1 Max"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan1", "Intel(R) Graphics (RPL-S)"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon(TM) Graphics"))).toBe(true);
+  });
+
+  it("is true for unified-memory parts named like cards", () => {
+    // Intel Meteor Lake and Lunar Lake: their iGPUs are called Arc.
+    expect(sharesSystemMemory(device("Vulkan0", "Intel(R) Arc(TM) Graphics"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan0", "Intel(R) Arc(TM) 140V GPU (16GB)"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan0", "Intel(R) Arc(TM) 130V GPU"))).toBe(true);
+    // AMD Strix Halo.
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon(TM) 8060S Graphics"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon(TM) 8050S Graphics"))).toBe(true);
+    // NVIDIA GB10 (DGX Spark) and the Jetson modules.
+    expect(sharesSystemMemory(device("CUDA0", "NVIDIA GB10"))).toBe(true);
+    expect(sharesSystemMemory(device("CUDA0", "Orin"))).toBe(true);
+    expect(sharesSystemMemory(device("CUDA0", "NVIDIA Jetson AGX Orin"))).toBe(true);
+    expect(sharesSystemMemory(device("CUDA0", "NVIDIA Thor"))).toBe(true);
+  });
+
+  it("is false for a card with memory of its own", () => {
+    expect(sharesSystemMemory(device("CUDA0", "NVIDIA GeForce RTX 4090"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon RX 7900 XTX"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon PRO W7900"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "Intel(R) Arc(TM) A770 Graphics"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "Intel(R) Arc(TM) B580 Graphics"))).toBe(false);
+  });
+});
+
+describe("deviceTableOnce (backlog 39)", () => {
+  it.skipIf(process.platform === "win32")(
+    "runs --list-devices once for a launch: the device pick and the context fit share the answer",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "gpu-devices-once-"));
+      const bin = join(dir, "llama-server");
+      const runs = join(dir, "runs");
+      writeFileSync(runs, "");
+      writeFileSync(
+        bin,
+        [
+          "#!/bin/sh",
+          `echo run >> '${runs}'`,
+          'echo "Available devices:"',
+          'echo "  MTL0: Apple M4 (10922 MiB, 10922 MiB free)"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      try {
+        const table = deviceTableOnce(bin);
+        expect(await resolveManagedDevice(bin, "auto", { listDevices: table })).toBe("MTL0");
+        const again = await table();
+        expect(again[0]).toMatchObject({ id: "MTL0", freeMemMiB: 10_922 });
+        expect(readFileSync(runs, "utf-8").split("\n").filter(Boolean)).toHaveLength(1);
+        // A table nobody asks never runs the binary.
+        deviceTableOnce(bin);
+        expect(readFileSync(runs, "utf-8").split("\n").filter(Boolean)).toHaveLength(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "asks once more when the first answer is empty (a cold start that ran out its deadline), and keeps that answer",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "gpu-devices-cold-"));
+      const bin = join(dir, "llama-server");
+      const runs = join(dir, "runs");
+      const warm = join(dir, "warm");
+      writeFileSync(runs, "");
+      // The first run says nothing, as one killed at its 5 s deadline does.
+      writeFileSync(
+        bin,
+        [
+          "#!/bin/sh",
+          `echo run >> '${runs}'`,
+          `[ -f '${warm}' ] || { : > '${warm}'; exit 0; }`,
+          'echo "Available devices:"',
+          'echo "  MTL0: Apple M4 (10922 MiB, 10922 MiB free)"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      try {
+        const table = deviceTableOnce(bin);
+        expect(await resolveManagedDevice(bin, "auto", { listDevices: table })).toBe("MTL0");
+        expect((await table())[0]?.id).toBe("MTL0");
+        expect(readFileSync(runs, "utf-8").split("\n").filter(Boolean)).toHaveLength(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "asks at most twice when there is no GPU to report",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "gpu-devices-none-"));
+      const bin = join(dir, "llama-server");
+      const runs = join(dir, "runs");
+      writeFileSync(runs, "");
+      writeFileSync(bin, ["#!/bin/sh", `echo run >> '${runs}'`, 'echo "Available devices:"'].join("\n"), {
+        mode: 0o755,
+      });
+      try {
+        const table = deviceTableOnce(bin);
+        expect(await resolveManagedDevice(bin, "auto", { listDevices: table })).toBeUndefined();
+        expect(await table()).toEqual([]);
+        expect(readFileSync(runs, "utf-8").split("\n").filter(Boolean)).toHaveLength(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

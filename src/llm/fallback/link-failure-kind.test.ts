@@ -4,7 +4,12 @@ import { LlamaServerError } from "../llama-server-client.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { SubscriptionCliAuthError } from "../provider/subscription-cli/subscription-cli-errors.js";
 import { ModelError } from "../reliability/llm-failures.js";
-import { isCredentialRejection, isOutageFailure } from "./link-failure-kind.js";
+import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
+import {
+  isBillingRefusal,
+  isCredentialRejection,
+  isOutageFailure,
+} from "./link-failure-kind.js";
 
 function http(
   status: number | null,
@@ -14,7 +19,83 @@ function http(
   return new OpenAiHttpError(message, status, "http://x/y", timedOut, null, "p");
 }
 
+/** A provider error as `httpErrorFromResponse` builds it: the body parsed beside the message. */
+function withBody(status: number, body: string, label = "aimlapi"): OpenAiHttpError {
+  return new OpenAiHttpError(
+    `openai provider ${status}: ${body}`,
+    status,
+    "https://api.aimlapi.com/v1/chat/completions",
+    false,
+    null,
+    label,
+    undefined,
+    { body: parseProviderErrorBody(body) },
+  );
+}
+
+/** Item 40's field body: AI/ML API with a good key and an empty account. */
+const OUT_OF_FUNDS = JSON.stringify({
+  title: "Forbidden",
+  status: 403,
+  message:
+    "You've run out of funds. Please top up your balance or update your payment method to continue: https://aimlapi.com/app/billing",
+});
+
+describe("isBillingRefusal", () => {
+  it("is AI/ML API's 403 for an empty account, a 402, and OpenAI's insufficient_quota", () => {
+    expect(isBillingRefusal(withBody(403, OUT_OF_FUNDS))).toBe(true);
+    expect(isBillingRefusal(withBody(402, '{"error":{"message":"Insufficient Balance"}}'))).toBe(true);
+    expect(isBillingRefusal(http(402))).toBe(true);
+    expect(
+      isBillingRefusal(
+        withBody(429, '{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}', "openai"),
+      ),
+    ).toBe(true);
+  });
+
+  it("is not a 429 in a rate limit's words, nor a 403 about authentication that mentions billing", () => {
+    for (const message of [
+      "Too many requests. Please top up your account to increase your rate limits.",
+      "Out of credits for this minute",
+    ]) {
+      const limited = withBody(429, JSON.stringify({ error: { message } }));
+      expect(isBillingRefusal(limited), message).toBe(false);
+      expect(isOutageFailure(limited), message).toBe(true);
+    }
+    for (const message of [
+      "Authentication failed. Please check your billing details.",
+      "Invalid token. Check billing.",
+    ]) {
+      const refused = withBody(403, JSON.stringify({ error: { message } }));
+      expect(isBillingRefusal(refused), message).toBe(false);
+      expect(isCredentialRejection(refused), message).toBe(true);
+    }
+  });
+
+  it("is not a refused key, a rate limit, a cooldown or an outage", () => {
+    expect(isBillingRefusal(withBody(403, '{"error":{"message":"Invalid API key"}}'))).toBe(false);
+    expect(isBillingRefusal(http(401))).toBe(false);
+    expect(isBillingRefusal(http(429))).toBe(false);
+    expect(
+      isBillingRefusal(http(402, 'openai provider 402: {"error":{"code":"in_flight_budget_exhausted"}}')),
+    ).toBe(false);
+    expect(isBillingRefusal(http(null))).toBe(false);
+    expect(isBillingRefusal(http(402, "boom", true))).toBe(false);
+    expect(isBillingRefusal(new TypeError("fetch failed"))).toBe(false);
+    expect(isBillingRefusal(new LlamaServerError("nope", 402, "http://l"))).toBe(false);
+  });
+});
+
 describe("isCredentialRejection", () => {
+  it("is not a 403 about the account's funds, whatever else it mentions", () => {
+    expect(isCredentialRejection(withBody(403, OUT_OF_FUNDS))).toBe(false);
+    expect(
+      isCredentialRejection(
+        withBody(403, '{"error":{"message":"Your API key has insufficient balance"}}'),
+      ),
+    ).toBe(false);
+  });
+
   it("is a cloud 401: the key is wrong, missing, or could not be sent", () => {
     expect(isCredentialRejection(http(401))).toBe(true);
     expect(
@@ -104,6 +185,13 @@ describe("isOutageFailure", () => {
     for (const status of [400, 401, 403, 404]) {
       expect(isOutageFailure(http(status))).toBe(false);
     }
+    // An empty account, even on a 429 (item 40).
+    expect(isOutageFailure(withBody(403, OUT_OF_FUNDS))).toBe(false);
+    expect(
+      isOutageFailure(
+        withBody(429, '{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}', "openai"),
+      ),
+    ).toBe(false);
     expect(
       isOutageFailure(
         http(402, "openai provider 402: This request requires more credits"),

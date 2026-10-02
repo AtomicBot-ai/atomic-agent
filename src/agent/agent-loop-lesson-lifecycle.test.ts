@@ -21,6 +21,12 @@ import type {
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
+import {
+  humanizeOpenAiHttpError,
+  OpenAiHttpError,
+} from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
+import { TransportError } from "../llm/reliability/llm-failures.js";
 
 /**
  * Phase 6 — lesson lifecycle integration with `AgentLoop.runTurn`.
@@ -28,6 +34,7 @@ import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
  * Pins:
  *   - `reply` / `finish` → hook fires with outcome="success".
  *   - thrown error → hook fires with outcome="failure".
+ *   - a refusal because the account cannot pay → hook is NOT called.
  *   - `cancelled` (signal aborted) → hook is NOT called.
  *   - `max_steps` → hook is NOT called.
  *   - Once-per-turn dedup: surfacing the same lesson across many
@@ -206,6 +213,50 @@ describe("AgentLoop lesson lifecycle hook (phase 6)", () => {
     });
     expect(result.reason).toBe("failed");
     expect(calls).toEqual([{ outcome: "failure", surfaced: [3, 4] }]);
+  });
+
+  it("does NOT fire the hook when the provider refused because the account cannot pay (item 40)", async () => {
+    // The turn fails at once on its first request, but an empty account
+    // says nothing about the lessons recalled for it: neutral, as the
+    // paused path for exhausted credit always was.
+    const calls: HookCall[] = [];
+    const body =
+      '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance"}';
+    const http = new OpenAiHttpError(
+      `openai provider 403: ${body}`,
+      403,
+      "https://api.aimlapi.com/v1/chat/completions",
+      false,
+      null,
+      "aimlapi",
+      undefined,
+      { body: parseProviderErrorBody(body) },
+    );
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new TransportError(humanizeOpenAiHttpError(http), 403, http.url, {
+          cause: http,
+        });
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      memoryContextProvider: makeProvider([[5, 6]]),
+      lessonLifecycle: captureHook(calls),
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-no-funds", workingDir }),
+      {
+        userMessage: "x",
+        maxSteps: 2,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(calls).toEqual([]);
   });
 
   it("does NOT fire the hook when the turn is cancelled", async () => {

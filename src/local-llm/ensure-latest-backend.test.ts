@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./backend-installer.js", async () => {
   const actual = await vi.importActual<typeof import("./backend-installer.js")>(
@@ -42,8 +46,16 @@ import {
   readRunningPid,
   stopChatAndEmbeddingDaemons,
 } from "./daemon-lifecycle.js";
-import { maybeAutoUpdateBackend } from "./ensure-latest-backend.js";
+import { resolveBackendCheckFilePath } from "./backend-paths.js";
+import { writeBackendVersion } from "./backend-version.js";
+import {
+  AUTO_UPDATE_RECHECK_MS,
+  AUTO_UPDATE_RETRY_MS,
+  checkForBackendUpdateForPanel,
+  maybeAutoUpdateBackend,
+} from "./ensure-latest-backend.js";
 import { hasOtherLiveSessions } from "./session-registry.js";
+import { resolveDownloadAsset } from "./windows-backend-variant.js";
 
 describe("maybeAutoUpdateBackend", () => {
   afterEach(() => {
@@ -209,5 +221,158 @@ describe("maybeAutoUpdateBackend", () => {
       error: "GitHub API rate-limited (HTTP 403)",
     });
     expect(downloadBackend).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Backlog 39: every switch to the local model in the desktop runs a fresh
+ * `models start`, so the process-wide release cache never helped and each
+ * start asked GitHub (up to 5 s) before the model began to load. The
+ * start paths pass `recheckAfterMs`: a recent answer for the build on
+ * disk stands, whichever process got it.
+ */
+describe("maybeAutoUpdateBackend with recheckAfterMs (backlog 39)", () => {
+  const INSTALLED = "turboquant-6df272c";
+  let dataDir: string;
+  let clock: number;
+  const now = () => clock;
+  const start = () =>
+    maybeAutoUpdateBackend(dataDir, {
+      enabled: true,
+      recheckAfterMs: AUTO_UPDATE_RECHECK_MS,
+      now,
+    });
+  const install = (tag: string, asset = resolveDownloadAsset().assetName) =>
+    writeBackendVersion(dataDir, {
+      tag,
+      downloadedAt: new Date(clock).toISOString(),
+      asset,
+    });
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "atomic-auto-update-"));
+    clock = 1_790_909_708_032;
+    install(INSTALLED);
+    vi.mocked(checkForBackendUpdate).mockReset();
+    vi.mocked(downloadBackend).mockReset();
+    vi.mocked(readRunningPid).mockReset();
+    vi.mocked(readRunningPid).mockReturnValue(null);
+    vi.mocked(hasOtherLiveSessions).mockReturnValue(false);
+    vi.mocked(isBackendDownloaded).mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function nothingNewer(): void {
+    vi.mocked(checkForBackendUpdate).mockResolvedValue({
+      updateAvailable: false,
+      latestTag: INSTALLED,
+      currentTag: INSTALLED,
+    });
+  }
+
+  it("asks GitHub once, then trusts that answer for six hours", async () => {
+    nothingNewer();
+    expect(await start()).toEqual({ action: "current", tag: INSTALLED });
+    const checkedAt = clock;
+    clock += 60_000;
+    expect(await start()).toEqual({ action: "recent", tag: INSTALLED, checkedAt });
+    clock = checkedAt + AUTO_UPDATE_RECHECK_MS - 1;
+    expect((await start()).action).toBe("recent");
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(1);
+    clock = checkedAt + AUTO_UPDATE_RECHECK_MS;
+    expect(await start()).toEqual({ action: "current", tag: INSTALLED });
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks again once another build is on disk", async () => {
+    nothingNewer();
+    await start();
+    install("turboquant-7a1c0de");
+    await start();
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("always asks while the machine wants another variant than the one installed", async () => {
+    // The installed asset is not what this machine resolves (on Windows:
+    // an NVIDIA driver installed since the Vulkan build) — an update in
+    // itself, however recent the last check.
+    install(INSTALLED, "llama-turboquant-some-other-variant.zip");
+    nothingNewer();
+    await start();
+    clock += 60_000;
+    await start();
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds off a failed check for fifteen minutes, not six hours", async () => {
+    vi.mocked(checkForBackendUpdate).mockRejectedValue(new Error("fetch failed"));
+    expect(await start()).toEqual({ action: "check_failed", error: "fetch failed" });
+    const failedAt = clock;
+    clock += AUTO_UPDATE_RETRY_MS - 1;
+    expect(await start()).toEqual({ action: "recent", tag: null, checkedAt: failedAt });
+    clock = failedAt + AUTO_UPDATE_RETRY_MS;
+    expect((await start()).action).toBe("check_failed");
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("records the update it installed, so the next start does not ask", async () => {
+    vi.mocked(checkForBackendUpdate).mockResolvedValue({
+      updateAvailable: true,
+      latestTag: "turboquant-7a1c0de",
+      currentTag: INSTALLED,
+    });
+    vi.mocked(downloadBackend).mockImplementation(async () => {
+      install("turboquant-7a1c0de");
+      return { ok: true, tag: "turboquant-7a1c0de" };
+    });
+    expect((await start()).action).toBe("updated");
+    clock += 60_000;
+    expect((await start()).action).toBe("recent");
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("remembers nothing and always asks without recheckAfterMs (models update, an explicit check)", async () => {
+    nothingNewer();
+    await maybeAutoUpdateBackend(dataDir, { enabled: true, now });
+    await maybeAutoUpdateBackend(dataDir, { enabled: true, now });
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+    expect(existsSync(resolveBackendCheckFilePath(dataDir))).toBe(false);
+  });
+
+  it("does not trust a check stamped in the future (a clock set back)", async () => {
+    nothingNewer();
+    await start();
+    clock -= 60_000;
+    await start();
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the record when the Models panel finds an update, so the next start asks and installs it", async () => {
+    nothingNewer();
+    await start();
+    expect(existsSync(resolveBackendCheckFilePath(dataDir))).toBe(true);
+    vi.mocked(checkForBackendUpdate).mockResolvedValueOnce({
+      updateAvailable: true,
+      latestTag: "turboquant-7a1c0de",
+      currentTag: INSTALLED,
+    });
+    expect((await checkForBackendUpdateForPanel(dataDir)).updateAvailable).toBe(true);
+    expect(existsSync(resolveBackendCheckFilePath(dataDir))).toBe(false);
+    clock += 60_000;
+    await start();
+    // The first start, the panel, and this start: it did not answer `recent`.
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the record when the Models panel finds nothing newer", async () => {
+    nothingNewer();
+    await start();
+    expect((await checkForBackendUpdateForPanel(dataDir)).updateAvailable).toBe(false);
+    clock += 60_000;
+    expect((await start()).action).toBe("recent");
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
   });
 });

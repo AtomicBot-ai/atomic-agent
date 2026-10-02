@@ -177,3 +177,90 @@ describe("browseTap lazy branch resolution", () => {
     expect(resolveDefaultCalls).toBe(1);
   });
 });
+
+describe("browseHub / browseTap fan-out", () => {
+  /** Every microtask queued so far, and those they queue, have run. */
+  const drain = () => new Promise<void>((r) => setImmediate(r));
+
+  it("reads the taps side by side, not one after the other", async () => {
+    const started: string[] = [];
+    let aSawB = false;
+    const client: SkillHubClient = {
+      resolveDefaultBranch: async () => "main",
+      listSkillManifests: async (owner) => {
+        started.push(owner);
+        // One microtask on: a tap read alongside has begun by now, one read after this one has not.
+        await Promise.resolve();
+        if (owner === "a") aSawB = started.includes("b");
+        return [{ dir: "s", manifestPath: "s/SKILL.md" }];
+      },
+      fetchTextFile: async (owner) => manifest(`${owner}-s`, "x"),
+      downloadSkillDir: async () => [],
+    };
+    const { entries } = await browseHub(client, [
+      { repo: "a/r", path: "" },
+      { repo: "b/r", path: "" },
+    ]);
+    expect(entries.map((e) => e.name)).toEqual(["a-s", "b-s"]);
+    expect(aSawB).toBe(true);
+  });
+
+  it("keeps errors in the configured order whichever tap fails first (an order guard: reading the taps one after the other kept it too)", async () => {
+    const client: SkillHubClient = {
+      resolveDefaultBranch: async () => "main",
+      listSkillManifests: async (owner) => {
+        if (owner === "slow") await drain();
+        throw new GithubSkillError(`${owner} down`, "rate_limited", 403);
+      },
+      fetchTextFile: async () => "",
+      downloadSkillDir: async () => [],
+    };
+    const { errors } = await browseHub(client, [
+      { repo: "slow/r", path: "" },
+      { repo: "fast/r", path: "" },
+    ]);
+    expect(errors.map((e) => e.repo)).toEqual(["slow/r", "fast/r"]);
+  });
+
+  it("keeps six SKILL.md reads in flight and refills a slot as soon as it frees", async () => {
+    const dirs = Array.from({ length: 13 }, (_, i) => `s${String(i).padStart(2, "0")}`);
+    // Each read waits until the test answers it.
+    const pending = new Map<string, () => void>();
+    let most = 0;
+    const client: SkillHubClient = {
+      resolveDefaultBranch: async () => "main",
+      listSkillManifests: async () =>
+        dirs.map((dir) => ({ dir, manifestPath: `${dir}/SKILL.md` })),
+      fetchTextFile: (_o, _r, _ref, path) => {
+        const dir = path.split("/")[0]!;
+        return new Promise<string>((resolve) => {
+          pending.set(dir, () => {
+            pending.delete(dir);
+            resolve(manifest(dir, "x"));
+          });
+          most = Math.max(most, pending.size);
+        });
+      },
+      downloadSkillDir: async () => [],
+    };
+    const answer = async (dir: string) => {
+      pending.get(dir)!();
+      await drain();
+    };
+    const browsing = browseTap(client, { repo: "o/r", path: "" });
+    await drain();
+    expect([...pending.keys()]).toEqual(dirs.slice(0, 6));
+    // s01 answers while s00 is still out: its slot goes to s06 at once.
+    // Fixed batches of six would hold s06…s12 until s00 answered.
+    await answer("s01");
+    expect([...pending.keys()]).toEqual(["s00", "s02", "s03", "s04", "s05", "s06"]);
+    for (let d = [...pending.keys()].find((k) => k !== "s00"); d; d = [...pending.keys()].find((k) => k !== "s00")) {
+      await answer(d);
+    }
+    expect([...pending.keys()]).toEqual(["s00"]);
+    await answer("s00");
+    const entries = await browsing;
+    expect(entries.map((e) => e.name)).toEqual(dirs);
+    expect(most).toBe(6);
+  });
+});

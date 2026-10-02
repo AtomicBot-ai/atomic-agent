@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { StructuredLogger } from "./structured-logger.js";
+import { describe, it, expect, vi } from "vitest";
+import { StructuredLogger, createStderrSink } from "./structured-logger.js";
 import { MetricsCollector } from "./metrics-collector.js";
 import { AgentMetrics, METRIC_NAMES } from "./agent-metrics.js";
 import { createLogNdjsonSink, createMetricNdjsonSink } from "./ndjson-sinks.js";
@@ -31,6 +31,50 @@ describe("StructuredLogger", () => {
     });
     logger.info("hi", { sessionId: "s1", tool: "grep" });
     expect(received[0]).toEqual({ sessionId: "s1", tool: "grep" });
+  });
+});
+
+describe("createStderrSink", () => {
+  // The desktop app labels each line of `atag serve`'s stderr by the
+  // level in it (desktop/main/agent-output.ts), so this shape is what it
+  // reads: `[ISO time] LEVEL message`, then the context as one JSON
+  // object, one record per line.
+  it("writes one line per record: [time] LEVEL message {context}", () => {
+    const lines: string[] = [];
+    const sink = createStderrSink({
+      write: (chunk: string | Uint8Array) => {
+        lines.push(String(chunk));
+        return true;
+      },
+    });
+    const logger = new StructuredLogger({ level: "debug", sinks: [sink] });
+    logger.debug("d");
+    logger.info("i");
+    logger.warn("w", { causeCode: "ECONNREFUSED" });
+    logger.error("e");
+    expect(lines.map((l) => l.replace(/^\[[^\]]+\] /, ""))).toEqual([
+      "DEBUG d\n",
+      "INFO i\n",
+      'WARN w {"causeCode":"ECONNREFUSED"}\n',
+      "ERROR e\n",
+    ]);
+    for (const line of lines) {
+      expect(line).toMatch(/^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] /);
+    }
+  });
+
+  it("writes to stderr by default", () => {
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      createStderrSink()({ level: "warn", message: "to stderr", timestamp: 0 });
+      expect(stderr).toHaveBeenCalledWith(
+        "[1970-01-01T00:00:00.000Z] WARN to stderr\n",
+      );
+    } finally {
+      stderr.mockRestore();
+    }
   });
 });
 

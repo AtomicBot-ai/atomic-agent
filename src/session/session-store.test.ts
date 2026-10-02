@@ -88,14 +88,16 @@ describe("SessionStore", () => {
       workingDir: "/work",
     });
     store.save(state);
+    // Not `running`: a live status is the turn's own to write
+    // (`beginTurn`), and `save` keeps it out of the row.
     store.save({
       ...state,
-      status: "running",
+      status: "completed",
       stepCount: 3,
       updatedAt: Date.now() + 100,
     });
     const loaded = store.load("s2")!;
-    expect(loaded.status).toBe("running");
+    expect(loaded.status).toBe("completed");
     expect(loaded.stepCount).toBe(3);
   });
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
 import { attachGenerationId } from "../../llm/provider/openai/generation-id.js";
+import { TransportError } from "../../llm/reliability/llm-failures.js";
 
 import { createTraceRecorder } from "./trace-recorder.js";
 import type { TraceEvent } from "./trace-event.js";
@@ -606,6 +607,188 @@ describe("createTraceRecorder", () => {
         },
       ],
     });
+  });
+
+  it("records the errno a transport failure left on its cause chain, on the one row", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-errno", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    // The field case: a local server that is not running. The step
+    // executor wraps undici's `fetch failed` in a `TransportError`, and
+    // the errno survives only two links down the `cause` chain.
+    const failure = new TransportError(
+      "fetch failed",
+      null,
+      "http://127.0.0.1:8080/completion",
+      {
+        cause: new TypeError("fetch failed", {
+          cause: Object.assign(
+            new Error("connect ECONNREFUSED 127.0.0.1:8080"),
+            { code: "ECONNREFUSED" },
+          ),
+        }),
+      },
+    );
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: { type: "step_error", error: failure, category: "transport" },
+    });
+    // The loop rethrows the very same object: still one row, and the
+    // row that stays is the one carrying the code.
+    rec.onAgentEvent({
+      type: "loop_failed",
+      error: failure,
+      category: "transport",
+    });
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      message: "fetch failed",
+      category: "transport",
+      causeCode: "ECONNREFUSED",
+      stepIndex: 0,
+    });
+  });
+
+  it("records the errno on a loop_failed that no step_error preceded", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-errno-loop", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    const error = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("read ECONNRESET"), {
+        code: "ECONNRESET",
+      }),
+    });
+    rec.onAgentEvent({ type: "loop_failed", error, category: "transport" });
+    expect(events.find((e) => e.type === "error")).toMatchObject({
+      message: "fetch failed",
+      causeCode: "ECONNRESET",
+    });
+  });
+
+  it("leaves causeCode off a row with no errno, and off any category but transport", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-no-errno", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "step_error",
+        error: new TransportError("fetch failed", null, ""),
+        category: "transport",
+      },
+    });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 1 });
+    // An abort can carry Node's `ABORT_ERR`. It says the request was
+    // cut off here, nothing about the provider, so it is not recorded.
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "step_error",
+        error: new Error("This operation was aborted", {
+          cause: Object.assign(new Error("The operation was aborted"), {
+            code: "ABORT_ERR",
+          }),
+        }),
+        category: "cancelled",
+      },
+    });
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toMatchObject({ category: "transport" });
+    expect(errors[0]).not.toHaveProperty("causeCode");
+    expect(errors[1]).toMatchObject({ category: "cancelled" });
+    expect(errors[1]).not.toHaveProperty("causeCode");
+  });
+
+  it("records what a parked turn waits on: the cause, its errno and the link", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-wait", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 3 });
+    rec.onAgentEvent({
+      type: "provider_waiting",
+      attempt: 1,
+      waitedMs: 0,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "fetch failed",
+      cause: { kind: "refused" },
+      causeCode: "ECONNREFUSED",
+      providerId: "local-llama",
+    });
+    expect(events.find((e) => e.type === "provider_waiting")).toEqual({
+      type: "provider_waiting",
+      seq: 2,
+      sessionId: "s-wait",
+      ts: 1000,
+      turnIndex: 0,
+      stepIndex: 3,
+      attempt: 1,
+      waitedMs: 0,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "fetch failed",
+      cause: { kind: "refused" },
+      causeCode: "ECONNREFUSED",
+      providerId: "local-llama",
+    });
+  });
+
+  it("records a wait without an errno as such, and a stream status of null as absent", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-wait-2", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "provider_waiting",
+      attempt: 1,
+      waitedMs: 0,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "the provider ended the completion with an error",
+      cause: { kind: "stream_error", status: null },
+    });
+    rec.onAgentEvent({
+      type: "provider_waiting",
+      attempt: 2,
+      waitedMs: 2_000,
+      maxWaitMs: 300_000,
+      nextRetryMs: 4_000,
+      reason: "openai provider 503: overloaded",
+      cause: { kind: "http", status: 503 },
+    });
+    // One shape for a reader, as on the SSE frame: `status` only when a
+    // response had one.
+    expect(events.filter((e) => e.type === "provider_waiting")).toEqual([
+      {
+        type: "provider_waiting",
+        seq: 1,
+        sessionId: "s-wait-2",
+        ts: 1000,
+        turnIndex: 0,
+        attempt: 1,
+        waitedMs: 0,
+        maxWaitMs: 300_000,
+        nextRetryMs: 2_000,
+        reason: "the provider ended the completion with an error",
+        cause: { kind: "stream_error" },
+      },
+      {
+        type: "provider_waiting",
+        seq: 2,
+        sessionId: "s-wait-2",
+        ts: 1000,
+        turnIndex: 0,
+        attempt: 2,
+        waitedMs: 2_000,
+        maxWaitMs: 300_000,
+        nextRetryMs: 4_000,
+        reason: "openai provider 503: overloaded",
+        cause: { kind: "http", status: 503 },
+      },
+    ]);
   });
 
   it("records a truncation with no cap on the wire without inventing one", () => {

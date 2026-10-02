@@ -41,10 +41,13 @@ import {
   isRequestSizeRejection,
 } from "../llm/index.js";
 import { readFailingLink } from "../llm/fallback/failed-attempts.js";
+import { describeFailedLinks } from "../llm/fallback/failed-links.js";
+import { readErrnoCode } from "../llm/errno-code.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
   classifyProviderWaitCause,
   type ProviderWaitCause,
+  type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
 import {
   composeSizeRejectionNotice,
@@ -841,6 +844,16 @@ export type AgentLoopEvent =
        */
       cause?: ProviderWaitCause;
       /**
+       * The errno-like code the transport left on the failure's `cause`
+       * chain (`ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`, `ECONNRESET`,
+       * `UND_ERR_SOCKET`, …), as `readErrnoCode` reads it. `reason` is
+       * often a bare `fetch failed`, which looks the same for a local
+       * server that is not running (refused) and a network that is down
+       * (unreachable, timed out); this is the fact that tells them apart
+       * in a trace or a log. Absent when the transport left no code.
+       */
+      causeCode?: string;
+      /**
        * The provider link the turn is waiting on: the one whose failure
        * parked it. With a fallback chain that is the last link tried,
        * often not the provider the user picked (a stopped local server
@@ -848,6 +861,14 @@ export type AgentLoopEvent =
        * did not come through the chain or a pinned link.
        */
       providerId?: string;
+      /**
+       * The links that failed before the one waited on, in the order
+       * they were tried, each with its own cause. The provider the user
+       * picked is usually the first, and why it failed (an account out
+       * of funds, a refused key) is the part a UI says before the link
+       * it waits on (item 40). Absent when nothing failed before it.
+       */
+      fallbackFailures?: readonly ProviderWaitFailure[];
     }
   | {
       /** The provider answered again; the parked turn is running on. */
@@ -1175,6 +1196,13 @@ export class AgentLoop {
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
     let state = session;
+    /**
+     * This turn picks up a task an earlier turn stopped at a ceiling or
+     * for credit (`continue` after "(paused: …)"): its first request is
+     * not the task's first, and a billing refusal pauses it again rather
+     * than failing it (item 40).
+     */
+    const resumesStoppedTask = session.status === "stalled";
 
     // NOTE: previously called `reflectionRunner.abortPending({ sessionId })`
     // here on every turn to "free the reflection slot quickly". That
@@ -2155,11 +2183,27 @@ export class AgentLoop {
         // reserved final step must keep its `cancelled` outcome
         // (issue #107 — cancellation semantics remain unchanged), not
         // be relabelled `max_steps`.
+        //
+        // Once the turn's own signal has aborted, a request that fails the
+        // way requests fail is the stop's doing, not a verdict on the
+        // provider. An abort that lands as the stream ends does not always
+        // surface as an abort: the socket the stop tore down can come back
+        // as `terminated` or `fetch failed`, a cut-off body as a parse or
+        // empty-completion failure — read as a transport outage (a wait,
+        // then a second close of the turn) or as `failed` with the
+        // transport's words, for a turn the user had simply stopped. The
+        // `tool` catch-all is left out on purpose: it is what
+        // `classifyFailure` answers for an error it does not recognise,
+        // which is how a programming error arrives, and that stays a
+        // failure — reported as one — whatever the signal says.
+        const stoppedRequest = options.signal.aborted && category !== "tool";
         const cancelled =
           !ceilingFired &&
-          (err instanceof CancelledError ||
+          (stoppedRequest ||
+            err instanceof CancelledError ||
             (err instanceof LlmFailure && err.category === "cancelled") ||
             category === "cancelled");
+        if (cancelled) category = "cancelled";
         if (ceilingFired) {
           if (!finalizationStep) {
             // Abandon the request and take the reserved summary step
@@ -2476,8 +2520,20 @@ export class AgentLoop {
         // is told which provider refused. (A fallback link, when the
         // chain has one, has already been tried by the time the error
         // reaches here.)
+        //
+        // Paused, that is, once the task has done something to keep: a
+        // step of this turn, or an earlier turn's that this one resumes.
+        // Refused on the task's very first request, there is nothing to
+        // resume: the turn fails at once with the provider's own sentence
+        // ("… refused the request: you've run out of funds. Top up …"),
+        // the way a refused key does, instead of a "(paused …) after 0
+        // steps" reply standing in for an answer (item 40).
         const verdict = cancelled ? null : readProviderErrorVerdict(err);
-        if (verdict?.kind === "credit_exhausted") {
+        const creditRefused = verdict?.kind === "credit_exhausted";
+        if (
+          verdict?.kind === "credit_exhausted" &&
+          (stepsTaken > 0 || resumesStoppedTask)
+        ) {
           stopCause = "credit_exhausted";
           creditStop = { provider: verdict.provider, detail: verdict.detail };
           reason = "max_steps";
@@ -2519,6 +2575,7 @@ export class AgentLoop {
         if (
           category === "transport" &&
           !cancelled &&
+          !creditRefused &&
           providerWaitCfg.enabled &&
           (isWaitableOutage(err) || retryHint !== null) &&
           outageWaitedMs < providerWaitCfg.maxWaitMs
@@ -2537,6 +2594,13 @@ export class AgentLoop {
           outageAttempts += 1;
           awaitingRecovery = true;
           const waitedOn = readFailingLink(err);
+          const failedBefore = describeFailedLinks(err);
+          // The errno behind the outage: `fetch failed` is the same
+          // sentence for a local server that is not running and for a
+          // network that is down. Read only here, for a `transport`
+          // failure (the condition above), so a user's abort, which
+          // classifies `cancelled`, never lends its `ABORT_ERR` to it.
+          const causeCode = readErrnoCode(err);
           this.deps.onEvent?.({
             type: "provider_waiting",
             attempt: outageAttempts,
@@ -2545,7 +2609,11 @@ export class AgentLoop {
             nextRetryMs,
             reason: runError.message,
             cause: classifyProviderWaitCause(err),
+            ...(causeCode !== undefined ? { causeCode } : {}),
             ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
+            ...(failedBefore.length > 0
+              ? { fallbackFailures: failedBefore }
+              : {}),
           });
           this.deps.logger?.warn("provider unreachable; parking the turn", {
             sessionId: state.id,
@@ -2554,6 +2622,7 @@ export class AgentLoop {
             waitedMs: outageWaitedMs,
             nextRetryMs,
             error: runError.message,
+            ...(causeCode !== undefined ? { causeCode } : {}),
             ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
           });
           await abortableSleep(nextRetryMs, options.signal);
@@ -2563,13 +2632,11 @@ export class AgentLoop {
           // attempt carried.
           pendingNotice = noticeForThisStep;
           if (options.signal.aborted) {
+            // Stopped while parked. The close below the loop does the
+            // rest — status, `loop_completed`, the turn count — exactly
+            // once; doing it here as well closed the turn twice: two
+            // `loop_completed` events and a turn counted double.
             reason = "cancelled";
-            state = { ...state, status: "cancelled" };
-            this.deps.onEvent?.({
-              type: "loop_completed",
-              reason: "cancelled",
-            });
-            state = incrementTurnCount(state);
             break;
           }
           // Retry the very same step index: `i += 1` runs on `continue`,
@@ -2597,11 +2664,22 @@ export class AgentLoop {
           runError = truncationRetry.original;
           category = classifyFailure(runError);
         }
+        // Same errno as the wait above, for the turn that fails instead
+        // of parking (waiting disabled, budget spent, a refusal that
+        // will not fix itself). Read off `runError`, which the swap just
+        // above may have replaced, and only for `transport`: any other
+        // category's code — an abort's `ABORT_ERR` — is not a network
+        // cause.
+        const failureCauseCode =
+          category === "transport" ? readErrnoCode(runError) : undefined;
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,
           stepIndex: i,
           error: runError.message,
           category,
+          ...(failureCauseCode !== undefined
+            ? { causeCode: failureCauseCode }
+            : {}),
         });
         this.deps.onEvent?.({
           type: "loop_failed",
@@ -2672,8 +2750,10 @@ export class AgentLoop {
         // Phase 6 — bump failure_count for every surfaced lesson.
         // `cancelled` is intentionally NOT routed here; that branch
         // returned earlier without calling the hook (cancellation
-        // carries neither success nor failure signal).
-        if (!options.ephemeral) {
+        // carries neither success nor failure signal). Nor is an account
+        // that cannot pay (item 40): it says nothing about the lessons
+        // recalled at turn start, as the paused path for it says nothing.
+        if (!options.ephemeral && !creditRefused) {
           invokeLessonLifecycle(
             this.deps,
             state.id,

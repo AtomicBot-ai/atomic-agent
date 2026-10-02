@@ -38,6 +38,8 @@ export const HELP =
     "  get <key>                 Print one value by dotted key",
     "  set <key> <value>         Set one value, leaving the rest of the file alone",
     "  set '<json>'              Replace the whole config file with a JSON payload",
+    "  set -                     Same, with the JSON read from stdin (keeps secrets",
+    "                            such as inline API keys off the command line)",
     "  unset <key>               Restore one key to its default",
     "  list                      Print every key as `key = value`",
     "  path                      Print the path to the config file",

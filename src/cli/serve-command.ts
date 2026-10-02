@@ -1,7 +1,7 @@
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
-import { stderrSink } from "../tracing/structured-logger.js";
+import { createStderrSink } from "../tracing/structured-logger.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import { HELP, parseArgs } from "./serve-args.js";
@@ -67,8 +67,21 @@ export async function serveCommand(args: string[]): Promise<number> {
         getConfig().agent.approvalLevel,
       ),
       traceDefault: true,
+      // A host that died (the desktop app, Force Quit) leaves stderr a
+      // dead pipe. The next log line used to exit the process there and
+      // then, skipping the `finally` below — the port, the session
+      // store's turn ends, the serve record. Muted, serve goes on until
+      // the orphan watch ends it through that teardown.
+      brokenPipe: "mute",
       handlers: {
-        logSinks: [stderrSink],
+        // The structured log goes to stderr, which a host running serve
+        // relays into its own log (the desktop app's agent.log and its
+        // Diagnostics pane); `config.log.level` still decides what is
+        // written. Serve once passed `stderrSink` here, the factory and
+        // not the sink it builds, and nothing was ever written: the
+        // factory's parameter makes that a compile error now, and
+        // `serve-command.test.ts` reads what is passed here.
+        logSinks: [createStderrSink()],
         onApprovalRequest: (request) => approvalBus.publish(request),
       },
     });

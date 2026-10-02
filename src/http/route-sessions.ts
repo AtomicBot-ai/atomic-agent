@@ -36,6 +36,10 @@ export function createListSessionsHandler(): HttpHandler {
       sessions: sessions.map((s) => ({
         id: s.id,
         workingDir: s.workingDir,
+        // `running` while a turn is in flight on the session, in this
+        // process or another on the same state dir; after it, the status
+        // that turn ended on (`cancelled` also for a turn the agent was
+        // shut down or killed in the middle of — see `SessionStore`).
         status: s.status,
         turnCount: s.turnCount,
         stepCount: s.stepCount,
