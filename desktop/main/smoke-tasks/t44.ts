@@ -192,6 +192,14 @@ function agentIn(bin: string): Agent {
 
 const providersIn = (cfg: UserConfigShape | undefined): ProviderEntry[] => cfg?.llm?.providers ?? [];
 const fileText = (p: string): string | null => (existsSync(p) ? readFileSync(p, "utf8") : null);
+/** The providers as config.json holds them on disk — what the agent wrote, read without another `atag` run. */
+const providersOnDisk = (dir: string): ProviderEntry[] => {
+  try {
+    return providersIn(JSON.parse(fileText(join(dir, "config.json")) ?? "{}") as UserConfigShape);
+  } catch {
+    return [];
+  }
+};
 const holdsAnyKey = (text: string | null) => ALL_KEYS.filter((k) => !!text && text.includes(k)).length;
 const modeOf = (p: string) => (existsSync(p) ? (statSync(p).mode & 0o777).toString(8) : "absent");
 const ownerOnly = (p: string) => process.platform === "win32" || (existsSync(p) && (statSync(p).mode & 0o077) === 0);
@@ -225,8 +233,7 @@ async function launchMove(check: Check, agent: Agent, dir: string, lb: { base: s
   const legacyHeld = holdsAnyKey(fileText(join(dir, "config.json")));
   const r = await moveProviderKeysIn(agent.store(dir, env));
   const cfgText = fileText(join(dir, "config.json"));
-  const after = await agent.store(dir, env).read();
-  const providers = providersIn(after.config);
+  const providers = providersOnDisk(dir);
   const dotenv = parseDotenvAsAgent(fileText(join(dir, ".env")) ?? "");
   const want: Record<string, [string, string]> = {
     "smoke-t44": ["SMOKE_T44_API_KEY", K.one],
@@ -299,7 +306,7 @@ async function launchMoveFails(check: Check, agent: Agent, dir: string, lb: { ba
   const real = agent.store(dir, env);
   const refusing: KeyStore = { ...real, write: async () => ({ ok: false, stdout: "", stderr: "", error: `config set failed: ${K.fail} was refused (smoke t44)` }) };
   const r = await moveProviderKeysIn(refusing);
-  const now = providersIn((await real.read()).config).find((p) => p.id === "smoke-t44-fail");
+  const now = providersOnDisk(dir).find((p) => p.id === "smoke-t44-fail");
   check(
     "T44: when config.json cannot be written nothing moves: .env and config.json stay exactly as they were, and the warning names no key",
     seeded && !r.ok && r.moved.length === 0 && r.left.includes("smoke-t44-fail")
@@ -320,7 +327,7 @@ async function windowSave(check: Check, agent: Agent, dir: string, lb: { base: s
   });
   const first = await upsertProviderIn(store, entry(K.save));
   const cfgText = fileText(join(dir, "config.json"));
-  const saved = providersIn((await store.read()).config).find((p) => p.id === "smoke-t44-save");
+  const saved = providersOnDisk(dir).find((p) => p.id === "smoke-t44-save");
   const dotenv = parseDotenvAsAgent(fileText(join(dir, ".env")) ?? "");
   const sentFirst = (await agent.sends(dir, env, "smoke-t44-save", "/save", lb)) === `Bearer ${K.save}`;
   check(
@@ -334,7 +341,7 @@ async function windowSave(check: Check, agent: Agent, dir: string, lb: { base: s
   const sentRekey = (await agent.sends(dir, env, "smoke-t44-save", "/save", lb)) === `Bearer ${K.rekey}`;
   // A blank field, with a row variable that is not the provider's own: the provider keeps its own.
   const blank = await upsertProviderIn(store, entry(undefined, "SMOKE_T44_ROW_KEY"));
-  const kept = providersIn((await store.read()).config).find((p) => p.id === "smoke-t44-save");
+  const kept = providersOnDisk(dir).find((p) => p.id === "smoke-t44-save");
   const envAfter = fileText(join(dir, ".env")) ?? "";
   check(
     "T44: re-keying replaces the key the agent sends; a blank key field keeps the provider's own variable",
@@ -346,7 +353,7 @@ async function windowSave(check: Check, agent: Agent, dir: string, lb: { base: s
   const gone = await upsertProviderIn(store, { id: "smoke-t44-gone", kind: "openai-compatible", baseUrl: `${lb.base}/gone`, defaultChatModel: "smoke-t44-model", apiKey: K.gone });
   const wrote = (fileText(join(dir, ".env")) ?? "").includes(K.gone);
   const removed = await removeProviderIn(store, "smoke-t44-gone");
-  const left = providersIn((await store.read()).config).some((p) => p.id === "smoke-t44-gone");
+  const left = providersOnDisk(dir).some((p) => p.id === "smoke-t44-gone");
   check(
     "T44: a key turned down for a provider the setup created leaves no trace in .env or config.json",
     gone.ok && wrote && removed.ok && !left && !(fileText(join(dir, ".env")) ?? "").includes(K.gone)
