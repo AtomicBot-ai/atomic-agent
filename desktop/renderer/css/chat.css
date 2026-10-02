@@ -11,24 +11,32 @@
    of the explicit drift correction and is lost anyway whenever #scroller is
    rebuilt.
 
-   The column is TOP-anchored on purpose. The reference bottom-anchors a short
-   transcript (justify-content:flex-end), but then folding a card in a chat
-   that does not scroll yet moves everything above it — the card's own head
-   included — and repaintEntry can only correct drift through scrollTop, which
-   a non-scrolling transcript does not have. Keeping the head still wins.
+   Chat review (Д19): the column is BOTTOM-anchored, as a chat app keeps its
+   conversation: a short transcript sits on the composer and grows upward, and
+   the first message no longer hangs alone under the toolbar. The scroller is a
+   flex column and the column takes `margin-top:auto`, which is all the free
+   space above a short transcript and nothing once it scrolls, so a long one
+   lays out and scrolls exactly as before (justify-content:flex-end would push
+   an overflowing column's top out of reach). The price is the one the
+   top-anchored column was avoiding: folding a card in a chat too short to
+   scroll moves what is above it, since the column's bottom stays put. Once
+   the transcript scrolls, repaintEntry keeps a card's head still as it did.
 
    The top fade is a mask on the scroller's own box, so it never moves content
    or changes a measurement; the column's top padding is taller than the fade,
    so nothing is faded at scrollTop 0. */
 .scroller{overflow-anchor:none}
-#scroller{-webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
+#scroller{display:flex;flex-direction:column;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
   mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px)}
-#scroller > .col720{max-width:720px;margin:0 auto;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
+#scroller > .col720{flex:none;width:100%;max-width:720px;margin:auto auto 0;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
 /* Backlog 18 review: the download card floats over the bottom-right of the
    transcript. --dlcard-chat (renderer dlCardOverChat) is how far up it reaches
    over this column, so the column's end — the newest reply, an approval's
    buttons — scrolls clear of it. 0 while the card is away or beside the
-   column. The empty chat has no column: its greeting stays as it is. */
+   column, and for a chat too short to scroll, which keeps its place on the
+   composer (chat review Д19). The empty chat has no column: its greeting
+   stays as it is. */
 #scroller > .col720{padding-bottom:max(16px, var(--dlcard-chat, 0px))}
 #scroller > .col720 > *{min-width:0}
 
@@ -78,11 +86,15 @@
    it to the column's right edge. `overflow-wrap:anywhere` on top of the
    inherited pre-wrap means a single unbroken 400-character token still cannot
    widen the transcript. The bottom-right corner is the tightened one: the
-   outgoing-tail convention without drawing a tail. */
-.turn.usr{display:block}
-.prose.usr.bubble{width:fit-content;max-width:74%;margin-left:auto;padding:10px 15px;
+   outgoing-tail convention without drawing a tail.
+   Chat review (Д19): nothing in a message may carry the bubble past the
+   column's edge — a path, a link or a token with no break in it wraps inside,
+   and the row itself never outgrows the column (t46 measures it with the
+   side panel open, narrowing the column). */
+.turn.usr{display:block;max-width:100%}
+.prose.usr.bubble{width:fit-content;max-width:74%;min-width:0;margin-left:auto;padding:10px 15px;
   border-radius:22px 22px 6px 22px;background:var(--brand);color:var(--on-strong);
-  font-size:14.5px;line-height:1.5;overflow-wrap:anywhere}
+  font-size:14.5px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
 
 /* ---------------- assistant prose and markdown ----------------
    A model writes markdown and renderMarkdown turns it into tags of its own,

@@ -9460,6 +9460,13 @@ function dlCardOverChat(el) {
   const cs = getComputedStyle(col);
   const left = c.left + (parseFloat(cs.paddingLeft) || 0), right = c.right - (parseFloat(cs.paddingRight) || 0);
   if (!(f.width > 0) || f.right <= left || f.left >= right || f.top >= s.bottom) return 0;
+  /* Chat review (Д19): the transcript sits on the composer now, so room made
+     under one too short to scroll would lift the whole chat each time the
+     card came, folded or went — the move this card exists not to make
+     (T18c). Such a chat keeps its place and the card floats over its end;
+     one that scrolls still ends clear of it. Judged without the room the
+     card already holds, so the answer does not feed on itself. */
+  if (sc.scrollHeight - Math.max(0, (DLC.chat || 0) - 16) <= sc.clientHeight) return 0;
   return Math.max(0, Math.round(s.bottom - f.top + DLC_EDGE));
 }
 
