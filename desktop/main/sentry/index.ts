@@ -1,10 +1,9 @@
-/** Desktop error reporting (SPEC "Desktop Sentry"): crash reporter, envelope client, scrubber, handlers. */
+/** Desktop error reporting (desktop/ANALYTICS.md "Error reports"): envelope client, scrubber, handlers. No minidumps. */
 
-export { baseTags, minidumpUrl, reportError, type ErrorInput } from "./client.js";
+export { baseTags, reportError, type ErrorInput } from "./client.js";
 export {
   reportAgentExit,
   reportRendererError,
-  startCrashReporter,
   wireProcessErrorReporting,
   wireWindowErrorReporting,
 } from "./handlers.js";

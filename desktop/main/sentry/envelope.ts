@@ -21,7 +21,6 @@ export interface ParsedDsn {
   host: string;
   projectId: string;
   envelopeUrl: string;
-  minidumpUrl: string;
   dsn: string;
 }
 
@@ -49,7 +48,6 @@ export function parseDsn(dsn: string): ParsedDsn | null {
     host: url.host,
     projectId,
     envelopeUrl: `${origin}/api/${projectId}/envelope/`,
-    minidumpUrl: `${origin}/api/${projectId}/minidump/?sentry_key=${publicKey}`,
     dsn,
   };
 }
@@ -58,8 +56,9 @@ export interface EnvelopeEvent {
   type: string;
   message?: string;
   frames: StackFrame[];
-  platform: "node" | "javascript";
   release: string;
+  /** The desktop version for the `sdk` block (`unknown` outside a packaged app). */
+  sdkVersion: string;
   installId: string;
   tags: Record<string, string>;
   /** `error` for exceptions, `warning` for a crash/exit seen only as tags. */
@@ -72,7 +71,10 @@ export function buildEnvelope(dsn: ParsedDsn, ev: EnvelopeEvent): { eventId: str
   const event = {
     event_id: eventId,
     timestamp: Date.now() / 1000,
-    platform: ev.platform,
+    // Always `node`, renderer errors included: Sentry infers the client IP for
+    // `javascript` events unless told not to, and the sdk block below says so too.
+    platform: "node",
+    sdk: { name: "atomic-agent-desktop", version: ev.sdkVersion, settings: { infer_ip: "never" } },
     level: ev.level ?? "error",
     release: ev.release,
     user: { id: ev.installId, ip_address: null },

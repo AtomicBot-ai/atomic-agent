@@ -167,9 +167,9 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 // Backlog 03 — the first-run probe's frame log, summarised.
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
-// Analytics and error reporting (SPEC "Desktop analytics"): one-line hooks below, the logic in these folders.
+// Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
-import { reportAgentExit, reportRendererError, startCrashReporter, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
+import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -8574,13 +8574,12 @@ async function firstRunProbe(): Promise<void> {
   app.exit(0);
 }
 
-/* Analytics and crash reporting, before app.whenReady as Electron's
-   crashReporter asks. Gated live on analytics.enabled; a test run sends nothing. */
+/* Analytics and error reporting, before the agent is spawned (the install id
+   is resolved here). Gated live on analytics.enabled; a test run sends nothing. */
 A.initAnalytics({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR });
 A.configureDownloads({ stateDir: DESKTOP_STATE_DIR, hostRamGb: () => FAKE_RAM_GB ?? hostRamGb() });
 A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
-startCrashReporter();
 wireProcessErrorReporting();
 
 void app.whenReady().then(async () => {

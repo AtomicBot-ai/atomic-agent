@@ -28,7 +28,6 @@ export interface ErrorInput {
   stack?: unknown;
   /** Small enum tags (kind, reason, exit_code…); anything not tag-shaped is dropped. */
   tags?: Record<string, unknown>;
-  platform?: "node" | "javascript";
   level?: "error" | "warning";
 }
 
@@ -73,8 +72,8 @@ export function reportError(input: ErrorInput): void {
       type,
       message: safeMessage(type, input.message),
       frames,
-      platform: input.platform ?? "node",
       release: `atomic-agent-desktop@${release}`,
+      sdkVersion: release,
       installId: id,
       tags,
       level: input.level,
@@ -88,9 +87,4 @@ export function reportError(input: ErrorInput): void {
   } catch {
     /* an error reporter must never be the error */
   }
-}
-
-/** The minidump endpoint for Electron's crashReporter, or null without a DSN. */
-export function minidumpUrl(): string | null {
-  return dsn()?.minidumpUrl ?? null;
 }

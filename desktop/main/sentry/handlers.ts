@@ -1,6 +1,10 @@
 /**
- * Where desktop errors are caught. Nothing here changes how the app behaves
- * when something goes wrong:
+ * Where desktop errors are caught. Every report is a scrubbed envelope
+ * (client.ts): an error type, sanitized stack frames and enum tags. There is
+ * deliberately no Electron crashReporter: a minidump carries process memory
+ * (chat text, keys) and absolute module paths, which no scrubbing on this
+ * side can take out. Nothing here changes how the app behaves when something
+ * goes wrong:
  *  - main-process exceptions are watched with `uncaughtExceptionMonitor`,
  *    which observes without becoming a handler — Electron's own dialog and
  *    exit stay exactly as they were (it also sees a rejection Node turns
@@ -8,45 +12,10 @@
  *  - window and process events are extra listeners beside the existing ones.
  */
 
-import { app, crashReporter, type BrowserWindow } from "electron";
+import { app, type BrowserWindow } from "electron";
 
-import { analyticsEnabled, desktopVersion, installChannelFor, isTestRun, onAnalyticsEnabledChange, windowCrashed } from "../analytics/index.js";
-import { minidumpUrl, reportError } from "./client.js";
-
-/**
- * Electron's crashReporter → Sentry's minidump endpoint. Before
- * app.whenReady, as Electron asks. Upload follows the analytics switch live;
- * a test run starts no reporter at all.
- */
-export function startCrashReporter(): void {
-  try {
-    if (isTestRun()) return;
-    const submitURL = minidumpUrl();
-    if (!submitURL) return;
-    const version = desktopVersion();
-    crashReporter.start({
-      submitURL,
-      uploadToServer: analyticsEnabled(),
-      compress: true,
-      // Sentry reads `sentry[...]` form fields as event attributes.
-      globalExtra: {
-        "sentry[tags][surface]": "desktop",
-        "sentry[tags][component]": "desktop-shell",
-        "sentry[tags][install_channel]": installChannelFor(process.platform, process.env),
-        ...(version ? { "sentry[tags][desktop_version]": version, "sentry[release]": `atomic-agent-desktop@${version}` } : {}),
-      },
-    });
-    onAnalyticsEnabledChange((on) => {
-      try {
-        crashReporter.setUploadToServer(on);
-      } catch {
-        /* the reporter may not have started */
-      }
-    });
-  } catch {
-    /* a crash reporter that cannot start is not a reason not to start the app */
-  }
-}
+import { windowCrashed } from "../analytics/index.js";
+import { reportError } from "./client.js";
 
 /** Main process and app-wide events. Call once, early. */
 export function wireProcessErrorReporting(): void {
@@ -101,7 +70,6 @@ export function reportRendererError(payload: unknown): void {
     name: p.name,
     message: p.message,
     stack: typeof p.stack === "string" ? p.stack.slice(0, 20_000) : undefined,
-    platform: "javascript",
     tags: { kind: p.kind === "unhandledrejection" ? "unhandledrejection" : "error" },
   });
 }
