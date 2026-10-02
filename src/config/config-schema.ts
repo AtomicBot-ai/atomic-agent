@@ -1508,7 +1508,8 @@ export interface UserManagedLocalLlmConfig {
    *   - `0` (default) — auto: fit the context to the target device's
    *     free VRAM at start (see `estimateContextSize`); on a device that
    *     shares the system's RAM (Apple silicon, an integrated GPU) also
-   *     within a share of physical memory (`resolveUnifiedMemoryKvCapMiB`).
+   *     leaving the system its headroom and the cache within its share of
+   *     physical memory (`resolveContextKvBudgetMiB`).
    *   - a positive value — pin `--ctx-size` exactly, clamped only to the
    *     model's trained context ceiling.
    */

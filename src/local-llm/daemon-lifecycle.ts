@@ -30,6 +30,7 @@ import {
   MANAGED_KV_CACHE_TYPE,
   resolveDeviceFreeVramMiB,
   resolveKvBudgetMiB,
+  resolveUnifiedMemoryHeadroomMiB,
   UNIFIED_MEMORY_KV_SHARE,
   type KvLayoutSource,
 } from "./context-size.js";
@@ -616,8 +617,11 @@ export function buildLlamaServerArgs(
  * (Apple silicon, an integrated GPU) the machine's physical memory too.
  * Best-effort — any enumeration failure degrades to the no-VRAM default.
  * Skips the probe entirely when the operator pinned a value or offload
- * is CPU-only. `note` says why a unified-memory machine got less than
- * its free figure would fit, for the daemon log.
+ * is CPU-only. `kvBudgetBytes` is what the cache may take within the
+ * system's headroom on unified memory — the budget `--swa-full` is
+ * weighed against, not the context's 1/16 share. `note` says why a
+ * unified-memory machine got less than its free figure would fit, for
+ * the daemon log.
  */
 async function resolveEffectiveContextSize(
   device: string | undefined,
@@ -661,7 +665,8 @@ async function resolveEffectiveContextSize(
     if (fits > contextSize) {
       note =
         `held to ${Math.round(systemMemoryMiB / 1024)} GB of unified memory: ` +
-        `half left to the system, at most 1/${Math.round(1 / UNIFIED_MEMORY_KV_SHARE)} for the KV cache ` +
+        `at most 1/${Math.round(1 / UNIFIED_MEMORY_KV_SHARE)} of it for the KV cache, ` +
+        `${Math.round(resolveUnifiedMemoryHeadroomMiB(systemMemoryMiB) / 1024)} GB left to the system ` +
         `(${fits} would fit the GPU's free figure)`;
     }
   }

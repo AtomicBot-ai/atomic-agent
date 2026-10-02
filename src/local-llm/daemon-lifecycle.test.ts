@@ -1202,7 +1202,7 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
   }
 
   /** A healthy server; returns the probe POSTs. `busySlot`: one slot still decoding as the probe ends. */
-  function healthyServer(opts: { speed?: number; busySlot?: boolean } = {}): string[] {
+  function healthyServer(opts: { speed?: number; busySlot?: boolean; alias?: string } = {}): string[] {
     const posts: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -1210,7 +1210,7 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
         const at = String(url);
         const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
         if (at.endsWith("/health")) return json({ status: "ok" });
-        if (at.endsWith("/v1/models")) return json({ data: [{ id: "qwen-3.5-4b" }] });
+        if (at.endsWith("/v1/models")) return json({ data: [{ id: opts.alias ?? "qwen-3.5-4b" }] });
         if (at.endsWith("/slots")) {
           return json([
             { id: 0, is_processing: false },
@@ -1399,6 +1399,70 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
       expect(
         readReusableThroughput(dataDir, throughputBasis(dataDir, "qwen-3.5-4b", "cpu")),
       ).toMatchObject({ tokensPerSecond: 13.66 });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  /** Gemma 4 31B's header and the catalogue's gemma-4-31b on disk (no projector). */
+  function stageGemma31(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    writeBackendVersion(dataDir, BUILD);
+    const model = getLocalModelDef("gemma-4-31b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, encodeSyntheticGguf(gemma4Pairs()));
+  }
+
+  it("gives Gemma 4 31B on a 32 GB Mac 109,568 tokens and three auto slots, where half of RAM floored it at one", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-gemma32-`);
+    try {
+      stageGemma31(dataDir);
+      totalmemMock.mockReturnValue(32 * 1024 ** 3);
+      listDevicesAnswers("MTL0: Apple M2 Max (21845 MiB, 21845 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6401));
+      healthyServer({ alias: "gemma-4-31b" });
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19081,
+        parallel: "auto",
+        completionMaxTokens: 16_384,
+        throughputProbe: false,
+      });
+      expect(result.contextSize).toBe(109_568);
+      expect(spawnedArg("--parallel")).toBe("3");
+      // Its full sliding-window cache (12.9 GB at this context) is far past the budget here.
+      expect(result.swaFull.enabled).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps --swa-full for Gemma 4 31B on a 128 GB Mac: weighed against the headroom, not the context's share", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-gemma128-`);
+    try {
+      stageGemma31(dataDir);
+      totalmemMock.mockReturnValue(128 * 1024 ** 3);
+      listDevicesAnswers("MTL0: Apple M4 Max (98304 MiB, 98304 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6402));
+      healthyServer({ alias: "gemma-4-31b" });
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19080,
+        parallel: 1,
+        throughputProbe: false,
+      });
+      expect(result.contextSize).toBe(262_144);
+      expect(result.swaFull.enabled).toBe(true);
+      expect(spawnMock.mock.calls[0]![1] as string[]).toContain("--swa-full");
+      expect(result.prefixReuse).toBe("partial");
+      expect(readFileSync(resolveLogFilePath(dataDir), "utf-8")).toContain(
+        "[atomic-agent] launch: swa-full: on (auto)",
+      );
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
