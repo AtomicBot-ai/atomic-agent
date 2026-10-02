@@ -16,7 +16,21 @@
    ============================================================ */
 
 /* ---------------- Window ---------------- */
+/* The settings window's size and the room around it.
+   Item 36: the system's own controls sit over the top 52px band of the
+   window — macOS's traffic lights at its left (hiddenInset, at 20,20; in
+   full screen the menu bar and the lights slide in over the same band when
+   the pointer is at the top), Windows' caption buttons at its right
+   (titleBarOverlay, 52px tall). With 24px all round, a small window put
+   them on the settings window's corners: the lights on the nav's top left,
+   the caption buttons on the header's top right, where the close control
+   is. The band is kept clear on both, and as much room is left under the
+   window as above it, so at the default size it sits exactly where it did.
+   Linux draws a normal frame above the page. */
+#window{--set-w:1060px;--set-h:700px;--set-gx:24px;--set-gy:24px}
+body.electron.platform-darwin #window,body.electron.platform-win32 #window{--set-gy:52px}
 #settings{position:absolute;inset:0;z-index:28;display:flex;align-items:center;justify-content:center;
+  padding:var(--set-gy) var(--set-gx);
   background:var(--scrim);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 /* Item 5. The settings backdrop covers the 52px toolbar band, and
    `body.electron #toolbar` is a `-webkit-app-region: drag` region. Chromium
@@ -32,7 +46,7 @@ body.electron #settings{-webkit-app-region:no-drag}
    opened from Settings › LLM (Add provider, the "… detected" prompt) was drawn behind the settings sheet. */
 #window:has(#settings) #overlays{z-index:29 !important}
 
-.setwin{position:relative;width:min(1060px, calc(100% - 48px));height:min(700px, calc(100% - 48px));
+.setwin{position:relative;width:min(var(--set-w), 100%);height:min(var(--set-h), 100%);
   display:grid;grid-template-columns:230px minmax(0,1fr);
   background:var(--well);border-radius:var(--r-comp);box-shadow:var(--sh-pop);overflow:hidden}
 
@@ -41,7 +55,10 @@ body.electron #settings{-webkit-app-region:no-drag}
    counts, no command list. */
 .setnav{min-width:0;min-height:0;display:flex;flex-direction:column;padding:16px 10px 12px}
 .setnav-title{margin:2px 10px 12px;font:600 15px/20px var(--font-ui);letter-spacing:-.02em;color:var(--ink)}
-.setmenu{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px}
+/* Item 36: a window too short for every row scrolls the list instead of
+   cutting its last rows off at the window's edge; the rows keep their height
+   (flex:none). renderSettings keeps the scroll across its rebuilds. */
+.setmenu{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;overscroll-behavior:contain}
 
 .menurow{position:relative;display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:0 10px;flex:none;
   border:0;border-radius:var(--r-pill);background:transparent;color:var(--ink-2);

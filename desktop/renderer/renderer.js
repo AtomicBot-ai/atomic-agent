@@ -4282,6 +4282,9 @@ function renderSettings() {
      at the top. */
   const keepScroll = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
     ? ((old.querySelector('.setbody') || {}).scrollTop || 0) : 0;
+  // Item 36: the nav scrolls when the window is too short for its rows, and
+  // the same rebuild would put it back at the top on every poll.
+  const keepNav = old ? ((old.querySelector('.setmenu') || {}).scrollTop || 0) : 0;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -4306,11 +4309,27 @@ function renderSettings() {
     + '</div>'
     + '</div>';
   $('#window').appendChild(el);
+  // Item 36: back where the nav was; on a new section or a fresh opening, its row is brought into view.
+  const menu = el.querySelector('.setmenu');
+  if (menu) {
+    menu.scrollTop = keepNav;
+    if (!old || SETTINGS_SCROLL.pane !== cur) settingsNavReveal(menu);
+  }
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
   // Calm (S5): the ring goes on the section the window opened on.
   if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus(); }
+}
+/* Item 36: scroll the nav, and only the nav, so the section's row is whole
+   in view. scrollIntoView would also scroll #window, which clips its overflow
+   but can still be scrolled. */
+function settingsNavReveal(menu) {
+  const row = menu.querySelector('.menurow.on');
+  if (!row) return;
+  const m = menu.getBoundingClientRect(), r = row.getBoundingClientRect();
+  if (r.top < m.top) menu.scrollTop -= m.top - r.top;
+  else if (r.bottom > m.bottom) menu.scrollTop += r.bottom - m.bottom;
 }
 
 /* A pane id, a section id or an old name → the pane to show. The prototype's
