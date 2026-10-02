@@ -4568,6 +4568,15 @@ function settingsPane() {
 function comingNote(label) {
   return '<div class="set-pane"><div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('clock') + '</span><h4>' + esc(label) + '</h4><p>coming in the next step of this branch</p></div></div>';
 }
+/* Д28: a toggle row in General ends in its switch. The "On" / "Off" word
+   beside it said what the switch already shows; a spinner stands in that
+   spot while the setting is read or written. The Notify (tui-parity.js) and
+   Name chats (session-titles.js) rows draw theirs here too. */
+function setSwitchHTML(o) {
+  return (o.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
+    + '<button class="tk-switch' + (o.on ? ' on' : '') + '" role="switch" aria-checked="' + !!o.on + '" aria-label="' + esc(o.label) + '"'
+    + ' data-act="' + esc(o.act) + '"' + (o.busy ? ' aria-busy="true"' : '') + (o.disabled ? ' disabled' : '') + ' title="' + esc(o.title) + '"></button>';
+}
 /* Calm (S5) › General: what is general about the app today — the theme
    (the same `theme:*` act and atag.theme key as the palette and View ›
    Appearance), the working folder (the sidebar chip's picker) and the
@@ -4609,15 +4618,6 @@ function generalPane() {
       + nameChatsRowHTML()
     + '</div>'
     + '</div>';
-}
-/* Д28: a toggle row in General ends in its switch. The "On" / "Off" word
-   beside it said what the switch already shows; a spinner stands in that
-   spot while the setting is read or written. The Notify (tui-parity.js) and
-   Name chats (session-titles.js) rows draw theirs here too. */
-function setSwitchHTML(o) {
-  return (o.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
-    + '<button class="tk-switch' + (o.on ? ' on' : '') + '" role="switch" aria-checked="' + !!o.on + '" aria-label="' + esc(o.label) + '"'
-    + ' data-act="' + esc(o.act) + '"' + (o.busy ? ' aria-busy="true"' : '') + (o.disabled ? ' disabled' : '') + ' title="' + esc(o.title) + '"></button>';
 }
 /* The restart notice and the error line an analytics or read-scope write
    leaves behind, on whichever of General / Privacy is showing. */
