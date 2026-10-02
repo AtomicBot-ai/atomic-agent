@@ -1165,7 +1165,7 @@ const LLM_LOG_LINES = 30; // local-llm-logs-panel.tsx DEFAULT_MAX_LINES
 const TG = {
   // `keysChain` serializes tgRefresh — see the note on that function.
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
-  showAdvanced:false, mode:'list', token:{error:null, submitting:false},
+  mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
 };
@@ -20903,7 +20903,7 @@ if (BR) {
 /* ---------------- Telegram tab (setup-state.ts, telegram-panel.tsx, telegram-token-prompt.tsx,
    tui-telegram-orchestrator.ts, telegram-key-bindings.ts). The channel state, bot identity and
    pairing live inside the serve process's channel — nothing on the HTTP API exposes them, so
-   the tab shows config + .env facts and says where pairing happens. ---------------- */
+   the tab reads the config and the saved token's presence, and says where pairing happens. ---------------- */
 
 function telegramVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'telegram'; }
 function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t && typeof t === 'object' ? t : null; }
@@ -20937,18 +20937,24 @@ async function tgRefreshOnce() {
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
   TG.envKeys = Array.isArray(env) ? env : [];
   TG.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
-  if (dotenv && dotenv.ok === false) TG.lastError = 'could not read .env: ' + (dotenv.error || 'unknown error');
+  if (dotenv && dotenv.ok === false) TG.lastError = 'Could not read the saved token: ' + (dotenv.error || 'unknown error');
   if (eff && eff.ok && eff.value && typeof eff.value === 'object') TG.cfg = eff.value;
   TG.keysKnown = true;
   tgRepaint();
 }
+/* Д36: until a token is in, the tab is the Connect Telegram card and nothing
+   else. With one, it is a single status (Connected / Not connected) over the
+   rows a person acts on, in words: the config keys, `.env` and the channel's
+   unreadable `unknown` state are gone, and so is the Advanced toggle, whose
+   label changed width under the pointer. Notices come last, so a flipped
+   switch does not push the rows down. */
 function telegramTab() {
   const hasToken = tgHasToken();
   const enabled = tgEnabled();
   const owner = tgOwner();
   let body = '';
   if (TG.mode === 'tokenPrompt') body += tgTokenPromptHTML();
-  else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>reading .env…</p></div>';
+  else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Loading…</p></div>';
   else if (!hasToken) {
     // setup-state.ts not_connected (no token). ST-28: one card, one action.
     body += '<div class="tk-card pad sd-tgcard sd-center">'
@@ -20956,53 +20962,65 @@ function telegramTab() {
       + '<h3 class="sd-title">Connect Telegram</h3>'
       + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
       + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div>';
-  } else if (owner === null) {
-    // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
-    body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-      + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
-      + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
   } else {
-    // Token + owner: the TUI would say "✅ Telegram is connected" only with the channel `up`, which the desktop cannot see.
-    body += '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">channel state is not exposed by the agent\'s HTTP API — the Telegram tab in `atag tui` shows it live</span></div>';
+    body += tgStatusHTML(enabled, owner);
+    // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
+    if (owner === null) {
+      body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
+        + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
+        + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
+    }
+    body += tgRowsHTML(enabled, owner);
   }
-  const advanced = TG.showAdvanced || (hasToken && owner !== null);
-  if (advanced && TG.mode !== 'tokenPrompt') body += tgAdvancedHTML(enabled, hasToken, owner);
-  // telegram-panel.tsx keeps `· <message>` inside AdvancedControls; here it leads the tab, because the desktop's message carries the restart the serve process needs.
-  const msg = TG.message ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TG.message)
-    + (TG.restart ? ' <span class="sec">(the agent loads .env and config.json at start)</span>' : '') + '</span>'
-    + (TG.restart ? '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>' : '') + '</div>' : '';
-  return '<div class="sd-pane sd-tg"><div class="tk-bar"><span class="grow"></span>'
-    + '<button class="btn btn-g sm" data-act="telegram:advanced" title="Advanced (a)">' + (TG.showAdvanced ? 'Hide advanced' : 'Advanced') + '</button></div>' + msg + body + '</div>';
+  return '<div class="sd-pane sd-tg">' + body + tgNoticesHTML() + '</div>';
 }
-/* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. ST-30: one row per fact, its actions beside it. */
-function tgAdvancedHTML(enabled, hasToken, owner) {
+/* Connected = set up for the bot to answer: a token, a paired owner, and not
+   turned off. The channel's live state stays inside the agent (no route
+   exposes it), so this is what the desktop can know. */
+function tgConnected(enabled, owner) { return tgHasToken() === true && owner !== null && enabled !== false; }
+function tgStatusHTML(enabled, owner) {
+  const on = tgConnected(enabled, owner);
+  const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
+    : owner === null ? 'Almost there: confirm your Telegram account below.'
+    : 'Turned off: the bot does not answer until you turn it on below.';
+  return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
+    + '<span class="tk-ico tk-ico--blue">' + ic('send') + '</span>'
+    + '<div class="body"><div class="t">Telegram</div><div class="d">' + esc(line) + '</div></div>'
+    + '<span class="tk-chip tk-chip--sm ' + (on ? 'tk-chip--green' : 'tk-chip--amber') + '" data-tg-status="' + (on ? 'connected' : 'not-connected') + '">'
+      + (on ? 'Connected' : 'Not connected') + '</span>'
+    + '</div></div>';
+}
+/* telegram-panel.tsx AdvancedControls, ST-30: one row per thing to do, its action beside it. */
+function tgRowsHTML(enabled, owner) {
   const busy = TG.busy;
-  const tokenChip = hasToken === null ? '<span class="tk-chip tk-chip--sm">—</span>' : hasToken ? '<span class="tk-chip tk-chip--sm tk-chip--green">set</span>' : '<span class="tk-chip tk-chip--sm tk-chip--amber">missing</span>';
-  const ownerChip = owner === null ? '<span class="tk-chip tk-chip--sm tk-chip--amber">unset</span>' : '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>';
-  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
-    + '<div class="tk-card sd-rows">'
-    + '<div class="tk-setrow"><div class="body"><div class="t">State</div><div class="d">The channel runs inside the agent; its live state is not readable here.</div></div>'
-    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</span></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Enabled</div><div class="d sd-mono">telegram.enabled</div></div>'
-    + '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Enabled" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Token</div><div class="d sd-mono">TELEGRAM_BOT_TOKEN in .env</div></div>' + tokenChip
-    + '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
-    + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy || !hasToken ? ' disabled' : '') + '>Clear token</button></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Owner</div><div class="d sd-mono">telegram.ownerUserId</div></div>' + ownerChip
-    + '<button class="btn btn-s sm" data-act="telegram:pair" disabled title="' + esc(TG_PAIRING_NOTE) + '">Re-pair</button>'
-    + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy || owner === null ? ' disabled' : '') + '>Clear owner</button></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Channel</div><div class="d">Restarts with the agent runtime.</div></div>'
-    + '<button class="btn btn-g sm" data-act="telegram:refresh">' + ic('refresh') + 'Refresh</button>'
-    + '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button></div>'
+  const row = (title, d, tail) => '<div class="tk-setrow"><div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>' + tail + '</div>';
+  return '<div class="tk-card sd-rows">'
+    + row('Answer in Telegram', 'When this is off, the bot ignores every message.',
+      '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Answer in Telegram" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button>')
+    + row('Bot token', 'Saved on this computer.',
+      '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
+      + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>Remove token</button>')
+    + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
+      '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>'
+      + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>Clear owner</button>') : '')
+    + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
     + '</div>'
     + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token', 'T clear token', 'O clear owner']);
+}
+/* What the last action left: an error, or a message that may carry the
+   restart the agent needs to load a token or a switch (it reads both at start). */
+function tgNoticesHTML() {
+  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+    + (TG.message ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TG.message)
+      + (TG.restart ? ' <span class="sec">It takes effect after a restart.</span>' : '') + '</span>'
+      + (TG.restart ? '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>' : '') + '</div>' : '');
 }
 /* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
   const t = TG.token;
   return '<div class="tk-card pad sd-tgcard">'
     + '<h3 class="sd-title">Bot token</h3>'
-    + '<p>Paste the token issued by @BotFather. Saved to <span class="sd-code">.env</span> at mode 0600.</p>'
+    + '<p>Paste the token @BotFather gave you. It is saved on this computer, in a file only your user account can read.</p>'
     + '<label class="tk-inpwrap sd-tokwrap' + (t.error ? ' is-error' : '') + '">' + ic('key')
     + '<input id="tg-token" type="password" autocomplete="off" spellcheck="false" aria-label="Bot token"' + (t.submitting ? ' disabled' : '') + '></label>'
     + (t.error ? '<p class="tk-help tk-help--err">' + esc(t.error) + '</p>' : '')
@@ -21020,19 +21038,19 @@ async function tgTokenSave(value) {
   const input = document.getElementById('tg-token');
   const raw = value !== undefined ? value : (input ? input.value : '');
   const trimmed = String(raw || '').trim();
-  if (!trimmed) { TG.token.error = 'token is empty'; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:'token is empty'}; }
+  if (!trimmed) { TG.token.error = 'Paste the token first.'; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error}; }
   const stateDir = memStateDir();
-  if (!BR || !stateDir) { TG.token.error = 'state dir unknown'; tgRepaint(); return {ok:false, error:'state dir unknown'}; }
+  if (!BR || !stateDir) { TG.token.error = 'The app is still starting. Try again in a moment.'; tgRepaint(); return {ok:false, error:TG.token.error}; }
   TG.token.submitting = true; TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', trimmed);
-  if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = (res && res.error) || 'setToken failed'; TG.lastError = 'setToken failed: ' + TG.token.error; tgRepaint(); return {ok:false, error:TG.token.error}; }
+  if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = (res && res.error) || 'the token was not saved'; TG.lastError = 'Could not save the token: ' + TG.token.error; tgRepaint(); return {ok:false, error:TG.token.error}; }
   TG.mode = 'list'; TG.token = {error:null, submitting:false};
-  tgSetMessage('token saved', true);
+  tgSetMessage('Token saved.', true);
   await tgRefresh();
   if (tgEnabled() === false) {
     const w = await BR.configSet('telegram.enabled', 'true');
-    if (!w || w.ok === false) TG.lastError = 'setEnabled failed: ' + ((w && w.error) || 'unknown error');
-    else tgSetMessage('telegram enabled', true);
+    if (!w || w.ok === false) TG.lastError = 'Could not turn Telegram on: ' + ((w && w.error) || 'unknown error');
+    else tgSetMessage('Token saved and Telegram turned on.', true);
     await tgRefresh();
   }
   TG.busy = false; tgRepaint();
@@ -21044,8 +21062,8 @@ async function tgClearToken() {
   TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', null);
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'clearToken failed: ' + ((res && res.error) || 'unknown error');
-  else tgSetMessage('token cleared', true);
+  if (!res || res.ok === false) TG.lastError = 'Could not remove the token: ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage('Token removed.', true);
   await tgRefresh();
 }
 async function tgSetEnabled(enabled) {
@@ -21053,8 +21071,8 @@ async function tgSetEnabled(enabled) {
   TG.busy = true; tgRepaint();
   const res = await BR.configSet('telegram.enabled', String(!!enabled));
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'setEnabled failed: ' + ((res && res.error) || 'unknown error');
-  else tgSetMessage(enabled ? 'telegram enabled' : 'telegram disabled', true);
+  if (!res || res.ok === false) TG.lastError = 'Could not turn Telegram ' + (enabled ? 'on' : 'off') + ': ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage(enabled ? 'Telegram turned on.' : 'Telegram turned off.', true);
   await tgRefresh();
 }
 async function tgClearOwner() {
@@ -21062,14 +21080,13 @@ async function tgClearOwner() {
   TG.busy = true; tgRepaint();
   const res = await BR.configUnset('telegram.ownerUserId');
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'setOwnerUserId failed: ' + ((res && res.error) || 'unknown error');
-  else tgSetMessage('owner cleared — telegram now ignores all DMs', true);
+  if (!res || res.ok === false) TG.lastError = 'Could not clear the owner: ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage('Owner cleared. The bot ignores every message until you pair again.', true);
   await tgRefresh();
 }
 function telegramAct(what) {
   const [verb] = what.split(':');
   const arg = what.slice(verb.length + 1);
-  if (verb === 'advanced') { TG.showAdvanced = !TG.showAdvanced; tgRepaint(); return; }
   if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
   if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
   if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
@@ -21077,7 +21094,7 @@ function telegramAct(what) {
   if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
   if (verb === 'clearOwner') { tgClearOwner(); return; }
   // `r — restart` restarts the channel in the TUI; the desktop restarts the agent runtime, which restarts the channel with it.
-  if (verb === 'restart') { tgSetMessage('telegram restarted with the agent runtime', false); act('agent:restart'); return; }
+  if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', false); act('agent:restart'); return; }
   if (verb === 'refresh') { tgRefresh(); return; }
   if (verb === 'pair') return; // disabled: pairing needs the live channel
 }
@@ -21092,7 +21109,7 @@ function telegramKey(e, k, inText) {
   if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
   // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
   if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIRING_NOTE, false), tgRepaint(); return true; }
-  const map = {a:'advanced', e:'enable', t:'token', T:'clearToken', o:'pair', O:'clearOwner', r:'restart', R:'refresh'};
+  const map = {e:'enable', t:'token', T:'clearToken', o:'pair', O:'clearOwner', r:'restart', R:'refresh'};
   if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
   return false;
 }
@@ -21288,7 +21305,7 @@ if (typeof window !== 'undefined') {
   window.__llmFallbackPersist = async (chain, appendLocal) => { await llmFallbackPersist(chain, appendLocal); return window.__llmPane(); };
   window.__llmProbe = (url) => (BR ? BR.llamaProbe(url) : Promise.resolve({ok:false, error:'no bridge'}));
   window.__llmExternalSave = async (url) => { llmSetMode('external'); LLMP.externalDraft = String(url); LLMP.externalInvalid = false; llmRepaint(); const n = document.getElementById('llm-url'); if (n) n.value = String(url); await llmExternalSave(); return window.__llmPane(); };
-  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, showAdvanced: TG.showAdvanced, message: TG.message || '', restart: !!TG.restart,
+  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: !!TG.restart,
     lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error});
   window.__telegramAct = (what) => { telegramAct(what); return window.__telegram(); };
   window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };

@@ -6516,22 +6516,29 @@ async function settingsTestPartC(
       "(() => { const b = document.querySelector('#settings .setbody .sd-tgcard [data-act=\"telegram:token\"]'); if (!b || !b.getClientRects().length) return null;"
       + " const k = b.querySelector('.kc'); return {label: [...b.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim(), key: k ? k.textContent.trim() : ''}; })()",
     );
+    // Release fix 49 (Д36): before a token the card is all there is — the
+    // Advanced toggle that used to sit above it is gone, so its word must not be.
     check(
-      "telegram tab: no token anywhere → the Connect Telegram card, plain tab label",
+      "telegram tab: no token anywhere → only the Connect Telegram card, plain tab label",
       tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
-        && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && tgBody.includes("Advanced") && tgPlain,
+        && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && !tgBody.includes("Advanced") && tgPlain,
       `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)} action=${JSON.stringify(tgCta)}`,
     );
   } else {
-    // The advanced rows as drawn: each fact's title and its chip.
-    const tgFacts = await js<Record<string, string>>(
-      "(() => { const out = {}; document.querySelectorAll('#settings .setbody .sd-rows .tk-setrow').forEach((r) => { const t = r.querySelector('.body .t'); const c = r.querySelector(':scope > .tk-chip');"
-      + " if (t) out[t.textContent.trim()] = c ? c.textContent.trim() : ''; }); return out; })()",
+    /* Release fix 49 (Д36): the fact rows (State `unknown`, telegram.enabled,
+       TELEGRAM_BOT_TOKEN in .env) became one status, Connected only with a
+       paired owner and Telegram not turned off, over rows in words. */
+    const tgView = await js<{ status: string; titles: string[] }>(
+      "(() => { const st = document.querySelector('#settings .setbody [data-tg-status]');"
+      + " return {status: st ? st.textContent.trim() : '', titles: [...document.querySelectorAll('#settings .setbody .sd-rows .tk-setrow .body .t')].map((t) => t.textContent.trim())}; })()",
     );
+    const wantStatus = tg.owner !== null && tg.enabled !== false ? "Connected" : "Not connected";
     check(
-      "telegram tab: a token is present → the facts, channel state honestly unknown, plain tab label",
-      tg.hasToken === true && tgFacts.Token === "set" && tgFacts.State === "unknown" && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
-      `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} label=${JSON.stringify(tgLabel)} facts=${JSON.stringify(tgFacts)}`,
+      "telegram tab: a token is present → one status in words, no config keys or .env, plain tab label",
+      tg.hasToken === true && tgView.status === wantStatus && tgView.titles.includes("Bot token")
+        && !/telegram\.enabled|ownerUserId|TELEGRAM_BOT_TOKEN|\.env\b|\bunknown\b/.test(tgBody)
+        && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
+      `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} enabled=${String(tg.enabled)} label=${JSON.stringify(tgLabel)} view=${JSON.stringify(tgView)}`,
     );
   }
   // Token round trip through the dotenv-writer port — only when no token exists anywhere, so a real one is never touched.
@@ -6573,7 +6580,8 @@ async function settingsTestPartC(
       try { envAfter = readFileSync(envPath, "utf8"); } catch { /* unlinked when empty */ }
       check(
         "telegram tab: T clear token removes the key and keeps the rest of .env",
-        cleared.hasToken === false && !envAfter.includes("TELEGRAM_BOT_TOKEN") && keysBefore.every((k) => envAfter.includes(`${k}=`)) && cleared.message === "token cleared",
+        // Release fix 49 (Д36): the messages read as sentences ("token cleared" before).
+        cleared.hasToken === false && !envAfter.includes("TELEGRAM_BOT_TOKEN") && keysBefore.every((k) => envAfter.includes(`${k}=`)) && cleared.message === "Token removed.",
         `keys=${JSON.stringify(dotenvKeys(stateDir).keys)} msg=${JSON.stringify(cleared.message)}`,
       );
     } finally {

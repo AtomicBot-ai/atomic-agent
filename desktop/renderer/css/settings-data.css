@@ -114,6 +114,10 @@ textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/
 .sd-pairhead{display:flex;align-items:center;gap:10px}
 .sd-pairhead b{font-size:15px;font-weight:600;color:var(--ink)}
 .sd-pair p{margin:0;font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+/* Д36: the one status over the rows — what it means, then Connected or Not connected. */
+.sd-tgstatus.tk-card{padding:4px 0}
+.sd-tgstatus .tk-setrow{gap:14px;min-height:64px}
+.sd-tgstatus .tk-setrow > .tk-chip{flex:none}
 .sd-rows.tk-card{padding:4px 0}
 .sd-rows .tk-setrow{gap:10px;flex-wrap:wrap}
 .sd-rows .tk-setrow .body{flex:1 1 220px}
