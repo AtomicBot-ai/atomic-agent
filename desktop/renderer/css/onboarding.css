@@ -176,9 +176,9 @@
 #onboarding .ob-tick svg{width:15px;height:15px;stroke-width:2.2}
 #onboarding .ob-models .ob-row > .ob-tick{align-self:center}
 #onboarding .ob-row > .tk-ico,#onboarding .ob-row > .logo{flex:none}
-/* A source with no brand mark wears its icon badge at the logo's size, so
-   every row's text starts on the same line (a model's fallback mark is that
-   size already: markFallbackHTML). */
+/* An icon badge drawn small in a row is brought up to the logo's size, so
+   every row's text starts on the same line (a model's or a provider's
+   fallback mark is that size already: markFallbackHTML). */
 #onboarding .ob-row > .tk-ico--sm{width:30px;height:30px}
 
 /* Route cards (ON-02): three lifted cards, the one under the cursor ringed. */
@@ -296,7 +296,12 @@
 /* ---------------- the cloud wizard (ON-09…15) ---------------- */
 #onboarding .ob-wiz{flex:1 1 auto;min-height:0;gap:12px}
 #onboarding .ob-wiz > *{max-width:var(--ob-col);flex-shrink:0}
-#onboarding .ob-wiz > .ob-wizlist{flex:0 1 auto;min-height:120px;margin:0 -16px;padding:4px 16px 14px;max-width:calc(var(--ob-col) + 32px)}
+/* The list's styled scrollbar takes 10px of width (see the end of this
+   file); its gutter is kept whether or not the list scrolls and comes out of
+   the right padding, so the cards inside stay --ob-col wide and end where the
+   action bar does. */
+#onboarding .ob-wiz > .ob-wizlist{flex:0 1 auto;min-height:120px;margin:0 -16px;padding:4px 6px 14px 16px;
+  scrollbar-gutter:stable;max-width:calc(var(--ob-col) + 32px)}
 #onboarding .ob-wiz > .ob-foot{margin-top:auto}
 #onboarding .ob-wizlist .prows{padding:6px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .prow .nm{font-size:14.5px}

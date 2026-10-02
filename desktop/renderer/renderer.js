@@ -1501,10 +1501,10 @@ function logoHTML(key, size, fb) {
     + '<img src="logos/' + f + '" alt=""></span>' : '';
 }
 /**
- * The badge a model wears when it has no mark of its own, or when its file
- * did not load: the icon on the same light disc and at the same size as a
- * logo. A small grey glyph beside the logo discs read as an image that
- * failed to load ("Meta Muse Glimmer 30B", Danya, 30.09).
+ * The badge a model or a provider wears when it has no mark of its own, or
+ * when its file did not load: the icon on the same light disc and at the
+ * same size as a logo. A small grey glyph beside the logo discs read as an
+ * image that failed to load ("Meta Muse Glimmer 30B", Danya, 30.09).
  */
 function markFallbackHTML(icon, size) {
   const sz = size === 'lg' || size === 'sm' || size === 'xs' ? ' tk-ico--' + size : '';
@@ -1514,9 +1514,9 @@ function markFallbackHTML(icon, size) {
 function modelMark(id, size) {
   return logoHTML(modelLogoKey(id), size, 'cpu') || markFallbackHTML('cpu', size);
 }
-/** A provider's mark, or the server icon on a neutral badge. */
+/** A provider's mark, or the server icon on the logo's badge (a custom endpoint, llama.cpp). */
 function providerMark(idOrLabel, size) {
-  return logoHTML(providerLogoKey(idOrLabel), size, 'server') || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('server') + '</span>';
+  return logoHTML(providerLogoKey(idOrLabel), size, 'server') || markFallbackHTML('server', size);
 }
 /* A mark whose file does not load (one missing from a build) swaps itself
    for the fallback badge instead of drawing a broken image. `error` does not
@@ -9847,9 +9847,12 @@ function obLocalPickHTML() {
     ? models.map((row, at) => {
         const model = row.model;
         const on = !onHf && at === OB.cursor;
+        // A caution's sentence is the row's description too: the tooltip alone never reaches the keyboard.
+        const noteId = obModelNote(model) ? 'ob-note-' + at : '';
         return obRow(at, on,
-          obModelRowLabel(model, best && model.id === best.id),
-          obModelRowDetail(model), '', ' data-model="' + esc(model.id) + '"', modelMark(model.id), on ? obTickHTML() : '');
+          obModelRowLabel(model, best && model.id === best.id, noteId),
+          obModelRowDetail(model), '', ' data-model="' + esc(model.id) + '"' + (noteId ? ' aria-describedby="' + noteId + '"' : ''),
+          modelMark(model.id), on ? obTickHTML() : '');
       }).join('')
     /* r2: while `atag models list` is out, a spinner where the list will be
        rather than a sentence about reading a catalogue. */
@@ -9914,20 +9917,29 @@ function obGbWord(gb) { return (Math.round(gb * 10) / 10).toFixed(1).replace(/\.
  * cards came out in two heights (Danya, 01.10). A comfortable fit says
  * nothing; the line above the list already says what it is ordered for.
  */
-function obModelRowLabel(model, isBest) {
+function obModelRowLabel(model, isBest, noteId) {
   return '<span class="ob-nm">' + esc(obModelName(model)) + '</span>'
     + (isBest ? '<span class="ob-badge ob-badge-best">Recommended</span>' : '')
-    + obModelNoteBadge(model);
+    + obModelNoteBadge(model, noteId);
 }
 
-/** The one caution a row may carry, as a badge whose tooltip is the sentence. */
-function obModelNoteBadge(model) {
+/** The one caution a row may carry, or null: its badge word, its sentence and its tone. */
+function obModelNote(model) {
   const note = modelPickNote(model, OB.ram);
-  if (!note || note.v === 'over') return '';
+  if (!note || note.v === 'over') return null;
   // The reduced-refusal tag ("Use at your own risk") is short enough to be its own word.
   const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model' : note.text;
-  const tone = note.v === 'tight' || model.uncensored ? ' ob-badge-warn' : ' ob-badge-note';
-  return '<span class="ob-badge' + tone + '" title="' + esc(note.text) + '">' + esc(word) + '</span>';
+  return {word, text: note.text, warn: note.v === 'tight' || !!model.uncensored};
+}
+
+/** That caution as a badge whose tooltip is the sentence; with `noteId`, the
+ *  sentence also sits hidden under that id for the row's aria-describedby. */
+function obModelNoteBadge(model, noteId) {
+  const note = obModelNote(model);
+  if (!note) return '';
+  return '<span class="ob-badge ' + (note.warn ? 'ob-badge-warn' : 'ob-badge-note') + '" title="' + esc(note.text) + '">'
+    + esc(note.word) + '</span>'
+    + (noteId ? '<span id="' + noteId + '" hidden>' + esc(note.text) + '</span>' : '');
 }
 
 /**
