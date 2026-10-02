@@ -1,6 +1,7 @@
 import { getConfig } from "../config/index.js";
 import { contextUsageFromPrompt } from "../tui/context-usage-from-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
+import { effectiveReplyReserve } from "../prompt/token-budget.js";
 import { openaiError } from "./openai-errors.js";
 import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-context.js";
 
@@ -19,12 +20,17 @@ import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-c
  * Body: `{ session_id?: string, message?: string }`. No `session_id`
  * previews a fresh thread in this workspace; `message` is the draft,
  * counted as the user message. Reply: `{ basis: "built", usage,
- * contextWindow, reservedForReply, pairsCap }` — `basis` says what this
- * is, because no recall / memory-index prefetch runs here (those rows
- * appear only after a real turn), and `reservedForReply` is what the
- * TUI panel passes as `reservedForReply`
- * (`config.localModels.completionMaxTokens`). 404 for an unknown
- * session, 400 for a bad body.
+ * contextWindow, reservedForReply, replyCap, pairsCap }` — `basis` says
+ * what this is, because no recall / memory-index prefetch runs here
+ * (those rows appear only after a real turn). `replyCap` is
+ * `config.localModels.completionMaxTokens`, what the TUI panel is handed
+ * as `reservedForReply`; `reservedForReply` is the part of it the prompt
+ * budget really holds back on this window (`effectiveReplyReserve`, the
+ * figure `computeEffectiveConversationCap` subtracts) — a 96k cap on a
+ * 32k window is not a 96k reservation. A panel drawing it still clamps it
+ * to what the prompt left of the window (the TUI's `replyReserveShown`,
+ * the desktop's `ctxReplyReserve`), so it can show less than this.
+ * 404 for an unknown session, 400 for a bad body.
  */
 export function createContextPreviewHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -62,7 +68,11 @@ export function createContextPreviewHandler(): HttpHandler {
       basis: "built",
       usage: contextUsageFromPrompt(prompt),
       contextWindow: prompt.contextWindow,
-      reservedForReply: getConfig().localModels.completionMaxTokens,
+      reservedForReply: effectiveReplyReserve(
+        getConfig().localModels.completionMaxTokens,
+        prompt.contextWindow,
+      ),
+      replyCap: getConfig().localModels.completionMaxTokens,
       pairsCap: prompt.conversationPairsCap,
     });
   };

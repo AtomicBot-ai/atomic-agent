@@ -207,7 +207,7 @@ function openReplyPath(p) {
    replaces it. `previewSupported` caches the route's 404 per connection
    the way MODE.supported does; `seq` drops a refresh that lost the race. */
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
-  window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0,
+  window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0, replyCap:0,
   previewSupported:null, seq:0, chipTimer:null, draftTimer:null };
 /* Calm (S2) — the composer loader. While the agent works, a band of light
    travels the composer's rim. Its motion is CSS (composer.css); this only
@@ -4305,28 +4305,63 @@ function ctxBoundLine() {
   if (u.droppedPairs > 0) text += ' · ' + u.droppedPairs + ' dropped so far';
   return '<p class="cap ctxbound">' + ic('alert') + '<span>' + esc(text) + '</span></p>';
 }
+/**
+ * Item 63 \u2014 the reply reservation this window can actually honour. Port of
+ * src/tui/components/context-panel.tsx replyReserveShown over
+ * src/prompt/token-budget.ts effectiveReplyReserve: the configured reply cap
+ * (localModels.completionMaxTokens), held to half a window it does not fit
+ * in (REPLY_RESERVE_MAX_WINDOW_SHARE \u2014 the share the agent's prompt budget
+ * holds back), and never more than the prompt left of the window. The QA
+ * case: a 96k cap on a 32.8k model drew "reserved for reply 96k", the
+ * meter's reserve band filled the bar and "free" sat at 0 for good.
+ */
+/* Pinned to src/prompt/token-budget.ts REPLY_RESERVE_MAX_WINDOW_SHARE — the
+   agent's budget holds the reply to this share of the window. Change both
+   together; smoke t63 compares it with the built preview's own
+   reservedForReply / contextWindow when the agent answers that route. */
+const REPLY_RESERVE_MAX_WINDOW_SHARE = 0.5;
+function ctxReplyReserve(cap, win, tokens) {
+  if (!(cap > 0) || !(win > 0)) return 0;
+  return Math.min(cap, Math.floor(win * REPLY_RESERVE_MAX_WINDOW_SHARE), Math.max(0, win - (tokens || 0)));
+}
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
   const pairs = agent.conversationMaxPairs || PAIRS_DEFAULT;
   const win = CTX.window;
   // Lane B \u2014 context before the first message (item 3). Copy follows
   // src/tui/components/context-panel.tsx: title(), buildRows() (the
-  // "reserved for reply" row is config.localModels.completionMaxTokens,
-  // tui-command.ts:232, and "free" is window \u2212 tokens \u2212 reserved, floored
-  // at 0), and the pre-measurement screen verbatim. The projected state
-  // is the desktop's own: the TUI has no figure before prompt_built.
+  // "reserved for reply" row starts from config.localModels.completionMaxTokens,
+  // which tui-command.ts hands the panel as session.completionMaxTokens, and
+  // is drawn as replyReserveShown \u2014 ctxReplyReserve above; "free" is
+  // window \u2212 tokens \u2212 reserved, floored at 0), and the pre-measurement
+  // screen verbatim. The projected state is the desktop's own: the TUI has
+  // no figure before prompt_built.
   const proj = CTX.source === 'projected';
-  const reserved = CTX.source === 'built' && CTX.reserved
-    ? CTX.reserved
-    : ((LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.completionMaxTokens) || 0);
+  const cfgCap = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.completionMaxTokens) || 0;
+  // The built route reports the configured cap as `replyCap` (an older agent
+  // only sent the raw cap, as `reservedForReply`); the clamp below is
+  // idempotent on the agent's own already-held figure.
+  const replyCap = CTX.source === 'built' && (CTX.replyCap || CTX.reserved)
+    ? (CTX.replyCap || CTX.reserved)
+    : cfgCap;
+  const reserved = ctxReplyReserve(replyCap, win, CTX.tokens);
+  // The cap is bounded by the window, not by "the model", and a cloud route
+  // does not send it at all; the reply can also run into "free".
+  const reserveTip = replyCap > reserved
+    ? 'Reply cap ' + fmtTokens(replyCap) + '; this ' + fmtTokens(win) + ' window holds back '
+      + fmtTokens(reserved) + ' for it (the reply can also use free space)'
+    : '';
   const pct = win ? Math.min(100, Math.round(CTX.tokens / win * 100)) : 0;
   const title = CTX.tokens
     ? 'context \u00b7 ' + (proj ? '~' : '') + fmtTokens(CTX.tokens)
       + (win ? ' of ' + fmtTokens(win) + ' window \u00b7 ' + pct + '%' : ' \u00b7 window unknown')
       + (proj ? ' \u00b7 projected' : '')
     : 'context \u00b7 not measured yet';
-  const row = (label, value, dim) => '<dt' + (dim ? ' class="ter"' : '') + '>' + esc(label) + '</dt>'
-    + '<dd class="mono tnum' + (dim ? ' ter' : '') + '">' + value + '</dd>';
+  const row = (label, value, dim, tip) => {
+    const t = tip ? ' title="' + esc(tip) + '"' : '';
+    return '<dt' + (dim ? ' class="ter"' : '') + t + '>' + esc(label) + '</dt>'
+      + '<dd class="mono tnum' + (dim ? ' ter' : '') + '"' + t + '>' + value + '</dd>';
+  };
   let body = '';
   if (CTX.tokens) {
     if ((CTX.source === 'built' || CTX.source === 'measured') && CTX.sections && CTX.sections.length) {
@@ -4338,7 +4373,7 @@ function contextHTML() {
       body += row('conversation', '0');
     } else body = row('prompt scaffold', fmtTokens(CTX.stablePrefix)) + row('conversation', fmtTokens(CTX.tail));
     if (win) {
-      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true);
+      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true, reserveTip);
       body += row('free', fmtTokens(Math.max(0, win - CTX.tokens - reserved)), true);
     }
   }
@@ -14706,7 +14741,8 @@ function selShell(title, body, foot, lead) {
                  newest trace built in this workspace (traceBaseline)
      draft     = estimateTokens(S.draft), the runtime's own estimator
      window    = /props n_ctx (local) or the provider catalogue
-     reserved  = localModels.completionMaxTokens, as the TUI panel
+     reserved  = localModels.completionMaxTokens held to what the window
+                 allows (ctxReplyReserve), as the TUI panel
    Precedence once something real exists: the branch route's built
    prompt ('built') > the session's trace ('provider'|'estimate') >
    the projection. The '~' and the word "projected" never come off
@@ -14903,7 +14939,7 @@ async function refreshContext(stateDirOverride) {
       usage = {tokens:u.tokens, source:'measured', stablePrefix:sec('prompt scaffold'),
         tail: typeof u.conversationTokens === 'number' ? u.conversationTokens : sec('conversation'),
         cacheHitTokens:null, modelId:null, baseline:null, sections:u.sections || [],
-        pairsCap: u.conversationPairsCap || 0, reserved:0,
+        pairsCap: u.conversationPairsCap || 0, reserved:0, replyCap:0,
         builtWindow: u.contextWindow > 0 ? u.contextWindow : null};
     }
   }
@@ -14919,14 +14955,14 @@ async function refreshContext(stateDirOverride) {
       const sec = (label) => { const s = (r.usage.sections || []).find((x) => x.label === label); return s ? s.tokens : 0; };
       usage = {tokens:r.usage.tokens, source:'built', stablePrefix:sec('prompt scaffold'), tail:sec('conversation'),
         cacheHitTokens:null, modelId:null, baseline:null, sections:r.usage.sections || [],
-        pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0,
+        pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0, replyCap:r.replyCap || 0,
         builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
     }
   }
   // (c) this session's trace, once a turn has run.
   if (!usage && S.agentSession && stateDir) {
     const r = await BR.traceUsage(stateDir, S.agentSession);
-    if (r && r.ok && r.usage) usage = Object.assign({}, r.usage, {baseline:null, sections:null, pairsCap:ctxPairsCap(), reserved:0, builtWindow:null});
+    if (r && r.ok && r.usage) usage = Object.assign({}, r.usage, {baseline:null, sections:null, pairsCap:ctxPairsCap(), reserved:0, replyCap:0, builtWindow:null});
   }
   // (d) the projection: the last scaffold this agent built here + the draft.
   if (!usage && stateDir && BR.traceBaseline) {
@@ -14936,7 +14972,7 @@ async function refreshContext(stateDirOverride) {
     if (r && r.ok && r.baseline) {
       const b = r.baseline;
       usage = {tokens:b.stablePrefix + CTX.draftTokens, source:'projected', stablePrefix:b.stablePrefix, tail:0,
-        cacheHitTokens:null, modelId:b.modelId, baseline:b, sections:null, pairsCap:ctxPairsCap(), reserved:0, builtWindow:null};
+        cacheHitTokens:null, modelId:b.modelId, baseline:b, sections:null, pairsCap:ctxPairsCap(), reserved:0, replyCap:0, builtWindow:null};
     }
   }
   if (seq !== CTX.seq) return; // a newer refresh is on its way
@@ -14944,7 +14980,7 @@ async function refreshContext(stateDirOverride) {
   if (!usage) {
     // Nothing measured and no trace to project from: the TUI's own
     // "not measured yet" state — chip hidden, never a zero.
-    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, pairsCap:0, reserved:0});
+    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, pairsCap:0, reserved:0, replyCap:0});
   } else {
     const builtWindow = usage.builtWindow; delete usage.builtWindow;
     Object.assign(CTX, usage);

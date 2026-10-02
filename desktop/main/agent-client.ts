@@ -1014,7 +1014,7 @@ export class AgentClient extends EventEmitter {
     ok: boolean; supported: boolean; basis?: "built";
     usage?: { tokens: number; contextWindow: number | null; conversationTokens: number; conversationPairs: number;
       droppedPairs: number; conversationPairsCap: number; sections: Array<{ label: string; tokens: number }> };
-    contextWindow?: number | null; reservedForReply?: number; pairsCap?: number; error?: string;
+    contextWindow?: number | null; reservedForReply?: number; replyCap?: number; pairsCap?: number; error?: string;
   }> {
     try {
       const res = await fetch(`${this.base()}/api/context-preview`, {
@@ -1037,7 +1037,7 @@ export class AgentClient extends EventEmitter {
       if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
       const body = (await res.json()) as {
         basis: "built"; usage: NonNullable<Awaited<ReturnType<AgentClient["contextPreview"]>>["usage"]>;
-        contextWindow: number | null; reservedForReply: number; pairsCap: number;
+        contextWindow: number | null; reservedForReply: number; replyCap?: number; pairsCap: number;
       };
       return { ok: true, supported: true, ...body };
     } catch (err) {
