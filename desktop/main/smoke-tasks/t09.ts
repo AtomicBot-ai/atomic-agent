@@ -22,6 +22,10 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /* The renderer's rule, restated: the MCP servers' own tools are out, the agent's native mcp.resource.* / mcp.prompt.* stay. */
 const builtIn = (name: string) => !name.startsWith("mcp.") || /^mcp\.(resource|prompt)\./.test(name);
+/* Page-side: a Skills tab's words without its count (Д43 gave every tab one: `All 18`, `Built-in tools 37`),
+   and the count alone ('' when the tab shows none). */
+const TAB_WORDS = `const label = (b) => { const c = b.cloneNode(true); c.querySelectorAll('.n').forEach((n) => n.remove()); return c.textContent.trim(); };
+  const tabCount = (sel) => { const n = document.querySelector(sel + ' .n'); return n ? n.textContent.trim() : ''; };`;
 
 /* A renderer error is a failed check, never a thrown one: a throw would leave
    checks09 for the smoke runner, which has no catch, and the app would keep
@@ -80,6 +84,7 @@ async function run(js: Js, check: Check): Promise<void> {
   }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     const q = (s) => [...document.querySelectorAll(s)];
+    ${TAB_WORDS}
     const saved = {caps: LIVE_CAPS, view: SKP.view, filter: SKP.filter, cursor: SKP.cursor, inspector: S.inspector, inspTab: S.inspTab};
     try {
       window.__settingsOpen('skills');
@@ -92,22 +97,22 @@ async function run(js: Js, check: Check): Promise<void> {
         {name:'os.fs.read', description:'Read a UTF-8 text file.'},
       ]});
       render(); await tick(60);
-      const btn = q('#settings .setbody .set-toolbar button').find((b) => b.textContent.trim() === 'Built-in tools');
+      const btn = q('#settings .setbody .set-toolbar button').find((b) => label(b) === 'Built-in tools');
       if (!btn) return {err:'no Built-in tools control in the Skills toolbar'};
       btn.click(); await tick(150);
       const out = {pane: window.__settingsPane(), overlay: S.overlay,
         inspectorMoved: S.inspector !== saved.inspector || S.inspTab !== saved.inspTab,
-        pressed: q('#settings .setbody .set-seg button.on').map((b) => b.textContent.trim()),
+        pressed: q('#settings .setbody .set-seg button.on').map(label),
         rows: q('#settings [data-tool-row]').map((x) => x.dataset.toolRow),
         families: q('#settings .set-tlfam').map((x) => x.textContent.trim()),
         desc: ((document.querySelector('#settings [data-tool-row="os.fs.read"] .d') || {}).textContent || ''),
-        counts: ((document.querySelector('#settings .set-toolbar .set-counts') || {}).textContent || '').trim(),
+        counts: tabCount('#settings .set-toolbar .set-seg [data-act="skills:tools"]'),
         skillRows: q('#settings [data-skill-row]').length};
       // A filter segment is the way back to the skills.
       const all = document.querySelector('#settings .set-seg [data-act="skills:filter:all"]');
       if (all) { all.click(); await tick(100); }
       out.back = SKP.view;
-      out.backPressed = q('#settings .setbody .set-seg button.on').map((b) => b.textContent.trim());
+      out.backPressed = q('#settings .setbody .set-seg button.on').map(label);
       return out;
     } finally {
       LIVE_CAPS = saved.caps; SKP.view = saved.view; SKP.filter = saved.filter; SKP.cursor = saved.cursor;
@@ -125,18 +130,19 @@ async function run(js: Js, check: Check): Promise<void> {
   check(
     "T09: the list is name and description, grouped by family, without the MCP servers' own tools",
     !r.err && same(r.rows, ["reply", "browser.navigate", "mcp.resource.list", "os.fs.read", "os.fs.write"])
-      && same(r.families, ["browser", "mcp.resource", "os.fs"]) && r.desc === "Read a UTF-8 text file." && r.counts === "5 tools",
+      && same(r.families, ["browser", "mcp.resource", "os.fs"]) && r.desc === "Read a UTF-8 text file." && r.counts === "5",
     r.err ?? JSON.stringify({ rows: r.rows, families: r.families, desc: r.desc, counts: r.counts }),
   );
   check(
     "T09: a filter segment goes back to the skills",
-    !r.err && r.back === "skills" && same(r.backPressed, ["all"]),
+    !r.err && r.back === "skills" && same(r.backPressed, ["All"]),
     r.err ?? JSON.stringify({ back: r.back, pressed: r.backPressed }),
   );
 
   // The live list: what GET /api/capabilities answers, less the MCP servers' tools, through `/tools`.
   const live = await safe<{ names: string[] | null; rows: string[]; pane: string | null; view: string; counts: string }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+    ${TAB_WORDS}
     const res = await window.atomic.capabilities();
     const v = SKP.view;
     try {
@@ -144,14 +150,14 @@ async function run(js: Js, check: Check): Promise<void> {
       return {names: res && res.ok && res.data && Array.isArray(res.data.tools) ? res.data.tools.map((t) => t.name) : null,
         rows: [...document.querySelectorAll('#settings [data-tool-row]')].map((x) => x.dataset.toolRow),
         pane: window.__settingsPane(), view: SKP.view,
-        counts: ((document.querySelector('#settings .set-toolbar .set-counts') || {}).textContent || '').trim()};
+        counts: tabCount('#settings .set-toolbar .set-seg [data-act="skills:tools"]')};
     } finally { window.__settingsClose(); SKP.view = v; }
   })()`);
   const want = live.err || !live.names ? null : live.names.filter(builtIn).sort();
   check(
     "T09: /tools lists the agent's GET /api/capabilities tools, less the MCP servers' own",
     !live.err && !!want && want.length > 0 && live.pane === "skills" && live.view === "tools"
-      && same(live.rows.slice().sort(), want) && live.counts === `${want.length} tools`,
+      && same(live.rows.slice().sort(), want) && live.counts === String(want.length),
     live.err ?? `${live.rows.length} rows, ${want ? want.length : "no"} built-in of ${live.names ? live.names.length : "no"} from the route; pane=${live.pane} view=${live.view} counts=${JSON.stringify(live.counts)}`,
   );
 
@@ -251,7 +257,8 @@ async function run(js: Js, check: Check): Promise<void> {
     const v = SKP.view;
     try {
       window.__runSlash('/tools'); window.__settingsClose(); window.__settingsOpen('skills');
-      return {view: SKP.view, pressed: [...document.querySelectorAll('#settings .setbody .set-seg button.on')].map((b) => b.textContent.trim())};
+      ${TAB_WORDS}
+      return {view: SKP.view, pressed: [...document.querySelectorAll('#settings .setbody .set-seg button.on')].map(label)};
     } finally { window.__settingsClose(); SKP.view = v; }
   })()`);
   check(
