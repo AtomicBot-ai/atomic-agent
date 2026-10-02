@@ -276,6 +276,21 @@ const KEY_CHAR_ERROR = 'That key has a character keys don’t have; paste it aga
    refused the request because the account has no funds (main's
    NO_FUNDS_CHECK_LINE). The key is saved if the person says so. */
 const NO_FUNDS_KEY_LINE = 'Key works, but the account has no funds.';
+/* Declared up here, with the other copy constants, because render() runs long before the chat code below is reached. */
+/* ATO-164: what a chat opened while its answer is still being written says. */
+const LIVE_ELSEWHERE_LINE = 'Still answering your last message. The reply will appear here when it\u2019s ready.';
+/* ATO-164: an approval's receipt says what was allowed, in the user's words.
+   "Approved · 13:19:45 · fusion · fan-out" read as "an unclear entity"; the
+   category's own label (CATEGORY_LABEL, the agent's) stays the tooltip and the
+   pending card's Details. */
+const CATEGORY_PLAIN = {
+  fs_write_workspace:'edit files in this folder', fs_write_home:'edit files in your home folder',
+  fs_trash:'move files to the Trash', http:'make a web request', shell:'run a terminal command',
+  script:'run a skill\u2019s script', proc_kill:'stop a running program', browser_nonweb:'open a non-web link',
+  trust_config:'change the agent\u2019s trust settings', fusion_fanout:'split the work across helper models',
+  other:'take this step', publish:'publish to GitHub', git_remote:'sync with a git remote', email:'send an email',
+  fs_read_outside:'read files outside this folder',
+};
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
 function keyCharsOk(key) { return /^[\x00-\x7f]*$/.test(String(key == null ? '' : key)); }
@@ -2787,9 +2802,10 @@ function apprCard(m) {
       : m.state === 'undelivered' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
+    const plain = CATEGORY_PLAIN[m.cat] || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
       + glyph + '<span class="apprlbl"><b>' + label + '</b> · <span class="mono">' + m.at + '</span></span>'
-      + '<span class="badge tk-chip tk-chip--sm">' + esc(m.kind) + '</span></div>';
+      + '<span class="badge tk-chip tk-chip--sm" title="' + esc(m.kind) + '">' + esc(plain) + '</span></div>';
   }
   const isTrust = m.cat === 'trust_config';
   /* Calm (S4): a question in plain words, the one line that says what
@@ -7892,7 +7908,7 @@ function onChatEvent(ev) {
       if (sid && sid === S.sessionId && ![...RUNNING.values()].includes(sid)) S.busy = false;
       // The chat on screen is being read as it lands, so it is never unread.
       if (sid && sid === S.sessionId) { PREFS.seen[sid] = Date.now(); savePrefs(); }
-      // Review fix: openSession promises "the reply lands when it finishes"
+      // Review fix: openSession promises the reply will appear when it is ready (LIVE_ELSEWHERE_LINE)
       // for a chat whose turn is running but whose stream is not in this log
       // (the user left and came back). Nothing reloaded it, so the reply never
       // arrived. It finished — load the stored transcript that now holds it.
@@ -16197,7 +16213,8 @@ async function openSession(id) {
   // Backlog 25: set outright, not only raised: a verdict that came back while
   // this loaded (denyByProse) may have raised it for the chat that was left.
   S.busy = live;
-  if (live && !rebuilt) S.log.push({id:nid(), k:'system', text:'a turn is still running here — the reply lands when it finishes'});
+  // ATO-164: plain words, not "a turn is still running here — the reply lands when it finishes".
+  if (live && !rebuilt) S.log.push({id:nid(), k:'system', text:LIVE_ELSEWHERE_LINE});
   // Anything sent from here continues that session rather than starting a new one.
   S.agentSession = id;
   S.history = [];
@@ -16316,7 +16333,8 @@ function noteSessionModelStamp(data) {
   const stamp = data && data.metadata && data.metadata.llm;
   if (!stamp || typeof stamp.providerId !== 'string' || !stamp.providerId) return;
   const model = typeof stamp.chatModel === 'string' && stamp.chatModel ? stamp.chatModel : null;
-  const liveProvider = selActiveProviderId() || '';
+  // ATO-164 review: with no llm block the agent runs on its synthesized local-llama, and so does this comparison.
+  const liveProvider = selActiveProviderId() || llmActiveTextId();
   /* Review fix: compare what the AGENT compares. 0.5.5's planModelRestore
      tests `turn.chatModel === (provider.defaultChatModel ?? provider.model)`
      — the FULL id off the provider entry. The old comparison used
@@ -16325,15 +16343,17 @@ function noteSessionModelStamp(data) {
      read as the same model and a real difference was suppressed. */
   const liveEntry = llmProvider(liveProvider);
   const liveModel = liveEntry ? (liveEntry.defaultChatModel || liveEntry.model || '') : '';
-  const shownModel = activeModel() || liveModel;   // the display label stays the chip's
+  // The display label stays the chip's — except the local route's "download model" prompt, which is not a model.
+  const shownLabel = activeModel();
+  const shownModel = (shownLabel && shownLabel !== DOWNLOAD_MODEL_LABEL ? shownLabel : '') || liveModel;
   if (stamp.providerId === liveProvider && (!model || sameModelId(model, liveModel))) return;
   const known = llmProviders().some((p) => p.id === stamp.providerId);
-  const label = stamp.providerId + (model ? '/' + model : '');
   if (!known) {
-    // The TUI's own sentence for a stamp whose provider has since been
-    // deleted (session-model-restore.ts describeModelRestore in 0.5.5).
-    // Soft Tactile: `tone` draws the row as a blue notice (sysRowHTML); the text stays verbatim.
-    S.log.push({id:nid(), k:'system', note:true, tone:'blue', text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
+    /* A stamp whose provider has since been deleted. It was the TUI's sentence
+       (session-model-restore.ts describeModelRestore, 0.5.5) verbatim; ATO-164:
+       now in plain words — the provider's name, not its config id. Soft
+       Tactile: `tone` draws the row as a blue notice (sysRowHTML). */
+    S.log.push({id:nid(), k:'system', note:true, tone:'blue', text: esc('This chat last ran on ' + stampWords(stamp.providerId, model) + ', which is no longer set up. It will use the current model.')});
     return;
   }
   CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
@@ -16341,9 +16361,20 @@ function noteSessionModelStamp(data) {
   // turn finished long ago — a notice about the session, not that turn's
   // outcome. Soft Tactile: a blue notice — sentence, caption under it,
   // Switch to it on the right (chat.css places the three).
-  S.log.push({id:nid(), k:'system', note:true, tone:'blue', icon:'refresh', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
-    + ' <span class="tk-stampcap">(a switch restarts the agent, so it is refused while any turn is running)</span>'
+  /* ATO-164: it read "this session ran on local-llama — the window is on
+     openrouter/deepseek/… (a switch restarts the agent, so it is refused while
+     any turn is running)": config ids and engine words. Now the two models by
+     their names, and what the button does, in a sentence. */
+  S.log.push({id:nid(), k:'system', note:true, tone:'blue', icon:'refresh', text: esc('This chat ran on ' + stampWords(stamp.providerId, model)
+      + '. New messages now go to ' + stampWords(liveProvider, shownModel || null) + '.')
+    + ' <span class="tk-stampcap">Switching restarts the agent, so it can\u2019t happen while any chat is still answering.</span>'
     + '<button class="btn sm btn-t tk-stampbtn" data-act="sessmodel:apply">Switch to it</button>'});
+}
+/* ATO-164: "Local models · qwen-3.5-9b", "OpenRouter · deepseek/deepseek-v4-flash" —
+   the provider by its name, the model by its full id (two vendors' models can
+   share a basename, and the notice exists to tell them apart). */
+function stampWords(providerId, model) {
+  return waitProviderName(providerId) + (model ? ' \u00b7 ' + model : '');
 }
 /* Full-id comparison, matching 0.5.5's planModelRestore
    (`turn.chatModel === (provider.defaultChatModel ?? provider.model)`).
@@ -23994,7 +24025,7 @@ if (typeof window !== 'undefined') {
    r4 integration — seam (c): the session model-stamp notice meets
    r4-ui's user bubbles
    ============================================================
-   r4-feat writes the "this session ran on <provider>/<model>" notice into
+   r4-feat writes the "This chat ran on <provider> · <model>" notice into
    the transcript, and r4-ui turned user rows into right-hand bubbles. The
    notice is neither: it is `k:'system'`, so `item()` must render it as a
    `.sysrow` with no `.prose.usr.bubble` around it and no `.endmark` in it.
