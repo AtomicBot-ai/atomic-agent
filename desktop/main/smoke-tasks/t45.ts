@@ -77,7 +77,8 @@ export async function checks45(js: Js, check: Check): Promise<void> {
 
   await run(`(() => {
     window.__t45saved = {models: OB.models, ram: OB.ram, outOpen: OB.outOpen,
-      wiz: {phase: WIZ.phase, row: WIZ.row, q: WIZ.q, cur: WIZ.cur}};
+      wiz: {phase: WIZ.phase, row: WIZ.row, q: WIZ.q, cur: WIZ.cur},
+      stamped: Object.assign({}, OB_STAMPED), log: OB_STAMP_LOG.slice()};
     return true;
   })()`);
   await run(HELPERS);
@@ -91,9 +92,15 @@ export async function checks45(js: Js, check: Check): Promise<void> {
   } finally {
     await run(`(() => {
       const s = window.__t45saved;
-      if (s) { OB.models = s.models; OB.ram = s.ram; OB.outOpen = s.outOpen; Object.assign(WIZ, s.wiz); }
-      delete window.__t45saved; delete window.__t45;
       window.__obClose();
+      if (s) {
+        OB.models = s.models; OB.ram = s.ram; OB.outOpen = s.outOpen; Object.assign(WIZ, s.wiz);
+        // The test jump clears the session's stamp record; it goes back as it was.
+        for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
+        Object.assign(OB_STAMPED, s.stamped);
+        OB_STAMP_LOG.length = 0; OB_STAMP_LOG.push(...s.log);
+      }
+      delete window.__t45saved; delete window.__t45;
       return true;
     })()`);
   }
@@ -160,6 +167,8 @@ async function rightEdge(run: Run, check: Check): Promise<void> {
     measure('local', '.ob-models, .ob-hfrow', '.ob > .ob-foot .btn-p');
     window.__obOpen('custom_chat_url');
     measure('url', '.ob-field', '.ob > .ob-foot .btn-p');
+    // The whole provider list, unfiltered: it is long enough to scroll, which is the case that once cost the cards 10px.
+    WIZ.q = null; WIZ.cur = 0;
     window.__obOpen('cloud'); window.__wizPhase('pick_kind');
     measure('cloud', '.ob-wizlist .prows', '.ob-wiz > .ob-foot .btn-p');
     return out;
@@ -202,6 +211,7 @@ async function modelStep(run: Run, check: Check): Promise<void> {
         h: Math.round(n.getBoundingClientRect().height * 2) / 2,
         lines: n.querySelectorAll('.d > span').length,
         badges: [...n.querySelectorAll('.t .ob-badge')].map((b) => [(b.textContent || '').trim(), b.getAttribute('title') || '']),
+        described: ((id) => { const el = id ? document.getElementById(id) : null; return el ? el.textContent : ''; })(n.getAttribute('aria-describedby')),
       })),
       small: SMALL_MODEL_CAUTION,
       name: t ? {size: parseFloat(t.fontSize), weight: Number(t.fontWeight)} : null,
@@ -223,7 +233,7 @@ async function modelStep(run: Run, check: Check): Promise<void> {
     typeof r.want === "string" && r.explain === r.want && r.again === false,
     q({ explain: r.explain, want: r.want, again: r.again }),
   );
-  const rows = (r.rows ?? []) as Array<{ id: string; h: number; lines: number; badges: Array<[string, string]> }>;
+  const rows = (r.rows ?? []) as Array<{ id: string; h: number; lines: number; badges: Array<[string, string]>; described: string }>;
   const byId = (id: string) => rows.find((x) => x.id === id);
   const badgesOf = (id: string) => q(byId(id)?.badges ?? null);
   check(
@@ -234,6 +244,13 @@ async function modelStep(run: Run, check: Check): Promise<void> {
       && badgesOf("qwen-smoke-t45-unc") === q([["Use at your own risk", "Use at your own risk"]])
       && badgesOf("gemma-smoke-t45-tight") === q([["Tight fit", "Tight fit on 18 GB. It will run slowly."]]),
     q(rows),
+  );
+  check(
+    "T45: the caution's sentence is also the row's description, so it reaches the keyboard and a screen reader",
+    byId("qwen-smoke-t45-best")?.described === ""
+      && byId("qwen-smoke-t45-small")?.described === r.small
+      && byId("gemma-smoke-t45-tight")?.described === "Tight fit on 18 GB. It will run slowly.",
+    q(rows.map((x) => [x.id, x.described])),
   );
   check(
     "T45: every model card is the name and one facts line, so every card is the same height",
@@ -326,22 +343,28 @@ async function marks(run: Run, check: Check): Promise<void> {
     try {
       const out = {};
       for (const s of ['', 'sm', 'xs', 'lg']) {
-        box.innerHTML = modelMark('muse-glimmer-30b', s) + logoHTML('qwen', s);
-        const fb = box.children[0], logo = box.children[1];
-        const a = getComputedStyle(fb), b = getComputedStyle(logo);
+        // A model with no mark, then a provider with none (a custom endpoint), beside a real logo of the same size.
+        box.innerHTML = modelMark('muse-glimmer-30b', s) + providerMark('', s) + logoHTML('qwen', s);
+        const [fb, pfb, logo] = box.children;
+        const a = getComputedStyle(fb), p = getComputedStyle(pfb), b = getComputedStyle(logo);
         out[s || 'default'] = {cls: fb.className, w: a.width, h: a.height, lw: b.width, bg: a.backgroundColor, lbg: b.backgroundColor,
-          ring: a.boxShadow !== 'none', icon: !!fb.querySelector('svg'), img: !!fb.querySelector('img')};
+          ring: a.boxShadow !== 'none', icon: !!fb.querySelector('svg'), img: !!fb.querySelector('img'),
+          provider: pfb.className, pw: p.width, pbg: p.backgroundColor};
       }
       return out;
     } finally { box.remove(); }
   })()`);
   const sizes = ["default", "sm", "xs", "lg"];
   check(
-    "T45: a model with no mark of its own (Meta Muse Glimmer 30B) wears its icon on the logo's disc, at the logo's size",
+    "T45: a model with no mark of its own (Meta Muse Glimmer 30B), or a provider with none, wears its icon on the logo's disc, at the logo's size",
     sizes.every((s) => {
-      const m = r[s] as { cls?: string; w?: string; h?: string; lw?: string; bg?: string; lbg?: string; ring?: boolean; icon?: boolean; img?: boolean } | undefined;
+      const m = r[s] as {
+        cls?: string; w?: string; h?: string; lw?: string; bg?: string; lbg?: string; ring?: boolean; icon?: boolean; img?: boolean;
+        provider?: string; pw?: string; pbg?: string;
+      } | undefined;
       return !!m && /\btk-ico--mark\b/.test(m.cls ?? "") && m.w === m.lw && m.h === m.lw && m.bg === m.lbg
-        && m.ring === true && m.icon === true && m.img === false;
+        && m.ring === true && m.icon === true && m.img === false
+        && /\btk-ico--mark\b/.test(m.provider ?? "") && m.pw === m.lw && m.pbg === m.lbg;
     }),
     q(r),
   );
