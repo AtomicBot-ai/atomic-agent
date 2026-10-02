@@ -158,6 +158,7 @@ import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
+import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMetaIds } from "./model-catalog.js";
 import { memoryQuery } from "./memory-db.js";
@@ -1688,9 +1689,14 @@ function wireIpc(client: AgentClient): void {
     if (!clean) return { ok: false, error: "skill name required" };
     return skillSetDisabled(clean, disabled === true);
   });
-  ipcMain.handle("cli:skillBrowse", (_event, query: unknown) =>
-    skillBrowse(typeof query === "string" ? query.slice(0, 200) : "", client.status.workingDir),
+  // Д45: the hub opens on its last answer (main/skills-hub-cache.ts); a browse keeps what it brings back.
+  ipcMain.handle("cli:skillBrowseCached", (_event, query: unknown) =>
+    hubCache.peek(typeof query === "string" ? query.slice(0, 200) : "", hubConfigKey(DESKTOP_STATE_DIR)) ?? { ok: false },
   );
+  ipcMain.handle("cli:skillBrowse", (_event, query: unknown) => {
+    const q = typeof query === "string" ? query.slice(0, 200) : "";
+    return hubCache.refresh(q, hubConfigKey(DESKTOP_STATE_DIR), () => skillBrowse(q, client.status.workingDir));
+  });
   ipcMain.handle("cli:skillInstall", (_event, payload: unknown) => {
     const { identifier, acknowledgeRisk } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown };
     if (typeof identifier !== "string" || !identifier.trim()) return { ok: false, error: "identifier required" };
