@@ -8,10 +8,11 @@
    Frame contract a tab can rely on:
      #settings > .setwin > (nav.setnav > .setmenu) + .setmain
      .setmain  — the floating body card, position:relative (overlays anchor here)
-       .settb    — the section's title (+ Connections' pane switch) and Done
+       .settb    — the section's title (+ Connections' pane switch), the
+                   status line of a pane that polls (Д26) and Done
        .setbody  — the scrolling pane, 24px side padding (paneBox() repaints it)
      .set-pane    — a tab's root: a column with 14px gaps
-     .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · readout · actions)
+     .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · counts · actions)
      .set-overlay > .tk-modal.set-modal — a confirm over the whole body card
    ============================================================ */
 
@@ -81,6 +82,14 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 14px 0 24px}
 .settb .grow{flex:1}
 .settb .setttl{margin:0;font:600 18px/24px var(--font-ui);letter-spacing:-.025em;color:var(--ink)}
+/* Д26: the status line of a pane that polls; empty (and gone) elsewhere. A
+   status, not a control: no hover, no pointer. */
+.set-status{min-width:0;display:flex}
+.set-status:empty{display:none}
+.set-statusin{display:inline-flex;align-items:center;gap:7px;min-width:0;font:400 12px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap}
+.set-statusin > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-statusin .tk-dot{width:7px;height:7px}
+.set-statusin .tk-spin{width:12px;height:12px}
 .settb .set-done{flex:none}
 /* Connections: MCP servers · Telegram beside the title. */
 .settb .set-subseg{margin-left:8px}
@@ -98,11 +107,11 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .set-pane > .tk-bar{min-height:34px}
 
 /* Toolbar */
-/* Two classes: `.tuibar` (kept on the toolbar for tkRefreshBar) and the kit's
-   `.tk-bar` both set align-items/flex-wrap at one class, and a centred column
-   would size each row to its content instead of the pane. */
+/* Two classes: `.tuibar` (the TUI-era class the toolbars still carry) and the
+   kit's `.tk-bar` both set align-items/flex-wrap at one class, and a centred
+   column would size each row to its content instead of the pane. */
 .tk-bar.set-toolbar{flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:10px;white-space:normal}
-/* A toolbar row never wraps: the search box and the readout give up width
+/* A toolbar row never wraps: the search box and the counts give up width
    first, the buttons keep theirs. */
 .set-tbrow{display:flex;align-items:center;flex-wrap:nowrap;gap:8px;min-width:0}
 .set-tbrow > *{flex:none}
@@ -110,9 +119,6 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .set-seg{max-width:100%;overflow-x:auto;scrollbar-width:none}
 .set-seg::-webkit-scrollbar{display:none}
 .set-tbrow > .set-counts{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.set-tbrow > .set-readout{flex:0 1 auto}
-/* The Skills readout is one word (auto / manual); the counts give up width instead. */
-.set-skills .set-tbrow > .set-readout{flex:none}
 .set-search{flex:0 1 280px;min-width:120px;height:34px;padding:0 6px 0 12px;cursor:text;color:var(--ink-3);font-size:13px}
 .set-tbrow > .set-search{flex:0 1 280px}
 .set-tbrow > .set-hubsearch{flex:1 1 300px}
@@ -125,12 +131,6 @@ button.set-search:hover{border-color:var(--bd)}
 .set-search input{font-size:13px}
 .set-search .kc{flex:none}
 .set-hubsearch{flex:1 1 300px}
-.set-readout{display:inline-flex;align-items:center;gap:7px;min-width:0;height:30px;padding:0 10px;border-radius:var(--r-pill);
-  font:400 12px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap;cursor:pointer;
-  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
-.set-readout:hover{background:var(--hover);color:var(--ink)}
-.set-readout > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.set-readout .tk-spin{width:12px;height:12px}
 .set-counts{font-size:12.5px;color:var(--ink-2);white-space:nowrap}
 
 /* Notices in a pane */
