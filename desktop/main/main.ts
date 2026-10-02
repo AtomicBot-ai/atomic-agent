@@ -40,6 +40,9 @@ import {
   verifyProviderKey,
   removeProvider,
   pruneIncompleteProvidersInFile,
+  // ATO-132: provider keys in .env, config.json and .env owner-only
+  moveProviderKeysToDotenv,
+  secureStateFiles,
   modelsStart,
   traceUsage,
   traceTools,
@@ -8486,6 +8489,24 @@ async function pruneIncompleteProvidersAtBoot(): Promise<void> {
   }
 }
 
+/**
+ * ATO-132: before `atag serve` first reads them, config.json and .env are
+ * made readable by this user only, and the provider keys an earlier version
+ * saved in config.json move to .env (agent-cli.ts moveProviderKeysToDotenv).
+ * Never fatal, and never says a key: ids, variable names and reasons only.
+ */
+async function secureProviderKeysAtBoot(): Promise<void> {
+  try {
+    const tightened = secureStateFiles(DESKTOP_STATE_DIR);
+    if (tightened.length) console.log(`[keys] ${tightened.join(" and ")} made readable by this user only`);
+    const r = await moveProviderKeysToDotenv();
+    if (r.moved.length) console.log(`[keys] moved the API keys of ${r.moved.join(", ")} from config.json to .env`);
+    if (r.error) console.warn(`[keys] ${r.error}`);
+  } catch (err) {
+    console.warn(`[keys] could not check where provider keys are kept (${err instanceof Error ? err.name : "error"})`);
+  }
+}
+
 async function claimDesktopPorts(): Promise<void> {
   if (!DESKTOP_STATE_WAS_FRESH) return;
   try {
@@ -8617,7 +8638,7 @@ void app.whenReady().then(async () => {
        schema defaults to 19091/19092, which is what the operator's terminal
        agent also holds; two daemons cannot share a port. On every later
        launch this is skipped entirely, so it costs nothing. */
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(() => {
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(secureProviderKeysAtBoot).then(() => {
       void agent?.start();
       if (SMOKE) void smokeTest();
       else void startLocalDaemonAtBoot();
