@@ -114,7 +114,13 @@ function tpWaitNotice(wait) {
 function tpLocalServerLine(st, said) {
   if (!st) return '';
   if (st.fault) return 'Local model server: ' + st.fault;
-  if (st.mode === 'managed' && !st.daemonRunning) return said ? 'Start it in Settings › Models.' : 'The local model server isn’t running. Start it in Settings › Models.';
+  if (st.mode === 'managed' && !st.daemonRunning) {
+    // ATO-123: main is bringing it back (renderer.js DWATCH): say so, not "start it".
+    if (typeof DWATCH !== 'undefined' && DWATCH && (DWATCH.kind === 'restarting' || DWATCH.kind === 'restart_failed')) {
+      return (said ? '' : 'The local model server stopped. ') + 'It is being started again; the turn goes on once it is back.';
+    }
+    return said ? 'Start it in Settings › Models.' : 'The local model server isn’t running. Start it in Settings › Models.';
+  }
   return '';
 }
 

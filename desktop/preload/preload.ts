@@ -238,6 +238,9 @@ contextBridge.exposeInMainWorld("atomic", {
   swapFusionLegs: () => ipcRenderer.invoke("cli:swapFusionLegs"),
   /** How a daemon a swap started in the background, without waiting, came up (item 11). */
   onDaemon: (cb: (payload: unknown) => void) => on("cli:daemon", cb),
+  /** ATO-123: the local model server brought back after it stopped — each notice (restarting, back, failed, gave up), and the state now. */
+  onDaemonWatch: (cb: (payload: unknown) => void) => on("app:daemonWatch", cb),
+  daemonWatch: () => ipcRenderer.invoke("app:daemonWatch"),
   fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
   fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
   useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),

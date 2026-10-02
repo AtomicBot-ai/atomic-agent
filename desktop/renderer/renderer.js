@@ -808,6 +808,10 @@ const MODE_NEEDS_NEWER = 'Coding modes need Atomic Agent 0.5.7 or newer.';
    on its own tick rather than trusting a number that arrived once. */
 let WAIT = null;
 let WAIT_TICK = 0;
+/* ATO-123: what main's supervisor is doing about the local model server
+   (daemon-supervisor.ts): its last notice while an incident is open —
+   `restarting`, `restart_failed` or `gave_up` — else null. */
+let DWATCH = null;
 
 let BUILD = null;
 /* Provider ids whose key was saved without ever being checked. Read from
@@ -6286,9 +6290,34 @@ function waitCauseWords(cause, providerId) {
   if (kind === 'error_finish') return 'the provider ended its reply with an error';
   return null;   // `unknown`, or a kind this window does not know yet
 }
+/* ATO-123: a turn waiting on the local model server while main brings it
+   back says so, instead of a reason that sends the person to Settings to do
+   what the app is already doing. Only for a wait on the local server. */
+function dwatchWords(wait) {
+  if (!DWATCH || !wait) return '';
+  const local = wait.providerId ? waitIsLocalServer(wait.providerId) : tpActiveIsLocal();
+  if (!local) return '';
+  if (DWATCH.kind === 'restarting') return 'the local model server stopped — starting it again';
+  if (DWATCH.kind === 'restart_failed') return 'the local model server did not come back — trying again';
+  if (DWATCH.kind === 'gave_up') return 'the local model server keeps stopping — start it in Settings › Models';
+  return '';
+}
+/** A notice from main's supervisor: kept while its incident is open, and said once on the app line. */
+function dwatchApply(n) {
+  if (!n || typeof n.kind !== 'string') return;
+  DWATCH = n.kind === 'restarting' || n.kind === 'restart_failed' || n.kind === 'gave_up' ? n : null;
+  if (n.kind === 'restarting') appSay('The local model server stopped — starting it again', 'caution');
+  else if (n.kind === 'restarted') appSay('The local model server is back');
+  else if (n.kind === 'restart_failed') appSay('The local model server did not come back' + (n.fault ? ': ' + n.fault : '') + ' — trying again', 'caution');
+  else if (n.kind === 'gave_up') appSay('The local model server stopped ' + (n.deaths || 3) + ' times within a minute of starting — automatic restarts are off until you start it again', 'caution');
+  render();
+  if (llmVisible()) llmRepaint();
+}
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
   if (!wait) return '';
+  const watching = dwatchWords(wait);
+  if (watching) return watching;
   const said = wait.cause ? waitCauseWords(wait.cause, wait.providerId) : null;
   if (said) return said;
   return wait.reason ? humanWaitReason(wait.reason) : '';
@@ -7802,6 +7831,10 @@ if (BR) {
       toast('The local model did not start', r.error || '', 'bad');
     } else if (r.daemon === 'started') appSay(r.daemonLine || 'local-llm: daemon started');
   });
+  /* ATO-123: main brings the local model server back when it stops under a
+     route that needs it. A window opened during an incident asks for it. */
+  if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
+  if (BR.daemonWatch) BR.daemonWatch().then((st) => { if (st && st.incident) dwatchApply(st.incident); }).catch(() => {});
   BR.status().then(applyStatus);
 
   // Stop routes to the real turn, and the workspace chip opens a picker.
@@ -19667,6 +19700,13 @@ function llmStatusLine() {
     if (LLMP.localBusy && LLMP.lastRefreshedAt === null) return 'local catalog: loading';
     if (LLMP.localErr) return 'local catalog: ' + LLMP.localErr;
     if (LLMP.statusErr) return 'local daemon: ' + LLMP.statusErr;
+    // ATO-123: what main's supervisor is doing about the server, while it is doing it.
+    if (DWATCH && DWATCH.kind === 'gave_up') {
+      return 'local daemon: it stopped ' + (DWATCH.deaths || 3) + ' times within a minute of starting, so it is not restarted automatically'
+        + (DWATCH.fault ? ' (' + DWATCH.fault + ')' : '') + ' — start it again once that is fixed';
+    }
+    if (DWATCH && DWATCH.kind === 'restarting') return 'local daemon: it stopped — starting it again (auto-restart)';
+    if (DWATCH && DWATCH.kind === 'restart_failed') return 'local daemon: the automatic restart failed' + (DWATCH.fault ? ' (' + DWATCH.fault + ')' : '') + ' — trying again';
   } else if (m === 'external') {
     if (LLMP.statusLine && LLMP.statusSource === 'external') return LLMP.statusLine;
   } else {
