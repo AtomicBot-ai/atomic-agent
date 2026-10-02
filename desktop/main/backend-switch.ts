@@ -537,13 +537,15 @@ export async function stopDaemonForQuit(dataDir: string): Promise<number[]> {
    update ends, and the pick's restart aborted that turn. So main decides here,
    whatever the window believed:
 
-   - A superseded result restarts nothing. A stop or a later switch came while
-     it waited for its turn, and a later switch restarts the agent for its own
-     route: this one's would be a second restart, for nothing. Settings › Stop
-     is the one that moves no route. The agent then stays on the route it
-     booted with until the next switch or restart, though the file names this
-     one's; with the model server just stopped, a restart onto it would have
-     had nothing to answer on.
+   - A superseded result restarts nothing when a later switch came while it
+     waited for its turn: that switch restarts the agent for its own route,
+     and this one's would be a second restart, for nothing. Settings › Stop
+     moves no route, though, so (backlog 35) when no newer switch is on its
+     way and the file names another route than serve booted on, main restarts
+     the agent onto the file's route (`drifted`): an agent left on the cloud
+     under a "Local models" label would send the person's messages somewhere
+     the window says they do not go. With the model server just stopped, the
+     restarted agent says so honestly instead.
    - While a turn runs, the restart is held back and the answer says so
      (`restartHeld`). The config is already written, and the window's chips
      read the file, so an agent left on its old route would answer the next
@@ -606,11 +608,13 @@ export async function waitForSwitchRestart(): Promise<void> {
 export async function restartAfterSwitch(
   res: SwitchResult,
   wanted: boolean,
+  /** Backlog 35: superseded by a stop, with the file on another route than serve booted on and no newer switch on its way (main.ts). */
+  drifted = false,
 ): Promise<{ restart: boolean; restartHeld?: true }> {
   // One at a time: from the last look at `restarting` to restartNow setting it, nothing is awaited.
   while (restarting) await restarting;
   const agent = switchAgent;
-  const mine = wanted && res.ok && res.daemon !== "superseded";
+  const mine = wanted && res.ok && (res.daemon !== "superseded" || drifted);
   if (!agent || turnsClosed || !res.ok || !(mine || restartOwed)) return { restart: false };
   if (agent.turnsInFlight() > 0) {
     restartOwed = true;

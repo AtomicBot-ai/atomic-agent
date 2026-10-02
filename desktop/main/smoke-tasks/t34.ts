@@ -238,9 +238,10 @@ export async function checks34(js: Js, check: Check, main: SmokeDownloads): Prom
     process.env.ATOMIC_AGENT_BIN = guard;
     guarded = true;
     if (resolveBinary() !== guard) throw new Error(`the guard is not the binary main runs (${resolveBinary()})`);
-    await step("1", () => supersededRestartsNothing(js, check, g, agent));
+    await step("1", () => supersededRestartsNothing(js, check, g, agent, main, route));
     await step("2", () => heldWhileTurnsRun(js, check, g, agent));
     await step("3", () => noSpawnOnceMovedOn(js, check, g, main));
+    await step("4", () => stopLeavesNoAgentBehindTheFile(js, check, g, agent, main, route));
     settled = await settle();
   } catch (err) {
     check("T34: the checks ran against a guarded agent", false, err instanceof Error ? err.message : String(err));
@@ -268,7 +269,16 @@ export async function checks34(js: Js, check: Check, main: SmokeDownloads): Prom
    does. Settings' Stop meanwhile stands for every stop and route change
    (supersedeBringUp): a cloud pick, another model, the seats moving to the
    cloud. The pick writes its model, so its answer asked for a restart. */
-async function supersededRestartsNothing(js: Js, check: Check, g: Guard, agent: StandIn): Promise<void> {
+async function supersededRestartsNothing(js: Js, check: Check, g: Guard, agent: StandIn, main: SmokeDownloads, route: UserConfigShape): Promise<void> {
+  // serve booted on the route the file names: a stop that supersedes the pick leaves nothing behind (backlog 35 is check 4).
+  const undoBoot = main.bootedOn(route);
+  try {
+    await supersededOnItsRoute(js, check, g, agent);
+  } finally {
+    undoBoot();
+  }
+}
+async function supersededOnItsRoute(js: Js, check: Check, g: Guard, agent: StandIn): Promise<void> {
   g.reset();
   agent.turns = 0;
   agent.restarts = 0;
@@ -296,7 +306,7 @@ async function supersededRestartsNothing(js: Js, check: Check, g: Guard, agent: 
   }
   const after = g.verbs();
   check(
-    "T34 1: a model pick that a stop or a switch superseded while it waited for the daemon's turn restarts nothing once its turn comes — not the agent, not the model server",
+    "T34 1: a model pick that a stop or a switch superseded while it waited for the daemon's turn restarts nothing once its turn comes — not the agent (already on the file's route), not the model server",
     stop?.ok === true && p?.ok === true && p.daemon === "superseded" && p.restart === false && agent.restarts === 0
       && !after.includes("models start begin"),
     JSON.stringify({ stop: brief(stop), pick: brief(p), restarts: agent.restarts, verbs: after }),
@@ -432,4 +442,87 @@ async function noSpawnOnceMovedOn(js: Js, check: Check, g: Guard, main: SmokeDow
       && before(stopVerbs, "stop", "models status end") && !stopVerbs.includes("models start begin"),
     JSON.stringify({ stop: brief(stop), start: { ok: s.ok, error: s.error }, verbs: stopVerbs }),
   );
+}
+
+/* 4 (backlog 35): the pick of check 1, but serve booted on a cloud route. A
+   stop that supersedes the pick moves no route, so the agent would stay on
+   the cloud while the file — and every chip the window reads — names the
+   local model. applySwitch restarts it onto the file's route, once, and still
+   starts no model server. With a second pick on its way as well, only the
+   last answer restarts it: one restart, never two. */
+async function stopLeavesNoAgentBehindTheFile(js: Js, check: Check, g: Guard, agent: StandIn, main: SmokeDownloads, route: UserConfigShape): Promise<void> {
+  const cloud = clone(route);
+  cloud.llm = {
+    ...(cloud.llm ?? {}),
+    activeTextProvider: "smoke-t35-cloud",
+    providers: [...(cloud.llm?.providers ?? []), { id: "smoke-t35-cloud", kind: "openai-compatible", defaultChatModel: "smoke-t35-chat" }],
+    runMode: { mode: "cloud" },
+  };
+  const undoBoot = main.bootedOn(cloud);
+  try {
+    // (a) One pick, superseded by Settings' Stop.
+    const one = await pickThenStop(js, g, agent, 1);
+    check(
+      "T34 4 (backlog 35): a model pick that Settings' Stop superseded restarts an agent that booted on the cloud onto the local route the file names — once — and starts no model server",
+      one.stop?.ok === true && one.picks.length === 1 && one.picks[0]?.ok === true && one.picks[0]?.daemon === "superseded"
+        && one.picks[0]?.restart === true && agent.restarts === 1 && !one.verbs.includes("models start begin"),
+      JSON.stringify({ stop: brief(one.stop), picks: one.picks.map(brief), restarts: agent.restarts, verbs: one.verbs }),
+    );
+    // (b) Two picks waiting, both superseded: the first to answer sees the other on its way and leaves the restart to it.
+    const two = await pickThenStop(js, g, agent, 2);
+    const restarted = two.picks.filter((p) => p?.restart === true).length;
+    check(
+      "T34 4 (backlog 35): with a second switch on its way the restart is left to the last one — one restart, not two",
+      two.stop?.ok === true && two.picks.length === 2 && two.picks.every((p) => p?.ok === true && p.daemon === "superseded")
+        && restarted === 1 && agent.restarts === 1 && !two.verbs.includes("models start begin"),
+      JSON.stringify({ stop: brief(two.stop), picks: two.picks.map(brief), restarts: agent.restarts, verbs: two.verbs }),
+    );
+  } finally {
+    undoBoot();
+  }
+  // (c) Where applySwitch asks: a drifted superseded result restarts; a plain superseded one still does not.
+  agent.restarts = 0;
+  const plain = await restartAfterSwitch({ ok: true, providerId: "local-llama", daemon: "superseded", restart: false }, true);
+  const drifted = await restartAfterSwitch({ ok: true, providerId: "local-llama", daemon: "superseded", restart: false }, true, true);
+  check(
+    "T34 4 (backlog 35): restartAfterSwitch restarts a superseded result only when main says the file left serve's route",
+    plain.restart === false && drifted.restart === true && agent.restarts === 1,
+    JSON.stringify({ plain, drifted, restarts: agent.restarts }),
+  );
+}
+
+/** `n` model picks through the real IPC wait behind a held daemon turn; Settings' Stop; the turn let go. */
+async function pickThenStop(js: Js, g: Guard, agent: StandIn, n: number): Promise<{ stop: Answer; picks: Answer[]; verbs: string[] }> {
+  g.reset();
+  agent.turns = 0;
+  agent.restarts = 0;
+  let release = () => {};
+  let began = () => {};
+  const begun = new Promise<void>((r) => { began = () => r(); });
+  const held = inDaemonTurn(
+    () => new Promise<void>((r) => { release = () => r(); began(); setTimeout(() => r(), 60_000); }),
+    () => { began(); return undefined; },
+  );
+  let stop: Answer = null;
+  let picks: Answer[] = [];
+  try {
+    await within(30_000, "the check's daemon turn", begun);
+    const pending: Promise<Answer>[] = [];
+    for (let i = 0; i < n; i++) {
+      pending.push(js<Answer>(`window.atomic.selectLocalModel(${JSON.stringify(MODEL)})`));
+      // Each pick has made its reads and writes and asked for its turn before the next one comes.
+      if (!(await g.until(() => count(g.verbs(), "models list end") >= i + 1, 20_000))) throw new Error(`pick ${i + 1} never read the catalogue: ${JSON.stringify(g.verbs())}`);
+      if (i === 0 && !(await g.pickAsked())) throw new Error(`the pick never asked for its turn: ${JSON.stringify(g.verbs())}`);
+      if (i > 0) await wait(1_500);
+    }
+    stop = await within(10_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
+    release();
+    await held;
+    picks = await within(30_000, "the superseded picks", Promise.all(pending));
+    await waitForSwitchRestart();
+    await wait(300);
+  } finally {
+    release();
+  }
+  return { stop, picks, verbs: g.verbs() };
 }

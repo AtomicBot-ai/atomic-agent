@@ -453,6 +453,11 @@ const smokeDownloads: SmokeDownloads = {
     const r = downloadRunning();
     return r ? { kind: r.kind, id: r.id } : null;
   },
+  bootedOn(cfg) {
+    const was = bootRoute;
+    bootRoute = Promise.resolve(cfg ? routeOf(cfg as UserConfigShape) : null);
+    return () => { bootRoute = was; };
+  },
 };
 
 /** One `cli:pull` progress frame, kept as its slot's last one when it carries a percent. */
@@ -501,16 +506,29 @@ function parsePullProgress(
 // pins its provider at boot, so a switch whose write found the file already
 // naming that provider (the TUI or a hand edit moved the file while this
 // window was open) still has to restart when serve is behind the file.
-interface BootRoute { provider: string; model: string | null }
+interface BootRoute { provider: string; model: string | null; key: string }
 let bootRoute: Promise<BootRoute | null> = Promise.resolve(null);
+/** The route a config names, as `atag serve` would boot on it. */
+function routeOf(cfg: UserConfigShape | undefined): BootRoute {
+  const llm = cfg?.llm;
+  // No llm block: the runtime synthesizes a single local-llama entry.
+  const provider = llm?.activeTextProvider ?? "local-llama";
+  const entry = (llm?.providers ?? []).find((p) => p.id === provider);
+  const model = entry?.defaultChatModel ?? entry?.model ?? null;
+  /* Backlog 35: everything a switch restarts the agent for — the provider,
+     its chat model on a cloud route (serve pins the entry it read), and the
+     run mode with its seats. */
+  const rm = resolveRunMode(cfg as RunModeConfig);
+  const seats = rm.effective === "fusion"
+    ? [rm.orchestratorProviderId, rm.orchestratorModel, rm.workerProviderId, rm.workerModel, rm.workers]
+    : [];
+  const key = JSON.stringify([provider, provider === "local-llama" ? null : model, rm.effective, ...seats]);
+  return { provider, model, key };
+}
 async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null> {
   try {
     const body = (await client.config()) as { config?: UserConfigShape };
-    const llm = body.config?.llm;
-    // No llm block: the runtime synthesizes a single local-llama entry.
-    const provider = llm?.activeTextProvider ?? "local-llama";
-    const entry = (llm?.providers ?? []).find((p) => p.id === provider);
-    return { provider, model: entry?.defaultChatModel ?? entry?.model ?? null };
+    return routeOf(body.config);
   } catch {
     return null;
   }
@@ -1373,25 +1391,48 @@ function wireIpc(client: AgentClient): void {
        later switch came while it waited for the daemon's turn), and while a
        turn runs in any chat the restart is held back — `restartHeld`, for the
        window to say why — and runs once the last one ends. */
-    const { restart, restartHeld } = await restartAfterSwitch(res, wanted);
+    /* Backlog 35: a superseded result restarts nothing, but a stop that
+       superseded it moved no route, so the agent stays on the one it booted
+       with while the file (and every chip the window reads from it) names this
+       one — a cloud agent under a "Local models" label. So when no newer
+       switch is on its way to restart for its own route, and the file names
+       another route than serve booted on, the agent is restarted onto it. */
+    let drifted = false;
+    if (res.ok && res.daemon === "superseded" && !quitting && boot && switchesOnTheirWay <= 1) {
+      const read = await readWholeConfig();
+      drifted = read.ok && !!read.config && switchesOnTheirWay <= 1 && routeOf(read.config).key !== boot.key;
+    }
+    const { restart, restartHeld } = await restartAfterSwitch(res, wanted || drifted, drifted);
     return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), status: client.status };
+  };
+  /* Backlog 35: the switches between their IPC call and applySwitch's answer.
+     Not a generation count: a newer switch can end without a restart (no key,
+     a refused write), and then nothing restarts for it. */
+  let switchesOnTheirWay = 0;
+  const switched = async (run: () => Promise<SwitchResult>) => {
+    switchesOnTheirWay++;
+    try {
+      return await applySwitch(await run());
+    } finally {
+      switchesOnTheirWay--;
+    }
   };
   ipcMain.handle("cli:switchBackend", async (_event, kind: unknown) => {
     if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
-    return applySwitch(await switchBackend(kind));
+    return switched(() => switchBackend(kind));
   });
   ipcMain.handle("cli:activateProvider", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return applySwitch(await activateProvider(id));
+    return switched(() => activateProvider(id));
   });
   ipcMain.handle("cli:selectCloudModel", async (_event, payload: unknown) => {
     const { id, model } = (payload ?? {}) as { id?: unknown; model?: unknown };
     if (typeof id !== "string" || typeof model !== "string") return { ok: false, error: "id and model are required" };
-    return applySwitch(await selectCloudModel(id, model));
+    return switched(() => selectCloudModel(id, model));
   });
   ipcMain.handle("cli:selectLocalModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    return applySwitch(await selectLocalModel(id));
+    return switched(() => selectLocalModel(id));
   });
   ipcMain.handle("cli:useManagedMode", () => useManagedMode());
   // Review fix (item 5): Settings › LLM › External writes mode + url + the
@@ -1815,12 +1856,12 @@ function wireIpc(client: AgentClient): void {
     if (!providerIdOk(p.orchestratorProvider) || !providerIdOk(p.workerProvider)) {
       return { ok: false, error: "orchestratorProvider and workerProvider must be provider ids" };
     }
-    return applySwitch(await enterFusion({
+    return switched(() => enterFusion({
       ...(typeof p.orchestratorProvider === "string" ? { orchestratorProvider: p.orchestratorProvider } : {}),
       ...(typeof p.workerProvider === "string" ? { workerProvider: p.workerProvider } : {}),
     }));
   });
-  ipcMain.handle("cli:swapFusionLegs", async () => applySwitch(await swapFusionLegs()));
+  ipcMain.handle("cli:swapFusionLegs", async () => switched(() => swapFusionLegs()));
   /* Item 11: a ⇄ brings a daemon that is down up in the background and does
      not wait for it. How that ended goes where the launch start says it (the
      agent log) and to the window, which tells it as it tells a switch's own. */
@@ -1835,11 +1876,11 @@ function wireIpc(client: AgentClient): void {
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
-    return applySwitch(await setFusionWorkers(workers));
+    return switched(() => setFusionWorkers(workers));
   });
   ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    return applySwitch(await selectFusionWorkerModel(id));
+    return switched(() => selectFusionWorkerModel(id));
   });
 
   /* Windows: the overlaid window controls are painted by the system, so they
