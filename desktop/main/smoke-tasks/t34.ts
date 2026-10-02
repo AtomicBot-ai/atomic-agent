@@ -226,6 +226,8 @@ export async function checks34(js: Js, check: Check, main: SmokeDownloads): Prom
   // While the checks run, a stand-in takes main's restarts: none reaches `atag serve`.
   const agent = standInAgent();
   const mainAgent = restartsAgent(agent);
+  // A restart an earlier check left owed would be paid by the first switch here, and read as this one's.
+  agentStarting();
   let guarded = false;
   let settled = false;
   try {
