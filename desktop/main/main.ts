@@ -167,6 +167,9 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 // Backlog 03 — the first-run probe's frame log, summarised.
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
+// Analytics and error reporting (SPEC "Desktop analytics"): one-line hooks below, the logic in these folders.
+import * as A from "./analytics/index.js";
+import { reportAgentExit, reportRendererError, startCrashReporter, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -624,6 +627,7 @@ function createWindow(): BrowserWindow {
     },
   });
   if (freshHere) FRESH_WINDOW.id = window.webContents.id;
+  wireWindowErrorReporting(window);
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
@@ -643,6 +647,7 @@ function createWindow(): BrowserWindow {
     if (FIRST_RUN_PROBE) window.showInactive();
     else window.show();
     windowShownAt = Date.now();
+    A.windowShown();
     if (DEV) window.webContents.openDevTools({ mode: "detach" });
   });
 
@@ -821,6 +826,10 @@ async function leaveManagedRoute<T extends { ok: boolean }>(res: T): Promise<T> 
 }
 
 function wireIpc(client: AgentClient): void {
+  // Analytics: chat_turn_ui, one per turn (analytics/chat-turns.ts).
+  const chatTurns = new A.ChatTurnTracker((summary) => { A.turnEnded(); A.track("chat_turn_ui", { ...summary }); });
+  ipcMain.on("analytics:track", (_event, payload: unknown) => A.trackFromRenderer(payload));
+  ipcMain.on("errors:report", (_event, payload: unknown) => reportRendererError(payload));
   /* End-of-turn notification (tui.notify): a native notification when a
      turn ends while the window is not focused. Never during the smoke run,
      which has no one to interrupt. Clicking it brings the window back. */
@@ -858,6 +867,7 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
   ipcMain.handle("agent:restart", async () => {
+    A.agentRestarting("manual");
     await client.stop();
     return client.start();
   });
@@ -895,6 +905,7 @@ function wireIpc(client: AgentClient): void {
     const want = typeof mode === "string" ? mode : undefined;
     const res = await client.codingMode(want);
     if (want !== undefined && res.ok) lastCodingMode = res.mode ?? want;
+    if (res.ok) chatTurns.setCodingMode(res.mode ?? want);
     return res;
   });
 
@@ -953,6 +964,7 @@ function wireIpc(client: AgentClient): void {
        agent it brings up rather than on one being stopped. */
     // One restart can follow another; the turn starts with no await after the last look.
     let waited = false;
+    const queuedAt = Date.now();
     for (let r = switchRestartOnItsWay(); r; r = switchRestartOnItsWay()) {
       waited = true;
       await r;
@@ -962,6 +974,7 @@ function wireIpc(client: AgentClient): void {
     }
     const turnId = randomUUID();
     turnNotifier.begin(turnId);
+    chatTurns.begin(turnId, Date.now() - queuedAt);
     void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
     return { ok: true, turnId };
   });
@@ -996,6 +1009,7 @@ function wireIpc(client: AgentClient): void {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
+    A.workspaceChosen(dir);
     // Telling the user to restart while the child keeps its old cwd is a lie;
     // move it here instead.
     client.status.workingDir = dir;
@@ -1006,12 +1020,17 @@ function wireIpc(client: AgentClient): void {
 
   // --- setup wizard: config writes and the local model catalogue ---
   ipcMain.handle("cli:configGet", () => configGet());
-  ipcMain.handle("cli:configSet", (_event, payload: unknown) => {
-    const { key, value } = payload as { key?: unknown; value?: unknown };
+  ipcMain.handle("cli:configSet", async (_event, payload: unknown) => {
+    const { key, value, via } = payload as { key?: unknown; value?: unknown; via?: unknown };
     if (typeof key !== "string" || typeof value !== "string") {
       return { ok: false, error: "key and value must be strings" };
     }
-    return configSet(key, value);
+    // Analytics: switching analytics off says so first (analytics_disabled), then stops sending.
+    await A.beforeAnalyticsWrite(key, value, via);
+    const res = await configSet(key, value);
+    A.afterAnalyticsWrite(key);
+    A.telegramConfigWrite(key, value, res);
+    return res;
   });
   ipcMain.handle("cli:modelsList", () => modelsList());
   // Review fix (item 5): the chat route's half of the catalogue, subtracted
@@ -1020,18 +1039,24 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsUse", (_event, id: unknown) =>
     typeof id === "string" ? modelsUse(id) : { ok: false, error: "model id required" },
   );
-  ipcMain.handle("cli:modelsPull", (_event, id: unknown) => {
+  ipcMain.handle("cli:modelsPull", (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
+    const trigger = (opts as { trigger?: unknown } | undefined)?.trigger;   // analytics label only
     const running = downloadRunning();
-    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    // A refusal for the download already running is the window following it (dlAdopt), not a failure.
+    if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: DOWNLOAD_BUSY, running }; }
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
-    const started = modelsPull(id, (line) =>
-      pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
-    );
+    A.downloadStarted(id, trigger);
+    const started = modelsPull(id, (line) => {
+      const progress = parsePullProgress(line, "weights");
+      A.downloadProgress(id, progress);
+      pullFrame(slot, { id, line, ...progress });
+    });
     pull = slot = { ...started, kind: "weights", id, last: null };
     void started.done.then((res) => {
       pull = null;
+      A.downloadFinished(id, res);
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
     });
     return { ok: true, started: true };
@@ -1051,6 +1076,7 @@ function wireIpc(client: AgentClient): void {
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     const id = "llama.cpp";
     const own = new AbortController();
+    const updateStartedAt = Date.now();
     let slot: DownloadSlot | null = null;
     const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean }>(
       own.signal,
@@ -1066,6 +1092,7 @@ function wireIpc(client: AgentClient): void {
     pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
     void done.then((res) => {
       pullUpdate = null;
+      A.runtimeUpdated("setup", updateStartedAt, res, own.signal.aborted);
       send("cli:pull", {
         id,
         done: true,
@@ -1095,6 +1122,7 @@ function wireIpc(client: AgentClient): void {
       return true;
     }
     if (!pull) return false;
+    if (pull.kind === "weights") A.downloadCancelRequested();
     pull.cancel();
     return true;
   });
@@ -1121,12 +1149,14 @@ function wireIpc(client: AgentClient): void {
       const repo = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
       hfLookup = null;
+      A.hfLookupDone({ choices: repo.choices.length });
       return { ok: true, repo };
     } catch (err) {
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
       hfLookup = null;
       if (controller.signal.aborted) return { ok: false, cancelled: true, error: "cancelled" };
       const message = err instanceof Error ? err.message : String(err);
+      A.hfLookupDone({ error: message });   // reduced to an enum there; the message never leaves
       return { ok: false, error: hfGatedTokenHint(message, stateDirPath()) };
     }
   });
@@ -1289,7 +1319,7 @@ function wireIpc(client: AgentClient): void {
   /* r6 cloud item 2: the wizard's key check, done honestly — one real
      one-token completion against the provider, instead of a catalogue
      lookup that answered for any string at all. */
-  ipcMain.handle("cli:verifyProviderKey", (_event, payload: unknown) => {
+  ipcMain.handle("cli:verifyProviderKey", async (_event, payload: unknown) => {
     const { entry, model } = (payload ?? {}) as { entry?: unknown; model?: unknown };
     const e = entry as Partial<ProviderEntry>;
     if (!e || typeof e.id !== "string" || typeof e.kind !== "string") {
@@ -1298,7 +1328,9 @@ function wireIpc(client: AgentClient): void {
     if (typeof model !== "string" || !model) {
       return { ok: false, checked: false, error: "model is required" };
     }
-    return verifyProviderKey(e as ProviderEntry, model);
+    const res = await verifyProviderKey(e as ProviderEntry, model);
+    A.providerKeyChecked(e.id, res);
+    return res;
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
@@ -1352,6 +1384,7 @@ function wireIpc(client: AgentClient): void {
   restartsAgent({
     turnsInFlight: () => client.turnsInFlight,
     restart: async () => {
+      A.agentRestarting("switch");
       await client.stop();
       // The app began quitting meanwhile: no fresh `atag serve` behind it.
       if (quitting) return;
@@ -1409,12 +1442,15 @@ function wireIpc(client: AgentClient): void {
      Not a generation count: a newer switch can end without a restart (no key,
      a refused write), and then nothing restarts for it. */
   let switchesOnTheirWay = 0;
-  const switched = async (run: () => Promise<SwitchResult>) => {
+  const switched = async (run: () => Promise<SwitchResult>, fusion?: Parameters<typeof A.switchEnd>[2]) => {
     switchesOnTheirWay++;
+    const began = A.switchBegin();
+    let answer: unknown = null;
     try {
-      return await applySwitch(await run());
+      return (answer = await applySwitch(await run()));
     } finally {
       switchesOnTheirWay--;
+      A.switchEnd(began, answer, fusion);   // backend_switched (+ fusion_configured, model_configured)
     }
   };
   ipcMain.handle("cli:switchBackend", async (_event, kind: unknown) => {
@@ -1610,11 +1646,11 @@ function wireIpc(client: AgentClient): void {
   });
   ipcMain.handle("agent:cancelTask", (_event, id: unknown) => {
     const clean = taskId(id);
-    return clean ? wrap(() => client.cancelTask(clean)) : { ok: false, error: "task id required" };
+    return clean ? wrap(() => client.cancelTask(clean)).then((res) => (A.taskAction("cancel", res), res)) : { ok: false, error: "task id required" };
   });
   ipcMain.handle("agent:runTask", (_event, id: unknown) => {
     const clean = taskId(id);
-    return clean ? wrap(() => client.runTask(clean)) : { ok: false, error: "task id required" };
+    return clean ? wrap(() => client.runTask(clean)).then((res) => (A.taskAction("run", res), res)) : { ok: false, error: "task id required" };
   });
   ipcMain.handle("agent:health", () => wrap(() => client.health()));
   // 0.6.6 live routes: MCP restart / enable / disable and the deep-merge config patch.
@@ -1631,7 +1667,7 @@ function wireIpc(client: AgentClient): void {
     return taskCreate(
       { message, kind, expression, ...(typeof tz === "string" && tz.trim() ? { tz: tz.trim() } : {}) },
       client.status.workingDir,
-    );
+    ).then((res) => (A.taskCreated(kind, res), res));
   });
   ipcMain.handle("cli:skillList", () => skillList(client.status.workingDir));
   ipcMain.handle("cli:configGetKey", (_event, key: unknown) =>
@@ -1669,7 +1705,7 @@ function wireIpc(client: AgentClient): void {
     const { name, source } = (payload ?? {}) as { name?: unknown; source?: unknown };
     const clean = skillName(name);
     if (!clean) return { ok: false, error: "skill name required" };
-    return wrap(() => client.uninstallSkill(clean, source === "project" ? "project" : "global"));
+    return wrap(() => client.uninstallSkill(clean, source === "project" ? "project" : "global")).then((res) => (A.skillAction("remove", res), res));
   });
   // Whole-file write of one dotted key (llm.* and mcp.servers have no leaf on 0.5.4).
   ipcMain.handle("cli:configSetPath", (_event, payload: unknown) => {
@@ -1686,7 +1722,7 @@ function wireIpc(client: AgentClient): void {
     const { name, disabled } = (payload ?? {}) as { name?: unknown; disabled?: unknown };
     const clean = skillName(name);
     if (!clean) return { ok: false, error: "skill name required" };
-    return skillSetDisabled(clean, disabled === true);
+    return skillSetDisabled(clean, disabled === true).then((res) => (A.skillAction(disabled === true ? "disable" : "enable", res), res));
   });
   ipcMain.handle("cli:skillBrowse", (_event, query: unknown) =>
     skillBrowse(typeof query === "string" ? query.slice(0, 200) : "", client.status.workingDir),
@@ -1694,7 +1730,7 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:skillInstall", (_event, payload: unknown) => {
     const { identifier, acknowledgeRisk } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown };
     if (typeof identifier !== "string" || !identifier.trim()) return { ok: false, error: "identifier required" };
-    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir);
+    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir).then((res) => (A.skillInstalled(res, acknowledgeRisk === true), res));
   });
   ipcMain.handle("app:clawhubSkillDetail", (_event, payload: unknown) => {
     const { apiBase, slug, owner } = (payload ?? {}) as { apiBase?: unknown; slug?: unknown; owner?: unknown };
@@ -1748,12 +1784,15 @@ function wireIpc(client: AgentClient): void {
     if (smokeOffline) return { ok: false, stdout: "", stderr: "", error: SMOKE_OFFLINE };
     const own = new AbortController();
     settingsUpdate = own;
+    const updateStartedAt = Date.now();
     try {
-      return await updateInTurn<CliResult>(
+      const res = await updateInTurn<CliResult>(
         own.signal,
         (error) => ({ ok: false, stdout: "", stderr: "", error }),
         () => modelsUpdate({ signal: own.signal }),
       );
+      A.runtimeUpdated("settings", updateStartedAt, res, own.signal.aborted);
+      return res;
     } finally {
       if (settingsUpdate === own) settingsUpdate = null;
     }
@@ -1763,9 +1802,13 @@ function wireIpc(client: AgentClient): void {
     typeof id === "string" ? modelsUseDevice(id) : { ok: false, error: "device id required" },
   );
   // `atag config unset <leaf>` — the Telegram tab's `O clear owner` (telegram.ownerUserId back to its null default).
-  ipcMain.handle("cli:configUnset", (_event, key: unknown) =>
-    typeof key === "string" ? configUnset(key) : { ok: false, error: "key must be a string" },
-  );
+  ipcMain.handle("cli:configUnset", async (_event, key: unknown) => {
+    if (typeof key !== "string") return { ok: false, error: "key must be a string" };
+    const res = await configUnset(key);
+    A.afterAnalyticsWrite(key);   // unset analytics.enabled = the default, on
+    A.telegramConfigWrite(key, null, res);
+    return res;
+  });
   ipcMain.handle("cli:importRun", (_event, input: unknown) => {
     const i = (input ?? {}) as Record<string, unknown>;
     // r5 item 7: all four sources `atag import` accepts, not two.
@@ -1782,7 +1825,7 @@ function wireIpc(client: AgentClient): void {
       limit: typeof i["limit"] === "string" ? i["limit"] : "",
       execute: i["execute"] === true,
     };
-    return importRun(clean, client.status.workingDir);
+    return importRun(clean, client.status.workingDir).then((res) => (A.agentImportDone(source, clean.execute, res), res));
   });
   /* ---- r5 item 9: the desktop's own state directory ------------------
      `app:firstRun` is what makes a first launch unmissable rather than
@@ -1812,7 +1855,7 @@ function wireIpc(client: AgentClient): void {
      writes what the app actually holds — the agent log on disk, the config
      with every secret removed, and what this build is — next to the state
      directory, and answers with the path so the window can reveal it. */
-  ipcMain.handle("app:debugBundle", async () => {
+  ipcMain.handle("app:debugBundle", async (_event, kind: unknown) => {
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const out = join(app.getPath("downloads"), `atomic-agent-debug-${stamp}.txt`);
@@ -1841,6 +1884,7 @@ function wireIpc(client: AgentClient): void {
         "--- agent log (tail) ---",
         log,
       ].join("\n"));
+      A.debugReportSaved(kind, { ok: true });
       return { ok: true, path: out };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1859,9 +1903,9 @@ function wireIpc(client: AgentClient): void {
     return switched(() => enterFusion({
       ...(typeof p.orchestratorProvider === "string" ? { orchestratorProvider: p.orchestratorProvider } : {}),
       ...(typeof p.workerProvider === "string" ? { workerProvider: p.workerProvider } : {}),
-    }));
+    }), { action: "enter" });
   });
-  ipcMain.handle("cli:swapFusionLegs", async () => switched(() => swapFusionLegs()));
+  ipcMain.handle("cli:swapFusionLegs", async () => switched(() => swapFusionLegs(), { action: "swap_legs" }));
   /* Item 11: a ⇄ brings a daemon that is down up in the background and does
      not wait for it. How that ended goes where the launch start says it (the
      agent log) and to the window, which tells it as it tells a switch's own. */
@@ -1873,14 +1917,15 @@ function wireIpc(client: AgentClient): void {
     send("agent:log", { stream: "stderr", line });
     // The launch start was only ever a log line; a ⇄'s also tells the window.
     if (r.via === "swap") send("cli:daemon", r);
+    if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
-    return switched(() => setFusionWorkers(workers));
+    return switched(() => setFusionWorkers(workers), { action: "set_workers" });
   });
   ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    return switched(() => selectFusionWorkerModel(id));
+    return switched(() => selectFusionWorkerModel(id), { action: "pick_worker_model" });
   });
 
   /* Windows: the overlaid window controls are painted by the system, so they
@@ -1930,7 +1975,7 @@ function wireIpc(client: AgentClient): void {
     return importFromTui(flags, {
       stopAgent: () => client.stop(),
       startAgent: () => client.start(),
-    });
+    }).then((res) => (A.tuiImportDone({ ...flags }, res), res));
   });
 
   // import-panel-state.ts defaultSourceDir: the env override or ~/.hermes / ~/.openclaw.
@@ -1951,10 +1996,12 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:setExternalLlamaUrls", async (_event, payload: unknown) => {
     const p = (payload ?? {}) as { chatUrl?: unknown; embeddingUrl?: unknown };
     if (typeof p.chatUrl !== "string" || !p.chatUrl) return { ok: false, changed: false, error: "chat url required" };
-    return leaveManagedRoute(await setExternalLlamaUrls({
+    const res = await leaveManagedRoute(await setExternalLlamaUrls({
       chatUrl: p.chatUrl,
       ...(typeof p.embeddingUrl === "string" && p.embeddingUrl ? { embeddingUrl: p.embeddingUrl } : {}),
     }));
+    if (res.ok) A.maybeModelConfigured();   // the custom-endpoint route: model_configured, once
+    return res;
   });
   ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
     typeof dataDir === "string" && isAbsoluteOn(process.platform, dataDir) ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
@@ -1969,12 +2016,14 @@ function wireIpc(client: AgentClient): void {
     envPresent(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string").slice(0, 64) : []),
   );
   // The one key the desktop writes into .env: the Telegram bot token (the TUI's telegram-settings.ts setToken).
-  ipcMain.handle("app:dotenvSet", (_event, payload: unknown) => {
+  ipcMain.handle("app:dotenvSet", async (_event, payload: unknown) => {
     const { stateDir, key, value } = (payload ?? {}) as { stateDir?: unknown; key?: unknown; value?: unknown };
     if (!ownDir(stateDir)) return { ok: false, error: "state dir required" };
     if (key !== "TELEGRAM_BOT_TOKEN") return { ok: false, error: "only TELEGRAM_BOT_TOKEN may be written from the desktop" };
     if (value !== null && typeof value !== "string") return { ok: false, error: "value must be a string or null" };
-    return dotenvSet(stateDir, key, value);
+    const res = await dotenvSet(stateDir, key, value);
+    A.telegramStep(value === null ? "token_cleared" : "token_saved", res);   // never the token
+    return res;
   });
 
   /* ---- Item 2 (voice input) --------------------------------------------
@@ -1983,19 +2032,22 @@ function wireIpc(client: AgentClient): void {
      is written to config.json and no `atag serve` restart is involved. */
   ipcMain.handle("voice:probe", async () => {
     const probe = await voice.probe();
+    A.voiceProbed(probe);
     return { ok: true, data: { ...probe, chosen: readVoicePrefs().locales } };
   });
-  ipcMain.handle("voice:start", (_event, locales: unknown) => {
+  ipcMain.handle("voice:start", async (_event, locales: unknown) => {
     const wanted = Array.isArray(locales) ? locales.filter((l): l is string => typeof l === "string") : [];
-    return voice.start(wanted, (payload) => send("app:voice", payload));
+    const res = await voice.start(wanted, (payload) => { A.voiceFrame(payload); send("app:voice", payload); });
+    A.voiceStarted(res);
+    return res;
   });
   // `on`, not `handle`: this fires ten times a second and no answer is wanted.
   ipcMain.on("voice:audio", (_event, chunk: unknown) => voice.audio(chunk));
-  ipcMain.handle("voice:stop", () => voice.stop());
-  ipcMain.handle("voice:cancel", () => voice.cancel());
+  ipcMain.handle("voice:stop", () => { A.voiceEnded("stop"); return voice.stop(); });
+  ipcMain.handle("voice:cancel", () => { A.voiceEnded("cancel"); return voice.cancel(); });
   ipcMain.handle("voice:install", (_event, locale: unknown) =>
     typeof locale === "string" && locale
-      ? voice.install(locale, (payload) => send("app:voice", payload))
+      ? voice.install(locale, (payload) => send("app:voice", payload)).then((res) => (A.voiceInstalled(res), res))
       : Promise.resolve({ ok: false, error: "locale required" }),
   );
   ipcMain.handle("voice:setLocales", (_event, locales: unknown) =>
@@ -2006,6 +2058,16 @@ function wireIpc(client: AgentClient): void {
   client.on("chat", (event) => send("agent:chat", event));
   client.on("chat", (event) => turnNotifier.observe(event));
   client.on("approval", (event) => send("agent:approval", event));
+  // Analytics and error reporting: counts, enums and exit codes only.
+  client.on("chat", (event) => chatTurns.observe(event));
+  client.on("approval", (event) => chatTurns.approval(event));
+  client.on("status", (status: { state?: string }) => A.agentStatus(status));
+  client.on("start-failed", (detail) => A.agentStartFailed(detail));
+  client.on("orphan-reaped", () => A.noteOrphanReaped());
+  client.on("unexpected-exit", (d: { exitCode: number | null; signal: string | null; phase: string }) => {
+    if (d.phase === "starting") A.agentStartFailed({ reason: "exited", exitCode: d.exitCode, signal: d.signal });
+    reportAgentExit(d);
+  });
   client.on("log", (event) => send("agent:log", event));
   /* The agent's own last words, kept for the smoke fixture. `atag serve`
      explains itself on stderr, but those lines only ever reached the
@@ -8365,6 +8427,7 @@ async function backendSwitchTest(
  * route, or a model not yet downloaded leaves everything as it is.
  */
 async function startLocalDaemonAtBoot(): Promise<void> {
+  let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
   try {
     const read = await readWholeConfig();
     if (!read.ok || !read.config) return;
@@ -8380,15 +8443,21 @@ async function startLocalDaemonAtBoot(): Promise<void> {
        ⇄ swap, as a side effect that made the swap stick (item 11). */
     const fusionLocalSeat = runModeWantsDaemon(resolveRunMode(cfg as RunModeConfig), cfg.localModels ?? {});
     if (!localRoute && !fusionLocalSeat) return;
+    backendUp = false;
     const st = await modelsStatus();
     if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
     /* Item 11: as the background bring-up — a ⇄ or a start made while the
        model loads queues behind it rather than starting a second daemon, and
        a stop (a cloud switch, Settings › Stop) ends it at once instead of
        waiting out the load. It says how it went through onBackgroundBringUp. */
-    await bringUpAtLaunch(st.status.activeModel);
+    const bringUpAt = Date.now();
+    const up = await bringUpAtLaunch(st.status.activeModel);
+    A.localBackendStarted("launch", up.daemon, st.status.activeModel, Date.now() - bringUpAt);
+    backendUp = up.daemon === "started" || up.daemon === "untouched" || up.daemon === "restarted";
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    A.launchBackendSettled(backendUp);
   }
 }
 
@@ -8505,6 +8574,15 @@ async function firstRunProbe(): Promise<void> {
   app.exit(0);
 }
 
+/* Analytics and crash reporting, before app.whenReady as Electron's
+   crashReporter asks. Gated live on analytics.enabled; a test run sends nothing. */
+A.initAnalytics({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR });
+A.configureDownloads({ stateDir: DESKTOP_STATE_DIR, hostRamGb: () => FAKE_RAM_GB ?? hostRamGb() });
+A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
+A.beginSession();
+startCrashReporter();
+wireProcessErrorReporting();
+
 void app.whenReady().then(async () => {
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
@@ -8536,6 +8614,7 @@ void app.whenReady().then(async () => {
        launch this is skipped entirely, so it costs nothing. */
     void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(() => {
       void agent?.start();
+      A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
       else void startLocalDaemonAtBoot();
     });
@@ -8545,6 +8624,7 @@ void app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       win = createWindow();
       win.on("closed", () => voice.kill());
+      A.appOpened("reopen", false);
     }
   });
 });
@@ -8573,6 +8653,8 @@ app.on("before-quit", (event) => {
   // microphone button.
   voice.kill();
   stopForQuit();
+  // Analytics: app_closed and a last flush, bounded (2 s); idempotent across repeated Quits.
+  const analyticsClosed = A.appClosing();
   // Item 30: a Quit while the quit's shutdown runs waits for it (quitShutdown).
   if (quitShutdown) {
     if (!quitShutdown.done) event.preventDefault();
@@ -8584,7 +8666,7 @@ app.on("before-quit", (event) => {
   agent = null;
   const shutdown = { done: false };
   quitShutdown = shutdown;
-  void client.stop().catch(() => undefined).then(stopLocalDaemonOnQuit).finally(() => {
+  void client.stop().catch(() => undefined).then(stopLocalDaemonOnQuit).then(() => analyticsClosed).finally(() => {
     shutdown.done = true;
     app.quit();
   });

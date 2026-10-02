@@ -373,6 +373,8 @@ export class AgentClient extends EventEmitter {
       // terminal when the app was started from one.
       this.emit("log", { stream: "stderr", line: said });
       console.error(said);
+      // Analytics: the last session did not end cleanly (app_opened.prev_session_crashed).
+      this.emit("orphan-reaped");
     }
     this.token = randomBytes(24).toString("hex");
     this.port = await freePort();
@@ -419,6 +421,8 @@ export class AgentClient extends EventEmitter {
         this.setStatus({ state: "stopped", port: null, llama: null });
         return;
       }
+      // Analytics / error reporting: numbers and a signal name only, never the agent's output.
+      this.emit("unexpected-exit", { exitCode: code, signal, phase: this.status.state === "starting" ? "starting" : "running" });
       this.setStatus({
         state: "error",
         port: null,
@@ -430,6 +434,8 @@ export class AgentClient extends EventEmitter {
     const budget = this.healthBudgetMs();
     const ok = await this.waitForHealth(budget);
     if (!ok) {
+      // A child still alive ran out of time; one that died on the way said so through `unexpected-exit`.
+      if (this.child) this.emit("start-failed", { reason: "health_timeout", exitCode: null, signal: null });
       this.setStatus({
         state: "error",
         error: `The agent did not become healthy within ${Math.round(budget / 1000)}s.`,

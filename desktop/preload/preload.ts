@@ -103,11 +103,15 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),
-  configSet: (key: string, value: string) => ipcRenderer.invoke("cli:configSet", { key, value }),
+  /** `via` (settings | slash) only matters for analytics.enabled: it is what `analytics_disabled` says. */
+  configSet: (key: string, value: string, via?: string) =>
+    ipcRenderer.invoke("cli:configSet", via === undefined ? { key, value } : { key, value, via }),
   modelsList: () => ipcRenderer.invoke("cli:modelsList"),
   chatModelsList: () => ipcRenderer.invoke("cli:chatModelsList"),
   modelsUse: (id: string) => ipcRenderer.invoke("cli:modelsUse", id),
-  modelsPull: (id: string) => ipcRenderer.invoke("cli:modelsPull", id),
+  /** `opts.trigger` (onboarding | settings | selector) only labels the download for analytics. */
+  modelsPull: (id: string, opts?: { trigger?: string }) =>
+    opts === undefined ? ipcRenderer.invoke("cli:modelsPull", id) : ipcRenderer.invoke("cli:modelsPull", id, opts),
   cancelPull: () => ipcRenderer.invoke("cli:cancelPull"),
   onPull: (cb: (payload: unknown) => void) => on("cli:pull", cb),
   modelsSearch: (query: string, provider?: string, limit?: number) =>
@@ -206,7 +210,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Windows: repaint the overlaid window controls for the page's theme. */
   setChromeTheme: (dark: boolean) => ipcRenderer.invoke("app:chromeTheme", dark),
   build: () => ipcRenderer.invoke("app:build"),
-  debugBundle: () => ipcRenderer.invoke("app:debugBundle"),
+  /** `kind` (dump | report) only labels the bundle for analytics. */
+  debugBundle: (kind?: "dump" | "report") =>
+    kind === undefined ? ipcRenderer.invoke("app:debugBundle") : ipcRenderer.invoke("app:debugBundle", kind),
   unverified: () => ipcRenderer.invoke("app:unverified"),
   unverifiedSet: (id: string, on: boolean) => ipcRenderer.invoke("app:unverifiedSet", { id, on }),
 
@@ -284,4 +290,30 @@ contextBridge.exposeInMainWorld("atomic", {
   undeliveredSteers: (sessionId: string) => ipcRenderer.invoke("agent:undeliveredSteers", sessionId),
   ackSteers: (sessionId: string, through: number, discarded: number) =>
     ipcRenderer.invoke("agent:ackSteers", { sessionId, through, discarded }),
+
+  /** Analytics (SPEC "Desktop transport"): fire and forget. Main re-validates
+   *  every event against its allowlist and drops anything it does not know;
+   *  nothing is sent while analytics is off. */
+  track: (event: string, props?: Record<string, unknown>) => {
+    if (typeof event !== "string") return;
+    try {
+      ipcRenderer.send("analytics:track", { event, props: props && typeof props === "object" ? props : {} });
+    } catch {
+      /* a value that cannot cross the bridge is dropped, never thrown at the caller */
+    }
+  },
+  /** A renderer error for the crash report. Main scrubs it (no message, basenames only). */
+  reportError: (payload: { kind: "error" | "unhandledrejection"; name: string; message: string; stack: string }) => {
+    if (!payload || typeof payload !== "object") return;
+    try {
+      ipcRenderer.send("errors:report", {
+        kind: payload.kind,
+        name: String(payload.name ?? ""),
+        message: String(payload.message ?? ""),
+        stack: typeof payload.stack === "string" ? payload.stack.slice(0, 20_000) : "",
+      });
+    } catch {
+      /* never thrown at the caller */
+    }
+  },
 });

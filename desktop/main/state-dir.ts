@@ -41,6 +41,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { isAbsoluteOn, isUnder, trimTrailingSep } from "./platform.js";
+import { agentAnalyticsEnv } from "./analytics/environment.js";
 
 function absoluteEnv(name: string): string | null {
   const raw = process.env[name];
@@ -128,7 +129,8 @@ export function claimPortsIn(cfg: Record<string, unknown>): boolean {
  * exists to end — so every spawn site names it.
  */
 export function agentEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, ATOMIC_AGENT_STATE_DIR: DESKTOP_STATE_DIR };
+  // Analytics: the agent tags its own events surface=desktop, with this install channel and desktop version.
+  return { ...process.env, ...agentAnalyticsEnv(), ATOMIC_AGENT_STATE_DIR: DESKTOP_STATE_DIR };
 }
 
 /** Is `p` the desktop's state directory, or inside it? */
