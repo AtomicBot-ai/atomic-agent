@@ -4594,13 +4594,21 @@ function generalPane() {
             + '<button class="set-link" data-act="settings:privacy">What is sent</button></div>'
           + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
-        + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (PRIV.busy || pending ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : '—')) + '</span>'
-        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
-          + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
+        + setSwitchHTML({on, busy: PRIV.busy || pending, disabled: !known || PRIV.busy, act: 'privacy:analytics',
+          label: 'Anonymous usage analytics', title: 'Turn analytics ' + (on ? 'off' : 'on')})
       + '</div>'
       + nameChatsRowHTML()
     + '</div>'
     + '</div>';
+}
+/* Д28: a toggle row in General ends in its switch. The "On" / "Off" word
+   beside it said what the switch already shows; a spinner stands in that
+   spot while the setting is read or written. The Notify (tui-parity.js) and
+   Name chats (session-titles.js) rows draw theirs here too. */
+function setSwitchHTML(o) {
+  return (o.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
+    + '<button class="tk-switch' + (o.on ? ' on' : '') + '" role="switch" aria-checked="' + !!o.on + '" aria-label="' + esc(o.label) + '"'
+    + ' data-act="' + esc(o.act) + '"' + (o.busy ? ' aria-busy="true"' : '') + (o.disabled ? ' disabled' : '') + ' title="' + esc(o.title) + '"></button>';
 }
 /* The restart notice and the error line an analytics or read-scope write
    leaves behind, on whichever of General / Privacy is showing. */
