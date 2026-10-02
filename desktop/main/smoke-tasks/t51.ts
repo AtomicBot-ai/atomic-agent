@@ -53,6 +53,7 @@ async function keyPresentInMain(check: Check): Promise<void> {
       show({ none, some }),
     );
     // A custom URL on this machine needs no key: an empty field there is not asked for.
+    delete process.env[NAME];   // the yes below must come from the local URL, not the variable
     const local = await providerKeyPresent({ kind: "openai-compatible", apiKeyEnvVar: NAME, baseUrl: "http://localhost:8000/v1" });
     check(
       "T51: an empty key on a custom server at localhost is not asked for — a server on this machine needs none",

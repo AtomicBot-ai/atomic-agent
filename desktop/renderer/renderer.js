@@ -17554,7 +17554,9 @@ function bswOpenKey(id, keyInvalid) {
      Anthropic's screen — "Paste your Anthropic API key" over a Groq entry —
      and the save then took Anthropic's URL. A hand-named OpenAI-compatible
      entry opens the custom row, which keeps its own URL. */
-  const row = KIND_ROWS.find((k) => k.id === id)
+  const byId = KIND_ROWS.find((k) => k.id === id);
+  // The id's preset only when the entry is still of its kind: a hand-edited entry keeps its own kind and URL.
+  const row = (byId && (!entry || byId.kind === entry.kind) ? byId : null)
     || (entry && entry.kind === 'openai-compatible' ? KIND_ROWS.find((k) => k.custom) : null)
     || (entry && KIND_ROWS.find((k) => k.kind === entry.kind));
   const env = (entry && entry.apiKeyEnvVar) || (row && row.env);
