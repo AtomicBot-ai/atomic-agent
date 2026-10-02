@@ -14103,9 +14103,9 @@ function reassertCodingMode(id) {
    surface over. The plan bar's failure check drives THIS function's own
    "came back !ok" branch through it, rather than patching window.atomic,
    which the contextBridge freezes. Nothing else passes it. */
-async function setCodingMode(id, post) {
+async function setCodingMode(id, post, anxViaGiven) {
   if (S.busy) { toast('Not while a turn is running'); return; }
-  const anxFrom = MODE.current, anxVia = ANX.modeVia();   // analytics: read before the round trip
+  const anxFrom = MODE.current, anxVia = anxViaGiven || ANX.modeVia();   // analytics: a caller that knows says so; else the marker
   // An explicit click outranks anything the reconnect path is still waiting
   // to re-assert: without this a queued re-assert would land after the turn
   // ends and quietly put the stance back to what the window had before.
@@ -14292,7 +14292,7 @@ async function executePlan(mode) {
   const mine = MODE.seq + 1;
   await setCodingMode(mode, PLAN.failMode
     ? () => Promise.resolve({ok:false, supported:true, error:'forced by __planFailMode'})
-    : undefined);
+    : undefined, 'plan_bar');
   PLAN.busy = false;
   if (MODE.seq !== mine) {
     S.log.push({id:nid(), k:'system', note:true,
