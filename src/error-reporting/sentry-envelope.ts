@@ -11,6 +11,22 @@ export interface EnvelopeMeta {
   release: string;
   /** OS platform tag (`darwin` / `linux` / `win32`). */
   platform: string;
+  /** Product surface enum (`desktop` / `tui` / `cli`). */
+  surface?: string;
+  /** Install channel enum (`curl_sh` / `dmg` / … / `unknown`). */
+  installChannel?: string;
+  /** Desktop app version, only under the desktop app. */
+  desktopVersion?: string;
+}
+
+/**
+ * Process-wide tags shared with product analytics. Structurally matches
+ * `AnalyticsDimensions` so the runtime can pass the same object to both.
+ */
+export interface ErrorReportDimensions {
+  surface: string;
+  installChannel: string;
+  desktopVersion?: string;
 }
 
 /** A ready-to-send envelope: the POST body plus its event id. */
@@ -45,6 +61,9 @@ export function buildEnvelope(
     error_type: ev.errorType,
     source: ev.source,
   };
+  if (meta.surface) tags.surface = meta.surface;
+  if (meta.installChannel) tags.install_channel = meta.installChannel;
+  if (meta.desktopVersion) tags.desktop_version = meta.desktopVersion;
   if (ev.causeType) tags.cause_type = ev.causeType;
   if (ev.category) tags.category = ev.category;
   if (ev.code) tags.code = ev.code;

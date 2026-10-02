@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PrivacyOrchestrator } from "./privacy-orchestrator.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -78,5 +78,21 @@ describe("PrivacyOrchestrator", () => {
       categories: ["shell"],
       shapes: ["git"],
     });
+  });
+
+  it("passes where an opt-out came from to the runtime", async () => {
+    const { bus } = makeBus();
+    const setAnalyticsEnabled = vi.fn(async (..._args: unknown[]) => {});
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+      setAnalyticsEnabled,
+    } as unknown as AgentRuntime;
+    const orchestrator = new PrivacyOrchestrator(runtime, bus);
+    await orchestrator.setAnalyticsEnabled(false, "slash");
+    expect(setAnalyticsEnabled).toHaveBeenLastCalledWith(false, "slash");
+    // The settings-tab toggle flips the (now false) value back on.
+    await orchestrator.toggleAnalytics();
+    expect(setAnalyticsEnabled).toHaveBeenLastCalledWith(true, "settings");
   });
 });

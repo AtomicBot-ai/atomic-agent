@@ -5,7 +5,11 @@ import {
   type ParsedSentryDsn,
 } from "./sentry-config.js";
 import type { ScrubbedErrorEvent } from "./error-scrubber.js";
-import { buildEnvelope, buildSentryAuthHeader } from "./sentry-envelope.js";
+import {
+  buildEnvelope,
+  buildSentryAuthHeader,
+  type ErrorReportDimensions,
+} from "./sentry-envelope.js";
 
 /** Minimal logger surface so this module does not depend on the tracing package. */
 export interface ErrorReportLogger {
@@ -30,6 +34,8 @@ export interface SentryClientOptions {
   installId: string;
   release: string;
   platform: string;
+  /** `surface` / `install_channel` / `desktop_version` tags. */
+  dimensions?: ErrorReportDimensions;
   logger?: ErrorReportLogger;
   fetchImpl?: FetchLike;
 }
@@ -59,6 +65,7 @@ export class SentryClient {
         installId: this.options.installId,
         release: this.options.release,
         platform: this.options.platform,
+        ...dimensionMeta(this.options.dimensions),
       });
       const promise = this.send(body)
         .catch((err) => {
@@ -130,6 +137,7 @@ export function createSentryClient(options: {
   installId: string;
   release: string;
   platform: string;
+  dimensions?: ErrorReportDimensions;
   dsn?: string;
   logger?: ErrorReportLogger;
   fetchImpl?: FetchLike;
@@ -151,9 +159,26 @@ export function createSentryClient(options: {
     installId: options.installId,
     release: options.release,
     platform: options.platform,
+    ...(options.dimensions ? { dimensions: options.dimensions } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
+}
+
+/** Envelope meta fields for the optional dimensions. */
+function dimensionMeta(dimensions: ErrorReportDimensions | undefined): {
+  surface?: string;
+  installChannel?: string;
+  desktopVersion?: string;
+} {
+  if (!dimensions) return {};
+  return {
+    surface: dimensions.surface,
+    installChannel: dimensions.installChannel,
+    ...(dimensions.desktopVersion !== undefined
+      ? { desktopVersion: dimensions.desktopVersion }
+      : {}),
+  };
 }
 
 /** True when running under Vitest / `NODE_ENV=test`. */
