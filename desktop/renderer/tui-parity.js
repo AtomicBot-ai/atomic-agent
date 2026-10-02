@@ -63,9 +63,8 @@ function tpNotifyRowHTML() {
         + esc(tpSeconds(TP_NOTIFY.minMs)) + ' or more.</div>'
       + (TP_NOTIFY.error ? '<div class="tk-help tk-help--warn">' + esc(TP_NOTIFY.error) + '</div>' : '')
     + '</div>'
-    + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (TP_NOTIFY.busy || pending ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : '—')) + '</span>'
-    + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Notify when a turn ends" data-act="notify:toggle"'
-      + (!known || TP_NOTIFY.busy ? ' disabled' : '') + ' title="Turn notifications ' + (on ? 'off' : 'on') + '"></button>'
+    + setSwitchHTML({on, busy: TP_NOTIFY.busy || pending, disabled: !known || TP_NOTIFY.busy, act: 'notify:toggle',
+      label: 'Notify when a turn ends', title: 'Turn notifications ' + (on ? 'off' : 'on')})
     + '</div>';
 }
 

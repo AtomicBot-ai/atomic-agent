@@ -47,7 +47,7 @@ function nameChatsOn() {
 }
 
 /* Settings › General row. Same parts as the analytics row: title, one
-   line of description, the state word and the switch. */
+   line of description and the switch (renderer.js setSwitchHTML). */
 function nameChatsRowHTML() {
   const known = !!LIVE_CONFIG;
   const on = known && nameChatsOn();
@@ -57,9 +57,9 @@ function nameChatsRowHTML() {
         + (NAMES.note ? '<div class="tk-help">' + esc(NAMES.note) + '</div>' : '')
         + (NAMES.error ? '<div class="tk-help tk-help--warn">' + esc(NAMES.error) + '</div>' : '')
       + '</div>'
-      + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (NAMES.busy ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : '—')) + '</span>'
-      + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Name chats automatically" data-act="names:toggle"'
-        + (!known || NAMES.busy || !BR ? ' disabled' : '') + ' title="Turn chat naming ' + (on ? 'off' : 'on') + '"></button>'
+      // Not read yet: the spinner says so, as the "—" beside the switch did.
+      + setSwitchHTML({on, busy: NAMES.busy || (!known && !!BR), disabled: !known || NAMES.busy || !BR, act: 'names:toggle',
+        label: 'Name chats automatically', title: 'Turn chat naming ' + (on ? 'off' : 'on')})
     + '</div>';
 }
 

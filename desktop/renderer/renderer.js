@@ -1083,7 +1083,7 @@ const SETDOWN = { outside: false };
 /* Installed skills incl. disabled ones, from `atag skill list` — the N in
    the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
    row; GET /api/skills never carries disabled skills). */
-const SK = { rows:null, busy:false, err:null, calls:0 };
+const SK = { rows:null, busy:false, err:null, calls:0, at:null }; // at: when `atag skill list` last answered (Д26's status line)
 /* Tasks tab state — the TUI's TasksPanelState, minus the firings ring
    the HTTP API does not expose. */
 const TK = {
@@ -4403,6 +4403,9 @@ function renderSettings() {
      at the top. */
   const keepScroll = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
     ? ((old.querySelector('.setbody') || {}).scrollTop || 0) : 0;
+  // Item 36: the nav scrolls when the window is too short for its rows, and
+  // the same rebuild would put it back at the top on every poll.
+  const keepNav = old ? ((old.querySelector('.setmenu') || {}).scrollTop || 0) : 0;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -4415,23 +4418,94 @@ function renderSettings() {
      is what the click handler's branch tests. Deliberately NOT `data-close`:
      that branch runs act('close'), which does not clear S.settings. */
   el.dataset.setclose = '1';
+  // The pane first: the status line beside Done reads what drawing it started.
+  const pane = settingsPane();
+  /* Д25: the close control was a bare × at the end of the section's title
+     row, so it read as "close this section" while it closed all of Settings.
+     It says Done now. Esc and a click on the backdrop still close too. */
   el.innerHTML = '<div class="setwin" role="dialog" aria-label="Settings">'
     + '<nav class="setnav" aria-label="Settings"><div class="setnav-title">Settings</div>'
       + '<div class="setmenu">' + settingsNavHTML(sec[0]) + '</div></nav>'
     + '<div class="setmain">'
     + '<div class="settb"><h3 class="setttl">' + esc(sec[1]) + '</h3>' + settingsSubnavHTML(sec, cur)
     + '<span class="grow"></span>'
-    + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
+    + '<span class="set-status">' + settingsStatusHTML(cur) + '</span>'
+    + '<button class="btn btn-s sm set-done" data-act="settings:close" title="Close Settings (Esc)">Done</button>'
     + '</div>'
-    + '<div class="setbody" data-pane="' + esc(cur) + '">' + settingsPane() + '</div>'
+    + '<div class="setbody" data-pane="' + esc(cur) + '">' + pane + '</div>'
     + '</div>'
     + '</div>';
   $('#window').appendChild(el);
+  // Item 36: back where the nav was; on a new section or a fresh opening, its row is brought into view.
+  const menu = el.querySelector('.setmenu');
+  if (menu) {
+    if (keepNav) menu.scrollTop = keepNav;
+    if (!old || SETTINGS_SCROLL.pane !== cur) settingsNavReveal(menu);
+  }
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
   // Calm (S5): the ring goes on the section the window opened on.
-  if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus(); }
+  // preventScroll: the row is in view already (revealed above), and a focus that scrolled would undo the nav's kept scroll.
+  if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus({preventScroll: true}); }
+}
+/* Item 36: scroll the nav, and only the nav, so the section's row is whole
+   in view. scrollIntoView would also scroll #window, which clips its overflow
+   but can still be scrolled. */
+function settingsNavReveal(menu) {
+  const row = menu.querySelector('.menurow.on');
+  if (!row) return;
+  const m = menu.getBoundingClientRect(), r = row.getBoundingClientRect();
+  if (r.top < m.top) menu.scrollTop -= m.top - r.top;
+  else if (r.bottom > m.bottom) menu.scrollTop += r.bottom - m.bottom;
+}
+
+/* Д26: one status line for the panes that poll every 5 s — Tasks, Skills,
+   Memory and MCP servers. Each drew its own "auto · refreshed …" readout,
+   each in a place of its own: after the search box, after the counts, at the
+   right end of the toolbar, at its left end. The window draws it now, in the
+   header beside Done, from what the pane says here (null: the pane, or the
+   view of it, shows none — the same panes and views that drew a readout).
+   It is a status, not the switch: the readout was also the auto-refresh
+   switch, a button that read as a status. `a` still pauses and resumes a
+   pane; paused, the line says so and carries a Resume (`act`), so a stray
+   `a` can be undone with the mouse. `live`: the pane is refreshing right now
+   — a memory's detail, an MCP modal or a skill's removal stops its poll. The
+   counts the readouts carried stay in the panes' toolbars. */
+function settingsPoll(pane) {
+  if (pane === 'tasks') return TK.mode === 'list' ? {auto: TK.auto, busy: TK.loading, at: TK.lastRefreshedAt, live: true, act: 'tasks:auto'} : null;
+  if (pane === 'skills') return SKP.mode === 'list' && SKP.view !== 'tools' && !SKP.hubCard
+    ? {auto: SKP.auto !== false, busy: SK.busy, at: SK.at, live: !SKP.removeConfirm && !SKP.busy, act: 'skills:auto'} : null;
+  if (pane === 'memory') return {auto: MEM.auto, busy: MEM.loading, at: MEM.lastRefreshedAt, live: MEM.mode === 'list', act: 'memory:auto'};
+  if (pane === 'mcp') return {auto: MCP.auto, busy: MCP.loading, at: MCP.lastRefreshedAt, live: !MCP.addModal && !MCP.removeConfirm, act: 'mcp:auto'};
+  return null;
+}
+/* The time is the clock time of the last answer, not "4s ago": a pane stops
+   polling in some of its views (a memory's detail, an open modal) and while
+   it is paused, and a relative time would stand still there and grow wrong. */
+function settingsStatusHTML(pane) {
+  const p = settingsPoll(pane);
+  if (!p) return '';
+  const when = p.at === null ? '' : new Date(p.at).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+  let mark, text, tip;
+  if (p.busy) { mark = '<span class="tk-spin"></span>'; text = p.at === null ? 'Loading…' : 'Updating…'; tip = 'Refreshing now'; }
+  else if (!p.auto) {
+    mark = '<i class="tk-dot tk-dot--hollow"></i>'; text = 'Auto-refresh paused' + (when ? ' · updated ' + when : ''); tip = 'Paused with the a key';
+    return '<span class="set-statusin" title="' + esc(tip) + '">' + mark + '<span class="t">' + esc(text) + '</span></span>'
+      + '<button class="set-link set-resume" data-act="' + esc(p.act) + '" title="Refresh every 5 s again (a)">Resume</button>';
+  }
+  else if (!when) return '';
+  else if (!p.live) { mark = '<i class="tk-dot tk-dot--hollow"></i>'; text = 'Updated ' + when; tip = 'Not refreshing while this view is open'; }
+  else { mark = '<i class="tk-dot tk-dot--green"></i>'; text = 'Updated ' + when; tip = 'Refreshes every 5 s (a pauses)'; }
+  return '<span class="set-statusin" title="' + esc(tip) + '">' + mark + '<span class="t">' + esc(text) + '</span></span>';
+}
+/* The line again, in place: a poll that changed nothing and a repaint of the
+   pane alone do not rebuild the window, and the header is outside the pane. */
+function settingsStatusRepaint() {
+  const st = S.settings && document.querySelector('#settings .settb .set-status');
+  if (!st) return;
+  const html = settingsStatusHTML(settingsPaneId(S.settingsPane));
+  if (st.innerHTML !== html) st.innerHTML = html;
 }
 
 /* A pane id, a section id or an old name → the pane to show. The prototype's
@@ -4570,9 +4644,10 @@ async function refreshSkillList() {
   const res = await BR.skillList();
   SK.busy = false;
   const before = JSON.stringify([SK.rows, SK.err]);
-  if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; }
+  if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; SK.at = Date.now(); }
   else SK.err = (res && res.error) || 'skill list failed';
   if ((S.settings || skillsVisible()) && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping() && !skpTyping()) render(); // same guard as refreshHealth (+ the hub search box and the Skills room (⌘3), which paints the same rows — Item 7 part B)
+  else settingsStatusRepaint();
 }
 /* Everything a Manage tab needs when it comes into view: the diagnostics
    line, the Tasks list primed once (the TUI starts its tasks orchestrator
@@ -4614,6 +4689,15 @@ function settingsPane() {
 function comingNote(label) {
   return '<div class="set-pane"><div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('clock') + '</span><h4>' + esc(label) + '</h4><p>coming in the next step of this branch</p></div></div>';
 }
+/* Д28: a toggle row in General ends in its switch. The "On" / "Off" word
+   beside it said what the switch already shows; a spinner stands in that
+   spot while the setting is read or written. The Notify (tui-parity.js) and
+   Name chats (session-titles.js) rows draw theirs here too. */
+function setSwitchHTML(o) {
+  return (o.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
+    + '<button class="tk-switch' + (o.on ? ' on' : '') + '" role="switch" aria-checked="' + !!o.on + '" aria-label="' + esc(o.label) + '"'
+    + ' data-act="' + esc(o.act) + '"' + (o.busy ? ' aria-busy="true"' : '') + (o.disabled ? ' disabled' : '') + ' title="' + esc(o.title) + '"></button>';
+}
 /* Calm (S5) › General: what is general about the app today — the theme
    (the same `theme:*` act and atag.theme key as the palette and View ›
    Appearance), the working folder (the sidebar chip's picker) and the
@@ -4647,9 +4731,8 @@ function generalPane() {
             + '<button class="set-link" data-act="settings:privacy">What is sent</button></div>'
           + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
-        + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (PRIV.busy || pending ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : '—')) + '</span>'
-        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
-          + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
+        + setSwitchHTML({on, busy: PRIV.busy || pending, disabled: !known || PRIV.busy, act: 'privacy:analytics',
+          label: 'Anonymous usage analytics', title: 'Turn analytics ' + (on ? 'off' : 'on')})
       + '</div>'
       + nameChatsRowHTML()
     + '</div>'
@@ -5045,6 +5128,15 @@ function toastsClearCard() {
   if (!box) return;
   const live = [...box.children].filter((n) => !n.classList.contains('out'));
   live.forEach((n) => { if (n.hidden) n.hidden = false; });
+  /* Д27: over Settings the column stands up from the body card's bottom
+     corner, and the card is under the backdrop. The oldest toasts step aside
+     before the column reaches the header, where Done is. */
+  const head = S.settings && document.querySelector('#settings .settb');
+  if (head) {
+    const top = head.getBoundingClientRect().bottom + 8;
+    for (let i = 0; i < live.length - 1 && live[i].getBoundingClientRect().top < top; i++) live[i].hidden = true;
+    return;
+  }
   const card = document.getElementById('dlcard');
   if (!card || card.hidden || live.length < 2) return;
   const limit = card.getBoundingClientRect().top - DLC_GAP;
@@ -17845,28 +17937,17 @@ async function tasksRefresh(quiet) {
   }
   // A poll must not steal the caret from the search box or the create form,
   // nor the focus from a hint/kind button: unchanged rows repaint only the
-  // filter bar's "refresh: auto (Ns ago)" text; changed rows repaint the
-  // tab in place and put the focus back on the same button.
+  // status line in the window's header (Д26), which is outside the tab;
+  // changed rows repaint the tab in place and put the focus back on the
+  // same button.
   if (quiet) {
+    settingsStatusRepaint();
     if (tkTyping()) return;
-    if (before === JSON.stringify([TK.rows, TK.err])) { tkRefreshBar(); return; }
+    if (before === JSON.stringify([TK.rows, TK.err])) return;
     tkRepaintKeepFocus();
     return;
   }
   tkRenderKeepCaret();
-}
-/* The Tasks list's filter bar only (the `refresh: auto (Ns ago)` clock);
-   skipped while the `/` search input lives inside it. */
-function tkRefreshBar() {
-  if (TK.mode !== 'list') return;
-  const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
-  // Soft Tactile: only the readout ticks; the search box and the buttons in
-  // the same toolbar are left alone, so a caret or a focus ring survives.
-  const readout = box && box.querySelector('.tuibar .set-readout');
-  if (!readout || readout.contains(document.activeElement)) return;
-  const tmp = document.createElement('div');
-  tmp.innerHTML = tkReadoutHTML(tkVisibleRows().length);
-  readout.replaceWith(tmp.firstElementChild);
 }
 /* Repaint the Tasks tab in place and keep the focus on the button (by its
    data-act) the user was on. With nothing focused inside the window a full
@@ -17917,19 +17998,11 @@ function tkFilterBar(visibleCount) {
       + tkReadoutHTML(visibleCount)
     + '</div></div>';
 }
-/* The readout tkRefreshBar repaints on each poll: `auto · refreshed 4s ago ·
-   7 of 12`. A click is the TUI's `a auto`. */
+/* Д26: what stands where the auto-refresh readout stood — how many tasks
+   show, "12 tasks" or "3 of 12". Its "auto · refreshed …" part is the
+   window's status line now, beside Done, and tkRefreshBar went with it. */
 function tkReadoutHTML(visibleCount) {
-  const mode = TK.auto ? 'auto' : 'manual';
-  let refresh;
-  if (TK.lastRefreshedAt === null) refresh = 'never refreshed';
-  else {
-    const seconds = Math.floor(Math.max(0, Date.now() - TK.lastRefreshedAt) / 1000);
-    refresh = seconds < 1 ? 'refreshed just now' : seconds < 60 ? 'refreshed ' + seconds + 's ago' : 'refreshed ' + Math.floor(seconds / 60) + 'm ago';
-  }
-  return '<button class="set-readout" data-act="tasks:auto" title="Auto-refresh every 5 s — a toggles">'
-    + (TK.loading ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (TK.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
-    + '<span>' + esc(mode + ' · ' + (TK.loading ? 'loading…' : refresh) + ' · ' + visibleCount + ' of ' + TK.rows.length) + '</span></button>';
+  return '<span class="set-counts">' + esc(visibleCount === TK.rows.length ? visibleCount + (visibleCount === 1 ? ' task' : ' tasks') : visibleCount + ' of ' + TK.rows.length) + '</span>';
 }
 /* Status chip: running pulses brand, failed red, blocked amber (waiting on
    something), completed green words, cancelled an outline. */
@@ -18304,6 +18377,7 @@ function tkRepaint() {
   const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
   if (!box) { render(); return; }
   box.innerHTML = tasksTab();
+  settingsStatusRepaint();
 }
 /* row-window.ts computeWindowStart, verbatim. */
 function computeWindowStart(cursor, total, size) {
@@ -18400,6 +18474,7 @@ function paneRepaintKeepFocus(html) {
   const focused = el && box.contains(el) && el.dataset ? el.dataset.act : null;
   if (!focused) { render(); return; }
   box.innerHTML = html;
+  settingsStatusRepaint();
   const again = box.querySelector('[data-act="' + focused.replace(/"/g, '\\"') + '"]');
   if (again) again.focus();
 }
@@ -19289,19 +19364,8 @@ async function memRefresh(quiet) {
     MEM.lastError = err && err.message ? err.message : String(err);
   }
   MEM.loading = false;
-  if (quiet && before === JSON.stringify([MEM.rows, MEM.channelHint, MEM.lastError])) {
-    const st = document.querySelector('#settings .memstatus');
-    if (st) st.textContent = memStatusLine();
-    return;
-  }
+  if (quiet && before === JSON.stringify([MEM.rows, MEM.channelHint, MEM.lastError])) { settingsStatusRepaint(); return; }
   if (memoryVisible()) paneRepaintKeepFocus(memoryTab()); else if (!quiet) render();
-}
-function memStatusLine() {
-  return [MEM.loading ? 'loading' : null, MEM.auto ? 'auto' : 'manual',
-    MEM.lastRefreshedAt ? 'refreshed ' + new Date(MEM.lastRefreshedAt).toLocaleTimeString() : null,
-    MEM.channel === 'notes' ? 'notes: ' + MEM.notesFilter : null,
-    MEM.search.trim() ? 'search: "' + MEM.search.trim() + '"' : null,
-    memVisibleRows().length + ' shown'].filter(Boolean).join(' · ');
 }
 function memoryTab() {
   ensureMemoryPoll();
@@ -19316,11 +19380,10 @@ function memoryTab() {
   const filter = MEM.channel === 'notes' && MEM.mode === 'list'
     ? '<div class="tk-seg">' + MEM_NOTES_FILTERS.map((f) => '<button class="' + (f === MEM.notesFilter ? 'on' : '') + '" aria-pressed="' + (f === MEM.notesFilter) + '" data-act="memory:filter:' + f + '">' + esc(f) + '</button>').join('') + '</div>'
     : '';
-  const dot = MEM.loading ? 'tk-dot--brand tk-dot--pulse' : MEM.auto ? 'tk-dot--green' : 'tk-dot--hollow';
   return '<div class="sd-pane sd-mem">'
     + '<div class="tk-bar"><div class="tk-seg" role="group" aria-label="Memory channel">' + seg + '</div>' + filter + '<span class="grow"></span>'
-    // Calm (S5): the readout is the auto-refresh switch (the `a` key), and Refresh is a button (the `r` key).
-    + '<button class="sd-status set-readout" data-act="memory:auto" title="Auto-refresh every 5 s (a)"><i class="tk-dot ' + dot + '"></i><span class="memstatus">' + esc(memStatusLine()) + '</span></button>'
+    // Calm (S5): Refresh is a button (the `r` key). The auto-refresh status is the window's, beside Done (Д26); `a` still pauses it.
+    + '<span class="set-counts">' + memVisibleRows().length + ' shown</span>'
     + '<button class="iconbtn sm" data-act="memory:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
     + (MEM.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MEM.lastError) + '</span></div>' : '')
     + (MEM.mode === 'list' ? memListHTML() : memDetailHTML()) + '</div>';
@@ -19735,21 +19798,12 @@ async function mcpRefreshRun(quiet) {
   const before = JSON.stringify(mcpRows());
   const [cfg, caps] = await Promise.all([BR.config(), BR.capabilities()]);
   MCP.loading = false;
-  if (cfg && cfg.ok && cfg.data && cfg.data.config) LIVE_CONFIG = cfg.data.config;
+  // The time of a read that worked, as the other panes keep it: the status line says "Updated" at it (Д26).
+  if (cfg && cfg.ok && cfg.data && cfg.data.config) { LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); }
   else MCP.lastError = 'mcp refresh failed: ' + ((cfg && cfg.error) || 'config unavailable');
   if (caps && caps.ok && caps.data) LIVE_CAPS = caps.data;
-  MCP.lastRefreshedAt = Date.now();
-  if (quiet && (mcpTyping() || before === JSON.stringify(mcpRows()))) {
-    const st = document.querySelector('#settings .mcpstatus');
-    if (st) st.textContent = mcpStatusLine();
-    return;
-  }
+  if (quiet && (mcpTyping() || before === JSON.stringify(mcpRows()))) { settingsStatusRepaint(); return; }
   if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
-}
-function mcpStatusLine() {
-  return [MCP.loading ? 'loading' : null, MCP.auto ? 'auto' : 'manual',
-    MCP.lastRefreshedAt ? 'refreshed ' + new Date(MCP.lastRefreshedAt).toLocaleTimeString() : null,
-    mcpRows().length + ' servers'].filter(Boolean).join(' · ');
 }
 function mcpHint() {
   if (MCP.addModal) return 'Enter submit · Esc cancel · paste JSON of one MCP server';
@@ -19761,13 +19815,12 @@ function mcpTab() {
   ensureMcpPoll();
   const rows = mcpRows();
   const hint = mcpHint();
-  const dot = MCP.loading ? 'tk-dot--brand tk-dot--pulse' : MCP.auto ? 'tk-dot--green' : 'tk-dot--hollow';
   const view = MCP.mode === 'list' ? mcpListHTML(rows) : mcpDetailHTML();
   // ST-18: a modal sits over the dimmed (inert) list or detail it belongs to; its keys and buttons are its own.
   const modal = MCP.addModal ? mcpAddModalHTML() : MCP.removeConfirm ? mcpRemoveModalHTML() : '';
   return '<div class="sd-pane sd-mcp">'
-    // Calm (S5): the readout is the auto-refresh switch (the `a` key), and Refresh is a button (the `r` key).
-    + '<div class="tk-bar"><button class="sd-status set-readout" data-act="mcp:auto" title="Auto-refresh every 5 s (a)"><i class="tk-dot ' + dot + '"></i><span class="mcpstatus">' + esc(mcpStatusLine()) + '</span></button><span class="grow"></span>'
+    // Calm (S5): Refresh is a button (the `r` key). The auto-refresh status is the window's, beside Done (Д26); `a` still pauses it.
+    + '<div class="tk-bar"><span class="set-counts">' + rows.length + (rows.length === 1 ? ' server' : ' servers') + '</span><span class="grow"></span>'
     + '<button class="iconbtn sm" data-act="mcp:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
     + (MCP.mode === 'list' ? '<button class="btn btn-p sm" data-act="mcp:add"' + (modal ? ' disabled' : '') + '>' + ic('plus') + 'Add server</button>' : '') + '</div>'
     + (MCP.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MCP.lastError) + '</span></div>' : '')

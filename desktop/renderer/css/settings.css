@@ -8,15 +8,31 @@
    Frame contract a tab can rely on:
      #settings > .setwin > (nav.setnav > .setmenu) + .setmain
      .setmain  — the floating body card, position:relative (overlays anchor here)
-       .settb    — the section's title (+ Connections' pane switch) and close
+       .settb    — the section's title (+ Connections' pane switch), the
+                   status line of a pane that polls (Д26) and Done
        .setbody  — the scrolling pane, 24px side padding (paneBox() repaints it)
      .set-pane    — a tab's root: a column with 14px gaps
-     .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · readout · actions)
+     .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · counts · actions)
      .set-overlay > .tk-modal.set-modal — a confirm over the whole body card
    ============================================================ */
 
 /* ---------------- Window ---------------- */
+/* The window's size and the room around it, on #window so the toasts (a
+   sibling of #settings) can be placed inside it too (Д27).
+   Item 36: the system's own controls sit over the top 52px band of the
+   window — macOS's traffic lights at its left (hiddenInset, at 20,20; in
+   full screen the menu bar and the lights slide in over the same band when
+   the pointer is at the top), Windows' caption buttons at its right
+   (titleBarOverlay, 52px tall). With 24px all round, a small window put
+   them on the settings window's corners: the lights on the nav's top left,
+   the caption buttons on the header's top right, where the close control
+   is. The band is kept clear on both, and as much room is left under the
+   window as above it, so at the default size it sits exactly where it did.
+   Linux draws a normal frame above the page. */
+#window{--set-w:1060px;--set-h:700px;--set-gx:24px;--set-gy:24px}
+body.electron.platform-darwin #window,body.electron.platform-win32 #window{--set-gy:52px}
 #settings{position:absolute;inset:0;z-index:28;display:flex;align-items:center;justify-content:center;
+  padding:var(--set-gy) var(--set-gx);
   background:var(--scrim);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 /* Item 5. The settings backdrop covers the 52px toolbar band, and
    `body.electron #toolbar` is a `-webkit-app-region: drag` region. Chromium
@@ -31,8 +47,17 @@ body.electron #settings{-webkit-app-region:no-drag}
    !important: paint() pins the layer with an INLINE z-index of 20, which beat this rule, so the wizard
    opened from Settings › LLM (Add provider, the "… detected" prompt) was drawn behind the settings sheet. */
 #window:has(#settings) #overlays{z-index:29 !important}
+/* Д27: the toasts stood at the top right of the app window, so over Settings
+   they straddled the settings window's right edge and sat on its close
+   control. They stand inside it now, in the body card's bottom right corner:
+   clear of the header and the toolbars, and never out past the card's edge.
+   The same sums as #settings and .setwin below: the gap beside the settings
+   window, then 8px of the card's margin and 16px inside the card. */
+#window:has(#settings) #toasts{top:auto;
+  right:calc(max(var(--set-gx), (100% - var(--set-w)) / 2) + 24px);
+  bottom:calc(max(var(--set-gy), (100% - var(--set-h)) / 2) + 24px)}
 
-.setwin{position:relative;width:min(1060px, calc(100% - 48px));height:min(700px, calc(100% - 48px));
+.setwin{position:relative;width:min(var(--set-w), 100%);height:min(var(--set-h), 100%);
   display:grid;grid-template-columns:230px minmax(0,1fr);
   background:var(--well);border-radius:var(--r-comp);box-shadow:var(--sh-pop);overflow:hidden}
 
@@ -41,7 +66,10 @@ body.electron #settings{-webkit-app-region:no-drag}
    counts, no command list. */
 .setnav{min-width:0;min-height:0;display:flex;flex-direction:column;padding:16px 10px 12px}
 .setnav-title{margin:2px 10px 12px;font:600 15px/20px var(--font-ui);letter-spacing:-.02em;color:var(--ink)}
-.setmenu{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px}
+/* Item 36: a window too short for every row scrolls the list instead of
+   cutting its last rows off at the window's edge; the rows keep their height
+   (flex:none). renderSettings keeps the scroll across its rebuilds. */
+.setmenu{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;overscroll-behavior:contain}
 
 .menurow{position:relative;display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:0 10px;flex:none;
   border:0;border-radius:var(--r-pill);background:transparent;color:var(--ink-2);
@@ -64,6 +92,17 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 14px 0 24px}
 .settb .grow{flex:1}
 .settb .setttl{margin:0;font:600 18px/24px var(--font-ui);letter-spacing:-.025em;color:var(--ink)}
+/* Д26: the status line of a pane that polls; empty (and gone) elsewhere. The
+   line is a status, not a control (no hover, no pointer); paused, a Resume
+   link follows it. */
+.set-status{min-width:0;display:flex;align-items:center;gap:8px}
+.set-status:empty{display:none}
+.set-statusin{display:inline-flex;align-items:center;gap:7px;min-width:0;font:400 12px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap}
+.set-statusin > .t{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-status .set-resume{flex:none;font:500 12px/1 var(--font-ui)}
+.set-statusin .tk-dot{width:7px;height:7px}
+.set-statusin .tk-spin{width:12px;height:12px}
+.settb .set-done{flex:none}
 /* Connections: MCP servers · Telegram beside the title. */
 .settb .set-subseg{margin-left:8px}
 .setbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 24px 22px;scrollbar-gutter:stable}
@@ -80,11 +119,11 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .set-pane > .tk-bar{min-height:34px}
 
 /* Toolbar */
-/* Two classes: `.tuibar` (kept on the toolbar for tkRefreshBar) and the kit's
-   `.tk-bar` both set align-items/flex-wrap at one class, and a centred column
-   would size each row to its content instead of the pane. */
+/* Two classes: `.tuibar` (the TUI-era class the toolbars still carry) and the
+   kit's `.tk-bar` both set align-items/flex-wrap at one class, and a centred
+   column would size each row to its content instead of the pane. */
 .tk-bar.set-toolbar{flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:10px;white-space:normal}
-/* A toolbar row never wraps: the search box and the readout give up width
+/* A toolbar row never wraps: the search box and the counts give up width
    first, the buttons keep theirs. */
 .set-tbrow{display:flex;align-items:center;flex-wrap:nowrap;gap:8px;min-width:0}
 .set-tbrow > *{flex:none}

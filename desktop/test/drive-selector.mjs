@@ -179,7 +179,7 @@ async function done(app) {
 
 /** A person's way out of the settings window: its close button. */
 async function closeSettings(app) {
-  await app.clickSel('#settings .iconbtn[data-act="settings:close"]', { settle: 600 });
+  await app.clickSel('#settings [data-act="settings:close"]', { settle: 600 });
 }
 
 async function main() {

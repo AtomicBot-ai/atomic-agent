@@ -5159,7 +5159,9 @@ async function settingsTestPartB(
   const notesBody = await js<string>("window.__settingsBody()");
   const notesView = await memView();
   const notesDrawn = same(notesView.pressed, ["Notes"]) && (notes.rows === 0 ? notesView.painted === 0 && notesView.empty === "No notes yet" : notesView.painted === Math.min(notes.rows, MEM_WINDOW));
-  check("memory tab: notes rows equal notes.listActive and the bar says notes: active", notes.channel === "notes" && notesSql.ok && notes.rows === (notesSql.rows ?? []).length && notesDrawn && notesBody.includes("notes: active"), `${notes.rows} vs ${notesSql.ok ? (notesSql.rows ?? []).length : notesSql.error} · drawn ${JSON.stringify(notesView)}`);
+  // Д26: the bar's readout ("… · notes: active · N shown") left for the window's status line; the notes filter itself says active.
+  const notesActive = await js<boolean>("!!document.querySelector('#settings .setbody .sd-mem .tk-seg button.on[data-act=\"memory:filter:active\"]')");
+  check("memory tab: notes rows equal notes.listActive and the bar says notes: active", notes.channel === "notes" && notesSql.ok && notes.rows === (notesSql.rows ?? []).length && notesDrawn && notesActive && notesBody.includes(`${notes.rows} shown`), `${notes.rows} vs ${notesSql.ok ? (notesSql.rows ?? []).length : notesSql.error} · drawn ${JSON.stringify(notesView)} · active pressed ${notesActive}`);
   if (notes.rows > 0) {
     const d = await js<MemState>("window.__memoryDetail(0)");
     const dBody = await js<string>("window.__settingsBody()");
@@ -5216,7 +5218,7 @@ async function settingsTestPartB(
   check(
     "mcp tab: rows come from mcp.servers, with Add server, Refresh and a plain empty state",
     // Calm (S5): Add server and Refresh are buttons (the key-hint row left); the empty state is one plain sentence.
-    m0.rows === (Array.isArray(beforeServers) ? beforeServers.length : 0) && mcpList.rows.length === Math.min(m0.rows, 14) && mcpBody.includes(`${m0.rows} servers`) && mcpBody.includes("Add server")
+    m0.rows === (Array.isArray(beforeServers) ? beforeServers.length : 0) && mcpList.rows.length === Math.min(m0.rows, 14) && mcpBody.includes(`${m0.rows} server`) && mcpBody.includes("Add server")
       && (await js<boolean>("!!document.querySelector('#settings .setbody .sd-mcp [data-act=\"mcp:refresh\"]')"))
       && (!mcpEmpty || (mcpBody.includes("Add a server to give the agent more tools.") && mcpList.empty === "No MCP servers")),
     `${m0.rows} rows, config holds ${Array.isArray(beforeServers) ? beforeServers.length : "unset"}, drawn ${JSON.stringify(mcpList)}`,
