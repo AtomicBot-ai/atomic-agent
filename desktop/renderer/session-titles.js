@@ -57,7 +57,8 @@ function nameChatsRowHTML() {
         + (NAMES.note ? '<div class="tk-help">' + esc(NAMES.note) + '</div>' : '')
         + (NAMES.error ? '<div class="tk-help tk-help--warn">' + esc(NAMES.error) + '</div>' : '')
       + '</div>'
-      + setSwitchHTML({on, busy: NAMES.busy, disabled: !known || NAMES.busy || !BR, act: 'names:toggle',
+      // Not read yet: the spinner says so, as the "—" beside the switch did.
+      + setSwitchHTML({on, busy: NAMES.busy || (!known && !!BR), disabled: !known || NAMES.busy || !BR, act: 'names:toggle',
         label: 'Name chats automatically', title: 'Turn chat naming ' + (on ? 'off' : 'on')})
     + '</div>';
 }

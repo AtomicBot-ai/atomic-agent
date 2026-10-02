@@ -92,12 +92,14 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 14px 0 24px}
 .settb .grow{flex:1}
 .settb .setttl{margin:0;font:600 18px/24px var(--font-ui);letter-spacing:-.025em;color:var(--ink)}
-/* Д26: the status line of a pane that polls; empty (and gone) elsewhere. A
-   status, not a control: no hover, no pointer. */
-.set-status{min-width:0;display:flex}
+/* Д26: the status line of a pane that polls; empty (and gone) elsewhere. The
+   line is a status, not a control (no hover, no pointer); paused, a Resume
+   link follows it. */
+.set-status{min-width:0;display:flex;align-items:center;gap:8px}
 .set-status:empty{display:none}
 .set-statusin{display:inline-flex;align-items:center;gap:7px;min-width:0;font:400 12px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap}
-.set-statusin > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-statusin > .t{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-status .set-resume{flex:none;font:500 12px/1 var(--font-ui)}
 .set-statusin .tk-dot{width:7px;height:7px}
 .set-statusin .tk-spin{width:12px;height:12px}
 .settb .set-done{flex:none}

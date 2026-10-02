@@ -4318,14 +4318,15 @@ function renderSettings() {
   // Item 36: back where the nav was; on a new section or a fresh opening, its row is brought into view.
   const menu = el.querySelector('.setmenu');
   if (menu) {
-    menu.scrollTop = keepNav;
+    if (keepNav) menu.scrollTop = keepNav;
     if (!old || SETTINGS_SCROLL.pane !== cur) settingsNavReveal(menu);
   }
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
   // Calm (S5): the ring goes on the section the window opened on.
-  if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus(); }
+  // preventScroll: the row is in view already (revealed above), and a focus that scrolled would undo the nav's kept scroll.
+  if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus({preventScroll: true}); }
 }
 /* Item 36: scroll the nav, and only the nav, so the section's row is whole
    in view. scrollIntoView would also scroll #window, which clips its overflow
@@ -4344,15 +4345,18 @@ function settingsNavReveal(menu) {
    right end of the toolbar, at its left end. The window draws it now, in the
    header beside Done, from what the pane says here (null: the pane, or the
    view of it, shows none — the same panes and views that drew a readout).
-   It is a status and nothing else: the readout was also the auto-refresh
-   switch, a button that read as a status. `a` still pauses and resumes it,
-   and the line says when it is paused. The counts the readouts carried stay
-   in the panes' toolbars. */
+   It is a status, not the switch: the readout was also the auto-refresh
+   switch, a button that read as a status. `a` still pauses and resumes a
+   pane; paused, the line says so and carries a Resume (`act`), so a stray
+   `a` can be undone with the mouse. `live`: the pane is refreshing right now
+   — a memory's detail, an MCP modal or a skill's removal stops its poll. The
+   counts the readouts carried stay in the panes' toolbars. */
 function settingsPoll(pane) {
-  if (pane === 'tasks') return TK.mode === 'list' ? {auto: TK.auto, busy: TK.loading, at: TK.lastRefreshedAt} : null;
-  if (pane === 'skills') return SKP.mode === 'list' && SKP.view !== 'tools' && !SKP.hubCard ? {auto: SKP.auto !== false, busy: SK.busy, at: SK.at} : null;
-  if (pane === 'memory') return {auto: MEM.auto, busy: MEM.loading, at: MEM.lastRefreshedAt};
-  if (pane === 'mcp') return {auto: MCP.auto, busy: MCP.loading, at: MCP.lastRefreshedAt};
+  if (pane === 'tasks') return TK.mode === 'list' ? {auto: TK.auto, busy: TK.loading, at: TK.lastRefreshedAt, live: true, act: 'tasks:auto'} : null;
+  if (pane === 'skills') return SKP.mode === 'list' && SKP.view !== 'tools' && !SKP.hubCard
+    ? {auto: SKP.auto !== false, busy: SK.busy, at: SK.at, live: !SKP.removeConfirm && !SKP.busy, act: 'skills:auto'} : null;
+  if (pane === 'memory') return {auto: MEM.auto, busy: MEM.loading, at: MEM.lastRefreshedAt, live: MEM.mode === 'list', act: 'memory:auto'};
+  if (pane === 'mcp') return {auto: MCP.auto, busy: MCP.loading, at: MCP.lastRefreshedAt, live: !MCP.addModal && !MCP.removeConfirm, act: 'mcp:auto'};
   return null;
 }
 /* The time is the clock time of the last answer, not "4s ago": a pane stops
@@ -4364,10 +4368,15 @@ function settingsStatusHTML(pane) {
   const when = p.at === null ? '' : new Date(p.at).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
   let mark, text, tip;
   if (p.busy) { mark = '<span class="tk-spin"></span>'; text = p.at === null ? 'Loading…' : 'Updating…'; tip = 'Refreshing now'; }
-  else if (!p.auto) { mark = '<i class="tk-dot tk-dot--hollow"></i>'; text = 'Auto-refresh paused' + (when ? ' · updated ' + when : ''); tip = 'Press a to resume refreshing every 5 s'; }
+  else if (!p.auto) {
+    mark = '<i class="tk-dot tk-dot--hollow"></i>'; text = 'Auto-refresh paused' + (when ? ' · updated ' + when : ''); tip = 'Paused with the a key';
+    return '<span class="set-statusin" title="' + esc(tip) + '">' + mark + '<span class="t">' + esc(text) + '</span></span>'
+      + '<button class="set-link set-resume" data-act="' + esc(p.act) + '" title="Refresh every 5 s again (a)">Resume</button>';
+  }
   else if (!when) return '';
+  else if (!p.live) { mark = '<i class="tk-dot tk-dot--hollow"></i>'; text = 'Updated ' + when; tip = 'Not refreshing while this view is open'; }
   else { mark = '<i class="tk-dot tk-dot--green"></i>'; text = 'Updated ' + when; tip = 'Refreshes every 5 s (a pauses)'; }
-  return '<span class="set-statusin" title="' + esc(tip) + '">' + mark + '<span>' + esc(text) + '</span></span>';
+  return '<span class="set-statusin" title="' + esc(tip) + '">' + mark + '<span class="t">' + esc(text) + '</span></span>';
 }
 /* The line again, in place: a poll that changed nothing and a repaint of the
    pane alone do not rebuild the window, and the header is outside the pane. */
@@ -4851,9 +4860,17 @@ function toastsClearCard() {
   if (!box) return;
   const live = [...box.children].filter((n) => !n.classList.contains('out'));
   live.forEach((n) => { if (n.hidden) n.hidden = false; });
+  /* Д27: over Settings the column stands up from the body card's bottom
+     corner, and the card is under the backdrop. The oldest toasts step aside
+     before the column reaches the header, where Done is. */
+  const head = S.settings && document.querySelector('#settings .settb');
+  if (head) {
+    const top = head.getBoundingClientRect().bottom + 8;
+    for (let i = 0; i < live.length - 1 && live[i].getBoundingClientRect().top < top; i++) live[i].hidden = true;
+    return;
+  }
   const card = document.getElementById('dlcard');
-  // Д27: over Settings the toasts stand inside its window, and the card is under its backdrop.
-  if (!card || card.hidden || live.length < 2 || S.settings) return;
+  if (!card || card.hidden || live.length < 2) return;
   const limit = card.getBoundingClientRect().top - DLC_GAP;
   for (let i = 0; i < live.length - 1 && live[live.length - 1].getBoundingClientRect().bottom > limit; i++) {
     live[i].hidden = true;
@@ -18736,10 +18753,10 @@ async function mcpRefreshRun(quiet) {
   const before = JSON.stringify(mcpRows());
   const [cfg, caps] = await Promise.all([BR.config(), BR.capabilities()]);
   MCP.loading = false;
-  if (cfg && cfg.ok && cfg.data && cfg.data.config) LIVE_CONFIG = cfg.data.config;
+  // The time of a read that worked, as the other panes keep it: the status line says "Updated" at it (Д26).
+  if (cfg && cfg.ok && cfg.data && cfg.data.config) { LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); }
   else MCP.lastError = 'mcp refresh failed: ' + ((cfg && cfg.error) || 'config unavailable');
   if (caps && caps.ok && caps.data) LIVE_CAPS = caps.data;
-  MCP.lastRefreshedAt = Date.now();
   if (quiet && (mcpTyping() || before === JSON.stringify(mcpRows()))) { settingsStatusRepaint(); return; }
   if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
 }
