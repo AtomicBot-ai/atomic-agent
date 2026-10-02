@@ -3324,7 +3324,12 @@ function renderOpenReasoningBlock(
  */
 function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
   if (err instanceof LlmFailure) return err;
-  if (ctx.signal.aborted) {
+  // A stopped step's request that fails the way requests fail (an abort,
+  // a torn socket, a cut-off body) is the stop's doing. An error the
+  // classifier does not recognise — `tool`, the shape a programming error
+  // arrives in — stays what it is whatever the signal says, so it is
+  // reported as a failure, not filed away as a cancel (ATO-137).
+  if (ctx.signal.aborted && classifyFailure(err) !== "tool") {
     return new CancelledError(
       err instanceof Error ? err.message : "operation cancelled",
       { cause: err },
