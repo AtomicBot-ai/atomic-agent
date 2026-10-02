@@ -16780,7 +16780,16 @@ async function wizNextStep() {
        models: the configured providers ship no catalog.` — true of the
        agent's model index, and no help at all to someone who has just
        mistyped a key. Say what failed first, then quote the backend. */
-    WIZ.error = listed && listed.error
+    /* ATO-161 follow-up: for the kinds that ship no catalog (Groq, DeepSeek…)
+       the model list IS the first call made with the key, and a provider that
+       refuses it answers `http 401` / `http 403` right here
+       (fetch-openai-compat-models.ts). That is a verdict on the key, as
+       plain as the one-token check's — say it the same way, not "could not
+       check", which read as the provider being down. */
+    const refused = !!(listed && /\bhttp 40[13]\b/.test(String(listed.error || '')));
+    WIZ.error = refused
+      ? k.label.split(' (')[0] + ' didn\u2019t accept this key. Check that you copied all of it.'
+      : listed && listed.error
       ? 'Could not check this key with ' + k.label.split(' (')[0] + '.'
       : k.label.split(' (')[0] + ' returned no models for this key.';
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
