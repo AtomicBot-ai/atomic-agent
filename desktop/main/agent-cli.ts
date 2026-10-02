@@ -3,9 +3,9 @@ import { execFile, spawn } from "node:child_process";
 // locates the OTHER agents' state dirs (~/.claude, ~/.codex …), never this
 // desktop's own, which is DESKTOP_STATE_DIR (item 9).
 import { homedir, totalmem } from "node:os";
-import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 // Item 7 part C (LLM / Telegram / Import tabs): the .env writer and llama log tail.
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -2600,60 +2600,137 @@ export async function modelsRemove(id: string): Promise<CliResult> {
 
 /* ---- ATO-119: Remove for every local model on disk, never under a server ----
    Settings › Models had no Remove for the model in use, nor for any embedding
-   model (`atag models remove` takes chat models only). The window stops the
-   server first when it knows the model is loaded; this side checks again
-   before anything is deleted, against what each running server says it has
-   loaded, because the window can be wrong — a server still on the model it
-   ran before a pick (`models use` writes the config and leaves the server
-   be) is one case. */
+   model (`atag models remove` takes chat models only). The window asks to stop
+   the server when it knows the model is loaded; this side decides, against
+   what every server of this app's could be running answers itself — not
+   against what `models status` or the pid files say. Those miss a server the
+   app no longer counts as its route: one left running when the route moved to
+   a Custom server prints no daemon line at all (src/cli/models-handlers.ts,
+   external mode), and the CLI's own guard only looks in managed mode. A server
+   still on the model it ran before a pick (`models use` writes the config and
+   leaves the server be) is the other case. When in doubt, nothing is deleted. */
+
+/** The user file's word on the managed servers: their ports, the models it gives them, the data dir. */
+type ManagedFacts = { chatPort: number; embPort: number; chatModel: string | null; embModel: string | null; dataDir: string };
+function managedFactsFromFile(): ManagedFacts {
+  type Lm = { managed?: { port?: unknown; modelId?: unknown; dataDirOverride?: unknown }; embeddings?: { port?: unknown; modelId?: unknown } };
+  let lm: Lm | undefined;
+  try {
+    lm = (JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: Lm }).localModels;
+  } catch {
+    // no file yet: the agent's defaults
+  }
+  const port = (v: unknown, fallback: number) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : fallback);
+  const id = (v: unknown) => (typeof v === "string" && MODEL_ID_RE.test(v) ? v : null);
+  const override = lm?.managed?.dataDirOverride;
+  return {
+    chatPort: port(lm?.managed?.port, 19091),
+    embPort: port(lm?.embeddings?.port, 19092),
+    chatModel: id(lm?.managed?.modelId),
+    embModel: id(lm?.embeddings?.modelId),
+    dataDir: managedDataDir(typeof override === "string" ? override : null),
+  };
+}
 
 /**
  * The catalogue id a managed model's file sits under: `<dataDir>/models/<id>/…`
- * (src/local-llm/backend-paths.ts resolveModelDir). Null for a path elsewhere.
+ * (src/local-llm/backend-paths.ts resolveModelDir). Tried as written, then
+ * through the file system's own spelling of both paths (/var and
+ * /private/var, a Windows short name), then case-blind where the file system
+ * is. Null for a file elsewhere.
  */
 export function modelIdFromPath(path: string, dataDir: string): string | null {
-  const rel = relative(join(dataDir, "models"), path);
-  if (!rel || /^\.\.(?:[\\/]|$)/.test(rel) || isAbsolute(rel)) return null;
-  const parts = rel.split(/[\\/]/);
-  return parts.length > 1 && parts[0] ? parts[0] : null;
+  const under = (file: string, root: string): string | null => {
+    const rel = relative(root, file);
+    if (!rel || /^\.\.(?:[\\/]|$)/.test(rel) || isAbsolute(rel)) return null;
+    const parts = rel.split(/[\\/]/);
+    return parts.length > 1 && parts[0] ? parts[0] : null;
+  };
+  // The file system's spelling of a path, through its deepest part that exists.
+  const real = (p: string): string => {
+    try { return realpathSync.native(p); } catch { const up = dirname(p); return up === p ? p : join(real(up), basename(p)); }
+  };
+  const root = join(dataDir, "models");
+  const folds = process.platform === "win32" || process.platform === "darwin";
+  return under(path, root) ?? under(real(path), real(root))
+    ?? (folds ? under(real(path).toLowerCase(), real(root).toLowerCase()) : null);
 }
 
+/** What a server answered: whether anything did, and every catalogue id its `/props` names. */
+export type ServerAnswer = { answered: boolean; ids: string[] };
+
 /**
- * Which catalogue model the llama-server at `url` has loaded, from its own
- * `/props` (`model_path`, the GGUF it was started on), with the managed key
- * when `url` is a managed daemon's address. Null when it names a file that is
- * not a managed model; undefined when it cannot be asked.
+ * Ask the llama-server at `url` what it has loaded (`/props`, with the managed
+ * key when `url` is a managed server's address). Any HTTP answer at all — a
+ * 401, a 503 while it loads — means a server is there. The ids come from the
+ * alias the agent starts it with (`-a <id>`) and from the GGUF path it was
+ * started on (`model_path`), each only when it names a catalogue model.
  */
-export async function servedModelId(url: string, dataDir: string, timeoutMs = 3000): Promise<string | null | undefined> {
+export async function probeServer(url: string, dataDir: string, timeoutMs = 3000): Promise<ServerAnswer> {
   const key = localLlamaKeyFor(url);
+  let res: Response;
   try {
-    const res = await fetch(llamaEndpointUrl(url, "/props"), {
+    res = await fetch(llamaEndpointUrl(url, "/props"), {
       headers: { accept: "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return undefined;
-    const json = (await res.json()) as Record<string, unknown>;
-    const settings = json["default_generation_settings"] as Record<string, unknown> | undefined;
-    const path = [json["model_path"], settings?.["model"], json["model"]].find((v): v is string => typeof v === "string" && v.trim().length > 0);
-    return path ? modelIdFromPath(path.trim(), dataDir) : undefined;
   } catch {
-    return undefined;
+    return { answered: false, ids: [] };
   }
+  const ids = new Set<string>();
+  try {
+    if (res.ok) {
+      const json = (await res.json()) as Record<string, unknown>;
+      const settings = json["default_generation_settings"] as Record<string, unknown> | undefined;
+      for (const v of [json["model_alias"], settings?.["model_alias"], json["model_path"], settings?.["model"], json["model"]]) {
+        if (typeof v !== "string" || !v.trim()) continue;
+        const s = v.trim();
+        const id = /[\\/]/.test(s) ? modelIdFromPath(s, dataDir) : MODEL_ID_RE.test(s) && !/\.gguf$/i.test(s) ? s : null;
+        if (id) ids.add(id);
+      }
+    }
+  } catch {
+    // an answer that is not JSON: a server is there, its model unknown
+  }
+  return { answered: true, ids: [...ids] };
 }
 
-/** One server, as a Remove sees it: up or not, the model the config gives it, the model its `/props` names (undefined: not asked or no answer). */
-export type ServerFacts = { running: boolean; activeId: string | null; served: string | null | undefined };
+/**
+ * One server, as a Remove sees it: whether it is up, the model the config
+ * gives it, and the ids it says it has loaded (null: it could not say).
+ */
+export type ServerFacts = { running: boolean; activeId: string | null; served: string[] | null };
 
 /**
- * Why `id` may not be deleted now, or null. A server has it loaded when its
- * `/props` says so, or — when it could not be asked — when it is the model
- * its config gives it.
+ * Why `id` may not be deleted now, or null. A server has it loaded when it
+ * says so, or — when it could not say which model it runs — when it is the
+ * model its config gives it.
  */
-export function removeBlocker(id: string, chat: ServerFacts, embedding: ServerFacts): string | null {
-  const loaded = (s: ServerFacts) => s.running && (s.served === id || (s.served === undefined && s.activeId === id));
-  if (loaded(chat)) return "the local model server is running this model — stop it first";
-  if (loaded(embedding)) return "the embedding server is running this model — stop it first";
+export function removeBlocker(id: string, servers: ServerFacts[]): string | null {
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  for (const s of servers) {
+    if (!s.running) continue;
+    const loaded = s.served && s.served.length ? s.served.some((x) => same(x, id)) : s.activeId !== null && same(s.activeId, id);
+    if (loaded) return "a local model server is running this model — stop it first";
+  }
   return null;
+}
+
+/** A background download of `id` the agent's own worker is still driving (`<dataDir>/downloads/<kind>-<id>.json`). */
+export function downloadJobRunning(dataDir: string, kind: "chat" | "embedding", id: string): boolean {
+  try {
+    const job = JSON.parse(readFileSync(join(dataDir, "downloads", `${kind}-${id}.json`), "utf8")) as { status?: unknown; pid?: unknown };
+    if (job.status !== "running" || typeof job.pid !== "number" || !Number.isInteger(job.pid) || job.pid <= 1) return false;
+    try {
+      process.kill(job.pid, 0);
+      return true;
+    } catch (err) {
+      // EPERM: alive, someone else's (a worker started under sudo).
+      return (err as NodeJS.ErrnoException).code === "EPERM";
+    }
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -2668,55 +2745,109 @@ export async function removeModelDir(dataDir: string, id: string): Promise<{ ok:
   const dir = join(root, id);
   if (dirname(dir) !== root) return { ok: false, error: `not a model id: ${id}` };
   try {
-    await rm(dir, { recursive: true, force: true });
+    // A file another process has open fails a delete on Windows for a moment: retried, as Node's rm does when asked.
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-/** `localModels.managed.dataDirOverride` as the CLI reads it, else `<stateDir>/models` (an external-mode status prints no data dir). */
-function managedDataDirFromFile(): string {
-  try {
-    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
-    const o = cfg.localModels?.managed?.dataDirOverride;
-    return managedDataDir(typeof o === "string" ? o : null);
-  } catch {
-    return managedDataDir(null);
-  }
+/**
+ * Every server of this app's that could hold a model file open, asked
+ * directly: the configured managed ports whatever the mode, plus the
+ * addresses `models status` and `list-embeddings` report; a server whose pid
+ * file says it is up but whose port does not answer counts as up, its model
+ * unknown.
+ */
+async function serversNow(st: ModelsStatus, emb: Awaited<ReturnType<typeof modelsListEmbeddings>>, facts: ManagedFacts, dataDir: string): Promise<ServerFacts[]> {
+  const chatActive = (st.mode === "managed" ? st.activeModel : null) ?? facts.chatModel;
+  const embActive = (emb.models ?? []).find((m) => m.active)?.id ?? facts.embModel;
+  const chatUrls = [...new Set([`http://127.0.0.1:${facts.chatPort}`, ...(st.daemonUrl ? [st.daemonUrl] : [])])];
+  const embUrls = [...new Set([`http://127.0.0.1:${facts.embPort}`, ...(emb.daemon?.port ? [`http://127.0.0.1:${emb.daemon.port}`] : [])])];
+  const ask = (urls: string[], activeId: string | null) => Promise.all(urls.map(async (url): Promise<ServerFacts> => {
+    const a = await probeServer(url, dataDir);
+    return { running: a.answered, activeId, served: a.ids.length ? a.ids : null };
+  }));
+  const [chat, embedding] = await Promise.all([ask(chatUrls, chatActive), ask(embUrls, embActive)]);
+  const out = [...chat, ...embedding];
+  if (st.daemonRunning && !chat.some((s) => s.running)) out.push({ running: true, activeId: chatActive, served: null });
+  if (emb.daemon?.running && !embedding.some((s) => s.running)) out.push({ running: true, activeId: embActive, served: null });
+  return out;
 }
 
 /**
- * Delete a local model's files — a chat model through `atag models remove`
- * (which also refuses the active one while its server runs), an embedding
- * model's directory here, since no CLI verb removes one — unless a running
- * server has it loaded: then nothing is deleted and the answer says so
- * (`running`), so the window can stop the server and ask again.
+ * Delete a local model's files — a chat model through `atag models remove`,
+ * an embedding model's directory here, since no CLI verb removes one — unless
+ * a server has it loaded (then nothing is deleted and the answer says so,
+ * `running`, so the window can offer to stop it), it is still coming down, or
+ * the servers' state cannot be read at all.
  */
 export async function modelsRemoveSafe(kind: "chat" | "embedding", id: string): Promise<CliResult & { running?: boolean }> {
-  if (!MODEL_ID_RE.test(id) || id === "." || id === "..") return { ok: false, stdout: "", stderr: "", error: `not a model id: ${id}` };
+  const refuse = (error: string, running?: boolean): CliResult & { running?: boolean } =>
+    ({ ok: false, stdout: "", stderr: "", error, ...(running ? { running } : {}) });
+  if (!MODEL_ID_RE.test(id) || id === "." || id === "..") return refuse(`not a model id: ${id}`);
   const [status, emb] = await Promise.all([modelsStatus(), modelsListEmbeddings()]);
-  const st = status.ok ? status.status : undefined;
-  const dataDir = st?.dataDir || managedDataDirFromFile();
-  const chatRunning = !!st?.daemonRunning;
-  const embRunning = !!(emb.ok && emb.daemon?.running);
-  const chatUrl = chatRunning && st && st.daemonUrl ? st.daemonUrl : null;
-  const embPort = embRunning && emb.daemon && emb.daemon.port ? emb.daemon.port : null;
-  const [chatServed, embServed] = await Promise.all([
-    chatUrl ? servedModelId(chatUrl, dataDir) : Promise.resolve(undefined),
-    embPort ? servedModelId(`http://127.0.0.1:${embPort}`, dataDir) : Promise.resolve(undefined),
-  ]);
-  const blocker = removeBlocker(
-    id,
-    { running: chatRunning, activeId: st && st.mode === "managed" ? st.activeModel : null, served: chatServed },
-    { running: embRunning, activeId: (emb.models ?? []).find((m) => m.active)?.id ?? null, served: embServed },
-  );
-  if (blocker) return { ok: false, stdout: "", stderr: "", error: blocker, running: true };
+  if (!status.ok || !status.status) return refuse(`could not read the local model servers' state, so nothing was deleted (${status.error ?? "no answer"})`);
+  const facts = managedFactsFromFile();
+  const dataDir = status.status.dataDir || facts.dataDir;
+  if (downloadJobRunning(dataDir, kind, id)) return refuse("it is still downloading — cancel the download first");
+  const blocker = removeBlocker(id, await serversNow(status.status, emb, facts, dataDir));
+  if (blocker) return refuse(blocker, true);
   if (kind === "chat") return cli(["models", "remove", id], 60_000);
-  if (!emb.ok) return { ok: false, stdout: "", stderr: "", error: emb.error ?? "could not read the embedding catalogue" };
-  if (!(emb.models ?? []).some((m) => m.id === id)) return { ok: false, stdout: "", stderr: "", error: `not an embedding model: ${id}` };
+  if (!emb.ok) return refuse(emb.error ?? "could not read the embedding catalogue");
+  if (!(emb.models ?? []).some((m) => m.id === id)) return refuse(`not an embedding model: ${id}`);
   const gone = await removeModelDir(dataDir, id);
-  return gone.ok ? { ok: true, stdout: `removed ${id}\n`, stderr: "" } : { ok: false, stdout: "", stderr: "", error: gone.error };
+  return gone.ok ? { ok: true, stdout: `removed ${id}\n`, stderr: "" } : refuse(gone.error ?? "could not delete its folder");
+}
+
+/**
+ * Stop the embedding server alone (`<dataDir>/llama-embed.pid`), as the
+ * agent's own stopEmbeddingDaemon does: the chat server, and any turn it is
+ * answering, are left be. A pid that is not a llama-server any more (reused)
+ * is never touched.
+ */
+export async function stopEmbeddingServer(): Promise<{ ok: boolean; error?: string }> {
+  const status = await modelsStatus();
+  const dataDir = (status.ok && status.status?.dataDir) || managedFactsFromFile().dataDir;
+  const pidFile = join(dataDir, "llama-embed.pid");
+  let pid: number;
+  try {
+    pid = Number(readFileSync(pidFile, "utf8").trim());
+  } catch {
+    return { ok: true };   // no embedding server
+  }
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  if (Number.isInteger(pid) && pid > 1 && alive()) {
+    const command = commandOf(pid);
+    if (command && /llama-server/i.test(command)) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* gone in between */ }
+      for (let i = 0; i < 15 && alive(); i++) await new Promise((r) => setTimeout(r, 200));
+      if (alive()) {
+        try { process.kill(pid, "SIGKILL"); } catch { /* gone in between */ }
+        for (let i = 0; i < 10 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+      }
+      if (alive()) return { ok: false, error: `the embedding server (pid ${pid}) did not stop` };
+    }
+  }
+  try { unlinkSync(pidFile); } catch { /* already gone */ }
+  return { ok: true };
+}
+
+/**
+ * What the managed servers run now, asked directly on their configured ports
+ * (ATO-125): Settings › Models names that model as the one answering, shows a
+ * server the route no longer counts, and its Use stops a server still on
+ * another model, so the pick starts it on the one asked for. `answered`
+ * false: no server there.
+ */
+export async function servedModels(): Promise<{ ok: true; chat: ServerAnswer; embedding: ServerAnswer }> {
+  const facts = managedFactsFromFile();
+  const [chat, embedding] = await Promise.all([
+    probeServer(`http://127.0.0.1:${facts.chatPort}`, facts.dataDir, 1500),
+    probeServer(`http://127.0.0.1:${facts.embPort}`, facts.dataDir, 1500),
+  ]);
+  return { ok: true, chat, embedding };
 }
 
 /** `atag models pull-embedding <id>`, streamed like `modelsPull`. */

@@ -192,9 +192,12 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsStatus: () => ipcRenderer.invoke("cli:modelsStatus"),
   modelsListEmbeddings: () => ipcRenderer.invoke("cli:modelsListEmbeddings"),
   modelsStop: () => ipcRenderer.invoke("cli:modelsStop"),
-  modelsRemove: (id: string) => ipcRenderer.invoke("cli:modelsRemove", id),
-  // ATO-119: an embedding model's files (no `atag models` verb removes one).
-  modelsRemoveEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsRemoveEmbedding", id),
+  // ATO-119: `stop` lets main stop a server that has the model loaded before it deletes.
+  modelsRemove: (id: string, opts?: { stop?: boolean }) => ipcRenderer.invoke("cli:modelsRemove", id, opts ?? {}),
+  // An embedding model's files (no `atag models` verb removes one).
+  modelsRemoveEmbedding: (id: string, opts?: { stop?: boolean }) => ipcRenderer.invoke("cli:modelsRemoveEmbedding", id, opts ?? {}),
+  // ATO-125: what the managed servers really run, asked on their ports.
+  modelsServed: () => ipcRenderer.invoke("cli:modelsServed"),
   modelsPullEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsPullEmbedding", id),
   modelsUseEmbedding: (idOrDisable: string) => ipcRenderer.invoke("cli:modelsUseEmbedding", idOrDisable),
   modelsUpdate: () => ipcRenderer.invoke("cli:modelsUpdate"),

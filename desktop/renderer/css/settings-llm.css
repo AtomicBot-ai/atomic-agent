@@ -145,6 +145,8 @@
 .llm-pane .llm-now b{font-weight:600;color:var(--ink)}
 .llm-pane .llm-nowst{display:inline-flex;align-items:center;gap:6px;margin-left:4px;color:var(--ink-2)}
 .llm-pane .llm-nowst .tk-dot{width:7px;height:7px}
+/* ATO-125: the server runs another model than the one picked. */
+.llm-pane .llm-nowpick{color:var(--amber-text)}
 .llm-pane .llm-nowbtn{height:26px;margin-left:6px;padding:0 10px}
 .llm-pane .llm-nowbtn svg{width:13px;height:13px}
 .llm-pane .llm-workers{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:2px 0 0}
@@ -164,7 +166,6 @@
 .llm-pane :is(.llm-adv, .llm-details)[open] > summary > svg{transform:rotate(90deg)}
 .llm-pane .llm-adv-body{display:flex;flex-direction:column;gap:10px;padding:10px 0 4px}
 .llm-pane .llm-adv-h{font-size:12.5px;font-weight:600;color:var(--ink-2)}
-.llm-pane .llm-adv-acts{display:flex;flex-wrap:wrap;gap:8px}
 .llm-pane .llm-details > summary{font-size:12.5px}
 .llm-pane .llm-details > .llm-route{margin-top:8px}
 

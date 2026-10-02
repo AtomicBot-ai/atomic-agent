@@ -810,7 +810,8 @@ export async function selectFusionWorkerModel(modelId: string): Promise<SwitchRe
 
 /** triggerLocalChatModel for a downloaded model; a pull is the renderer's job. */
 export async function selectLocalModel(modelId: string): Promise<SwitchResult> {
-  if (!/^[\w.-]{1,64}$/.test(modelId)) return { ok: false, error: `not a model id: ${modelId}` };
+  // 96, as agent-cli's MODEL_ID_RE: a model added from Hugging Face is `custom-` + up to 80 characters (Settings' Use comes here too now, ATO-125).
+  if (!/^[\w.-]{1,96}$/.test(modelId)) return { ok: false, error: `not a model id: ${modelId}` };
   const list = await modelsList();
   if (!list.ok || !list.models) return { ok: false, error: list.error };
   const row = list.models.find((m) => m.id === modelId);
