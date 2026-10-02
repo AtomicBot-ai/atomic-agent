@@ -34,8 +34,9 @@
    transcript. --dlcard-chat (renderer dlCardOverChat) is how far up it reaches
    over this column, so the column's end — the newest reply, an approval's
    buttons — scrolls clear of it. 0 while the card is away or beside the
-   column, and for a chat too short to scroll, which keeps its place on the
-   composer (chat review Д19). The empty chat has no column: its greeting
+   column. A chat too short to scroll takes it too: it sits on the composer
+   (chat review Д19), so it lifts clear of the card, and the folded badge
+   keeps the open card's room. The empty chat has no column: its greeting
    stays as it is. */
 #scroller > .col720{padding-bottom:max(16px, var(--dlcard-chat, 0px))}
 #scroller > .col720 > *{min-width:0}

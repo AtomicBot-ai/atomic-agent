@@ -27,7 +27,7 @@ import { BrowserWindow } from "electron";
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 type View = { sessionId: string; agentSession: string | null; busy: boolean; rows: string[]; screen: string; seen: string[]; ob: boolean };
-type Seam = { added: number; markedBefore: number; markedAfter: number; busy: boolean };
+type Seam = { added: number; turnsBefore: number; turnsAfter: number; busy: boolean };
 type Payload = { sessionId?: unknown };
 
 const PREFIX = "smoke-t22-";
@@ -200,12 +200,13 @@ async function newChatWhileLoading(js: Js, check: Check, agent: SlowAgent, wins:
     `clicked=${clicked} loading=${JSON.stringify(loading)} pressed=${pressed} → after=${JSON.stringify(after)}`,
   );
 
-  // r4SeamTest plants one finished turn into whatever transcript is up and counts the end marks.
+  // r4SeamTest plants one finished turn into whatever transcript is up and counts the finished turns
+  // (the end marks it counted before chat review Д18 took the mark away).
   const seam = await js<Seam>("window.__stampRowShape({llm:{providerId:'no-such-provider-seam', chatModel:'ghost-model'}})");
   check(
-    "T22: r4SeamTest's probe then finds only the turn it plants (marks 1→1, not 3→3)",
-    seam.added === 1 && seam.markedBefore === 1 && seam.markedAfter === 1 && !seam.busy,
-    `marks ${seam.markedBefore}→${seam.markedAfter}, added ${seam.added}, busy=${seam.busy}`,
+    "T22: r4SeamTest's probe then finds only the turn it plants (turns 1→1, not 3→3)",
+    seam.added === 1 && seam.turnsBefore === 1 && seam.turnsAfter === 1 && !seam.busy,
+    `turns ${seam.turnsBefore}→${seam.turnsAfter}, added ${seam.added}, busy=${seam.busy}`,
   );
 
   // The next message: startLiveTurn's own BR.chat, answered by a stand-in that refuses it.

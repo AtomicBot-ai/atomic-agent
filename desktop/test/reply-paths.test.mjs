@@ -10,7 +10,7 @@ import { basename, join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { replyPathVerdict, runsWhenOpened } = require("../out/main/reply-paths.js");
+const { openTarget, replyPathVerdict, runsWhenOpened } = require("../out/main/reply-paths.js");
 
 const home = mkdtempSync(join(tmpdir(), "reply-home-"));
 const outside = mkdtempSync(join(tmpdir(), "reply-outside-"));
@@ -30,6 +30,10 @@ writeFileSync(join(home, "notes.txt"), "x");
 chmodSync(join(home, "notes.txt"), 0o755);
 writeFileSync(join(outside, "secret.txt"), "x");
 symlinkSync(join(outside, "secret.txt"), join(home, "escape.txt"));
+// A link named like a document that leads to a script, a folder-style installer, and a Finder alias.
+symlinkSync(join(home, "run.command"), join(home, "notes-link.txt"));
+mkdirSync(join(home, "Installer.pkg"));
+writeFileSync(join(home, "Report alias"), Buffer.concat([Buffer.from("book\0\0\0\0mark\0\0\0\0", "latin1"), Buffer.alloc(48)]));
 
 const v = (p) => replyPathVerdict(p, home, "darwin");
 const real = (...parts) => realpathSync(join(home, ...parts));
@@ -67,11 +71,18 @@ test("a URL or a relative path is never a file to open", async () => {
 });
 
 test("what would run is shown, not opened", async () => {
-  for (const p of ["~/Tool.app", "~/run.command", "~/tool"]) {
+  for (const p of ["~/Tool.app", "~/run.command", "~/tool", "~/Installer.pkg", "~/Report alias"]) {
     const r = await v(p);
     assert.equal(r.ok, true, p);
     assert.equal(r.reveal, true, p);
   }
+  // A link is judged by what it leads to, and that is what opens.
+  const link = await v("~/notes-link.txt");
+  assert.deepEqual([link.ok, link.reveal, link.abs], [true, true, real("run.command")]);
+  const target = await openTarget(join(home, "notes-link.txt"), "darwin");
+  assert.deepEqual(target, { real: real("run.command"), kind: "file", reveal: true });
+  assert.equal(await openTarget(join(home, "missing.txt"), "darwin"), null);
+  assert.equal(runsWhenOpened("win32", "C:\\Users\\x\\update.msu", "file", 0), true);
   // An execute bit on a document with an extension does not make it a program.
   assert.equal((await v("~/notes.txt")).reveal, false);
   assert.equal(runsWhenOpened("win32", "C:\\Users\\x\\setup.exe", "file", 0), true);

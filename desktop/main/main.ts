@@ -175,7 +175,7 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 // Backlog 03 — the first-run probe's frame log, summarised.
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
-import { replyPathVerdict, runsWhenOpened } from "./reply-paths.js";
+import { openTarget, replyPathVerdict } from "./reply-paths.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -1491,18 +1491,19 @@ function wireIpc(client: AgentClient): void {
     return p;
   };
   /* Chat review Д23: opening a file the agent produced never runs it. An app,
-     a script, an installer or a link file (runsWhenOpened) is shown in the
-     file manager instead — the agent writes these too, and a click on a chip
-     that ran one would run whatever the model put in it. */
+     a script, an installer, a link file or a Finder alias (openTarget) is
+     shown in the file manager instead — the agent writes these too, and a
+     click on a chip that ran one would run whatever the model put in it. The
+     path is resolved first: a link named notes.txt that leads to a script is
+     the script, and the real path is what is judged and opened. */
   const openWithoutRunning = async (path: string): Promise<{ ok: boolean; revealed?: boolean; error?: string }> => {
-    try {
-      const st = await stat(path);
-      if (runsWhenOpened(process.platform, path, st.isDirectory() ? "dir" : "file", st.mode)) {
-        shell.showItemInFolder(path);
-        return { ok: true, revealed: true };
-      }
-    } catch { /* not there: openPath says so in its own words */ }
-    const err = await shell.openPath(path);
+    const target = await openTarget(path, process.platform);
+    if (target && target.reveal) {
+      shell.showItemInFolder(target.real);
+      return { ok: true, revealed: true };
+    }
+    // Not there: openPath says so in its own words.
+    const err = await shell.openPath(target ? target.real : path);
     return err ? { ok: false, error: err } : { ok: true };
   };
   ipcMain.handle("app:openPath", async (_event, p: unknown) => {
@@ -1538,7 +1539,8 @@ function wireIpc(client: AgentClient): void {
     const home = homedir();
     return { ok: true, files: await Promise.all(list.slice(0, 64).map((p) => replyPathVerdict(p, home, process.platform))) };
   });
-  ipcMain.handle("app:openReplyPath", async (_event, p: unknown) => {
+  /** A reply chip's file, opened: asked about again, never run. */
+  const openReplyPathNow = async (p: unknown): Promise<{ ok: boolean; revealed?: boolean; why?: string; error?: string }> => {
     const v = await replyPathVerdict(p, homedir(), process.platform);
     if (!v.ok || !v.abs) {
       return { ok: false, why: v.why, error: v.why === "missing" ? "It is no longer there." : "Only a file in your home folder opens from a reply." };
@@ -1546,14 +1548,18 @@ function wireIpc(client: AgentClient): void {
     if (v.reveal) { shell.showItemInFolder(v.abs); return { ok: true, revealed: true }; }
     const err = await shell.openPath(v.abs);
     return err ? { ok: false, error: err } : { ok: true };
-  });
+  };
+  ipcMain.handle("app:openReplyPath", (_event, p: unknown) => openReplyPathNow(p));
 
-  ipcMain.handle("app:fileMenu", (event, p: unknown) => {
+  // Chat review Д23: a reply chip's menu (`fromReply`) is offered only while
+  // its path is a file inside the home folder, and its Open asks again.
+  ipcMain.handle("app:fileMenu", async (event, p: unknown, fromReply: unknown) => {
     const path = safePath(p);
     if (!path) return;
+    if (fromReply === true && !(await replyPathVerdict(path, homedir(), process.platform)).ok) return;
     const { clipboard, Menu } = require("electron") as typeof import("electron");
     const menu = Menu.buildFromTemplate([
-      { label: "Open", click: () => void openWithoutRunning(path) },
+      { label: "Open", click: () => void (fromReply === true ? openReplyPathNow(path) : openWithoutRunning(path)) },
       { label: fileManagerLabel(process.platform), click: () => shell.showItemInFolder(path) },
       { type: "separator" },
       { label: "Copy Path", click: () => clipboard.writeText(path) },
@@ -7168,8 +7174,9 @@ async function uiTest(
 
   type Route = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string; settings: boolean };
   type Panes = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string };
-  // Snapshotted first: these acts really open the inspector and the console,
-  // the inspector starts OPEN, and the backend-switch lane runs after this one.
+  // Snapshotted first: these acts really open the inspector and the console
+  // (the inspector starts closed, chat review Д22), and the backend-switch
+  // lane runs after this one.
   const panesBefore = await js<Panes>("window.__panes()");
   const routes = await js<{ chat: Route; world: Route; llm: Route }>(
     "(() => { const chat = window.__route('room:chat');"
@@ -8760,7 +8767,8 @@ async function r4SeamTest(
 ): Promise<void> {
   type Shape = {
     added: number; kinds: string[]; classes: string[];
-    bubbles: number; endmarks: number; offers: number; busy: boolean;
+    bubbles: number; endmarks: number; offers: number;
+    turnsBefore: number; turnsAfter: number; busy: boolean;
   };
   // A provider that is not configured takes the "no longer configured" arm,
   // which is the one notice this window can raise without a real session
@@ -8771,14 +8779,16 @@ async function r4SeamTest(
   );
   check(
     // __stampRowShape plants a finished turn first, so the notice lands where
-    // it does in a reopened chat. (The end-mark count this check also made
-    // went with the mark, chat review Д18.)
+    // it does in a reopened chat, and the finished turns are counted around
+    // it (what the end mark counted before chat review Д18): 1 before, 1 after.
     "seam: the session model-stamp notice is a system row, not a user bubble",
     gone.added === 1 && gone.kinds[0] === "system"
       && gone.classes.every((c) => /(^|\s)sysrow(\s|$)/.test(c))
-      && gone.bubbles === 0 && gone.endmarks === 0 && !gone.busy,
+      && gone.bubbles === 0 && gone.endmarks === 0
+      && !gone.busy && gone.turnsBefore === 1 && gone.turnsAfter === 1,
     `added=${gone.added} kinds=${JSON.stringify(gone.kinds)} classes=${JSON.stringify(gone.classes)}`
-      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} busy=${gone.busy}`,
+      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} turns ${gone.turnsBefore}→${gone.turnsAfter}`
+      + ` busy=${gone.busy}`,
   );
 
   // The composer carries the microphone, the interim strip and the send

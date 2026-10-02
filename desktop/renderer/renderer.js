@@ -724,6 +724,9 @@ const DLC = {
   /** How far the card reaches up over the conversation's bottom edge,
       published as --dlcard-chat (0 while it is away or beside the column). */
   chat: 0,
+  /** Chat review (Д19): that reach as the open card took it, which the
+      folded badge keeps (null while the card is away). */
+  openRoom: null,
 };
 /* The card's distance from the window's edges, and from whatever it keeps clear of. */
 const DLC_EDGE = 16, DLC_GAP = 8;
@@ -1477,7 +1480,6 @@ function ic(n, cls) {
     + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
 }
 const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="var(--brand)"/><path fill="var(--on-brand)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
-const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 
 /* ---------------- brand logos ----------------
    Real marks for models and providers (LobeHub icons, MIT; the AI/ML API mark
@@ -1698,7 +1700,9 @@ const PAL = [
 ];
 
 /* ---------------- state ---------------- */
-/** A per-viewer pane flag in localStorage: 'open' or 'closed'. */
+/** A per-viewer pane flag in localStorage: 'open' or 'closed'. Nothing reads
+    `atag.inspector` any more (inspectorAtLaunch below); kept because item 09's
+    smoke (t09.ts) still puts the panel back through it. */
 function writePaneFlag(key, on) {
   try { localStorage.setItem(key, on ? 'open' : 'closed'); } catch (e) { /* no storage: the choice lasts this launch */ }
 }
@@ -10223,6 +10227,7 @@ function renderDlcard() {
     if (!el.hidden || el.innerHTML) { el.hidden = true; el.innerHTML = ''; }
     DLC.shape = null;
     DLC.had = false;
+    DLC.openRoom = null;
     dlCardFollow(null);
     dlCardPublish(0);
     return;
@@ -10307,18 +10312,26 @@ function dlCardOverChat(el) {
   const col = sc && sc.querySelector(':scope > .col720');
   const face = el.firstElementChild;
   if (!col || !face) return 0;
+  /* Chat review (Д19): the transcript sits on the composer now, so even a
+     chat too short to scroll has its newest reply, or an approval's buttons,
+     where the card stands, and it takes the room too: it lifts clear of the
+     card when the card comes and settles back when it goes. Folded to its
+     badge, the card keeps the room it took open, so folding and opening
+     move nothing (T18c). */
+  if (DLC.collapsed && DLC.openRoom !== null) return DLC.openRoom;
   const s = sc.getBoundingClientRect(), c = col.getBoundingClientRect(), f = face.getBoundingClientRect();
   const cs = getComputedStyle(col);
   const left = c.left + (parseFloat(cs.paddingLeft) || 0), right = c.right - (parseFloat(cs.paddingRight) || 0);
-  if (!(f.width > 0) || f.right <= left || f.left >= right || f.top >= s.bottom) return 0;
-  /* Chat review (Д19): the transcript sits on the composer now, so room made
-     under one too short to scroll would lift the whole chat each time the
-     card came, folded or went — the move this card exists not to make
-     (T18c). Such a chat keeps its place and the card floats over its end;
-     one that scrolls still ends clear of it. Judged without the room the
-     card already holds, so the answer does not feed on itself. */
-  if (sc.scrollHeight - Math.max(0, (DLC.chat || 0) - 16) <= sc.clientHeight) return 0;
-  return Math.max(0, Math.round(s.bottom - f.top + DLC_EDGE));
+  /* The card's top as laid out (its own `bottom` and height in the window),
+     not as drawn: it arrives sliding up from 8px lower, and room measured off
+     that slide would be short by as much until the card is next drawn —
+     moving the chat again then. */
+  const win = document.getElementById('window');
+  const top = win ? win.getBoundingClientRect().bottom - (parseFloat(el.style.bottom) || 0) - el.offsetHeight : f.top;
+  const room = !(f.width > 0) || f.right <= left || f.left >= right || top >= s.bottom ? 0
+    : Math.max(0, Math.round(s.bottom - top + DLC_EDGE));
+  if (!DLC.collapsed) DLC.openRoom = room;
+  return room;
 }
 
 /** The composer grows as it is typed into without a render: follow it. */
@@ -16348,10 +16361,10 @@ function noteSessionModelStamp(data) {
     return;
   }
   CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
-  // `note:true` (see endMarkIds): this row is appended to a REPLAYED
-  // transcript whose last turn finished long ago, so it must not take that
-  // turn's full stop away. Soft Tactile: a blue notice — sentence, caption
-  // under it, Switch to it on the right (chat.css places the three).
+  // `note:true`: this row is appended to a REPLAYED transcript whose last
+  // turn finished long ago — a notice about the session, not that turn's
+  // outcome. Soft Tactile: a blue notice — sentence, caption under it,
+  // Switch to it on the right (chat.css places the three).
   S.log.push({id:nid(), k:'system', note:true, tone:'blue', icon:'refresh', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
     + ' <span class="tk-stampcap">(a switch restarts the agent, so it is refused while any turn is running)</span>'
     + '<button class="btn sm btn-t tk-stampbtn" data-act="sessmodel:apply">Switch to it</button>'});
@@ -17103,8 +17116,15 @@ function renderProse(text) {
   // Windows: not the tail of `C:/dir/file` either — that whole path is the
   // drive-letter chip below.
   const FILE_RE_HERE = IS_WIN ? /(?<![\p{L}\p{N}_\/:])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu : FILE_RE;
-  const md = renderMarkdown(esc(text));
+  // \u0000 marks held code and \u0001 a chip below, so neither may come from the text itself.
+  const md = renderMarkdown(esc(text).replace(/[\u0000\u0001]/g, ''));
   let html = md.html;
+  /* Chat review (Д23): a chip's markup carries its path in two attributes,
+     and the drive-letter pass below would find a Windows path there and wrap
+     it again. So every chip (or the span it waits in) goes in as a \u0001N\u0001
+     placeholder, and the markup is put in only once no pass is left to scan. */
+  const chips = [];
+  const chip = (raw, shown) => '\u0001' + (chips.push(replyPathChip(raw, shown)) - 1) + '\u0001';
   html = html.replace(URL_RE, (u) => {
     const trail = (u.match(/[.,;:!?)\]}>"'\u00bb]+$/) || [''])[0];
     const core = u.slice(0, u.length - trail.length);
@@ -17112,23 +17132,24 @@ function renderProse(text) {
     return '<a class="msglink" href="#" data-url="' + href + '">' + core + '</a>' + trail;
   });
   // Chat review (Д23): a chip only for a file main found in the home folder; text until then.
-  html = html.replace(FILE_RE_HERE, (p) => replyPathChip(p, p));
+  html = html.replace(FILE_RE_HERE, (p) => chip(p, p));
   if (IS_WIN) {
     // Windows: `C:\dir\file.ext` (either separator), the same chip.
     const WIN_FILE_RE = /(?<![\w\\/])([A-Za-z]:[\\/](?:[\w.@+-]+[\\/])*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\\/])/g;
-    html = html.replace(WIN_FILE_RE, (p) => replyPathChip(p, p));
+    html = html.replace(WIN_FILE_RE, (p) => chip(p, p));
   }
   /* Chat review (Д23): most models write a path in a code span
      (`~/Desktop/report.docx`), which this pass used to leave as code. A code
      span holding nothing but a path (spaces and all) is that path too, on the
      same terms; a fence stays code, and so does a span with anything else in
      it. */
-  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => {
+  html = html.replace(/\u0000(\d+)\u0000/g, (m, i) => {
     const h = md.held[+i];
     const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
-    return raw && codeSpanIsPath(raw) ? replyPathChip(raw, h) : h;
+    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h;
   });
+  return html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]);
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {
@@ -17215,7 +17236,8 @@ document.addEventListener('contextmenu', (e) => {
   const f = e.target.closest('[data-file]');
   if (!f || !BR) return;
   e.preventDefault();
-  BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'));
+  // Chat review (Д23): a chip from a reply's text says so, and main checks its path again.
+  BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'), !!f.dataset.reply);
 });
 
 /* ============================================================
@@ -23207,7 +23229,8 @@ if (typeof window !== 'undefined') {
   /* Item 5: the routes above really open the inspector and the console, and the
      backend-switch lane runs after this one — so the panes are snapshotted and
      put back exactly, through the same acts, rather than being toggled off on
-     the assumption that they started closed (the inspector starts OPEN). */
+     the assumption that they started closed (a check before this one may
+     have left either open). */
   window.__panes = () => ({room: S.room, inspector: S.inspector, inspTab: S.inspTab,
                            consoleOpen: S.consoleOpen, consoleTab: S.consoleTab});
   window.__restorePanes = (was) => {
@@ -23763,12 +23786,28 @@ if (typeof window !== 'undefined') {
   window.__stampRowShape = (metadata) => {
     /* A finished turn is pushed first — user then a non-empty assistant — so
        the notice lands where it does in a real reopened chat, and is taken
-       back out with it. (Chat review Д18: the end mark it once counted, and
-       could have taken away, is gone.) */
+       back out with it.
+       The finished turns in the transcript are counted around the notice:
+       spans from one user message to the next that end in a reply with words,
+       stepping over notices about the session (`note:true`) — what r4-ui's
+       end mark counted before chat review Д18 took the mark away. With only
+       the planted turn on screen that is 1 before and 1 after: the notice
+       neither opens a turn nor reads as one's outcome, and a chat the window
+       left behind (T22: `3→3`) has not landed under it. */
+    const finishedTurns = () => {
+      const segs = [[]];
+      S.log.forEach((m) => { if (m.k === 'user') segs.push([]); segs[segs.length - 1].push(m); });
+      return segs.filter((seg) => {
+        let at = seg.length - 1;
+        while (at >= 0 && seg[at].k === 'system' && seg[at].note) at--;
+        return at >= 0 && seg[at].k === 'assistant' && !!String(seg[at].text || '').trim();
+      }).length;
+    };
     const base = S.log.length;
     S.log.push({id:nid(), k:'user', text:'(smoke) a turn that finished'});
     S.log.push({id:nid(), k:'assistant', text:'and its reply'});
     const before = S.log.length;
+    const turnsBefore = finishedTurns();
     // noteSessionModelStamp writes CTX055.stamp as well as the transcript, and
     // the checks around this one read it — so it is snapshotted, not zeroed.
     const stampBefore = CTX055.stamp;
@@ -23789,6 +23828,7 @@ if (typeof window !== 'undefined') {
         bubbles: tail.filter((n) => n.querySelector('.prose.usr.bubble') || n.classList.contains('usr')).length,
         endmarks: tail.filter((n) => n.querySelector('.endmark')).length,
         offers: tail.filter((n) => n.querySelector('[data-act="sessmodel:apply"]')).length,
+        turnsBefore, turnsAfter: finishedTurns(),
         // Reported, not assumed: the shape is read with the window at rest.
         busy: !!S.busy || !!S.pending,
       };
