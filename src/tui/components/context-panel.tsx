@@ -4,6 +4,7 @@ import {
   CONVERSATION_MAX_PAIRS_MAX,
   CONVERSATION_MAX_PAIRS_MIN,
 } from "../../config/config-schema.js";
+import { effectiveReplyReserve } from "../../prompt/token-budget.js";
 import {
   MouseTarget,
   useMouseCommands,
@@ -64,9 +65,12 @@ export interface ContextPanelProps {
   /** Columns available in that pane. */
   availableColumns: number;
   /**
-   * Tokens the runtime holds back for the model's own reply. Rendered as
-   * its own line under the rule: it is not in the prompt, but it is the
-   * reason the prompt cannot grow into the last of the window.
+   * The configured reply cap (`localModels.completionMaxTokens`). Drawn
+   * as its own line under the rule: it is not in the prompt, but it is
+   * the reason the prompt cannot grow into the last of the window. The
+   * line shows what the budget really holds back on this window
+   * (`replyReserveShown`), not the raw cap — a 96k cap on a 32k window
+   * would otherwise eat the whole window and leave "free" at zero.
    */
   reservedForReply: number | null;
   /**
@@ -222,16 +226,40 @@ function buildRows(
     tokens: section.tokens,
   }));
   if (usage.contextWindow === null) return rows;
-  if (reservedForReply !== null && reservedForReply > 0) {
+  const reserved = replyReserveShown(
+    reservedForReply,
+    usage.contextWindow,
+    usage.tokens,
+  );
+  if (reserved > 0) {
     rows.push({
       label: "reserved for reply",
-      tokens: reservedForReply,
+      tokens: reserved,
       dim: true,
     });
   }
-  const free = usage.contextWindow - usage.tokens - (reservedForReply ?? 0);
+  const free = usage.contextWindow - usage.tokens - reserved;
   rows.push({ label: "free", tokens: Math.max(0, free), dim: true });
   return rows;
+}
+
+/**
+ * The reply reservation as this window can actually honour it: the
+ * prompt budget's own figure (`effectiveReplyReserve` — the configured
+ * cap, held to half a window it does not fit in), and never more than
+ * the prompt left of the window. The desktop's context popover ports
+ * this rule (`ctxReplyReserve` in desktop/renderer/renderer.js).
+ */
+export function replyReserveShown(
+  replyCap: number | null,
+  contextWindow: number,
+  promptTokens: number,
+): number {
+  if (replyCap === null || replyCap <= 0) return 0;
+  return Math.min(
+    effectiveReplyReserve(replyCap, contextWindow),
+    Math.max(0, contextWindow - promptTokens),
+  );
 }
 
 function renderRow(

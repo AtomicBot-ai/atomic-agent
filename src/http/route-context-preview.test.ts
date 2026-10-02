@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import { resetConfigCache } from "../config/index.js";
+import { effectiveReplyReserve } from "../prompt/token-budget.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
 interface PreviewJson {
@@ -13,6 +15,7 @@ interface PreviewJson {
   };
   contextWindow: number | null;
   reservedForReply: number;
+  replyCap: number;
   pairsCap: number;
 }
 
@@ -57,12 +60,45 @@ describe("POST /api/context-preview", () => {
     expect(json.usage.conversationPairs).toBe(0);
     expect(json.pairsCap).toBe(harness.runtime.config.agent.conversationMaxPairs);
     expect(json.usage.conversationPairsCap).toBe(json.pairsCap);
-    expect(json.reservedForReply).toBe(
+    // The configured cap rides as `replyCap`; the reservation is the part
+    // of it the budget really holds back on this window.
+    expect(json.replyCap).toBe(
       harness.runtime.config.localModels.completionMaxTokens,
+    );
+    expect(json.reservedForReply).toBe(
+      effectiveReplyReserve(json.replyCap, json.contextWindow),
     );
     expect(json.contextWindow === null || json.contextWindow > 0).toBe(true);
     // A preview is not a session.
     expect(harness.runtime.sessionStore.listRecent(100).length).toBe(before);
+  });
+
+  /**
+   * Desktop item 63: a 96k reply cap on a 32k model. The route used to
+   * report the raw cap as reserved, which the popover drew as eating the
+   * whole window; it reports the budget's reservation and the cap apart.
+   */
+  it("reports a cap past half the window as half the window, and the cap itself as replyCap", async () => {
+    const before = process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
+    process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "96000";
+    resetConfigCache();
+    try {
+      harness = await startTestHarness({
+        llamaProps: {
+          model_alias: "small-32k",
+          default_generation_settings: { n_ctx: 32_768 },
+        },
+      });
+      const { status, json } = await preview(harness.baseUrl, {});
+      expect(status).toBe(200);
+      expect(json.contextWindow).toBe(32_768);
+      expect(json.replyCap).toBe(96_000);
+      expect(json.reservedForReply).toBe(16_384);
+    } finally {
+      if (before === undefined) delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
+      else process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = before;
+      resetConfigCache();
+    }
   });
 
   it("counts the draft as the user message", async () => {
