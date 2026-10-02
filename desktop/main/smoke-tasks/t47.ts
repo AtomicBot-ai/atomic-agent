@@ -112,13 +112,13 @@ const STATUS = String.raw`(async () => {
     for (let i = 0; i < 50 && loading[pane](); i++) await tick(100);
     await tick(100);
     const keep = {tk: {mode: TK.mode, auto: TK.auto, loading: TK.loading, at: TK.lastRefreshedAt},
-      skp: {mode: SKP.mode, view: SKP.view, hubCard: SKP.hubCard, auto: SKP.auto}, sk: {busy: SK.busy, at: SK.at},
-      mem: {auto: MEM.auto, loading: MEM.loading, at: MEM.lastRefreshedAt},
+      skp: {mode: SKP.mode, view: SKP.view, hubCard: SKP.hubCard, auto: SKP.auto, removeConfirm: SKP.removeConfirm, busy: SKP.busy}, sk: {busy: SK.busy, at: SK.at},
+      mem: {mode: MEM.mode, auto: MEM.auto, loading: MEM.loading, at: MEM.lastRefreshedAt},
       mcp: {auto: MCP.auto, loading: MCP.loading, at: MCP.lastRefreshedAt, addModal: MCP.addModal, removeConfirm: MCP.removeConfirm}};
     const stage = (auto, busy, at) => {
       if (pane === 'tasks') Object.assign(TK, {mode: 'list', auto, loading: busy, lastRefreshedAt: at});
-      if (pane === 'skills') { Object.assign(SKP, {mode: 'list', view: 'skills', hubCard: null, auto}); Object.assign(SK, {busy, at}); }
-      if (pane === 'memory') Object.assign(MEM, {auto, loading: busy, lastRefreshedAt: at});
+      if (pane === 'skills') { Object.assign(SKP, {mode: 'list', view: 'skills', hubCard: null, auto, removeConfirm: null, busy: false}); Object.assign(SK, {busy, at}); }
+      if (pane === 'memory') Object.assign(MEM, {mode: 'list', auto, loading: busy, lastRefreshedAt: at});
       if (pane === 'mcp') Object.assign(MCP, {auto, loading: busy, lastRefreshedAt: at, addModal: null, removeConfirm: null});
     };
     const r = {};
@@ -143,7 +143,7 @@ const STATUS = String.raw`(async () => {
     } finally {
       Object.assign(TK, {mode: keep.tk.mode, auto: keep.tk.auto, loading: keep.tk.loading, lastRefreshedAt: keep.tk.at});
       Object.assign(SKP, keep.skp); Object.assign(SK, keep.sk);
-      Object.assign(MEM, {auto: keep.mem.auto, loading: keep.mem.loading, lastRefreshedAt: keep.mem.at});
+      Object.assign(MEM, {mode: keep.mem.mode, auto: keep.mem.auto, loading: keep.mem.loading, lastRefreshedAt: keep.mem.at});
       Object.assign(MCP, {auto: keep.mcp.auto, loading: keep.mcp.loading, lastRefreshedAt: keep.mcp.at, addModal: keep.mcp.addModal, removeConfirm: keep.mcp.removeConfirm});
       render();
     }
