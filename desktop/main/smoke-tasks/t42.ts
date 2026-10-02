@@ -12,9 +12,10 @@ import { DENSE_KV_BYTES_PER_TOKEN, managedStart, servedWith } from "./managed-st
  * working-set ceiling (about two thirds of RAM) as free, whatever else runs,
  * and the fit spent it. 262,144 tokens of that model's cache is 1.75 GiB at
  * turbo3, against 224 MiB at 32,768. On a device that shares the system's
- * RAM the auto context is now also held to half of physical memory for the
- * whole server and 1/16 of it for the cache; a context set in config stays
- * as set, and a GPU with memory of its own keeps the plain fit.
+ * RAM the auto context now also leaves the system a headroom of
+ * max(4 GiB, a quarter of RAM) and holds the cache to 1/16 of RAM; a
+ * context set in config stays as set, and a GPU with memory of its own
+ * keeps the plain fit.
  *
  * The real `models start` runs against a stand-in llama-server
  * (managed-start.ts) whose `--list-devices` answers with a Metal device, then
@@ -42,7 +43,7 @@ export async function checks42(_js: unknown, check: Check): Promise<void> {
   const ramMiB = totalmem() / MIB;
   const weightsMiB = ((curatedMeta("qwen-3.5-4b")?.sizeGb ?? 2.7) * 1e9) / MIB;
   const fitMiB = FREE_MIB * 0.92 - weightsMiB - 768;
-  const shareMiB = Math.min(ramMiB * 0.5 - weightsMiB - 768, ramMiB / 16);
+  const shareMiB = Math.min(ramMiB - Math.max(4096, ramMiB * 0.25) - weightsMiB - 768, ramMiB / 16);
   const expectCard = contextFor(fitMiB);
   const expectMac = contextFor(Math.min(fitMiB, shareMiB));
   const gb = Math.round(ramMiB / 1024);
