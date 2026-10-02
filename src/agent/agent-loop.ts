@@ -1286,6 +1286,16 @@ export class AgentLoop {
         claimNoticeGiven = true;
       },
     };
+    // Links need a source, once per turn, the same way: a reply link no
+    // tool result holds is held back the first time only
+    // (`link-evidence.ts`).
+    let linkNoticeGiven = false;
+    const linkEvidence = {
+      noticed: () => linkNoticeGiven,
+      markNoticed: () => {
+        linkNoticeGiven = true;
+      },
+    };
     // Same shape for the progress-note notice: a `reply` batched with
     // work is kept as a note and the turn goes on; the model is told
     // why once per turn (`progress-note-reply.ts`).
@@ -1722,6 +1732,7 @@ export class AgentLoop {
                 }
               : {}),
             claimEvidence,
+            linkEvidence,
             progressNotes,
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
