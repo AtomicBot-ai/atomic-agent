@@ -22459,12 +22459,28 @@ if (typeof window !== 'undefined') {
   window.__stampRowShape = (metadata) => {
     /* A finished turn is pushed first — user then a non-empty assistant — so
        the notice lands where it does in a real reopened chat, and is taken
-       back out with it. (Chat review Д18: the end mark it once counted, and
-       could have taken away, is gone.) */
+       back out with it.
+       The finished turns in the transcript are counted around the notice:
+       spans from one user message to the next that end in a reply with words,
+       stepping over notices about the session (`note:true`) — what r4-ui's
+       end mark counted before chat review Д18 took the mark away. With only
+       the planted turn on screen that is 1 before and 1 after: the notice
+       neither opens a turn nor reads as one's outcome, and a chat the window
+       left behind (T22: `3→3`) has not landed under it. */
+    const finishedTurns = () => {
+      const segs = [[]];
+      S.log.forEach((m) => { if (m.k === 'user') segs.push([]); segs[segs.length - 1].push(m); });
+      return segs.filter((seg) => {
+        let at = seg.length - 1;
+        while (at >= 0 && seg[at].k === 'system' && seg[at].note) at--;
+        return at >= 0 && seg[at].k === 'assistant' && !!String(seg[at].text || '').trim();
+      }).length;
+    };
     const base = S.log.length;
     S.log.push({id:nid(), k:'user', text:'(smoke) a turn that finished'});
     S.log.push({id:nid(), k:'assistant', text:'and its reply'});
     const before = S.log.length;
+    const turnsBefore = finishedTurns();
     // noteSessionModelStamp writes CTX055.stamp as well as the transcript, and
     // the checks around this one read it — so it is snapshotted, not zeroed.
     const stampBefore = CTX055.stamp;
@@ -22485,6 +22501,7 @@ if (typeof window !== 'undefined') {
         bubbles: tail.filter((n) => n.querySelector('.prose.usr.bubble') || n.classList.contains('usr')).length,
         endmarks: tail.filter((n) => n.querySelector('.endmark')).length,
         offers: tail.filter((n) => n.querySelector('[data-act="sessmodel:apply"]')).length,
+        turnsBefore, turnsAfter: finishedTurns(),
         // Reported, not assumed: the shape is read with the window at rest.
         busy: !!S.busy || !!S.pending,
       };

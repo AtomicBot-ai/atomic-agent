@@ -8673,7 +8673,8 @@ async function r4SeamTest(
 ): Promise<void> {
   type Shape = {
     added: number; kinds: string[]; classes: string[];
-    bubbles: number; endmarks: number; offers: number; busy: boolean;
+    bubbles: number; endmarks: number; offers: number;
+    turnsBefore: number; turnsAfter: number; busy: boolean;
   };
   // A provider that is not configured takes the "no longer configured" arm,
   // which is the one notice this window can raise without a real session
@@ -8684,14 +8685,16 @@ async function r4SeamTest(
   );
   check(
     // __stampRowShape plants a finished turn first, so the notice lands where
-    // it does in a reopened chat. (The end-mark count this check also made
-    // went with the mark, chat review Д18.)
+    // it does in a reopened chat, and the finished turns are counted around
+    // it (what the end mark counted before chat review Д18): 1 before, 1 after.
     "seam: the session model-stamp notice is a system row, not a user bubble",
     gone.added === 1 && gone.kinds[0] === "system"
       && gone.classes.every((c) => /(^|\s)sysrow(\s|$)/.test(c))
-      && gone.bubbles === 0 && gone.endmarks === 0 && !gone.busy,
+      && gone.bubbles === 0 && gone.endmarks === 0
+      && !gone.busy && gone.turnsBefore === 1 && gone.turnsAfter === 1,
     `added=${gone.added} kinds=${JSON.stringify(gone.kinds)} classes=${JSON.stringify(gone.classes)}`
-      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} busy=${gone.busy}`,
+      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} turns ${gone.turnsBefore}→${gone.turnsAfter}`
+      + ` busy=${gone.busy}`,
   );
 
   // The composer carries the microphone, the interim strip and the send
