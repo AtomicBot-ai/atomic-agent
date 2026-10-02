@@ -91,4 +91,13 @@ describe("what serve hands the runtime", () => {
       stderr.mockRestore();
     }
   });
+
+  // Under the desktop, a host that died leaves stderr a dead pipe, and
+  // the next log line exited the process before its teardown ran (the
+  // port, the session store's turn ends, the serve record). Muted, the
+  // orphan watch ends it the way SIGTERM would.
+  it("a broken stderr is muted, not a reason to exit", async () => {
+    const options = await serveBootOptions();
+    expect(options.brokenPipe).toBe("mute");
+  });
 });

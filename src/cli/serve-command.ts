@@ -67,6 +67,12 @@ export async function serveCommand(args: string[]): Promise<number> {
         getConfig().agent.approvalLevel,
       ),
       traceDefault: true,
+      // A host that died (the desktop app, Force Quit) leaves stderr a
+      // dead pipe. The next log line used to exit the process there and
+      // then, skipping the `finally` below — the port, the session
+      // store's turn ends, the serve record. Muted, serve goes on until
+      // the orphan watch ends it through that teardown.
+      brokenPipe: "mute",
       handlers: {
         // The structured log goes to stderr, which a host running serve
         // relays into its own log (the desktop app's agent.log and its
