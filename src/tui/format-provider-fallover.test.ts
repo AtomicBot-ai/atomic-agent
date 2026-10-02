@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyFalloverReason,
+  formatFallbackStatusLine,
   formatProviderFalloverNotice,
 } from "./format-provider-fallover.js";
 
@@ -72,5 +73,50 @@ describe("formatProviderFalloverNotice", () => {
     );
     expect(text).toMatch(/until openrouter recovers/);
     expect(text).not.toMatch(/will not clear by itself/);
+  });
+});
+
+describe("formatFallbackStatusLine", () => {
+  const away = (reason: string) =>
+    formatFallbackStatusLine({
+      direction: "away",
+      from: "openrouter",
+      to: "local-llama",
+      reason,
+    });
+
+  it("names a credit refusal and the fix, not the provider's raw text", () => {
+    const line = away(
+      "This request requires more credits, or fewer max_tokens. You requested up to 96000 tokens (402).",
+    );
+    expect(line).toContain("failed over openrouter -> local-llama");
+    expect(line).toContain("openrouter is out of credit or quota");
+    expect(line).toContain("maxOutputTokens");
+    expect(line).not.toContain("96000");
+  });
+
+  it("names a key refusal and where the key lives", () => {
+    const line = away("provider rejected the request (401).");
+    expect(line).toContain("openrouter refused the API key");
+    expect(line).toContain(".env");
+    expect(line).not.toContain("(401)");
+  });
+
+  it("keeps a transient reason and says the chain retries by itself", () => {
+    const line = away("503 Service Unavailable");
+    expect(line).toBe(
+      "status: failed over openrouter -> local-llama (503 Service Unavailable) · retrying openrouter automatically",
+    );
+  });
+
+  it("reports a recovery without a reason", () => {
+    expect(
+      formatFallbackStatusLine({
+        direction: "back",
+        from: "local-llama",
+        to: "openrouter",
+        reason: "primary recovered",
+      }),
+    ).toBe("status: recovered primary openrouter");
   });
 });

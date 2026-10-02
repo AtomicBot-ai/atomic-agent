@@ -1,3 +1,5 @@
+import type { FallbackLastSwitch } from "./llm-panel/fallback/fallback-panel-state.js";
+
 /**
  * The chat-surface announcement for a fallover away from the primary
  * provider.
@@ -48,4 +50,32 @@ export function classifyFalloverReason(reason: string): FalloverCause {
   if (/\b401\b|\b403\b|unauthor|forbidden|invalid api key|api key/.test(text))
     return "auth";
   return "other";
+}
+
+/**
+ * The Fallback pane's one-line status for the last observed switch.
+ *
+ * The pane is where an operator goes to act on a fallover, so the line
+ * says which kind of failure happened and the one thing to do about it,
+ * not the provider's raw refusal text: that full reason is already in
+ * the chat notice and the Observe feed. A credit or key refusal names
+ * the fix, because the recovery probe will keep failing until someone
+ * applies it. A transient failure keeps its short reason (a status code,
+ * a timeout) and says the chain retries on its own, because there is
+ * nothing to do but wait.
+ */
+export function formatFallbackStatusLine(
+  lastSwitch: FallbackLastSwitch,
+): string {
+  const { direction, from, to, reason } = lastSwitch;
+  if (direction === "back") return `status: recovered primary ${to}`;
+  const head = `status: failed over ${from} -> ${to}`;
+  switch (classifyFalloverReason(reason)) {
+    case "billing":
+      return `${head} · ${from} is out of credit or quota: top it up or lower its maxOutputTokens`;
+    case "auth":
+      return `${head} · ${from} refused the API key: check it in <stateDir>/.env`;
+    default:
+      return `${head} (${reason}) · retrying ${from} automatically`;
+  }
 }
