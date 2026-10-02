@@ -337,6 +337,7 @@ export async function checks26(js: Js, check: Check): Promise<void> {
     await deletedWhileWaiting(js, check, agent, w);
     await underAnotherChatsCard(js, check, agent, w);
     await refusedAfterOwnTurnEnded(js, check, agent, w);
+    await idleBehindAnotherChatsTurn(js, check, agent, w);
     await backWhileRunning(js, check, agent, w);
   } finally {
     /* The held answers are let go and the stand-ins come off before anything
@@ -666,17 +667,12 @@ async function underAnotherChatsCard(js: Js, check: Check, agent: StandIn, w: Br
   );
 }
 
-/* (i2) The other way the queue on screen drains behind another chat's turn
-   (onChatEvent's `idle` leg), now that a card of another chat no longer
-   takes a chat's Enter down the steer path (Q60). That leg runs for the end
-   of the window's last-started turn (S.turnId) when that turn's rows are not
-   on screen and the chat on screen runs no turn of its own.
-   In chat B the person types a follow-up while B's turn runs, so it is asked
-   as a steer. They go to chat A and start a turn there (the window's turn is
-   A's now). B's turn ends while they are away, and only then does the agent
-   answer the steer: refused. The message is parked in B, whose turn is over,
-   and nothing is owed (B's queue was empty when its turn ended). Back in B,
-   it waits in the tray; when A's turn ends it runs in B. */
+/* (i2) A follow-up typed in chat B while B's turn runs is asked as a steer.
+   The person goes to chat A and starts a turn there; B's turn ends while
+   they are away, and only then does the agent answer the steer: refused.
+   The message is parked in B, and as B runs no turn any more nothing would
+   ever end to run it, so it is owed at once (parkIn). It runs in B as soon
+   as the person is back there, once, and A's end does not run it again. */
 async function refusedAfterOwnTurnEnded(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
   const a = `${PREFIX}a-i2`;
   const b = `${PREFIX}b-i2`;
@@ -697,18 +693,60 @@ async function refusedAfterOwnTurnEnded(js: Js, check: Check, agent: StandIn, w:
   if (turnB) await frame(js, w, { turnId: turnB, kind: "done" });
   agent.releaseSteers();
   await settle(js);
+  const away = agent.chats(mark).length;
   const back = await land(js, b, "smoke t26: chat B (i2)");
-  const parked = await js<View>(VIEW);
-  const before = agent.chats(mark).length;
+  const inB = await js<View>(VIEW);
+  const onReturn = agent.chats(mark);
   if (turnA) await frame(js, w, { turnId: turnA, kind: "done" });
+  const all = agent.chats(mark);
+  const runs = (list: Sent[]) => list.filter((c) => c.text === typed);
+  check(
+    "T26: a steer refused after the chat's own turn ended (the person away) runs in that chat once they are back there, once",
+    onB && !!turnB && asked && onA && !!turnA && back && away === 2
+      && runs(onReturn).length === 1 && runs(onReturn)[0]!.sessionId === b && inB.sessionId === b
+      && inB.rows.includes(`user:${typed}`) && !queuedFollowUp(inB, typed) && runs(all).length === 1,
+    `turns=${turnA},${turnB} asked=${asked} away=${away} inB=${show(inB)} chats=${show(all)}`,
+  );
+}
+
+/* (i3) onChatEvent's `idle` drain: the queue on screen runs behind the end
+   of the window's last-started turn when that turn is another chat's and the
+   chat on screen runs none. Chat A's turn runs (the window's turn); chat B,
+   which runs nothing, is on screen. A request comes from a session with no
+   chat to be found in (a one-shot task's), so it is drawn in B (Q60:
+   approvalReachable), and Enter there takes the steer path; B runs no turn,
+   so the steer is refused and the message is parked in B. It runs in B when
+   A's turn ends. */
+async function idleBehindAnotherChatsTurn(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
+  const a = `${PREFIX}a-i3`;
+  const b = `${PREFIX}b-i3`;
+  const x = `${PREFIX}x-i3`;   // no row, no stand-in, no turn here
+  const first = "smoke t26: the question that starts chat A's turn (i3)";
+  const typed = "smoke t26: typed in B under a card with no chat of its own (i3)";
+  agent.ready(a, loaded(a, turns("A", 1)));
+  agent.ready(b, loaded(b, turns("B", 1)));
+  await js<boolean>(RESET);
+  const mark = agent.sent.length;
+  const onA = await land(js, a, "smoke t26: chat A (i3)");
+  const turn = await startTurn(js, agent, first);
+  const onB = await land(js, b, "smoke t26: chat B (i3)");
+  const asked = await js<boolean>(`(() => {
+    onApprovalEvent({approvalId: ${q(`${PREFIX}approval-i3`)}, tool: 'os.shell.run', category: 'shell', reason: 'smoke t26',
+      preview: 'echo smoke t26', sessionId: ${q(x)}});
+    return !!S.pending && S.pending.sessionId === ${q(x)} && S.turnId === ${q(turn)};
+  })()`);
+  agent.steer = "refuse";
+  const parked = await typeAndEnter(js, typed);
+  const before = agent.chats(mark).length;
+  if (turn) await frame(js, w, { turnId: turn, kind: "done" });
   const after = await js<View>(VIEW);
   const all = agent.chats(mark);
+  const steers = agent.since(mark).filter((s) => s.channel === "steer");
   check(
-    "T26: a steer refused after the chat's own turn ended waits in that chat and runs there when the window's turn, another chat's, ends",
-    onB && !!turnB && asked && onA && !!turnA && back && queuedFollowUp(parked, typed) && before === 2
-      && all.length === 3 && all[2]!.text === typed && all[2]!.sessionId === b && after.sessionId === b
-      && after.rows.includes(`user:${typed}`),
-    `turns=${turnA},${turnB} asked=${asked} parked=${show(parked)} chats=${show(all)} after=${show(after)}`,
+    "T26: a message parked in a chat that runs no turn runs there when the window's turn, another chat's, ends",
+    onA && !!turn && onB && asked && steers.length === 1 && steers[0]!.sessionId === b && queuedFollowUp(parked, typed)
+      && before === 1 && all.length === 2 && all[1]!.text === typed && all[1]!.sessionId === b && after.rows.includes(`user:${typed}`),
+    `turn=${turn} asked=${asked} steers=${show(steers)} parked=${show(parked)} chats=${show(all)} after=${show(after)}`,
   );
 }
 
