@@ -434,10 +434,15 @@ async function stopInTheChatOnScreen(js: Js, check: Check, agent: StandIn): Prom
   const mark = agent.sent.length;
   await key(js, "Escape");
   const outEsc = agent.since(mark);
+  /* 0.6.7 item 38: a chat opened again while its turn runs shows that turn,
+     its question and its reply row still being written, where it used to say
+     "a turn is still running here" over the stored transcript alone. That is
+     what tells this view the turn is still running, so it is read instead. */
   check(
     "T25: back in a chat whose turn still runs here, Escape stops that chat's turn, not the turn started last in another chat",
     !!turnA && !!turnB && !!turnC && !!backA && backA.busy && backA.stop
-      && backA.rows.some((r) => r.includes("a turn is still running here")) && show(cancels(outEsc)) === show([turnA]),
+      && backA.rows.includes("user:smoke t25: a question in chat A") && backA.rows[backA.rows.length - 1] === "assistant:"
+      && show(cancels(outEsc)) === show([turnA]),
     `turns=${show(ids)} backA=${show(backA)} sent=${show(outEsc)}`,
   );
   const backB = (await land(js, b, "smoke t25: chat B, its turn runs on")) ? await js<View>(VIEW) : null;

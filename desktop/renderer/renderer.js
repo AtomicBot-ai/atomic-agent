@@ -1724,6 +1724,27 @@ const QUEUES = new Map();
    one. */
 const FIRST_TURNS = new Map();
 const PENDING_CHATS = new Map();
+/* 0.6.7 item 38: a chat opened again while its turn runs showed "this session
+   has no turns yet" and "a turn is still running here", without the message
+   just sent: the agent stores a turn when it ends, and the turn's live view
+   went with the chat. Every turn this window starts keeps a record here,
+   turnId → {text, startedAt, asked, item, log, view, missed, outAt, ended,
+   sid, endedAt, endRows}: the message (`asked`, its row), the turn's rows
+   (`log` is the transcript they are in, from `asked` to its reply `item`),
+   what of its view is window-wide state (`view`: WAIT and FZ.live, kept when
+   its chat was left), and the frames that came while its rows were not on
+   screen (`missed`). Opening the chat puts the stored transcript up, the
+   turn's rows under it and what was missed into them, and the turn streams
+   on there (liveRebuild). A turn that failed or was stopped stays here for a
+   while (`ended`), as the store may not have it. */
+const LIVE_TURNS = new Map();
+/* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
+   are bookkeeping and go on as they always did. */
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'delta', 'progress_note', 'fusion_worker',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered']);
+/* Item 38: the local model server's request slots (`total_slots` in its
+   /props), read when two chats run at once. */
+const LLAMA_SLOTS = {n:null, busy:false};
 const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
 const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
@@ -2199,7 +2220,7 @@ function workingRowHTML(m) {
   if (!workingShown(m)) return '';
   workingTickStart();
   return '<div class="turn tk-working"><div></div><div><div class="tk-work"><span class="tk-spin"></span>'
-    + '<span class="tk-work-t">Working…</span><span class="tk-work-n">' + workingElapsed() + '</span></div></div></div>';
+    + '<span class="tk-work-t">' + esc(workingLabel()) + '</span><span class="tk-work-n">' + workingElapsed() + '</span></div></div></div>';
 }
 let WORKING_TICK = 0;
 function workingTickStart() {
@@ -2210,6 +2231,9 @@ function workingTickStart() {
     if (on.length && workingShown(m)) {
       const t = workingElapsed();
       on.forEach((el) => { el.textContent = t; });
+      // Item 38: the local model is taken by another chat, and given back, without a render.
+      const label = workingLabel();
+      document.querySelectorAll('#scroller .tk-work-t').forEach((el) => { if (el.textContent !== label) el.textContent = label; });
       return;
     }
     clearInterval(WORKING_TICK); WORKING_TICK = 0;
@@ -4907,6 +4931,7 @@ function act(a) {
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'session:new') { close();
                              stashQueue();   // Backlog 26: what was queued in the chat being left waits for it, read before the view goes
+                             liveLeave();    // Item 38: and a turn running there keeps its view for when it is opened again
                              S.log = []; S.history = []; S.agentSession = null; S.busy = false;
                              forgetApprovalCard();   // item 6 review fix: a fresh thread does not answer the open gate — the other chat's dot keeps saying it is waiting
                              clearPlanOffer();   // Item 1: the plan belonged to the thread being left (see openSession)
@@ -4922,7 +4947,7 @@ function act(a) {
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
-  if (a === 'clear') { close(); S.log = []; S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
+  if (a === 'clear') { close(); liveLeave(); S.log = []; S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -5077,6 +5102,7 @@ function act(a) {
                              const gone = i >= 0 ? SESSIONS[i].t : v;
                              if (i >= 0) SESSIONS.splice(i, 1);
                              forgetQueue(v);   // Backlog 26: nothing queued in it is sent anywhere else
+                             liveForget(v);    // Item 38: nor is a failed turn kept for it
                              PREFS.pinned = PREFS.pinned.filter((x) => x !== v);
                              delete PREFS.seen[v];
                              savePrefs();
@@ -6804,6 +6830,9 @@ function startLiveTurn(text) {
   S.history.push({role:'user', content:text});
   S.reasonId = null;
   FZ.live = [];
+  // Item 38: and the wait strip, which is the turn on screen's: a turn left
+  // parked elsewhere keeps its own wait in its record (liveLeave).
+  liveSetWait(null);
   // Backlog 24: the queue has a turn to drain after again.
   DRAIN_OWED = false;
   S.busy = true; S.stick = true;
@@ -6819,6 +6848,9 @@ function startLiveTurn(text) {
   S.log.push(streaming);
   clearInterval(ticker);
   render();
+  // Item 38: the message's row (submit() and drainQueued() push it just
+  // before), the transcript the turn draws into, and when it was sent.
+  const live = {text, asked:liveAskedRow(text), item:streaming, log:S.log, startedAt:S.turnStartedAt};
   // Item 27: with no session yet, this message opens a new chat, and the
   // chat's row goes on the list when the stream names its session.
   const opensChat = !S.agentSession;
@@ -6841,6 +6873,7 @@ function startLiveTurn(text) {
     // item 6: the sidebar's running dot follows the stream, not S.busy.
     RUNNING.set(res.turnId, session || null);
     if (opensChat) FIRST_TURNS.set(res.turnId, text);
+    liveTurnStarted(res.turnId, live, session || null);   // Item 38
     renderSidebar();
   });
 }
@@ -6892,6 +6925,291 @@ function settlePendingChats() {
 /** A chat by id, stored or still a stand-in (item 27). */
 function chatById(id) {
   return SESSIONS.find((s) => s.id === id) || PENDING_CHATS.get(id) || null;
+}
+
+/* ============================================================
+   0.6.7 item 38 — a chat opened again while its turn runs.
+
+   Nadya: a message in a new chat, then another chat and a message there,
+   then back in the first one: "this session has no turns yet" and "a turn is
+   still running here — the reply lands when it finishes", and neither her
+   message nor anything of the reply. The agent stores a turn when it ends,
+   so the stored transcript has nothing of a turn that runs; the window
+   dropped the turn's rows with the chat (openSession replaces S.log) and
+   every frame of it after that (onChatEvent draws only S.turnId's frames,
+   and only into a reply row on screen). The TUI says the same.
+
+   Now the turn keeps its rows (LIVE_TURNS), and a frame that comes while
+   they are not on screen waits in its record. Opening the chat puts the
+   stored transcript up and the turn's rows under it, draws the frames that
+   waited into them as they would have been drawn when they came, and makes
+   the turn the window's (S.turnId) again, so the rest streams on into it
+   (liveRebuild). Its end is the end of a turn watched from the start; the
+   record goes with it, and the next open reads the turn from the store, so
+   nothing of it shows twice. A turn that failed or was stopped may not be in
+   the store (the agent lost it, or had not written a stopped turn yet): its
+   record stays for its chat (liveEndedView).
+   ============================================================ */
+
+/** The message's row: submit() and drainQueued() push it just before the reply row. */
+function liveAskedRow(text) {
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const m = S.log[i];
+    if (m.k !== 'user' || m.steered) continue;
+    return String(m.text || '').trim() === String(text || '').trim() ? m : null;
+  }
+  return null;
+}
+
+/** BR.chat answered: turn `turnId` runs, in chat `sid` (null: a new chat, until its session_id frame). */
+function liveTurnStarted(turnId, live, sid) {
+  // A chat runs one turn at a time: what was kept of its last one is over.
+  if (sid) for (const [id, r] of LIVE_TURNS) if (r.ended && r.sid === sid) LIVE_TURNS.delete(id);
+  LIVE_TURNS.set(turnId, Object.assign(live, {view:null, missed:[], outAt:0, ended:null, sid:null, endedAt:0, endRows:[]}));
+  // Two chats at once: does the local model take them together or one by one (workingLabel)?
+  if (RUNNING.size > 1) llamaSlotsRefresh();
+}
+
+/** A frame of a turn this window started, before onChatEvent draws it. One
+    that draws into the turn's rows while they are not on screen is kept, to
+    be drawn when the chat is opened again, and nothing else is done with it
+    (true): the wait strip and the fan-out list are the turn's too, and went
+    with its chat (liveLeave). Before, the window's last turn (S.turnId) drew
+    its wait strip in whatever chat was open, and its frames into whatever
+    reply row S.streamId named there. A kept frame carries `at`. */
+function liveTurnFrame(ev) {
+  const rec = ev && ev.turnId ? LIVE_TURNS.get(ev.turnId) : null;
+  if (!rec || rec.ended || !LIVE_DRAWS.has(ev.kind)) return false;
+  // The model is writing for this turn now (workingLabel); a kept frame being drawn says nothing of now.
+  if ((ev.kind === 'delta' || ev.kind === 'reasoning_progress') && !ev.at) rec.outAt = Date.now();
+  if (liveOnScreen(ev.turnId, rec)) return false;   // drawn as it comes
+  liveKeep(rec, ev);
+  return true;
+}
+/** The turn's rows are on screen, and it is the window's turn, whose frames onChatEvent draws. */
+function liveOnScreen(turnId, rec) {
+  return turnId === S.turnId && S.log.includes(rec.item);
+}
+/** Kept, dated when it came. A run of reply or reasoning text is kept as one frame. */
+function liveKeep(rec, ev) {
+  const at = Date.now();
+  const last = rec.missed[rec.missed.length - 1];
+  if (ev.kind === 'delta') {
+    if (last && last.kind === 'delta') { last.text += String(ev.text || ''); return; }
+    rec.missed.push({turnId:ev.turnId, kind:'delta', text:String(ev.text || ''), at});
+    return;
+  }
+  if (ev.kind === 'reasoning_progress') {
+    const text = String(pick(ev.payload, 'delta', 'text', 'content') || '');
+    if (last && last.kind === 'reasoning_progress') { last.payload.text += text; return; }
+    rec.missed.push({turnId:ev.turnId, kind:'reasoning_progress', payload:{text}, at});
+    return;
+  }
+  rec.missed.push(Object.assign({}, ev, {at}));
+}
+
+/** The rows on screen leave it (another chat, a new one, a cleared
+    transcript). What of the turn's view is window-wide (the wait strip, the
+    fan-out list) goes into its record, and off the window. */
+function liveLeave() {
+  const rec = S.turnId ? LIVE_TURNS.get(S.turnId) : null;
+  if (!rec || rec.ended || rec.view || !liveOnScreen(S.turnId, rec)) return;
+  rec.view = {wait:WAIT, fz:FZ.live};
+  liveSetWait(null);
+  FZ.live = [];
+}
+/** WAIT, with the tick that counts its strip down. */
+function liveSetWait(w) {
+  WAIT = w || null;
+  if (WAIT && !WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
+  if (!WAIT && WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
+}
+
+/** Chat `id`'s turn this window started: running (`live`), or the last one, ended. */
+function liveTurnOf(id, live) {
+  let found = null;
+  for (const [turnId, rec] of LIVE_TURNS) {
+    if (live ? !rec.ended && RUNNING.get(turnId) === id : !!rec.ended && rec.sid === id) found = {turnId, rec};
+  }
+  return found;
+}
+
+/** The turn's rows as they were last on screen: its message, what it drew, its reply. */
+function liveSegment(rec) {
+  const log = rec.log || [];
+  const end = log.indexOf(rec.item);
+  if (!rec.asked) rec.asked = {id:nid(), k:'user', text:rec.text};
+  if (end < 0) return [rec.asked, rec.item];
+  let from = log.indexOf(rec.asked);
+  if (from >= 0 && from < end) return log.slice(from, end + 1);
+  // The message's row was not found: the rows back to the turn before.
+  from = end;
+  while (from > 0 && log[from - 1].k !== 'user' && log[from - 1].k !== 'assistant') from--;
+  return [rec.asked].concat(log.slice(from, end + 1));
+}
+/** The turn's reasoning row: onChatEvent grows one per turn (S.reasonId). */
+function liveReasonId(rec) {
+  const from = S.log.indexOf(rec.asked), to = S.log.indexOf(rec.item);
+  for (let i = to - 1; i > from; i--) if (S.log[i].k === 'reason') return S.log[i].id;
+  return null;
+}
+
+/** openSession: chat `own` runs a turn here. The stored transcript, the
+    turn's rows under it, and what came while they were not on screen drawn
+    into them; then the turn is the window's again, and streams on there. */
+function liveRebuild(own, stored) {
+  const {turnId, rec} = own;
+  S.log = stored.concat(liveSegment(rec));
+  rec.log = S.log;
+  S.turnId = turnId;
+  S.streamId = rec.item.id;
+  S.turnStartedAt = rec.startedAt;
+  const view = rec.view || {wait:null, fz:[]};
+  rec.view = null;
+  liveSetWait(view.wait);
+  FZ.live = view.fz || [];
+  if (FZ.live.length) tpFzEnsureTick();
+  S.reasonId = liveReasonId(rec);
+  liveReplay(rec);
+  if (RUNNING.size > 1) llamaSlotsRefresh();
+}
+
+/** The kept frames, drawn through onChatEvent as they would have been when
+    they came: a running tool's card is measured to the frame after it, and a
+    card, a wait and a fan-out leg are dated by their own frame. */
+function liveReplay(rec) {
+  for (const f of rec.missed.splice(0)) {
+    for (let i = S.log.length - 1; i >= 0; i--) {   // as the top of onChatEvent brackets it, at the frame's time
+      const c = S.log[i];
+      if (c.k === 'tool' && c.ok === null && c.startedAt && !c.observedMs) { c.observedMs = Math.max(1, f.at - c.startedAt); break; }
+      if (c.k === 'tool') break;
+    }
+    const leg = f.kind === 'fusion_worker' ? String((f.payload || {}).task_id || '') : null;
+    const before = leg !== null ? FZ.live.find((w) => w.taskId === leg) : null;
+    // One frame that cannot be drawn is not worth the chat: it opens with the rest.
+    try { onChatEvent(f); } catch (e) { LOGS.push([new Date().toTimeString().slice(0, 8), 'warn', 'a kept frame was not drawn: ' + String((e && e.message) || e)]); continue; }
+    if (f.kind === 'tool_progress') {
+      const c = S.log[S.log.indexOf(rec.item) - 1];
+      if (c && c.k === 'tool' && c.ok === null && !c.observedMs) c.startedAt = f.at;
+    }
+    if (f.kind === 'provider_waiting' && WAIT) WAIT.until = f.at + (Number((f.payload || {}).next_retry_ms) || 0);
+    const w = leg !== null ? FZ.live.find((x) => x.taskId === leg) : null;
+    if (w && !before) w.startedAt = f.at;
+    if (w && w.done && !(before && before.done)) w.finishedAt = f.at;
+  }
+}
+
+/** Turn `ev.turnId` ended (onChatEvent's bookkeeping, before its end is
+    drawn). A finished turn is in the store from here, and its record goes,
+    with any older one of its chat. A failed or stopped one may not be; its
+    record stays for its chat, with the failure line made now (from this
+    turn's send and its own wait), unless the chat already runs a newer turn
+    (a message sent right after Stop). Only the last ended turn of a chat,
+    and those of the last few chats, are kept. */
+function liveTurnEnded(ev, sid) {
+  const rec = LIVE_TURNS.get(ev.turnId);
+  if (!rec) return;
+  if (sid) for (const [id, r] of LIVE_TURNS) if (id !== ev.turnId && r.ended && r.sid === sid) LIVE_TURNS.delete(id);
+  const newer = !!sid && [...LIVE_TURNS].some(([id, r]) => id !== ev.turnId && !r.ended && RUNNING.get(id) === sid);
+  if (ev.kind === 'done' || !sid || newer) { LIVE_TURNS.delete(ev.turnId); return; }
+  rec.endRows = ev.kind === 'error' ? liveFailureRows(rec, ev, liveOnScreen(ev.turnId, rec) ? WAIT : liveWaitOf(rec)) : [];
+  rec.ended = ev.kind; rec.sid = sid; rec.endedAt = Date.now();
+  rec.log = liveSegment(rec);   // its own rows, not the whole transcript they were in
+  const ended = [...LIVE_TURNS].filter(([, r]) => r.ended);
+  ended.slice(0, Math.max(0, ended.length - 20)).forEach(([id]) => LIVE_TURNS.delete(id));
+}
+/** The wait a turn whose rows are not on screen was in: as its chat was left, then its kept frames. */
+function liveWaitOf(rec) {
+  let w = rec.view ? rec.view.wait : null;
+  for (const f of rec.missed) {
+    if (f.kind === 'provider_waiting') w = {maxWaitMs: Number((f.payload || {}).max_wait_ms) || 0};
+    else if (f.kind === 'provider_recovered') w = null;
+  }
+  return w;
+}
+/** The rows onChatEvent's end draws under a failed turn ("Stopped waiting"
+    when it was parked, then the failure line), made the same way: keep the
+    two alike. The store keeps neither, so a chat opened again shows these.
+    turnWaited() counts from this turn's send, not the window's last. */
+function liveFailureRows(rec, ev, wait) {
+  const keep = S.turnStartedAt;
+  S.turnStartedAt = rec.startedAt;
+  try {
+    return (wait ? [tpWaitGaveUpEntry(wait)] : []).concat([{id:nid(), k:'system', sev:'err',
+      text: turnFailureLine(ev), tried: tpFallbackFailures(ev.payload), open: false,
+      act: providerFailure(ev) ? 'switch-provider' : null}]);
+  } finally {
+    S.turnStartedAt = keep;
+  }
+}
+
+/** openSession: chat `own` is opened, and the last turn this window ran in
+    it failed or was stopped. When its message is the last one stored, the
+    store has it: the stored transcript, and under it the failure line. When
+    not, the turn as the window had it (its rows, what came while they were
+    not on screen, its end) under the stored transcript. False when the
+    store was written after the turn ended (the chat moved on elsewhere). */
+function liveEndedView(own, turns, data, stored) {
+  const {turnId, rec} = own;
+  const last = turns.filter((t) => t && t.kind === 'user' && !t.steered).pop();
+  if (last && String(last.text || '').trim() === rec.text.trim()) { S.log = stored.concat(rec.endRows); return true; }
+  if (data && Number.isFinite(data.updatedAt) && data.updatedAt > rec.endedAt + 5000) { LIVE_TURNS.delete(turnId); return false; }
+  const keep = {turnId:S.turnId, streamId:S.streamId, reasonId:S.reasonId, wait:WAIT, fz:FZ.live, busy:S.busy};
+  S.log = stored.concat(liveSegment(rec));
+  rec.log = S.log;
+  S.turnId = turnId; S.streamId = rec.item.id; S.reasonId = liveReasonId(rec);
+  WAIT = rec.view ? rec.view.wait : null;
+  FZ.live = (rec.view && rec.view.fz) || [];
+  rec.view = null;
+  try {
+    liveReplay(rec);
+  } finally {
+    S.turnId = keep.turnId; S.streamId = keep.streamId; S.reasonId = keep.reasonId; S.busy = keep.busy;
+    FZ.live = keep.fz; liveSetWait(keep.wait);
+  }
+  rec.log = liveSegment(rec);   // its own rows, for the next time
+  // The reply row reads as onChatEvent's end leaves it.
+  if (!String(rec.item.text || '').trim()) {
+    rec.item.text = rec.ended === 'aborted' ? '(stopped)' : '(no reply)';
+    rec.item.placeholder = true; rec.item.failed = rec.ended === 'error';
+  }
+  S.log.push(...rec.endRows);
+  return true;
+}
+/** A deleted chat's kept turn goes with it. */
+function liveForget(sid) {
+  for (const [id, r] of LIVE_TURNS) if (r.ended && r.sid === sid) LIVE_TURNS.delete(id);
+}
+
+/* Item 38: a local model server with one request slot (`--parallel 1`)
+   answers one chat at a time, and a turn waiting for it has nothing to show:
+   Nadya's two chats on Qwen 3.5 4B, the second waiting minutes on the first.
+   A request queued at the server sends no frame, so this is all that tells
+   it apart: the server has one slot, the turn on screen has drawn nothing
+   yet ("Working…" is up), and another chat's turn here is getting words from
+   the model right now. With nothing streaming elsewhere (a tool running
+   there, a turn this window did not start) it stays "Working…". */
+function workingLabel() {
+  return liveModelTaken() ? 'Waiting for the local model · another chat is using it' : 'Working…';
+}
+function liveModelTaken() {
+  if (LLAMA_SLOTS.n !== 1 || !tpActiveIsLocal()) return false;
+  const mine = screenTurnId();
+  const now = Date.now();
+  for (const [turnId, rec] of LIVE_TURNS) {
+    if (turnId !== mine && !rec.ended && RUNNING.has(turnId) && now - rec.outAt < 4000) return true;
+  }
+  return false;
+}
+/** The local model server's request slots, from its /props (read in main: the page fetches nothing). */
+function llamaSlotsRefresh() {
+  const url = LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url;
+  if (!BR || !BR.llamaProps || !url || LLAMA_SLOTS.busy || !tpActiveIsLocal()) return;
+  const key = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.apiKey) || undefined;
+  LLAMA_SLOTS.busy = true;
+  Promise.resolve(BR.llamaProps(url, key))
+    .then((p) => { LLAMA_SLOTS.n = p && p.ok && Number.isFinite(p.slots) ? p.slots : null; }, () => { LLAMA_SLOTS.n = null; })
+    .then(() => { LLAMA_SLOTS.busy = false; });
 }
 
 /* ---------------------------------------------------------------
@@ -7014,6 +7332,7 @@ function onChatEvent(ev) {
       FIRST_TURNS.delete(ev.turnId);   // item 27: a turn that ended before its stream named a session
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (ev.kind === 'error' && sid) ATTN.add(sid);
+      liveTurnEnded(ev, sid);          // item 38: a failed or stopped turn is kept for its chat
       // Review fix: the turn is over, so nothing of it is waiting for an
       // approval any more. Without this the row kept saying "waiting for your
       // approval" for the rest of the window's life when the turn ended (an
@@ -7040,6 +7359,8 @@ function onChatEvent(ev) {
       });
     }
   }
+  // Item 38: what a turn draws while its rows are not on screen waits for its chat to be opened.
+  if (liveTurnFrame(ev)) return;
   if (!ev || ev.turnId !== S.turnId) return;
   const item = S.log.find((m) => m.id === S.streamId);
   /* Review fix: `item` is undefined when the user opened another chat while
@@ -15165,6 +15486,7 @@ async function openSession(id) {
   /* Backlog 26: the queue on screen goes with the chat being left, and this
      chat's own comes back; a reload of the chat on screen keeps its own. */
   if (queueKey() !== id) { stashQueue(); restoreQueue(id); }
+  liveLeave();   // Item 38: a turn whose rows are on screen keeps its view for when its chat is back
   S.sessionId = id;
   // Backlog 24: and until the answer lands, the composer holds what is sent here.
   const opening = {id, failed:false};
@@ -15214,18 +15536,29 @@ async function openSession(id) {
   const data = res.data;
   const turns = Array.isArray(data.turns) ? data.turns : [];
   const log = sessionTurnsToLog(turns);
-  S.log = log.length ? log : [{id:nid(), k:'system', text:'this session has no turns yet'}];
-  // Review fix: the streaming item of a turn that is still running elsewhere
-  // did not survive this reload, so no frame may position a card against it.
-  S.streamId = null;
+  /* Item 38: the stored transcript has nothing of a turn that is running
+     (the agent stores a turn when it ends). A turn this window started is
+     drawn under it from what the window kept of it, and streams on there;
+     a failed or stopped one, as the store may not have it, is drawn as the
+     window last had it (liveEndedView). */
+  const own = liveTurnOf(id, live);
+  const rebuilt = !!own && live;
+  if (rebuilt) liveRebuild(own, log);
+  else {
+    if (!(own && liveEndedView(own, turns, data, log))) S.log = log.length ? log : [{id:nid(), k:'system', text:'this session has no turns yet'}];
+    // Review fix: the streaming item of a turn that is still running elsewhere
+    // did not survive this reload, so no frame may position a card against it.
+    S.streamId = null;
+  }
   // item 6: a turn of this session is still running, but its stream is not in
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
   // — the TUI's "a turn is still running here".
+  // Item 38: now only where nothing of the turn was kept here.
   // Backlog 25: set outright, not only raised: a verdict that came back while
   // this loaded (denyByProse) may have raised it for the chat that was left.
   S.busy = live;
-  if (live) S.log.push({id:nid(), k:'system', text:'a turn is still running here — the reply lands when it finishes'});
+  if (live && !rebuilt) S.log.push({id:nid(), k:'system', text:'a turn is still running here — the reply lands when it finishes'});
   // Anything sent from here continues that session rather than starting a new one.
   S.agentSession = id;
   S.history = [];
@@ -15240,7 +15573,12 @@ async function openSession(id) {
      the focus mid-word would let the y in "why" allow the call. */
   const asked = live ? APPROVAL_CARDS.get(id) : null;
   if (asked && !asked.state && PENDING_APPROVALS.get(id) === asked.approvalId) {
-    S.log.push(asked); S.pending = asked; S.apprFocused = true; S.busy = false;
+    /* Item 38: with the turn's rows back, a card it raised while they were on
+       screen is among them already; one raised while the chat was not on
+       screen goes into the turn, under the call that asked, as it would have. */
+    if (!rebuilt) S.log.push(asked);
+    else if (!S.log.includes(asked)) placeInLiveTurn(asked, {afterTool: asked.tool, sessionId: id});
+    S.pending = asked; S.apprFocused = true; S.busy = false;
   }
   render();
   refreshContext();
