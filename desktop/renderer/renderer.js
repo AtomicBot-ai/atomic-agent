@@ -19641,8 +19641,9 @@ function llmRouteNeedsOpen(id) {
     llmSetMode('local');
   }
 }
-/* One line: the model answering, its provider, a readiness word, and — on
-   the local route — the model server's Start / Stop beside them (Д35: it
+/* One line: the model answering, its provider, a readiness word, and —
+   wherever the managed model server does the work (the local route, or
+   Fusion's local workers) — that server's Start / Stop beside them (Д35: it
    was one of Advanced's look-alike buttons). */
 function llmNowHTML() {
   const active = llmProvider(llmActiveTextId());
@@ -19651,19 +19652,25 @@ function llmNowHTML() {
   if (!model && local) model = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || null;
   const route = llmRouteMode();
   const where = route === 'external' ? 'a custom server' : local ? THIS_MACHINE : active ? providerWord(active.id) : 'no provider';
+  // Under Fusion the line names the planner; when its workers are local, the server it names is theirs.
+  const rm = rmNow();
+  const workersLocal = !local && rm.effective === 'fusion' && fzLegIsLocal(rm, 'worker');
+  const managed = (local && route !== 'external') || workersLocal;
+  const serverModel = local ? model : (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || null;
   const d = llmFormatDaemon();
   const up = llmDaemonUp();
-  // The model the route names is not on disk (deleted, or never pulled): there is nothing to start.
-  const missing = local && route !== 'external' && !!model && !up && !!LLMP.status && LLMP.status.activeDownloaded === false;
-  const word = !local || route === 'external' ? '' : missing ? 'Not downloaded' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting'
+  // The model the server would run is not on disk (deleted, or never pulled): there is nothing to start.
+  const missing = managed && !!serverModel && !up && !!LLMP.status && LLMP.status.activeDownloaded === false;
+  const word = !managed ? '' : missing ? 'Not downloaded' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting'
     : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? (llmJustSpawned() ? 'Starting' : 'Not answering') : '';
   const dot = word === 'Ready' ? 'tk-dot--green' : word === 'Starting' ? 'tk-dot--brand tk-dot--pulse' : word ? 'tk-dot--amber' : '';
   const phase = LLMP.daemonPhase;
-  const server = local && route !== 'external' && !!model && !missing
+  const server = managed && !!serverModel && !missing
     ? '<button class="btn btn-s sm llm-nowbtn" data-act="llm:daemon"' + (phase ? ' disabled' : '')
       + ' title="' + (up ? 'Stop the local model server (s)' : 'Start the local model server (s)') + '">' + ic(up ? 'stop' : 'play')
       + esc(phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : up ? 'Stop' : 'Start') + '</button>' : '';
   return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
+    + (workersLocal ? esc(', local workers' + (serverModel ? ' on ' + modelWord(serverModel) : '')) : '')
     + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '') + server + '</p>';
 }
 /* What the count means depends on the worker leg (agent v0.6.3,
