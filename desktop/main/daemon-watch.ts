@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
-import { bringUpAtLaunch, bringUpInFlight, runModeWantsDaemon } from "./backend-switch.js";
+import { bringUpAtLaunch, bringUpInFlight, daemonTurnsOnTheirWay, runModeWantsDaemon } from "./backend-switch.js";
 import {
   DaemonSupervisor,
   type DaemonLook,
@@ -19,9 +19,12 @@ import { DESKTOP_STATE_DIR } from "./state-dir.js";
  * the real thing: the config file for whether the route needs the managed
  * server, its pid file and its port for whether it is up, the background
  * bring-up (backend-switch) to start it again, and agent-cli's starts and
- * stops on purpose for whose it is. main.ts arms it (not in a smoke run,
- * where checks kill model servers by hand on purpose), feeds it the agent's
- * `provider_waiting` frames, and passes its notices to the window.
+ * stops on purpose for whose it is — a start the app asks for that finds the
+ * server already up counts as one it made (agent-cli daemonFoundUp). main.ts
+ * arms it (not in a smoke run, where checks kill model servers by hand on
+ * purpose), feeds it the agent's `provider_waiting` frames, tells it of the
+ * llama.cpp update (updateBegins, afterUpdate), and passes its notices to the
+ * window.
  */
 
 /** What this module reads of `<stateDir>/config.json`. */
@@ -36,7 +39,12 @@ interface WatchConfig extends RunModeConfig {
       parallel?: number | string;
     };
   };
-  llm?: NonNullable<RunModeConfig["llm"]> & { providers?: Array<RunModeProvider & { url?: string; baseUrl?: string }> };
+  /* The run-mode block, with the provider entries' own urls: `providers` is
+     replaced, not intersected — an intersection of the two array types reads
+     as RunModeProvider[] to `.find`, and the urls would not be there. */
+  llm?: Omit<NonNullable<RunModeConfig["llm"]>, "providers"> & {
+    providers?: Array<RunModeProvider & { url?: string; baseUrl?: string }>;
+  };
 }
 
 /** The agent's default managed port (src/config/config-schema.ts), when the file names none. */
@@ -60,18 +68,21 @@ function managedPort(cfg: WatchConfig | null): number {
  * main.ts's launch start makes (startLocalDaemonAtBoot): the managed mode
  * with a model chosen, and Local models as the route (a `llama-server`
  * entry, or no `llm` block at all, which the agent reads as local) or Fusion
- * with a local seat. And `localModels.managed.autoRestart`, the terminal's
- * own switch for this (default on).
+ * with a local seat.
  */
-export function routeWantsRestarts(cfg: WatchConfig | null): boolean {
+export function routeNeedsDaemon(cfg: WatchConfig | null): boolean {
   if (!cfg) return false;
   const lm = cfg.localModels;
   if (lm?.mode !== "managed" || !lm.managed?.modelId) return false;
-  if (lm.managed.autoRestart === false) return false;
   const active = cfg.llm ? cfg.llm.activeTextProvider : "local-llama";
   const entry = cfg.llm?.providers?.find((p) => p.id === active);
   const localRoute = !cfg.llm || (!!entry && entry.kind === "llama-server");
   return localRoute || runModeWantsDaemon(resolveRunMode(cfg), lm);
+}
+
+/** routeNeedsDaemon, and `localModels.managed.autoRestart` — the terminal's own switch for restarts (default on). */
+export function routeWantsRestarts(cfg: WatchConfig | null): boolean {
+  return routeNeedsDaemon(cfg) && cfg?.localModels?.managed?.autoRestart !== false;
 }
 
 /**
@@ -133,14 +144,24 @@ export interface DaemonWatchHost {
 
 let host: DaemonWatchHost = { notify: () => {}, say: () => {}, busy: () => false };
 
-/** The server at one look: busy while anything brings it up or replaces it; down when its pid is gone or its port refuses. */
+/**
+ * The server at one look: busy while anything brings it up, stops it to start
+ * it again or replaces its binary — a daemon turn on its way or running (a
+ * model pick, Settings' Start repairing a wedged server, the llama.cpp
+ * update), a background bring-up, a `models start` — else what probe() says.
+ */
 async function look(): Promise<DaemonLook> {
-  if (startsInFlight() > 0 || bringUpInFlight() || host.busy()) return "busy";
+  if (daemonTurnsOnTheirWay() > 0 || startsInFlight() > 0 || bringUpInFlight() || host.busy()) return "busy";
+  return probe();
+}
+
+/** Down when the pid file names a dead pid or the port refuses; any HTTP answer (503 while a model loads), or a listener too busy to answer in time, is a server that is there. */
+async function probe(): Promise<"up" | "down"> {
   const cfg = readConfig();
   const pid = chatDaemonPid(cfg);
   if (pid !== null && !pidAlive(pid)) return "down";
-  const answer = await portAnswer(managedPort(cfg), 2_000);
-  // Any HTTP answer (503 while a model loads) or a listener too busy to answer in time is a server that is there.
+  // portAnswer's own 2.5 s: Windows takes about two seconds to refuse a closed local port, and a refusal cut short reads as up.
+  const answer = await portAnswer(managedPort(cfg));
   return answer.kind === "refused" ? "down" : "up";
 }
 
@@ -151,6 +172,56 @@ async function restart(): Promise<{ ok: boolean; superseded?: boolean; error?: s
   if (r.daemon === "started" || r.daemon === "untouched") return { ok: true };
   if (r.daemon === "superseded") return { ok: false, superseded: true };
   return { ok: false, error: r.error ?? (r.daemon === "skipped" ? "the model is not on disk" : `the start ended as ${r.daemon}`) };
+}
+
+/**
+ * ATO-123, the llama.cpp update (Nadya's decision, 02.10): `atag models
+ * update` stops the model server itself when there is a newer llama.cpp to
+ * install, and never starts it again (src/cli/models-handlers.ts). Told
+ * nothing, the supervisor saw a server the app had started go down, brought it
+ * back a few seconds after the update with "stopped — starting it again", and
+ * counted a quick death. The update is a stop on purpose instead, said as it
+ * begins — in the daemon's turn, where nothing else starts or stops the
+ * server — and afterUpdate puts back what it took.
+ */
+export interface UpdateHold {
+  /** The server was the app's when the update began. */
+  wasOwned: boolean;
+}
+
+/** main.ts, as a llama.cpp update begins in its daemon turn. */
+export function updateBegins(): UpdateHold {
+  const wasOwned = daemonWatch.state().owned;
+  daemonWatch.noteStopped();
+  if (wasOwned) host.say("[desktop] local-llm: the llama.cpp update may stop the model server to replace its binary — it is started again after a successful update");
+  return { wasOwned };
+}
+
+/**
+ * main.ts, once the update is over and out of the daemon's turn. A server the
+ * update left running is the app's again. One it stopped is started again,
+ * quietly, after a successful update when the route needs it; after a failed
+ * one it is left as the update left it, and the update's answer says so — the
+ * line Settings › Models shows for it.
+ */
+export async function afterUpdate<T extends { ok: boolean; error?: string }>(res: T, hold: UpdateHold): Promise<T> {
+  if (!hold.wasOwned) return res;
+  if ((await probe()) === "up") {
+    daemonWatch.noteStarted();
+    return res;
+  }
+  if (!res.ok) {
+    return {
+      ...res,
+      error: `${res.error ?? "the update failed"} — the local model server it stopped is still stopped; start it in Settings › Models`,
+    };
+  }
+  if (routeNeedsDaemon(readConfig())) {
+    const modelId = readConfig()?.localModels?.managed?.modelId ?? "";
+    // The launch's background bring-up: in its turn, and ended at once by a stop or a switch; its start makes the server the app's again.
+    void bringUpAtLaunch(modelId).catch(() => undefined);
+  }
+  return res;
 }
 
 const deps: DaemonSupervisorDeps = {

@@ -104,7 +104,15 @@ import {
 } from "./backend-switch.js";
 import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
 // ATO-123: the managed model server, brought back when it dies under the app that started it.
-import { daemonWatch, daemonWatchState, hostDaemonWatch, onAgentFrame } from "./daemon-watch.js";
+import {
+  afterUpdate,
+  daemonWatch,
+  daemonWatchState,
+  hostDaemonWatch,
+  onAgentFrame,
+  updateBegins,
+  type UpdateHold,
+} from "./daemon-watch.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
 import {
   RELEASE_FIX_TASKS,
@@ -1057,10 +1065,13 @@ function wireIpc(client: AgentClient): void {
     const id = "llama.cpp";
     const own = new AbortController();
     let slot: DownloadSlot | null = null;
+    // ATO-123: as Settings' update (cli:modelsUpdate) — the update's own stop is on purpose, and the server comes back after it.
+    const held: { hold: UpdateHold | null } = { hold: null };
     const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean }>(
       own.signal,
       (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false }),
       () => {
+        held.hold = updateBegins();
         const started = modelsUpdateStream((line) =>
           pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
         );
@@ -1069,8 +1080,9 @@ function wireIpc(client: AgentClient): void {
       },
     );
     pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
-    void done.then((res) => {
+    void done.then(async (ended) => {
       pullUpdate = null;
+      const res = held.hold ? await afterUpdate(ended, held.hold) : ended;
       send("cli:pull", {
         id,
         done: true,
@@ -1311,12 +1323,7 @@ function wireIpc(client: AgentClient): void {
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
-  // ATO-123: a server Settings' Start finds already up is the app's to bring back from here on.
-  ipcMain.handle("cli:modelsStart", async () => {
-    const res = await startDaemonNow();
-    if (res.ok && res.alreadyRunning) daemonWatch.noteStarted();
-    return res;
-  });
+  ipcMain.handle("cli:modelsStart", () => startDaemonNow());
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
     if (!ownDir(stateDir) || typeof sessionId !== "string") {
@@ -1758,15 +1765,24 @@ function wireIpc(client: AgentClient): void {
     if (smokeOffline) return { ok: false, stdout: "", stderr: "", error: SMOKE_OFFLINE };
     const own = new AbortController();
     settingsUpdate = own;
+    /* ATO-123: the update stops the model server itself — a stop on purpose,
+       told as the update begins in its turn; afterUpdate brings the server
+       back after a successful one, or says it is still stopped. */
+    const held: { hold: UpdateHold | null } = { hold: null };
+    let res: CliResult;
     try {
-      return await updateInTurn<CliResult>(
+      res = await updateInTurn<CliResult>(
         own.signal,
         (error) => ({ ok: false, stdout: "", stderr: "", error }),
-        () => modelsUpdate({ signal: own.signal }),
+        () => {
+          held.hold = updateBegins();
+          return modelsUpdate({ signal: own.signal });
+        },
       );
     } finally {
       if (settingsUpdate === own) settingsUpdate = null;
     }
+    return held.hold ? afterUpdate(res, held.hold) : res;
   });
   ipcMain.handle("cli:modelsDevices", () => modelsDevices());
   ipcMain.handle("cli:modelsUseDevice", (_event, id: unknown) =>
@@ -8412,9 +8428,7 @@ async function startLocalDaemonAtBoot(): Promise<void> {
        model loads queues behind it rather than starting a second daemon, and
        a stop (a cloud switch, Settings › Stop) ends it at once instead of
        waiting out the load. It says how it went through onBackgroundBringUp. */
-    const up = await bringUpAtLaunch(st.status.activeModel);
-    // ATO-123: one found already up (a server the app left running) is the app's to bring back as well.
-    if (up.daemon === "untouched") daemonWatch.noteStarted();
+    await bringUpAtLaunch(st.status.activeModel);
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
   }

@@ -22,11 +22,16 @@
  *   turn that was using it; that is expected, and never fought.
  * - Only while the route needs it: Local models, or Fusion with a local seat
  *   (`wanted`, read from the config file as it is at that moment), and only
- *   with `localModels.managed.autoRestart` on.
+ *   with `localModels.managed.autoRestart` on. A route that stops needing it
+ *   with no stop on purpose (a cloud switch over a server already down) ends
+ *   an incident that is still open.
  * - Never under a start, a model load or a llama.cpp update: those are
- *   `busy`, and no dead look is counted while one runs. The restart itself
- *   takes the daemon's turn like every other start (backend-switch), so it
- *   queues behind any of them, and a stop or a switch ends it at once.
+ *   `busy` (any daemon turn on its way counts), and no dead look is counted
+ *   while one runs. The restart itself takes the daemon's turn like every
+ *   other start (backend-switch), so it queues behind any of them, and a stop
+ *   or a switch ends it at once. The update's own stop is a stop on purpose
+ *   (daemon-watch updateBegins), and a successful update starts the server
+ *   again by itself.
  * - A death is confirmed on two looks in a row, a few seconds apart, before
  *   anything is done. When the agent itself reports the server refusing
  *   connections (`provider_waiting`, item 29's cause), that report is the
@@ -34,7 +39,8 @@
  * - Crash-loop guard, as in the terminal: a server that dies — or a restart
  *   that fails — within QUICK_DEATH_MS of its start is a quick death; at the
  *   MAX_QUICK_DEATHS-th in a row the supervisor stops trying and says so
- *   (Settings › Models). The next start the person makes listens again.
+ *   (Settings › Models). The next start the person makes listens again, and
+ *   counts afresh.
  *
  * Every dependency is handed in, so the T43 smoke drives the same object the
  * app runs.
@@ -136,11 +142,15 @@ export class DaemonSupervisor {
    * The app brought the server up, or found it up when it asked for it: it is
    * the app's to bring back from here on. The crash-loop clock starts over,
    * and a supervisor that gave up listens again. The supervisor's own restart
-   * comes through here too; any other start ends an open incident.
+   * comes through here too, and counts on: any other start ends an open
+   * incident and starts the count of quick deaths afresh.
    */
   noteStarted(): void {
     const gaveUp = this.gaveUp;
-    if (!this.recovering) this.closeIncident(true);
+    if (!this.recovering) {
+      this.closeIncident(true);
+      this.quickDeaths = 0;
+    }
     this.owned = true;
     this.gaveUp = false;
     this.deadLooks = 0;
@@ -170,6 +180,7 @@ export class DaemonSupervisor {
     try {
       if (!this.listening()) {
         this.deadLooks = 0;
+        this.settleWhenNotWanted();
         return;
       }
       const look = await this.deps.look();
@@ -207,6 +218,26 @@ export class DaemonSupervisor {
    */
   private listening(): boolean {
     return this.timer !== null && this.owned && !this.gaveUp && this.deps.wanted();
+  }
+
+  /**
+   * The route stopped needing the server without a stop on purpose: a switch
+   * to the cloud with the server already down (a cloud switch stops only a
+   * server it finds running), the route pointed at another server, or
+   * `autoRestart` turned off by hand. An open incident — or a "stopped
+   * trying" — is then about a server nobody waits for any more: it is closed,
+   * or the waiting strip, Settings › Models and a reopened window would go on
+   * saying "trying again" for good.
+   */
+  private settleWhenNotWanted(): void {
+    if (this.incidentSince === null && !this.gaveUp) return;
+    if (this.timer === null || this.deps.wanted()) return;
+    if (this.gaveUp) {
+      this.gaveUp = false;
+      this.notify({ kind: "clear" });
+      return;
+    }
+    this.closeIncident(true);
   }
 
   /** Restart now, with the crash-loop accounting. Concurrent callers share one attempt. */

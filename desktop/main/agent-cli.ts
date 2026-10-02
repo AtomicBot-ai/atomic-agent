@@ -703,6 +703,10 @@ function tell(e: DaemonLifecycle): void {
 export function startsInFlight(): number {
   return startsOnTheirWay.size;
 }
+/** ATO-123: a start the app asked for found the server already up — it is the app's from here on, as one it started (backend-switch). */
+export function daemonFoundUp(): void {
+  tell("started");
+}
 
 /** What a start that spawned nothing says: the app is quitting. */
 export const START_REFUSED_QUITTING = "the app is quitting — the model server was not started";
@@ -752,7 +756,10 @@ export async function modelsStart(
     if (res.ok) {
       const speed = parseChatStartSpeed(res.stdout);
       if (speed) lastChatSpeed = speed;
-      tell("started");
+      /* ATO-123: the app's to bring back — unless a stop or a switch came
+         while it started: theirs is the last word, and a server the person
+         stopped is never brought back. */
+      if (!opts.signal?.aborted && (opts.stillWanted?.() ?? true)) tell("started");
     }
     return res;
   } finally {
