@@ -46,6 +46,7 @@ import { checks51 } from "./smoke-tasks/t51.js";
 import { checks53 } from "./smoke-tasks/t53.js";
 import { checks54 } from "./smoke-tasks/t54.js";
 import { checks55, checks56, checks57 } from "./smoke-tasks/t55.js";
+import { checks61 } from "./smoke-tasks/t61.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -82,7 +83,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "61"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -693,6 +694,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("56")) await guarded("56", check, () => checks56(js, check));
   // 57 (ATO-166) — no model repeated under the greeting, a gear on Settings, the context gauge a donut.
   if (want.has("57")) await guarded("57", check, () => checks57(js, check));
+  // 61 — Settings › Diagnostics: the row's icon was half a dial and looked cut off.
+  if (want.has("61")) await guarded("61", check, () => checks61(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));
