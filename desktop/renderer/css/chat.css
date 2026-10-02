@@ -123,7 +123,8 @@
    it scrolls sideways rather than widening the reply. Cells wrap; the header row is the quiet one. */
 .prose .mdtbl{display:inline-block;width:100%;vertical-align:top;margin:4px 0;overflow-x:auto;white-space:normal}
 .prose .mdtbl table{border-collapse:collapse;font-size:13.5px;line-height:1.45;min-width:60%}
-.prose .mdtbl th,.prose .mdtbl td{padding:6px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--divider)}
+.prose .mdtbl th,.prose .mdtbl td{padding:6px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--divider);
+  word-break:normal;overflow-wrap:break-word}   /* .prose's break-word would squeeze a wide table letter by letter instead of letting it scroll */
 .prose .mdtbl th{font-weight:600;color:var(--ink-2);border-bottom-color:var(--bd)}
 .prose .mdtbl tr:last-child td{border-bottom:0}
 .prose strong{font-weight:600}

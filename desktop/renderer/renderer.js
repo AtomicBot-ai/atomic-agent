@@ -17074,7 +17074,7 @@ function mdInline(t) {
    separator row's colons set each column's alignment. A row may leave out
    the outer pipes. Rows with fewer cells than the header are padded, extra
    cells dropped, as GitHub does. */
-const MD_TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const MD_TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 function mdCells(line) {
   const body = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
   return body.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
@@ -17084,8 +17084,10 @@ function mdTableAt(lines, at) {
   const sep = lines[at + 1];
   if (!head.includes('|') || sep === undefined || !MD_TABLE_SEP.test(sep) || !sep.includes('|') && !head.startsWith('|')) return null;
   const cols = mdCells(head);
-  const aligns = mdCells(sep).map((c) => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : '');
-  if (cols.length < 2 && !head.startsWith('|')) return null;
+  const seps = mdCells(sep);
+  // As GitHub: the separator has as many cells as the header, or this is prose and a rule, not a table.
+  if (seps.length !== cols.length || (cols.length < 2 && !head.startsWith('|'))) return null;
+  const aligns = seps.map((c) => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : /^:-/.test(c) ? 'left' : '');
   const cell = (tag, text, i) => '<' + tag + (aligns[i] ? ' style="text-align:' + aligns[i] + '"' : '') + '>' + mdInline(text || '') + '</' + tag + '>';
   let end = at + 1;
   const rows = [];
