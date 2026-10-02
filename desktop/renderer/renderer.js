@@ -4297,13 +4297,16 @@ function renderSettings() {
      is what the click handler's branch tests. Deliberately NOT `data-close`:
      that branch runs act('close'), which does not clear S.settings. */
   el.dataset.setclose = '1';
+  /* Д25: the close control was a bare × at the end of the section's title
+     row, so it read as "close this section" while it closed all of Settings.
+     It says Done now. Esc and a click on the backdrop still close too. */
   el.innerHTML = '<div class="setwin" role="dialog" aria-label="Settings">'
     + '<nav class="setnav" aria-label="Settings"><div class="setnav-title">Settings</div>'
       + '<div class="setmenu">' + settingsNavHTML(sec[0]) + '</div></nav>'
     + '<div class="setmain">'
     + '<div class="settb"><h3 class="setttl">' + esc(sec[1]) + '</h3>' + settingsSubnavHTML(sec, cur)
     + '<span class="grow"></span>'
-    + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
+    + '<button class="btn btn-s sm set-done" data-act="settings:close" title="Close Settings (Esc)">Done</button>'
     + '</div>'
     + '<div class="setbody" data-pane="' + esc(cur) + '">' + settingsPane() + '</div>'
     + '</div>'

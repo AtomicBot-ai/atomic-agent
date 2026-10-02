@@ -214,7 +214,7 @@ try {
   await landed((c) => c.runMode.fusion.workers === 2 && c.parallel === 2, 'two workers written from the card');
   const msgG = await until(() => app.eval(`(() => { const t = document.querySelector('#settings') ? document.querySelector('#settings').textContent : ''; return /fusion: 2 workers/.test(t) ? 'shown' : null; })()`), 'the notice on the pane', 20000);
   check('G: the card writes through the composer\'s path and says so on the pane', msgG === 'shown');
-  await app.clickSel('#settings .iconbtn[data-act="settings:close"]');
+  await app.clickSel('#settings [data-act="settings:close"]');
 
   /* H — Backend › cloud leaves Fusion in the file, not only on the chip. */
   await app.clickSel('#composer .cfoot [data-sel-open="backend"]');

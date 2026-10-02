@@ -8,7 +8,7 @@
    Frame contract a tab can rely on:
      #settings > .setwin > (nav.setnav > .setmenu) + .setmain
      .setmain  — the floating body card, position:relative (overlays anchor here)
-       .settb    — the section's title (+ Connections' pane switch) and close
+       .settb    — the section's title (+ Connections' pane switch) and Done
        .setbody  — the scrolling pane, 24px side padding (paneBox() repaints it)
      .set-pane    — a tab's root: a column with 14px gaps
      .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · readout · actions)
@@ -81,6 +81,7 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 14px 0 24px}
 .settb .grow{flex:1}
 .settb .setttl{margin:0;font:600 18px/24px var(--font-ui);letter-spacing:-.025em;color:var(--ink)}
+.settb .set-done{flex:none}
 /* Connections: MCP servers · Telegram beside the title. */
 .settb .set-subseg{margin-left:8px}
 .setbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 24px 22px;scrollbar-gutter:stable}
