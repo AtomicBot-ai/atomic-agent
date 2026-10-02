@@ -6670,12 +6670,16 @@ function dwatchWords(wait) {
   if (DWATCH.kind === 'restarting') return 'the local model server stopped — starting it again';
   if (DWATCH.kind === 'restart_failed') return 'the local model server did not come back — trying again';
   if (DWATCH.kind === 'gave_up') return 'the local model server keeps stopping — start it in Settings › Models';
+  /* Back up, while the agent sits out the rest of its backoff (up to 30 s):
+     its last cause would still say the server is not running. Until its next
+     frame on the wait (onChatEvent). */
+  if (DWATCH.kind === 'restarted') return 'the local model server is back — retrying';
   return '';
 }
 /** A notice from main's supervisor: kept while its incident is open, and said once on the app line. */
 function dwatchApply(n) {
   if (!n || typeof n.kind !== 'string') return;
-  DWATCH = n.kind === 'restarting' || n.kind === 'restart_failed' || n.kind === 'gave_up' ? n : null;
+  DWATCH = n.kind === 'restarting' || n.kind === 'restart_failed' || n.kind === 'gave_up' || n.kind === 'restarted' ? n : null;
   if (n.kind === 'restarting') appSay('The local model server stopped — starting it again', 'caution');
   else if (n.kind === 'restarted') appSay('The local model server is back');
   else if (n.kind === 'restart_failed') appSay('The local model server did not come back' + (n.fault ? ': ' + n.fault : '') + ' — trying again', 'caution');
@@ -7939,6 +7943,8 @@ function onChatEvent(ev) {
   if (ev.kind === 'provider_waiting') {
     const p = ev.payload || {};
     const firstWait = !WAIT;
+    // ATO-123: the supervisor's "back — retrying" holds until this, the agent's next word on the wait.
+    if (DWATCH && DWATCH.kind === 'restarted') DWATCH = null;
     WAIT = {
       attempt: Number(p.attempt) || 1,
       waitedMs: Number(p.waited_ms) || 0,
@@ -20888,17 +20894,15 @@ function llmRouteCardHTML() {
 /* llm-panel.tsx StatusLines: one line, the first that applies, else "status: ready". */
 function llmStatusLine() {
   const m = LLMP.mode;
+  // ATO-123: what main's supervisor is doing about the local server — after the local pane's own errors (why a Start failed), and on every other pane, Fusion's included.
+  const watching = dwatchStatusLine();
   if (m === 'local') {
     if (LLMP.localBusy && LLMP.lastRefreshedAt === null) return 'local catalog: loading';
     if (LLMP.localErr) return 'local catalog: ' + LLMP.localErr;
     if (LLMP.statusErr) return 'local daemon: ' + LLMP.statusErr;
-    // ATO-123: what main's supervisor is doing about the server, while it is doing it.
-    if (DWATCH && DWATCH.kind === 'gave_up') {
-      return 'local daemon: it stopped ' + (DWATCH.deaths || 3) + ' times within a minute of starting, so it is not restarted automatically'
-        + (DWATCH.fault ? ' (' + DWATCH.fault + ')' : '') + ' — start it again once that is fixed';
-    }
-    if (DWATCH && DWATCH.kind === 'restarting') return 'local daemon: it stopped — starting it again (auto-restart)';
-    if (DWATCH && DWATCH.kind === 'restart_failed') return 'local daemon: the automatic restart failed' + (DWATCH.fault ? ' (' + DWATCH.fault + ')' : '') + ' — trying again';
+    if (watching) return watching;
+  } else if (watching) {
+    return watching;
   } else if (m === 'external') {
     if (LLMP.statusLine && LLMP.statusSource === 'external') return LLMP.statusLine;
   } else {
@@ -20908,6 +20912,17 @@ function llmStatusLine() {
   return 'status: ready';
 }
 function llmReport(line, source) { LLMP.statusLine = line; LLMP.statusSource = source || 'cloud'; }
+/** ATO-123: Settings › Models' line for main's supervisor while it restarts the local server, or has stopped trying; '' otherwise. */
+function dwatchStatusLine() {
+  if (!DWATCH) return '';
+  if (DWATCH.kind === 'gave_up') {
+    return 'local daemon: it stopped ' + (DWATCH.deaths || 3) + ' times within a minute of starting, so it is not restarted automatically'
+      + (DWATCH.fault ? ' (' + DWATCH.fault + ')' : '') + ' — start it again once that is fixed';
+  }
+  if (DWATCH.kind === 'restarting') return 'local daemon: it stopped — starting it again (auto-restart)';
+  if (DWATCH.kind === 'restart_failed') return 'local daemon: the automatic restart failed' + (DWATCH.fault ? ' (' + DWATCH.fault + ')' : '') + ' — trying again';
+  return '';
+}
 /* Calm (S5): the footer's key rows are gone (the keys still work; each
    names itself in a tooltip). Д35 (Danya, 01.10): what was left here read as
    a pile of look-alike buttons. Start / Stop sits beside the model's state

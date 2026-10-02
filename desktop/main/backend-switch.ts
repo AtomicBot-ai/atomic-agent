@@ -2,6 +2,7 @@ import {
   abortStarts,
   chatModelsList,
   closeStarts,
+  daemonFoundUp,
   daemonPidsIn,
   keyNamesAvailable,
   killDaemonLeftovers,
@@ -335,11 +336,22 @@ export type BringUp = { daemon: DaemonEffect; daemonLine?: string; error?: strin
    update the quit stopped does not bring a model server up as the app goes. */
 let daemonChain: Promise<void> = Promise.resolve();
 let turnsClosed = false;
+/* ATO-123: the turns asked for and not over yet. While one is on its way the
+   server may be down on purpose (a model pick stopping the old one, Settings'
+   Start replacing a wedged one, the llama.cpp update), so the supervisor
+   (daemon-watch.ts) takes no look at it. */
+let turnsOnTheirWay = 0;
 function withDaemonLock<T>(run: () => Promise<T>, whenClosed: () => T): Promise<T> {
+  turnsOnTheirWay += 1;
   const turn = () => (turnsClosed ? Promise.resolve(whenClosed()) : run());
   const next = daemonChain.then(turn, turn);
-  daemonChain = next.then(() => undefined, () => undefined);
+  const over = () => { turnsOnTheirWay -= 1; };
+  daemonChain = next.then(over, over);
   return next;
+}
+/** ATO-123: how many daemon turns are on their way or running. */
+export function daemonTurnsOnTheirWay(): number {
+  return turnsOnTheirWay;
 }
 /** Backlog 18: `run` in the daemon's turn, as a start takes it — the llama.cpp update's. `whenClosed` is its answer if the app quits first. */
 export function inDaemonTurn<T>(run: () => Promise<T>, whenClosed: () => T): Promise<T> {
@@ -388,7 +400,11 @@ async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
   return withDaemonLock(async (): Promise<BringUp> => {
     if (!stillAsked()) return SUPERSEDED;
     const running = await localDaemonRunning();
-    if (running && !modelChanged) return { daemon: "untouched" };
+    if (running && !modelChanged) {
+      // ATO-123: found up when it was asked for, so it is the app's to bring back — unless a stop came meanwhile.
+      if (stillAsked()) daemonFoundUp();
+      return { daemon: "untouched" };
+    }
     if (running) {
       const s = await modelsStop();
       if (!s.ok) return { daemon: "stop-failed", daemonLine: `local-llm: stop failed — ${s.error ?? "unknown error"}` };
@@ -415,7 +431,8 @@ async function onDisk(modelId: string): Promise<boolean> {
    nothing after. */
 export interface BringUpSteps { signal: AbortSignal; superseded(): boolean; starting(): void }
 interface Background { superseded: boolean; starting: boolean; abort: AbortController; done: Promise<BringUp> }
-export type BringUpReport = (r: BringUp & { modelId: string; via: "swap" | "launch" }) => void;
+/** `update` (ATO-123): the server the llama.cpp update stopped, started again after it. */
+export type BringUpReport = (r: BringUp & { modelId: string; via: "swap" | "launch" | "update" }) => void;
 const SUPERSEDED: BringUp = { daemon: "superseded" };
 let background: Background | null = null;
 let reportBringUp: BringUpReport = () => {};
@@ -458,7 +475,11 @@ export function supersedeBringUp(): boolean {
 }
 /** status → start, checking after each step whether a stop has ended it. */
 async function startIfDown(s: BringUpSteps): Promise<BringUp> {
-  if (await localDaemonRunning()) return { daemon: "untouched" };
+  if (await localDaemonRunning()) {
+    // ATO-123: found up when it was asked for (a ⇄, the launch, the supervisor's own restart) — the app's from here on.
+    if (!s.superseded()) daemonFoundUp();
+    return { daemon: "untouched" };
+  }
   if (s.superseded()) return SUPERSEDED;
   s.starting();
   const st = await modelsStart({ signal: s.signal });
@@ -466,7 +487,7 @@ async function startIfDown(s: BringUpSteps): Promise<BringUp> {
   if (st.notStarted) return SUPERSEDED;
   return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
 }
-function report(r: BringUp, modelId: string, via: "swap" | "launch"): void {
+function report(r: BringUp, modelId: string, via: "swap" | "launch" | "update"): void {
   if (r.daemon !== "started" && r.daemon !== "start-failed") return;   // nothing started, or it was superseded
   try { reportBringUp({ ...r, modelId, via }); } catch { /* a report never fails the bring-up */ }
 }
@@ -485,10 +506,14 @@ function bringUpBehindSwap(modelId: string): void {
  * model on disk), as the background bring-up. One already on its way — a ⇄'s
  * — is adopted, and says how it went itself: the start is logged once.
  */
-export function bringUpAtLaunch(modelId: string): Promise<BringUp> {
+export function bringUpAtLaunch(modelId: string, via: "launch" | "update" = "launch"): Promise<BringUp> {
   const { done, adopted } = startInBackground(startIfDown);
-  if (!adopted) void done.then((r) => report(r, modelId, "launch"));
+  if (!adopted) void done.then((r) => report(r, modelId, via));
   return done;
+}
+/** ATO-123: the mark every stop, switch, model change and the quit move (supersedeBringUp) — whether one came since a moment. */
+export function stopsMark(): number {
+  return startsMark;
 }
 /** Settings › Models › Start: in its turn, and no second `models start` for a daemon that is already up. */
 export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean }> {
@@ -497,7 +522,11 @@ export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean
   return withDaemonLock(async () => {
     // Backlog 18: a stop or a route change came while this waited for its turn.
     if (!stillAsked()) return { ok: false, stdout: "", stderr: "", error: START_REFUSED_MOVED_ON };
-    if (await localDaemonRunning()) return { ok: true, stdout: "", stderr: "", alreadyRunning: true };
+    if (await localDaemonRunning()) {
+      // ATO-123: Settings' Start found it up: the app's to bring back from here on, unless a stop came meanwhile.
+      if (stillAsked()) daemonFoundUp();
+      return { ok: true, stdout: "", stderr: "", alreadyRunning: true };
+    }
     // Its second review: asked again at the spawn — one may have come, or the quit begun, during that status read.
     return modelsStart({ stillWanted: stillAsked });
   }, () => ({ ok: false, stdout: "", stderr: "", error: START_REFUSED_QUITTING }));

@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { DaemonSupervisor, MAX_QUICK_DEATHS } = require("../out/main/daemon-supervisor.js");
-const { routeWantsRestarts, isManagedServer } = require("../out/main/daemon-watch.js");
+const { routeNeedsDaemon, routeWantsRestarts, isManagedServer } = require("../out/main/daemon-watch.js");
 
 /** A supervisor on stand-ins: the test sets what the looks see and moves the clock. */
 function standIn() {
@@ -139,11 +139,67 @@ test("a stop made while it restarts wins", async () => {
   assert.equal(sv.state().incident, null);
 });
 
+test("an incident still open when the route moves on without a stop is closed", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  later(120_000);
+  f.look = "down";
+  f.answer = { ok: false, error: "no" };
+  await sv.checkNow("refused");
+  assert.equal(sv.state().incident.kind, "restart_failed");
+  f.wanted = false;
+  await sv.tick();
+  disarm();
+  assert.equal(sv.state().incident, null);
+  assert.equal(f.notices.at(-1), "clear");
+});
+
+test("a server it stopped trying for is let go of when the route moves on, and only the person's start takes it back", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  f.look = "down";
+  for (let i = 0; i < MAX_QUICK_DEATHS; i++) {
+    later(5_000);
+    await sv.checkNow("refused");
+  }
+  assert.equal(sv.state().gaveUp, true);
+  f.wanted = false;
+  await sv.tick();
+  assert.equal(sv.state().gaveUp, false);
+  assert.equal(sv.state().owned, false);
+  assert.equal(f.notices.at(-1), "clear");
+  f.wanted = true;
+  later(120_000);
+  assert.equal(await sv.checkNow("refused"), false);
+  disarm();
+  assert.equal(f.restarts, MAX_QUICK_DEATHS - 1);
+});
+
+test("the person's own start counts quick deaths afresh", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  f.look = "down";
+  for (let i = 0; i < MAX_QUICK_DEATHS - 1; i++) {
+    later(5_000);
+    await sv.checkNow("refused");
+  }
+  assert.equal(sv.state().quickDeaths, MAX_QUICK_DEATHS - 1);
+  sv.noteStarted();
+  assert.equal(sv.state().quickDeaths, 0);
+  later(5_000);
+  await sv.checkNow("refused");
+  disarm();
+  assert.equal(sv.state().gaveUp, false);
+  assert.equal(f.restarts, MAX_QUICK_DEATHS);
+});
+
 test("the route that needs the managed server: Local models, or Fusion with a local seat, with autoRestart on", () => {
   const local = { localModels: { mode: "managed", managed: { modelId: "qwen-3.5-4b" } }, llm: { activeTextProvider: "local-llama", providers: [{ id: "local-llama", kind: "llama-server" }] } };
   assert.equal(routeWantsRestarts(local), true);
   assert.equal(routeWantsRestarts({ localModels: { mode: "managed", managed: { modelId: "qwen-3.5-4b" } } }), true, "no llm block is the local route");
   assert.equal(routeWantsRestarts({ ...local, localModels: { mode: "managed", managed: { modelId: "qwen-3.5-4b", autoRestart: false } } }), false);
+  // Restarting after the app's own llama.cpp update is not an auto-restart: autoRestart does not gate it.
+  assert.equal(routeNeedsDaemon({ ...local, localModels: { mode: "managed", managed: { modelId: "qwen-3.5-4b", autoRestart: false } } }), true);
   assert.equal(routeWantsRestarts({ ...local, localModels: { mode: "external", managed: { modelId: "qwen-3.5-4b" } } }), false);
   assert.equal(routeWantsRestarts({ ...local, localModels: { mode: "managed", managed: { modelId: null } } }), false);
   const cloud = { ...local, llm: { activeTextProvider: "openrouter", providers: [{ id: "openrouter", kind: "openrouter" }, { id: "local-llama", kind: "llama-server" }] } };
