@@ -1494,7 +1494,9 @@ const P = {
   expand:'<path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/>',
   list:'<path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/>',
   flag:'<path d="M3.5 14V2.5M3.5 3h8l-1.5 3 1.5 3h-8"/>',
-  gauge:'<path d="M2.5 11a5.5 5.5 0 1 1 11 0M8 11l2.5-3"/>',
+  /* #61: a whole dial. The old glyph was only the dial's upper half (y 5.5..11),
+     which at 15px in Settings' nav read as a circle with its bottom cut off. */
+  gauge:'<circle cx="8" cy="8" r="5.5"/><path d="M8 8.5l2.4-2.9M5 8.5h.01M8 5h.01M11 8.5h.01"/>',
   log:'<path d="M3 3.5h10M3 6.5h7M3 9.5h10M3 12.5h5"/>',
   bulb:'<path d="M6 12h4M6.5 14h3M5.2 9.6A4 4 0 1 1 10.8 9.6c-.6.5-.8 1-.8 1.9H6c0-.9-.2-1.4-.8-1.9z"/>',
   edit:'<path d="M10.5 3.5l2 2L6 12H4v-2z"/>',
