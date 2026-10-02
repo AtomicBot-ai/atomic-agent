@@ -230,7 +230,7 @@ describe("buildEnvelope", () => {
       source: "llm_failure",
       category: "transport",
       httpStatus: 400,
-      transportHost: "127.0.0.1:8095",
+      transportHost: "localhost",
       upstreamErrorType: "exceed_context_size_error",
       frames: [],
     };
@@ -259,7 +259,7 @@ describe("buildEnvelope", () => {
       source: "llm_failure",
       category: "transport",
       httpStatus: 400,
-      transportHost: "127.0.0.1:8095",
+      transportHost: "localhost",
       frames: [{ filename: "openai-http.js", lineno: 519 }],
     } as const;
     const exceeded = parseEventPayload(
@@ -290,7 +290,7 @@ describe("buildEnvelope", () => {
       causeType: "OpenAiHttpError",
       source: "llm_failure",
       category: "transport",
-      transportHost: "127.0.0.1:8095",
+      transportHost: "localhost",
       frames: [{ filename: "openai-http.js", lineno: 519 }],
     } as const;
     const contextTooSmall = parseEventPayload(
