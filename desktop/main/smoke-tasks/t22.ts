@@ -268,7 +268,7 @@ async function reloadAfterStop(js: Js, check: Check, agent: SlowAgent, w: Browse
   await js<boolean>(`(() => { ${H}
     S.sessionId = ${q(id)}; S.agentSession = ${q(id)}; S.room = 'chat'; S.streamId = null; S.busy = true;
     S.log = [{id: nid(), k: 'user', text: 'smoke t22: RAN question 1'},
-             {id: nid(), k: 'system', text: 'a turn is still running here — the reply lands when it finishes'}];
+             {id: nid(), k: 'system', text: 'Still answering your last message. The reply will appear here when it\u2019s ready.'}];
     RUNNING.set(${q(turn)}, ${q(id)});
     render();
     return true;
@@ -336,7 +336,7 @@ async function sameChatTwice(js: Js, check: Check, agent: SlowAgent, w: BrowserW
   check(
     "T22: when the same chat loads twice, the older answer arriving first does not bring back a turn that already ended",
     first && second && after.sessionId === id && after.agentSession === id && !after.busy
-      && has(after, "LIVE answer 1") && !after.rows.some((r) => r.includes("a turn is still running here")),
+      && has(after, "LIVE answer 1") && !after.rows.some((r) => r.includes("Still answering your last message")),
     `loads=${first},${second} → after=${JSON.stringify(after)}`,
   );
 }

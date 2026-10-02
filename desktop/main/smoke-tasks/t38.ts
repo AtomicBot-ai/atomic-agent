@@ -316,7 +316,7 @@ function workingReads(js: Js, label: string, ms: number): Promise<string | null>
 }
 
 const count = (v: View, row: string) => v.rows.filter((r) => r === row).length;
-const neverSaid = (v: View) => !v.rows.some((r) => r.includes("no turns yet") || r.includes("still running here"));
+const neverSaid = (v: View) => !v.rows.some((r) => r.includes("no turns yet") || r.includes("still running here") || r.includes("Still answering your last message"));
 
 export async function checks38(js: Js, check: Check): Promise<void> {
   const wins = BrowserWindow.getAllWindows().filter((x) => !x.isDestroyed());

@@ -420,7 +420,7 @@ async function runningChatWhileOpening(js: Js, check: Check, agent: StandIn): Pr
   const out2 = agent.since(mark2);
   check(
     "T24: once it has loaded, Enter steers that chat's own turn",
-    after.agentSession === live && after.busy && after.rows.some((r) => r.includes("a turn is still running here")) && after.entry === said
+    after.agentSession === live && after.busy && after.rows.some((r) => r.includes("Still answering your last message")) && after.entry === said
       && out2.length === 1 && out2[0]!.channel === "steer" && out2[0]!.sessionId === live && out2[0]!.text === said,
     `after=${show(after)} sent=${show(out2)}`,
   );

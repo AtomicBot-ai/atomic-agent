@@ -6274,7 +6274,7 @@ async function hfAndDeltaTest(
   const liveProvider = await js<string>("window.__activeProvider()");
   type Probe = { stamp: { providerId: string; chatModel: string | null } | null; added: string[]; provider: string; model: string };
   const gone = await js<Probe>("window.__sessStampProbe({llm:{providerId:'no-such-provider', chatModel:'ghost-model'}})");
-  const goneLine = 'this session last ran on "no-such-provider/ghost-model", which is no longer configured — keeping the current model';
+  const goneLine = 'This chat last ran on no-such-provider · ghost-model, which is no longer set up. It will use the current model.';   // ATO-164
   check(
     "stamp: a provider that is gone says so verbatim and offers nothing",
     gone.stamp === null && gone.added.map(decodeEntities).some((t) => t === goneLine),
@@ -6288,7 +6288,7 @@ async function hfAndDeltaTest(
     "stamp: a configured provider is reported with an offer, and reporting it switches nothing",
     hasOpenrouter
       ? !!offered.stamp && offered.stamp.providerId === "openrouter"
-        && offered.added.some((t) => t.includes("this session ran on openrouter/a/model-this-session-ran-on") && t.includes("Switch to it"))
+        && offered.added.some((t) => t.includes("This chat ran on OpenRouter · a/model-this-session-ran-on") && t.includes("Switch to it"))
         && providerAfter === liveProvider
       : offered.stamp === null && providerAfter === liveProvider,
     hasOpenrouter ? JSON.stringify(offered.stamp) : "no `openrouter` provider in this config - the gone-provider arm covers the copy",

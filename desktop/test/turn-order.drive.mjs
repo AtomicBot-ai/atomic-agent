@@ -223,7 +223,7 @@ async function main() {
     const st = storedRows.findIndex((r) => r.k === 'tool' && r.name === 'os.fs.write');
     const sa = storedRows.findIndex((r) => r.k === 'approval');
     if (WANT_RECEIPTS) {
-      check(st >= 0 && sa === st + 1 && storedRows[sa].label === 'Approved' && storedRows[sa].badge === 'file write · workspace',
+      check(st >= 0 && sa === st + 1 && storedRows[sa].label === 'Approved' && storedRows[sa].badge === 'edit files in this folder',
         'reopened: the stored approval sits directly under its call, as it did live', shape(storedRows));
       check(JSON.stringify(shape(storedRows)) === JSON.stringify(shape(liveRows)), 'reopened and live transcripts have the same shape',
         `live ${shape(liveRows)} | reopened ${shape(storedRows)}`);
