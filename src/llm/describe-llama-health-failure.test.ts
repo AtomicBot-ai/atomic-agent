@@ -91,6 +91,7 @@ describe("describeLlamaHealthFailure", () => {
       "http://127.0.0.1:8080",
     );
     expect(line).toContain("ATOMIC_AGENT_LLAMA_API_KEY");
+    expect(line).toContain("llama-server.key");
     expect(line).toContain("http 401");
   });
 

@@ -3,6 +3,7 @@ import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-registry.js";
 import { llamaEndpointUrl } from "../../llm/llama-endpoint-url.js";
+import { apiKeyForUrl } from "../../local-llm/managed-api-key.js";
 import type { TuiAction } from "../tui-action.js";
 
 /**
@@ -220,7 +221,9 @@ export class LlmHealthPoller {
       // Same auth as real requests: llama.cpp guards /props behind
       // --api-key, so an unauthenticated label fetch would leave the
       // footer nameless on exactly the servers that need the key.
-      const apiKey = getConfig().localModels.apiKey;
+      // The key for the polled URL, which can differ from the configured
+      // one: the managed daemons' key never goes to another host (#582).
+      const apiKey = apiKeyForUrl(this.url, getConfig());
       const response = await this.fetchImpl(url, {
         method: "GET",
         headers: {

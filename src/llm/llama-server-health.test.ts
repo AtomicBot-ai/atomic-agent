@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resetConfigCache } from "../config/index.js";
+import { getConfig, resetConfigCache } from "../config/index.js";
+import {
+  getUserConfigPath,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
+import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { checkLlamaServer } from "./llama-server-health.js";
 
 function jsonResponse(body: unknown, ok = true, status = 200) {
@@ -205,7 +210,9 @@ describe("checkLlamaServer", () => {
     // The exact "works via openai-compatible, dead via external" split:
     // the compat client concatenates and reaches /llama/v1/models, while
     // this probe used to resolve "/health" against the origin and 404.
-    const fetchMock = vi.fn(async () => jsonResponse({ status: "ok" }));
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) =>
+        jsonResponse({ status: "ok" }),
+      );
     vi.stubGlobal("fetch", fetchMock);
     const result = await checkLlamaServer({
       url: "https://box.example/llama",
@@ -286,5 +293,61 @@ describe("checkLlamaServer", () => {
     });
     expect(result.reachable).toBe(true);
     expect(result.kind).toBe("llama-server");
+  });
+
+  describe("managed daemon key (#582)", () => {
+    function useManagedMode(): string {
+      writeUserConfigFileSync(getUserConfigPath(stateDir), {
+        ...USER_CONFIG_DEFAULTS,
+        localModels: { ...USER_CONFIG_DEFAULTS.localModels, mode: "managed" },
+      });
+      resetConfigCache();
+      return getConfig().localModels.apiKey as string;
+    }
+
+    function authHeaders(fetchMock: { mock: { calls: unknown[][] } }): unknown[] {
+      return fetchMock.mock.calls.map((call) => {
+        const init = call[1] as RequestInit | undefined;
+        return (init?.headers as Record<string, string> | undefined)?.authorization;
+      });
+    }
+
+    afterEach(() => {
+      delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
+    });
+
+    it("a probe of another host carries no authorization", async () => {
+      useManagedMode();
+      const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) =>
+        jsonResponse({ status: "ok" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await checkLlamaServer({ url: "http://192.168.1.5:8080", retries: 0 });
+      expect(fetchMock).toHaveBeenCalled();
+      expect(authHeaders(fetchMock).every((h) => h === undefined)).toBe(true);
+    });
+
+    it("a probe of the managed port on loopback carries the key", async () => {
+      const key = useManagedMode();
+      expect(key).toMatch(/^[0-9a-f]{64}$/);
+      const port = getConfig().localModels.managed.port;
+      const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) =>
+        jsonResponse({ status: "ok" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await checkLlamaServer({ url: `http://127.0.0.1:${port}`, retries: 0 });
+      expect(authHeaders(fetchMock)).toEqual([`Bearer ${key}`]);
+    });
+
+    it("the operator's env key still goes to the URL they probe", async () => {
+      process.env.ATOMIC_AGENT_LLAMA_API_KEY = "operator-key";
+      useManagedMode();
+      const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) =>
+        jsonResponse({ status: "ok" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await checkLlamaServer({ url: "http://192.168.1.5:8080", retries: 0 });
+      expect(authHeaders(fetchMock)).toEqual(["Bearer operator-key"]);
+    });
   });
 });

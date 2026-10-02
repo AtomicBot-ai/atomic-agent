@@ -13,8 +13,9 @@
 import { probeLlamaHealth, getEmbeddingModelDef } from "../../src/local-llm/index.js";
 import {
   EmbeddingUnavailableError,
-  LlamaEmbeddingClient,
+  type LlamaEmbeddingClient,
 } from "../../src/memory/embeddings/embedding-client.js";
+import { createLocalEmbeddingClient } from "../../src/memory/embeddings/local-embedding-client.js";
 import { isReferentialMessage } from "../../src/memory/retrieve/referential-detector.js";
 import { createEmbeddingGate } from "../../src/memory/retrieve/embedding-gate.js";
 import { DEFAULT_REWRITER_EXEMPLARS } from "../../src/memory/retrieve/default-rewriter-exemplars.js";
@@ -47,11 +48,11 @@ async function buildEmbeddingClient(
   const url = `http://127.0.0.1:${port}`;
   let dim = model.dim;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const client = new LlamaEmbeddingClient({ url, dim, model: model.id });
+    const client = createLocalEmbeddingClient({ url, dim, model: model.id });
     try {
       const r = await client.embed({ text: "probe" });
       if (r.vector.length !== dim) dim = r.vector.length;
-      return new LlamaEmbeddingClient({ url, dim, model: model.id });
+      return createLocalEmbeddingClient({ url, dim, model: model.id });
     } catch (err) {
       if (!(err instanceof EmbeddingUnavailableError)) throw err;
       const m = /got (\d+)/.exec(err.message);

@@ -10,6 +10,7 @@ import {
   slotsPollFailure,
 } from "./llama-server-client.js";
 import type { CompletionResult } from "./llama-server-client.js";
+import { resetConfigCache } from "../config/config-cache.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -2108,5 +2109,45 @@ describe("LlamaServerClient.applyTemplate (F31)", () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(LlamaServerError);
     expect((err as LlamaServerError).status).toBe(404);
+  });
+});
+
+describe("LlamaServerClient auth header (#582)", () => {
+  afterEach(() => {
+    delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
+    resetConfigCache();
+  });
+
+  function clientCapturing(auth: Array<string | null>, apiKey?: string): LlamaServerClient {
+    return new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      ...(apiKey ? { apiKey } : {}),
+      fetchImpl: createMockFetch(async (_url, init) => {
+        const headers = (init.headers ?? {}) as Record<string, string>;
+        auth.push(headers.authorization ?? null);
+        return new Response(JSON.stringify({ content: "x", stop: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    });
+  }
+
+  it("reads localModels.apiKey per request, so a key that appears mid-session is sent", async () => {
+    const auth: Array<string | null> = [];
+    const client = clientCapturing(auth);
+    await client.complete({ prompt: "p" });
+    process.env.ATOMIC_AGENT_LLAMA_API_KEY = "daemon-key";
+    resetConfigCache();
+    await client.complete({ prompt: "p" });
+    expect(auth).toEqual([null, "Bearer daemon-key"]);
+  });
+
+  it("a key passed to the constructor wins", async () => {
+    process.env.ATOMIC_AGENT_LLAMA_API_KEY = "daemon-key";
+    resetConfigCache();
+    const auth: Array<string | null> = [];
+    await clientCapturing(auth, "fixed-key").complete({ prompt: "p" });
+    expect(auth).toEqual(["Bearer fixed-key"]);
   });
 });
