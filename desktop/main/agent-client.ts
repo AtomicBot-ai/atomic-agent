@@ -678,8 +678,11 @@ export class AgentClient extends EventEmitter {
    * extractContextWindow), with the same bearer auth. Runs here because
    * the renderer's CSP is connect-src 'none'. Any failure is "no window
    * from /props" — the caller falls through, as the poller swallows it.
+   * `slots` (0.6.7 item 38) is `total_slots`, the requests the server runs
+   * at once (`--parallel`): with one, a chat's turn waits while another
+   * chat's runs, and the window says so. Null when the server does not say.
    */
-  async llamaProps(url: string, apiKey?: string): Promise<{ ok: boolean; n_ctx: number | null; model?: string | null; error?: string }> {
+  async llamaProps(url: string, apiKey?: string): Promise<{ ok: boolean; n_ctx: number | null; model?: string | null; slots?: number | null; error?: string }> {
     if (!/^https?:\/\//.test(url)) return { ok: false, n_ctx: null, model: null, error: "not an http url" };
     // The renderer's key, when its config carries one; otherwise the env key,
     // or the managed daemon's own key when `url` is its address (#582) —
@@ -694,10 +697,12 @@ export class AgentClient extends EventEmitter {
       const json = (await res.json()) as Record<string, unknown>;
       const settings = json["default_generation_settings"] as Record<string, unknown> | undefined;
       const model = extractLlamaModelLabel(json, settings);
+      const total = json["total_slots"];
+      const slots = typeof total === "number" && Number.isInteger(total) && total > 0 ? total : null;
       for (const candidate of [settings?.["n_ctx"], json["n_ctx"]]) {
-        if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) return { ok: true, n_ctx: candidate, model };
+        if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) return { ok: true, n_ctx: candidate, model, slots };
       }
-      return { ok: true, n_ctx: null, model };
+      return { ok: true, n_ctx: null, model, slots };
     } catch (err) {
       return { ok: false, n_ctx: null, model: null, error: err instanceof Error ? err.message : String(err) };
     }
