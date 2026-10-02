@@ -144,8 +144,9 @@
 
   /* Radius. Soft Tactile rounds everything interactive fully; containers get
      rounder as they get bigger. */
-  --r-pill:999px;  /* buttons, chips, pill selects, segmented, inputs, sidebar rows, toasts, dots */
+  --r-pill:999px;  /* buttons, chips that are buttons, pill selects, segmented, inputs, sidebar rows, toasts, dots */
   --r-kbd:6px;     /* keycaps */
+  --r-badge:6px;   /* badges that say something and do nothing; a pill is a control (Danya, 01.10) */
   --r-well:12px;   /* readouts, code / output blocks, menu items */
   --r-row:14px;    /* list rows */
   --r-panel:16px;  /* sidebar, inspector, drawer, tool cards */
@@ -363,9 +364,11 @@ svg{display:block;flex:none}
 .tk-spin.on-fill{border-color:var(--glass);border-top-color:var(--on-strong)}
 
 /* ---- Chips ----
-   28px pill, tones carry state. Never a green fill behind text: green chips
-   are a tint with green words. */
-.tk-chip,.ann{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:var(--r-pill);
+   28px, tones carry state. Never a green fill behind text: green chips
+   are a tint with green words. A chip that only says something (a status,
+   a tag, a count) is a rounded rectangle; only a chip that is a button is a
+   pill, so a badge is never taken for a button (Danya, 01.10). */
+.tk-chip,.ann{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:var(--r-badge);
   background:var(--hover);color:var(--ink-2);font:500 12.5px/1 var(--font-ui);letter-spacing:0;text-transform:none;
   white-space:nowrap;max-width:100%;flex:none}
 .tk-chip svg{width:14px;height:14px}
@@ -376,7 +379,7 @@ svg{display:block;flex:none}
 .tk-chip--green,.ann.lit{background:var(--success-tint);color:var(--success)}
 .tk-chip--indigo{background:var(--indigo);color:var(--on-indigo)}
 .tk-chip--line{background:transparent;box-shadow:inset 0 0 0 1px var(--bd-2)}
-button.tk-chip{cursor:pointer}
+button.tk-chip{cursor:pointer;border-radius:var(--r-pill)}
 button.tk-chip:hover{background:var(--press)}
 
 /* ---- Icon badge and brand logos ----
