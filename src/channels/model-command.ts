@@ -35,19 +35,19 @@
  * refused on a `llama-server` provider, whose factory never reads one
  * (see {@link MODEL_PIN_IGNORED_KINDS}), and a provider whose entry
  * declares an `apiKeyEnvVar` that is unset is refused even though its
- * kind is not in {@link KEY_REQUIRED_KINDS} (see {@link missingApiKey}).
+ * kind is not a cloud kind (see {@link missingApiKey}).
  */
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import { LOCAL_PROVIDER_KIND } from "../config/llm-run-mode-config.js";
 import type { RunModeName } from "../config/llm-run-mode-config.js";
-import { resolveLlmProviderApiKey } from "../config/resolve-llm-api-key.js";
 import {
   resolveLlmConfig,
   type LlmProviderConfigEntry,
   type ResolvedLlmConfig,
 } from "../llm/provider/registry/index.js";
+import { providerKeyStatus } from "../llm/provider/provider-key.js";
 import {
   describeRunMode,
   resolveRunMode,
@@ -70,15 +70,6 @@ export interface ModelCommandChat {
   /** Decorate an id for the host chat — bare on Telegram, `code` on Discord. */
   code: (text: string) => string;
 }
-
-/**
- * Provider kinds whose entry is useless without a resolvable API key.
- * Everything else is left alone on purpose: `llama-server` never wants
- * one, and a keyless `openai-compatible` entry is how LM Studio and
- * friends are configured (see `resolve-llm-api-key.ts`), so demanding a
- * key there would refuse a working setup.
- */
-const KEY_REQUIRED_KINDS = new Set(["openrouter", "aimlapi", "gemini"]);
 
 /**
  * Provider kinds whose factory never reads `entry.defaultChatModel`, so
@@ -527,24 +518,20 @@ function matchProvider(
   return { kind: "none" };
 }
 
-function hasApiKey(entry: LlmProviderConfigEntry): boolean {
-  return Boolean(resolveLlmProviderApiKey(entry)?.length);
-}
-
 /**
  * Why `providerId` cannot authenticate, or `null` when it can (or does
  * not need to).
  *
- * Two reasons, and the second is the one a kind check alone misses. The
- * known-service presets — Groq, Nous, Anthropic and friends — are all
- * stored as `kind: "openai-compatible"` with their own `apiKeyEnvVar`
- * (`providers-wizard-build-entry.ts`), so keying only on kind reports
- * them as usable and switches to them happily while
- * `resolveLlmProviderApiKey` returns `undefined`; every following turn
- * then 401s with nothing in the channel to explain it. An entry that
- * *declares* an env var has said it needs a key, which is exactly the
- * signal that separates it from a bare keyless compat entry (LM Studio,
- * Ollama) that must keep working.
+ * The rule is `providerKeyStatus` (`src/llm/provider/provider-key.ts`),
+ * the one the fallback chain and the TUI's first-run check read, and a
+ * switch is refused only when it says `missing`. That covers the case a
+ * kind check alone misses: the known-service presets (Groq, Nous,
+ * Anthropic and friends) are all stored as `kind: "openai-compatible"`
+ * with their own `apiKeyEnvVar` (`providers-wizard-build-entry.ts`), and
+ * an entry that *declares* an env var has said it needs a key. A local
+ * server (LM Studio, Ollama, anything on this machine) never needs one,
+ * even though the wizard saves it with an env var too, and a bare keyless
+ * compat entry elsewhere is left alone.
  *
  * `apiKeyEnvVar` lives on the user-config entry rather than on
  * `LlmProviderConfigEntry`, so it is read off the file entry here.
@@ -553,12 +540,14 @@ function missingApiKey(
   entry: LlmProviderConfigEntry,
   config: AtomicAgentConfig,
 ): { envVar: string | null } | null {
-  if (hasApiKey(entry)) return null;
   const envVar = config.llm?.providers.find(
     (e) => e.id === entry.id,
   )?.apiKeyEnvVar;
-  if (envVar !== undefined && envVar.length > 0) return { envVar };
-  return KEY_REQUIRED_KINDS.has(entry.kind) ? { envVar: null } : null;
+  const status = providerKeyStatus({
+    ...entry,
+    ...(envVar !== undefined ? { apiKeyEnvVar: envVar } : {}),
+  });
+  return status.state === "missing" ? { envVar: status.envVar } : null;
 }
 
 /**

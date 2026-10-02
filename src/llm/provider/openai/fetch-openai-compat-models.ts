@@ -9,6 +9,8 @@ import {
   type OpenAiCompatAuth,
 } from "./openai-auth-headers.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
+import { providerErrorSentence } from "./openai-http.js";
+import { redactProviderDetail } from "../verify/redact-provider-detail.js";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -73,7 +75,7 @@ export async function fetchOpenAiCompatModels(
     headers: buildOpenAiAuthHeaders(apiKey, auth),
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`http ${res.status}`);
+  if (!res.ok) throw await modelListHttpError(res, apiKey);
   const json = (await res.json()) as { data?: readonly { id?: unknown }[] };
   const ids = (json.data ?? [])
     .map((row) => row?.id)
@@ -83,4 +85,27 @@ export async function fetchOpenAiCompatModels(
 
   cache.set(cacheKey(baseUrl, apiKey), { fetchedAt: Date.now(), ids });
   return ids;
+}
+
+/**
+ * A refused model-list request as `http <status>`, followed by the
+ * provider's own sentence when the body had one: `http 400: Please pass a
+ * valid API key`. The status alone hid which problem it was — Gemini
+ * refuses a bad key with a 400, and Anthropic answers 401 both to a key in
+ * the wrong header ("invalid x-api-key") and to a wrong key ("API key is
+ * invalid."). The status stays first for callers that branch on it, and
+ * the key is redacted in case the service quoted it back.
+ */
+export async function modelListHttpError(
+  res: Response,
+  apiKey: string | undefined,
+): Promise<Error> {
+  let body = "";
+  try {
+    body = await res.text();
+  } catch {
+    body = "";
+  }
+  const said = redactProviderDetail(providerErrorSentence(body), apiKey ?? "");
+  return new Error(said ? `http ${res.status}: ${said}` : `http ${res.status}`);
 }

@@ -387,6 +387,69 @@ describe("ProviderFallbackChain", () => {
     expect(chain.advanceFrom("primary", abort)).toBeNull();
   });
 
+  describe("a stand-in for a primary that refused", () => {
+    it("sends the next pick back to the primary until it serves, inside the throttle", () => {
+      const clock = makeClock();
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "backup"]),
+        now: clock.now,
+      });
+      expect(chain.advanceFrom("primary", http(401))).toBe("backup");
+      // Nothing served: every pick asks the primary again.
+      expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+      clock.advance(1_000);
+      expect(chain.advanceFrom("primary", http(401))).toBe("backup");
+      expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+
+      // Once the stand-in answers it is a working fallback, and the probe
+      // throttle holds the next turn on it as before.
+      expect(chain.advanceFrom("primary", http(401))).toBe("backup");
+      chain.recordSuccess("backup", false);
+      expect(chain.pickProvider()).toEqual({ providerId: "backup", isProbe: false });
+    });
+
+    it("loses its standing when the chain moves past it", () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "b", "c"]),
+        now: makeClock().now,
+      });
+      chain.advanceFrom("primary", http(404));
+      chain.recordSuccess("b", false);
+      // `b` drops later; the pointer moves to `c`, which has served nothing.
+      expect(chain.advanceFrom("b", new TypeError("fetch failed"))).toBe("c");
+      expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+    });
+
+    it("is not named as the route until it serves, and then it is", () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "backup"]),
+        now: makeClock().now,
+      });
+      chain.advanceFrom("primary", http(401));
+      expect(chain.activeOverrideFor("")).toBe("backup");
+      expect(chain.standingOverrideFor("")).toBeNull();
+      expect(chain.hasFallbackServed()).toBe(false);
+      chain.recordSuccess("backup", false);
+      expect(chain.standingOverrideFor("")).toBe("backup");
+      expect(chain.hasFallbackServed()).toBe(true);
+      // A fallback that served stays on record when it fails later.
+      chain.advanceFrom("backup", new TypeError("fetch failed"));
+      expect(chain.hasFallbackServed()).toBe(true);
+    });
+
+    it("does not apply to a primary that is down: its cooldown holds as before", () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "backup"]),
+        now: makeClock().now,
+      });
+      expect(chain.advanceFrom("primary", http(503))).toBe("backup");
+      expect(chain.standingOverrideFor("")).toBe("backup");
+      expect(chain.pickProvider()).toEqual({ providerId: "backup", isProbe: false });
+      expect(chain.advanceFrom("backup", new TypeError("fetch failed"))).toBeNull();
+      expect(chain.pickProvider()).toEqual({ providerId: "backup", isProbe: false });
+    });
+  });
+
   describe("partition isolation", () => {
     it("keeps override state per partition — one session's fallover does not move another's", () => {
       const chain = new ProviderFallbackChain({

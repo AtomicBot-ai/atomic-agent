@@ -4,7 +4,11 @@ import type {
   StreamChunk,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
-import { replayPrimedStream, runWithFallback } from "../llm/fallback/index.js";
+import {
+  attachFailingLink,
+  replayPrimedStream,
+  runWithFallback,
+} from "../llm/fallback/index.js";
 import type { ProviderFallbackChain } from "../llm/fallback/index.js";
 import {
   completeOnLink,
@@ -115,7 +119,7 @@ export function createFallbackCompleter(
   };
   return async (params) =>
     params.providerId !== undefined
-      ? attempt(params.providerId, params)
+      ? onPinnedLink(params.providerId, (id) => attempt(id, params))
       : runWithFallback(
           deps.fallbackChain,
           (providerId) => attempt(providerId, params),
@@ -147,10 +151,10 @@ export function createFallbackStreamer(
     async function* run(): AsyncGenerator<StreamChunk, CompletionResult, void> {
       const opened =
         params.providerId !== undefined
-          ? {
-              providerId: params.providerId,
-              ...(await openStreamOnLink(deps, params, params.providerId)),
-            }
+          ? await onPinnedLink(params.providerId, async (id) => ({
+              providerId: id,
+              ...(await openStreamOnLink(deps, params, id)),
+            }))
           : await runWithFallback(
               deps.fallbackChain,
               async (id) => ({
@@ -160,15 +164,41 @@ export function createFallbackStreamer(
               params.sessionId,
             );
       const { primed, transport, providerId } = opened;
-      const result = yield* stampServedTransport(
-        replayPrimedStream(primed),
-        transport,
-      );
+      let result: CompletionResult;
+      try {
+        result = yield* stampServedTransport(
+          replayPrimedStream(primed),
+          transport,
+        );
+      } catch (err) {
+        // A stream that dies after it opened (`terminated`) never passes
+        // back through the chain, and it is the one a turn most often
+        // parks on: name its link too.
+        attachFailingLink(err, providerId);
+        throw err;
+      }
       deps.recordStreamUsage(params.sessionId, result, providerId);
       return { ...result, servedTransport: transport };
     }
     return run();
   };
+}
+
+/**
+ * Run a pinned request on its one link, and mark a failure with that link
+ * the way `runWithFallback` marks a chain's (`attachFailingLink`): a turn
+ * parked on it says which link it waits on either way.
+ */
+async function onPinnedLink<T>(
+  providerId: string,
+  run: (providerId: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await run(providerId);
+  } catch (err) {
+    attachFailingLink(err, providerId);
+    throw err;
+  }
 }
 
 /**

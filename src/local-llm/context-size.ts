@@ -292,11 +292,13 @@ export const MIN_AUTO_CONTEXT = 32_768;
 export const MAX_AUTO_CONTEXT = 262_144;
 
 /**
- * Default context when no VRAM figure is available (CPU-only offload or
- * an unknown device). KV lives in system RAM there, which is plentiful,
- * so a moderate fixed value is safe.
+ * Default context when no VRAM figure is available (CPU-only offload, an
+ * unknown device, or a device probe that failed or timed out). KV lives in
+ * system RAM there, which is plentiful, so a moderate fixed value is safe.
+ * It must not drop below MIN_AUTO_CONTEXT: at 16,384 it equalled the
+ * default reply reserve and left no room for the prompt at all.
  */
-export const NO_VRAM_DEFAULT_CONTEXT = 16_384;
+export const NO_VRAM_DEFAULT_CONTEXT = MIN_AUTO_CONTEXT;
 
 export interface EstimateContextSizeInput {
   /**

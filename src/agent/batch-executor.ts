@@ -24,6 +24,10 @@ import {
 import { findUnknownArguments } from "../tools/unknown-argument-guard.js";
 import { CancelledError } from "../llm/index.js";
 import {
+  runWithApprovalLedger,
+  type ToolApprovalRecord,
+} from "../approval/approval-ledger.js";
+import {
   isParallelWithinGroup,
   resourceClassFor,
   type ResourceClass,
@@ -510,7 +514,17 @@ export async function executeBatch(
       input.resourceClass === "terminal"
         ? null
         : refuseBeforeDispatch(input.call);
-    compressed = refusal ?? (await invokeRegistry(input));
+    // Collects the approvals this call raises, whatever async context the
+    // verdict arrives from (an HTTP resolve, a Telegram button). A denial
+    // throws out of the tool and `invokeRegistry` turns it into an error
+    // result, so the ledger is read after that too.
+    const approvals: ToolApprovalRecord[] = [];
+    compressed =
+      refusal ??
+      (await runWithApprovalLedger(approvals, () => invokeRegistry(input)));
+    if (approvals.length > 0) {
+      compressed = { ...compressed, approvals: [...approvals] };
+    }
     const durationMs = Date.now() - startedAt;
     slots[input.batchIndex] = {
       ...slots[input.batchIndex]!,

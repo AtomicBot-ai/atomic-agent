@@ -1,15 +1,11 @@
 import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
-import type { UserLlmProviderEntry } from "../config/llm-config.js";
-import { usesExternalCliAuth } from "../config/provider-auth-mode.js";
-import { resolveLlmProviderApiKey } from "../config/resolve-llm-api-key.js";
 import {
   getLocalModelDef,
   isBackendDownloaded,
   isKnownLocalModelId,
   isModelDownloaded,
 } from "../local-llm/index.js";
-import { isLocalProviderUrl } from "./providers/is-local-provider-url.js";
-import { presetForEntryId } from "./providers/provider-presets.js";
+import { providerKeyStatus } from "../llm/provider/provider-key.js";
 
 /**
  * "Does this install have a backend at all?" — three predicates, no UI
@@ -28,26 +24,14 @@ export function isCloudTextProviderReady(): boolean {
   if (!active || active === "local-llama") return false;
   const entry = cfg.llm?.providers.find((provider) => provider.id === active);
   if (!entry) return false;
-  if (resolveLlmProviderApiKey(entry)) return true;
-  if (isKeylessLocalProviderEntry(entry)) return true;
-  // A subscription CLI carries no key and no base URL, so both checks
-  // above miss it. Reachable only for a kind that config validation
-  // rejected outright before this existed, so no pre-existing config
-  // changes behaviour here.
-  return usesExternalCliAuth(entry);
-}
-
-/**
- * Local servers (Ollama, LM Studio) have no API key at all, so a missing
- * key must not send the user back into the startup wizard: a configured
- * local provider is as ready as a cloud one with a key. An entry counts
- * as keyless-local when its id maps to a `local: true` preset, or when
- * its base URL points at the operator's own machine — the latter covers
- * manual openai-compatible entries typed in before the preset existed.
- */
-function isKeylessLocalProviderEntry(entry: UserLlmProviderEntry): boolean {
-  if (presetForEntryId(entry.id)?.local) return true;
-  return isLocalProviderUrl(entry.baseUrl);
+  // Ready when the key rule every other caller reads says the entry can
+  // authenticate: a key resolves (or a credential header is set), it signs
+  // in through a vendor CLI, or it is a local server with no key at all
+  // (an Ollama or LM Studio entry must not send the user back into the
+  // first-run flow). An entry that may or may not need a key does not
+  // count: nothing says it can serve.
+  const { state } = providerKeyStatus(entry);
+  return state === "present" || state === "not-needed";
 }
 
 /**

@@ -164,6 +164,34 @@ describe("isCloudTextProviderReady", () => {
     expect(isCloudTextProviderReady()).toBe(false);
   });
 
+  it("treats a remote entry whose key rides in a hand-set header as ready", () => {
+    // The same key rule the fallback chain reads: a credential header is a
+    // key the provider sends, so the entry is not "keyless".
+    const cfg = getConfig();
+    const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
+    writeUserConfigFileSync(cfg.paths.userConfigFile, {
+      ...file,
+      llm: {
+        activeTextProvider: "remote-compat",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: cfg.localModels.url },
+          {
+            id: "remote-compat",
+            kind: "openai-compatible",
+            baseUrl: "https://api.example.invalid",
+            defaultChatModel: "some-model",
+            headers: { Authorization: "Bearer sk-test" },
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    expect(isCloudTextProviderReady()).toBe(true);
+  });
+
   it("treats a manual keyless entry with a loopback base URL as ready", () => {
     const cfg = getConfig();
     const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);

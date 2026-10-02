@@ -6,8 +6,11 @@ import {
   type FallbackLogger,
 } from "./log-fallback-advance.js";
 import {
+  clearOverride,
   freshBreaker,
   freshPartition,
+  isStandIn,
+  registerBreakerFailure,
   type BreakerEntry,
   type PartitionState,
 } from "./partition-state.js";
@@ -86,7 +89,8 @@ export class ProviderFallbackChain {
    * `partitionKey` (default = the shared partition). Resolves the live
    * chain, drops a stale override that no longer names a chain member,
    * and — when the primary's cooldown has elapsed and the probe throttle
-   * allows — routes this one turn back to the primary as a probe.
+   * allows — routes this one turn back to the primary as a probe. A
+   * stand-in (`isStandIn`) is probed past at once, cooldown or not.
    */
   pickProvider(partitionKey: string = DEFAULT_PARTITION): ProviderPick {
     const { chain } = this.resolve();
@@ -102,7 +106,7 @@ export class ProviderFallbackChain {
     // A user hot-swap (new primary) or a chain edit that dropped the
     // override provider drops the override entirely.
     if (p.overrideId && !chain.includes(p.overrideId)) {
-      this.clearOverride(p);
+      clearOverride(p);
     }
 
     if (!p.overrideId) {
@@ -112,6 +116,10 @@ export class ProviderFallbackChain {
     // On an override: consider probing the primary.
     const now = this.now();
     const b = this.breaker(p, primary);
+    if (isStandIn(p)) {
+      b.lastProbeAt = now;
+      return { providerId: primary, isProbe: true };
+    }
     const cooledDown = now >= b.cooldownUntil;
     const throttleOk =
       now - b.lastProbeAt >= this.resolve().timing.probeThrottleMs;
@@ -138,7 +146,12 @@ export class ProviderFallbackChain {
 
     const { chain, timing } = this.resolve();
     const p = this.partition(partitionKey);
-    this.registerFailure(p, fromId, decision.immediate, timing);
+    registerBreakerFailure(
+      this.breaker(p, fromId),
+      this.now(),
+      decision.immediate,
+      timing,
+    );
 
     const idx = chain.indexOf(fromId);
     // Next healthy link after `fromId`. When `fromId` is not in the chain
@@ -174,12 +187,16 @@ export class ProviderFallbackChain {
     b.cooldownUntil = 0;
     b.cooldownStep = 0;
     b.lastFailureAt = 0;
+    if (id === p.overrideId) {
+      p.overrideServed = true;
+      p.fallbackServed = true;
+    }
 
     const { chain } = this.resolve();
     const primary = chain[0];
     if (wasProbe && id === primary && p.overrideId) {
       const from = p.overrideId;
-      this.clearOverride(p);
+      clearOverride(p);
       this.emit({
         direction: "back",
         from,
@@ -204,39 +221,21 @@ export class ProviderFallbackChain {
     return this.partitions.get(partitionKey)?.overrideCause ?? null;
   }
 
-  private registerFailure(
-    p: PartitionState,
-    id: string,
-    immediate: boolean,
-    timing: ResolvedFallbackChain["timing"],
-  ): void {
-    const now = this.now();
-    const b = this.breaker(p, id);
+  /** Whether `id` heads the live chain: the provider the user picked. */
+  isPrimary(id: string): boolean {
+    return this.resolve().chain[0] === id;
+  }
 
-    // Reset the streak if the last failure is older than the no-error
-    // window — the provider had a clean run since, so start fresh.
-    if (
-      b.lastFailureAt > 0 &&
-      now - b.lastFailureAt >= timing.failureWindowMs
-    ) {
-      b.consecutiveFailures = 0;
-      b.cooldownStep = 0;
-    }
-    b.consecutiveFailures += 1;
-    b.lastFailureAt = now;
+  /** Whether a fallback has served `partitionKey` since it left the primary. */
+  hasFallbackServed(partitionKey = DEFAULT_PARTITION): boolean {
+    return this.partitions.get(partitionKey)?.fallbackServed ?? false;
+  }
 
-    // Arm (or escalate) the cooldown once the breaker trips: either an
-    // immediate signal, or the consecutive-failure threshold is reached.
-    const tripped =
-      immediate || b.consecutiveFailures >= timing.failureThreshold;
-    if (tripped) {
-      const step = Math.min(b.cooldownStep, timing.cooldownMs.length - 1);
-      b.cooldownUntil = now + timing.cooldownMs[step]!;
-      b.cooldownStep = Math.min(
-        b.cooldownStep + 1,
-        timing.cooldownMs.length - 1,
-      );
-    }
+  /** The override the next call starts on (no stand-in), for the route note. */
+  standingOverrideFor(partitionKey: string): string | null {
+    const p = this.partitions.get(partitionKey);
+    if (!p?.overrideId) return null;
+    return isStandIn(p) ? null : p.overrideId;
   }
 
   private switchAwayTo(
@@ -251,10 +250,13 @@ export class ProviderFallbackChain {
     if (fromId === primary && !p.overrideId) {
       p.overrideId = toId;
       p.announcedOverride = false;
+      p.overrideServed = false;
+      p.fallbackServed = false;
     } else if (p.overrideId) {
       // Chain continued past a dead deeper link — keep the override
       // pointed at the newest working candidate.
       p.overrideId = toId;
+      p.overrideServed = false;
     }
     if (fromId === primary && p.overrideId) {
       p.overrideCause = { providerId: fromId, error: err };
@@ -268,12 +270,6 @@ export class ProviderFallbackChain {
         reason: describeReason(err),
       });
     }
-  }
-
-  private clearOverride(p: PartitionState): void {
-    p.overrideId = null;
-    p.announcedOverride = false;
-    p.overrideCause = null;
   }
 
   private partition(key: string): PartitionState {

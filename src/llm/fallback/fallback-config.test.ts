@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveFallbackChain,
+  withoutKeylessLinks,
+  withoutUnbuiltLinks,
   DEFAULT_FALLBACK_TIMING,
 } from "./fallback-config.js";
 import type { ResolvedLlmConfig } from "../provider/registry/provider-types.js";
@@ -255,5 +257,48 @@ describe("resolveFallbackChain", () => {
     expect(resolved.timing.failureWindowMs).toBe(
       DEFAULT_FALLBACK_TIMING.failureWindowMs,
     );
+  });
+});
+
+describe("withoutUnbuiltLinks", () => {
+  const timing = DEFAULT_FALLBACK_TIMING;
+  it("drops links the registry did not build and reports each one", () => {
+    const dropped: string[] = [];
+    const out = withoutUnbuiltLinks(
+      { chain: ["openrouter", "ollama", "local-llama"], timing },
+      (id) => id !== "ollama",
+      (id) => dropped.push(id),
+    );
+    expect(out.chain).toEqual(["openrouter", "local-llama"]);
+    expect(dropped).toEqual(["ollama"]);
+  });
+
+  it("always keeps the primary and returns the same object when nothing changes", () => {
+    const input = { chain: ["gemini", "local-llama"], timing };
+    expect(withoutUnbuiltLinks(input, () => true)).toBe(input);
+    expect(withoutUnbuiltLinks(input, () => false).chain).toEqual(["gemini"]);
+  });
+});
+
+describe("withoutKeylessLinks", () => {
+  const timing = DEFAULT_FALLBACK_TIMING;
+  it("skips a fallback link with no key, and reports it as skipped", () => {
+    const skipped: string[] = [];
+    const out = withoutKeylessLinks(
+      { chain: ["aimlapi", "dashscope", "local-llama"], timing },
+      (id) => id === "dashscope",
+      (id) => skipped.push(id),
+    );
+    expect(out.chain).toEqual(["aimlapi", "local-llama"]);
+    expect(skipped).toEqual(["dashscope"]);
+  });
+
+  it("keeps the primary even without a key: its own refusal is the message", () => {
+    const input = { chain: ["dashscope", "local-llama"], timing };
+    const skipped: string[] = [];
+    expect(
+      withoutKeylessLinks(input, (id) => id === "dashscope", (id) => skipped.push(id)),
+    ).toBe(input);
+    expect(skipped).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
 import {
@@ -34,6 +35,18 @@ export type OpenAiHttpDeps = {
    */
   logger?: CreditLimitLogger;
 };
+
+/**
+ * A key problem the request itself shows, without asking the provider:
+ *
+ *  - `non_ascii`: the key has a character no API key has (a letter from
+ *    another keyboard layout, a typographic quote picked up while
+ *    pasting). It cannot go in a header, so nothing was sent; the 401 is
+ *    ours, built in `openAiFetch`.
+ *  - `missing`: no key was set, so the request went out without one, and
+ *    the service answered 401/403.
+ */
+export type OpenAiKeyProblem = "non_ascii" | "missing";
 
 /**
  * Typed failure for the OpenAI-compatible HTTP path, mirroring
@@ -74,6 +87,7 @@ export class OpenAiHttpError extends Error {
       body?: ProviderErrorBody;
       generationId?: string;
       streamError?: string;
+      keyProblem?: OpenAiKeyProblem;
     },
   ) {
     super(message);
@@ -88,7 +102,18 @@ export class OpenAiHttpError extends Error {
     if (options?.streamError !== undefined) {
       this.streamError = options.streamError;
     }
+    if (options?.keyProblem !== undefined) {
+      this.keyProblem = options.keyProblem;
+    }
   }
+
+  /**
+   * What is wrong with the key itself, when the request shows it, for a
+   * 401 the provider did not get to judge on the merits. Absent on every
+   * other error, a 401 for a key that was sent included: that one the
+   * provider refused, and only it knows why.
+   */
+  readonly keyProblem?: OpenAiKeyProblem;
 
   /**
    * The error body read for its reason (`parseProviderErrorBody`):
@@ -163,6 +188,14 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
       `Tried ${OPENAI_MAX_ATTEMPTS} times. Check the provider URL or your connection.`
     );
   }
+  if (err.keyProblem === "non_ascii") {
+    // Nothing was sent, so nothing was "rejected": say what is wrong with
+    // the key instead of quoting a status the provider never answered.
+    return `${who} can't use its API key: the key has a character API keys never contain (often a letter or quote picked up while pasting), so it was not sent. Re-enter the key in the Providers panel.`;
+  }
+  if (err.keyProblem === "missing") {
+    return `${who} needs an API key and none is set. Add the key in the Providers panel.`;
+  }
   if (err.status === 401 || err.status === 403) {
     return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
   }
@@ -170,13 +203,24 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
   }
   if (err.status === 402) {
-    // Reached only after the credit-limit retry declined or failed, so
-    // the ceiling is not the fixable part any more — say what is.
-    return (
-      `${who} refused the request for lack of credit (402). ` +
+    /* Reached only after the credit-limit retry declined or failed, so the
+       ceiling is not the fixable part any more — say what is.
+
+       And say what the PROVIDER said, when it said anything. Two branches
+       met here in the desktop merge: one explaining the mechanism (the
+       service reserves the whole output ceiling against your balance), one
+       insisting that a 402 must not throw away the provider's own sentence,
+       because OpenRouter's reads "This request requires more credits, or
+       fewer max_tokens. You requested up to 8192 tokens, but can only afford
+       7181" — an instruction with the actual numbers in it. Neither is worth
+       losing, so a 402 carries both when the body has something to carry. */
+    const own = providerReason(err);
+    const mechanism =
       `Top up the account, or lower localModels.completionMaxTokens: ` +
-      `the service reserves the whole output ceiling against your balance.`
-    );
+      `the service reserves the whole output ceiling against your balance.`;
+    return own
+      ? `${who} rejected the request (402). ${own} ${mechanism}`
+      : `${who} rejected the request (402). ${mechanism}`;
   }
   if (err.status === 429) {
     return `${who} is rate-limiting this key (429). Tried ${OPENAI_MAX_ATTEMPTS} times — wait a minute and retry.`;
@@ -184,8 +228,112 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status >= 500) {
     return `${who} is having server trouble (${err.status}). Tried ${OPENAI_MAX_ATTEMPTS} times — this is on the provider, not your setup.`;
   }
-  return `${who} rejected the request (${err.status}).`;
+  // Everything else — 400 bad request, 413, 422 — has no wording of its own
+  // here, and a bare "rejected the request (400)" throws away the only
+  // sentence that could have helped. The
+  // provider already said what was wrong and what to do about it:
+  // OpenRouter's 402 reads "This request requires more credits, or fewer
+  // max_tokens. You requested up to 8192 tokens, but can only afford
+  // 7181", which is an instruction, not a status code. Pass it on.
+  const reason = providerReason(err);
+  return reason
+    ? `${who} rejected the request (${err.status}). ${reason}`
+    : `${who} rejected the request (${err.status}).`;
 }
+
+/**
+ * The provider's own explanation, dug out of the body `httpErrorFromResponse`
+ * folded into the message as `openai provider <status>: <body>`.
+ */
+function providerReason(err: OpenAiHttpError): string {
+  return providerErrorSentence(
+    err.message.replace(/^openai provider \d+:\s*/, ""),
+  );
+}
+
+/**
+ * The provider's own sentence out of an error body. Exported for the
+ * model-list fetchers, whose refusals had only a status to show.
+ *
+ * OpenAI-compatible errors are `{"error": {"message": …}}`; a few
+ * providers send `{"message": …}` or `{"error": "…"}`, Google's
+ * OpenAI-compatible surface wraps the object in an array
+ * (`[{"error": {…}}]`), and some send plain text. Anything unrecognisable
+ * is passed through as trimmed text rather than dropped — an unhelpful
+ * sentence is still better evidence than a status code alone. Bounded so
+ * a provider that echoes the whole request cannot flood a chat row.
+ */
+export function providerErrorSentence(raw: string): string {
+  const body = raw.trim();
+  if (!body) return "";
+  let text: string;
+  try {
+    // Structured body: the message is the only part worth reading out
+    // loud. If it parsed but carries no message (`{}`, an empty error
+    // object), say nothing rather than reading braces at the operator.
+    text = messageFromErrorJson(JSON.parse(body));
+  } catch {
+    // Not parseable — which is the NORMAL case for a long error, because
+    // `httpErrorFromResponse` folds only the first
+    // `OPENAI_ERROR_DETAIL_MAX_LEN` characters of the body into the
+    // message and a cut-off JSON object no longer parses. OpenRouter's
+    // 402 is exactly that shape, so relying on `JSON.parse` alone read
+    // the operator a wall of braces. Lift the first `"message"` out by
+    // hand; failing that, the raw text is still better than nothing.
+    text = messageFromTruncatedJson(body) || body;
+  }
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  return flat.length > OPENAI_REASON_MAX_LEN
+    ? `${flat.slice(0, OPENAI_REASON_MAX_LEN)}…`
+    : flat;
+}
+
+function messageFromErrorJson(parsed: unknown): string {
+  // Google's array form: the first element that says something. Read as
+  // an object it had no message, and "Please pass a valid API key" was
+  // dropped from a Gemini refusal.
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      const message = messageFromErrorJson(item);
+      if (message) return message;
+    }
+    return "";
+  }
+  if (!parsed || typeof parsed !== "object") return "";
+  const root = parsed as { error?: unknown; message?: unknown };
+  if (typeof root.message === "string" && root.message.trim()) {
+    return root.message;
+  }
+  if (typeof root.error === "string" && root.error.trim()) return root.error;
+  if (root.error && typeof root.error === "object") {
+    const inner = root.error as { message?: unknown };
+    if (typeof inner.message === "string" && inner.message.trim()) {
+      return inner.message;
+    }
+  }
+  return "";
+}
+
+/**
+ * The first `"message": "…"` in a body that did not survive truncation.
+ * Matched against the raw text (escapes intact) and unescaped through
+ * `JSON.parse` so `\"` and `\n` come back as themselves; a value that was
+ * itself cut in half simply does not match, and the caller falls back.
+ */
+function messageFromTruncatedJson(body: string): string {
+  const m = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(body);
+  if (!m || !m[1]) return "";
+  try {
+    const value: unknown = JSON.parse(`"${m[1]}"`);
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Cap on the provider sentence folded into a chat message. */
+const OPENAI_REASON_MAX_LEN = 220;
 
 function hostOf(url: string): string {
   try {
@@ -499,6 +647,8 @@ export async function openAiFetch(
       false,
       null,
       deps.label,
+      undefined,
+      isAsciiOnly(deps.apiKey) ? undefined : { keyProblem: "non_ascii" },
     );
   }
   const controller = new AbortController();
@@ -575,6 +725,8 @@ async function httpErrorFromResponse(
     (res.status === 429 || res.status === 503
       ? parseRetryInfoDelayMs(text)
       : null);
+  const keyMissing =
+    (res.status === 401 || res.status === 403) && !sentCredential(deps);
   return new OpenAiHttpError(
     `openai provider ${res.status}: ${text.slice(0, OPENAI_ERROR_DETAIL_MAX_LEN)}`,
     res.status,
@@ -583,8 +735,30 @@ async function httpErrorFromResponse(
     retryAfterMs,
     deps.label,
     undefined,
-    { body: parseProviderErrorBody(text) },
+    {
+      body: parseProviderErrorBody(text),
+      ...(keyMissing ? { keyProblem: "missing" as const } : {}),
+    },
   );
+}
+
+/**
+ * Whether the request carried a credential at all: the resolved key, or
+ * a header the entry sets by hand whose name looks like one (`key`,
+ * `auth`, `token`: a proxy's own scheme counts too). Keyless servers send
+ * none on purpose, so this only means something next to a 401/403.
+ */
+function sentCredential(deps: OpenAiHttpDeps): boolean {
+  if ((deps.apiKey ?? "").trim().length > 0) return true;
+  const named = deps.apiKeyHeader?.trim().toLowerCase();
+  return Object.entries(deps.extraHeaders ?? {}).some(([name, value]) => {
+    const lower = name.trim().toLowerCase();
+    return (
+      typeof value === "string" &&
+      value.trim().length > 0 &&
+      (/key|auth|token/i.test(lower) || lower === named)
+    );
+  });
 }
 
 /**

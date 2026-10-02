@@ -681,7 +681,13 @@ describe("humanizeOpenAiHttpError", () => {
     expect(humanizeOpenAiHttpError(mk(404))).toContain(
       "model id or the base URL",
     );
-    expect(humanizeOpenAiHttpError(mk(402))).toContain("lack of credit (402)");
+    /* A 402 names the status and always explains the mechanism; when the
+       body carries the provider's own sentence it carries that too. The
+       wording moved when the desktop branch merged: "refused the request
+       for lack of credit" dropped OpenRouter's own line, which is the
+       one with the numbers in it. */
+    expect(humanizeOpenAiHttpError(mk(402))).toContain("rejected the request (402)");
+    expect(humanizeOpenAiHttpError(mk(402))).toContain("completionMaxTokens");
     expect(humanizeOpenAiHttpError(mk(402))).toContain("Top up the account");
     expect(humanizeOpenAiHttpError(mk(429))).toContain(
       "rate-limiting this key (429)",
@@ -734,6 +740,181 @@ describe("humanizeOpenAiHttpError", () => {
   it("falls back to the host when no provider label is set", () => {
     const err = new OpenAiHttpError("raw", 500, "https://api.x.ai/v1/y");
     expect(humanizeOpenAiHttpError(err)).toContain('"api.x.ai"');
+  });
+
+  /* A status with no wording of its own used to end the sentence, and
+     402 is the one that hurts: OpenRouter's body says, in plain English,
+     that the balance covers fewer tokens than the request asked for and
+     what to do about it. "rejected the request (402)" is not something
+     an operator can act on; the provider's own sentence is. */
+  const withBody = (status: number, body: string): OpenAiHttpError =>
+    new OpenAiHttpError(
+      `openai provider ${status}: ${body}`,
+      status,
+      "https://openrouter.ai/api/v1/chat/completions",
+      false,
+      null,
+      "openrouter",
+    );
+
+  it("passes on the provider's own reason for a status it has no wording for", () => {
+    const err = withBody(
+      402,
+      JSON.stringify({
+        error: {
+          message:
+            "This request requires more credits, or fewer max_tokens. You requested up to 8192 tokens, but can only afford 7181",
+          code: 402,
+        },
+      }),
+    );
+    const said = humanizeOpenAiHttpError(err);
+    expect(said).toContain('"openrouter" rejected the request (402)');
+    expect(said).toContain("requires more credits, or fewer max_tokens");
+  });
+
+  /* The body is folded into the message truncated to 300 characters, so
+     a real 402 arrives as a JSON object cut off mid-way. Parsing alone
+     therefore fails on exactly the case this exists for. */
+  it("still finds the sentence when the body was cut off mid-JSON", () => {
+    const full = JSON.stringify({
+      error: {
+        message:
+          "This request requires more credits, or fewer max_tokens. You requested up to 8192 tokens, but can only afford 7166",
+        code: 402,
+        metadata: {
+          remedy_hint:
+            "Add credits at https://openrouter.ai/settings/credits, or lower max_tokens / prompt size to fit your remaining balance.",
+          limit_source: "openrouter_credits",
+          previous_errors: [],
+        },
+      },
+    });
+    const err = withBody(402, full.slice(0, 300));
+    expect(() => JSON.parse(full.slice(0, 300))).toThrow();
+    const said = humanizeOpenAiHttpError(err);
+    expect(said).toContain("This request requires more credits, or fewer max_tokens");
+    expect(said).not.toContain('{"error"');
+  });
+
+  it("reads the shapes providers actually send, and plain text too", () => {
+    expect(humanizeOpenAiHttpError(withBody(400, JSON.stringify({ message: "bad tool schema" }))))
+      .toContain("bad tool schema");
+    expect(humanizeOpenAiHttpError(withBody(400, JSON.stringify({ error: "unsupported" }))))
+      .toContain("unsupported");
+    expect(humanizeOpenAiHttpError(withBody(413, "payload too large\n"))).toContain("payload too large");
+  });
+
+  /* Google's OpenAI-compatible surface wraps its error object in an array.
+     It parsed, carried no top-level message, and the sentence was dropped:
+     a bad Gemini key read only "rejected the request (400)." */
+  it("reads the sentence out of Gemini's array-wrapped error", () => {
+    const body =
+      '[{\n  "error": {\n    "code": 400,\n    "message": "Please pass a valid API key",\n    "status": "INVALID_ARGUMENT"\n  }\n}\n]';
+    const said = humanizeOpenAiHttpError(withBody(400, body));
+    expect(said).toContain("rejected the request (400). Please pass a valid API key");
+    expect(said).not.toContain('"error"');
+  });
+
+  it("says only what it knows when the body carried nothing", () => {
+    /* No sentence from the provider, so none is invented — but a 402 still
+       explains the mechanism, because that part is true whatever the body
+       said. What must NOT appear is a fabricated reason. */
+    for (const body of ["", "{}"]) {
+      const said = humanizeOpenAiHttpError(withBody(402, body));
+      expect(said).toContain('"openrouter" rejected the request (402).');
+      expect(said).toContain("completionMaxTokens");
+      expect(said).not.toContain("undefined");
+    }
+  });
+
+  it("bounds a provider that echoes the whole request back", () => {
+    const said = humanizeOpenAiHttpError(withBody(400, JSON.stringify({ error: { message: "x".repeat(4000) } })));
+    expect(said.length).toBeLessThan(300);
+    expect(said.endsWith("…")).toBe(true);
+  });
+});
+
+describe("a key problem the request itself shows", () => {
+  const caught = async (run: () => Promise<unknown>): Promise<OpenAiHttpError> => {
+    try {
+      await run();
+    } catch (err) {
+      if (err instanceof OpenAiHttpError) return err;
+      throw err;
+    }
+    throw new Error("expected an OpenAiHttpError");
+  };
+
+  it("a key with a non-ASCII character was never sent, and the message says so", async () => {
+    const fetchImpl = vi.fn();
+    const err = await caught(() =>
+      openAiPostJson(
+        { ...depsWith(fetchImpl as unknown as typeof fetch), apiKey: "sk-ключ", label: "aimlapi" },
+        "/v1/chat/completions",
+        {},
+        {},
+      ),
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(err.status).toBe(401);
+    expect(err.keyProblem).toBe("non_ascii");
+    expect(humanizeOpenAiHttpError(err)).toBe(
+      '"aimlapi" can\'t use its API key: the key has a character API keys never contain (often a letter or quote picked up while pasting), so it was not sent. Re-enter the key in the Providers panel.',
+    );
+  });
+
+  it("a 401 to a request that carried no key says no key is set", async () => {
+    const err = await caught(() =>
+      openAiPostJson(
+        {
+          ...depsWith(async () => errorResponse(401, '{"error":{"message":"You didn\'t provide an API key."}}')),
+          apiKey: "",
+          label: "dashscope",
+        },
+        "/v1/chat/completions",
+        {},
+        {},
+      ),
+    );
+    expect(err.keyProblem).toBe("missing");
+    expect(humanizeOpenAiHttpError(err)).toBe(
+      '"dashscope" needs an API key and none is set. Add the key in the Providers panel.',
+    );
+  });
+
+  it("a 401 to a key that was sent stays the provider's refusal", async () => {
+    const err = await caught(() =>
+      openAiPostJson(
+        depsWith(async () => errorResponse(401, "invalid key")),
+        "/v1/chat/completions",
+        {},
+        {},
+      ),
+    );
+    expect(err.keyProblem).toBeUndefined();
+    expect(humanizeOpenAiHttpError(err)).toContain("rejected the API key (401)");
+  });
+
+  it("a key set by hand in the entry's headers counts as sent", async () => {
+    for (const extraHeaders of [
+      { Authorization: "Bearer sk-by-hand" },
+      { "x-goog-api-key": "AIza-by-hand" },
+    ]) {
+      const err = await caught(() =>
+        openAiPostJson(
+          {
+            ...depsWith(async () => errorResponse(403, "forbidden")),
+            apiKey: "",
+            extraHeaders,
+          },
+          "/v1/chat/completions",
+          {},
+          {},
+        ),
+      );
+      expect(err.keyProblem).toBeUndefined();
+    }
   });
 });
 

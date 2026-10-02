@@ -40,6 +40,7 @@ import {
   classifyFailure,
   isRequestSizeRejection,
 } from "../llm/index.js";
+import { readFailingLink } from "../llm/fallback/failed-attempts.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
   classifyProviderWaitCause,
@@ -839,6 +840,14 @@ export type AgentLoopEvent =
        * for logs and traces.
        */
       cause?: ProviderWaitCause;
+      /**
+       * The provider link the turn is waiting on: the one whose failure
+       * parked it. With a fallback chain that is the last link tried,
+       * often not the provider the user picked (a stopped local server
+       * the chain appended after a cloud one). Absent when the failure
+       * did not come through the chain or a pinned link.
+       */
+      providerId?: string;
     }
   | {
       /** The provider answered again; the parked turn is running on. */
@@ -2527,6 +2536,7 @@ export class AgentLoop {
           );
           outageAttempts += 1;
           awaitingRecovery = true;
+          const waitedOn = readFailingLink(err);
           this.deps.onEvent?.({
             type: "provider_waiting",
             attempt: outageAttempts,
@@ -2535,6 +2545,7 @@ export class AgentLoop {
             nextRetryMs,
             reason: runError.message,
             cause: classifyProviderWaitCause(err),
+            ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
           });
           this.deps.logger?.warn("provider unreachable; parking the turn", {
             sessionId: state.id,
@@ -2543,6 +2554,7 @@ export class AgentLoop {
             waitedMs: outageWaitedMs,
             nextRetryMs,
             error: runError.message,
+            ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
           });
           await abortableSleep(nextRetryMs, options.signal);
           outageWaitedMs += nextRetryMs;

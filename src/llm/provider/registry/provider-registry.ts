@@ -20,6 +20,32 @@ export {
   resolveLlmConfig,
 } from "./provider-types.js";
 
+/**
+ * Build one provider entry. A broken entry that is NOT the active text
+ * provider (say, a half-finished "add provider" flow that saved a
+ * base URL but no model yet) is skipped with a warning instead of
+ * taking the whole agent down at boot: the other providers still work,
+ * and switching to the broken one later fails with "not configured".
+ * The active provider still throws, since there is nothing to run on.
+ */
+async function buildOrSkip(
+  build: () => LlmProvider | Promise<LlmProvider>,
+  id: string,
+  isActive: boolean,
+  logger: ProviderFactoryContext["logger"],
+): Promise<LlmProvider | undefined> {
+  try {
+    return await build();
+  } catch (err) {
+    if (isActive) throw err;
+    logger.warn("llm: provider skipped (invalid config entry)", {
+      id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
 export class ProviderRegistry {
   private readonly providers: Map<string, LlmProvider>;
   private activeTextId: string;
@@ -50,12 +76,13 @@ export class ProviderRegistry {
           `unknown llm provider kind "${entry.kind}" for id "${entry.id}"`,
         );
       }
-      const provider = await factory({
-        ...ctx,
-        config,
-        entry,
-      });
-      built.set(entry.id, provider);
+      const provider = await buildOrSkip(
+        () => factory({ ...ctx, config, entry }),
+        entry.id,
+        entry.id === resolved.activeTextProvider,
+        ctx.logger,
+      );
+      if (provider) built.set(entry.id, provider);
     }
     if (!built.has(resolved.activeTextProvider)) {
       throw new Error(
@@ -172,11 +199,13 @@ export class ProviderRegistry {
           `unknown llm provider kind "${entry.kind}" for id "${entry.id}"`,
         );
       }
-      const provider = await factory({
-        ...ctx,
-        config,
-        entry,
-      });
+      const provider = await buildOrSkip(
+        () => factory({ ...ctx, config, entry }),
+        entry.id,
+        entry.id === this.activeTextId,
+        ctx.logger,
+      );
+      if (!provider) continue;
       this.providers.set(entry.id, provider);
       added.push(entry.id);
     }

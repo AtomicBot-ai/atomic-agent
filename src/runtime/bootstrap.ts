@@ -105,10 +105,8 @@ import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import { LearnedContextWindows } from "./learned-context-windows.js";
-import {
-  ProviderFallbackChain,
-  resolveFallbackChain,
-} from "../llm/fallback/index.js";
+import { ProviderFallbackChain } from "../llm/fallback/index.js";
+import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import {
   createFallbackCompleter,
   createFallbackStreamer,
@@ -1102,8 +1100,15 @@ export async function createAgentRuntime(
   // (AGENTS.md §"Provider fallback chain"). The notice sink lifts each
   // one-shot switch into a `provider_switched` AgentLoopEvent; the logger
   // records every advance, with the failed link's status and message.
+  // Set once the provider registry exists (below). Until then the chain
+  // is taken from config as before; nothing picks a provider that early.
+  let builtProviderIds: (() => readonly string[]) | null = null;
   const fallbackChain = new ProviderFallbackChain({
-    resolve: () => resolveFallbackChain(resolveLlmConfig(getConfig())),
+    resolve: createFallbackChainResolver({
+      readLlmConfig: () => resolveLlmConfig(getConfig()),
+      builtProviderIds: () => builtProviderIds?.() ?? null,
+      logger,
+    }),
     noticeSink: (notice) =>
       emitAgentLoopEvent({ type: "provider_switched", ...notice }),
     logger,
@@ -1762,6 +1767,7 @@ export async function createAgentRuntime(
     getModelId: getLiveModelId,
     logger,
   });
+  builtProviderIds = () => providerRegistry.listIds();
 
   /**
    * Re-read on every inference so TUI `setActive` hot-swap takes effect.
@@ -3229,7 +3235,9 @@ export async function createAgentRuntime(
       ...(runOptions.providerId !== undefined
         ? { pinnedProviderId: runOptions.providerId }
         : {}),
-      fallbackOverrideId: fallbackChain.activeOverrideFor(session.id),
+      // Not a stand-in the chain will pass over for the primary: the
+      // turn starts on the primary then, and that is what it is told.
+      fallbackOverrideId: fallbackChain.standingOverrideFor(session.id),
     });
     const previousRoute = readSessionRoute(session.metadata);
     const routeNote =
