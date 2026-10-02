@@ -46,7 +46,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { slug: darwin-arm64, os: macos-14, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg" }
+          # macos-15, not macos-14: GitHub retires macos-14 (ATO-114), and it has
+          # no Xcode 26 — the voice helper needs the macOS 26 SDK, so on
+          # macos-14 it was skipped and the DMG shipped without dictation (ATO-162).
+          - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg" }
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe" }
           - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
           - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
@@ -195,6 +198,21 @@ jobs:
         run: npx tsx scripts/package-bundle.ts "${{ matrix.slug }}"
 
       # ---- desktop app ------------------------------------------------------
+      # The voice helper (desktop/native/atomic-speech.swift) needs the macOS 26
+      # SDK; the runner's default Xcode is older. Pick the newest Xcode 26.
+      - name: Select Xcode 26 (macOS)
+        if: matrix.slug == 'darwin-arm64'
+        run: |
+          set -euo pipefail
+          xc=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "$xc" ]; then
+            echo "::error::No Xcode 26 on this runner; the DMG would ship without voice input."
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xc/Contents/Developer"
+          xcodebuild -version
+
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
@@ -202,6 +220,15 @@ jobs:
       - name: Build desktop app
         working-directory: desktop
         run: npm run build
+
+      # build-speech-helper.mjs never fails the build (a contributor without
+      # Xcode still gets an app); CI must not ship a Mac DMG without it.
+      - name: Check the voice helper was built (macOS)
+        if: matrix.slug == 'darwin-arm64'
+        run: |
+          set -euo pipefail
+          test -x desktop/out/native/atomic-speech || { echo "::error::desktop/out/native/atomic-speech was not built — voice input would be missing from the DMG."; exit 1; }
+          file desktop/out/native/atomic-speech
 
       # afterPack copies ../bundle/<slug> into resources/agent and runs it
       # once; the job fails here if the bundle is missing or cannot open its
@@ -283,6 +310,10 @@ jobs:
           agent_sig=$(codesign -dvv "$app/Contents/Resources/agent/atomic-agent" 2>&1)
           grep -q "^Authority=Developer ID Application" <<<"$agent_sig"
           grep -q "^CodeDirectory .*flags=.*runtime" <<<"$agent_sig"
+          # Voice input (ATO-162): the helper is in the app and signed like the agent.
+          speech_sig=$(codesign -dvv "$app/Contents/Resources/native/atomic-speech" 2>&1)
+          grep -q "^Authority=Developer ID Application" <<<"$speech_sig"
+          grep -q "^CodeDirectory .*flags=.*runtime" <<<"$speech_sig"
           spctl --assess --type execute --verbose=2 "$app"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           xcrun stapler validate "$app"
