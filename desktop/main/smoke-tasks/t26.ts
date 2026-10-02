@@ -668,11 +668,15 @@ async function underAnotherChatsCard(js: Js, check: Check, agent: StandIn, w: Br
 
 /* (i2) The other way the queue on screen drains behind another chat's turn
    (onChatEvent's `idle` leg), now that a card of another chat no longer
-   takes a chat's Enter down the steer path (Q60). Chat A's turn runs in the
-   background; in chat B the person types a follow-up while B's own turn
-   runs, so it is asked as a steer. B's turn ends before the agent answers,
-   and the answer is a refusal: the message is parked in B, whose turn is
-   over. It runs in B when the next turn here ends, A's. */
+   takes a chat's Enter down the steer path (Q60). That leg runs for the end
+   of the window's last-started turn (S.turnId) when that turn's rows are not
+   on screen and the chat on screen runs no turn of its own.
+   In chat B the person types a follow-up while B's turn runs, so it is asked
+   as a steer. They go to chat A and start a turn there (the window's turn is
+   A's now). B's turn ends while they are away, and only then does the agent
+   answer the steer: refused. The message is parked in B, whose turn is over,
+   and nothing is owed (B's queue was empty when its turn ended). Back in B,
+   it waits in the tray; when A's turn ends it runs in B. */
 async function refusedAfterOwnTurnEnded(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
   const a = `${PREFIX}a-i2`;
   const b = `${PREFIX}b-i2`;
@@ -683,24 +687,25 @@ async function refusedAfterOwnTurnEnded(js: Js, check: Check, agent: StandIn, w:
   agent.ready(b, loaded(b, turns("B", 1)));
   await js<boolean>(RESET);
   const mark = agent.sent.length;
-  const onA = await land(js, a, "smoke t26: chat A (i2)");
-  const turnA = await startTurn(js, agent, firstA);
   const onB = await land(js, b, "smoke t26: chat B (i2)");
   const turnB = await startTurn(js, agent, firstB);
   agent.steer = "refuse";
   agent.holdSteers = true;
   const asked = (await typeAndEnterOnly(js, typed)) && (await agent.steered(mark, 1));
+  const onA = await land(js, a, "smoke t26: chat A (i2)");
+  const turnA = await startTurn(js, agent, firstA);
   if (turnB) await frame(js, w, { turnId: turnB, kind: "done" });
   agent.releaseSteers();
   await settle(js);
+  const back = await land(js, b, "smoke t26: chat B (i2)");
   const parked = await js<View>(VIEW);
   const before = agent.chats(mark).length;
   if (turnA) await frame(js, w, { turnId: turnA, kind: "done" });
   const after = await js<View>(VIEW);
   const all = agent.chats(mark);
   check(
-    "T26: a steer refused after the chat's own turn ended waits in that chat and runs there when another chat's turn ends",
-    onA && !!turnA && onB && !!turnB && asked && queuedFollowUp(parked, typed) && before === 2
+    "T26: a steer refused after the chat's own turn ended waits in that chat and runs there when the window's turn, another chat's, ends",
+    onB && !!turnB && asked && onA && !!turnA && back && queuedFollowUp(parked, typed) && before === 2
       && all.length === 3 && all[2]!.text === typed && all[2]!.sessionId === b && after.sessionId === b
       && after.rows.includes(`user:${typed}`),
     `turns=${turnA},${turnB} asked=${asked} parked=${show(parked)} chats=${show(all)} after=${show(after)}`,
