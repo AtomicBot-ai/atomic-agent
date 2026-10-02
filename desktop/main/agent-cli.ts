@@ -64,17 +64,39 @@ export function plainCliError(stderr: string): string {
    stand-in answers the calls made inside `withCliStandIn`'s body — and only
    those: the app's own reads and writes elsewhere (the supervisor, the
    window's refreshes) run in other async contexts and still reach the real
-   agent, and nothing the stand-in is asked touches the real config. */
+   agent. Inside it, everything else this module keeps for the app is the
+   stand-in's own too: the config lock and its count, the count of stops, the
+   starts on their way, the model server's lifecycle events (handed to
+   `tell`, never to the real supervisor), and the hints read from disk. So a
+   check run there reads, writes, stops and starts nothing real. */
 export type CliStandIn = (args: string[], input?: string) => Promise<CliResult>;
-const cliStandIns = new AsyncLocalStorage<CliStandIn>();
-/** Smoke only: run `body` with every `atag` call it makes answered by `standIn`. */
-export function withCliStandIn<T>(standIn: CliStandIn, body: () => Promise<T>): Promise<T> {
-  return cliStandIns.run(standIn, body);
+export interface CliStandInHooks {
+  /** Where the lifecycle events of the body's starts and stops go. */
+  tell?: (e: DaemonLifecycle) => void;
+  /** The config file as configFileHint would read it from disk. */
+  configHint?: () => unknown;
+  /** Whether a managed daemon's pid file names a live process (managedDaemonPidAlive). */
+  daemonPidAlive?: () => boolean;
+}
+interface CliHarness extends CliStandInHooks {
+  cli: CliStandIn;
+  configChain: Promise<void>;
+  configTurns: number;
+  stops: number;
+}
+const cliStandIns = new AsyncLocalStorage<CliHarness>();
+/** Smoke only: run `body` with every `atag` call it makes answered by `standIn`, and the module's state its own (see above). */
+export function withCliStandIn<T>(standIn: CliStandIn, body: () => Promise<T>, hooks: CliStandInHooks = {}): Promise<T> {
+  return cliStandIns.run({ ...hooks, cli: standIn, configChain: Promise.resolve(), configTurns: 0, stops: 0 }, body);
+}
+/** Whether this runs inside withCliStandIn's body. */
+export function inCliStandIn(): boolean {
+  return cliStandIns.getStore() !== undefined;
 }
 
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
   const standIn = cliStandIns.getStore();
-  if (standIn) return standIn(args, input);
+  if (standIn) return standIn.cli(args, input);
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {
@@ -176,11 +198,44 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
    the desktop follows it with a write of its own that must not race it.
 */
 let configWriteChain: Promise<void> = Promise.resolve();
+let configLockAsked = 0;
 /** Run `write` with the config file to itself; every writer here queues on this. */
 export function withConfigLock<T>(write: () => Promise<T>): Promise<T> {
+  const h = cliStandIns.getStore();
+  if (h) {
+    h.configTurns++;
+    const next = h.configChain.then(write, write);
+    h.configChain = next.then(() => undefined, () => undefined);
+    return next;
+  }
+  configLockAsked++;
   const next = configWriteChain.then(write, write);
   configWriteChain = next.then(() => undefined, () => undefined);
   return next;
+}
+/**
+ * ATO-157: how many holds of the config lock have been asked for. Moved the
+ * moment a writer queues, so an unchanged count says no write of this process
+ * queued or landed since it was read.
+ */
+export function configLockTurns(): number {
+  const h = cliStandIns.getStore();
+  return h ? h.configTurns : configLockAsked;
+}
+
+/**
+ * ATO-157: the config file as it is on disk, read without a process — a hint
+ * only (it may be mid-change), for deciding whether to ask something early.
+ * Null when it cannot be read.
+ */
+export function configFileHint(): UserConfigShape | null {
+  const h = cliStandIns.getStore();
+  try {
+    const cfg = h ? (h.configHint ? h.configHint() : null) : JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"));
+    return cfg && typeof cfg === "object" ? (cfg as UserConfigShape) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function configGet(): Promise<{ ok: boolean; config?: unknown; error?: string }> {
@@ -746,11 +801,15 @@ export function onDaemonLifecycle(fn: (e: DaemonLifecycle) => void): () => void 
   return () => { if (lifecycle === fn) lifecycle = was; };
 }
 function tell(e: DaemonLifecycle): void {
-  try { lifecycle(e); } catch { /* a listener never fails a start or a stop */ }
+  const h = cliStandIns.getStore();
+  try {
+    if (h) h.tell?.(e);   // a smoke's own start or stop: never the real supervisor's business
+    else lifecycle(e);
+  } catch { /* a listener never fails a start or a stop */ }
 }
 /** ATO-123: the `models start` runs on their way — a model loading, for the supervisor. */
 export function startsInFlight(): number {
-  return startsOnTheirWay.size;
+  return cliStandIns.getStore() ? 0 : startsOnTheirWay.size;
 }
 /** ATO-123: a start the app asked for found the server already up — it is the app's from here on, as one it started (backend-switch). */
 export function daemonFoundUp(): void {
@@ -786,6 +845,13 @@ export async function modelsStart(
   if (startsClosed) return { ok: false, stdout: "", stderr: "", error: START_REFUSED_QUITTING, notStarted: true };
   if (opts.stillWanted && !opts.stillWanted()) {
     return { ok: false, stdout: "", stderr: "", error: START_REFUSED_MOVED_ON, notStarted: true };
+  }
+  /* ATO-157: a smoke's stand-in start — no port of the real server watched,
+     nothing added to the starts quitting would end, no speed remembered. */
+  if (cliStandIns.getStore()) {
+    const res = await cli(["models", "start"], 90_000, undefined, opts.signal);
+    if (res.ok && !opts.signal?.aborted && (opts.stillWanted?.() ?? true)) tell("started");
+    return res;
   }
   const abort = new AbortController();
   const forward = () => abort.abort();
@@ -1909,8 +1975,37 @@ async function refusesThroughout(port: number, ms: number): Promise<boolean> {
  * brings back a server it watches going down.
  */
 export async function modelsStop(opts: { repair?: boolean } = {}): Promise<CliResult> {
+  const h = cliStandIns.getStore();
+  if (h) h.stops++;
+  else stopsAskedFor++;
   if (!opts.repair) tell("stopping");
   return cli(["models", "stop"], 30_000);
+}
+let stopsAskedFor = 0;
+/** ATO-157: how many `models stop` this process has asked for, whoever asked (a stop moves no other mark). */
+export function stopsAsked(): number {
+  const h = cliStandIns.getStore();
+  return h ? h.stops : stopsAskedFor;
+}
+
+/**
+ * ATO-157: whether a managed daemon's pid file (`llama-server.pid` or
+ * `llama-embed.pid`) names a live process — no `atag` process asked. A hint:
+ * an agent-side duplicate can leave a serving daemon with no pid file
+ * (localDaemonRunning), and then this says false.
+ */
+export function managedDaemonPidAlive(cfg: UserConfigShape): boolean {
+  const h = cliStandIns.getStore();
+  if (h) return h.daemonPidAlive?.() ?? false;
+  const override = (cfg.localModels?.managed as unknown as { dataDirOverride?: unknown } | undefined)?.dataDirOverride;
+  return daemonPidsIn(managedDataDir(typeof override === "string" ? override : null)).some((pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as { code?: string }).code === "EPERM";
+    }
+  });
 }
 
 /** The pids the daemons' pid files name (`llama-server.pid`, `llama-embed.pid`, src/local-llm/backend-paths.ts). */
@@ -2630,6 +2725,10 @@ export const EMBEDDING_NAME_HINT = /embed|bge|nomic|jina/i;
 /** Memoised: one binary's embedding catalogue is static for this process. */
 let EMBEDDING_IDS: Promise<Set<string> | null> | null = null;
 export function embeddingModelIds(): Promise<Set<string> | null> {
+  // A smoke's stand-in answers are never remembered for the app.
+  if (cliStandIns.getStore()) {
+    return modelsListEmbeddings().then((r) => (r.ok && r.models ? new Set(r.models.map((m) => m.id)) : null)).catch(() => null);
+  }
   if (!EMBEDDING_IDS) {
     const p = modelsListEmbeddings()
       .then((r) => (r.ok && r.models ? new Set(r.models.map((m) => m.id)) : null))
