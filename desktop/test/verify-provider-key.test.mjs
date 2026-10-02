@@ -73,3 +73,54 @@ test("Gemini's array-wrapped error reaches the person as its sentence", async ()
   assert.equal(res.status, 400);
   assert.equal(res.error, "the provider answered HTTP 400: Please pass a valid API key");
 });
+
+/* Backlog 40: a good key on an account with no funds. AI/ML API answers it
+   with a 403 that says so; the check read every 403 as a refused key, and the
+   setup threw the key away. */
+test("AI/ML API's 403 for an empty account is a key that works, with the provider's first sentence", async () => {
+  const calls = [];
+  globalThis.fetch = answering(
+    403,
+    JSON.stringify({
+      title: "Forbidden",
+      status: 403,
+      message:
+        "You've run out of funds. Please top up your balance or update your payment method to continue: https://aimlapi.com/app/billing",
+    }),
+    calls,
+  );
+  const res = await verifyProviderKey({ id: "aimlapi", kind: "aimlapi", apiKey: "aiml-dummy-check" }, "openai/gpt-oss-20b");
+  assert.deepEqual(calls, ["https://api.aimlapi.com/v1/chat/completions"]);
+  assert.deepEqual(res, {
+    ok: true,
+    checked: true,
+    status: 403,
+    noFunds: true,
+    error: "Key works, but the account has no funds.",
+    detail: "You've run out of funds",
+  });
+});
+
+test("a 402 and OpenAI's 429 insufficient_quota are an empty account; a rate limit and a refused key are not", async () => {
+  const ask = async (status, body) => {
+    globalThis.fetch = answering(status, JSON.stringify(body), []);
+    return verifyProviderKey({ id: "p", kind: "openai-compatible", baseUrl: "https://api.example.com", apiKey: "sk-dummy-check" }, "m");
+  };
+  const paid = await ask(402, { error: { message: "Insufficient Balance" } });
+  assert.equal(paid.ok, true);
+  assert.equal(paid.noFunds, true);
+  const quota = await ask(429, {
+    error: { message: "You exceeded your current quota, please check your plan and billing details.", code: "insufficient_quota" },
+  });
+  assert.equal(quota.ok, true);
+  assert.equal(quota.noFunds, true);
+  // Gemini's free tier: a per-minute limit in quota and billing words.
+  const rate = await ask(429, {
+    error: { message: "You exceeded your current quota, please check your plan and billing details. Please retry in 30s." },
+  });
+  assert.deepEqual(rate, { ok: true, checked: true, status: 429 });
+  const refused = await ask(403, { error: { message: "Invalid API key. Check your billing settings." } });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.noFunds, undefined);
+  assert.match(refused.error, /^the provider rejected this key/);
+});
