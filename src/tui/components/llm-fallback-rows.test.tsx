@@ -142,6 +142,25 @@ describe("FallbackRows", () => {
     expect(out).not.toMatch(/retry in \d/);
   });
 
+  it("says in the status line that a credit refusal needs a top-up", () => {
+    const state = fallbackState({
+      links: [link("cloud-a", { isActive: true })],
+      lastSwitch: {
+        direction: "away",
+        from: "cloud-a",
+        to: "cloud-b",
+        reason: '"cloud-a" rejected the request (402).',
+      },
+    });
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
+    const out = strip(lastFrame() ?? "").replace(/\s+/g, " ");
+    expect(out).toContain("failed over cloud-a -> cloud-b");
+    expect(out).toContain("cloud-a is out of credit or quota");
+    expect(out).not.toContain("rejected the request");
+  });
+
   it("says on primary when nothing has failed over", () => {
     const state = fallbackState({
       links: [link("cloud-a", { isActive: true })],
