@@ -49,9 +49,12 @@ jobs:
           # macos-26, not macos-14: GitHub retires macos-14 (ATO-114), and it has
           # no Xcode 26 — the voice helper needs the macOS 26 SDK, so on
           # macos-14 it was skipped and the DMG shipped without dictation (ATO-162).
-          # macos-26 rather than macos-15: its default Xcode is 26 and current,
-          # where macos-15 stops at Xcode 26.3.
-          - { slug: darwin-arm64, os: macos-26, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg" }
+          # macos-15, not macos-26: on macos-26 electron-builder's temporary
+          # signing keychain fails to unlock (`security set-key-partition-list`:
+          # "SecKeychainUnlock: The user name or passphrase you entered is not
+          # correct", run 37017546119). macos-15 carries Xcode 26.x too, which
+          # the Select Xcode 26 step picks.
+          - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg" }
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe" }
           - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
           - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
@@ -201,8 +204,8 @@ jobs:
 
       # ---- desktop app ------------------------------------------------------
       # The voice helper (desktop/native/atomic-speech.swift) needs the macOS 26
-      # SDK. macos-26 defaults to an Xcode 26; this pins the newest one and
-      # fails loudly if a future image has none.
+      # SDK; the runner's default Xcode is older. This picks the newest Xcode 26
+      # and fails loudly if the image has none.
       - name: Select Xcode 26 (macOS)
         if: matrix.slug == 'darwin-arm64'
         run: |
