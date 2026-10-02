@@ -260,7 +260,7 @@
 .aplate dd{margin:0;min-width:0;color:var(--ink);overflow-wrap:anywhere}
 .aplate .mono{font-size:12px}
 .appr .cap{color:var(--ink-2)}
-.appr .badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-pill);
+.appr .badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-badge);
   box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2);font-size:11.5px;font-weight:500;white-space:nowrap}
 .previewblk{max-height:200px;overflow:auto;padding:8px 10px;border-radius:var(--r-well);background:var(--well);
   color:var(--ink);font:400 12px/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
@@ -366,7 +366,7 @@
 .sysrow .fz-p{display:block}
 .sysrow .tk-spin{display:inline-block;width:13px;height:13px}
 /* a repeated warning is one row with a count, not a wall */
-.sysrow .sysrep{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 7px;border-radius:var(--r-pill);
+.sysrow .sysrep{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 7px;border-radius:var(--r-badge);
   font-size:11px;font-variant-numeric:tabular-nums;background:var(--hover);color:var(--ink-2);vertical-align:1px}
 /* a system row that is a notice (the session model stamp) */
 .sysrow.tk-sysnotice{padding:0;grid-template-columns:0 minmax(0,1fr);column-gap:0}

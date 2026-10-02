@@ -312,7 +312,7 @@
 .dlc-ttl.is-failed > svg{color:var(--critical)}
 .dlc-ttl.is-done > svg{color:var(--success)}
 .dlc-ttl > span:first-of-type{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dlc-count{flex:none;min-width:20px;height:18px;padding:0 6px;border-radius:var(--r-pill);background:var(--hover);
+.dlc-count{flex:none;min-width:20px;height:18px;padding:0 6px;border-radius:var(--r-badge);background:var(--hover);
   font:600 11px/18px var(--font-ui);text-align:center;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .dlc-fold svg,.dlc-x svg{width:14px;height:14px}
 .dlc-list{list-style:none;margin:0;padding:2px 8px 8px;display:flex;flex-direction:column;gap:6px;

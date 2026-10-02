@@ -48,12 +48,18 @@
 .prow-tick svg{width:15px;height:15px;stroke-width:2.2}
 .prow-more{font:600 12.5px/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;margin:16px 0 8px 10px}
 
-/* ---------------- the layer ---------------- */
+/* ---------------- the layer ----------------
+   `--ob-col` is the step column's one width: every card, field, notice and
+   the action bar stop at it, so they share one right edge on every step.
+   Cards used to stop at 640, 660 or 720px while the action bar ran the full
+   column, and the cards ended short of Continue (Danya, 01.10). Paragraphs
+   keep their own measure: text is not a box with an edge. */
 #onboarding{
   position:absolute;inset:0;z-index:40;
   display:grid;grid-template-columns:400px minmax(0,1fr);
   background:var(--well);color:var(--ink);
   -webkit-app-region:drag;
+  --ob-col:720px;
 }
 #onboarding > *{-webkit-app-region:no-drag}
 
@@ -100,13 +106,19 @@
 #onboarding .ob-lock .ob-mark svg{width:30px;height:30px}
 #onboarding .ob-lock .ob-wm{font:600 17px/1.2 var(--font-ui);letter-spacing:-.02em;color:var(--on-strong);white-space:nowrap}
 #onboarding .ob-statement{margin:auto 0 0;max-width:14ch;font:600 26px/1.18 var(--font-ui);letter-spacing:-.035em;color:var(--on-strong)}
-#onboarding .ob-stepmarks{display:grid;gap:4px}
-#onboarding .ob-stepmark{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:var(--r-pill);
-  font:500 14px/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted)}
+/* The phases are a progress list, not controls: no pill and no fill behind
+   the current one — those read as two buttons nobody could press (Danya,
+   30.09). The current phase is its filled number and bright label; a hairline
+   track joins the numbers. */
+#onboarding .ob-stepmarks{display:grid;gap:14px;margin:0;padding:0;list-style:none}
+#onboarding .ob-stepmark{position:relative;display:flex;align-items:center;gap:12px;height:26px;padding:0;border-radius:0;
+  background:none;font:500 14px/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted);cursor:default}
+#onboarding .ob-stepmark + .ob-stepmark::before{content:"";position:absolute;left:12.25px;top:-12px;width:1.5px;height:10px;
+  border-radius:1px;background:var(--glass)}
 #onboarding .ob-stepmark .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;
   font:500 11.5px/1 var(--font-mono);box-shadow:inset 0 0 0 1.5px var(--glass)}
 #onboarding .ob-stepmark .n svg{width:13px;height:13px;stroke-width:2.2}
-#onboarding .ob-stepmark.on{background:var(--glass-12);color:var(--on-strong)}
+#onboarding .ob-stepmark.on{color:var(--on-strong);font-weight:600}
 #onboarding .ob-stepmark.on .n{background:var(--on-strong);color:var(--indigo);box-shadow:none}
 #onboarding .ob-stepmark.done{color:var(--on-strong)}
 #onboarding .ob-stepmark.done .n{background:var(--glass-20);box-shadow:none}
@@ -122,10 +134,10 @@
 #onboarding .ob-title{margin:0;max-width:760px;font:600 34px/1.15 var(--font-ui);letter-spacing:-.04em;color:var(--ink)}
 #onboarding .ob-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:14px;
   margin:10px -16px 0;padding:4px 16px 14px;overflow-y:auto;overscroll-behavior:contain}
-#onboarding .ob-body > *{max-width:720px;flex-shrink:0}
+#onboarding .ob-body > *{max-width:var(--ob-col);flex-shrink:0}
 #onboarding .ob-body > .ob-scroll,#onboarding .ob-body > .ob-wiz{flex-shrink:1}
-/* The wizard carries its own action bar, which spans the column like every
-   other step's; its content is held to 720px below. */
+/* The wizard carries its own action bar, held to the column's width like
+   every other step's; so is its content, below. */
 #onboarding .ob-body > .ob-wiz{max-width:none}
 #onboarding .ob-explain{font-size:15.5px;line-height:1.5;color:var(--ink-2);max-width:60ch;white-space:pre-line}
 #onboarding .ob-body > .ob-explain:first-child{margin:-4px 0 8px}
@@ -164,12 +176,13 @@
 #onboarding .ob-tick svg{width:15px;height:15px;stroke-width:2.2}
 #onboarding .ob-models .ob-row > .ob-tick{align-self:center}
 #onboarding .ob-row > .tk-ico,#onboarding .ob-row > .logo{flex:none}
-/* A model with no brand mark wears the CPU badge at the logo's size, so
-   every row's text starts on the same line. */
+/* An icon badge drawn small in a row is brought up to the logo's size, so
+   every row's text starts on the same line (a model's or a provider's
+   fallback mark is that size already: markFallbackHTML). */
 #onboarding .ob-row > .tk-ico--sm{width:30px;height:30px}
 
 /* Route cards (ON-02): three lifted cards, the one under the cursor ringed. */
-#onboarding .ob-routes{gap:12px;max-width:660px}
+#onboarding .ob-routes{gap:12px}
 #onboarding .ob-routes .ob-row{gap:16px;padding:14px 18px;border-radius:var(--r-block);background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .ob-routes .ob-row:hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
 #onboarding .ob-routes .ob-row:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
@@ -181,30 +194,54 @@
 /* ---------------- the local model list (ON-03, ON-04) ---------------- */
 #onboarding .ob-models{flex:0 1 auto;min-height:140px;max-height:none;overflow-y:auto;overscroll-behavior:contain}
 #onboarding .ob-scroll{min-height:120px;overflow-y:auto;overscroll-behavior:contain}
-#onboarding .ob-models .ob-row{align-items:flex-start}
-#onboarding .ob-models .ob-row > .logo,#onboarding .ob-models .ob-row > .tk-ico{margin-top:2px}
+/* A model card is two lines and only two: the name, larger and heavier, with
+   its badges; then the facts (what it is · its size), smaller and quieter
+   (Danya, 01.10). Each line keeps to one line, so every card is the same
+   height; a caution is a badge on the name line, never a third line. The
+   facts are paler than --ink-2 and still well over 4.5:1 in both themes. */
+#onboarding .ob-models .ob-row{align-items:center;min-height:60px;padding:10px 12px}
+#onboarding .ob-models .ob-row .t{display:flex;align-items:center;gap:8px;min-width:0;min-height:22px;
+  font-size:15px;font-weight:650;letter-spacing:-.012em;white-space:nowrap}
+#onboarding .ob-models .ob-row .ob-nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#onboarding .ob-models .ob-row .d{font-size:12px;line-height:1.4;color:color-mix(in srgb,var(--ink-2) 55%,var(--ink-3))}
+#onboarding .ob-models .ob-row .d > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #onboarding .ob-row .t .ob-mono{font-size:13.5px;font-weight:500}
-#onboarding .ob-badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;margin-left:8px;vertical-align:1px;
-  border-radius:var(--r-pill);font:500 11.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;
+/* Badges say something; they are not controls, so they are rounded
+   rectangles (--r-badge), not pills (Danya, 01.10). A caution's whole
+   sentence is its tooltip. */
+#onboarding .ob-badge{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 7px;
+  border-radius:var(--r-badge);font:500 11.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;
   background:var(--brand-wash);color:var(--blue)}
+#onboarding .ob-badge[title]{cursor:help}
 #onboarding .ob-badge-best{background:var(--indigo);color:var(--on-indigo)}
 #onboarding .ob-badge-warn{background:var(--amber-wash);color:var(--amber-text)}
+#onboarding .ob-badge-note{background:var(--hover);color:var(--ink-2)}
 #onboarding .ob-row .d > span{display:block}
-#onboarding .ob-row .d > .ob-desc{display:inline}
-#onboarding .ob-row .d > .ob-desc + span{display:inline}
-#onboarding .ob-row .d > .ob-desc::after{content:" · "}
-#onboarding .ob-row .d .ob-fit{margin-top:1px}
-#onboarding .ob-fit-comfortable{color:var(--success)}
-#onboarding .ob-fit-tight{color:var(--amber-text)}
 #onboarding .ob-fit-over{color:var(--ink-2)}
-#onboarding .ob-row .d .ob-caution{margin-top:2px;color:var(--ink-2)}
-#onboarding .ob-hfrow{min-height:40px;padding:6px 12px}
-#onboarding .ob-hfrow .ob-rbody{flex-direction:row;align-items:baseline;flex-wrap:wrap;gap:2px 8px}
-#onboarding .ob-hfrow .t{font-size:13.5px}
+#onboarding .ob-chev{flex:none;display:grid;place-items:center;width:22px;height:22px;margin-left:auto;color:var(--ink-3)}
+#onboarding .ob-chev svg{width:15px;height:15px}
+/* The Hugging Face way in: a card of its own under the list, the list's lift
+   and edge, the mark and the label where the model rows have theirs, and a
+   chevron. As a bare row under the list it was lost (Danya, 01.10). */
+#onboarding .ob-hfrow{min-height:56px;padding:10px 18px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-hfrow:hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
+#onboarding .ob-hfrow:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
+#onboarding .ob-hfrow.on{background:var(--lift);box-shadow:0 0 0 2px var(--brand),var(--sh-card)}
 /* Out of reach: shown, explained, not a control — a quiet well inside the
-   list card, after the rows it could not be one of. */
-#onboarding .ob-out-h{margin:12px 8px 6px;font-size:13.5px;font-weight:600;color:var(--ink)}
-#onboarding .ob-out-list{display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:var(--r-row);background:var(--well)}
+   list card, after the rows it could not be one of. Folded under its
+   heading by default (Danya, 01.10); the heading is the block's one
+   control, a full-width row that says how many and unfolds them. */
+#onboarding .ob-outtoggle{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;margin-top:4px;padding:8px 12px;
+  border:0;border-radius:var(--r-row);background:transparent;box-shadow:0 -1px 0 var(--divider);
+  font:600 13.5px/1.35 var(--font-ui);color:var(--ink);text-align:left;cursor:pointer;
+  transition:background var(--t-state) var(--ease)}
+#onboarding .ob-outtoggle:hover{background:var(--hover)}
+#onboarding .ob-outtoggle:active{background:var(--press)}
+#onboarding .ob-outtoggle:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+#onboarding .ob-outtoggle-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#onboarding .ob-outtoggle .ob-chev{color:var(--ink-2)}
+#onboarding .ob-out-list{display:flex;flex-direction:column;gap:2px;margin-top:4px;padding:6px;border-radius:var(--r-row);background:var(--well)}
+#onboarding .ob-out-list[hidden]{display:none}
 #onboarding .ob-out{display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px;align-items:center;
   padding:6px 8px;border:0;color:var(--ink-2);cursor:default}
 #onboarding .ob-out > .logo,#onboarding .ob-out > .tk-ico{grid-row:1 / span 3;align-self:start;margin-top:1px}
@@ -214,11 +251,11 @@
 /* ---------------- fields ---------------- */
 #onboarding .ob-lbl{display:block;margin:4px 0 -6px 2px;font:600 13px/1.4 var(--font-ui);color:var(--ink)}
 #onboarding .ob-lbl .ob-explain{display:inline;font-size:inherit;line-height:inherit;font-weight:500;color:var(--ink-2);white-space:normal}
-#onboarding .ob-inp{height:52px;max-width:640px;padding:0 18px;border:0;background:var(--lift);
+#onboarding .ob-inp{height:52px;max-width:var(--ob-col);padding:0 18px;border:0;background:var(--lift);
   box-shadow:inset 0 0 0 1px var(--bd-2);font-size:14.5px}
 #onboarding .ob-inp:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--ink-3)}
 #onboarding .ob-inp:focus{background:var(--lift);box-shadow:inset 0 0 0 1.5px var(--brand),var(--focus-ring)}
-#onboarding .ob-field{display:flex;align-items:center;gap:10px;width:100%;max-width:640px;height:52px;padding:0 8px 0 18px;
+#onboarding .ob-field{display:flex;align-items:center;gap:10px;width:100%;max-width:var(--ob-col);height:52px;padding:0 8px 0 18px;
   border-radius:var(--r-pill);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-3);
   transition:box-shadow var(--t-state) var(--ease)}
 #onboarding .ob-field:hover{box-shadow:inset 0 0 0 1px var(--ink-3)}
@@ -244,11 +281,11 @@
 
 /* Errors: a red notice under the control that caused it; a surface error
    sits above the action bar in the same shape. */
-#onboarding .ob-err{display:flex;align-items:flex-start;gap:10px;max-width:640px;padding:10px 14px;border-radius:18px;
+#onboarding .ob-err{display:flex;align-items:flex-start;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
   background:color-mix(in srgb,var(--critical) 8%,var(--lift));color:var(--ink);font-size:13px;line-height:1.5;white-space:pre-wrap}
 #onboarding .ob-err > svg{width:16px;height:16px;flex:none;margin-top:2px;color:var(--critical)}
 #onboarding .ob-err > span{min-width:0}
-#onboarding .ob-note{display:flex;align-items:center;gap:10px;max-width:720px;padding:10px 14px;border-radius:18px;
+#onboarding .ob-note{display:flex;align-items:center;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
   font-size:13px;line-height:1.45;color:var(--ink);white-space:normal}
 #onboarding .ob-note > svg{width:16px;height:16px;flex:none}
 #onboarding .ob-note.is-blue{background:color-mix(in srgb,var(--brand) 9%,var(--lift))}
@@ -258,9 +295,14 @@
 
 /* ---------------- the cloud wizard (ON-09…15) ---------------- */
 #onboarding .ob-wiz{flex:1 1 auto;min-height:0;gap:12px}
-#onboarding .ob-wiz > *{max-width:720px;flex-shrink:0}
-#onboarding .ob-wiz > .ob-wizlist{flex:0 1 auto;min-height:120px;margin:0 -16px;padding:4px 16px 14px;max-width:752px}
-#onboarding .ob-wiz > .ob-foot{max-width:none;margin-top:auto}
+#onboarding .ob-wiz > *{max-width:var(--ob-col);flex-shrink:0}
+/* The list's styled scrollbar takes 10px of width (see the end of this
+   file); its gutter is kept whether or not the list scrolls and comes out of
+   the right padding, so the cards inside stay --ob-col wide and end where the
+   action bar does. */
+#onboarding .ob-wiz > .ob-wizlist{flex:0 1 auto;min-height:120px;margin:0 -16px;padding:4px 6px 14px 16px;
+  scrollbar-gutter:stable;max-width:calc(var(--ob-col) + 32px)}
+#onboarding .ob-wiz > .ob-foot{margin-top:auto}
 #onboarding .ob-wizlist .prows{padding:6px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .prow .nm{font-size:14.5px}
 #onboarding .prow .ann.lit{height:22px}
@@ -293,8 +335,9 @@
    onboarding-mouse.mjs still measures it. */
 #onboarding .ob-foot .btn-g{padding:0 18px 0 14px;border:1px solid var(--bd-2)}
 #onboarding .ob-foot .btn-g:hover{background:var(--hover);color:var(--ink)}
-/* r2: the action bar is the last thing in the column now (no hint strip). */
-#onboarding .ob > .ob-foot{padding-bottom:28px}
+/* r2: the action bar is the last thing in the column now (no hint strip).
+   It stops where the cards above it stop (`--ob-col`). */
+#onboarding .ob > .ob-foot{padding-bottom:28px;max-width:var(--ob-col)}
 
 /* ---------------- the closing screen (r2) ----------------
    A small comet crosses the middle of the column while setup settles: a
@@ -320,7 +363,7 @@
    `.ob-dlprog` is the one box a progress sample repaints (refreshDlProgress);
    its rows are fixed-width and never wrap, so a sample cannot move the
    offer card a pointer rests on. */
-#onboarding .ob-dlprog{display:grid;gap:14px;max-width:640px;padding:18px 20px 16px;border-radius:var(--r-card);
+#onboarding .ob-dlprog{display:grid;gap:14px;max-width:var(--ob-col);padding:18px 20px 16px;border-radius:var(--r-card);
   background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .ob-phase{display:grid;grid-template-columns:24px max-content minmax(48px,1fr) 23ch;align-items:center;gap:12px;white-space:nowrap}
 #onboarding .ob-phase .tk-ico{width:24px;height:24px}
@@ -336,10 +379,10 @@
 #onboarding .ob-dlprog > .ob-err{padding:0;background:transparent;color:var(--critical)}
 /* Calm (S1, U5): the strip's Cancel, drawn under the progress card while
    setup covers the window. Outside .ob-dlprog, so samples never rebuild it. */
-#onboarding .ob-dlcancel{display:flex;justify-content:flex-end;max-width:640px;margin-top:-4px}
+#onboarding .ob-dlcancel{display:flex;justify-content:flex-end;max-width:var(--ob-col);margin-top:-4px}
 #onboarding .ob-dlcancel .btn{color:var(--ink-2)}
 #onboarding .ob-dlcancel .btn:hover{color:var(--ink)}
-#onboarding .ob-offer:not(.ob-offer-inline){display:flex;align-items:center;gap:14px;width:100%;max-width:640px;min-height:64px;margin:0;
+#onboarding .ob-offer:not(.ob-offer-inline){display:flex;align-items:center;gap:14px;width:100%;max-width:var(--ob-col);min-height:64px;margin:0;
   padding:12px 16px;border:0;border-radius:var(--r-block);background:var(--lift);box-shadow:var(--sh-card);
   color:var(--ink);text-align:left;cursor:pointer;
   transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
@@ -369,19 +412,19 @@
 #onboarding .ob-out > :not(.logo):not(.tk-ico){grid-column:2}
 #onboarding .ob-applogo svg{width:100%;height:100%}
 #onboarding .ob-list.is-busy{opacity:.7}
-#onboarding .ob-scanstrip{display:flex;align-items:center;gap:10px;max-width:680px;padding:10px 14px;border-radius:18px;
+#onboarding .ob-scanstrip{display:flex;align-items:center;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
   background:color-mix(in srgb,var(--amber) 13%,var(--lift));font-size:13px;color:var(--ink)}
 #onboarding .ob-scanstrip .tk-spin{border-color:var(--amber-wash);border-top-color:var(--amber)}
 #onboarding .ob-scanstrip .ob-scan-k{font-weight:700}
 #onboarding .ob-scanstrip .readout{font:400 12px/1 var(--font-mono);color:var(--ink);min-width:0}
 #onboarding .ob-scanstrip .ob-help{padding:0;font-size:13px;color:var(--ink-2)}
-#onboarding .ob-summary{display:grid;gap:8px;max-width:700px;padding:16px 18px;border-radius:var(--r-card);
+#onboarding .ob-summary{display:grid;gap:8px;max-width:var(--ob-col);padding:16px 18px;border-radius:var(--r-card);
   background:var(--lift);box-shadow:var(--sh-card);white-space:normal;font-size:14px;color:var(--ink-2)}
 #onboarding .ob-sumrow{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px}
 #onboarding .ob-sumrow .k{font-weight:600;color:var(--ink)}
 #onboarding .ob-sumrow .v.is-warn{color:var(--amber-text)}
 #onboarding .ob-failures{display:flex;flex-wrap:wrap;gap:8px}
-#onboarding .ob-failtbl{max-width:700px;padding:4px 6px 8px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-failtbl{max-width:var(--ob-col);padding:4px 6px 8px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .ob-failtbl td:first-child{font:500 12px/1 var(--font-mono)}
 
 /* Hugging Face file pick (ON-06). */

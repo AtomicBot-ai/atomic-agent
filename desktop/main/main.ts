@@ -8961,7 +8961,7 @@ async function onboardingTest(
       "wizard opens on the title card, and a repaint leaves it alone",
       openedNow.open && openedNow.step === "intro" &&
         cardBefore.includes("Atomic Agent") && cardAfter === cardBefore &&
-        openRows === 3 && openTitle === "Choose how Atomic Agent gets its model",
+        openRows === 3 && openTitle === "Where should your model run?",
       `open=${JSON.stringify(openedNow)} card=${JSON.stringify(cardBefore.slice(0, 60))}` +
         ` same=${cardAfter === cardBefore} rows=${openRows} title=${JSON.stringify(openTitle)}`,
     );
@@ -9068,7 +9068,7 @@ async function onboardingTest(
       "((document.querySelector('#onboarding .ob-stepmark.on')||{}).textContent||'').trim()");
     check(
       "wizard: the choose step is titled, and says which phase you are in",
-      chooseTitle === "Choose how Atomic Agent gets its model"
+      chooseTitle === "Where should your model run?"
         && phases.length === 2 && /01/.test(phases[0] || "") && /02/.test(phases[1] || "")
         && /01/.test(phaseOn),
       `title=${JSON.stringify(chooseTitle)} phases=${JSON.stringify(phases)} on=${JSON.stringify(phaseOn)}`,

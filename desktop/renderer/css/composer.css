@@ -105,7 +105,7 @@
 :where(.vsmname){flex:none}
 :where(.vsmtag){font-size:11px}
 :where(.vsmnote){flex:1;min-width:0;font-size:11.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
-:where(.vsmbadge){flex:none;height:18px;display:inline-flex;align-items:center;padding:0 6px;border-radius:var(--r-pill);
+:where(.vsmbadge){flex:none;height:18px;display:inline-flex;align-items:center;padding:0 6px;border-radius:var(--r-badge);
   font-size:11px;background:var(--brand-wash);color:var(--blue)}
 :where(.vsmadd){width:26px;height:26px;flex:none;display:grid;place-items:center;border-radius:50%;color:var(--ink-2)}
 :where(.vsmadd.on){color:var(--blue)}
