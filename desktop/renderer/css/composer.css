@@ -179,13 +179,16 @@
   font:400 15px/24px var(--font-ui);letter-spacing:-.01em;color:var(--ink)}
 #entry::placeholder{color:var(--ink-3)}
 
-/* Mic: a quiet round icon; recording turns it red and it breathes. */
+/* Mic: a round icon in the full ink, so it reads as live (chat review Д24:
+   the secondary grey looked switched off); recording turns it red and it
+   breathes. One that cannot work is greyed (`aria-disabled`, its reason in
+   the tooltip), with no hover of its own. */
 .micbtn{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:50%;
-  background:transparent;color:var(--ink-2);
+  background:transparent;color:var(--ink);
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .micbtn svg{width:16px;height:16px}
-.micbtn:hover:not([disabled]){background:var(--hover);color:var(--ink)}
-.micbtn[disabled]{color:var(--ink-3);opacity:.55;cursor:default}
+.micbtn:hover:not([disabled]):not([aria-disabled="true"]){background:var(--hover);color:var(--ink)}
+.micbtn[disabled],.micbtn[aria-disabled="true"]{color:var(--ink-3);opacity:.55;cursor:default}
 .micbtn.rec,.micbtn.rec:hover:not([disabled]){background:var(--critical-wash);color:var(--critical);animation:cmp-rec 1.4s var(--ease) infinite}
 @keyframes cmp-rec{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--critical) 22%, transparent)}
   50%{box-shadow:0 0 0 5px color-mix(in srgb, var(--critical) 0%, transparent)}}

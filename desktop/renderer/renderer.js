@@ -3175,12 +3175,20 @@ function micButton() {
   if (BR && BR.voiceSupported === false) return '';
   const rec = VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing';
   const off = VOICE.available === false;
+  const checking = VOICE.available === null;
   const title = off ? VOICE.reason
-    : VOICE.available === null ? 'Checking for the on-device speech model…'
+    : checking ? 'Checking for the on-device speech model…'
     : rec ? 'Stop and insert · Esc to discard'
     : 'Dictate (click to start, click again to insert) · right-click to choose the language';
-  return '<button class="micbtn' + (rec ? ' rec' : '') + '" data-mic="1"'
-    + (off || VOICE.available === null ? ' disabled' : '')
+  /* Chat review (Д24): a microphone that works is drawn in the full ink, the
+     way a live control looks; it was the secondary grey, and read as switched
+     off. One that cannot work (no speech helper in this build, macOS too old,
+     no microphone access…) is greyed and says why: in its tooltip, and in a
+     toast when it is pressed anyway. It is `aria-disabled`, not `disabled`, so
+     the hover that shows the reason and the press that explains it still
+     reach it; voiceToggle refuses the press. */
+  return '<button class="micbtn' + (rec ? ' rec' : '') + (off ? ' off' : '') + '" data-mic="1"'
+    + (off || checking ? ' aria-disabled="true"' : '')
     + ' title="' + esc(title) + '" aria-label="' + esc(title) + '">' + ic('mic') + '</button>';
 }
 
@@ -6007,7 +6015,9 @@ function voiceMouseUp() {
 }
 
 function voiceToggle() {
-  if (VOICE.available === false) return;
+  // Chat review (Д24): a press on a microphone that cannot work says why.
+  if (VOICE.available === false) { toast('Voice input is off', VOICE.reason || VOICE_REASONS['voice-helper-failed'], 'bad'); return; }
+  if (VOICE.available !== true) return;   // still checking: nothing to start yet
   if (VOICE.state === 'idle' || VOICE.state === 'error') voiceStart();
   else if (VOICE.state === 'recording' || VOICE.state === 'starting') voiceStop();
 }
@@ -21926,7 +21936,7 @@ if (typeof window !== 'undefined') {
   // screen while a take is running, and the button's tooltip says this.
   document.addEventListener('contextmenu', (e) => {
     const b = e.target.closest && e.target.closest('[data-mic]');
-    if (!b || b.disabled) return;
+    if (!b || b.disabled || b.getAttribute('aria-disabled') === 'true') return;
     e.preventDefault();
     voiceAct('voice:lang');
   });
@@ -21988,7 +21998,9 @@ if (typeof window !== 'undefined') {
     const b = document.querySelector('.composer .field .micbtn');
     const field = document.querySelector('.composer .field');
     return {
-      present: !!b, disabled: !!(b && b.disabled), title: b ? b.getAttribute('title') : '',
+      // Chat review Д24: an unavailable microphone is aria-disabled (its reason
+      // stays reachable on hover), so that is what "disabled" reads.
+      present: !!b, disabled: !!(b && (b.disabled || b.getAttribute('aria-disabled') === 'true')), title: b ? b.getAttribute('title') : '',
       order: field ? Array.prototype.map.call(field.children, (n) => n.className || n.tagName).join('|') : '',
     };
   };
