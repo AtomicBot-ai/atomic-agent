@@ -27,6 +27,7 @@ import { checks28 } from "./smoke-tasks/t28.js";
 import { checks32 } from "./smoke-tasks/t32.js";
 import { checks30 } from "./smoke-tasks/t30.js";
 import { checks34 } from "./smoke-tasks/t34.js";
+import { checks49 } from "./smoke-tasks/t49.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -63,7 +64,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "49"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -630,6 +631,9 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // 26 — a message queued in one chat ran in whatever chat was on screen when its turn ended.
   if (want.has("26")) await guarded("26", check, () => checks26(js, check));
+
+  // 49 — Danya's Settings items (Д36, Д39, Д40, Д47–Д59): Telegram, Memory, Tasks, Privacy, Import, Diagnostics.
+  if (want.has("49")) await guarded("49", check, () => checks49(js, check));
 
   await wait(100);
 }

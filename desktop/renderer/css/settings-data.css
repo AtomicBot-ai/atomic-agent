@@ -114,6 +114,10 @@ textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/
 .sd-pairhead{display:flex;align-items:center;gap:10px}
 .sd-pairhead b{font-size:15px;font-weight:600;color:var(--ink)}
 .sd-pair p{margin:0;font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+/* Д36: the one status over the rows — what it means, then Connected or Not connected. */
+.sd-tgstatus.tk-card{padding:4px 0}
+.sd-tgstatus .tk-setrow{gap:14px;min-height:64px}
+.sd-tgstatus .tk-setrow > .tk-chip{flex:none}
 .sd-rows.tk-card{padding:4px 0}
 .sd-rows .tk-setrow{gap:10px;flex-wrap:wrap}
 .sd-rows .tk-setrow .body{flex:1 1 220px}
@@ -122,6 +126,16 @@ textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/
 
 /* ---- Import · ST-31, ST-32 ---- */
 .sd-imphead{gap:10px}
+/* Д51: the header carries Preview import and stays at the top of the pane
+   while the form scrolls under it; its title never wraps, so the button
+   keeps one place whatever the source. */
+.sd-imp > .sd-imphead{position:sticky;top:0;z-index:2;flex-wrap:nowrap;max-width:640px;padding-bottom:8px;margin-bottom:-8px;background:var(--lift)}
+.sd-imphead .sd-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sd-imphead > .btn{flex:none}
+.sd-imp > .tk-notice{max-width:640px}
+/* Д54: a source with no mark of its own wears a neutral glyph the size of one. */
+.sd-imp .tk-ico--xs.sd-implogo{width:18px;height:18px}
+.sd-imp .tk-ico--sm.sd-implogo{width:22px;height:22px}
 .sd-form{display:flex;flex-direction:column;gap:14px;max-width:640px;min-width:0}
 .sd-frow{border-radius:var(--r-row);transition:background var(--t-state) var(--ease)}
 /* A field row is exactly as wide as the Sessions card below it: the keyboard
@@ -129,7 +143,7 @@ textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/
    card's 16px text edge. */
 .sd-form > .tk-field.sd-frow{padding:8px 16px;margin:0}
 .sd-form .tk-field .tk-inp{width:100%}
-.sd-form .sd-limit{max-width:220px}
+.sd-form .sd-limit .tk-inp{max-width:220px}
 .sd-form .tk-field > .tk-seg{justify-self:start}
 /* importKey's form cursor (the TUI's ▸): a quiet wash and a blue label, not a selection. */
 .sd-frow.sd-kfocus{background:var(--hover)}
@@ -137,10 +151,10 @@ textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/
 .sd-rows .tk-setrow.sd-frow{margin:0 4px;padding:8px 12px}
 .sd-rows .tk-setrow.sd-kfocus,.sd-rows .tk-setrow.sd-kfocus + .tk-setrow{box-shadow:none}
 .btn.sd-kfocus{box-shadow:0 0 0 2px var(--lift),0 0 0 4px var(--brand)}
-.sd-form .tk-seg .logo{margin-left:-6px;margin-right:1px}
-.sd-run{display:flex;align-items:center;gap:10px}
-.sd-sum{display:block;line-height:28px;font-size:12px}
-.sd-sep{margin:0 3px;color:var(--ink-3)}
+.sd-form .tk-seg .logo,.sd-form .tk-seg .sd-implogo{margin-left:-6px;margin-right:1px}
+/* Д53: the report's summary as a sentence, its "Nothing is changed yet" beside the title. */
+.sd-sum{margin:0;font-size:13px;line-height:1.45;color:var(--ink-2)}
+.sd-dry{white-space:nowrap}
 .sd-imptbl{table-layout:fixed}
 .sd-imptbl th:nth-child(1),.sd-imptbl th:nth-child(2){width:112px}
 .sd-imptbl td.sd-path{font:400 12px/1.3 var(--font-mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis}

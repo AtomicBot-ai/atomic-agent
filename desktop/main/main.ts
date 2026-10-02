@@ -23,6 +23,7 @@ import { promisify } from "node:util";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
+import { redactSecrets } from "./report-redact.js";
 import {
   configGet,
   configSet,
@@ -1817,18 +1818,6 @@ function wireIpc(client: AgentClient): void {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const out = join(app.getPath("downloads"), `atomic-agent-debug-${stamp}.txt`);
       const cfg = await readWholeConfig();
-      const redact = (v: unknown): unknown => {
-        if (Array.isArray(v)) return v.map(redact);
-        if (v && typeof v === "object") {
-          const o: Record<string, unknown> = {};
-          for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-            o[k] = /key|token|secret|password/i.test(k) && typeof val === "string" && val
-              ? `<redacted ${val.length} chars>` : redact(val);
-          }
-          return o;
-        }
-        return v;
-      };
       let log = "";
       try { log = readFileSync(agentLogPath(), "utf8").slice(-400_000); } catch { log = "(no agent.log yet)"; }
       writeFileSync(out, [
@@ -1836,7 +1825,8 @@ function wireIpc(client: AgentClient): void {
         `written ${new Date().toISOString()}`,
         "",
         "--- config (secrets removed) ---",
-        JSON.stringify(cfg.ok ? redact(cfg.config) : { error: cfg.error }, null, 2),
+        // Release fix 49 (Д57): by key name alone it kept an MCP server's Authorization header, a --api-key argument, a password in a URL.
+        JSON.stringify(cfg.ok ? redactSecrets(cfg.config) : { error: cfg.error }, null, 2),
         "",
         "--- agent log (tail) ---",
         log,
@@ -4576,13 +4566,15 @@ async function settingsTest(
   // the tab's count is checked against what the store holds up to the TUI's
   // 200-row list limit — not against the same 200-row call the tab makes.
   const storeCount = await agent!.tasksList(500).then((r) => ((r as { tasks?: unknown[] }).tasks ?? []).length).catch(() => -1);
-  const taskState = await js<{ rows: number; body: string; heads: string[]; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
+  const taskState = await js<{ rows: number; body: string; heads: string[]; refresh: boolean; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
     "(() => ({rows: window.__tasksRows(), body: window.__settingsBody(), win: window.__tasksWindow(),"
+    + " refresh: !!document.querySelector('#settings .setbody .set-toolbar [data-act=\"tasks:refresh\"]'),"
     + " heads: [...document.querySelectorAll('#settings .setbody .set-tktbl thead th')].map((th) => th.textContent.trim())}))()",
   );
   // No rows: the empty state in one sentence (Calm S5: its n / f / r hint buttons left; New task, the filter and Refresh are the toolbar's). Rows: the table's column headers.
+  // Release fix 49 (Д40): Refresh is an icon beside the filters now, so it is found by its act, not its word.
   const tasksCopy = taskState.rows === 0
-    ? ["No tasks yet", "A task sends a message to the agent on a schedule.", "New task", "Refresh"].every((s) => taskState.body.includes(s)) && !taskState.body.includes("cycle filter")
+    ? ["No tasks yet", "A task sends a message to the agent on a schedule.", "New task"].every((s) => taskState.body.includes(s)) && taskState.refresh && !taskState.body.includes("cycle filter")
     : same(taskState.heads, ["Status", "Schedule", "Next run", "Session", "Message"]);
   // The route is called with limit=500 (agent-client tasks(); item 6 needs the
   // whole list so the sidebar's Load more pages over real rows); the TAB then
@@ -4726,19 +4718,21 @@ async function settingsTest(
   }
 
   // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it. Calm
-  // (S5): the analytics switch moved to General; Privacy names its state and
-  // links there, so there is exactly one switch.
+  // (S5) moved the analytics switch to General and left Privacy a link
+  // there; release fix 49 (Д48/Д49) puts the same switch back in Privacy —
+  // one value, one write, a switch in each pane — and Session grants, a row
+  // with nothing to set, is a line under the read-scope switch.
   await js<void>("window.__settingsOpen('privacy')");
   const priv = await js<string>("window.__settingsBody()");
   const privSwitches = await js<number>("document.querySelectorAll('#settings .setbody [data-act=\"privacy:analytics\"]').length");
   await js<void>("window.__settingsOpen('general')");
   const gen = await js<string>("window.__settingsBody()");
   const genSwitches = await js<number>("document.querySelectorAll('#settings .setbody .tk-switch[data-act=\"privacy:analytics\"]').length");
-  const privacyCopy = ["Session grants", "Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "Open General"]
-    .every((s) => priv.includes(s))
+  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "Never sent with analytics"]
+    .every((s) => priv.includes(s)) && !priv.includes("Session grants") && !priv.includes("Open General")
     && ["Appearance", "Working folder", "Anonymous usage analytics", "Crash reports and coarse usage counts"].every((s) => gen.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
-  check("privacy tab: TUI copy, no approval ladder; the analytics switch is in General only", privacyCopy && noLadder && privSwitches === 0 && genSwitches === 1,
+  check("privacy tab: TUI copy, no approval ladder; one analytics switch in General and one in Privacy", privacyCopy && noLadder && privSwitches === 1 && genSwitches === 1,
     privacyCopy ? (noLadder ? `switches privacy=${privSwitches} general=${genSwitches}` : "ladder text present") : "copy missing");
   // The TUI's tab strip is one line; with the count suffixes the eight
   // labels used to wrap onto a second row inside the 900px window.
@@ -6516,22 +6510,29 @@ async function settingsTestPartC(
       "(() => { const b = document.querySelector('#settings .setbody .sd-tgcard [data-act=\"telegram:token\"]'); if (!b || !b.getClientRects().length) return null;"
       + " const k = b.querySelector('.kc'); return {label: [...b.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim(), key: k ? k.textContent.trim() : ''}; })()",
     );
+    // Release fix 49 (Д36): before a token the card is all there is — the
+    // Advanced toggle that used to sit above it is gone, so its word must not be.
     check(
-      "telegram tab: no token anywhere → the Connect Telegram card, plain tab label",
+      "telegram tab: no token anywhere → only the Connect Telegram card, plain tab label",
       tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
-        && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && tgBody.includes("Advanced") && tgPlain,
+        && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && !tgBody.includes("Advanced") && tgPlain,
       `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)} action=${JSON.stringify(tgCta)}`,
     );
   } else {
-    // The advanced rows as drawn: each fact's title and its chip.
-    const tgFacts = await js<Record<string, string>>(
-      "(() => { const out = {}; document.querySelectorAll('#settings .setbody .sd-rows .tk-setrow').forEach((r) => { const t = r.querySelector('.body .t'); const c = r.querySelector(':scope > .tk-chip');"
-      + " if (t) out[t.textContent.trim()] = c ? c.textContent.trim() : ''; }); return out; })()",
+    /* Release fix 49 (Д36): the fact rows (State `unknown`, telegram.enabled,
+       TELEGRAM_BOT_TOKEN in .env) became one status, Connected only with a
+       paired owner and Telegram not turned off, over rows in words. */
+    const tgView = await js<{ status: string; titles: string[] }>(
+      "(() => { const st = document.querySelector('#settings .setbody [data-tg-status]');"
+      + " return {status: st ? st.textContent.trim() : '', titles: [...document.querySelectorAll('#settings .setbody .sd-rows .tk-setrow .body .t')].map((t) => t.textContent.trim())}; })()",
     );
+    const wantStatus = tg.owner !== null && tg.enabled !== false ? "Connected" : "Not connected";
     check(
-      "telegram tab: a token is present → the facts, channel state honestly unknown, plain tab label",
-      tg.hasToken === true && tgFacts.Token === "set" && tgFacts.State === "unknown" && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
-      `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} label=${JSON.stringify(tgLabel)} facts=${JSON.stringify(tgFacts)}`,
+      "telegram tab: a token is present → one status in words, no config keys or .env, plain tab label",
+      tg.hasToken === true && tgView.status === wantStatus && tgView.titles.includes("Bot token")
+        && !/telegram\.enabled|ownerUserId|TELEGRAM_BOT_TOKEN|\.env\b|\bunknown\b/.test(tgBody)
+        && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
+      `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} enabled=${String(tg.enabled)} label=${JSON.stringify(tgLabel)} view=${JSON.stringify(tgView)}`,
     );
   }
   // Token round trip through the dotenv-writer port — only when no token exists anywhere, so a real one is never touched.
@@ -6573,7 +6574,8 @@ async function settingsTestPartC(
       try { envAfter = readFileSync(envPath, "utf8"); } catch { /* unlinked when empty */ }
       check(
         "telegram tab: T clear token removes the key and keeps the rest of .env",
-        cleared.hasToken === false && !envAfter.includes("TELEGRAM_BOT_TOKEN") && keysBefore.every((k) => envAfter.includes(`${k}=`)) && cleared.message === "token cleared",
+        // Release fix 49 (Д36): the messages read as sentences ("token cleared" before).
+        cleared.hasToken === false && !envAfter.includes("TELEGRAM_BOT_TOKEN") && keysBefore.every((k) => envAfter.includes(`${k}=`)) && cleared.message === "Token removed.",
         `keys=${JSON.stringify(dotenvKeys(stateDir).keys)} msg=${JSON.stringify(cleared.message)}`,
       );
     } finally {
@@ -6603,13 +6605,14 @@ async function settingsTestPartC(
     + " source: [...form.querySelectorAll('.tk-seg button.on[data-act^=\"import:source:\"]')].map((b) => b.textContent.trim()),"
     + " dir: src ? src.value : null, limit: lim ? lim.value : null, switches: sw}; })()",
   );
+  // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite", "Limit"])
+    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite", "Sessions to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
-    "import tab: the TUI form with its defaults, and no CLI run until Run preview",
-    imp.runs === 0 && impDrawn && impBody.includes("Run preview") && !impBody.includes("↑↓ move")
+    "import tab: the TUI form with its defaults, and no CLI run until Preview import",
+    imp.runs === 0 && impDrawn && impBody.includes("Preview import") && !impBody.includes("↑↓ move")
       && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("replace differing destinations") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
     `runs=${imp.runs} dir=${imp.form.sourceDir}${impDrawn ? "" : " drawn " + JSON.stringify(impView)}`,
   );
@@ -6617,24 +6620,27 @@ async function settingsTestPartC(
   await js<void>(`window.__importAct(${JSON.stringify("field:sourceDir:" + dir)})`);
   const prev = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(false)");
   const prevBody = await js<string>("window.__settingsBody()");
-  // The report as drawn: the title, the dry-run chip, the table's headers and one row per item (outcome chip · kind chip · reason).
+  // The report as drawn: the title, the preview's "Nothing is changed yet" (the "dry run" chip before release fix 49, Д53),
+  // the table's headers and one row per item (outcome chip · kind chip · reason).
   type ReportView = { title: string; chip: string; heads: string[]; rows: Array<{ outcome: string; kind: string; reason: string }> };
   const reportView = () => js<ReportView>(
     "(() => { const box = document.querySelector('#settings .setbody .sd-imp'); if (!box) return {title: '', chip: '', heads: [], rows: []};"
-    + " const bar = box.querySelector(':scope > .tk-bar'); const chip = bar && bar.querySelector(':scope > .tk-chip');"
+    + " const bar = box.querySelector(':scope > .tk-bar'); const chip = bar && bar.querySelector(':scope > .sd-dry');"
     + " return {title: ((bar && bar.querySelector('.sd-title')) || {textContent: ''}).textContent.trim(), chip: chip ? chip.textContent.trim() : '',"
     + " heads: [...box.querySelectorAll('.sd-imptbl thead th')].map((th) => th.textContent.trim()),"
     + " rows: [...box.querySelectorAll('[data-import-row]')].map((tr) => { const c = tr.querySelectorAll('td');"
     + " return {outcome: c[0] ? c[0].textContent.trim() : '', kind: c[1] ? c[1].textContent.trim() : '', reason: ((tr.querySelector('.sd-reason') || {}).textContent || '').trim()}; })}; })()",
   );
   const pv = await reportView();
-  const previewDrawn = pv.title === "Preview · 2 items" && pv.chip === "dry run" && same(pv.heads, ["Outcome", "Kind", "Item"])
+  const previewDrawn = pv.title === "Preview · 2 items" && pv.chip === "Nothing is changed yet" && same(pv.heads, ["Outcome", "Kind", "Item"])
     && pv.rows.length === 2 && pv.rows.every((r) => r.outcome === "skipped") && pv.rows.some((r) => r.kind === "sessions" && r.reason === `(no state.db at ${dir}/state.db)`);
+  // Release fix 49 (Д53): the summary in words, and Apply drawn but off when the preview found nothing to import.
   check(
-    "import tab: Run preview runs atag import --dry-run and parses the report into the TUI rows",
+    "import tab: Preview import runs atag import --dry-run and parses the report into the TUI rows",
     prev.ok && prev.state === "preview" && prev.state2.mode === "preview" && prev.state2.runs === 1 && prev.state2.report?.items === 2 && prev.state2.report.summary.skipped === 2 && prev.state2.painted === 2
-      && previewDrawn && prevBody.includes("migrated=0 · skipped=2 · conflict=0 · error=0")
-      && (await js<boolean>("!!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:apply\"]') && !!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:reset\"]')")),
+      && previewDrawn && prevBody.includes("0 will be imported, 2 skipped")
+      && (await js<boolean>("(() => { const apply = document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:apply\"]');"
+        + " return !!apply && apply.disabled && !!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:reset\"]'); })()")),
     prev.ok ? `state=${prev.state} items=${prev.state2.report?.items} runs=${prev.state2.runs}${previewDrawn ? "" : " drawn " + JSON.stringify(pv)}` : `error=${prev.error ?? "?"}`,
   );
   const applied = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(true)");
@@ -6642,7 +6648,7 @@ async function settingsTestPartC(
   const av = await reportView();
   check(
     "import tab: apply passes --yes and reports the CLI's own Nothing to import",
-    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && av.title === "Result · 2 items" && av.rows.length === 2 && appliedBody.includes("Nothing to import.") && appliedBody.includes("Back to form"),
+    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && av.title === "Result · 2 items" && av.rows.length === 2 && appliedBody.includes("Nothing to import.") && appliedBody.includes("Back"),
     applied.ok ? `state=${applied.state} mode=${applied.state2.mode} title=${JSON.stringify(av.title)}` : `error=${applied.error ?? "?"}`,
   );
   await js<void>("window.__importAct('reset'); window.__settingsClose()");

@@ -1165,7 +1165,7 @@ const LLM_LOG_LINES = 30; // local-llm-logs-panel.tsx DEFAULT_MAX_LINES
 const TG = {
   // `keysChain` serializes tgRefresh — see the note on that function.
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
-  showAdvanced:false, mode:'list', token:{error:null, submitting:false},
+  mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
 };
@@ -1174,6 +1174,7 @@ const TG = {
 const IMP = {
   mode:'configure', form:{source:'hermes', sourceDir:'', skills:true, memory:true, mcp:true, sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
   report:null, reportExecuted:false, notice:null, state:null, defaults:null, runs:0, busy:false,
+  applying:false, // the run on screen is Apply's (Importing…), not a preview's (Checking…)
 };
 const IMP_TOGGLE_FIELDS = ['skills','memory','mcp','sessions','cron','secrets','overwrite'];
 /* src/tui/import/import-sources.ts: the source row's order, its labels, the
@@ -1191,6 +1192,10 @@ const IMP_SOURCE_META = {
 };
 const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', sessions:'Sessions', cron:'Cron jobs', secrets:'Secrets'};
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
+/* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
+   server's log shown there — open or not, its last read, the poll's timer. */
+const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null };
+const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 
@@ -4549,7 +4554,13 @@ function privacyNoticesHTML() {
    model server — plus the two things you do when something is wrong: read
    the llama-server log and write a debug bundle. The agent's routes carry
    no version of their own (/health, /api/capabilities on 0.6.3), so the
-   agent is named by the binary that answered, as the footer did. */
+   agent is named by the binary that answered, as the footer did.
+   Д55–Д59 (Danya, 30.09): a line under the title says what the screen is
+   for; every value and the log can be copied; the bundle is "Save report
+   for support" with what it holds in words; the model server's log opens
+   here (it used to send you to Models, so logs lived in two places); and
+   the TUI's status line, which repeated the rows above, is gone from view —
+   Copy details still carries it. */
 function diagnosticsPane() {
   const home = homeDir();
   const short = (p) => (p && home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
@@ -4567,65 +4578,175 @@ function diagnosticsPane() {
     ['Working folder', short(wd), wd],
     ['Local model server', llama],
   ];
+  // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
+  DIAG.copy = rows.map(([k, v]) => ({label:k, value:v || ''}));
+  diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
+    + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
     + '<div class="tk-list set-setlist set-diaglist">'
-      + rows.map(([k, v, full]) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
-        + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div></div>').join('')
+      + rows.map(([k, v, full], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
+        + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+        + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
+          : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
     + '</div>'
     + '<div class="set-diagacts">'
-      + '<button class="btn btn-s sm" data-act="diag:llmlogs">' + ic('log') + 'LLM logs</button>'
-      + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Write debug bundle</button>'
-      + '<span class="set-cap">A bundle holds the agent log and your config with every secret removed.</span>'
+      + '<button class="btn btn-p sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
+      + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
     + '</div>'
-    + '<div class="set-diagline"><div class="tk-sh">Status line</div><div class="set-diagcode mono">' + esc(diagLine()) + '</div></div>'
+    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. It is not sent anywhere: attach it when you write to us.</p>'
+    + diagLogHTML()
     + '</div>';
+}
+/* Д58: the model server's log, read the way Models › LLM logs read it (the
+   tail of llama-server.log in the data dir `models status` names), on a 2 s
+   poll that runs only while it is open on screen. */
+function diagVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'diagnostics'; }
+function diagRepaint() { if (diagVisible()) paneRepaintKeepFocus(diagnosticsPane()); }
+function diagLogTone(line) {
+  const lower = line.toLowerCase();
+  if (/\b(error|fatal|fail|abort)\b/.test(lower)) return 'set-log-err';
+  if (/\b(warn|warning)\b/.test(lower)) return 'set-log-warn';
+  if (/\b(loading|loaded|ready|listening)\b/.test(lower)) return 'set-log-ok';
+  return '';
+}
+function diagBytes(n) { return n < 1024 ? n + ' B' : n < 1024 * 1024 ? (n / 1024).toFixed(1) + ' KB' : (n / (1024 * 1024)).toFixed(1) + ' MB'; }
+function diagLogHTML() {
+  const open = DIAG.logOpen;
+  const l = DIAG.log;
+  let html = '<div class="set-diaglog' + (open ? ' on' : '') + '"><div class="set-diaglog-head">'
+    + '<button class="set-disc" data-act="diag:log" aria-expanded="' + open + '">' + ic('chevR') + 'Model server log</button><span class="grow"></span>';
+  if (open) {
+    const meta = l && typeof l.size === 'number' ? diagBytes(l.size) + (l.lastReadAt ? ' · read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') : '';
+    html += (meta ? '<span class="set-cap">' + esc(meta) + '</span>' : '')
+      + '<button class="iconbtn sm" data-act="diag:logRefresh" title="Refresh" aria-label="Refresh the log">' + ic('refresh') + '</button>'
+      + '<button class="btn btn-g xs" data-act="diag:copylog"' + (l && l.text ? '' : ' disabled') + '>' + ic('copy') + 'Copy</button>';
+  }
+  html += '</div>';
+  if (open) {
+    const home = homeDir();
+    const path = l && l.path ? (home && l.path.startsWith(home) ? '~' + l.path.slice(home.length) : l.path) : '';
+    const tail = l ? l.text.split('\n').filter((x) => x.length > 0).slice(-DIAG_LOG_LINES) : [];
+    html += (path ? '<div class="set-meta set-logpath" title="' + esc(l.path) + '">' + esc(path) + '</div>' : '')
+      + (l && l.error ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(l.error) + '</span></div>' : '')
+      + (!l ? '<p class="set-cap">Reading the log…</p>'
+        : l.external ? '<p class="set-cap">You run this model server yourself, so its log is wherever you started it.</p>'
+        : tail.length ? '<pre class="tk-out set-log">' + tail.map((line) => '<span class="' + diagLogTone(line) + '">' + esc(line) + '</span>').join('\n') + '</pre>'
+        : l.error ? '' : '<p class="set-cap">No log yet. It starts the first time the local model server runs.</p>');
+  }
+  return html + '</div>';
+}
+async function diagLogRefresh() {
+  if (!BR || !BR.llamaLogTail || DIAG.logBusy) return;
+  DIAG.logBusy = true;
+  try {
+    let dataDir = LLMP.status && LLMP.status.dataDir;
+    if (!dataDir) { await llmRefreshStatus(true); dataDir = LLMP.status && LLMP.status.dataDir; }
+    const key = (x) => JSON.stringify(x && [x.path, x.size, x.text.length, x.error, !!x.external]);
+    const before = key(DIAG.log);
+    const none = (extra) => Object.assign({path:null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:null}, extra);
+    if (!dataDir) {
+      // An external llama.cpp route has no data dir: the server, and its log, are the user's own.
+      if (LLMP.status && LLMP.status.mode === 'external') DIAG.log = none({external:true});
+      else if (LLMP.statusErr) DIAG.log = none({error:'Could not find the model server’s folder: ' + LLMP.statusErr});
+      // Otherwise `models status` has not answered yet: the next tick asks again.
+    } else {
+      const res = await BR.llamaLogTail(dataDir);
+      DIAG.log = res && res.ok ? res : {path:(res && res.path) || null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:'Could not read the log: ' + ((res && res.error) || 'unknown error')};
+    }
+    if (before !== key(DIAG.log)) diagRepaint();
+  } finally { DIAG.logBusy = false; }
+}
+function diagLogStop() { if (DIAG.logTimer) { clearInterval(DIAG.logTimer); DIAG.logTimer = null; } }
+/* The poll follows the pane: diagnosticsPane() starts it when the log is open
+   (also after Settings closes and opens again), and it stops by itself once
+   the log is closed or off screen. */
+function diagEnsureLogPoll() {
+  if (!DIAG.logOpen || DIAG.logTimer || !BR) return;
+  setTimeout(diagLogRefresh, 0); // read now: what an earlier opening read may be stale
+  DIAG.logTimer = setInterval(() => { if (!diagVisible() || !DIAG.logOpen) { diagLogStop(); return; } diagLogRefresh(); }, 2000);
+}
+function diagAct(what) {
+  if (what === 'log') { DIAG.logOpen = !DIAG.logOpen; if (!DIAG.logOpen) diagLogStop(); render(); return; }
+  if (what === 'logRefresh') { diagLogRefresh(); return; }
+  if (what === 'copylog') {
+    if (DIAG.log && DIAG.log.text) copyText(DIAG.log.text, 'Log copied');
+    else toast('Nothing to copy', 'the model server has not written a log yet', 'bad');
+    return;
+  }
+  if (what === 'copyall') {
+    const rows = (DIAG.copy || []).map((r) => r.label + ': ' + (r.value || '—'));
+    copyText(rows.concat(diagLine()).join('\n'), 'Details copied');
+    return;
+  }
+  if (what.startsWith('copy:')) {
+    const row = (DIAG.copy || [])[Number(what.slice(5))];
+    if (row && row.value) copyText(row.value, 'Copied', row.label);
+    return;
+  }
+  /* Diagnostics' log, opened from wherever asks for it (Models › LLM logs
+     included): Settings on Diagnostics, the log open and scrolled into view. */
+  if (what === 'llmlogs') {
+    const opened = !S.settings;
+    S.settings = 1; S.settingsPane = 'diagnostics'; LLMP.logsBack = null; DIAG.logOpen = true;
+    render(); settingsPaneEntered(opened);
+    const box = document.querySelector('#settings .set-diaglog');
+    if (box && box.scrollIntoView) box.scrollIntoView({block:'nearest'});
+  }
 }
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
    + session grants, no ladder. The desktop's approval path only offers
    allow-once/deny, so the runtime never accumulates grants and the TUI's
    "none active" line is the truth here. The toggle is `atag config set
    analytics.enabled`; the running agent keeps its boot-time client, so
-   the note and the Restart button say so. */
+   the note and the Restart button say so.
+   Д47–Д50 (Danya, 30.09): a read-scope change the agent takes at once is a
+   toast, and what still needs a restart is said under the rows, never above
+   them (a blue line on top pushed the page down ~50 px); Session grants, a
+   row with nothing to set, is one line under the switch it is about; the
+   analytics switch is here as well as in General — the same value and the
+   same write, so the two always agree; what analytics send is two plain
+   lines under that switch instead of two loud cards. */
 function privacyPane() {
   const eff = privacyEffective();
   const known = typeof eff === 'boolean';
-  // What is and is not sent — both lists are the analytics sentence, split into its parts.
-  const sentList = (title, items, icon, tone) => '<div class="set-privcol"><div class="tk-sh">' + esc(title) + '</div><ul class="set-privul">'
-    + items.map((t) => '<li><span class="tk-ico tk-ico--xs ' + tone + '">' + ic(icon) + '</span>' + esc(t) + '</li>').join('') + '</ul></div>';
+  const on = known && eff;
+  const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
+  const scope = readScopeValue();
+  // What is and is not sent: the analytics sentence, split into its parts.
+  const sentLine = (label, items) => '<p class="set-privline"><b>' + esc(label) + ':</b> ' + esc(items.join(', ')) + '.</p>';
   return '<div class="set-pane set-privacy">'
-    + privacyNoticesHTML()
     + '<div class="tk-list set-setlist">'
       /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
          config cache, which a CLI write does not reset in a running
          `atag serve` (checked live: a write with the chat open still asked),
-         so the change takes the restart notice above. */
+         so on an agent without PATCH the change takes the restart notice below. */
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Reading outside the working folder</div>'
-          + '<div class="d">' + esc(READ_SCOPES.find((r) => r[0] === readScopeValue())[2]) + '. The agent can always read the working folder and any path you name in the chat.</div></div>'
+          + '<div class="d">' + esc(READ_SCOPES.find((r) => r[0] === scope)[2]) + '. The agent can always read the working folder and any path you name in the chat.</div>'
+          + '<div class="tk-help set-privgrant">Allowing one read outside it lets the agent read that folder for the rest of the chat.</div></div>'
         + '<div class="tk-seg set-seg" role="group" aria-label="Reading outside the working folder">'
-          + READ_SCOPES.map(([v, label, long]) => '<button class="' + (v === readScopeValue() ? 'on' : '') + '" aria-pressed="' + (v === readScopeValue())
+          + READ_SCOPES.map(([v, label, long]) => '<button class="' + (v === scope ? 'on' : '') + '" aria-pressed="' + (v === scope)
             + '" title="' + esc(long) + '" data-act="privacy:readscope:' + v + '"' + (PRIV.busy || !LIVE_CONFIG ? ' disabled' : '') + '>' + esc(label) + '</button>').join('')
         + '</div>'
       + '</div>'
-      + '<div class="tk-setrow">'
-        + '<div class="body"><div class="t">Session grants</div>'
-          + '<div class="d">Each approval is answered once, allow or deny. One exception: approving a read outside the working folder lets the agent read that folder for the rest of that chat.</div></div>'
-      + '</div>'
-      // Calm (S5): the analytics switch lives in General; this row says where it stands and links there.
-      + '<div class="tk-setrow">'
+      // The same switch as General's (privacy:analytics → privacyToggle), drawn from the same value.
+      + '<div class="tk-setrow set-privan">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">' + (known ? (eff ? 'On.' : 'Off.') : PRIV.effectiveBusy ? 'Checking…' : 'Unknown.') + ' You can turn it on or off in General.</div></div>'
-        + '<button class="btn btn-s sm" data-act="settings:general">Open General</button>'
+          /* Said about analytics, not about the Mac: "never leaves this Mac" read as
+             a promise the app does not make (a cloud model is sent the messages).
+             The agent swaps the IP for 0.0.0.0 before an event goes out. */
+          + sentLine('Sent with analytics', ['an install id', 'coarse counters', 'crash reports'])
+          + sentLine('Never sent with analytics', ['message content', 'paths', 'tool arguments', 'IP address'])
+          + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
+        + '</div>'
+        // A spinner only while the value is still being read; PRIV.busy is shared with the read-scope write.
+        + (pending ? '<span class="set-state" aria-hidden="true"><span class="tk-spin"></span></span>' : '')
+        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
+          + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
-    + '</div>'
-    /* Said about analytics, not about the Mac: "never leaves this Mac" read as
-       a promise the app does not make (a cloud model is sent the messages).
-       The agent swaps the IP for 0.0.0.0 before an event goes out. */
-    + '<div class="set-privgrid">'
-      + sentList('Sent with analytics', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
-      + sentList('Never sent with analytics', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
     + '</div>'
     + '<p class="set-cap set-privnote">With a cloud model, your messages go to that provider.</p>'
+    + privacyNoticesHTML()
     + '</div>';
 }
 /* B3: `agent.readScope` — the user file's value, else the schema default. */
@@ -4641,7 +4762,9 @@ async function readScopeSet(value) {
     // agent's cached config: PATCH (0.6.6) refreshes that cache, a CLI write does not.
     const res = await configPatchOr({agent:{readScope:value}}, () => BR.configSet('agent.readScope', value));
     if (!res.ok) PRIV.lastError = 'could not change where the agent reads: ' + (res.error || 'unknown error');
-    else { PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder'; PRIV.messageLive = !!res.live; }
+    // Д47: taken at once (PATCH, 0.6.6) it is a toast over the pane; only a change waiting for a restart stays on it.
+    else if (res.live) toast(value === 'unrestricted' ? 'The agent will read anywhere without asking' : 'The agent will ask before reading outside the working folder');
+    else { PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder'; PRIV.messageLive = false; }
     await refreshLiveConfig();
     PRIV.busy = false; render();
   };
@@ -4857,7 +4980,7 @@ function act(a) {
       + '&body=' + encodeURIComponent(body);
     if (BR && BR.debugBundle) {
       BR.debugBundle().then((res) => {
-        if (res && res.ok) toast('Debug bundle written', res.path + ' — attach it if you want to');
+        if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
       }).catch(() => {});
     }
     if (BR && BR.openExternal) BR.openExternal(url);
@@ -4959,10 +5082,10 @@ function act(a) {
      the agent log, the config with every secret removed, and the build. */
   if (a === 'dump') {
     close(); render();
-    if (!BR || !BR.debugBundle) { toast('Write debug bundle', 'not available in this build', 'bad'); return; }
+    if (!BR || !BR.debugBundle) { toast('Save report for support', 'not available in this build', 'bad'); return; }
     BR.debugBundle().then((res) => {
-      if (res && res.ok) { toast('Debug bundle written', res.path); if (BR.openPath) BR.openPath(res.path); }
-      else toast('Could not write the bundle', (res && res.error) || '', 'bad');
+      if (res && res.ok) { toast('Report saved', res.path); if (BR.openPath) BR.openPath(res.path); }
+      else toast('Could not save the report', (res && res.error) || '', 'bad');
     });
     return;
   }
@@ -5012,8 +5135,8 @@ function act(a) {
   if (a === 'analytics') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = 'general'; render(); settingsPaneEntered(opened); return; }
   // Calm (S5): the sidebar button, ⌘ , and the app menu open Settings on the last section shown (General the first time).
   if (a === 'settings:open') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsOpenPane(); render(); settingsPaneEntered(opened); return; }
-  // Diagnostics › LLM logs: the Models pane's log view, whose Back returns here.
-  if (a === 'diag:llmlogs') { close(); S.settings = 1; S.settingsPane = 'llm'; LLMP.logsBack = 'diagnostics'; render(); llmAct('logs'); return; }
+  // Diagnostics' own verbs (Д56/Д58): copy a value, the details or the log; open the model server's log here.
+  if (k === 'diag') { close(); diagAct(v || ''); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -16941,9 +17064,9 @@ function tkStatusClass(status) {
   return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
 }
 /* Soft Tactile (ST-01): the Tasks toolbar — the filters as a segmented
-   control (every TK_FILTER_ORDER value), then search, the auto-refresh
-   readout, Refresh and New task. `.tuibar` stays on it: tkRefreshBar finds the
-   readout inside. */
+   control (every TK_FILTER_ORDER value) with Refresh and New task, then
+   search and the auto-refresh readout. `.tuibar` stays on it: tkRefreshBar
+   finds the readout inside. */
 function tkFilterBar(visibleCount) {
   const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
     + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
@@ -16952,14 +17075,18 @@ function tkFilterBar(visibleCount) {
     ? '<label class="tk-inpwrap set-search is-open">' + ic('search') + '<input id="tk-search" value="' + esc(TK.search) + '" placeholder="Search tasks" autocomplete="off" spellcheck="false"></label>'
     : '<button class="tk-inpwrap set-search" data-act="tasks:search" title="Search (/)">' + ic('search')
       + (TK.search.length ? '<span class="v">' + esc(TK.search) + '</span>' : '<span class="ph">Search tasks</span>') + '</button>';
+  /* Д40: Refresh and New task share the filters' row (alone on the row below
+     they left a hole beside the filters); on a window too narrow for all of
+     it, the pair wraps under the filters as one, still on the right. */
   return '<div class="tuibar tk-bar set-toolbar">'
-    + '<div class="set-tbrow">' + seg + '</div>'
+    + '<div class="set-tbrow set-tbrow--wrap">' + seg
+      + '<span class="set-tbacts">'
+        + '<button class="iconbtn sm" data-act="tasks:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
+        + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
+      + '</span></div>'
     + '<div class="set-tbrow">' + search
       + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
       + tkReadoutHTML(visibleCount)
-      + '<span class="grow"></span>'
-      + '<button class="btn btn-s sm" data-act="tasks:refresh" title="r refresh">' + ic('refresh') + 'Refresh</button>'
-      + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
     + '</div></div>';
 }
 /* The readout tkRefreshBar repaints on each poll: `auto · refreshed 4s ago ·
@@ -18299,7 +18426,11 @@ function memListHTML() {
   if (!rows.length) {
     if (MEM.lastRefreshedAt === null) return '<div class="tk-empty"><span class="tk-spin"></span><p>loading…</p></div>';
     const none = {profile:'Nothing about you yet', notes:'No notes yet', lessons:'No lessons yet', procedures:'No procedures yet', links:'No links yet', votes:'No votes yet'}[MEM.channel] || 'Nothing here yet';
-    const what = {profile:'What the agent learns about you in chats shows up here.', notes:'Notes the agent keeps while it works show up here.'}[MEM.channel] || '';
+    // Д39: every channel says what would be here, not only About you and Notes ("No votes yet" stood alone).
+    const what = {profile:'What the agent learns about you in chats shows up here.', notes:'Notes the agent keeps while it works show up here.',
+      lessons:'Lessons the agent draws from earlier chats show up here.', procedures:'Step-by-step guides the agent writes for work it repeats show up here.',
+      links:'Links the agent makes between related notes show up here.',
+      votes:'After each reply the agent rates the memories it used, so helpful ones stay and unhelpful ones fade out.'}[MEM.channel] || '';
     return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('memory') + '</span><h4>' + esc(none) + '</h4>'
       + (what ? '<p>' + esc(what) + '</p>' : '') + '</div>';
   }
@@ -20903,7 +21034,7 @@ if (BR) {
 /* ---------------- Telegram tab (setup-state.ts, telegram-panel.tsx, telegram-token-prompt.tsx,
    tui-telegram-orchestrator.ts, telegram-key-bindings.ts). The channel state, bot identity and
    pairing live inside the serve process's channel — nothing on the HTTP API exposes them, so
-   the tab shows config + .env facts and says where pairing happens. ---------------- */
+   the tab reads the config and the saved token's presence, and says where pairing happens. ---------------- */
 
 function telegramVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'telegram'; }
 function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t && typeof t === 'object' ? t : null; }
@@ -20937,18 +21068,24 @@ async function tgRefreshOnce() {
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
   TG.envKeys = Array.isArray(env) ? env : [];
   TG.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
-  if (dotenv && dotenv.ok === false) TG.lastError = 'could not read .env: ' + (dotenv.error || 'unknown error');
+  if (dotenv && dotenv.ok === false) TG.lastError = 'Could not read the saved token: ' + (dotenv.error || 'unknown error');
   if (eff && eff.ok && eff.value && typeof eff.value === 'object') TG.cfg = eff.value;
   TG.keysKnown = true;
   tgRepaint();
 }
+/* Д36: until a token is in, the tab is the Connect Telegram card and nothing
+   else. With one, it is a single status (Connected / Not connected) over the
+   rows a person acts on, in words: the config keys, `.env` and the channel's
+   unreadable `unknown` state are gone, and so is the Advanced toggle, whose
+   label changed width under the pointer. Notices come last, so a flipped
+   switch does not push the rows down. */
 function telegramTab() {
   const hasToken = tgHasToken();
   const enabled = tgEnabled();
   const owner = tgOwner();
   let body = '';
   if (TG.mode === 'tokenPrompt') body += tgTokenPromptHTML();
-  else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>reading .env…</p></div>';
+  else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Loading…</p></div>';
   else if (!hasToken) {
     // setup-state.ts not_connected (no token). ST-28: one card, one action.
     body += '<div class="tk-card pad sd-tgcard sd-center">'
@@ -20956,53 +21093,65 @@ function telegramTab() {
       + '<h3 class="sd-title">Connect Telegram</h3>'
       + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
       + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div>';
-  } else if (owner === null) {
-    // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
-    body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-      + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
-      + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
   } else {
-    // Token + owner: the TUI would say "✅ Telegram is connected" only with the channel `up`, which the desktop cannot see.
-    body += '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">channel state is not exposed by the agent\'s HTTP API — the Telegram tab in `atag tui` shows it live</span></div>';
+    body += tgStatusHTML(enabled, owner);
+    // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
+    if (owner === null) {
+      body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
+        + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
+        + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
+    }
+    body += tgRowsHTML(enabled, owner);
   }
-  const advanced = TG.showAdvanced || (hasToken && owner !== null);
-  if (advanced && TG.mode !== 'tokenPrompt') body += tgAdvancedHTML(enabled, hasToken, owner);
-  // telegram-panel.tsx keeps `· <message>` inside AdvancedControls; here it leads the tab, because the desktop's message carries the restart the serve process needs.
-  const msg = TG.message ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TG.message)
-    + (TG.restart ? ' <span class="sec">(the agent loads .env and config.json at start)</span>' : '') + '</span>'
-    + (TG.restart ? '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>' : '') + '</div>' : '';
-  return '<div class="sd-pane sd-tg"><div class="tk-bar"><span class="grow"></span>'
-    + '<button class="btn btn-g sm" data-act="telegram:advanced" title="Advanced (a)">' + (TG.showAdvanced ? 'Hide advanced' : 'Advanced') + '</button></div>' + msg + body + '</div>';
+  return '<div class="sd-pane sd-tg">' + body + tgNoticesHTML() + '</div>';
 }
-/* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. ST-30: one row per fact, its actions beside it. */
-function tgAdvancedHTML(enabled, hasToken, owner) {
+/* Connected = set up for the bot to answer: a token, a paired owner, and not
+   turned off. The channel's live state stays inside the agent (no route
+   exposes it), so this is what the desktop can know. */
+function tgConnected(enabled, owner) { return tgHasToken() === true && owner !== null && enabled !== false; }
+function tgStatusHTML(enabled, owner) {
+  const on = tgConnected(enabled, owner);
+  const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
+    : owner === null ? 'Almost there: confirm your Telegram account below.'
+    : 'Turned off: the bot does not answer until you turn it on below.';
+  return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
+    + '<span class="tk-ico tk-ico--blue">' + ic('send') + '</span>'
+    + '<div class="body"><div class="t">Telegram</div><div class="d">' + esc(line) + '</div></div>'
+    + '<span class="tk-chip tk-chip--sm ' + (on ? 'tk-chip--green' : 'tk-chip--amber') + '" data-tg-status="' + (on ? 'connected' : 'not-connected') + '">'
+      + (on ? 'Connected' : 'Not connected') + '</span>'
+    + '</div></div>';
+}
+/* telegram-panel.tsx AdvancedControls, ST-30: one row per thing to do, its action beside it. */
+function tgRowsHTML(enabled, owner) {
   const busy = TG.busy;
-  const tokenChip = hasToken === null ? '<span class="tk-chip tk-chip--sm">—</span>' : hasToken ? '<span class="tk-chip tk-chip--sm tk-chip--green">set</span>' : '<span class="tk-chip tk-chip--sm tk-chip--amber">missing</span>';
-  const ownerChip = owner === null ? '<span class="tk-chip tk-chip--sm tk-chip--amber">unset</span>' : '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>';
-  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
-    + '<div class="tk-card sd-rows">'
-    + '<div class="tk-setrow"><div class="body"><div class="t">State</div><div class="d">The channel runs inside the agent; its live state is not readable here.</div></div>'
-    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</span></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Enabled</div><div class="d sd-mono">telegram.enabled</div></div>'
-    + '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Enabled" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Token</div><div class="d sd-mono">TELEGRAM_BOT_TOKEN in .env</div></div>' + tokenChip
-    + '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
-    + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy || !hasToken ? ' disabled' : '') + '>Clear token</button></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Owner</div><div class="d sd-mono">telegram.ownerUserId</div></div>' + ownerChip
-    + '<button class="btn btn-s sm" data-act="telegram:pair" disabled title="' + esc(TG_PAIRING_NOTE) + '">Re-pair</button>'
-    + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy || owner === null ? ' disabled' : '') + '>Clear owner</button></div>'
-    + '<div class="tk-setrow"><div class="body"><div class="t">Channel</div><div class="d">Restarts with the agent runtime.</div></div>'
-    + '<button class="btn btn-g sm" data-act="telegram:refresh">' + ic('refresh') + 'Refresh</button>'
-    + '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button></div>'
+  const row = (title, d, tail) => '<div class="tk-setrow"><div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>' + tail + '</div>';
+  return '<div class="tk-card sd-rows">'
+    + row('Answer in Telegram', 'When this is off, the bot ignores every message.',
+      '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Answer in Telegram" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button>')
+    + row('Bot token', 'Saved on this computer.',
+      '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
+      + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>Remove token</button>')
+    + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
+      '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>'
+      + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>Clear owner</button>') : '')
+    + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
     + '</div>'
     + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token', 'T clear token', 'O clear owner']);
+}
+/* What the last action left: an error, or a message that may carry the
+   restart the agent needs to load a token or a switch (it reads both at start). */
+function tgNoticesHTML() {
+  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+    + (TG.message ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TG.message)
+      + (TG.restart ? ' <span class="sec">It takes effect after a restart.</span>' : '') + '</span>'
+      + (TG.restart ? '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>' : '') + '</div>' : '');
 }
 /* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
   const t = TG.token;
   return '<div class="tk-card pad sd-tgcard">'
     + '<h3 class="sd-title">Bot token</h3>'
-    + '<p>Paste the token issued by @BotFather. Saved to <span class="sd-code">.env</span> at mode 0600.</p>'
+    + '<p>Paste the token @BotFather gave you. It is saved on this computer, in a file only your user account can read.</p>'
     + '<label class="tk-inpwrap sd-tokwrap' + (t.error ? ' is-error' : '') + '">' + ic('key')
     + '<input id="tg-token" type="password" autocomplete="off" spellcheck="false" aria-label="Bot token"' + (t.submitting ? ' disabled' : '') + '></label>'
     + (t.error ? '<p class="tk-help tk-help--err">' + esc(t.error) + '</p>' : '')
@@ -21020,19 +21169,19 @@ async function tgTokenSave(value) {
   const input = document.getElementById('tg-token');
   const raw = value !== undefined ? value : (input ? input.value : '');
   const trimmed = String(raw || '').trim();
-  if (!trimmed) { TG.token.error = 'token is empty'; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:'token is empty'}; }
+  if (!trimmed) { TG.token.error = 'Paste the token first.'; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error}; }
   const stateDir = memStateDir();
-  if (!BR || !stateDir) { TG.token.error = 'state dir unknown'; tgRepaint(); return {ok:false, error:'state dir unknown'}; }
+  if (!BR || !stateDir) { TG.token.error = 'The app is still starting. Try again in a moment.'; tgRepaint(); return {ok:false, error:TG.token.error}; }
   TG.token.submitting = true; TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', trimmed);
-  if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = (res && res.error) || 'setToken failed'; TG.lastError = 'setToken failed: ' + TG.token.error; tgRepaint(); return {ok:false, error:TG.token.error}; }
+  if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = (res && res.error) || 'the token was not saved'; TG.lastError = 'Could not save the token: ' + TG.token.error; tgRepaint(); return {ok:false, error:TG.token.error}; }
   TG.mode = 'list'; TG.token = {error:null, submitting:false};
-  tgSetMessage('token saved', true);
+  tgSetMessage('Token saved.', true);
   await tgRefresh();
   if (tgEnabled() === false) {
     const w = await BR.configSet('telegram.enabled', 'true');
-    if (!w || w.ok === false) TG.lastError = 'setEnabled failed: ' + ((w && w.error) || 'unknown error');
-    else tgSetMessage('telegram enabled', true);
+    if (!w || w.ok === false) TG.lastError = 'Could not turn Telegram on: ' + ((w && w.error) || 'unknown error');
+    else tgSetMessage('Token saved and Telegram turned on.', true);
     await tgRefresh();
   }
   TG.busy = false; tgRepaint();
@@ -21044,8 +21193,8 @@ async function tgClearToken() {
   TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', null);
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'clearToken failed: ' + ((res && res.error) || 'unknown error');
-  else tgSetMessage('token cleared', true);
+  if (!res || res.ok === false) TG.lastError = 'Could not remove the token: ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage('Token removed.', true);
   await tgRefresh();
 }
 async function tgSetEnabled(enabled) {
@@ -21053,8 +21202,8 @@ async function tgSetEnabled(enabled) {
   TG.busy = true; tgRepaint();
   const res = await BR.configSet('telegram.enabled', String(!!enabled));
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'setEnabled failed: ' + ((res && res.error) || 'unknown error');
-  else tgSetMessage(enabled ? 'telegram enabled' : 'telegram disabled', true);
+  if (!res || res.ok === false) TG.lastError = 'Could not turn Telegram ' + (enabled ? 'on' : 'off') + ': ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage(enabled ? 'Telegram turned on.' : 'Telegram turned off.', true);
   await tgRefresh();
 }
 async function tgClearOwner() {
@@ -21062,14 +21211,13 @@ async function tgClearOwner() {
   TG.busy = true; tgRepaint();
   const res = await BR.configUnset('telegram.ownerUserId');
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'setOwnerUserId failed: ' + ((res && res.error) || 'unknown error');
-  else tgSetMessage('owner cleared — telegram now ignores all DMs', true);
+  if (!res || res.ok === false) TG.lastError = 'Could not clear the owner: ' + ((res && res.error) || 'unknown error');
+  else tgSetMessage('Owner cleared. The bot ignores every message until you pair again.', true);
   await tgRefresh();
 }
 function telegramAct(what) {
   const [verb] = what.split(':');
   const arg = what.slice(verb.length + 1);
-  if (verb === 'advanced') { TG.showAdvanced = !TG.showAdvanced; tgRepaint(); return; }
   if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
   if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
   if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
@@ -21077,7 +21225,7 @@ function telegramAct(what) {
   if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
   if (verb === 'clearOwner') { tgClearOwner(); return; }
   // `r — restart` restarts the channel in the TUI; the desktop restarts the agent runtime, which restarts the channel with it.
-  if (verb === 'restart') { tgSetMessage('telegram restarted with the agent runtime', false); act('agent:restart'); return; }
+  if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', false); act('agent:restart'); return; }
   if (verb === 'refresh') { tgRefresh(); return; }
   if (verb === 'pair') return; // disabled: pairing needs the live channel
 }
@@ -21092,7 +21240,7 @@ function telegramKey(e, k, inText) {
   if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
   // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
   if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIRING_NOTE, false), tgRepaint(); return true; }
-  const map = {a:'advanced', e:'enable', t:'token', T:'clearToken', o:'pair', O:'clearOwner', r:'restart', R:'refresh'};
+  const map = {e:'enable', t:'token', T:'clearToken', o:'pair', O:'clearOwner', r:'restart', R:'refresh'};
   if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
   return false;
 }
@@ -21113,16 +21261,29 @@ async function importTabEntered() {
   if (d && d.hermes) { IMP.defaults = d; if (!IMP.form.sourceDir) IMP.form.sourceDir = d[IMP.form.source] || ''; impRepaint(); }
 }
 function impDefaultDir(source) { return IMP.defaults && IMP.defaults[source] ? IMP.defaults[source] : (homeDir() ? homeDir() + impMeta(source).dir.slice(1) : ''); }
+/* Д51/Д52: Preview import lives in the header, which stays at the top of the
+   pane while the form scrolls. Under the form it moved with each source's
+   rows and, for the longer ones (Codex), went past the window's bottom edge. */
 function importTab() {
   const f = IMP.form;
   const meta = impMeta(f.source);
   const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
-  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(meta.logo, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3></div>';
+  const previewing = IMP.mode === 'configure' || (IMP.mode === 'running' && !IMP.applying);
+  let body = report ? '' : '<div class="tk-bar sd-imphead">' + impLogoHTML(f.source, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3>'
+    + (previewing ? '<span class="grow"></span><button class="btn btn-p sm' + (f.focus === 'run' && IMP.mode === 'configure' ? ' sd-kfocus' : '') + '" data-act="import:preview"'
+      + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Preview import</button>' : '')
+    + '</div>';
   if (IMP.notice) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(IMP.notice) + '</span></div>';
   if (IMP.mode === 'configure') body += impFormHTML(f);
-  else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>importing… please wait</p></div>';
+  // Д53: a preview is a check — nothing is imported until Apply.
+  else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>' + (IMP.applying ? 'Importing…' : 'Checking…') + '</p></div>';
   else if (report) body += impReportHTML(IMP.report, IMP.mode === 'done');
   return '<div class="sd-pane sd-imp">' + body + '</div>';
+}
+/* Д54: Pi and Oh-My-Pi have no mark in logos/, so they wear a neutral terminal
+   glyph the size of a mark rather than a logo made up for them. */
+function impLogoHTML(source, size) {
+  return logoHTML(impMeta(source).logo, size) || '<span class="tk-ico tk-ico--' + (size === 'xs' ? 'xs' : 'sm') + ' sd-implogo">' + ic('term') + '</span>';
 }
 function impFormHTML(f) {
   const fc = f.focus;
@@ -21137,16 +21298,16 @@ function impFormHTML(f) {
   return '<div class="sd-form">'
     + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg" role="group" aria-labelledby="imp-source-type">'
     + IMP_SOURCES.map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
-      + logoHTML(IMP_SOURCE_META[s].logo, 'xs') + esc(IMP_SOURCE_META[s].label) + '</button>').join('') + '</div></div>'
+      + impLogoHTML(s, 'xs') + esc(IMP_SOURCE_META[s].label) + '</button>').join('') + '</div></div>'
     + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
     + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(meta.dir) + '" autocomplete="off" spellcheck="false"></div>'
     + '<div class="tk-card sd-rows">'
     + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
     + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
-    + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Limit</label>'
-    + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="no limit" autocomplete="off" spellcheck="false"></div>'
-    + '<div class="sd-run"><button class="btn btn-p' + (fc === 'run' ? ' sd-kfocus' : '') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Run preview</button></div>'
-
+    // Д52: `--limit N` caps the sessions imported, newest first (src/cli/import-command.ts); "Limit / no limit" said none of that.
+    + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Sessions to import</label>'
+    + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="All" inputmode="numeric" autocomplete="off" spellcheck="false">'
+    + '<span class="tk-help">The newest first. Leave it empty to import them all.</span></div>'
     + '</div>';
 }
 /* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. ST-32. */
@@ -21156,26 +21317,36 @@ function impReportHTML(report, executed) {
   const s = report.summary;
   const n = report.items.length, noun = n === 1 ? ' item' : ' items';
   const tone = (st) => ({migrated:'tk-chip--green', conflict:'tk-chip--amber', error:'tk-chip--red'}[st] || '');
+  /* Д53: the report in words. A preview's `migrated` is what Apply would
+     import, so it reads "will import"; the run's reads "imported". */
+  const outcome = (st) => (st === 'migrated' ? (executed ? 'imported' : 'will import') : st);
   const arrowOf = (it) => (it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || ''));
-  // The summary stays one line of text (`migrated=0 · skipped=2 · …`): the chips are inline, not flex items.
-  const sum = (label, v, t) => '<span class="tk-chip tk-chip--sm ' + (v > 0 ? t : '') + '">' + label + '=' + v + '</span>';
+  // Nothing would be imported: Apply has nothing to do, so it is not offered as if it had.
+  const nothing = !executed && !(s.migrated > 0);
   return '<div class="tk-bar"><h3 class="sd-title">' + (executed ? 'Result' : 'Preview') + ' · ' + n + noun + '</h3>'
-    + (executed ? (IMP.state === 'applied' ? '<span class="tk-chip tk-chip--sm tk-chip--green">applied</span>' : '') : '<span class="tk-chip tk-chip--sm">dry run</span>')
+    + (executed ? (IMP.state === 'applied' ? '<span class="tk-chip tk-chip--sm tk-chip--green">applied</span>' : '') : '<span class="sd-cap sd-dry">Nothing is changed yet</span>')
     + '<span class="grow"></span>'
     + (executed
-      ? '<button class="btn btn-s sm" data-act="import:reset">Back to form</button>'
-      : '<button class="btn btn-g sm" data-act="import:reset">Edit</button><button class="btn btn-p sm" data-act="import:apply"' + (IMP.busy ? ' disabled' : '') + '>Apply</button>')
+      ? '<button class="btn btn-s sm" data-act="import:reset">Back</button>'
+      : '<button class="btn btn-g sm" data-act="import:reset">Back</button><button class="btn btn-p sm" data-act="import:apply"'
+        + (IMP.busy || nothing ? ' disabled' : '') + (nothing ? ' title="Nothing to import"' : '') + '>Apply</button>')
     + '</div>'
-    + '<div class="sd-sum">' + sum('migrated', s.migrated, 'tk-chip--green') + '<span class="sd-sep"> · </span>' + sum('skipped', s.skipped, '')
-    + '<span class="sd-sep"> · </span>' + sum('conflict', s.conflict, 'tk-chip--amber') + '<span class="sd-sep"> · </span>' + sum('error', s.error, 'tk-chip--red') + '</div>'
+    + '<p class="sd-sum">' + esc(impSummaryText(s, executed)) + '</p>'
     + (items.length ? '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-imptbl"><thead><tr><th>Outcome</th><th>Kind</th><th>Item</th></tr></thead><tbody>'
-      + items.map((it) => '<tr data-import-row="1"><td><span class="tk-chip tk-chip--sm ' + tone(it.status) + '">' + esc(it.status) + '</span></td>'
+      + items.map((it) => '<tr data-import-row="1"><td><span class="tk-chip tk-chip--sm ' + tone(it.status) + '">' + esc(outcome(it.status)) + '</span></td>'
         + '<td><span class="tk-chip tk-chip--sm tk-chip--line">' + esc(it.kind) + '</span></td>'
         + '<td class="sd-path" title="' + esc(arrowOf(it) + (it.reason ? ' (' + it.reason + ')' : '')) + '">' + esc(arrowOf(it)) + (it.reason ? ' <span class="sd-reason">(' + esc(it.reason) + ')</span>' : '') + '</td></tr>').join('')
       + '</tbody></table></div>' : '')
     + (hidden > 0 ? '<p class="sd-cap">… ' + hidden + ' more</p>' : '')
     + (IMP.state === 'nothing' ? '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">Nothing to import.</span></div>' : '')
     + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]));
+}
+/* Д53: "0 will be imported, 2 skipped" for `migrated=0 · skipped=2 · conflict=0 · error=0`; conflicts and errors only when there are any. */
+function impSummaryText(s, executed) {
+  const parts = [s.migrated + (executed ? ' imported' : ' will be imported'), s.skipped + ' skipped'];
+  if (s.conflict > 0) parts.push(s.conflict + (s.conflict === 1 ? ' conflict' : ' conflicts'));
+  if (s.error > 0) parts.push(s.error + (s.error === 1 ? ' error' : ' errors'));
+  return parts.join(', ');
 }
 /* import-orchestrator.ts runImport: the option set from the toggles, the
    limit parsed, then one `atag import` subprocess — never while a turn is
@@ -21185,7 +21356,7 @@ async function impRun(execute) {
   if (S.busy) { IMP.notice = 'Not while a turn is running'; impRepaint(); return {ok:false, error:IMP.notice}; }
   const f = IMP.form;
   const limit = f.limit.trim();
-  if (limit && !/^\d+$/.test(limit)) { IMP.mode = 'configure'; IMP.notice = 'limit must be a non-negative integer'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  if (limit && !/^\d+$/.test(limit)) { IMP.mode = 'configure'; IMP.notice = 'Sessions to import takes a whole number, or nothing for all of them.'; impRepaint(); return {ok:false, error:IMP.notice}; }
   // import-form-options.ts: every drawn toggle that is off is excluded; secrets is its own opt-in.
   const toggles = impMeta(f.source).toggles;
   const exclude = toggles.filter((t) => t !== 'secrets' && !f[t]);
@@ -21196,7 +21367,7 @@ async function impRun(execute) {
     IMP.mode = 'configure'; IMP.notice = 'nothing selected to import — enable ' + (names.length ? names.join(', ') + ' or ' + last : last);
     impRepaint(); return {ok:false, error:IMP.notice};
   }
-  IMP.mode = 'running'; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
+  IMP.mode = 'running'; IMP.applying = !!execute; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
   const secrets = toggles.includes('secrets') && f.secrets;
   const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets, overwrite:f.overwrite, limit, execute});
   IMP.busy = false;
@@ -21206,8 +21377,7 @@ async function impRun(execute) {
   if (execute) {
     IMP.mode = 'done'; IMP.reportExecuted = true;
     if (res.state === 'applied') {
-      const s = res.report.summary;
-      toast('import done', 'migrated=' + s.migrated + ' skipped=' + s.skipped + ' conflict=' + s.conflict + ' error=' + s.error);
+      toast('Import finished', impSummaryText(res.report.summary, true));
       if (toggles.includes('cron') && f.cron) tasksRefresh();
       if (f.sessions) loadResources();
     }
@@ -21225,7 +21395,8 @@ function importAct(what) {
   if (verb === 'field') { const [name, ...v] = rest; if (name === 'sourceDir' || name === 'limit') f[name] = v.join(':'); impRepaint(); return; }
   if (verb === 'focus') { f.focus = arg; impRepaint(); return; }
   if (verb === 'preview') { f.focus = 'run'; impRun(false); return; }
-  if (verb === 'apply') { if (IMP.mode === 'preview') impRun(true); return; }
+  // Д53: Apply (and y / Enter) does nothing when the preview found nothing to import.
+  if (verb === 'apply') { if (IMP.mode === 'preview' && IMP.report && IMP.report.summary.migrated > 0) impRun(true); return; }
   if (verb === 'reset') { IMP.mode = 'configure'; IMP.report = null; IMP.reportExecuted = false; IMP.notice = null; IMP.state = null; impRepaint(); return; }
 }
 /* import-key-bindings.ts. Text rows are real inputs here: letters type into them, ↑/↓ and Enter walk the form. */
@@ -21288,7 +21459,7 @@ if (typeof window !== 'undefined') {
   window.__llmFallbackPersist = async (chain, appendLocal) => { await llmFallbackPersist(chain, appendLocal); return window.__llmPane(); };
   window.__llmProbe = (url) => (BR ? BR.llamaProbe(url) : Promise.resolve({ok:false, error:'no bridge'}));
   window.__llmExternalSave = async (url) => { llmSetMode('external'); LLMP.externalDraft = String(url); LLMP.externalInvalid = false; llmRepaint(); const n = document.getElementById('llm-url'); if (n) n.value = String(url); await llmExternalSave(); return window.__llmPane(); };
-  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, showAdvanced: TG.showAdvanced, message: TG.message || '', restart: !!TG.restart,
+  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: !!TG.restart,
     lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error});
   window.__telegramAct = (what) => { telegramAct(what); return window.__telegram(); };
   window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };
