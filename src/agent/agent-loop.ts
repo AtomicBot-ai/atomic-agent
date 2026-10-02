@@ -2155,11 +2155,22 @@ export class AgentLoop {
         // reserved final step must keep its `cancelled` outcome
         // (issue #107 — cancellation semantics remain unchanged), not
         // be relabelled `max_steps`.
+        //
+        // Once the turn's own signal has aborted, whatever the request
+        // threw is the stop's doing, not a verdict on the provider. An
+        // abort that lands as the stream ends does not always surface as
+        // an abort: the socket the stop tore down can come back as
+        // `terminated` or `fetch failed`, or a cut-off body as a parse
+        // failure — read as a transport outage (a wait, then a second
+        // close of the turn) or as `failed` with the transport's words,
+        // for a turn the user had simply stopped.
         const cancelled =
           !ceilingFired &&
-          (err instanceof CancelledError ||
+          (options.signal.aborted ||
+            err instanceof CancelledError ||
             (err instanceof LlmFailure && err.category === "cancelled") ||
             category === "cancelled");
+        if (cancelled) category = "cancelled";
         if (ceilingFired) {
           if (!finalizationStep) {
             // Abandon the request and take the reserved summary step
@@ -2563,13 +2574,11 @@ export class AgentLoop {
           // attempt carried.
           pendingNotice = noticeForThisStep;
           if (options.signal.aborted) {
+            // Stopped while parked. The close below the loop does the
+            // rest — status, `loop_completed`, the turn count — exactly
+            // once; doing it here as well closed the turn twice: two
+            // `loop_completed` events and a turn counted double.
             reason = "cancelled";
-            state = { ...state, status: "cancelled" };
-            this.deps.onEvent?.({
-              type: "loop_completed",
-              reason: "cancelled",
-            });
-            state = incrementTurnCount(state);
             break;
           }
           // Retry the very same step index: `i += 1` runs on `continue`,
