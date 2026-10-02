@@ -265,6 +265,7 @@ import {
   installGlobalErrorHandlers,
   captureError,
 } from "../error-reporting/index.js";
+import type { BrokenPipePolicy } from "../error-reporting/index.js";
 import { getAppVersion } from "../version.js";
 
 export interface RuntimeEventHandlers {
@@ -339,6 +340,14 @@ export interface CreateAgentRuntimeOptions {
    * day. Only the TUI passes `true`.
    */
   interactiveLaunch?: boolean;
+  /**
+   * What this process does when the reader of its stdout or stderr goes
+   * away (see `BrokenPipePolicy`). Default `exit`; `serve` passes `mute`,
+   * so a server whose host died keeps going until its orphan watch ends
+   * it through the teardown, instead of exiting at its next log line.
+   * Process-wide and first-come: the handlers are installed once.
+   */
+  brokenPipe?: BrokenPipePolicy;
   /** Optional overrides — used by tests to inject fakes. */
   overrides?: {
     llamaComplete?: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -871,7 +880,9 @@ export async function createAgentRuntime(
   });
   // Read the current reporter lazily so a hot-toggle is reflected without
   // re-installing the process-global handlers.
-  installGlobalErrorHandlers(() => errorReporter);
+  installGlobalErrorHandlers(() => errorReporter, {
+    brokenPipe: options.brokenPipe,
+  });
   // Live intent mirror for `setAnalyticsEnabled`. Tracks the operator's
   // choice, which is distinct from "is a client non-null" — the factories
   // still return `null` in test env / on a placeholder key/DSN even when

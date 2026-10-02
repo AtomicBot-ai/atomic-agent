@@ -61,10 +61,31 @@ export class StructuredLogger {
   }
 }
 
-export function stderrSink(): LogSink {
+/** Where `createStderrSink` writes: stderr, unless a test hands in another. */
+export type LineWriter = Pick<NodeJS.WritableStream, "write">;
+
+/**
+ * A sink that writes each record as one line:
+ *
+ *   [2026-10-02T07:15:29.123Z] WARN message {"context":"as JSON"}
+ *
+ * The desktop app reads the level back out of this shape (its agent.log
+ * and Diagnostics label `atag serve`'s lines by it), so the shape is a
+ * contract, pinned by `tracing.test.ts`.
+ *
+ * A factory, and named like one, because of how it was once misused:
+ * `serve` handed the runtime the factory itself instead of the sink it
+ * returns, and every record "written" built a sink and threw it away.
+ * The parameter is what makes that a compile error: a `LogRecord` is
+ * not a stream, so the factory does not type-check where a `LogSink`
+ * is wanted.
+ */
+export function createStderrSink(
+  stream: LineWriter = process.stderr,
+): LogSink {
   return (record) => {
     const context = record.context ? ` ${JSON.stringify(record.context)}` : "";
-    process.stderr.write(
+    stream.write(
       `[${new Date(record.timestamp).toISOString()}] ${record.level.toUpperCase()} ${record.message}${context}\n`,
     );
   };

@@ -23,7 +23,8 @@ import { promisify } from "node:util";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
-import { redactSecrets } from "./report-redact.js";
+import { logTail, redactSecrets, scrubText } from "./report-redact.js";
+import { agentLogTag, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
   configGet,
   configSet,
@@ -1878,14 +1879,18 @@ function wireIpc(client: AgentClient): void {
      anything but screenshots of a scrolling pane. This
      writes what the app actually holds — the agent log on disk, the config
      with every secret removed, and what this build is — next to the state
-     directory, and answers with the path so the window can reveal it. */
+     directory, and answers with the path so the window can reveal it.
+     The log's tail goes through the same scrubber as the config's strings:
+     `atag serve`'s own lines are in agent.log now (provider errors, URLs,
+     command lines), and the screen promises the keys are out. It starts at
+     a whole line, so a secret cut at its start cannot slip past it. */
   ipcMain.handle("app:debugBundle", async () => {
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const out = join(app.getPath("downloads"), `atomic-agent-debug-${stamp}.txt`);
       const cfg = await readWholeConfig();
       let log = "";
-      try { log = readFileSync(agentLogPath(), "utf8").slice(-400_000); } catch { log = "(no agent.log yet)"; }
+      try { log = scrubText(logTail(readFileSync(agentLogPath(), "utf8"), 400_000)); } catch { log = "(no agent.log yet)"; }
       writeFileSync(out, [
         `Atomic Agent ${app.getVersion()} · ${process.platform} ${process.arch}`,
         `written ${new Date().toISOString()}`,
@@ -2085,10 +2090,17 @@ function wireIpc(client: AgentClient): void {
      not become healthy within 120s" with no cause attached, and the cause had
      to be guessed at from outside the process that knew it. Small ring,
      write-only until a check fails. */
-  client.on("log", (event: { stream?: string; line?: string }) => {
-    AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${String(event.line ?? "").slice(0, 300)}`);
-    if (AGENT_SAID.length > 40) AGENT_SAID.shift();
-    appendAgentLog(`${new Date().toISOString()} ${event.stream === "stderr" ? "ERR" : "OUT"} ${String(event.line ?? "")}`);
+  client.on("log", (event: { stream?: string; line?: string; level?: AgentLogLevel }) => {
+    const line = String(event.line ?? "");
+    /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
+       INFO lines filled this ring. A structured line is tagged with its own
+       level (agent-output.ts); INFO and DEBUG stay in agent.log and the
+       console drawer but out of the ring, which is for what went wrong. */
+    if (worthQuoting(event.level)) {
+      AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${line.slice(0, 300)}`);
+      if (AGENT_SAID.length > 40) AGENT_SAID.shift();
+    }
+    appendAgentLog(`${new Date().toISOString()} ${agentLogTag(event.stream, event.level)} ${line}`);
   });
 
   // Lane B — backend switch: snapshot the route serve booted with, as soon
@@ -3280,7 +3292,8 @@ function exitAfterAgentStop(code: number): void {
   stopForQuit();
   const client = agent;
   agent = null;
-  const shutdown = (client ? client.stop() : Promise.resolve()).then(stopLocalDaemonOnQuit);
+  // close, not stop: no restart, workspace change or import still on its way starts another agent after it.
+  const shutdown = (client ? client.close() : Promise.resolve(true)).then(stopLocalDaemonOnQuit);
   void Promise.race([shutdown, new Promise((r) => setTimeout(r, 10_000))])
     .catch(() => undefined)
     .finally(() => app.exit(code));
@@ -8710,7 +8723,10 @@ app.on("before-quit", (event) => {
   agent = null;
   const shutdown = { done: false };
   quitShutdown = shutdown;
-  void client.stop().catch(() => undefined).then(stopLocalDaemonOnQuit).finally(() => {
+  /* close, not stop: a restart, a workspace change or an import whose stop
+     this joins would otherwise start `atag serve` again behind the quitting
+     app (agent-client start). */
+  void client.close().catch(() => undefined).then(stopLocalDaemonOnQuit).finally(() => {
     shutdown.done = true;
     app.quit();
   });

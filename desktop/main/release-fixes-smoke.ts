@@ -511,7 +511,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("34")) await guarded("34", check, () => checks34(js, check, downloads));
   // 40 — AI/ML API was out of funds, and the window named the local model server (and the key check called the key bad).
   if (want.has("40")) await guarded("40", check, () => checks40(js, check));
-  // 41 — a restart's own SIGKILL read as the agent failing, and the agent after it lost track of.
+  // 41 — a restart's own SIGKILL read as the agent failing, and the agent after it lost track of; a quit during a
+  // restart, an agent let go after its SIGKILL, and (41b) the agent's output as whole lines with their levels.
   if (want.has("41")) await guarded("41", check, () => checks41(js, check));
   // 43 — ATO-123: the local model server brought back when it dies under the app that started it.
   if (want.has("43")) await guarded("43", check, () => checks43(js, check));

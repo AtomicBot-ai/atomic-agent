@@ -4807,7 +4807,7 @@ function diagnosticsPane() {
       + '<button class="btn btn-p sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
       + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
     + '</div>'
-    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. It is not sent anywhere: attach it when you write to us.</p>'
+    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us.</p>'
     + diagLogHTML()
     + '</div>';
 }
@@ -8647,7 +8647,11 @@ if (BR) {
   BR.onMenu((command) => { if (typeof command === 'string') act(command); });
   BR.onLog((entry) => {
     if (!entry || !entry.line) return;
-    LOGS.push([new Date().toTimeString().slice(0, 8), entry.stream === 'stderr' ? 'warn' : 'info', entry.line]);
+    /* ATO-121: one of the agent's structured lines comes with its own level
+       (main's agent-output.ts), so routine INFO is not drawn as a warning; any
+       other stderr line still is. */
+    const lvl = ['debug', 'info', 'warn', 'error'].includes(entry.level) ? entry.level : (entry.stream === 'stderr' ? 'warn' : 'info');
+    LOGS.push([new Date().toTimeString().slice(0, 8), lvl, entry.line]);
     if (LOGS.length > 300) LOGS.shift();
     if (S.consoleOpen) renderConsole();
   });

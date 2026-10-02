@@ -1,8 +1,7 @@
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
-import { stderrSink } from "../tracing/structured-logger.js";
-import type { LogSink } from "../tracing/structured-logger.js";
+import { createStderrSink } from "../tracing/structured-logger.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import { HELP, parseArgs } from "./serve-args.js";
@@ -68,8 +67,21 @@ export async function serveCommand(args: string[]): Promise<number> {
         getConfig().agent.approvalLevel,
       ),
       traceDefault: true,
+      // A host that died (the desktop app, Force Quit) leaves stderr a
+      // dead pipe. The next log line used to exit the process there and
+      // then, skipping the `finally` below — the port, the session
+      // store's turn ends, the serve record. Muted, serve goes on until
+      // the orphan watch ends it through that teardown.
+      brokenPipe: "mute",
       handlers: {
-        logSinks: serveLogSinks(),
+        // The structured log goes to stderr, which a host running serve
+        // relays into its own log (the desktop app's agent.log and its
+        // Diagnostics pane); `config.log.level` still decides what is
+        // written. Serve once passed `stderrSink` here, the factory and
+        // not the sink it builds, and nothing was ever written: the
+        // factory's parameter makes that a compile error now, and
+        // `serve-command.test.ts` reads what is passed here.
+        logSinks: [createStderrSink()],
         onApprovalRequest: (request) => approvalBus.publish(request),
       },
     });
@@ -134,25 +146,6 @@ export async function serveCommand(args: string[]): Promise<number> {
     // invisible stray this module exists to prevent.
     releaseRecord?.();
   }
-}
-
-/**
- * Where `serve` sends its structured log: stderr, which a host running
- * it relays into its own log (the desktop app's agent.log and
- * Diagnostics pane). `config.log.level` still decides what is written —
- * the logger drops a record below it before any sink sees it.
- *
- * Built by a call, and exported for its test, because of how this went
- * wrong: serve used to hand the runtime `stderrSink` itself, the factory
- * rather than the sink it returns. That type-checks — a sink's return
- * value is ignored, so a function that takes no record and returns a
- * sink passes for one — and every record "written" to it built a sink
- * and threw it away. No structured line from `serve` ever reached
- * stderr: under the desktop, the log said nothing about why a turn
- * parked or failed.
- */
-export function serveLogSinks(): LogSink[] {
-  return [stderrSink()];
 }
 
 interface OrphanWatch {

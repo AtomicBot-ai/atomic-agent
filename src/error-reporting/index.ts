@@ -29,4 +29,8 @@ export {
   installStdioErrorGuards,
   resetGlobalErrorHandlersForTests,
 } from "./error-reporter.js";
+export type {
+  BrokenPipePolicy,
+  GlobalErrorHandlerOptions,
+} from "./error-reporter.js";
 export { isBrokenPipeError } from "./broken-pipe.js";

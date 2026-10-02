@@ -37,6 +37,10 @@ import { replyTool } from "../tools/conversation/reply.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import { reviewStallToolSet } from "./review-stall.js";
 import { resetConfigCache } from "../config/index.js";
+import {
+  StructuredLogger,
+  type LogRecord,
+} from "../tracing/structured-logger.js";
 import { buildOpenAiChatBody } from "../llm/provider/openai/openai-build-body.js";
 import type {
   CapabilitiesSummary,
@@ -2638,7 +2642,7 @@ describe("executeStep skill.view short-circuit", () => {
 describe("executeStep unparseable-completion fallback", () => {
   const grammarsDir = join(process.cwd(), "grammars");
 
-  async function runQwenStep(content: string) {
+  async function runQwenStep(content: string, logger?: StructuredLogger) {
     const registry = new ToolRegistry();
     registry.register(replyTool);
     const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
@@ -2675,6 +2679,7 @@ describe("executeStep unparseable-completion fallback", () => {
         }),
         grammar,
         profile: QWEN_THINK_PROFILE,
+        ...(logger ? { logger } : {}),
       },
     );
   }
@@ -2694,6 +2699,29 @@ describe("executeStep unparseable-completion fallback", () => {
     await expect(
       runQwenStep("[SFC] 分析中 rambling that never closes"),
     ).rejects.toThrow(/tool-call/);
+  });
+
+  // agent.log is what the desktop's "Save report for support" takes the
+  // tail of, and a completion can quote whatever the model read.
+  it("logs the unparseable completion's length and start, never the whole of it", async () => {
+    const records: LogRecord[] = [];
+    const logger = new StructuredLogger({
+      level: "debug",
+      sinks: [(record) => records.push(record)],
+    });
+    const prose = `Here is the file: ${"x".repeat(2_000)} OPENAI_API_KEY=sk-tail-of-the-file`;
+    const content = `thinking about it</think>${prose}`;
+    const outcome = await runQwenStep(content, logger);
+    expect(outcome.toolCalls[0]!.tool).toBe("reply");
+    const failed = records.find(
+      (r) => r.message === "tool-call parse failed after retry",
+    );
+    expect(failed?.context).toMatchObject({ rawLength: content.length });
+    expect(failed?.context).not.toHaveProperty("raw");
+    const preview = String(failed?.context?.["rawPreview"]);
+    expect(preview.length).toBeLessThanOrEqual(301);
+    expect(content.startsWith(preview.slice(0, -1))).toBe(true);
+    expect(JSON.stringify(records)).not.toContain("sk-tail-of-the-file");
   });
 });
 
@@ -5291,6 +5319,7 @@ describe("links need a source (#581)", () => {
       linkEvidence?: false;
       claimEvidence?: boolean;
       worldText?: string;
+      logger?: StructuredLogger;
     } = {},
   ) {
     const registry = new ToolRegistry();
@@ -5374,10 +5403,34 @@ describe("links need a source (#581)", () => {
         }),
         grammar,
         profile: PLAIN_INSTRUCT_PROFILE,
+        ...(options.logger ? { logger: options.logger } : {}),
       },
     );
     return { outcome, marks: () => marks, claimMarks: () => claimMarks };
   }
+
+  it("logs how many links were held and a few of them, each cut short", async () => {
+    const records: LogRecord[] = [];
+    const logger = new StructuredLogger({
+      level: "debug",
+      sinks: [(record) => records.push(record)],
+    });
+    const links = Array.from(
+      { length: 7 },
+      (_, i) => `${MANGLED}-${i}-${"a".repeat(300)}`,
+    );
+    await run(`Reviews: ${links.join(" ")}`, { logger });
+    const held = records.find(
+      (r) => r.message === "reply links a URL no tool result holds; held once",
+    );
+    expect(held?.context?.["linkCount"]).toBe(7);
+    const logged = held?.context?.["links"] as string[];
+    expect(logged).toHaveLength(5);
+    for (const [i, url] of logged.entries()) {
+      expect(url.length).toBeLessThanOrEqual(201);
+      expect(links[i]!.startsWith(url.slice(0, -1))).toBe(true);
+    }
+  });
 
   it("holds a reply whose link no result holds, once, with a notice naming it", async () => {
     const { outcome, marks } = await run(`The review: ${MANGLED}`);
