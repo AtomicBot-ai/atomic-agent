@@ -334,6 +334,57 @@ describe("runWorkerTasks", () => {
     ]);
   });
 
+  it("reports each completion's context size to the parent, as the context chip counts it", async () => {
+    // The live row beside each worker reads `timing.promptTokens` — the
+    // figure the composer's context chip takes from `llm_completed` —
+    // so the two readouts can never disagree about a token.
+    const completed = (promptTokens: number) => ({
+      type: "llm_event" as const,
+      event: {
+        type: "llm_completed" as const,
+        completion: {
+          content: "",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: { promptMs: 1, predictedMs: 1, promptTokens, predictedTokens: 1 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "m",
+        },
+      },
+    });
+    const { deps, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      options.eventHook?.(completed(4_200));
+      // An unchanged size is not news, and a provider that counted
+      // nothing is not a measurement of zero.
+      options.eventHook?.(completed(4_200));
+      options.eventHook?.(completed(0));
+      options.eventHook?.(completed(12_345));
+      return turnResult({ stepCount: 3 });
+    });
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(events.map((e) => e.sessionId)).toEqual(Array(4).fill("s-parent"));
+    expect(
+      events.map((e) =>
+        e.event.type === "fusion_worker"
+          ? [e.event.phase, e.event.contextTokens ?? null]
+          : null,
+      ),
+    ).toEqual([
+      ["started", null],
+      ["usage", 4_200],
+      ["usage", 12_345],
+      ["finished", null],
+    ]);
+  });
+
   it("bounds the tool lines: consecutive repeats collapse and the count is capped", async () => {
     // Eight workers times a dozen tools each is a feed that shows
     // nothing else. The complete tally still comes back on the result

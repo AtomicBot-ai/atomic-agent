@@ -6,7 +6,7 @@ import { MemoryStore, type MemoryEntry } from "../../../src/memory/memory-store.
 import {
   EmbeddingStore,
   EmbeddingWriter,
-  LlamaEmbeddingClient,
+  createLocalEmbeddingClient,
 } from "../../../src/memory/embeddings/index.js";
 import { LinkStore } from "../../../src/memory/links/link-store.js";
 
@@ -340,7 +340,7 @@ export async function runE1(opts: E1RunnerOptions = {}): Promise<E1Report> {
           if (requested.includes(m)) modesSkipped.push({ mode: m, reason });
         }
       } else {
-        const client = new LlamaEmbeddingClient({
+        const client = createLocalEmbeddingClient({
           url: opts.embeddingUrl!,
           dim: opts.embeddingDim!,
           model: opts.embeddingModel ?? "unknown",

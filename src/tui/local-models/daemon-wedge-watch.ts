@@ -91,14 +91,22 @@ export function processingFingerprint(slots: unknown): string | null {
   return parts.length > 0 ? parts.join("|") : null;
 }
 
-/** Any HTTP status is an answer; only a connect/timeout failure is not. */
+/**
+ * Any HTTP status is an answer; only a connect/timeout failure is not.
+ * `apiKey` is the managed daemon's key: `/slots` sits behind `--api-key`
+ * (#582), and a 401 would carry no slots to read a stall from.
+ */
 export async function probeEndpoint(
   url: string,
   timeoutMs: number,
   fetchImpl: typeof fetch = fetch,
+  apiKey?: string | null,
 ): Promise<ProbeAnswer> {
   try {
-    const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetchImpl(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      ...(apiKey ? { headers: { authorization: `Bearer ${apiKey}` } } : {}),
+    });
     const slots = res.ok ? await res.json().catch(() => undefined) : undefined;
     return { answered: true, slots };
   } catch {

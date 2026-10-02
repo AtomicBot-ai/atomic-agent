@@ -954,7 +954,11 @@ export type AgentLoopEvent =
       type: "fusion_worker";
       taskId: string;
       title: string;
-      phase: "started" | "tool" | "finished" | "failed" | "cancelled";
+      /**
+       * `usage` is not a line: it carries a fresh `contextTokens` for the
+       * live worker row and the feed renders nothing for it.
+       */
+      phase: "started" | "tool" | "usage" | "finished" | "failed" | "cancelled";
       /**
        * Which leg this line is about. `worker` when absent, so the
        * event's original shape still reads correctly. The orchestrator
@@ -969,6 +973,14 @@ export type AgentLoopEvent =
        * here would be attributing spend to the wrong model.
        */
       model?: string;
+      /**
+       * `phase: "usage"` only: how full this worker's context is, as its
+       * last completion counted it — `timing.promptTokens`, the figure
+       * the composer's context chip takes from `llm_completed` (llama.cpp
+       * `prompt_n + tokens_cached`, so a warm KV cache is not
+       * under-counted). Measured, never estimated.
+       */
+      contextTokens?: number;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
       /**
@@ -1293,6 +1305,16 @@ export class AgentLoop {
       noticed: () => claimNoticeGiven,
       markNoticed: () => {
         claimNoticeGiven = true;
+      },
+    };
+    // Links need a source, once per turn, the same way: a reply link no
+    // tool result holds is held back the first time only
+    // (`link-evidence.ts`).
+    let linkNoticeGiven = false;
+    const linkEvidence = {
+      noticed: () => linkNoticeGiven,
+      markNoticed: () => {
+        linkNoticeGiven = true;
       },
     };
     // Same shape for the progress-note notice: a `reply` batched with
@@ -1731,6 +1753,7 @@ export class AgentLoop {
                 }
               : {}),
             claimEvidence,
+            linkEvidence,
             progressNotes,
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,

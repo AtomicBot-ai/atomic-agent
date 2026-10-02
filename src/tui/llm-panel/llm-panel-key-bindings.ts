@@ -16,6 +16,7 @@ import {
   activateProviderEmbedding,
   openAddProvider,
   openProviderConfig,
+  requestCloudProviderRemoval,
   switchLlmMode,
   triggerDaemonAction,
   triggerLlmPrimary,
@@ -137,6 +138,14 @@ export function handleLlmPanelKey(
   if (input === "c") {
     dispatch({ type: "llm_mode_set", mode: "cloud" });
     openProviderConfig(state, dispatch);
+    return true;
+  }
+  // `d` — remove the cloud provider under the cursor, the same key the
+  // Fallback pane uses for its links. Opens the shared y/n confirm
+  // (`LlmPanelModals`, keys in `handleLlmModalKey`); the write goes
+  // through `onProvidersRemove` → `ProvidersOrchestrator`.
+  if (input === "d" && state.llmPanel.mode === "cloud") {
+    requestCloudProviderRemoval(row, dispatch);
     return true;
   }
   if (input === "s") {

@@ -31,6 +31,14 @@ import {
   type CheckClaim,
 } from "./claim-evidence.js";
 import {
+  extractLinks,
+  formatUnsourcedLinkNotice,
+  formatUnsourcedLinkRefusal,
+  linkSources,
+  unsourcedLinks,
+  type UnsourcedLink,
+} from "./link-evidence.js";
+import {
   formatProgressNoteNotice,
   closingReplyBatch,
   progressNoteText,
@@ -265,6 +273,12 @@ export interface StepDependencies {
    * claimed a check that never ran. Absent ⇒ replies are never held.
    */
   claimEvidence?: { noticed: () => boolean; markNoticed: () => void };
+  /**
+   * Links need a source (`link-evidence.ts`). Per-turn state held by the
+   * loop: whether this turn has already been told once that a reply
+   * carried a link no tool result holds. Absent ⇒ links are not checked.
+   */
+  linkEvidence?: { noticed: () => boolean; markNoticed: () => void };
   /**
    * Per-turn state for the progress-note notice
    * (`progress-note-reply.ts`): whether this turn was already told that
@@ -1530,39 +1544,79 @@ async function executeStepInner(
   // more step to run the check or drop the claim. The forced final step
   // is exempt (it exists so a turn is never cut off without a summary),
   // and the second time the claim is delivered and marked in the trace.
+  //
+  // A `reply` link that no tool result this turn holds, on a host those
+  // results did link to — a search hit with a slug word dropped — is
+  // held the same way, once per turn (`link-evidence.ts`). Both checks
+  // read the same reply; when both fire on one step they share the one
+  // held reply and the notice names both.
   let unverified: CheckClaim[] = [];
-  let claimRefusal: string | null = null;
+  let unsourced: UnsourcedLink[] = [];
+  let heldRefusal: string | null = null;
   const tail = calls[calls.length - 1];
-  if (
-    deps.claimEvidence !== undefined &&
+  const replyText =
     suppressedTerminal === null &&
     tail !== undefined &&
     tail.tool === "reply" &&
     typeof tail.args?.text === "string"
-  ) {
-    unverified = unverifiedClaims(tail.args.text, [
+      ? tail.args.text
+      : null;
+  if (replyText !== null && deps.claimEvidence !== undefined) {
+    unverified = unverifiedClaims(replyText, [
       ...turnToolCalls(ctx.session.turns),
       ...calls
         .slice(0, -1)
         .map((call) => ({ tool: call.tool, args: call.args ?? {} })),
     ]);
-    if (unverified.length > 0 && ctx.terminalOnly !== true) {
-      if (!deps.claimEvidence.noticed()) {
-        deps.claimEvidence.markNoticed();
-        const notice = formatUnverifiedClaimNotice(unverified);
-        trimmedBatchNotice =
-          trimmedBatchNotice === undefined
-            ? notice
-            : `${trimmedBatchNotice}\n\n${notice}`;
-        claimRefusal = formatUnverifiedClaimRefusal(unverified);
-        suppressedTerminal = tail;
-        calls = calls.slice(0, -1);
-        deps.logger?.warn("reply claims a check that did not run; held once", {
-          sessionId: ctx.session.id,
-          stepIndex: ctx.stepIndex,
-          claims: unverified.map((claim) => claim.text),
-        });
-      }
+  }
+  if (
+    replyText !== null &&
+    deps.linkEvidence !== undefined &&
+    extractLinks(replyText).length > 0
+  ) {
+    // The reply's own batch can only hold bookkeeping here (a reply
+    // batched with work became a progress note above), so the
+    // transcript's results are every result the reply could quote. The
+    // open page's snapshot is shown to the model too, so its links count
+    // as known. A reply with no link skips the transcript scan.
+    const world = ctx.session.worldSnapshot?.text;
+    unsourced = unsourcedLinks(
+      replyText,
+      linkSources(ctx.session.turns, world ? [world] : []),
+    );
+  }
+  if (tail !== undefined && ctx.terminalOnly !== true) {
+    const notices: string[] = [];
+    const refusals: string[] = [];
+    if (unverified.length > 0 && deps.claimEvidence?.noticed() === false) {
+      deps.claimEvidence.markNoticed();
+      notices.push(formatUnverifiedClaimNotice(unverified));
+      refusals.push(formatUnverifiedClaimRefusal(unverified));
+      deps.logger?.warn("reply claims a check that did not run; held once", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        claims: unverified.map((claim) => claim.text),
+      });
+    }
+    if (unsourced.length > 0 && deps.linkEvidence?.noticed() === false) {
+      deps.linkEvidence.markNoticed();
+      notices.push(formatUnsourcedLinkNotice(unsourced));
+      refusals.push(formatUnsourcedLinkRefusal(unsourced));
+      deps.logger?.warn("reply links a URL no tool result holds; held once", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        links: unsourced.map((link) => link.url),
+      });
+    }
+    if (notices.length > 0) {
+      const notice = notices.join("\n\n");
+      trimmedBatchNotice =
+        trimmedBatchNotice === undefined
+          ? notice
+          : `${trimmedBatchNotice}\n\n${notice}`;
+      heldRefusal = refusals.join("\n");
+      suppressedTerminal = tail;
+      calls = calls.slice(0, -1);
     }
   }
   const batchSize =
@@ -1612,16 +1666,16 @@ async function executeStepInner(
   const suppressed =
     suppressedTerminal !== null && fabricated !== null
       ? suppressedTerminalRecord(suppressedTerminal, fabricated)
-      : suppressedTerminal !== null && claimRefusal !== null
+      : suppressedTerminal !== null && heldRefusal !== null
         ? {
             call: suppressedTerminal,
             result: compressToolResult({
               tool: suppressedTerminal.tool,
               status: "error",
-              output: claimRefusal,
+              output: heldRefusal,
               details: {
                 notDelivered: true,
-                unverifiedClaims: unverified.map((claim) => claim.text),
+                ...evidenceMarks(unverified, unsourced),
               },
             }),
           }
@@ -1725,7 +1779,8 @@ async function executeStepInner(
   // A reply delivered with claims nothing backs (the turn was already
   // told once, or this is the forced final step) is marked, so the trace
   // and the transcript say the check was never seen to run.
-  if (unverified.length > 0 && suppressed === null) {
+  // Same for a link no tool result held.
+  if ((unverified.length > 0 || unsourced.length > 0) && suppressed === null) {
     const last = toolResults.length - 1;
     const reply = toolResults[last];
     if (reply !== undefined && reply.tool === "reply") {
@@ -1733,7 +1788,7 @@ async function executeStepInner(
         ...reply,
         details: {
           ...reply.details,
-          unverifiedClaims: unverified.map((claim) => claim.text),
+          ...evidenceMarks(unverified, unsourced),
         },
       };
     }
@@ -3770,4 +3825,24 @@ function applyStateEffects(
     }
   }
   return next;
+}
+
+/**
+ * The trace marks a reply carries when a check found something: the
+ * claims nothing backed (`unverifiedClaims`) and the links no tool
+ * result held (`unsourcedLinks`). A key is present only when it has
+ * entries.
+ */
+function evidenceMarks(
+  unverified: readonly CheckClaim[],
+  unsourced: readonly UnsourcedLink[],
+): Record<string, string[]> {
+  return {
+    ...(unverified.length > 0
+      ? { unverifiedClaims: unverified.map((claim) => claim.text) }
+      : {}),
+    ...(unsourced.length > 0
+      ? { unsourcedLinks: unsourced.map((link) => link.url) }
+      : {}),
+  };
 }

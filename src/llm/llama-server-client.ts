@@ -459,7 +459,12 @@ const THROUGHPUT_WINDOW = 8;
 export class LlamaServerClient {
   /** When set, this fixed base wins; otherwise each request reads `getConfig().llama.url`. */
   private readonly baseUrlOverride: string | undefined;
-  private readonly apiKey: string | null;
+  /**
+   * When set, this fixed key wins; otherwise each request reads
+   * `getConfig().localModels.apiKey`, like the URL — a switch to managed
+   * mode mid-session brings the managed daemon's key with it (#582).
+   */
+  private readonly apiKeyOverride: string | undefined;
   private readonly requestTimeoutMs: number;
   private readonly firstTokenTimeoutMs: number;
   private readonly streamTotalTimeoutMs: number;
@@ -496,7 +501,7 @@ export class LlamaServerClient {
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
     this.baseUrlOverride = options.baseUrl;
-    this.apiKey = options.apiKey ?? config.localModels.apiKey;
+    this.apiKeyOverride = options.apiKey ?? undefined;
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? config.localModels.requestTimeoutMs;
     // Floored at the idle budget: before the two were split, "raise
@@ -1488,7 +1493,8 @@ export class LlamaServerClient {
       "content-type": "application/json",
       accept: stream ? "text/event-stream" : "application/json",
     };
-    if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
+    const apiKey = this.apiKeyOverride ?? getConfig().localModels.apiKey;
+    if (apiKey) headers.authorization = `Bearer ${apiKey}`;
     return headers;
   }
 

@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import { formatTokens } from "./components/format-tokens.js";
 
 /** One leg of a fan-out, as the chat surface shows it while it runs. */
 export interface FusionLiveWorker {
@@ -28,6 +29,14 @@ export interface FusionLiveWorker {
    * stuck?" is the only question the operator is asking of this row.
    */
   readonly etaSeconds: number | null;
+  /**
+   * How full this leg's context was at its last completion, as the
+   * provider counted it — the composer chip's own figure, carried on
+   * `phase: "usage"`. `null` until the first completion reports one;
+   * kept once the leg is done, because the final size is the answer to
+   * "which worker ate the window".
+   */
+  readonly contextTokens: number | null;
 }
 
 /**
@@ -72,6 +81,7 @@ export function reduceFusionLiveWorkers(
     // The estimate arrives on the first event and is not repeated on
     // every one, so it is kept rather than overwritten with undefined.
     etaSeconds: event.etaSeconds ?? previous?.etaSeconds ?? null,
+    contextTokens: event.contextTokens ?? previous?.contextTokens ?? null,
   };
   if (at < 0) return [...current, next];
   const copy = [...current];
@@ -162,7 +172,7 @@ export function etaCorrection(
 }
 
 /**
- * One line per leg: `worker · qwen-3.5-4b — os.fs.read · 42s (~2m expected)`.
+ * One line per leg: `worker · qwen-3.5-4b — os.fs.read · 42s (~2m expected) · 12.3k ctx`.
  *
  * The estimate is dropped once the leg is done: at that point the
  * elapsed time IS the answer, and a guess printed next to a fact only
@@ -200,11 +210,17 @@ export function formatFusionLiveWorker(
       : typeof expectation === "number"
         ? { correction: expectation, medianMs: null }
         : expectation;
+  // Last, so a narrow terminal truncates the count before the clock:
+  // "is this stuck?" is the question this row answers first.
+  const context =
+    worker.contextTokens === null
+      ? ""
+      : ` · ${formatTokens(worker.contextTokens)} ctx`;
   return `${worker.title} · ${model} — ${what} · ${elapsed}${describeExpectation(
     worker,
     elapsedMs,
     measured,
-  )}`;
+  )}${context}`;
 }
 
 /**

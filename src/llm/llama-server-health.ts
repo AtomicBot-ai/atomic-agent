@@ -1,4 +1,5 @@
 import { getConfig } from "../config/index.js";
+import { apiKeyForUrl } from "../local-llm/managed-api-key.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { verifyGuardedEndpoint } from "./llama-server-auth-probe.js";
 
@@ -47,6 +48,10 @@ export interface HealthCheckOptions {
   timeoutMs?: number;
   retries?: number;
   backoffMs?: number;
+  /**
+   * Defaults to the key for `url` (`apiKeyForUrl`): a probe of another
+   * host never carries the managed daemons' key (#582).
+   */
   apiKey?: string | null;
   /**
    * Also GET the key-guarded `/props` after a passing `/health`, so a
@@ -219,7 +224,7 @@ export async function checkLlamaServer(
   const retries = options.retries ?? config.localModels.healthRetries;
   const backoffMs =
     options.backoffMs ?? config.localModels.healthRetryBackoffMs;
-  const apiKey = options.apiKey ?? config.localModels.apiKey;
+  const apiKey = options.apiKey ?? apiKeyForUrl(base, config);
 
   let last: HealthResult | null = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {

@@ -14,6 +14,8 @@ import {
   setActiveTextProviderInConfig,
   setProviderDefaultChatModelInConfig,
   setProviderDefaultEmbeddingModelInConfig,
+  activeProviderRemovalMessage,
+  LlmRemoveActiveProviderError,
   removeLlmProvider,
   wrapLlmConfigError,
 } from "../persist-llm-provider.js";
@@ -606,9 +608,35 @@ export class ProvidersOrchestrator {
     }
   }
 
+  /**
+   * True when `id` serves chat per the runtime registry or the cached
+   * config. An early, cheap check only: the cache can lag another
+   * process, so `removeLlmProvider` repeats it on the file it reads.
+   */
+  private isLiveActiveTextProvider(id: string): boolean {
+    if (this.runtime.providerRegistry.activeTextProviderId === id) return true;
+    return resolveLlmConfig(getConfig()).activeTextProvider === id;
+  }
+
   async removeProviderById(id: string): Promise<void> {
     this.bus.emit({ type: "providers_busy", busy: true });
     try {
+      // The panel's `isActiveText` is a snapshot from the last refresh;
+      // Telegram `/model` or a run-mode change elsewhere can move the
+      // active route without the TUI rows following. Check the runtime
+      // registry and the cached config before anything is written:
+      // `providerRegistry.removeProvider` refuses the active provider
+      // too, but only after `removeLlmProvider` has already rewritten
+      // the file. The authoritative check is inside `removeLlmProvider`,
+      // on the file it reads; this one just answers early.
+      if (this.isLiveActiveTextProvider(id)) {
+        this.bus.emit({
+          type: "providers_remove_failed",
+          error: activeProviderRemovalMessage(id),
+        });
+        this.refresh();
+        return;
+      }
       removeLlmProvider(id);
       await this.runtime.providerRegistry.removeProvider(id);
       await this.runtime.reloadLlmProviders();
@@ -623,6 +651,9 @@ export class ProvidersOrchestrator {
         type: "providers_remove_failed",
         error: wrapLlmConfigError(err),
       });
+      // The file moved the active provider under a stale panel; reload
+      // the rows so the Cloud pane shows which provider serves chat now.
+      if (err instanceof LlmRemoveActiveProviderError) this.refresh();
     } finally {
       this.bus.emit({ type: "providers_busy", busy: false });
     }

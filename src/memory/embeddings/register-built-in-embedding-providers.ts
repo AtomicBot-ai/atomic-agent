@@ -1,4 +1,4 @@
-import { LlamaEmbeddingClient } from "./embedding-client.js";
+import { createLocalEmbeddingClient } from "./local-embedding-client.js";
 import {
   OpenAiEmbeddingProvider,
   OpenRouterEmbeddingProvider,
@@ -24,10 +24,11 @@ export function registerBuiltInEmbeddingProviderKinds(): void {
     }
     const def = getEmbeddingModelDef(modelId);
     const port = config.localModels.embeddings.port;
-    return new LlamaEmbeddingClient({
+    return createLocalEmbeddingClient({
       url: entry.baseUrl ?? `http://127.0.0.1:${port}`,
       dim: def.dim,
       model: def.id,
+      ...(entry.apiKey ? { fixedApiKey: entry.apiKey } : {}),
     });
   });
 

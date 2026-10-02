@@ -171,6 +171,98 @@ describe("taskCommand", () => {
     expect(stderr()).toMatch(/--max-attempts/);
   });
 
+  it("create --at keeps a one-shot task out of the due queue until that time", async () => {
+    const at = Date.now() + 60 * 60_000;
+    const code = await taskCommand([
+      "create",
+      "--message",
+      "later",
+      "--at",
+      String(at),
+    ]);
+    expect(code).toBe(0);
+    const created = JSON.parse(stdout());
+    expect(created.scheduledFor).toBe(at);
+
+    const store = new TaskStore({ dbFile: getConfig().paths.tasksDbFile });
+    try {
+      const dueIds = (now: number) => store.listDue(now).map((t) => t.id);
+      expect(dueIds(Date.now())).not.toContain(created.id);
+      expect(dueIds(at)).toContain(created.id);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("create --at accepts an ISO-8601 time", async () => {
+    const code = await taskCommand([
+      "create",
+      "--message",
+      "new year",
+      "--at",
+      "2030-01-01T09:00:00Z",
+    ]);
+    expect(code).toBe(0);
+    const created = JSON.parse(stdout());
+    expect(created.scheduledFor).toBe(Date.parse("2030-01-01T09:00:00Z"));
+    expect(created.schedule).toEqual({
+      kind: "at",
+      at: Date.parse("2030-01-01T09:00:00Z"),
+    });
+  });
+
+  it("create rejects an unparseable --at", async () => {
+    const code = await taskCommand([
+      "create",
+      "--message",
+      "x",
+      "--at",
+      "tomorrow-ish",
+    ]);
+    expect(code).toBe(1);
+    expect(stderr()).toMatch(/--at must be a Unix timestamp/);
+    expect(stderr()).toContain("tomorrow-ish");
+  });
+
+  it.each(["Oct 2", "-5", "2030-02-31", "2030-01-01 09:00"])(
+    "create rejects the non-strict --at %j that Date.parse would accept",
+    async (raw) => {
+      const code = await taskCommand(["create", "--message", "x", "--at", raw]);
+      expect(code).toBe(1);
+      expect(stderr()).toMatch(/strict ISO-8601/);
+      expect(stdout()).toBe("");
+    },
+  );
+
+  it("create --at in the future prints no past-time warning", async () => {
+    const code = await taskCommand([
+      "create",
+      "--message",
+      "future",
+      "--at",
+      "2030-01-01T09:00:00+02:00",
+    ]);
+    expect(code).toBe(0);
+    expect(stderr()).not.toMatch(/in the past/);
+  });
+
+  it("create --at in the past warns on stderr with the ISO time", async () => {
+    const code = await taskCommand([
+      "create",
+      "--message",
+      "overdue",
+      "--at",
+      "2020-01-01T00:00:00Z",
+    ]);
+    expect(code).toBe(0);
+    expect(stderr()).toContain(
+      "warning: --at 2020-01-01T00:00:00.000Z is in the past",
+    );
+    expect(stderr()).toMatch(/next scheduler tick/);
+    const created = JSON.parse(stdout());
+    expect(created.scheduledFor).toBe(Date.parse("2020-01-01T00:00:00Z"));
+  });
+
   it("show fails for unknown id", async () => {
     const code = await taskCommand(["show", "t-missing"]);
     expect(code).toBe(1);

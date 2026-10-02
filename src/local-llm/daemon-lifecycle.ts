@@ -50,6 +50,10 @@ import {
 } from "./models-catalog.js";
 import { resolvePlatformAsset } from "./platform-assets.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
+import {
+  buildDaemonEnv,
+  resolveManagedServerApiKey,
+} from "./managed-api-key.js";
 
 export interface DaemonStartOptions {
   dataDir: string;
@@ -139,6 +143,13 @@ export interface DaemonStartOptions {
    * 31B model at 3 tok/s spends ~20 s on it. `false` skips it.
    */
   throughputProbe?: boolean;
+  /**
+   * The key the server requires (issue #582), handed to the child as
+   * `LLAMA_API_KEY` — never argv. `startDaemon` resolves it from
+   * `localModels.apiKey`, falling back to the key persisted in `dataDir`,
+   * so a caller passes it only to force one.
+   */
+  apiKey?: string;
 }
 
 /** What `probeThroughput` measured on one short completion. */
@@ -742,6 +753,9 @@ export async function startDaemon(
         : prefixReuse.prefixReuse;
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
+  const apiKey =
+    opts.apiKey ??
+    resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());
   const args = buildLlamaServerArgs(
     {
       ...opts,
@@ -783,7 +797,7 @@ export async function startDaemon(
       stdio: ["ignore", logFd, logFd],
       detached: true,
       ...(process.platform === "win32" ? { windowsHide: true } : {}),
-      env: { ...process.env },
+      env: buildDaemonEnv(apiKey),
     });
     child.unref();
     if (child.pid == null) {
@@ -818,7 +832,7 @@ export async function startDaemon(
     if (opts.throughputProbe !== false) {
       const sample = await probeThroughput({
         port: opts.port,
-        apiKey: readConfiguredApiKey(),
+        apiKey,
       });
       if (sample) {
         tokensPerSecond = sample.tokensPerSecond;
@@ -850,7 +864,11 @@ export async function startDaemon(
   }
 }
 
-/** `localModels.apiKey` for the probe; a config that cannot be read sends none. */
+/**
+ * `localModels.apiKey` — the key the agent's clients send. A config that
+ * cannot be read yields none, and the launch falls back to the key
+ * persisted in the data dir.
+ */
 function readConfiguredApiKey(): string | null {
   try {
     return getConfig().localModels.apiKey ?? null;
@@ -973,6 +991,8 @@ export interface EmbeddingDaemonStartOptions {
    * daemons land on the same chosen GPU.
    */
   device?: string;
+  /** Same as `DaemonStartOptions.apiKey`; both daemons share one key. */
+  apiKey?: string;
 }
 
 /**
@@ -1041,6 +1061,9 @@ export async function startEmbeddingDaemon(
   }
 
   const device = await resolveManagedDevice(binPath, opts.device);
+  const apiKey =
+    opts.apiKey ??
+    resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());
   const args = buildEmbeddingServerArgs({ ...opts, device }, modelPath);
 
   const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
@@ -1049,7 +1072,7 @@ export async function startEmbeddingDaemon(
       stdio: ["ignore", logFd, logFd],
       detached: true,
       ...(process.platform === "win32" ? { windowsHide: true } : {}),
-      env: { ...process.env },
+      env: buildDaemonEnv(apiKey),
     });
     child.unref();
     if (child.pid == null) {

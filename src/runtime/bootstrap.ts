@@ -132,9 +132,9 @@ import {
 } from "../memory/retrieve/index.js";
 import type { EmbeddingClient } from "../memory/embeddings/embedding-client.js";
 import {
+  createLocalEmbeddingClient,
   EmbeddingStore,
   EmbeddingWriter,
-  LlamaEmbeddingClient,
 } from "../memory/embeddings/index.js";
 import {
   getEmbeddingModelDef,
@@ -1409,7 +1409,11 @@ export async function createAgentRuntime(
     }).catch(() => ({ reachable: false }));
     if (probe.reachable) {
       try {
-        const client = new LlamaEmbeddingClient({
+        // Not a bare `LlamaEmbeddingClient`: a managed embedding daemon
+        // requires the key (#582), and `/health` above is exempt from
+        // it, so a keyless client would pass the probe and then get 401
+        // on every `/embedding`.
+        const client = createLocalEmbeddingClient({
           url: embUrl,
           dim: embModelDef.dim,
           model: embModelDef.id,
