@@ -1162,7 +1162,7 @@ const MCP_MAX_ROWS = 14;
    list from `atag models search --json`, /health for the External row,
    and the key names present in the Electron env ∪ <stateDir>/.env. */
 const LLMP = {
-  mode:'local', cursor:{local:0, cloud:0, external:0, fallback:0}, view:'panel', // view: 'panel' | 'logs' (the `L` LLM-logs screen)
+  mode:'local', cursor:{local:0, cloud:0, external:0, fallback:0}, view:'panel', // the one view: the `L` log screen is Settings › Diagnostics' now (Д35)
   /* SELECTOR LANE — llm-panel-state.ts `syncModeToActiveRoute`. Armed when the
      LLM tab is asked for (tui-state.ts:686) and settled by
      llm-panel-reducer.ts resolveModeFromActiveRoute; it stays armed while no
@@ -1183,15 +1183,13 @@ const LLMP = {
   externalDraft:null, externalInvalid:false, steerUrl:null,
   fallbackPicker:null, // {cursor}
   daemonPhase:null, // 'starting' | 'stopping' while a `models start|stop` runs (the TUI's daemonPhase)
-  logs:null, logsTimer:null, logsBusy:false,
   pulling:null, pullLog:[], // {kind:'chat'|'embedding', id} while a `models pull[-embedding]` streams
-  tune:{busy:null, msg:null, err:null}, // the Thinking section: busy = the config path being written
+  tune:{busy:null, msg:null, err:null}, // the Thinking knobs and the chat template: busy = the config path being written; where = 'tune' | 'adv', the card the last write's line goes under
   timer:null, seq:0, inflight:null,
 };
 const LLM_PANEL_MODES = ['local','cloud','external','fallback']; // llm-panel-state.ts LLM_PANEL_MODES
 const LLM_MODE_LABELS = {local:'Local', cloud:'Cloud', external:'External llama.cpp', fallback:'Fallback'}; // llm-panel.tsx MODE_LABELS
 const LLM_MODEL_WINDOW = 12; // llm-mode-rows.tsx MODEL_WINDOW
-const LLM_LOG_LINES = 30; // local-llm-logs-panel.tsx DEFAULT_MAX_LINES
 /* Telegram panel — the TUI's TelegramPanelState minus the channel facts
    the serve API does not expose (channelState, botUsername, botId). */
 const TG = {
@@ -1333,7 +1331,7 @@ const HF_MMPROJ_LINE = '   vision projector in this repo — it is pulled alongs
 const HF_ROW_LABEL = 'Add a model from Hugging Face…';  // onboarding/local-model-picks.ts HUGGING_FACE_ROW_LABEL
 /* Authored here — the TUI has no counterpart, because the TUI's Local
    pane never has to explain why Ollama is not in it. */
-const OLLAMA_SIGNPOST = 'Using Ollama? Add it under Cloud as a provider: Ollama (local), http://localhost:11434. Nothing here downloads from Ollama.';
+const OLLAMA_SIGNPOST = 'Ollama runs its own models: this adds it as a provider at http://localhost:11434. Nothing here downloads from Ollama.';
 
 /* ---- Item 7C: what v0.5.5 answers that the desktop was projecting ----
    `stored` is GET /api/sessions/{id}.contextUsage verbatim — the whole
@@ -19941,6 +19939,8 @@ function llmTabEntered() {
     LLMP.syncModeToRoute = true;
     llmSyncModeToRoute();
   }
+  // Д31: what Cloud and Fusion still need (llmRouteNeeds) is read off these facts; a window that has not loaded them yet does it now.
+  if (BR && (!BSW.readyLoaded || !BSW.localLoaded)) fzLoadFacts().then(() => llmRepaint());
   llmEnsurePoll();
   if (LLMP.lastRefreshedAt === null && !LLMP.inflight) llmRefresh();
   else if (!LLMP.inflight) llmRefreshStatus();
@@ -19949,7 +19949,7 @@ function llmTabEntered() {
 function llmEnsurePoll() {
   if (!BR || LLMP.timer) return;
   LLMP.timer = setInterval(() => {
-    if (!llmVisible()) { clearInterval(LLMP.timer); LLMP.timer = null; llmStopLogs(); return; }
+    if (!llmVisible()) { clearInterval(LLMP.timer); LLMP.timer = null; return; }
     if (LLMP.view === 'panel' && !LLMP.inflight && !LLMP.pulling && !LLMP.daemonPhase && !LLMP.statusBusy && !llmTyping()) llmRefreshStatus(true);
   }, 5000);
 }
@@ -20114,8 +20114,9 @@ function llmLocalRows() {
     rows.push({kind:'localTextModel', id:'local-text:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect,
       text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'
         + (best && m.id === best.id ? '  ★ best fit for this machine' : ''),
-      // The blurb line and the fit verdict, drawn under the row.
+      // The blurb line, drawn under the row. The fit verdict is a badge on the first line (Д32), its reasons the badge's tooltip.
       sub: [m.description || null, m.vision ? 'reads images' : null, m.context + ' context'].filter(Boolean).join(' · '),
+      fit: llmFitBadge(m, ram),
       fitClass: fit.v,
       fitNote: fit.label,
       caution: cautions.length ? cautions.join(' ') : null});
@@ -20288,7 +20289,6 @@ function llmRemoveLink(links, providerId) {
 function llmTab() {
   llmEnsurePoll();
   if (BR && LLMP.lastRefreshedAt === null && !LLMP.inflight) setTimeout(llmRefresh, 0); // reached without settingsPaneEntered (the --models harness's __pane)
-  if (LLMP.view === 'logs') return '<div class="llm-pane llm-pane--logs">' + llmLogsHTML() + '</div>';
   /* Soft Tactile (ST-24, ST-27): a confirm or a prompt floats over the pane
      instead of replacing it. The pane behind is `inert`, so it takes no
      click, no focus and no key — the same reach as when the modal took the
@@ -20302,22 +20302,26 @@ function llmTab() {
   return '<div class="llm-pane has-modal"><div class="llm-modal-layer">' + modal + '</div>'
     + '<div class="llm-behind" inert aria-hidden="true">' + body + '</div></div>';
 }
-/* The panel under the toolbar, top to bottom (Calm S5): the pane switch,
-   notices, where chats run, the pane itself, and Advanced (the route's
-   internals and the local server's knobs) behind a disclosure. */
+/* The panel, top to bottom (Д30, Danya 01.10): where chats run — the one
+   choice here that changes what answers — with the model and its server;
+   what the pane has to report; then the setup tabs (Local models · Cloud
+   providers · Custom server) and the tab's lists; Advanced last, behind a
+   disclosure. The two choices used to be two look-alike rows at the top,
+   "Set up: Local / Cloud / Custom server" over "Chats run on: Local models /
+   Cloud / Fusion", and people took one for the other. */
 function llmPanelHTML() {
   const mode = LLMP.mode;
   const status = llmStatusLine();
   const tone = llmStatusTone(status);
-  return llmBarHTML(mode, status, tone)
-    // External reports its probe under its own row (ST-24); the other panes report at the top.
+  return llmRunModeHTML(status, tone)
+    // External reports its probe under its own row (ST-24); the other panes report here.
     + (mode !== 'external' ? llmStatusNoteHTML(status, tone) : '')
     + (LLMP.daemonPhase === 'starting'
       ? '<div class="tk-notice tk-notice--blue llm-start"><span class="tk-spin"></span><span class="grow"><b>The model is starting</b>'
         + '<span class="llm-note">Loading it into memory. Chats wait until it is ready.</span></span></div>' : '')
     + (mode === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
     + (LLMP.msg ? (LLMP.msg.restart ? restartLine(LLMP.msg.text) : llmMsgHTML(LLMP.msg.text)) : '')
-    + llmRunModeHTML()
+    + llmBarHTML(mode)
     + (mode === 'fallback' ? llmFallbackHTML() : mode === 'cloud' ? llmCloudHTML() : mode === 'external' ? llmExternalHTML() : llmLocalHTML())
     + llmAdvancedHTML(mode);
 }
@@ -20335,29 +20339,21 @@ function llmStatusTone(line) {
   if (/^local-llm URL saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
   return 'err';
 }
-/* Calm (S5): the pane switch is three words — Local · Cloud · Custom server
-   (the External llama.cpp pane). Fallback is reached from the Cloud pane and
-   keeps Cloud lit. Drivers read `#settings .llmmode.on` and click
-   `[data-act="llm:mode:cloud"]`. A busy readout only while something is on
-   its way; "ready" is not news. */
-const LLM_BAR_MODES = [['local', 'Local'], ['cloud', 'Cloud'], ['external', 'Custom server']];
-function llmBarHTML(mode, status, tone) {
+/* The setup tabs (Д30): which list the pane shows — local models to
+   download, cloud providers to add, a llama.cpp server of your own. They
+   write nothing; where chats run is the choice above them, and their words
+   are not that choice's words ("Cloud providers", not "Cloud"). Fallback is
+   reached from Cloud providers and keeps that tab lit. Drivers read
+   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
+const LLM_BAR_MODES = [['local', 'Local models'], ['cloud', 'Cloud providers'], ['external', 'Custom server']];
+function llmBarHTML(mode) {
   const lit = mode === 'fallback' ? 'cloud' : mode;
-  return '<div class="tk-bar llm-bar">'
-    /* Calm (S7): two rows of this pane both had a "Cloud" — this switch
-       (which models you are setting up) and "Chats run on" (where chats
-       run). Each now names what it is; they stay two controls because they
-       do two different things (one only shows a list, one writes config). */
-    + '<div class="llm-modehead">'
-      + '<span class="llm-rm-t0">Set up</span>'
-      + '<span class="tk-seg llm-seg" role="tablist" aria-label="Set up models">'
-      + LLM_BAR_MODES.map(([m, label]) => '<button class="llmmode' + (m === lit ? ' on' : '') + '" role="tab" aria-selected="' + (m === lit) + '" data-act="llm:mode:' + m + '">'
-        + esc(label) + '</button>').join('')
-      + '</span></div>'
-    + (tone === 'busy' ? '<span class="llm-status is-busy"><span class="tk-spin"></span><span>' + esc(status) + '</span></span>' : '')
-    + '<span class="grow"></span>'
-    + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
-    + '</div>';
+  return '<div class="tk-bar llm-bar llm-srcbar">'
+    + '<span class="llm-sh-t">Set up models</span>'
+    + '<span class="tk-seg llm-seg" role="tablist" aria-label="Set up models">'
+    + LLM_BAR_MODES.map(([m, label]) => '<button class="llmmode' + (m === lit ? ' on' : '') + '" role="tab" aria-selected="' + (m === lit) + '" data-act="llm:mode:' + m + '">'
+      + esc(label) + '</button>').join('')
+    + '</span></div>';
 }
 function llmMsgHTML(text) {
   const bad = /^! /.test(text);
@@ -20372,43 +20368,92 @@ function llmProviderMark(p, size) {
 function llmModelName(m) {
   return m && m.name ? m.name.replace(/\s+(?:QAT\s+)?GGUF$/i, '') : modelWord(m ? m.id : '');
 }
-/* Where chats run (Calm S5). The three run modes stay the one write path
-   they were — act 'runmode:*' → the composer's own switch — drawn as three
-   quiet choices, with the answer under them in plain words: which model,
-   on which provider, and whether it is ready. The resolved `/runmode status`
-   line only when Fusion is stored or in effect (it is the only case where
-   the stored and the effective mode can disagree); the worker count only
-   under Fusion. */
-function llmRunModeHTML() {
+/* Where chats run (Calm S5; Д30 made it the pane's first and main choice).
+   The three run modes stay the one write path they were — act 'runmode:*'
+   → the composer's own switch — drawn as three cards, each with a line on
+   what it means, and the answer under them in plain words: which model, on
+   which provider, whether it is ready, and the local server's Start / Stop
+   beside that (Д35). The resolved `/runmode status` line only when Fusion is
+   stored or in effect (it is the only case where the stored and the
+   effective mode can disagree); the worker count only under Fusion. The
+   pane's refresh, and its busy readout while something is on its way,
+   head the section: "ready" is not news. */
+function llmRunModeHTML(status, tone) {
   /* The EFFECTIVE mode, resolved as the agent resolves it (rmResolve): a
      stored `fusion` whose orchestrator is no longer the active provider is not
      Fusion, and it must not be drawn as the active choice. */
   const rm = rmNow();
   const mode = rm.effective;
-  const blocker = BSW.readyLoaded ? fzBlocker() : null;
+  const needs = llmRouteNeeds();
   const MODES = [
-    ['local', 'Local models', 'Everything runs on ' + THIS_MACHINE, 'laptop'],
-    ['cloud', 'Cloud', 'Everything runs on the provider', 'cloud'],
-    ['fusion', 'Fusion', blocker && mode !== 'fusion' ? blocker : 'A cloud model plans, local workers do the work', 'fusion'],
+    ['local', 'Local models', 'Runs on ' + THIS_MACHINE, 'laptop'],
+    ['cloud', 'Cloud', 'Runs on a provider you add', 'cloud'],
+    ['fusion', 'Fusion', 'A cloud model plans, local workers do the work', 'fusion'],
   ];
   const fusionShown = mode === 'fusion' || rm.stored === 'fusion';
-  return '<section class="llm-section llm-runmode"><div class="llm-rm-row">'
-    + '<span class="llm-rm-t0">Chats run on</span>'
-    + '<span class="llm-rm-grid" role="group" aria-label="Chats run on">'
-    + MODES.map(([id, label, why, icon]) => {
+  return '<section class="llm-section llm-runmode">'
+    + '<div class="tk-sh llm-sh llm-rm-head"><span class="llm-sh-t">Where chats run</span><span class="grow"></span>'
+      + (tone === 'busy' ? '<span class="llm-status is-busy"><span class="tk-spin"></span><span>' + esc(status) + '</span></span>' : '')
+      + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
+    + '<div class="llm-rm-grid" role="group" aria-label="Where chats run">'
+    + MODES.map(([id, label, what, icon]) => {
         const on = id === mode;
-        const blocked = id === 'fusion' && !on && !!blocker;
-        return '<button class="llm-rm' + (on ? ' on' : '') + (blocked ? ' blocked' : '') + '" data-act="runmode:' + id + '" aria-pressed="' + on + '" title="' + esc(why) + '">'
-          + ic(icon) + '<span class="llm-rm-t">' + esc(label) + '</span></button>';
+        /* Д31: a choice that cannot be made yet says what it needs and opens
+           that here (llm:needs:*), rather than trying a switch whose error
+           lands in the chat behind Settings. */
+        const need = on ? null : needs[id];
+        return '<button class="llm-rm' + (on ? ' on' : '') + (need ? ' blocked' : '') + '" data-act="' + (need ? 'llm:needs:' + id : 'runmode:' + id) + '"'
+          + ' aria-pressed="' + on + '" title="' + esc(need ? need.title : what) + '">'
+          + '<span class="llm-rm-ico">' + ic(icon) + '</span>'
+          + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(need ? need.line : what) + '</span></span></button>';
       }).join('')
-    + '</span></div>'
+    + '</div>'
     + llmNowHTML() + tpLlmFaultHTML()
     + (fusionShown ? '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
     + '</section>';
 }
-/* One line: the model answering, its provider, and a readiness word. */
+/**
+ * Д31 (Danya, 01.10): Cloud with no cloud provider ran the switch anyway,
+ * and its refusal landed in the chat behind Settings. What a route still
+ * needs before it can be chosen, or null: Cloud, a cloud provider; Fusion,
+ * what its pre-flight (fzBlocker) is missing — a cloud provider with its key
+ * to plan, a local model (or a second provider) to do the work.
+ * @returns {{local: null, cloud: {line:string, title:string}|null, fusion: {line:string, title:string}|null}}
+ */
+function llmRouteNeeds() {
+  const cloud = llmCloudProviders();
+  const out = {local:null, cloud:null, fusion:null};
+  if (!cloud.length) out.cloud = {line:'Add a cloud provider first', title:'Cloud needs a cloud provider. Click to add one.'};
+  if (BSW.readyLoaded && fzBlocker()) {
+    const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
+    out.fusion = !ready
+      ? {line:'Needs a cloud provider to plan', title:'Fusion needs a cloud provider, with its key, to plan the work. Click to add one.'}
+      : {line:'Needs a local model for the work', title:'Fusion needs a local model, or a second provider, to do the work. Click to pick a local model.'};
+  }
+  return out;
+}
+/** What a blocked choice opens (llm:needs:cloud | llm:needs:fusion). */
+function llmRouteNeedsOpen(id) {
+  const cloud = llmCloudProviders();
+  const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
+  if (id === 'cloud' || (id === 'fusion' && !ready)) {
+    if (id === 'fusion') LLMP.msg = {text:'Fusion needs a cloud provider to plan. Add one, then choose Fusion again.'};
+    llmSetMode('cloud');
+    // A provider without its key opens on that key; none at all opens the list to add one from.
+    llmOpenWizard(id === 'fusion' && cloud.length ? cloud[0] : null);
+    return;
+  }
+  if (id === 'fusion') {
+    LLMP.msg = {text:'Fusion needs a local model for the work. Download one below, then choose Fusion again.'};
+    llmSetMode('local');
+  }
+}
+/* One line: the model answering, its provider, a readiness word, and —
+   wherever the managed model server does the work (the local route, or
+   Fusion's local workers) — that server's Start / Stop beside them (Д35: it
+   was one of Advanced's look-alike buttons). */
 function llmNowHTML() {
   const active = llmProvider(llmActiveTextId());
   const local = !!active && active.kind === 'llama-server';
@@ -20416,12 +20461,26 @@ function llmNowHTML() {
   if (!model && local) model = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || null;
   const route = llmRouteMode();
   const where = route === 'external' ? 'a custom server' : local ? THIS_MACHINE : active ? providerWord(active.id) : 'no provider';
+  // Under Fusion the line names the planner; when its workers are local, the server it names is theirs.
+  const rm = rmNow();
+  const workersLocal = !local && rm.effective === 'fusion' && fzLegIsLocal(rm, 'worker');
+  const managed = (local && route !== 'external') || workersLocal;
+  const serverModel = local ? model : (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || null;
   const d = llmFormatDaemon();
-  const word = !local || route === 'external' ? '' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting'
+  const up = llmDaemonUp();
+  // The model the server would run is not on disk (deleted, or never pulled): there is nothing to start.
+  const missing = managed && !!serverModel && !up && !!LLMP.status && LLMP.status.activeDownloaded === false;
+  const word = !managed ? '' : missing ? 'Not downloaded' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting'
     : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? (llmJustSpawned() ? 'Starting' : 'Not answering') : '';
   const dot = word === 'Ready' ? 'tk-dot--green' : word === 'Starting' ? 'tk-dot--brand tk-dot--pulse' : word ? 'tk-dot--amber' : '';
+  const phase = LLMP.daemonPhase;
+  const server = managed && !!serverModel && !missing
+    ? '<button class="btn btn-s sm llm-nowbtn" data-act="llm:daemon"' + (phase ? ' disabled' : '')
+      + ' title="' + (up ? 'Stop the local model server (s)' : 'Start the local model server (s)') + '">' + ic(up ? 'stop' : 'play')
+      + esc(phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : up ? 'Stop' : 'Start') + '</button>' : '';
   return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
-    + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '') + '</p>';
+    + (workersLocal ? esc(', local workers' + (serverModel ? ' on ' + modelWord(serverModel) : '')) : '')
+    + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '') + server + '</p>';
 }
 /* What the count means depends on the worker leg (agent v0.6.3,
    fusion-delegate.ts): an unpinned LOCAL leg runs one worker per job —
@@ -20449,8 +20508,9 @@ function llmWorkersHTML(rm) {
    aimlapi / gpt-5.5", "local daemon: stopped · mode managed") as a label and
    its value. `current:` is the provider's chat model; for the local route the
    desktop has no /props, so `atag models status` "active model:" stands in,
-   then localModels.managed.modelId. */
-function llmRouteCardHTML() {
+   then localModels.managed.modelId. Each value has its Copy (Д56, "and in
+   Models too"): the words a bug report wants, without retyping them. */
+function llmRouteFacts() {
   const activeId = llmActiveTextId();
   const active = llmProvider(activeId);
   const local = !!active && active.kind === 'llama-server';
@@ -20459,14 +20519,19 @@ function llmRouteCardHTML() {
   const emb = llmProvider(llmActiveEmbId());
   const lm = llmLocalModels();
   const mode = lm.mode || 'external';
-  const daemon = llmFormatDaemon();
-  const kv = (label, value) => '<div class="llm-kv"><span class="llm-k">' + esc(label) + '</span>' + value + '</div>';
-  return '<div class="llm-route">'
-    + kv('current', '<b class="mono">' + esc(active ? active.id : 'unknown') + '</b>'
-      + (model ? '<span class="llm-slash"> / </span><span class="mono">' + esc(model) + '</span>' : ''))
-    + kv('tools', '<span class="mono">' + (local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity') + '</span>')
-    + kv('provider embeddings', '<span class="mono">' + (emb ? esc(emb.id) + (emb.defaultEmbeddingModel ? ' · ' + esc(emb.defaultEmbeddingModel) : '') : 'not configured') + '</span>')
-    + kv('local daemon', '<span class="mono">' + esc(daemon) + ' · mode ' + esc(mode) + (mode === 'external' ? ' · ' + esc(lm.url || '') : '') + '</span>')
+  return [
+    {label:'current', value:(active ? active.id : 'unknown') + (model ? ' / ' + model : ''), id: active ? active.id : 'unknown', model},
+    {label:'tools', value:(local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity')},
+    {label:'provider embeddings', value: emb ? emb.id + (emb.defaultEmbeddingModel ? ' · ' + emb.defaultEmbeddingModel : '') : 'not configured'},
+    {label:'local daemon', value: llmFormatDaemon() + ' · mode ' + mode + (mode === 'external' ? ' · ' + (lm.url || '') : '')},
+  ];
+}
+function llmRouteCardHTML() {
+  return '<div class="llm-route">' + llmRouteFacts().map((f, i) => '<div class="llm-kv"><span class="llm-k">' + esc(f.label) + '</span>'
+    + (f.label === 'current'
+      ? '<b class="mono">' + esc(f.id) + '</b>' + (f.model ? '<span class="llm-slash"> / </span><span class="mono">' + esc(f.model) + '</span>' : '')
+      : '<span class="mono">' + esc(f.value) + '</span>')
+    + '<button class="iconbtn sm llm-copybtn" data-act="llm:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(f.label) + '">' + ic('copy') + '</button></div>').join('')
     + '</div>';
 }
 /* llm-panel.tsx StatusLines: one line, the first that applies, else "status: ready". */
@@ -20493,30 +20558,52 @@ function llmStatusLine() {
 }
 function llmReport(line, source) { LLMP.statusLine = line; LLMP.statusSource = source || 'cloud'; }
 /* Calm (S5): the footer's key rows are gone (the keys still work; each
-   names itself in a tooltip). What only a key could do is a button here:
-   the local server's start/stop, backend update, auto-update and device,
-   local embeddings on/off, the LLM log; the route's internals above them. */
+   names itself in a tooltip). Д35 (Danya, 01.10): what was left here read as
+   a pile of look-alike buttons. Start / Stop sits beside the model's state
+   now (llmNowHTML); llama.cpp's update, auto-update and device are one
+   Engine card — a title, a line and the control, like Reasoning above; the
+   LLM log is Settings › Diagnostics' (the card's Server log row and the `L`
+   key open it there); the route's internals fold under Details, each value
+   with its Copy. */
 function llmAdvancedHTML(mode) {
   const open = !!SETDET['llm-adv'];
   const managed = llmManaged();
   const autoOn = managed.autoUpdate !== false;
   const embOn = llmEmbCfg().enabled === true;
   const btn = (act, label, title) => '<button class="btn btn-s sm" data-act="' + act + '" title="' + esc(title) + '">' + esc(label) + '</button>';
+  // A switch with no On / Off beside it: the switch says it.
+  const sw = (act, on, label, title) => '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" data-act="' + act + '"'
+    + ' aria-label="' + esc(label) + '" title="' + esc(title) + '"></button>';
+  const st = LLMP.status;
+  const version = st && st.backendTag && st.backendTag !== '(none)' ? st.backendTag : '';
+  const device = managed.device || 'auto';
+  const card = (rows) => '<div class="llm-tune-card">' + rows + '</div>';
   return '<details class="llm-adv"' + (open ? ' open' : '') + '><summary data-setdet="llm-adv">' + ic('chevR') + 'Advanced</summary>'
     + '<div class="llm-adv-body">'
-    + '<div class="llm-adv-h">Active route</div>'
-    + llmRouteCardHTML()
-    + (mode !== 'cloud' && mode !== 'fallback'
-      ? '<div class="llm-adv-h">Local model server</div>'
-        + '<div class="llm-adv-acts">'
-          + btn('llm:daemon', llmDaemonUp() ? 'Stop' : 'Start', 'Start or stop the local model server (s)')
-          + btn('llm:backend', 'Update llama.cpp', 'Fetch the newest llama.cpp backend now (B)')
-          + btn('llm:autoUpdate', 'Auto-update: ' + (autoOn ? 'on' : 'off'), 'Fetch a newer llama.cpp after each start (U)')
-          + btn('llm:device', 'Device: ' + (managed.device || 'auto'), 'Cycle the device the model runs on: auto, each GPU, CPU (G)')
-          + btn('llm:embToggle', 'Local embeddings: ' + (embOn ? 'on' : 'off'), 'Turn the local embedding model on or off (E)')
-        + '</div>' : '')
-    + '<div class="llm-adv-acts">' + btn('llm:logs', 'LLM logs', 'The local model server’s log (L)')
-      + (mode === 'cloud' ? btn('llm:mode:fallback', 'Fallback chain…', 'Which providers to try when one fails') : '') + '</div>'
+    + (mode === 'local'
+      ? '<div class="llm-adv-h">Engine</div>'
+        + '<div class="llm-tune-card llm-engine">'
+          + llmTuneRowHTML('llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
+              btn('llm:backend', 'Update now', 'Fetch the newest llama.cpp now (B)'))
+          + llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
+              sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start (U)'))
+          + llmTuneRowHTML('Device', 'Auto runs the model on the GPU when there is one. A change applies the next time the model server starts.',
+              btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU (G)'))
+          // The log itself is Diagnostics' (Д58: one place for it); this is the way there.
+          + llmTuneRowHTML('Server log', 'What the local model server printed. It opens in Settings › Diagnostics.',
+              btn('diag:llmlogs', 'Open', 'The local model server’s log, in Diagnostics (L)'))
+        + '</div>'
+        + '<div class="llm-adv-h">Memory</div>'
+        + card(llmTuneRowHTML('Local embeddings', 'A small model on ' + THIS_MACHINE + ' that indexes memory for search.',
+            sw('llm:embToggle', embOn, 'Local embeddings', 'Turn the local embedding model on or off (E)')))
+        + '<div class="llm-adv-h">Prompt format</div>' + card(llmTemplateRowHTML())
+      : mode === 'external' ? '<div class="llm-adv-h">Prompt format</div>' + card(llmTemplateRowHTML())
+      : mode === 'cloud' ? card(llmTuneRowHTML('Fallback chain', 'Which providers answer when one fails.',
+          btn('llm:mode:fallback', 'Open', 'Which providers to try when one fails')))
+      : '')
+    + ((mode === 'local' || mode === 'external') && LLMP.tune.where === 'adv' ? llmTuneNoteHTML() : '')
+    + '<details class="llm-details"' + (SETDET['llm-details'] ? ' open' : '') + '><summary data-setdet="llm-details">' + ic('chevR') + 'Details</summary>'
+      + llmRouteCardHTML() + '</details>'
     + '</div></details>';
 }
 /* What a row's action pill says (Calm S5): the verb in plain words, with
@@ -20535,14 +20622,63 @@ function llmEffectLabel(row) {
   if (p === 'configure') return 'Add key';
   return row.enterEffect;
 }
+/**
+ * Д32 (Danya, 01.10): how a local model fits this machine was a line under
+ * its row ("runs comfortably — wants 16 GB…", "a tight fit…", "needs 24 GB…"),
+ * and the lines made the rows uneven. It is a badge now — Fits well, Tight
+ * fit, Too big — with the reasons in its tooltip, the small-model caution
+ * among them. The verdicts are fitFor's, the ones the wizard and the
+ * composer's picker give. Null until the machine's memory is read, or for a
+ * model there is nothing true to say about (no catalogue entry, no size).
+ * @returns {{v: string, word: string, tone: string, title: string}|null}
+ */
+function llmFitBadge(m, ram) {
+  const have = Number(ram) || 0;
+  if (!m || !have) return null;
+  const fit = fitFor(m, have);
+  const rec = Number(m.recommendedRamGb) || 0, min = Number(m.minRamGb) || 0;
+  let why;
+  if (fit.known) {
+    why = fit.v === 'comfortable' ? 'It wants ' + rec + ' GB of memory, and ' + THIS_MACHINE + ' has ' + have + ' GB.'
+      : fit.v === 'tight' ? 'It runs in ' + min + ' GB but wants ' + rec + ' GB, and ' + THIS_MACHINE + ' has ' + have + ' GB. ' + TIGHT_FIT_CAUTION
+      : 'It needs at least ' + min + ' GB of memory, and ' + THIS_MACHINE + ' has ' + have + ' GB.';
+  } else {
+    // A model added from Hugging Face: fitFor's own estimate from the file size, said to be one.
+    const need = Math.ceil(sizeStringGb(m.size) * 1.6);
+    if (!need) return null;
+    why = 'About ' + need + ' GB to run, estimated from its file size; ' + THIS_MACHINE + ' has ' + have + ' GB.' + (fit.v === 'tight' ? ' ' + TIGHT_FIT_CAUTION : '');
+  }
+  if (isSmallModel(m)) why += ' ' + SMALL_MODEL_CAUTION;
+  const word = fit.v === 'comfortable' ? 'Fits well' : fit.v === 'tight' ? 'Tight fit' : 'Too big';
+  return {v: fit.v, word, tone: fit.v === 'comfortable' ? 'green' : fit.v === 'tight' ? 'amber' : '', title: word + '. ' + why};
+}
+/* A local row's badges: Installed for a model on disk, and the fit badge
+   unless the model is installed and fits well (then Installed says it all,
+   and its tooltip carries the fit). The shared non-clickable chip (tk-chip):
+   a label, never a button. */
+function llmRowBadgesHTML(row) {
+  const m = row.model;
+  if (!m) return '';
+  const fit = row.kind === 'localTextModel' ? row.fit : null;
+  const badge = (key, tone, word, title) => ' <span class="tk-chip tk-chip--sm llm-ib llm-badge' + (tone ? ' tk-chip--' + tone : '') + '" data-badge="' + key + '"'
+    + ' title="' + esc(title) + '">' + esc(word) + '</span>';
+  let out = '';
+  if (m.downloaded) {
+    const size = modelSizeWord(m);
+    out += badge('installed', 'line', 'Installed', 'Installed on ' + THIS_MACHINE + (size ? ' (' + size + ')' : '') + '.'
+      + (fit && fit.v === 'comfortable' ? ' ' + fit.title : ''));
+  }
+  if (fit && !(m.downloaded && fit.v === 'comfortable')) out += badge(fit.v, fit.tone, fit.word, fit.title);
+  return out;
+}
 function llmRowHTML(row, index, cursor) {
   const selected = index === cursor;
   const extra = row.kind === 'localTextModel' && !row.model.downloaded ? ' data-pull-local="' + esc(row.model.id) + '"' : '';
   /* Soft Tactile list row (ST-20, ST-23): the name, its id in mono when the
-     name is not the id, and the best-fit chip on one line (the chips are
-     inline-block, and model-picks.drive.mjs reads that first line off
-     innerText), then the blurb and fit lines. A row that carries them keeps
-     `.llm-model` and `.llm-sub`: the driver measures the first one. */
+     name is not the id, the best-fit chip and the fit / Installed badges on
+     one line (the chips are inline-block, and model-picks.drive.mjs reads
+     that first line off innerText), then the blurb line. A row that carries
+     one keeps `.llm-model` and `.llm-sub`: the driver measures the first one. */
   const open = '<button class="tuirow tk-li llm-row' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + (row.active ? ' is-active' : '')
     + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">';
   const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
@@ -20562,15 +20698,17 @@ function llmRowHTML(row, index, cursor) {
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
       + (best ? ' ' + chip('indigo', '★ best fit for this machine') : '')
       + (chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
+      + llmRowBadgesHTML(row)
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
       + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
       + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
-      + (row.fitNote ? '<span class="d llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc(row.fitNote) + '</span>' : '')
-      + (row.caution ? '<span class="d llm-sub llm-caution">' + esc(row.caution) + '</span>' : '')
       + '</span>'
-      + (chat && m.downloaded && row.primaryAction !== 'current' ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      /* ATO-119: every model on disk has its Remove, the one in use and the
+         embedding models included; the confirm says when the server stops
+         first (llmRemoveStops). Not while it is coming down. */
+      + (m.downloaded && row.primaryAction !== 'downloading' ? rowAct('llm:removeAt:' + index, 'Remove') : '')
       + effect + '</button>';
   }
   if (row.kind === 'cloudProvider') {
@@ -20622,17 +20760,18 @@ function llmLocalHTML() {
   const cursor = LLMP.cursor.local;
   const text = rows.filter((r) => r.kind === 'localTextModel');
   const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
-  const ram = hostRamGb();
-  // r7 models: the basis for the order and for every fit line below it.
+  /* Д32: no sentence over the list about its order and this machine's
+     memory (the order is plain to see: on disk first, then the best fit);
+     each row's badge says how it fits, and its tooltip the figures.
+     Д34: the Ollama signpost under the lists read as an ad. Ollama is a
+     provider, never a download source here, so it is one quiet button
+     that opens the provider setup with Ollama and its address filled in —
+     gone once Ollama is added. */
   return llmSectionHTML('Local models', text, 0, cursor, null, false, {
-      note: '<p class="llm-ram">' + esc(ram
-        ? 'Downloaded first, then the best fit for ' + THIS_MACHINE + '’s ' + ram + ' GB of memory.'
-        : 'Reading ' + THIS_MACHINE + '’s memory…') + '</p>',
-      actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
+      actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'
+        + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')})
     + llmTuneHTML()
-    + llmSectionHTML('Embedding models', emb, text.length, cursor)
-    // Item 7B — the Ollama signpost: Ollama is a provider, never a download source here.
-    + '<div class="llm-ollama">' + logoHTML('ollama', 'sm') + '<span>' + esc(OLLAMA_SIGNPOST) + '</span></div>';
+    + llmSectionHTML('Embedding models', emb, text.length, cursor);
 }
 function llmCloudHTML() {
   const rows = llmCloudRows();
@@ -20679,35 +20818,52 @@ function llmExternalHTML() {
     + llmTuneHTML();
 }
 /* Gaps 11: the three knobs agent v0.6.3 reads on every local completion
-   (config v66/v68) — the managed daemon and an External llama.cpp alike.
-   Leaf `config set` writes; `atag serve` read the file at boot, so each
-   change carries the restart line. Copy condensed from the schema's own
+   (config v66/v68) — the managed daemon and an External llama.cpp alike:
+   the two thinking knobs under Reasoning, the chat template in Advanced
+   (Д33). Leaf `config set` writes; `atag serve` read the file at boot, so
+   each change carries the restart line. Copy condensed from the schema's own
    comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
 const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
+/* One knob: a title and one help line each, the choice on the right. */
+function llmTuneRowHTML(title, help, control) {
+  return '<div class="llm-tune-row"><span class="llm-tune-body"><span class="llm-tune-t">' + esc(title) + '</span>'
+    + '<span class="tk-help">' + esc(help) + '</span></span>' + control + '</div>';
+}
+function llmTuneSegHTML(key, cur, opts, label) {
+  return '<span class="tk-seg llm-tuneseg" role="group" aria-label="' + esc(label) + '">'
+    + opts.map(([v, txt]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
+      + (LLMP.tune.busy ? ' disabled' : '') + '>' + esc(txt) + '</button>').join('') + '</span>';
+}
+/* What the last knob write said, under the card it was made in. */
+function llmTuneNoteHTML() {
+  const T = LLMP.tune;
+  return T.err ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(T.err) + '</span></div>'
+    : T.msg ? restartLine(T.msg) : '';
+}
+/* Д33 (Danya, 01.10): the chat-template knob lives in Advanced now, in
+   shorter words; what Auto does is the agent's (localModels.useServerTemplate:
+   the model's own template for every model without a built-in format). */
+function llmTemplateRowHTML() {
+  const v = llmLocalModels().useServerTemplate;
+  return llmTuneRowHTML('Chat template', 'Auto suits nearly every model. Try On or Off only if a local model’s replies come out garbled.',
+    llmTuneSegHTML('template', v === 'on' || v === 'off' ? v : 'auto', [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Use the model’s own chat template'));
+}
 function llmTuneHTML() {
   const lm = llmLocalModels();
-  const tri = (v) => (v === 'on' || v === 'off' ? v : 'auto');
-  const thinking = tri(lm.thinking), template = tri(lm.useServerTemplate);
+  const thinking = lm.thinking === 'on' || lm.thinking === 'off' ? lm.thinking : 'auto';
   const budget = Number.isInteger(lm.reasoningBudgetTokens) ? lm.reasoningBudgetTokens : 1500;
   const T = LLMP.tune;
-  const seg = (key, cur, opts, label) => '<span class="tk-seg llm-tuneseg" role="group" aria-label="' + esc(label) + '">'
-    + opts.map(([v, txt]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
-      + (T.busy ? ' disabled' : '') + '>' + esc(txt) + '</button>').join('') + '</span>';
   const budgets = LLM_TUNE_BUDGETS.includes(budget) ? LLM_TUNE_BUDGETS : LLM_TUNE_BUDGETS.concat([budget]).sort((a, b) => a - b);
-  const row = (title, help, control) => '<div class="llm-tune-row"><span class="llm-tune-body"><span class="llm-tune-t">' + esc(title) + '</span>'
-    + '<span class="tk-help">' + esc(help) + '</span></span>' + control + '</div>';
-  return '<section class="llm-section llm-tune"><div class="tk-sh llm-sh"><span class="llm-sh-t">Reasoning and prompt format</span>'
-    + (T.busy ? '<span class="tk-spin"></span>' : '') + '</div>'
+  return '<section class="llm-section llm-tune"><div class="tk-sh llm-sh"><span class="llm-sh-t">Reasoning</span>'
+    + (T.busy && T.where !== 'adv' ? '<span class="tk-spin"></span>' : '') + '</div>'
     + '<div class="llm-tune-card">'
-    + row('Thinking', 'Auto keeps the model’s own default. Off asks a reasoning model to answer without thinking first.',
-        seg('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
-    + row('Thinking budget', 'Tokens a reasoning model may think before it calls a tool. Its final answer is never cut. Default 1500.',
-        seg('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n)]), 'Thinking budget in tokens'))
-    + row('Model’s own chat template', 'Auto uses it for every model without a built-in format, so everything but Gemma and Qwen. On forces it, Off never uses it.',
-        seg('template', template, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Use the model’s own chat template'))
+    + llmTuneRowHTML('Thinking', 'Auto keeps the model’s own default. Off asks a reasoning model to answer without thinking first.',
+        llmTuneSegHTML('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
+    // Д33: the default is the choice lit when nothing is set; the help line no longer spells it out.
+    + llmTuneRowHTML('Thinking budget', 'Tokens a reasoning model may think before it calls a tool. Its final answer is never cut.',
+        llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n)]), 'Thinking budget in tokens'))
     + '</div>'
-    + (T.err ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(T.err) + '</span></div>'
-      : T.msg ? restartLine(T.msg) : '')
+    + (T.where !== 'adv' ? llmTuneNoteHTML() : '')
     + '</section>';
 }
 async function llmTuneSet(key, raw) {
@@ -20715,14 +20871,16 @@ async function llmTuneSet(key, raw) {
   const PATHS = {thinking:'localModels.thinking', budget:'localModels.reasoningBudgetTokens', template:'localModels.useServerTemplate'};
   const path = PATHS[key]; if (!path) return;
   const value = key === 'budget' ? String(Math.max(0, parseInt(raw, 10) || 0)) : (['auto', 'on', 'off'].includes(raw) ? raw : 'auto');
-  LLMP.tune = {busy:path, msg:null, err:null}; llmRepaint();
+  // Where the knob is: its line goes under that card (the template is Advanced's, Д33).
+  const where = key === 'template' ? 'adv' : 'tune';
+  LLMP.tune = {busy:path, msg:null, err:null, where}; llmRepaint();
   const res = await BR.configSet(path, value);
-  if (!res || res.ok === false) { LLMP.tune = {busy:null, msg:null, err:llmFail(path + ' write failed', res)}; llmRepaint(); return; }
+  if (!res || res.ok === false) { LLMP.tune = {busy:null, msg:null, err:llmFail(path + ' write failed', res), where}; llmRepaint(); return; }
   await refreshLiveConfig();
   const said = key === 'thinking' ? 'Thinking: ' + value
-    : key === 'template' ? 'Model’s own chat template: ' + value
+    : key === 'template' ? 'Chat template: ' + value
     : 'Thinking budget: ' + (value === '0' ? 'no limit' : value + ' tokens');
-  LLMP.tune = {busy:null, msg:said + '.', err:null};
+  LLMP.tune = {busy:null, msg:said + '.', err:null, where};
   llmRepaint();
 }
 function llmFallbackHTML() {
@@ -20793,16 +20951,23 @@ function llmModalHTML() {
       + '<button class="btn btn-df sm" data-act="llm:confirm"' + (yes.disabled ? ' disabled' : '') + (yes.title ? ' title="' + esc(yes.title) + '"' : '') + '>' + esc(label) + '</button></div>';
     if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + c.id + '?')
       + err + busy + acts('Remove', {disabled:c.submitting}) + '</div>';
-    if (c.kind === 'removeLocal') {
-      const m = (LLMP.local || []).find((x) => x.id === c.id);
-      return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Delete local model ' + c.id + '?')
-        + '<p>Removes GGUF/mmproj files' + (m && m.size ? ' — <span class="mono">' + esc(m.size) + '</span>' : '') + '.</p>'
-        + err + busy + acts('Delete', {disabled:c.submitting}) + '</div>';
+    /* ATO-119: any model on disk, the one in use and the embedding models
+       included. A model a server has loaded is never deleted under it: the
+       confirm says the server stops first, and its button says so too. */
+    if (c.kind === 'removeLocal' || c.kind === 'removeEmbedding') {
+      const m = llmRemoveModel(c);
+      const size = m ? modelSizeWord(m) : '';
+      const stops = llmRemoveStops(c);
+      const what = stops === 'chat'
+        ? 'Chats use this model now. Deleting it stops the local model server first; pick another model to chat on Local models again.'
+        : stops === 'emb'
+          ? 'Memory search uses this model now. Deleting it turns local embeddings off and stops the local model server first'
+            + (llmDaemonUp() ? ', then starts it again for chats.' : '.')
+          : 'Removes its files from ' + THIS_MACHINE + '.';
+      return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Delete ' + (m ? llmModelName(m) : c.id) + '?')
+        + '<p>' + esc(what) + (size ? ' Frees <span class="mono">' + esc(size) + '</span>.' : '') + '</p>'
+        + err + busy + acts(stops === 'chat' ? 'Stop and delete' : stops === 'emb' ? 'Turn off and delete' : 'Delete', {disabled:c.submitting}) + '</div>';
     }
-    if (c.kind === 'removeEmbedding') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Delete local embedding model ' + c.id + '?')
-      // `atag models remove` accepts chat catalogue ids only (runLocalModelsRemove isKnownLocalModelId), so the desktop cannot delete an embedding GGUF.
-      + '<p>(no CLI removes an embedding model on this agent — `atag models remove` accepts chat models only)</p>' + err
-      + acts('Delete', {disabled:true, title:'`atag models remove` accepts chat models only'}) + '</div>';
   }
   if (LLMP.externalDraft !== null) {
     return '<div class="tk-modal llm-modal" role="dialog">'
@@ -20983,26 +21148,6 @@ function llmDownloadBannerHTML() {
     + '<span class="llm-dl-line" id="llm-pull-line">' + esc(LLMP.pullLog[LLMP.pullLog.length - 1] || 'starting…') + '</span></span>'
     + '<button class="btn btn-g sm" data-act="llm:cancelPull">Cancel</button></div>';
 }
-/* local-llm-logs-panel.tsx: header (path or the waiting line), size · tail · last read, error, the last 30 lines coloured. */
-function llmLogsHTML() {
-  const l = LLMP.logs;
-  const header = l && l.path ? l.path : '(waiting for the first daemon start — no log file yet)';
-  const lines = l ? l.text.split('\n').filter((x) => x.length > 0) : [];
-  const tail = lines.slice(-LLM_LOG_LINES);
-  const color = (line) => { const lower = line.toLowerCase(); if (/\b(error|fatal|fail|abort)\b/.test(lower)) return 'llm-log-err'; if (/\b(warn|warning)\b/.test(lower)) return 'llm-log-warn'; if (/\b(loading|loaded|ready|listening)\b/.test(lower)) return 'llm-log-ok'; return ''; };
-  const meta = l && typeof l.size === 'number'
-    ? llmFormatBytes(l.size) + (l.truncated ? ' · showing tail only' : '') + (l.lastReadAt ? ' · last read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') : '';
-  // ST-26: back, the log path, size and read time, then the tail in a mono well — errors red, warnings amber, loading and ready in accent.
-  return '<div class="tk-bar llm-bar llm-logbar"><button class="btn btn-g sm" data-act="llm:back">' + ic('chevL') + 'Back</button>'
-      + '<span class="llm-logpath" title="' + esc(header) + '">' + esc(header) + '</span><span class="grow"></span>'
-      + (meta ? '<span class="llm-note">' + esc(meta) + '</span>' : '')
-      + '<button class="iconbtn sm" data-act="llm:logsRefresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
-    + (l && l.error ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(l.error) + '</span></div>' : '')
-    + (tail.length === 0 ? '<div class="llm-log llm-log--empty">' + (l && l.error ? '' : '(log is empty — start the daemon to see output)') + '</div>'
-      : '<pre class="tk-out llm-log">' + tail.map((line) => '<span class="' + color(line) + '">' + esc(line) + '</span>').join('\n') + '</pre>')
-    + tuiHints([['Esc back', 'llm:back'], ['r refresh', 'llm:logsRefresh']]);
-}
-function llmFormatBytes(n) { if (n < 1024) return n + ' B'; if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'; return (n / (1024 * 1024)).toFixed(1) + ' MB'; }
 
 /* --- writes --- */
 /* A whole-file write of one `llm.*` key (0.5.4 has no llm leaf). With no
@@ -21205,14 +21350,69 @@ async function llmDeviceCycle() {
   await refreshLiveConfig();
   llmRepaint();
 }
+/* ATO-119 — Remove for every model on disk, the one in use and the
+   embedding models included (there was none for either). Never the files of
+   a model a server has loaded: the chat model in use stops the model server
+   first; the embedding model memory search uses turns local embeddings off
+   and stops it too (`models stop` ends both servers), and a chat server that
+   was up starts again after. main checks once more before it deletes
+   anything (modelsRemoveSafe), and refuses a model a running server still
+   has loaded — a server still on the model it ran before a pick, say; that
+   refusal turns this confirm into Stop and delete. */
+function llmRemoveModel(c) {
+  return ((c.kind === 'removeEmbedding' ? LLMP.emb : LLMP.local) || []).find((x) => x.id === c.id) || null;
+}
+/** The chat model the route names, with its server up (or starting). */
+function llmChatModelRunning(id) {
+  const st = LLMP.status;
+  return !!st && st.mode === 'managed' && st.activeModel === id && llmDaemonUp();
+}
+/** The embedding model memory search uses, with the embedding server up. */
+function llmEmbModelRunning(id) {
+  const m = (LLMP.emb || []).find((x) => x.id === id);
+  return !!(LLMP.embDaemon && LLMP.embDaemon.running) && !!m && !!m.active;
+}
+/** Which server a Remove stops first: 'chat', 'emb', or null. */
+function llmRemoveStops(c) {
+  if (!c) return null;
+  if (c.kind === 'removeLocal') return c.mustStop || llmChatModelRunning(c.id) ? 'chat' : null;
+  if (c.kind === 'removeEmbedding') return c.mustStop || llmEmbModelRunning(c.id) ? 'emb' : null;
+  return null;
+}
 async function llmRemoveLocalConfirm() {
-  const c = LLMP.confirm; if (!c || c.submitting) return;
+  const c = LLMP.confirm; if (!c || c.submitting || !BR) return;
+  const emb = c.kind === 'removeEmbedding';
+  const m = llmRemoveModel(c);
+  const stops = llmRemoveStops(c);
+  // Stopping the server ends a turn it is answering: not under one (Backlog 28's rule for a restart).
+  const held = stops ? restartStopsTurn() : null;
+  if (held) {
+    c.error = 'Not while a turn is running — stopping the model server would end it.' + (held.here ? '' : ' ' + (held.title ? '“' + clipWords(held.title, 48) + '” is' : 'Another chat is') + ' still answering.');
+    llmRepaint(); return;
+  }
   c.submitting = true; c.error = null; llmRepaint();
-  const res = await BR.modelsRemove(c.id);
-  c.submitting = false;
-  if (!res || res.ok === false) { c.error = (res && res.error) || 'remove failed'; llmRepaint(); return; }
+  const fail = (text) => { c.submitting = false; c.error = text; llmRepaint(); };
+  const chatWasUp = llmDaemonUp();
+  // The embedding model memory search uses goes off first, so nothing starts a server on files that are gone.
+  if (emb && m && m.active) {
+    const off = await BR.modelsUseEmbedding('--disable');
+    if (!off || off.ok === false) return fail(llmFail('could not turn local embeddings off', off));
+  }
+  if (stops) {
+    const stopped = await BR.modelsStop();
+    if (!stopped || stopped.ok === false) return fail(llmFail('could not stop the local model server', stopped));
+  }
+  const res = emb ? await BR.modelsRemoveEmbedding(c.id) : await BR.modelsRemove(c.id);
+  if (!res || res.ok === false) {
+    // A running server has it loaded after all: the next confirm stops it first.
+    if (res && res.running) c.mustStop = true;
+    return fail((res && res.error) || 'remove failed');
+  }
   LLMP.confirm = null;
-  LLMP.msg = {text:'local-llm: ' + c.id + ' removed'};
+  // `models stop` ended the chat model's server as well: an embedding removal brings it back.
+  if (emb && stops && chatWasUp) await llmDaemon('start');
+  LLMP.msg = {text:'Deleted ' + (m ? llmModelName(m) : c.id) + '.'};
+  await refreshLiveConfig();
   llmRefresh();
 }
 function llmPull(kind, id) {
@@ -21346,24 +21546,6 @@ async function llmFallbackPersist(chain, appendLocal) {
   llmClampCursors();
   llmRepaint();
 }
-async function llmLogsOpen() {
-  LLMP.view = 'logs'; LLMP.logs = null; llmRepaint();
-  await llmLogsRefresh();
-  if (!LLMP.logsTimer) LLMP.logsTimer = setInterval(() => { if (!llmVisible() || LLMP.view !== 'logs') { llmStopLogs(); return; } llmLogsRefresh(); }, 1000);
-}
-function llmStopLogs() { if (LLMP.logsTimer) { clearInterval(LLMP.logsTimer); LLMP.logsTimer = null; } }
-async function llmLogsRefresh() {
-  if (!BR || LLMP.logsBusy) return;
-  let dataDir = LLMP.status && LLMP.status.dataDir;
-  if (!dataDir) { await llmRefreshStatus(true); dataDir = LLMP.status && LLMP.status.dataDir; }
-  if (!dataDir) { LLMP.logs = {path:null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:LLMP.statusErr ? 'models status failed: ' + LLMP.statusErr : null}; llmRepaint(); return; }
-  LLMP.logsBusy = true;
-  const res = await BR.llamaLogTail(dataDir);
-  LLMP.logsBusy = false;
-  const before = JSON.stringify(LLMP.logs && [LLMP.logs.size, LLMP.logs.text.length, LLMP.logs.error]);
-  LLMP.logs = res && res.ok ? res : {path:(res && res.path) || null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:(res && res.error) || 'log read failed'};
-  if (before !== JSON.stringify([LLMP.logs.size, LLMP.logs.text.length, LLMP.logs.error])) llmRepaint();
-}
 /**
  * llm-panel-reducer.ts resolveModeFromActiveRoute: `cloud` for a cloud
  * provider, `local` for llama-server, and nothing at all until a provider is
@@ -21471,19 +21653,15 @@ function llmAct(what) {
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
   if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
-  if (verb === 'logs') { llmLogsOpen(); return; }
-  if (verb === 'logsRefresh') { llmLogsRefresh(); return; }
-  if (verb === 'back') {
-    llmStopLogs(); LLMP.view = 'panel';
-    // Opened from Diagnostics › LLM logs: Back returns there.
-    if (LLMP.logsBack === 'diagnostics') { LLMP.logsBack = null; S.settingsPane = 'diagnostics'; render(); return; }
-    llmRepaint(); return;
-  }
   if (verb === 'cancelPull') { if (BR) BR.cancelPull(); LLMP.pulling = null; llmRepaint(); return; }
+  // Details' Copy (Д56): one value of the route, as drawn.
+  if (verb === 'copy') { const f = llmRouteFacts()[+arg]; if (f) copyText(f.value, 'Copied', f.label); return; }
   if (verb === 'remove') {
     if (LLMP.mode === 'fallback') { llmFallbackRemove(); return; }
     const row = llmRowAt(); if (!row) return;
     if (row.kind === 'cloudProvider' || row.kind === 'cloudChatModel' || row.kind === 'cloudEmbeddingModel') LLMP.confirm = {kind:'removeProvider', id:row.provider.id, error:null, submitting:false};
+    // Not a model still coming down: Cancel is its way off the disk.
+    else if (row.primaryAction === 'downloading') return;
     else if (row.kind === 'localTextModel' && row.model.downloaded) LLMP.confirm = {kind:'removeLocal', id:row.model.id, error:null, submitting:false};
     else if (row.kind === 'localEmbeddingModel' && row.model.downloaded) LLMP.confirm = {kind:'removeEmbedding', id:row.model.id, error:null, submitting:false};
     else return;
@@ -21492,7 +21670,16 @@ function llmAct(what) {
   // Calm (S5): a row's own Remove / Edit (the keys acted on the cursor row).
   if (verb === 'removeAt') { LLMP.cursor[LLMP.mode] = +arg; llmAct('remove'); return; }
   if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode('cloud'); llmOpenWizard(p); } return; }
-  if (verb === 'confirm') { const c = LLMP.confirm; if (!c) return; if (c.kind === 'removeProvider') llmRemoveProviderConfirm(); else if (c.kind === 'removeLocal') llmRemoveLocalConfirm(); return; }
+  if (verb === 'confirm') {
+    const c = LLMP.confirm; if (!c) return;
+    if (c.kind === 'removeProvider') llmRemoveProviderConfirm();
+    else if (c.kind === 'removeLocal' || c.kind === 'removeEmbedding') llmRemoveLocalConfirm();
+    return;
+  }
+  // Д31: Cloud or Fusion, chosen before what it needs is there — that, opened here.
+  if (verb === 'needs') { llmRouteNeedsOpen(arg); return; }
+  // Д34: Ollama as a provider, its preset and address filled in.
+  if (verb === 'ollama') { llmSetMode('cloud'); llmOpenWizard(KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}); return; }
   if (verb === 'cancel') { LLMP.confirm = null; llmRepaint(); return; }
   if (verb === 'external') {
     if (arg === 'save') { llmExternalSave(); return; }
@@ -21569,13 +21756,8 @@ function llmKey(e, k, inText) {
     return false;
   }
   if (inText || mod) return false;
-  if (LLMP.view === 'logs') {
-    if (k === 'Escape') { e.preventDefault(); llmAct('back'); return true; }
-    if (k === 'r') { e.preventDefault(); llmLogsRefresh(); return true; }
-    return true;
-  }
   if (LLMP.confirm) {
-    if (k === 'y' && LLMP.confirm.kind !== 'removeEmbedding') { e.preventDefault(); llmAct('confirm'); return true; }
+    if (k === 'y') { e.preventDefault(); llmAct('confirm'); return true; }
     if (k === 'n' || k === 'Escape') { e.preventDefault(); llmAct('cancel'); return true; }
     return true;
   }
@@ -21629,7 +21811,9 @@ function llmKey(e, k, inText) {
   if (k === 'Enter') { e.preventDefault(); llmAct('enter'); return true; }
   if (k === '[' || k === 'ArrowLeft') { e.preventDefault(); llmAct('mode:prev'); return true; }
   if (k === ']' || k === 'ArrowRight') { e.preventDefault(); llmAct('mode:next'); return true; }
-  const map = {e:'embedding', E:'embToggle', n:'add', c:'configure', s:'daemon', B:'backend', L:'logs', r:'refresh', d:'remove', U:'autoUpdate', G:'device'};
+  // Д35: the LLM log lives in Settings › Diagnostics now; `L` opens it there (Diagnostics' own diag:llmlogs).
+  if (k === 'L') { e.preventDefault(); act('diag:llmlogs'); return true; }
+  const map = {e:'embedding', E:'embToggle', n:'add', c:'configure', s:'daemon', B:'backend', r:'refresh', d:'remove', U:'autoUpdate', G:'device'};
   if (map[k]) { e.preventDefault(); llmAct(map[k]); return true; }
   if (k === 'a') { e.preventDefault(); llmAct('hf'); return true; } // Item 7A — add from Hugging Face
   return false;

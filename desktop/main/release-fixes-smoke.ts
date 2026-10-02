@@ -35,6 +35,8 @@ import { checks41 } from "./smoke-tasks/t41.js";
 import { checks43 } from "./smoke-tasks/t43.js";
 import { checks46 } from "./smoke-tasks/t46.js";
 import { checks44 } from "./smoke-tasks/t44.js";
+import { checks37 } from "./smoke-tasks/t37.js";
+import { checks48 } from "./smoke-tasks/t48.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -71,7 +73,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "38", "40", "41", "43", "44", "46", "49", "50"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "37", "38", "40", "41", "43", "44", "46", "48", "49", "50"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -510,6 +512,12 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("43")) await guarded("43", check, () => checks43(js, check));
   // 44 (ATO-132) — the key field promised .env with mode 0600, and the key was saved in config.json, mode 0644.
   if (want.has("44")) await guarded("44", check, () => checks44(js, check));
+
+  // 37 — Settings › Models: the green "In use" sat in a dark pill on the selected row.
+  if (want.has("37")) await guarded("37", check, () => checks37(js, check));
+
+  // 48 — Settings › Models: where chats run first, fit badges, Advanced regrouped, Remove for every model on disk (Д30–Д35, ATO-119).
+  if (want.has("48")) await guarded("48", check, () => checks48(js, check));
 
   if (want.has("23")) {
     // 23 — "This Mac" named the local route on every platform, Windows and Linux included.

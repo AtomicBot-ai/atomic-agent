@@ -190,7 +190,8 @@ function tpTriedHTML(m) {
    `health: ok` only means the socket answers. A server that ran out of GPU
    memory keeps its socket and fails every request; `models status` now reads
    the server's own log (current run only) and prints one `fault:` line. The
-   Models section shows it under the "now answering" line, with the log. */
+   Models section shows it under the "now answering" line, with the way to the
+   log, which lives in Settings › Diagnostics (Д35). */
 function tpLlmFault() {
   const st = typeof LLMP !== 'undefined' ? LLMP.status : null;
   return st && st.fault ? String(st.fault) : '';
@@ -201,7 +202,7 @@ function tpLlmFaultHTML() {
   if (!fault) return '';
   return '<div class="tk-notice tk-notice--amber llm-fault">' + ic('alert')
     + '<span class="grow"><b>Local model server problem.</b> ' + esc(fault) + '</span>'
-    + '<button class="btn btn-s sm" data-act="llm:logs">LLM logs</button></div>';
+    + '<button class="btn btn-s sm" data-act="diag:llmlogs" title="The model server’s log, in Settings › Diagnostics">LLM logs</button></div>';
 }
 
 /* ---- Fusion: how long each worker has run (src/tui/fusion-live-workers.ts) --

@@ -238,8 +238,10 @@ try {
        window repaints out from under a Settings window opened in that gap —
        so open it, and open it again if it is gone. Clicking is still the
        only way anything here is made to happen. */
+    /* Д30: the setup tabs read "Local models · Cloud providers · Custom
+       server" now (they were "Local · Cloud · Custom server"). */
     let pane = '';
-    for (let attempt = 1; attempt <= 4 && !/^local$/i.test(pane.trim()); attempt += 1) {
+    for (let attempt = 1; attempt <= 4 && !/^local models$/i.test(pane.trim()); attempt += 1) {
       if (!(await app.eval('!!document.querySelector("#settings")'))) {
         await app.clickSel('.sb-settings');
         await app.clickText('Models', { scope: '#settings' });
@@ -260,21 +262,25 @@ try {
          selector, not by its text: the pane's footer hint also says the
          word "Local" ("←/→ switch Local/Cloud/External/Fallback") and it is
          clickable, and clicking THAT walks the mode on instead. */
-      if (pane && !/^local$/i.test(pane.trim())) {
+      if (pane && !/^local models$/i.test(pane.trim())) {
         await app.clickSel('#settings .llmmode', { nth: 0 });
         await sleep(1500);
         pane = await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''");
       }
-      if (!/^local$/i.test(pane.trim())) await sleep(4000);
+      if (!/^local models$/i.test(pane.trim())) await sleep(4000);
     }
-    check('the mode strip reaches the Local pane', /^local$/i.test(pane.trim()), JSON.stringify(pane));
+    check('the mode strip reaches the Local pane', /^local models$/i.test(pane.trim()), JSON.stringify(pane));
     for (let i = 0; i < 60; i += 1) {
       if (await app.eval("document.querySelectorAll('#settings [data-llm-row^=\"local-text:\"]').length")) break;
       await sleep(500);
     }
     const rows = await app.eval(`[...document.querySelectorAll('#settings [data-llm-row^="local-text:"]')]
       .map((n) => (n.innerText || '').trim().split('\\n').map((s) => s.trim()).filter(Boolean))`);
-    const ramLine = await app.eval("(document.querySelector('#settings .llm-ram') || {}).innerText || ''");
+    /* Д32: the fit is a badge on the row's first line (Fits well / Tight fit /
+       Too big / Installed), the figures and the cautions in its tooltip; the
+       sentence over the list about this machine's memory is gone. */
+    const badges = await app.eval(`[...document.querySelectorAll('#settings [data-llm-row^="local-text:"]')]
+      .map((n) => [...n.querySelectorAll('.llm-badge')].map((b) => ({word: (b.innerText || '').trim(), title: b.title || ''})))`);
     /* Measured, not read: `.tuirow` is a 24px line with overflow hidden,
        and the added lines were clipped to nothing on screen while every
        one of them still came back from innerText. */
@@ -288,24 +294,28 @@ try {
     })()`);
     if (SHOTS) await app.screenshot(join(SHOTS, 'settings-local-8gb.png'));
     say('--- Settings › LLM › Local on the same simulated 8 GB machine ---');
-    say(`  ${ramLine.trim()}`);
-    for (const r of rows) { say(`   ${r[0]}`); for (const l of r.slice(1)) say(`       ${l}`); }
-    check('the Local pane names the machine it is ranking for', /8 GB of memory/.test(ramLine), ramLine.trim());
+    rows.forEach((r, i) => { say(`   ${r[0]}`); for (const l of r.slice(1)) say(`       ${l}`); for (const b of badges[i] || []) say(`       [${b.word}] ${b.title}`); });
+    // A model added from Hugging Face (custom-…) has no catalogue figures; every curated row's badge names the machine.
+    check('the Local pane names the machine it is ranking for, in each row’s badge tooltip',
+      rows.length > 0 && rows.every((r, i) => /custom-/.test(r[0]) || (badges[i] || []).some((b) => /has 8 GB/.test(b.title))),
+      JSON.stringify(badges[0] || 'no rows'));
     check('the Local pane is ordered best fit first, and marks it',
       rows.length > 0 && /★ best fit for this machine/.test(rows[0][0]) && /gemma-4-e4b/.test(rows[0][0]),
       rows.length ? rows[0][0] : 'no rows');
     check('the Local pane shows each model’s description',
       rows.some((r) => r.some((l) => /Compact multimodal reasoning/.test(l))), JSON.stringify(rows[0]));
+    const tooBig = badges.filter((bs) => bs.some((b) => b.word === 'Too big' && /needs at least \d+ GB of memory/.test(b.title))).length;
     check('the Local pane agrees with the wizard about what will not run',
-      rows.filter((r) => r.some((l) => /needs \d+ GB of RAM at minimum/.test(l))).length === 10,
-      `${rows.filter((r) => r.some((l) => /needs \d+ GB of RAM at minimum/.test(l))).length} rows say a model will not run here`);
-    check('the small-model caution is on the recommended row here too',
-      rows.length > 0 && rows[0].some((l) => /small model/i.test(l)), JSON.stringify(rows[0] || 'no rows'));
-    check('the Local pane’s added lines are on the screen, not clipped by the 24px row',
-      rowGeom.rowH > 60 && rowGeom.subH > 10 && rowGeom.subInRow, JSON.stringify(rowGeom));
+      tooBig === 10, `${tooBig} rows say a model is too big for this machine`);
+    check('the small-model caution is on the recommended row here too, in its badge’s tooltip',
+      badges.length > 0 && (badges[0] || []).some((b) => /small model/i.test(b.title)), JSON.stringify(badges[0] || 'no rows'));
+    // One blurb line under the name now (the fit and caution lines are badges): the row still grows past the 24px TUI line to hold it.
+    check('the Local pane’s blurb line is on the screen, not clipped by the 24px row',
+      rowGeom.rowH >= 44 && rowGeom.subH > 10 && rowGeom.subInRow, JSON.stringify(rowGeom));
+    const qwen = rows.findIndex((r) => /qwen-3\.5-9b/.test(r[0]));
     check('a model that fits is not warned about here either',
-      !rows.some((r) => /qwen-3\.5-9b/.test(r[0]) && r.some((l) => /small model/i.test(l))),
-      JSON.stringify((rows.find((r) => /qwen-3\.5-9b/.test(r[0])) || [])[0] || 'no such row'));
+      qwen >= 0 && !(badges[qwen] || []).some((b) => /small model/i.test(b.title)),
+      JSON.stringify(qwen >= 0 ? badges[qwen] : 'no such row'));
   } finally {
     await app.close();
   }
