@@ -17069,6 +17069,36 @@ function mdInline(t) {
     .replace(/~~([^~]+)~~/g, '<s>$1</s>');
 }
 
+/* ATO-163: GitHub-style tables. Cells are split on `|` (a `\\|` stays a
+   pipe; code spans are already held out, so a pipe inside code is safe); the
+   separator row's colons set each column's alignment. A row may leave out
+   the outer pipes. Rows with fewer cells than the header are padded, extra
+   cells dropped, as GitHub does. */
+const MD_TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+function mdCells(line) {
+  const body = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
+  return body.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+}
+function mdTableAt(lines, at) {
+  const head = (lines[at] || '').trim();
+  const sep = lines[at + 1];
+  if (!head.includes('|') || sep === undefined || !MD_TABLE_SEP.test(sep) || !sep.includes('|') && !head.startsWith('|')) return null;
+  const cols = mdCells(head);
+  const aligns = mdCells(sep).map((c) => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : '');
+  if (cols.length < 2 && !head.startsWith('|')) return null;
+  const cell = (tag, text, i) => '<' + tag + (aligns[i] ? ' style="text-align:' + aligns[i] + '"' : '') + '>' + mdInline(text || '') + '</' + tag + '>';
+  let end = at + 1;
+  const rows = [];
+  while (end + 1 < lines.length && lines[end + 1].trim() && lines[end + 1].includes('|')) {
+    end++;
+    const c = mdCells(lines[end]);
+    rows.push('<tr>' + cols.map((_, i) => cell('td', c[i], i)).join('') + '</tr>');
+  }
+  const html = '<div class="mdtbl"><table><thead><tr>' + cols.map((c, i) => cell('th', c, i)).join('') + '</tr></thead>'
+    + (rows.length ? '<tbody>' + rows.join('') + '</tbody>' : '') + '</table></div>';
+  return { html, end };
+}
+
 function renderMarkdown(escaped) {
   const held = [];
   let t = escaped
@@ -17080,8 +17110,15 @@ function renderMarkdown(escaped) {
   const out = [];
   let list = null;                       // 'ul' | 'ol' | null
   const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
-  for (const raw of t.split('\n')) {
-    const line = raw.replace(/\s+$/, '');
+  const lines = t.split('\n');
+  for (let at = 0; at < lines.length; at++) {
+    const line = lines[at].replace(/\s+$/, '');
+    /* ATO-163: a table — a row of cells, then a dashed separator row — was
+       printed as its pipes and dashes. The whole table is one line of markup
+       (no newlines inside it for `pre-wrap` to keep), in a wrapper that
+       scrolls sideways instead of pushing the reply wider. */
+    const table = mdTableAt(lines, at);
+    if (table) { closeList(); out.push(table.html); at = table.end; continue; }
     const heading = /^(#{1,3})\s+(.*)$/.exec(line);
     const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
     const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);

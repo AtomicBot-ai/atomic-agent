@@ -43,6 +43,7 @@ import { checks45 } from "./smoke-tasks/t45.js";
 import { checks36 } from "./smoke-tasks/t36.js";
 import { checks47 } from "./smoke-tasks/t47.js";
 import { checks51 } from "./smoke-tasks/t51.js";
+import { checks53 } from "./smoke-tasks/t53.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -79,7 +80,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -679,6 +680,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("50")) await guarded("50", check, () => checks50(js, check));
   // 51 (ATO-161) — adding a cloud provider: an empty key saved as it was, the wrong row lit, the same error three times in red.
   if (want.has("51")) await guarded("51", check, () => checks51(js, check));
+  // 53 (ATO-163) — a markdown table in a reply was printed as its pipes and dashes.
+  if (want.has("53")) await guarded("53", check, () => checks53(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));
