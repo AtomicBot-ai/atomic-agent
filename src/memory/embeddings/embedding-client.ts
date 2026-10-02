@@ -92,7 +92,7 @@ export interface LlamaEmbeddingClientOptions {
   fetch?: typeof fetch;
   /**
    * The bearer key the daemon requires, read per request (a managed
-   * daemon runs with `--api-key-file`, #582). Unset or `null`: no
+   * daemon gets its key via the `LLAMA_API_KEY` env, #582). Unset or `null`: no
    * `authorization` header.
    */
   getApiKey?: () => string | null | undefined;

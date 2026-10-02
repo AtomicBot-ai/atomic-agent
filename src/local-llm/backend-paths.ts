@@ -53,8 +53,8 @@ export function resolveLogFilePath(dataDir: string): string {
 }
 
 /**
- * The bearer key both managed daemons are launched with (`--api-key-file`,
- * see `managed-api-key.ts`), next to the pid file so every process that
+ * The bearer key both managed daemons are launched with (passed via the
+ * `LLAMA_API_KEY` env, see `managed-api-key.ts`), next to the pid file so every process that
  * attaches to the daemon finds the same key. Mode 0600.
  */
 export function resolveApiKeyFilePath(dataDir: string): string {
