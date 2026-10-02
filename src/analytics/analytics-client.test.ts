@@ -49,6 +49,61 @@ describe("AnalyticsClient", () => {
     );
   });
 
+  it("stamps arch, surface, install_channel and desktop_version after caller props", () => {
+    const posthog = fakePosthog();
+    const client = new AnalyticsClient({
+      installId: "x",
+      platform: "darwin",
+      version: "1.0.0",
+      dimensions: {
+        surface: "desktop",
+        arch: "arm64",
+        installChannel: "dmg",
+        desktopVersion: "0.6.7",
+      },
+      posthog,
+    });
+    // A caller cannot override the global dimensions.
+    client.capture("app_opened", { surface: "tui", arch: "x64" });
+    const props = posthog.capture.mock.calls[0][0].properties;
+    expect(props.surface).toBe("desktop");
+    expect(props.arch).toBe("arm64");
+    expect(props.install_channel).toBe("dmg");
+    expect(props.desktop_version).toBe("0.6.7");
+    expect(props.$ip).toBe("0.0.0.0");
+  });
+
+  it("stamps arch but no surface fields when no dimensions are given", () => {
+    const posthog = fakePosthog();
+    const client = new AnalyticsClient({
+      installId: "x",
+      platform: "linux",
+      version: "1.0.0",
+      posthog,
+    });
+    client.capture("app_opened");
+    const props = posthog.capture.mock.calls[0][0].properties;
+    expect(props.arch).toBe(process.arch);
+    expect(props).not.toHaveProperty("surface");
+    expect(props).not.toHaveProperty("desktop_version");
+  });
+
+  it("omits desktop_version for terminal surfaces", () => {
+    const posthog = fakePosthog();
+    const client = new AnalyticsClient({
+      installId: "x",
+      platform: "linux",
+      version: "1.0.0",
+      dimensions: { surface: "tui", arch: "x64", installChannel: "curl_sh" },
+      posthog,
+    });
+    client.capture("app_opened");
+    const props = posthog.capture.mock.calls[0][0].properties;
+    expect(props.surface).toBe("tui");
+    expect(props.install_channel).toBe("curl_sh");
+    expect(props).not.toHaveProperty("desktop_version");
+  });
+
   it("is fire-safe: swallows capture errors", () => {
     const posthog = {
       capture: vi.fn(() => {

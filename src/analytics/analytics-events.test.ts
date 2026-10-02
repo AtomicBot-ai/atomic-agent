@@ -48,7 +48,10 @@ describe("captureAppInstalled", () => {
     const client = fakeClient();
     const store = fakeStore();
     captureAppInstalled(client, store);
-    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.appInstalled);
+    expect(client.capture).toHaveBeenCalledWith(
+      ANALYTICS_EVENTS.appInstalled,
+      {},
+    );
     expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
   });
 

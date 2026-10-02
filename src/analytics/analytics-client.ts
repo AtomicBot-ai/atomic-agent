@@ -5,6 +5,7 @@ import {
   POSTHOG_PLACEHOLDER_KEY,
   POSTHOG_PROJECT_KEY,
 } from "./posthog-config.js";
+import type { AnalyticsDimensions } from "./resolve-analytics-dimensions.js";
 
 /**
  * Sentinel IP sent as the `$ip` event property. Overriding with a truthy
@@ -25,6 +26,12 @@ export interface AnalyticsClientOptions {
   platform: string;
   /** App version stamped on every event as `app_version` (e.g. `1.2.3`). */
   version: string;
+  /**
+   * Process-wide dimensions (`surface`, `arch`, `install_channel`,
+   * `desktop_version`) stamped on every event. `arch` falls back to
+   * `process.arch` when omitted.
+   */
+  dimensions?: AnalyticsDimensions;
   logger?: AnalyticsLogger;
   /** Test seam — inject a fake PostHog implementation. */
   posthog?: Pick<PostHog, "capture" | "shutdown">;
@@ -40,7 +47,9 @@ export interface AnalyticsClientOptions {
  *     truthy `$ip` override — a falsy value (`null`/empty) is ignored and the
  *     request IP is captured instead, so the override must be a real string;
  *   - stamped with the `platform` OS tag (`darwin` / `linux` / `win32`);
- *   - stamped with the `app_version` tag (the running app version).
+ *   - stamped with the `app_version` tag (the running app version);
+ *   - stamped with `arch`, and — when dimensions are given — `surface`,
+ *     `install_channel` and `desktop_version` (desktop only).
  *
  * The client is fire-safe: capture failures are swallowed so an
  * analytics outage never disturbs the agent runtime.
@@ -50,12 +59,14 @@ export class AnalyticsClient {
   private readonly installId: string;
   private readonly platform: string;
   private readonly version: string;
+  private readonly globals: Record<string, string>;
   private readonly logger?: AnalyticsLogger;
 
   constructor(options: AnalyticsClientOptions) {
     this.installId = options.installId;
     this.platform = options.platform;
     this.version = options.version;
+    this.globals = globalProperties(options.dimensions);
     if (options.logger) this.logger = options.logger;
     this.posthog =
       options.posthog ??
@@ -75,6 +86,9 @@ export class AnalyticsClient {
         event,
         properties: {
           ...properties,
+          // Surface / arch / install channel / desktop version. After the
+          // caller's props so an event can never override them.
+          ...this.globals,
           // OS platform dimension, stamped on every event.
           platform: this.platform,
           // App version dimension, stamped on every event.
@@ -117,6 +131,7 @@ export function createAnalyticsClient(options: {
   installId: string;
   platform: string;
   version: string;
+  dimensions?: AnalyticsDimensions;
   logger?: AnalyticsLogger;
   posthog?: Pick<PostHog, "capture" | "shutdown">;
 }): AnalyticsClient | null {
@@ -132,9 +147,26 @@ export function createAnalyticsClient(options: {
     installId: options.installId,
     platform: options.platform,
     version: options.version,
+    ...(options.dimensions ? { dimensions: options.dimensions } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.posthog ? { posthog: options.posthog } : {}),
   });
+}
+
+/** Event properties derived from the process-wide dimensions. */
+function globalProperties(
+  dimensions: AnalyticsDimensions | undefined,
+): Record<string, string> {
+  const props: Record<string, string> = {
+    arch: dimensions?.arch ?? process.arch,
+  };
+  if (!dimensions) return props;
+  props.surface = dimensions.surface;
+  props.install_channel = dimensions.installChannel;
+  if (dimensions.desktopVersion !== undefined) {
+    props.desktop_version = dimensions.desktopVersion;
+  }
+  return props;
 }
 
 /** True when running under Vitest / `NODE_ENV=test`. */

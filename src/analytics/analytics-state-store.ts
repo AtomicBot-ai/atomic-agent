@@ -2,12 +2,16 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { resolveSharedInstallId } from "./shared-install-id.js";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Persistent, on-disk analytics state kept in `<stateDir>/analytics.json`.
- * Holds only an anonymous, randomly-generated install id and three
- * "fire once" flags. No IP, hostname, username, or any machine-derived
- * value is stored here — the id is a bare UUID with no link back to the
- * user or the device.
+ * Holds only an anonymous, randomly-generated install id, the install
+ * timestamp, and three "fire once" flags. No IP, hostname, username, or
+ * any machine-derived value is stored here — the id is a bare UUID with
+ * no link back to the user or the device.
  */
 export interface AnalyticsState {
   /** Anonymous, stable-per-install identifier (random UUID). */
@@ -18,6 +22,12 @@ export interface AnalyticsState {
   firstMessageSent: boolean;
   /** Whether the one-time `model_configured` event was already sent. */
   modelConfiguredSent: boolean;
+  /**
+   * ISO timestamp of the fresh install that created this file. Absent in
+   * files written before it existed — deliberately not backfilled, since
+   * "now" would understate the age of an old install.
+   */
+  installedAt?: string;
 }
 
 /**
@@ -29,13 +39,42 @@ export interface AnalyticsState {
  */
 export class AnalyticsStateStore {
   private state: AnalyticsState;
+  private sharedInstallId: string | undefined;
 
   constructor(private readonly filePath: string) {
     this.state = this.load();
   }
 
+  /** This state dir's own id (the pre-shared-id identifier). */
   getInstallId(): string {
     return this.state.installId;
+  }
+
+  /**
+   * The machine-wide id shared with the other surface (see
+   * `resolveSharedInstallId`). While analytics is disabled the shared
+   * file is not touched and the local id is returned. Cached once
+   * resolved with analytics on.
+   */
+  getSharedInstallId(enabled: boolean): string {
+    if (this.sharedInstallId !== undefined) return this.sharedInstallId;
+    const id = resolveSharedInstallId({
+      localId: this.state.installId,
+      enabled,
+    });
+    if (enabled) this.sharedInstallId = id;
+    return id;
+  }
+
+  /**
+   * Whole days since the fresh install that created this file, or
+   * `undefined` when the install predates the `installedAt` field.
+   */
+  getDaysSinceInstall(now: number = Date.now()): number | undefined {
+    if (this.state.installedAt === undefined) return undefined;
+    const at = Date.parse(this.state.installedAt);
+    if (!Number.isFinite(at)) return undefined;
+    return Math.max(0, Math.floor((now - at) / DAY_MS));
   }
 
   isAppInstalledSent(): boolean {
@@ -83,6 +122,9 @@ export class AnalyticsStateStore {
           // rather than never — the flag means "already reported", and
           // an old file has genuinely never reported it.
           modelConfiguredSent: parsed.modelConfiguredSent === true,
+          ...(typeof parsed.installedAt === "string"
+            ? { installedAt: parsed.installedAt }
+            : {}),
         };
       }
     } catch {
@@ -93,6 +135,7 @@ export class AnalyticsStateStore {
       appInstalledSent: false,
       firstMessageSent: false,
       modelConfiguredSent: false,
+      installedAt: new Date().toISOString(),
     };
     this.state = fresh;
     this.persist();
