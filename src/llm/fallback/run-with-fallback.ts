@@ -14,62 +14,15 @@ import { shouldAdvance } from "./should-advance.js";
  * provider id and resolves on success or throws on failure. This module
  * owns only the switching policy: pick the starting provider, and on a
  * fallover-worthy failure advance to the next chain link and retry the
- * SAME work.
- *
- * When every link has failed, the error thrown is the LAST link's, byte
- * for byte: it decides classification, fallover and the outage wait, and
- * those match on its class, cause, status and an anchored `fetch failed`.
- *
- * The tail is often an accident of the chain — `resolveFallbackChain`
- * appends the configured `llama-server` provider whether or not a local
- * model was ever downloaded — so its `fetch failed` alone would answer
- * "why did my message not go through" with a socket error from a backend
- * the operator never picked, while the provider in their composer chip
- * had refused in words (`402 … requires more credits`).
+ * SAME work. When the chain is exhausted (or the error is not
+ * fallover-worthy), the last error is rethrown untouched so the existing
+ * `loop_failed` classification and humanized messaging are preserved.
  *
  * Untouched, but not alone: the links that failed before it are recorded
  * beside the error (`attachFailedAttempts`), so a failure line can say
  * that the primary answered 404 before the local fallback turned out not
  * to be running. The last link still decides everything else — its error
- * is the one classified, and the link the turn waits on. A host that shows
- * one sentence per failed turn (the HTTP stream the desktop reads) names
- * the first recorded link instead: see `buildStreamEventHook`.
- *
- * **Except when the primary refused its key and nothing stood in for
- * it.** A refusal of the key by the primary in this very call
- * (`isCredentialRejection`: a wrong, dead or missing key, or one that
- * could not even be sent) outranks whatever the links after it said,
- * unless a fallback has served this partition since the chain left the
- * primary. The last link's error would otherwise decide the turn, and a
- * stopped local server's `fetch failed` parks it for the whole outage
- * wait, telling the user the model is not answering while the fix is the
- * key (item 29). The primary's own error classifies as a refusal, so the
- * turn ends at once with its sentence. Nothing failed before it, so
- * nothing is recorded beside it; each later link's failure is in the
- * advance log. A fallback that has been serving is the route the user
- * is actually on, so its outage still gets the outage wait, as before.
- *
- * Every thrown error also carries the id of the link that threw it
- * (`attachFailingLink`), for the hosts that say which link a parked turn
- * is waiting on.
- *
- * **Except when the primary refused its key and nothing stood in for
- * it.** A refusal of the key by the primary in this very call
- * (`isCredentialRejection`: a wrong, dead or missing key, or one that
- * could not even be sent) outranks whatever the links after it said,
- * unless a fallback has served this partition since the chain left the
- * primary. The last link's error would otherwise decide the turn, and a
- * stopped local server's `fetch failed` parks it for the whole outage
- * wait, telling the user the model is not answering while the fix is the
- * key (item 29). The primary's own error classifies as a refusal, so the
- * turn ends at once with its sentence. Nothing failed before it, so
- * nothing is recorded beside it; each later link's failure is in the
- * advance log. A fallback that has been serving is the route the user
- * is actually on, so its outage still gets the outage wait, as before.
- *
- * Every thrown error also carries the id of the link that threw it
- * (`attachFailingLink`), for the hosts that say which link a parked turn
- * is waiting on.
+ * is the one classified, and the link the turn waits on.
  *
  * **Except when the primary refused its key and nothing stood in for
  * it.** A refusal of the key by the primary in this very call
