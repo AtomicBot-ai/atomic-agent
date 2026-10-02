@@ -1,8 +1,17 @@
-export { SessionStore } from "./session-store.js";
+export { SessionStore, INTERRUPTED_TURN_ENDING } from "./session-store.js";
 export type {
   SessionStoreOptions,
   RecentWorkingDirRow,
+  TurnEnding,
 } from "./session-store.js";
+export {
+  currentTurnOwnerProbe,
+  hostBootAt,
+  isTurnOwnerGone,
+  parseTurnOwner,
+  serializeTurnOwner,
+} from "./turn-owner.js";
+export type { TurnOwner, TurnOwnerProbe } from "./turn-owner.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
 export type {
   PruneSessionsOptions,
