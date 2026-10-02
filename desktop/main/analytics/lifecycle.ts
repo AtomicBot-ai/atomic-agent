@@ -25,7 +25,7 @@ const L = {
   readySent: false,
   turns: 0,
   lastAgentStart: null as number | null,
-  restartTrigger: null as "manual" | "switch" | "update" | "other" | null,
+  restartTrigger: null as "manual" | "switch" | "other" | null,
   connectedOnce: false,
   closedSent: false,
 };
@@ -81,8 +81,8 @@ function maybeReady(): void {
   });
 }
 
-/** `agent:restart` (manual) or a switch / update restart, said just before the stop+start. */
-export function agentRestarting(trigger: "manual" | "switch" | "update" | "other"): void {
+/** `agent:restart` (manual) or a switch's restart, said just before the stop+start. */
+export function agentRestarting(trigger: "manual" | "switch" | "other"): void {
   L.restartTrigger = trigger;
 }
 

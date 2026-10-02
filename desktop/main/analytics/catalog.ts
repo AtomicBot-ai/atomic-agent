@@ -1,12 +1,19 @@
 /**
  * The ONE allowlist of every analytics event the desktop shell may send,
- * with its allowed properties and, for enum properties, the allowed values.
+ * with its allowed properties and, for enum properties, the allowed values
+ * (the lists themselves live in catalog-values.ts).
  *
- * Contract: SPEC "Desktop analytics — shared contract (v1)". Owner says who
- * fires it: `main` (this process) or `ui` (the renderer, through
- * `window.atomic.track`). The renderer may only send `ui` events; main may
- * send either. Events the agent runtime owns (`app_installed`,
- * `message_sent`, …) are not listed: the desktop never sends them itself.
+ * Documented in desktop/ANALYTICS.md. Owner says who fires it: `main` (this
+ * process) or `ui` (the renderer, through `window.atomic.track`). The
+ * renderer may only send `ui` events; main may send either.
+ *
+ * Runtime-owned events: most (`app_installed`, `message_sent`,
+ * `first_message_sent`, …) the bundled agent fires itself and are not
+ * listed. Two are, because the agent does not fire them under `atag serve`
+ * (the desktop drives setup through config writes, not the TUI wizard), so
+ * the shell sends them in the runtime's own schema: `model_configured`
+ * (`provider` as the agent spells it — `llama.cpp` for the managed local
+ * backend — and `kind`) and `analytics_disabled`.
  *
  * Anything not listed here is dropped by validate.ts — an unknown event, an
  * unknown property, a value of the wrong shape. Privacy rests on this file:
@@ -15,14 +22,26 @@
  */
 
 import { curatedMetaIds } from "../model-catalog.js";
+import {
+  APPROVAL_CATEGORIES, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
+  NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
+  SWITCH_REFUSALS, uiActionOk, UI_VIA,
+} from "./catalog-values.js";
+
+export * from "./catalog-values.js";
 
 export type PropSpec =
   | { kind: "enum"; values: readonly string[]; fallback?: string; nullable?: boolean }
   | { kind: "int"; min?: number; max?: number; nullable?: boolean }
   | { kind: "num"; min?: number; max?: number; decimals?: number; nullable?: boolean }
   | { kind: "bool" }
-  /** A short identifier-shaped string (≤64 chars, `^[a-zA-Z0-9_.:-]*$`). */
-  | { kind: "str"; nullable?: boolean; pattern?: RegExp }
+  /**
+   * A short identifier-shaped string (≤64 chars, `^[a-zA-Z0-9_.:-]*$`).
+   * `clean` may normalise it or refuse it (undefined); `fallback` replaces a
+   * refused or non-string value.
+   */
+  | { kind: "str"; nullable?: boolean; clean?: (s: string) => string | undefined; fallback?: string }
   /** Built-in tool names; any MCP tool collapses to `mcp`. */
   | { kind: "tools" }
   | { kind: "boolMap"; keys: readonly string[] }
@@ -43,65 +62,6 @@ const num = (opts: { decimals?: number; nullable?: boolean } = {}): PropSpec => 
 const bool: PropSpec = { kind: "bool" };
 const ms = int();
 
-/* ---- shared value lists ---- */
-
-export const ONBOARDING_STEPS = [
-  "intro", "choose", "local_pick", "local_hf_ref", "local_hf_pick", "local_download", "wait_or_jump",
-  "cloud", "custom_chat_url", "custom_embedding_url", "propose_second", "import_pick", "import_preview",
-  "import_done", "finished",
-] as const;
-
-/** Provider preset ids (src/llm/provider/presets/provider-presets.ts + the built-in cloud kinds). */
-export const PROVIDER_PRESETS = [
-  "openrouter", "openai", "anthropic", "gemini", "groq", "aimlapi", "atomic-chat", "cerebras", "deepseek",
-  "fireworks", "hyperbolic", "lmstudio", "mistral", "moonshot", "nous", "novita", "ollama", "ollama-cloud",
-  "perplexity", "dashscope", "sambanova", "sarvam", "together", "xai", "local-llama", "custom",
-] as const;
-
-export const RUN_MODES = ["local", "cloud", "fusion"] as const;
-export const CODING_MODES = ["default", "plan", "auto", "bypass", "other"] as const;
-export const FIT = ["comfortable", "tight", "over"] as const;
-export const RAM_BUCKETS = ["8", "16", "32", "64"] as const;
-export const ERROR_CATEGORIES = ["transport", "grammar", "model", "tool", "cancelled"] as const;
-export const NODE_SIGNALS = [
-  "SIGTERM", "SIGKILL", "SIGINT", "SIGHUP", "SIGQUIT", "SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE",
-  "SIGPIPE", "SIGTRAP", "SIGSYS", "SIGUSR1", "SIGUSR2", "SIGBREAK",
-] as const;
-/** Electron's RenderProcessGoneDetails.reason / child-process-gone reason. */
-export const GONE_REASONS = [
-  "clean-exit", "abnormal-exit", "killed", "crashed", "oom", "launch-failed", "integrity-failure", "memory-eviction",
-] as const;
-/** The renderer's SLASH table (renderer.js). Anything else is `unknown`. */
-export const SLASH_COMMANDS = [
-  "dump", "report", "help", "tools", "theme", "onboarding", "setup", "clear", "abort", "quit", "debug", "chat",
-  "runmode", "observe", "manage", "feed", "logs", "reasoning", "world", "expand", "collapse", "session",
-  "sessions", "new", "skills", "skill", "memory", "llm", "mcp", "model", "tasks", "task", "telegram",
-  "import", "privacy", "analytics", "unknown",
-] as const;
-/** The renderer's approval CATS ids. */
-export const APPROVAL_CATEGORIES = [
-  "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "script", "proc_kill", "publish",
-  "git_remote", "fusion_fanout", "browser_nonweb", "trust_config", "email", "fs_read_outside", "other",
-] as const;
-export const SETTINGS_PANES = [
-  "general", "models", "mcp", "telegram", "memory", "tasks", "skills", "privacy", "import", "diagnostics",
-] as const;
-export const IMPORT_SOURCES = ["tui", "hermes", "openclaw", "claude-code", "codex", "pi", "other"] as const;
-export const IMPORT_PARTS = ["providers", "keys", "skills", "sessions", "memory"] as const;
-export const DAEMON_EFFECTS = [
-  "started", "restarted", "start_failed", "stop_failed", "skipped", "superseded", "untouched", "stopped",
-] as const;
-export const SWITCH_REFUSALS = [
-  "turn_running", "switch_running", "needs_provider", "needs_key", "key_invalid", "needs_model",
-  "needs_chat_model", "needs_download", "no_provider", "other",
-] as const;
-export const DOWNLOAD_FAIL_REASONS = [
-  "offline", "busy", "exited", "disk_full", "http_error", "no_progress", "other",
-] as const;
-export const DOWNLOAD_TRIGGERS = ["onboarding", "settings", "selector", "other"] as const;
-export const UI_ACTION_RE = /^[a-z][a-z0-9_.-]*(:[a-z0-9_.-]+){0,2}$/;
-export const UI_VIA = ["click", "menu", "shortcut", "palette", "slash", "other"] as const;
-
 /** Curated catalogue ids, plus the two stand-ins for anything user-added. */
 const modelIds = (): readonly string[] => [...curatedMetaIds(), "custom", "hf_custom"];
 
@@ -109,7 +69,7 @@ const downloadProps: Record<string, PropSpec> = {
   model_id: en(modelIds(), { fallback: "hf_custom" }),
   source: en(["curated", "hf"]),
   size_gb: num({ decimals: 1, nullable: true }),
-  quant: { kind: "str" },
+  quant: { kind: "str", clean: cleanQuant, fallback: "unknown" },
   has_projector: bool,
   fit: en(FIT, { nullable: true }),
   trigger: en(DOWNLOAD_TRIGGERS),
@@ -128,7 +88,7 @@ export const EVENTS: Record<string, EventSpec> = {
       ms,
     },
   },
-  agent_restarted: { owner: "main", props: { trigger: en(["manual", "switch", "update", "other"]) } },
+  agent_restarted: { owner: "main", props: { trigger: en(["manual", "switch", "other"]) } },
   window_crashed: {
     owner: "main",
     props: {
@@ -151,14 +111,14 @@ export const EVENTS: Record<string, EventSpec> = {
       outcome: en(["local", "cloud", "custom", "skipped"]),
     },
   },
-  onboarding_skipped: { owner: "ui", props: { at_step: en(ONBOARDING_STEPS) } },
+  onboarding_skipped: { owner: "ui", props: { at_step: en(ONBOARDING_STEPS) } },   // includes `other`
   model_picked: {
     owner: "ui",
     props: {
       model_id: en(modelIds(), { fallback: "custom" }),
       size_gb: num({ decimals: 1, nullable: true }),
       fit: en(FIT, { nullable: true }),
-      host_ram_gb: en(RAM_BUCKETS),
+      host_ram_gb: en(RAM_BUCKETS, { nullable: true }),
     },
   },
   provider_setup_started: { owner: "ui", props: { provider_preset: en(PROVIDER_PRESETS, { fallback: "custom" }) } },
@@ -166,7 +126,7 @@ export const EVENTS: Record<string, EventSpec> = {
     owner: "main",
     props: {
       provider_preset: en(PROVIDER_PRESETS, { fallback: "custom" }),
-      result: en(["ok", "rejected", "unreachable", "payment_required", "saved_unchecked"]),
+      result: en(["ok", "rejected", "unreachable", "payment_required"]),
       http_status: int({ min: 100, max: 599, nullable: true }),
     },
   },
@@ -177,7 +137,7 @@ export const EVENTS: Record<string, EventSpec> = {
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
   model_configured: {
     owner: "main",
-    props: { provider: en(PROVIDER_PRESETS, { fallback: "custom" }), kind: en(["local", "cloud", "custom"]) },
+    props: { provider: en(CONFIGURED_PROVIDERS, { fallback: "custom" }), kind: en(["local", "cloud", "custom"]) },
   },
 
   /* ---- models, downloads, backend ---- */
@@ -269,8 +229,11 @@ export const EVENTS: Record<string, EventSpec> = {
   plan_handoff: { owner: "ui", props: { choice: en(["auto", "bypass", "dismiss"]) } },
 
   /* ---- navigation and features ---- */
-  /* `prefix`, `prefix:tail` or `runmode:workers:N` — the renderer keeps only enum tails. */
-  ui_action: { owner: "ui", props: { action: { kind: "str", pattern: UI_ACTION_RE }, via: en(UI_VIA) } },
+  /* `prefix`, `prefix:tail` or `runmode:workers:N` — the renderer keeps only enum tails; uiActionOk refuses anything id-like. */
+  ui_action: {
+    owner: "ui",
+    props: { action: { kind: "str", clean: (a: string) => (uiActionOk(a) ? a : undefined) }, via: en(UI_VIA) },
+  },
   slash_command_used: { owner: "ui", props: { command: en(SLASH_COMMANDS, { fallback: "unknown" }) } },
   settings_pane_viewed: { owner: "ui", props: { pane: en(SETTINGS_PANES), ms_on_pane: int({ nullable: true }) } },
   session_action: {
@@ -283,7 +246,7 @@ export const EVENTS: Record<string, EventSpec> = {
       action: en(["start", "stop", "cancel"]),
       result: en(["ok", "error"]),
       duration_s: num({ decimals: 1, nullable: true }),
-      locale: { kind: "str", nullable: true },
+      locale: { kind: "str", nullable: true, clean: cleanLocale },
       error: en(["spawn", "too_long", "other"], { nullable: true }),
     },
   },
@@ -303,7 +266,7 @@ export const EVENTS: Record<string, EventSpec> = {
   telegram_setup: {
     owner: "main",
     props: {
-      step: en(["enable", "pair", "token_saved", "token_cleared", "owner_cleared"]),
+      step: en(["enable", "token_saved", "token_cleared", "owner_cleared"]),
       result: en(["ok", "error"]),
     },
   },

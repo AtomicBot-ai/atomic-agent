@@ -5,7 +5,8 @@
  *  - unknown property → dropped;
  *  - enum value not in the list → `other` (or the prop's own fallback), or
  *    dropped when the prop has neither;
- *  - strings: ≤64 chars, `^[a-zA-Z0-9_.:-]*$`, else dropped;
+ *  - strings: ≤64 chars, `^[a-zA-Z0-9_.:-]*$`, then the prop's own `clean`
+ *    (ui_action ids, quant, locale), else the prop's fallback or dropped;
  *  - numbers: finite, clamped to the prop's range, ints truncated;
  *  - tool lists: built-in names only, any MCP tool → `mcp`, dedup, max 20.
  *
@@ -75,7 +76,8 @@ export function cleanProp(spec: PropSpec, v: unknown): unknown {
       return typeof v === "boolean" ? v : undefined;
     case "str": {
       const str = safeString(v);
-      return str !== undefined && spec.pattern && !spec.pattern.test(str) ? undefined : str;
+      if (!spec.clean) return str ?? spec.fallback;
+      return (str === undefined ? undefined : spec.clean(str)) ?? spec.fallback;
     }
     case "tools":
       return cleanTools(v);

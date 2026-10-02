@@ -11,14 +11,6 @@ export function presetOf(id: unknown): string {
   return typeof id === "string" && (PROVIDER_PRESETS as readonly string[]).includes(id) ? id : "custom";
 }
 
-/** 8 / 16 / 32 / 64 — the bucket at or below the host's RAM (8 for anything smaller). */
-export function ramBucket(gb: number): "8" | "16" | "32" | "64" {
-  if (gb >= 64) return "64";
-  if (gb >= 32) return "32";
-  if (gb >= 16) return "16";
-  return "8";
-}
-
 /** comfortable / tight / over, from the catalogue's RAM figures when known, else from the file size. */
 export function fitFor(
   hostRamGb: number,
@@ -39,11 +31,11 @@ export function fitFor(
   return size > hostRamGb * 0.6 ? "tight" : "comfortable";
 }
 
-/** `Q4_K_M`, `IQ3_XXS`, `UD-Q4_K_XL`, `F16`… out of a GGUF file name, else `unknown`. */
+/** `Q4_K_M`, `IQ3_XXS`, `F16`… out of a GGUF file name (an Unsloth `UD-` prefix dropped), else `unknown`. */
 export function quantOf(filename: unknown): string {
   if (typeof filename !== "string") return "unknown";
   const base = filename.split(/[\\/]/).pop() ?? "";
-  const m = /(?:^|[-_.])((?:UD-)?(?:I?Q\d(?:_[A-Z0-9]+){0,3}|BF16|F16|F32|MXFP4))(?=[-_.]|$)/i.exec(base);
+  const m = /(?:^|[-_.])(?:UD-)?(I?Q\d(?:_[A-Z0-9]+){0,3}|BF16|F16|F32|MXFP4)(?=[-_.]|$)/i.exec(base);
   return m ? m[1]!.toUpperCase() : "unknown";
 }
 

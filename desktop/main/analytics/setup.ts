@@ -37,7 +37,8 @@ function configuredRoute(): { provider: string; kind: "local" | "cloud" | "custo
   const lm = cfg["localModels"] as { mode?: unknown } | undefined;
   if (active === "local-llama" || entry?.["kind"] === "llama-server") {
     // An external llama-server (the wizard's custom-endpoint branch) is `custom`.
-    return lm?.mode === "external" ? { provider: "custom", kind: "custom" } : { provider: "local-llama", kind: "local" };
+    // The managed backend is `llama.cpp`, as the agent runtime names it in its own model_configured.
+    return lm?.mode === "external" ? { provider: "custom", kind: "custom" } : { provider: "llama.cpp", kind: "local" };
   }
   const preset = presetOf(active);
   return { provider: preset, kind: preset === "custom" ? "custom" : "cloud" };

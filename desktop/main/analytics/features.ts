@@ -79,7 +79,7 @@ export function skillAction(action: "enable" | "disable" | "remove", res: unknow
 
 /* ---- telegram (never the token) ---- */
 
-export function telegramStep(step: "enable" | "pair" | "token_saved" | "token_cleared" | "owner_cleared", res: unknown): void {
+export function telegramStep(step: "enable" | "token_saved" | "token_cleared" | "owner_cleared", res: unknown): void {
   track("telegram_setup", { step, result: ok(res) ? "ok" : "error" });
 }
 
@@ -91,7 +91,8 @@ export function telegramConfigWrite(key: string, value: string | null, res: unkn
 
 /* ---- import ---- */
 
-export function tuiImportDone(flags: Record<string, boolean>, res: unknown): void {
+/** `flags` is the panel's own toggles; the validator keeps only the known part names, as booleans. */
+export function tuiImportDone(flags: Record<string, boolean | undefined>, res: unknown): void {
   const r = (res ?? {}) as { ok?: boolean; error?: string; copied?: Record<string, number | boolean> };
   // ok with an error beside it: some arms copied, one did not.
   const result = !r.ok ? "error" : r.error ? "partial" : "ok";
