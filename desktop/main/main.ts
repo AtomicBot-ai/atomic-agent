@@ -98,6 +98,7 @@ import {
   supersedeBringUp,
   swapFusionLegs,
   switchBackend,
+  switchRestartOnItsWay,
   waitForSwitchRestart,
   type SwitchResult,
 } from "./backend-switch.js";
@@ -868,9 +869,16 @@ function wireIpc(client: AgentClient): void {
       ? client.deleteSession(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
       : { ok: false, error: "id required" },
   );
-  ipcMain.handle("agent:codingMode", (_event, mode: unknown) =>
-    client.codingMode(typeof mode === "string" ? mode : undefined),
-  );
+  /* Backlog 18 (its second review): the last coding mode the window set. A
+     switch's restart puts it back on the new agent before the turns waiting
+     for that restart go (restartsAgent below). */
+  let lastCodingMode: string | null = null;
+  ipcMain.handle("agent:codingMode", async (_event, mode: unknown) => {
+    const want = typeof mode === "string" ? mode : undefined;
+    const res = await client.codingMode(want);
+    if (want !== undefined && res.ok) lastCodingMode = res.mode ?? want;
+    return res;
+  });
 
   /* Item 7C — mid-turn steering. The 409/429 bodies come back as
      `error.message` through `request`; the renderer decides what to say,
@@ -925,7 +933,13 @@ function wireIpc(client: AgentClient): void {
        a message queued behind that turn goes out at that very moment. A turn
        asked for while a switch's restart runs waits for it, and runs on the
        agent it brings up rather than on one being stopped. */
-    if ((await waitForSwitchRestart()) && client.status.state !== "connected") {
+    // One restart can follow another; the turn starts with no await after the last look.
+    let waited = false;
+    for (let r = switchRestartOnItsWay(); r; r = switchRestartOnItsWay()) {
+      waited = true;
+      await r;
+    }
+    if (waited && client.status.state !== "connected") {
       return { ok: false, error: client.status.error ?? "the agent did not come back after the switch restarted it" };
     }
     const turnId = randomUUID();
@@ -1321,7 +1335,17 @@ function wireIpc(client: AgentClient): void {
     turnsInFlight: () => client.turnsInFlight,
     restart: async () => {
       await client.stop();
+      // The app began quitting meanwhile: no fresh `atag serve` behind it.
+      if (quitting) return;
       await client.start();
+      /* The coding mode is the agent process's own state, and a new agent
+         boots at the config's approval level (bypass at 5). The window puts
+         its choice back on reconnect, but only once no turn runs
+         (reassertCodingMode), and a restart it did not ask for holds no switch
+         lock there: a message queued behind the turn that just ended goes out
+         at once. So main puts back the last mode the window set first, and the
+         turns waiting for this restart (agent:chat) go after it. */
+      if (lastCodingMode && !quitting && client.status.state === "connected") await client.codingMode(lastCodingMode);
     },
   });
   // A restart held back for the turns runs as the last one ends — on a live agent; a dead one is started afresh by whoever starts it.

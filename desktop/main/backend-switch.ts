@@ -552,7 +552,8 @@ export async function stopDaemonForQuit(dataDir: string): Promise<number[]> {
      (lastTurnEnded, the AgentClient's `idle`), which is when the switch would
      have restarted had it landed then; a turn asked for while it runs (a
      message queued behind the one that ended goes out at that very moment)
-     waits for it in main and runs on the agent it brings up. A switch that
+     waits for it in main and runs on the agent it brings up, once main has
+     put the window's coding mode back on it (main.ts). A switch that
      comes first restarts it instead, and so does anything else that starts
      `atag serve` (agentStarting): a new agent reads the file as it is.
    - Nothing restarts once the app quits (closeDaemonTurns).
@@ -586,14 +587,14 @@ function restartNow(agent: SwitchAgent): Promise<void> {
   return run;
 }
 
-/** Wait out a switch's restart on its way, and any that follows it; answers whether there was one. main.ts: applySwitch, and agent:chat. */
-export async function waitForSwitchRestart(): Promise<boolean> {
-  let waited = false;
-  while (restarting) {
-    waited = true;
-    await restarting;
-  }
-  return waited;
+/** The switch restart on its way, or null. One can follow another, so it is waited out in a loop with nothing awaited after the last look (main.ts agent:chat). */
+export function switchRestartOnItsWay(): Promise<void> | null {
+  return restarting;
+}
+
+/** Wait out a switch's restart on its way, and any that follows it. main.ts: applySwitch, before it reads the route serve booted on. */
+export async function waitForSwitchRestart(): Promise<void> {
+  while (restarting) await restarting;
 }
 
 /**
@@ -606,7 +607,8 @@ export async function restartAfterSwitch(
   res: SwitchResult,
   wanted: boolean,
 ): Promise<{ restart: boolean; restartHeld?: true }> {
-  await waitForSwitchRestart();
+  // One at a time: from the last look at `restarting` to restartNow setting it, nothing is awaited.
+  while (restarting) await restarting;
   const agent = switchAgent;
   const mine = wanted && res.ok && res.daemon !== "superseded";
   if (!agent || turnsClosed || !res.ok || !(mine || restartOwed)) return { restart: false };
