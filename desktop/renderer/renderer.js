@@ -428,9 +428,11 @@ const OB_PHASE_OF = {
   wait_or_jump:'02', finished:'02',
 };
 /* The screen's own title, in the app's voice rather than the TUI's status
-   line. Plainest possible form: what this screen asks you to decide. */
+   line. Plainest possible form: what this screen asks you to decide.
+   The first one asks the person, not about the app in the third person
+   (Danya, 30.09: it was "Choose how Atomic Agent gets its model"). */
 const OB_TITLES = {
-  choose: 'Choose how Atomic Agent gets its model',
+  choose: 'Where should your model run?',
   cloud: 'Choose a provider',
   custom_chat_url: 'Point Atomic Agent at your endpoint',
   custom_embedding_url: 'Embeddings endpoint',
@@ -467,9 +469,10 @@ const OB_SUBTITLES = {
 
 /* Copy tables, each verbatim from the component named beside it. */
 const OB_COPY = {
-  // onboarding-choose-step.tsx:30-33
+  // onboarding-choose-step.tsx:30-33. "The others" left a person guessing
+  // which others, and where (Danya, 30.09).
   chooseExplainer: [
-    'You can add the others later.'],
+    'You can add cloud or custom models later in Settings.'],
   // onboarding-intro-step.tsx:12, logo.tsx TAGLINE. Not the TUI's :53
   // "press any key" line: the desktop's card leaves by itself (backlog 03).
   tagline: 'Local AI-First Agent',
@@ -8392,16 +8395,21 @@ function obHeadHTML() {
  * `.ob-stepmark`, not `.ob-phase`: the download progress ROW is `.ob-phase`,
  * and reusing that name once put this row's type on the progress rows and
  * brought back the hover flicker. The smoke reads the phases by this class.
+ *
+ * The phases are a numbered list, not a pair of pills: drawn as pills, with
+ * the current one filled, they read as buttons nobody could press (Danya,
+ * 30.09). Nothing on them is a control; the current phase is the filled
+ * number and `aria-current`.
  */
 function obRailHTML() {
   const here = OB_PHASE_OF[OB.step] || null;
   const importing = OB.step === 'import_pick' || OB.step === 'import_preview' || OB.step === 'import_done';
   const statement = importing ? 'Bring what you already taught other agents.' : 'Choose how it runs. Change it any time.';
-  const phases = here === null ? '' : '<div class="ob-stepmarks">' + OB_PHASES.map((p) => {
+  const phases = here === null ? '' : '<ol class="ob-stepmarks" aria-label="Setup progress">' + OB_PHASES.map((p) => {
     const state = p.n === here ? 'on' : p.n < here ? 'done' : '';
-    return '<span class="ob-stepmark' + (state ? ' ' + state : '') + '">'
-      + '<span class="n">' + (state === 'done' ? ic('check') : p.n) + '</span> ' + esc(p.label) + '</span>';
-  }).join('') + '</div>';
+    return '<li class="ob-stepmark' + (state ? ' ' + state : '') + '"' + (state === 'on' ? ' aria-current="step"' : '') + '>'
+      + '<span class="n">' + (state === 'done' ? ic('check') : p.n) + '</span> ' + esc(p.label) + '</li>';
+  }).join('') + '</ol>';
   return '<aside class="ob-rail">'
     + '<span class="ob-orb ob-orb-a" aria-hidden="true"></span><span class="ob-orb ob-orb-b" aria-hidden="true"></span>'
     + '<div class="ob-lock"><span class="ob-mark">' + MARK_COLOR + '</span>'

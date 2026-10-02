@@ -100,13 +100,19 @@
 #onboarding .ob-lock .ob-mark svg{width:30px;height:30px}
 #onboarding .ob-lock .ob-wm{font:600 17px/1.2 var(--font-ui);letter-spacing:-.02em;color:var(--on-strong);white-space:nowrap}
 #onboarding .ob-statement{margin:auto 0 0;max-width:14ch;font:600 26px/1.18 var(--font-ui);letter-spacing:-.035em;color:var(--on-strong)}
-#onboarding .ob-stepmarks{display:grid;gap:4px}
-#onboarding .ob-stepmark{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:var(--r-pill);
-  font:500 14px/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted)}
+/* The phases are a progress list, not controls: no pill and no fill behind
+   the current one — those read as two buttons nobody could press (Danya,
+   30.09). The current phase is its filled number and bright label; a hairline
+   track joins the numbers. */
+#onboarding .ob-stepmarks{display:grid;gap:14px;margin:0;padding:0;list-style:none}
+#onboarding .ob-stepmark{position:relative;display:flex;align-items:center;gap:12px;height:26px;padding:0;border-radius:0;
+  background:none;font:500 14px/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted);cursor:default}
+#onboarding .ob-stepmark + .ob-stepmark::before{content:"";position:absolute;left:12.25px;top:-12px;width:1.5px;height:10px;
+  border-radius:1px;background:var(--glass)}
 #onboarding .ob-stepmark .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;
   font:500 11.5px/1 var(--font-mono);box-shadow:inset 0 0 0 1.5px var(--glass)}
 #onboarding .ob-stepmark .n svg{width:13px;height:13px;stroke-width:2.2}
-#onboarding .ob-stepmark.on{background:var(--glass-12);color:var(--on-strong)}
+#onboarding .ob-stepmark.on{color:var(--on-strong);font-weight:600}
 #onboarding .ob-stepmark.on .n{background:var(--on-strong);color:var(--indigo);box-shadow:none}
 #onboarding .ob-stepmark.done{color:var(--on-strong)}
 #onboarding .ob-stepmark.done .n{background:var(--glass-20);box-shadow:none}
