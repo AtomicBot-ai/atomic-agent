@@ -83,6 +83,11 @@ export interface AgentStatus {
 const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_TIMEOUT_LOCAL_MS = 120_000;
 const HEALTH_POLL_MS = 300;
+/* ATO-157: `atag serve` answers its first /health well inside a second on a
+   switch's restart, so the first seconds are looked at three times as often:
+   a 300 ms step alone put up to 300 ms of nothing on every switch. */
+const HEALTH_POLL_FAST_MS = 100;
+const HEALTH_FAST_FOR_MS = 3_000;
 
 /**
  * Stopping the agent: SIGTERM, a grace to close by itself, then SIGKILL.
@@ -743,7 +748,8 @@ export class AgentClient extends EventEmitter {
       if (superseded() || this.stopped.has(child)) return "superseded";
       return this.child === child ? null : "exited";
     };
-    const deadline = Date.now() + budgetMs;
+    const began = Date.now();
+    const deadline = began + budgetMs;
     while (Date.now() < deadline) {
       const gone = ended();
       if (gone) return gone;
@@ -771,7 +777,7 @@ export class AgentClient extends EventEmitter {
       } catch {
         /* not up yet */
       }
-      await sleep(HEALTH_POLL_MS);
+      await sleep(Date.now() - began < HEALTH_FAST_FOR_MS ? HEALTH_POLL_FAST_MS : HEALTH_POLL_MS);
     }
     return ended() ?? "timeout";
   }
@@ -1008,7 +1014,7 @@ export class AgentClient extends EventEmitter {
     ok: boolean; supported: boolean; basis?: "built";
     usage?: { tokens: number; contextWindow: number | null; conversationTokens: number; conversationPairs: number;
       droppedPairs: number; conversationPairsCap: number; sections: Array<{ label: string; tokens: number }> };
-    contextWindow?: number | null; reservedForReply?: number; pairsCap?: number; error?: string;
+    contextWindow?: number | null; reservedForReply?: number; replyCap?: number; pairsCap?: number; error?: string;
   }> {
     try {
       const res = await fetch(`${this.base()}/api/context-preview`, {
@@ -1031,7 +1037,7 @@ export class AgentClient extends EventEmitter {
       if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
       const body = (await res.json()) as {
         basis: "built"; usage: NonNullable<Awaited<ReturnType<AgentClient["contextPreview"]>>["usage"]>;
-        contextWindow: number | null; reservedForReply: number; pairsCap: number;
+        contextWindow: number | null; reservedForReply: number; replyCap?: number; pairsCap: number;
       };
       return { ok: true, supported: true, ...body };
     } catch (err) {

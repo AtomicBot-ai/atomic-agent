@@ -57,17 +57,47 @@ export const WORKER_READS_ALLOWANCE_TOKENS = 6_000;
 export const DEFAULT_WORKER_COMPLETION_TOKENS = 16_384;
 
 /**
- * Tokens one worker occupies in the shared pool at its peak: its prompt,
- * what it reads, and its reply — ~32k at the default reply cap.
+ * The reply part of one local worker's footprint: the configured cap,
+ * never more than {@link DEFAULT_WORKER_COMPLETION_TOKENS}.
+ *
+ * `localModels.completionMaxTokens` is the orchestrator's knob as much as
+ * the workers', and it gets raised for long single-stream runs (96k for a
+ * benchmark). Sized at that, one worker filled most of a 131k pool and
+ * the fan-out ran one at a time where four fit. The bound is a fixed
+ * number rather than a share of the context on purpose: a share grows
+ * with the pool it is dividing and never lets more workers in, which is
+ * the whole point. It is the schema default because that is the reply
+ * every worker was sized for before anyone raised the cap.
+ *
+ * Only honest because it is enforced: a local fan-out whose cap is above
+ * this figure sends it as the workers' own reply cap
+ * (`fusion-delegate.ts`), so no worker can generate past the share the
+ * pool was divided by — four workers each writing 96k into a pool sized
+ * for 16k replies is exactly the shared overflow that kills them all.
+ * A lower cap is kept as it is; `0` ("no cap") is planned at the default
+ * and stays uncapped on the wire, as before.
  */
-export function workerSlotFootprint(completionMaxTokens?: number): number {
-  const reply =
+export function workerReplyAllowance(completionMaxTokens?: number): number {
+  const cap =
     completionMaxTokens !== undefined &&
     Number.isFinite(completionMaxTokens) &&
     completionMaxTokens > 0
       ? Math.floor(completionMaxTokens)
       : DEFAULT_WORKER_COMPLETION_TOKENS;
-  return WORKER_PROMPT_BASE_TOKENS + WORKER_READS_ALLOWANCE_TOKENS + reply;
+  return Math.min(cap, DEFAULT_WORKER_COMPLETION_TOKENS);
+}
+
+/**
+ * Tokens one worker occupies in the shared pool at its peak: its prompt,
+ * what it reads, and its reply (`workerReplyAllowance`) — ~32k at the
+ * default reply cap or any cap above it.
+ */
+export function workerSlotFootprint(completionMaxTokens?: number): number {
+  return (
+    WORKER_PROMPT_BASE_TOKENS +
+    WORKER_READS_ALLOWANCE_TOKENS +
+    workerReplyAllowance(completionMaxTokens)
+  );
 }
 
 /**
@@ -121,7 +151,8 @@ export interface WorkerSlotsInput {
   cpuOnly: boolean;
   /**
    * `localModels.completionMaxTokens` — the reply part of a worker's
-   * footprint. Omitted (or `0`) uses `DEFAULT_WORKER_COMPLETION_TOKENS`.
+   * footprint, through `workerReplyAllowance` (held to
+   * `DEFAULT_WORKER_COMPLETION_TOKENS`). Omitted (or `0`) uses the default.
    */
   completionMaxTokens?: number;
   /**

@@ -529,8 +529,9 @@ async function backToAWaitingChat(js: Js, check: Check, agent: StandIn, w: Brows
 }
 
 /* (f) Chats A and B both have a turn running, B's started last and streaming
-   on screen. A's turn asks for approval: its card is drawn in B, where the
-   person is. They press Escape on it (Abort run). */
+   on screen. A's turn asks for approval. Q60: its card is not drawn in B,
+   where the person is (it waits for A, whose dot says so), so Escape there
+   stops B's own turn and answers nothing; A's card is in A. */
 async function abortRunOnAnotherChatsCard(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
   const a = `${PREFIX}a6`;
   const b = `${PREFIX}b6`;
@@ -548,12 +549,14 @@ async function abortRunOnAnotherChatsCard(js: Js, check: Check, agent: StandIn, 
   await key(js, "Escape");
   const after = await js<View>(VIEW);
   const out = agent.since(mark);
+  const inA2 = (await land(js, a, "smoke t25: a chat whose turn asks for approval")) ? await js<View>(VIEW) : null;
   check(
-    "T25: Abort run (Escape) on an approval card that another chat's turn raised stops that turn, and the chat on screen keeps its own running, with its Stop button",
-    !!turnA && !!turnB && asked.sessionId === b && asked.card && asked.pending === approval
-      && show(answered(out)) === show([`${approval} deny`]) && show(cancels(out)) === show([turnA])
-      && after.busy && after.stop && after.running.includes(`${turnB}>${b}`),
-    `turns=${turnA},${turnB} asked=${show(asked)} sent=${show(out)} after=${show(after)}`,
+    "T25: another chat's approval is not drawn in the chat on screen; Escape there stops that chat's own turn, and the request stays open for its own chat, where its card is",
+    !!turnA && !!turnB && asked.sessionId === b && !asked.card && asked.pending === null && asked.waiting.includes(a)
+      && answered(out).length === 0 && show(cancels(out)) === show([turnB])
+      && after.waiting.includes(a) && after.running.includes(`${turnA}>${a}`)
+      && !!inA2 && inA2.card && inA2.pending === approval,
+    `turns=${turnA},${turnB} asked=${show(asked)} sent=${show(out)} after=${show(after)} inA=${show(inA2)}`,
   );
 }
 
@@ -687,10 +690,11 @@ async function twoCardsOnScreen(js: Js, check: Check, agent: StandIn, w: Browser
   await settle(js);
   const after = await js<View>(VIEW);
   const out = agent.since(mark);
+  // Q60: A's request is A's: only B's own card is in B, and its Allow once answers it.
   check(
-    "T25: with two approval cards on screen, Allow once on the first answers that card, not the newest request",
-    !!turnA && !!turnB && cards === 2 && show(answered(out)) === show([`${askB} allow-once`]) && cancels(out).length === 0
-      && after.pending === askA && after.waiting.includes(a) && !after.waiting.includes(b),
+    "T25: with another chat's request open too, only the chat on screen's own card is drawn there, and Allow once answers that card",
+    !!turnA && !!turnB && cards === 1 && show(answered(out)) === show([`${askB} allow-once`]) && cancels(out).length === 0
+      && after.pending === null && after.waiting.includes(a) && !after.waiting.includes(b),
     `turns=${turnA},${turnB} cards=${cards} sent=${show(out)} after=${show(after)}`,
   );
 }
@@ -752,9 +756,8 @@ async function aStaleEntryDoesNotHoldBusy(js: Js, check: Check, agent: StandIn, 
   );
 }
 
-/* (l) Chat B's own turn runs on screen when chat A's turn asks for approval:
-   A's card is drawn in B. The person presses Escape in the box, where the
-   card's keys do not reach. */
+/* (l) Chat B's own turn runs on screen when chat A's turn asks for approval.
+   Q60: A's card is not drawn in B. The person presses Escape in the box. */
 async function escapeInTheBoxUnderAnotherChatsCard(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
   const a = `${PREFIX}a12`;
   const b = `${PREFIX}b12`;
@@ -774,10 +777,10 @@ async function escapeInTheBoxUnderAnotherChatsCard(js: Js, check: Check, agent: 
   const after = await js<View>(VIEW);
   const out = agent.since(mark);
   check(
-    "T25: Escape in the box stops the turn of the chat on screen and leaves another chat's card up and open",
-    !!turnA && !!turnB && asked.busy && asked.pending === approval
+    "T25: Escape in the box stops the turn of the chat on screen and leaves another chat's request open, its card not drawn there",
+    !!turnA && !!turnB && asked.busy && asked.pending === null && !asked.card
       && show(cancels(out)) === show([turnB]) && answered(out).length === 0
-      && after.pending === approval && after.card && after.waiting.includes(a),
+      && after.pending === null && !after.card && after.waiting.includes(a),
     `turns=${turnA},${turnB} asked=${show(asked)} sent=${show(out)} after=${show(after)}`,
   );
 }

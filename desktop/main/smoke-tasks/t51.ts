@@ -75,7 +75,12 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       return { ok: true, present: answer.present, smokeT51: true };
     },
     "cli:upsertProvider": (_e, entry) => { seen.push({ ch: "upsert", id: (entry as { id?: unknown } | null)?.id }); return { ok: true, stdout: "", stderr: "" }; },
-    "cli:providerModels": () => { seen.push({ ch: "models" }); return { ok: true, models: [{ provider: "openrouter", id: "openrouter/auto", kind: "chat" }] }; },
+    "cli:providerModels": (_e, p) => {
+      seen.push({ ch: "models" });
+      // Groq ships no catalog: its list is a live call with the key, and a bad key is refused there.
+      if ((p as { id?: unknown } | null)?.id === "groq") return { ok: false, error: 'could not list models from "groq": http 401: Invalid API Key' };
+      return { ok: true, models: [{ provider: "openrouter", id: "openrouter/auto", kind: "chat" }] };
+    },
     "cli:verifyProviderKey": () => { seen.push({ ch: "verify" }); return answer.verify; },
     "cli:removeProvider": (_e, id) => { seen.push({ ch: "remove", id }); return { ok: true, stdout: "", stderr: "" }; },
     "app:unverifiedSet": () => ({ ok: true }),
@@ -202,6 +207,21 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       "T51: an empty key on a custom URL asks main with that URL, and goes on to the model step when main says nothing is missing",
       seen.some((c) => c.ch === "present" && c.baseUrl === "http://localhost:8000/v1") && custom["phase"] === "pick_model",
       show({ custom, calls: seen }),
+    );
+
+    // 6b. A provider with no bundled catalog refuses the key on its model list (http 401): said as a refused key.
+    seen.length = 0;
+    const listRefused = await js<Record<string, unknown>>(`(async () => {
+      WIZ.phase = null; window.__t51Stage([]);
+      Object.assign(WIZ, {row: KIND_ROWS.find((k) => k.id === 'groq'), phase: 'configure', apiKey: 'smoke-t51-bad-key-0123', baseUrl: '', error: null,
+        softError: null, forId: null, unfinishedId: null, modelChosen: false}); render();
+      act('wiz:next'); await window.__t51Settle(); return window.__t51View();
+    })()`);
+    check(
+      "T51: a key Groq refuses on its model list (http 401) reads \"Groq didn't accept this key\", in red — not \"Could not check this key\"",
+      listRefused["phase"] === "configure" && /^Groq didn\u2019t accept this key/.test(String(listRefused["error"] ?? ""))
+        && listRefused["soft"] === false && !!listRefused["redLine"],
+      show(listRefused),
     );
 
     // 7. A failure is still red: a key the provider turned down.

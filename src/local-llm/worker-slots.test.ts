@@ -10,6 +10,7 @@ import {
   WORKER_READS_ALLOWANCE_TOKENS,
   resolveConfiguredSlots,
   resolveWorkerSlots,
+  workerReplyAllowance,
   workerSlotFootprint,
 } from "./worker-slots.js";
 
@@ -41,6 +42,21 @@ describe("workerSlotFootprint", () => {
     expect(workerSlotFootprint()).toBe(workerSlotFootprint(DEFAULT_CAP));
     expect(workerSlotFootprint(0)).toBe(workerSlotFootprint(DEFAULT_CAP));
   });
+
+  /**
+   * `completionMaxTokens: 96000` (a benchmark config) sized every worker
+   * at ~112k, so a 131k pool ran one worker where four fit. The reply part
+   * stops at the default; `fusion-delegate.ts` sends that same figure as
+   * the local workers' cap, so the pool is never divided by a number a
+   * worker can exceed.
+   */
+  it("holds the reply part to the default however high the cap goes", () => {
+    expect(workerReplyAllowance(96_000)).toBe(DEFAULT_WORKER_COMPLETION_TOKENS);
+    expect(workerReplyAllowance(32_768)).toBe(DEFAULT_WORKER_COMPLETION_TOKENS);
+    expect(workerReplyAllowance(8_192)).toBe(8_192);
+    expect(workerReplyAllowance(0)).toBe(DEFAULT_WORKER_COMPLETION_TOKENS);
+    expect(workerSlotFootprint(96_000)).toBe(32_384);
+  });
 });
 
 describe("resolveWorkerSlots", () => {
@@ -66,12 +82,15 @@ describe("resolveWorkerSlots", () => {
     ).toBeGreaterThanOrEqual(4);
   });
 
-  it("gives fewer slots to a bigger reply cap", () => {
+  it("gives fewer slots to a bigger reply cap, down to the allowance", () => {
     const at = (completionMaxTokens: number): number =>
       resolveWorkerSlots({ contextSize: 131_072, cpuOnly: false, completionMaxTokens });
     expect(at(8_192)).toBe(5);
     expect(at(16_384)).toBe(4);
-    expect(at(32_768)).toBe(2);
+    // Past the allowance the cap no longer costs slots: workers are sent
+    // the allowance as their own cap (`workerReplyAllowance`).
+    expect(at(32_768)).toBe(4);
+    expect(at(96_000)).toBe(4);
     // Uncapped replies are sized at the default, not at zero — zero would
     // hand out the ceiling on a pool that holds four whole workers.
     expect(at(0)).toBe(at(DEFAULT_CAP));

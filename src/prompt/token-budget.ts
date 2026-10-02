@@ -210,15 +210,72 @@ export const CONVERSATION_CAP_SAFETY_MARGIN = 512;
 export const AGENT_FIXED_PROMPT_TOKENS = 6000;
 
 /**
+ * Most of the window the prompt budget will hold back for the reply.
+ *
+ * `localModels.completionMaxTokens` is one number for every model the
+ * operator runs, and it is routinely raised far past a small model's
+ * window (96k for long agent runs, against a 32k local model). Taken
+ * verbatim, `computeEffectiveConversationCap` subtracted the whole of it
+ * from a window it did not fit in, the result went negative, and the
+ * transcript was pinned to `CONVERSATION_CAP_FLOOR` (512 tokens) on every
+ * step: the agent forgot everything but the last message, and the reply
+ * still could not get the 96k it was budgeted, because the model server
+ * stops generating when its window is full.
+ *
+ * Half the window keeps a configured cap that fits untouched (the default
+ * 16384 on a 32k window is exactly half) and splits a window that cannot
+ * hold the cap evenly between what the model reads and what it writes.
+ */
+export const REPLY_RESERVE_MAX_WINDOW_SHARE = 0.5;
+
+/**
+ * The reply reservation the prompt budget actually uses on a given
+ * window: `completionMaxTokens`, never more than
+ * {@link REPLY_RESERVE_MAX_WINDOW_SHARE} of a known window. An unknown
+ * window keeps the configured figure (nothing to compare it against),
+ * and a non-positive cap (`0`, "no client-side cap") reserves nothing,
+ * as before.
+ *
+ * This is the budget's reservation, not `n_predict`: the request still
+ * carries the configured cap, and a local reply may run past this figure
+ * into whatever the prompt left free, up to the end of the window.
+ */
+export function effectiveReplyReserve(
+  completionMaxTokens: number,
+  contextWindow: number | null | undefined,
+): number {
+  if (!Number.isFinite(completionMaxTokens) || completionMaxTokens <= 0) {
+    return 0;
+  }
+  if (!contextWindow || contextWindow <= 0) return completionMaxTokens;
+  return Math.min(
+    completionMaxTokens,
+    Math.floor(contextWindow * REPLY_RESERVE_MAX_WINDOW_SHARE),
+  );
+}
+
+/**
  * Smallest context window in which the agent can actually complete a
  * step: fixed scaffolding + a full generation budget + boundary margin.
  * `contextWindow` below this means every step will hit llama.cpp's
  * context ceiling and come back `truncated`.
+ *
+ * Given the window being judged, the generation budget is the one the
+ * prompt budget really reserves on it (`effectiveReplyReserve`), not the
+ * raw cap: a 96k `completionMaxTokens` would otherwise call every window
+ * under ~102k "too small" — including the ones the agent runs on fine,
+ * because the budget holds the reply to half of them. Without a window
+ * (sizing a context that does not exist yet) the full cap still counts.
  */
-export function minUsableContextWindow(completionMaxTokens: number): number {
+export function minUsableContextWindow(
+  completionMaxTokens: number,
+  contextWindow?: number | null,
+): number {
   return (
     AGENT_FIXED_PROMPT_TOKENS +
-    completionMaxTokens +
+    (contextWindow
+      ? effectiveReplyReserve(completionMaxTokens, contextWindow)
+      : completionMaxTokens) +
     CONVERSATION_CAP_SAFETY_MARGIN
   );
 }
@@ -297,7 +354,7 @@ export function computeEffectiveConversationCap(
     (input.lessonsTokens ?? 0) -
     (input.proceduresTokens ?? 0) -
     (input.loadedToolsTokens ?? 0) -
-    input.completionMaxTokens -
+    effectiveReplyReserve(input.completionMaxTokens, input.contextWindow) -
     CONVERSATION_CAP_SAFETY_MARGIN;
   if (input.autoFill) return Math.max(CONVERSATION_CAP_FLOOR, available);
   return Math.max(

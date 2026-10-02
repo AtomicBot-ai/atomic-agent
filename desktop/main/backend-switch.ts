@@ -1,12 +1,19 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import {
   abortStarts,
+  applyActiveTextProvider,
+  applyManagedMode,
   chatModelsList,
   closeStarts,
+  configFileHint,
+  configLockTurns,
   daemonFoundUp,
   daemonPidsIn,
   keyNamesAvailable,
   killDaemonLeftovers,
   localDaemonRunning,
+  managedDaemonPidAlive,
   modelsList,
   modelsStart,
   modelsStop,
@@ -21,11 +28,16 @@ import {
   setActiveTextProvider,
   setMemoryEmbeddingsEnabled,
   setProviderModel,
+  startsInFlight,
+  stopsAsked,
   START_REFUSED_MOVED_ON,
   START_REFUSED_QUITTING,
-  useManagedMode,
+  withCliStandIn,
   type CliResult,
+  type CliStandIn,
+  type CliStandInHooks,
   type ProviderEntry,
+  type UserConfigShape,
 } from "./agent-cli.js";
 import {
   describeRunMode,
@@ -136,55 +148,154 @@ function readyLine(stdout: string): string | undefined {
   return last ? `local-llm: ${last}` : undefined;
 }
 
+/* ATO-157 — what a switch costs. Every `atag` call below is a process of its
+   own (~0.6 s on a quiet Mac, more on one deep in swap), and they ran one
+   after another: the cloud switch read the whole config four times (the
+   provider pick, the activation, the route write, the embeddings flag) around
+   its two writes, a `models status` and a `models stop` — eight processes
+   before the agent's restart. Now the pick, the checks and the route are one
+   read and one write under one hold of the config lock (rewriteWholeConfig),
+   the Cloud switch asks the daemon's status beside them when a stop looks
+   needed and no start can be on its way (earlyDaemonLook), and the
+   embeddings flag is written only when the file still has it on.
+
+   Left as it was, said out loud: the agent's own `models` commands (a pull,
+   an update, `models use`) and the TUI write the file outside this process's
+   lock, so a write of theirs between the read and the write here is lost, as
+   it was before (the "migration race" of the review). */
+
+/** What one activation decided, read and planned under the config lock. */
+interface ActivationPlan {
+  write: boolean;
+  /** Nothing was written: the switch's answer (no provider, no key, no chat model). */
+  refuse?: SwitchResult;
+  id?: string;
+  entry?: ProviderEntry;
+  cloud?: boolean;
+  keepFusion?: boolean;
+  /** memory.embeddings.enabled is already false in the file as written. */
+  embeddingsOff?: boolean;
+}
+
+/**
+ * Whether the Cloud switch will stop a local model server — asked of the
+ * config file and the pid files on disk, no process spawned. Only a hint:
+ * false whenever it cannot tell, and the switch then asks `models status`
+ * after its write, as it always did.
+ */
+function cloudSwitchLikelyStops(): boolean {
+  const cfg = configFileHint();
+  if (!cfg) return false;
+  const id = pickCloudProvider(cfg);
+  if (typeof id !== "string") return false;   // refused: no provider
+  const entry = (cfg.llm?.providers ?? []).find((p) => p.id === id);
+  if (!entry || !providerIsUsable(entry) || isIncompleteProvider(entry)) return false;   // refused: no key, no chat model
+  return managedDaemonPidAlive(cfg);
+}
+
+/**
+ * The Cloud switch's `models status`, asked at once, beside the config's read
+ * and write, instead of after them. Only when no start can be on its way — no
+ * daemon turn, no background bring-up, no `models start` — because the look
+ * is taken before supersedeBringUp ends such a start, and a server that start
+ * spawned would not be in it (item 11).
+ *
+ * `still()`, asked after the write and the switch's own supersedeBringUp,
+ * says whether the look still holds: no turn begun, nothing in flight, no
+ * stop asked for (Settings › Stop, the route leaving the managed daemon, a
+ * stop of any kind) and no mark moved but by the switch's own one bump. When
+ * it does not hold, the status is asked again.
+ */
+function earlyDaemonLook(): { running: Promise<boolean>; still: () => boolean } | null {
+  const d = book();
+  const quiet = () => d.background === null && d.onTheirWay === 0 && startsInFlight() === 0;
+  if (!quiet()) return null;
+  const begun = d.begun;
+  const mark = d.mark;
+  const stops = stopsAsked();
+  return {
+    running: localDaemonRunning({ reapWedged: false }),
+    still: () => quiet() && d.begun === begun && d.mark === mark + 1 && stopsAsked() === stops,
+  };
+}
+
 /**
  * triggerCloudProvider + setActiveText + stopLocalDaemonsForCloudSelection.
  * Write 1 is llm.activeTextProvider; the daemon stop comes after it, and
  * only a successful stop is followed by write 2 (memory.embeddings.enabled
  * = false), which is the order the TUI's stopDaemon does it.
  */
-export async function activateProvider(id: string, opts: { leaveFusion?: boolean } = {}): Promise<SwitchResult> {
-  const read = await readWholeConfig();
-  if (!read.ok || !read.config) return { ok: false, error: read.error };
-  const entry = (read.config.llm?.providers ?? []).find((p) => p.id === id);
-  if (!entry) return { ok: false, error: `provider "${id}" is not configured` };
-  const cloud = entry.kind !== "llama-server";
-  if (cloud && !providerIsUsable(entry)) {
-    return needsKeyFor(entry, id);
-  }
-  // U29: an entry with no chat model cannot be built by the agent, and as the
-  // active provider it would stop `atag serve` from starting. Pick the model
-  // first (selectCloudModel writes it and then activates).
-  if (isIncompleteProvider(entry)) {
-    return { ok: false, needsChatModel: true, providerId: id, error: "choose a model for this provider first" };
-  }
-  /* Under effective Fusion the orchestrator IS the active provider, and its
-     own model chip re-activates it: that keeps the mode (the TUI's
-     selectChatModel on the active provider), and it must not stop the local
-     daemon the workers run on. Every other activation — another provider,
-     or the backend row's `cloud` — leaves Fusion in the same write. */
-  const rm = resolveRunMode(read.config);
-  const keepFusion = !opts.leaveFusion && rm.effective === "fusion" && rm.orchestratorProviderId === id;
-  const w = await setActiveTextProvider(id, { leaveFusion: !keepFusion });
-  if (!w.ok) return { ok: false, error: w.error };
+export function activateProvider(id: string, opts: { leaveFusion?: boolean } = {}): Promise<SwitchResult> {
+  return activate(() => id, opts);
+}
+
+/** activateProvider for the provider `pick` names in the file as read, or `pick`'s refusal. */
+async function activate(
+  pick: (cfg: UserConfigShape) => string | SwitchResult,
+  opts: { leaveFusion?: boolean; earlyLook?: boolean },
+): Promise<SwitchResult> {
+  /* The status beside the write: the Cloud switch's only (switchBackend), and
+     only when a stop looks needed — a refused switch, the wizard's local-llama
+     or a Fusion orchestrator's own chip spawn nothing they will not use. */
+  const early = opts.earlyLook && cloudSwitchLikelyStops() ? earlyDaemonLook() : null;
+  const pending = rewriteWholeConfig((cfg): ActivationPlan => {
+    const id = pick(cfg);
+    if (typeof id !== "string") return { write: false, refuse: id };
+    const entry = (cfg.llm?.providers ?? []).find((p) => p.id === id);
+    if (!entry) return { write: false, refuse: { ok: false, error: `provider "${id}" is not configured` } };
+    const cloud = entry.kind !== "llama-server";
+    if (cloud && !providerIsUsable(entry)) return { write: false, refuse: needsKeyFor(entry, id) };
+    // U29: an entry with no chat model cannot be built by the agent, and as the
+    // active provider it would stop `atag serve` from starting. Pick the model
+    // first (selectCloudModel writes it and then activates).
+    if (isIncompleteProvider(entry)) {
+      return { write: false, refuse: { ok: false, needsChatModel: true, providerId: id, error: "choose a model for this provider first" } };
+    }
+    /* Under effective Fusion the orchestrator IS the active provider, and its
+       own model chip re-activates it: that keeps the mode (the TUI's
+       selectChatModel on the active provider), and it must not stop the local
+       daemon the workers run on. Every other activation — another provider,
+       or the backend row's `cloud` — leaves Fusion in the same write. */
+    const rm = resolveRunMode(cfg);
+    const keepFusion = !opts.leaveFusion && rm.effective === "fusion" && rm.orchestratorProviderId === id;
+    const a = applyActiveTextProvider(cfg, id, { leaveFusion: !keepFusion });
+    if (!a.ok) return { write: false, refuse: { ok: false, error: a.error } };
+    return { write: a.changed, id, entry, cloud, keepFusion, embeddingsOff: cfg.memory?.embeddings?.enabled === false };
+  });
+  // This activation's own hold of the config lock: asked for synchronously just above.
+  const ownTurn = configLockTurns();
+  const w = await pending;
+  if (!w.ok || !w.verdict) return { ok: false, error: w.error };
+  const v = w.verdict;
+  if (v.refuse) return v.refuse;
+  const { id, entry, cloud, keepFusion } = v as Required<Pick<ActivationPlan, "id" | "entry" | "cloud" | "keepFusion">>;
   // `restart` says the file moved. main.ts also restarts when the file did
   // NOT move but `atag serve` booted on another route (the TUI or a hand
   // edit changed the file while this window was open) — see applySwitch.
   let restart = w.changed;
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
-  // A stop never waits out a load (item 11): a bring-up on its way is ended, its start killed.
-  if (cloud && !keepFusion) supersedeBringUp();
-  // A stop decision: whatever is still there, answering or not (item 31), is stopped and said so.
-  if (cloud && !keepFusion && (await localDaemonRunning({ reapWedged: false }))) {
-    const s = await modelsStop();
-    if (s.ok) {
-      daemon = "stopped";
-      daemonLine = "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)";
-      const m = await setMemoryEmbeddingsEnabled(false);
-      if (m.changed) restart = true;
-    } else {
-      daemon = "stop-failed";
-      daemonLine = `local-llm: stop failed — ${s.error ?? "unknown error"}`;
+  if (cloud && !keepFusion) {
+    // A stop never waits out a load (item 11): a bring-up on its way is ended, its start killed.
+    supersedeBringUp();
+    // A stop decision: whatever is still there, answering or not (item 31), is stopped and said so.
+    const up = early && early.still() ? await early.running : await localDaemonRunning({ reapWedged: false });
+    if (up) {
+      const s = await modelsStop();
+      if (s.ok) {
+        daemon = "stopped";
+        daemonLine = "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)";
+        /* The file as this activation wrote it has the flag off already, and no
+           other write of this process has queued since: nothing to read or
+           write. Any other write since, and the file is read again. */
+        if (!(v.embeddingsOff && configLockTurns() === ownTurn)) {
+          const m = await setMemoryEmbeddingsEnabled(false);
+          if (m.changed) restart = true;
+        }
+      } else {
+        daemon = "stop-failed";
+        daemonLine = `local-llm: stop failed — ${s.error ?? "unknown error"}`;
+      }
     }
   }
   return {
@@ -206,19 +317,27 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
  * otherwise (triggerLocalChatModel + setActive).
  */
 async function routeToLocal(modelId: string): Promise<SwitchResult> {
-  const read = await readWholeConfig();
-  if (!read.ok || !read.config) return { ok: false, error: read.error };
-  const lm = read.config.localModels ?? {};
-  const changed = lm.mode !== "managed" || (lm.managed?.modelId ?? null) !== modelId;
-  let restart = false;
+  /* ATO-157: the model check and the route are one read and (when the route
+     moves) one write. Another model goes the long way: `models use` writes
+     the file itself, so the route is written after it, on a fresh read. */
+  const w = await rewriteWholeConfig((cfg): { write: boolean; changed: boolean; error?: string } => {
+    const lm = cfg.localModels ?? {};
+    const changed = lm.mode !== "managed" || (lm.managed?.modelId ?? null) !== modelId;
+    if (changed) return { write: false, changed };
+    const a = applyActiveTextProvider(cfg, LOCAL_ID, { leaveFusion: true });
+    return { write: a.ok && a.changed, changed, error: a.ok ? undefined : a.error };
+  });
+  if (!w.ok || !w.verdict) return { ok: false, error: w.error };
+  if (w.verdict.error) return { ok: false, error: w.verdict.error };
+  const changed = w.verdict.changed;
+  let restart = w.changed;
   if (changed) {
     const used = await modelsUse(modelId);
     if (!used.ok) return { ok: false, error: used.error };
     restart = true;
+    const r = await setActiveTextProvider(LOCAL_ID, { leaveFusion: true });
+    if (!r.ok) return { ok: false, error: r.error };
   }
-  const w = await setActiveTextProvider(LOCAL_ID, { leaveFusion: true });
-  if (!w.ok) return { ok: false, error: w.error };
-  if (w.changed) restart = true;
 
   /* Another model: a background start for the old one is moot (item 11); the
      same one is waited for. The daemon's turn is bringUpLocalDaemon's, which
@@ -237,21 +356,23 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
   };
 }
 
+/** The cloud provider "cloud" picks: the active one, else the first with a key, else the first. */
+function pickCloudProvider(cfg: UserConfigShape): string | SwitchResult {
+  const llm = cfg.llm ?? {};
+  const cloud = (llm.providers ?? []).filter((p) => p.kind !== "llama-server");
+  const provider: ProviderEntry | undefined =
+    cloud.find((p) => p.id === llm.activeTextProvider) ??
+    cloud.find((p) => providerHasKey(p)) ??
+    cloud[0];
+  return provider ? provider.id : { ok: false, needsProvider: true, error: "add a provider first" };
+}
+
 /** activateCloud / activateLocal from composer-switch-activate.ts. */
 export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResult> {
   if (kind === "cloud") {
-    const read = await readWholeConfig();
-    if (!read.ok || !read.config) return { ok: false, error: read.error };
-    const llm = read.config.llm ?? {};
-    const cloud = (llm.providers ?? []).filter((p) => p.kind !== "llama-server");
-    const provider: ProviderEntry | undefined =
-      cloud.find((p) => p.id === llm.activeTextProvider) ??
-      cloud.find((p) => providerHasKey(p)) ??
-      cloud[0];
-    if (!provider) return { ok: false, needsProvider: true, error: "add a provider first" };
     // Under Fusion the active provider is the orchestrator, so "cloud" picks
     // it — and without leaveFusion the stored mode would keep it in Fusion.
-    return activateProvider(provider.id, { leaveFusion: true });
+    return activate(pickCloudProvider, { leaveFusion: true, earlyLook: true });
   }
 
   // Embedding models are a separate daemon; the chat route never picks
@@ -263,18 +384,22 @@ export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResu
   if (!ready) {
     // Nothing on disk: point the route at local-llama and make the mode
     // managed so the control does not read `custom` on the next frame;
-    // the renderer opens the model pane.
-    const w = await setActiveTextProvider(LOCAL_ID, { leaveFusion: true });
-    if (!w.ok) return { ok: false, error: w.error };
-    const m = await useManagedMode();
-    if (!m.ok) return { ok: false, error: m.error };
+    // the renderer opens the model pane. One read and one write (ATO-157).
+    const w = await rewriteWholeConfig((cfg): { write: boolean; error?: string } => {
+      const a = applyActiveTextProvider(cfg, LOCAL_ID, { leaveFusion: true });
+      if (!a.ok) return { write: false, error: a.error };
+      const managed = applyManagedMode(cfg);
+      return { write: a.changed || managed };
+    });
+    if (!w.ok || !w.verdict) return { ok: false, error: w.error };
+    if (w.verdict.error) return { ok: false, error: w.verdict.error };
     return {
       ok: true,
       providerId: LOCAL_ID,
       transport: transportFor(LOCAL_ID),
       daemon: "untouched",
       needsModel: true,
-      restart: w.changed || m.changed,
+      restart: w.changed,
     };
   }
   return routeToLocal(ready.id);
@@ -334,24 +459,59 @@ export type BringUp = { daemon: DaemonEffect; daemonLine?: string; error?: strin
    same data dir. Quitting closes the turns (closeDaemonTurns): one that has
    not begun by then gets `whenClosed` instead — a start that waited out an
    update the quit stopped does not bring a model server up as the app goes. */
-let daemonChain: Promise<void> = Promise.resolve();
+/**
+ * The daemon's bookkeeping, in one place.
+ *
+ * `chain`: the turns, one after another. `onTheirWay` (ATO-123): the turns
+ * asked for and not over yet. While one is on its way the server may be down
+ * on purpose (a model pick stopping the old one, Settings' Start replacing a
+ * wedged one, the llama.cpp update), so the supervisor (daemon-watch.ts)
+ * takes no look at it. `begun` (ATO-157): every turn ever begun — the early
+ * status look is trusted only when none began while it was out. `mark`: see
+ * startsMark below. `background`: the bring-up nobody waits on.
+ *
+ * ATO-157: a smoke check runs a switch on a bookkeeping of its own
+ * (withSwitchStandIn), so it never ends, waits for or counts as the app's.
+ */
+interface DaemonBook { chain: Promise<void>; onTheirWay: number; begun: number; mark: number; background: Background | null }
+const appBook: DaemonBook = { chain: Promise.resolve(), onTheirWay: 0, begun: 0, mark: 0, background: null };
+const standInBooks = new AsyncLocalStorage<DaemonBook>();
+function book(): DaemonBook {
+  return standInBooks.getStore() ?? appBook;
+}
+/** What a smoke check may set on its own bookkeeping, and read back. */
+export type StandInBook = Pick<DaemonBook, "onTheirWay" | "begun" | "mark">;
+/**
+ * Smoke only (ATO-157): run `body` — a switch — with every `atag` call it
+ * makes answered by `standIn` (agent-cli withCliStandIn) and on a daemon
+ * bookkeeping of its own, starting from `start`. `hooks` stand in for the
+ * lifecycle listener and the hints read from disk. Nothing of the app's is
+ * read, written, stopped, started, ended or waited for.
+ */
+export function withSwitchStandIn<T>(
+  standIn: CliStandIn,
+  body: (book: StandInBook) => Promise<T>,
+  hooks: CliStandInHooks = {},
+  start: Partial<StandInBook> = {},
+): Promise<T> {
+  const own: DaemonBook = { chain: Promise.resolve(), onTheirWay: 0, begun: 0, mark: 0, background: null, ...start };
+  return withCliStandIn(standIn, () => standInBooks.run(own, () => body(own)), hooks);
+}
+
 let turnsClosed = false;
-/* ATO-123: the turns asked for and not over yet. While one is on its way the
-   server may be down on purpose (a model pick stopping the old one, Settings'
-   Start replacing a wedged one, the llama.cpp update), so the supervisor
-   (daemon-watch.ts) takes no look at it. */
-let turnsOnTheirWay = 0;
 function withDaemonLock<T>(run: () => Promise<T>, whenClosed: () => T): Promise<T> {
-  turnsOnTheirWay += 1;
+  const d = book();
+  d.onTheirWay += 1;
+  d.begun += 1;
   const turn = () => (turnsClosed ? Promise.resolve(whenClosed()) : run());
-  const next = daemonChain.then(turn, turn);
-  const over = () => { turnsOnTheirWay -= 1; };
-  daemonChain = next.then(over, over);
+  const next = d.chain.then(turn, turn);
+  const over = () => { d.onTheirWay -= 1; };
+  d.chain = next.then(over, over);
   return next;
 }
 /** ATO-123: how many daemon turns are on their way or running. */
 export function daemonTurnsOnTheirWay(): number {
-  return turnsOnTheirWay;
+  return book().onTheirWay;
 }
 /** Backlog 18: `run` in the daemon's turn, as a start takes it — the llama.cpp update's. `whenClosed` is its answer if the app quits first. */
 export function inDaemonTurn<T>(run: () => Promise<T>, whenClosed: () => T): Promise<T> {
@@ -378,19 +538,20 @@ export function closeDaemonTurns(): () => void {
    bring-up (supersedeBringUp) moves this mark too, and a start asked for
    before it moved starts nothing in its turn: a server nobody asks for any
    more would hold the model's memory, on a route that has moved on. */
-let startsMark = 0;
+/* startsMark: book().mark. */
 
 /** Start the managed daemon when it is down (restart it when the model moved), in its turn. A model pick's and a worker pin's. */
 async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
   // Another model: a background start for the old one is moot.
   if (modelChanged) supersedeBringUp();
-  const asked = startsMark;
+  const d = book();
+  const asked = d.mark;
   /* Backlog 18: whether a stop or a route change came since this was asked for.
      Asked as its turn begins, and (its second review) again at the spawn
      itself (modelsStart): the turn's `models status` and `models stop` take
      seconds, and one that comes in them would otherwise still be followed by a
      start nobody asks for any more. */
-  const stillAsked = () => startsMark === asked;
+  const stillAsked = () => d.mark === asked;
   const start = async (effect: "started" | "restarted"): Promise<BringUp> => {
     const st = await modelsStart({ stillWanted: stillAsked });
     // It reached its spawn after a stop, a switch or the quit: nothing was started.
@@ -434,7 +595,6 @@ interface Background { superseded: boolean; starting: boolean; abort: AbortContr
 /** `update` (ATO-123): the server the llama.cpp update stopped, started again after it. */
 export type BringUpReport = (r: BringUp & { modelId: string; via: "swap" | "launch" | "update" }) => void;
 const SUPERSEDED: BringUp = { daemon: "superseded" };
-let background: Background | null = null;
 let reportBringUp: BringUpReport = () => {};
 
 /** main.ts: where a background bring-up says how it ended. Hands back the one it replaces. */
@@ -445,17 +605,19 @@ export function onBackgroundBringUp(report: BringUpReport): BringUpReport {
 }
 /** The background bring-up on its way, or null. */
 export function bringUpInFlight(): Promise<BringUp> | null {
-  return background ? background.done : null;
+  const b = book().background;
+  return b ? b.done : null;
 }
 function startInBackground(task: (s: BringUpSteps) => Promise<BringUp>): { done: Promise<BringUp>; adopted: boolean } {
-  if (background) return { done: background.done, adopted: true };
+  const d = book();
+  if (d.background) return { done: d.background.done, adopted: true };
   const b = { superseded: false, starting: false, abort: new AbortController() } as Background;
   const steps: BringUpSteps = { signal: b.abort.signal, superseded: () => b.superseded, starting: () => { b.starting = true; } };
   b.done = withDaemonLock(() => (b.superseded ? Promise.resolve(SUPERSEDED) : task(steps)), () => SUPERSEDED)
     .catch((err): BringUp => ({ daemon: "start-failed", error: err instanceof Error ? err.message : String(err) }))
     .then((r) => (b.superseded ? SUPERSEDED : r))
-    .finally(() => { if (background === b) background = null; });
-  background = b;
+    .finally(() => { if (d.background === b) d.background = null; });
+  d.background = b;
   return { done: b.done, adopted: false };
 }
 /**
@@ -465,10 +627,11 @@ function startInBackground(task: (s: BringUpSteps) => Promise<BringUp>): { done:
  * Backlog 18: a start still waiting for its turn is ended too (startsMark).
  */
 export function supersedeBringUp(): boolean {
-  startsMark++;
-  const b = background;
+  const d = book();
+  d.mark++;
+  const b = d.background;
   if (!b) return false;
-  background = null;
+  d.background = null;
   b.superseded = true;
   b.abort.abort();
   return b.starting;
@@ -513,12 +676,13 @@ export function bringUpAtLaunch(modelId: string, via: "launch" | "update" = "lau
 }
 /** ATO-123: the mark every stop, switch, model change and the quit move (supersedeBringUp) — whether one came since a moment. */
 export function stopsMark(): number {
-  return startsMark;
+  return book().mark;
 }
 /** Settings › Models › Start: in its turn, and no second `models start` for a daemon that is already up. */
 export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean }> {
-  const asked = startsMark;
-  const stillAsked = () => startsMark === asked;
+  const d = book();
+  const asked = d.mark;
+  const stillAsked = () => d.mark === asked;
   return withDaemonLock(async () => {
     // Backlog 18: a stop or a route change came while this waited for its turn.
     if (!stillAsked()) return { ok: false, stdout: "", stderr: "", error: START_REFUSED_MOVED_ON };

@@ -21,6 +21,8 @@ export {
   truncateToTokens,
   computeEffectiveConversationCap,
   minUsableContextWindow,
+  effectiveReplyReserve,
+  REPLY_RESERVE_MAX_WINDOW_SHARE,
   AGENT_FIXED_PROMPT_TOKENS,
   CONVERSATION_CAP_SAFETY_MARGIN,
   CONVERSATION_CAP_FLOOR,

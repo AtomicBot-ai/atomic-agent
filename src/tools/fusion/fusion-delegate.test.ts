@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { RunTurnResult } from "../../agent/agent-loop.js";
+import { resetConfigCache } from "../../config/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { createEmptySessionState } from "../../session/session-state.js";
 import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
@@ -486,6 +487,49 @@ describe("fusion.delegate", () => {
     expect(seen[0]).not.toHaveProperty("maxOutputTokens");
     expect(result.summary).not.toContain("cloud spend");
     expect(result.details).not.toHaveProperty("workerSpendUsd");
+  });
+
+  /**
+   * The local pool is divided by `workerReplyAllowance` (16 384), not by
+   * the raw `completionMaxTokens`. A cap raised past it (96k for long
+   * single-stream runs) is sent as the local workers' own, so no worker
+   * writes past its share of the shared context; a cloud leg has no pool
+   * and is not capped.
+   */
+  it("caps local workers at the reply allowance the pool was sized for", async () => {
+    const before = process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
+    process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "96000";
+    resetConfigCache();
+    try {
+      const seen: Array<Record<string, unknown>> = [];
+      const run = async (over: Partial<FusionDelegateDeps>) => {
+        seen.length = 0;
+        await buildFusionDelegateTool(
+          deps({
+            runTurn: async (_session, _message, options) => {
+              seen.push({ ...options });
+              return turnResult();
+            },
+            ...over,
+          }),
+        ).run({ tasks: TASKS }, ctx());
+        return seen[0];
+      };
+      expect(await run({})).toMatchObject({ maxOutputTokens: 16_384 });
+      expect(
+        await run({ workerSupportsSlotAffinity: () => false }),
+      ).not.toHaveProperty("maxOutputTokens");
+      // The operator's own worker cap still wins.
+      expect(
+        await run({
+          resolveRunMode: () => fusionMode({ workerMaxOutputTokens: 40_000 }),
+        }),
+      ).toMatchObject({ maxOutputTokens: 40_000 });
+    } finally {
+      if (before === undefined) delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
+      else process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = before;
+      resetConfigCache();
+    }
   });
 
   it("sizes a local worker's time limit from the measured speed, a cloud one from the ceiling (F19)", async () => {

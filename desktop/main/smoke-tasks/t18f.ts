@@ -183,10 +183,13 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
     while (!pred() && Date.now() < end) await wait(50);
     return pred();
   };
-  /* A pick reads the catalogue (`models list`), then the config twice (and on
-     a first run's route writes its model, `models use`), and then asks for its
-     turn. It has asked once every such call since its `models list` has ended,
-     two config reads among them, and none began for half a second. */
+  /* A pick reads the catalogue (`models list`), then the config (and on a
+     first run's route writes its model, `models use`, and reads it again), and
+     then asks for its turn. It has asked once every such call since its
+     `models list` has ended, a config read among them, and none began for half
+     a second. ATO-157: one config read, not two — the model check and the
+     route are one read now (backend-switch routeToLocal); the turn is still
+     asked for after the reads, as before. */
   const PICK_CALLS = ["models list", "config get", "config set", "models use"];
   const pickAsked = async () => {
     let begun = -1;
@@ -198,7 +201,7 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
       const b = PICK_CALLS.reduce((n, c) => n + count(s, c), 0);
       const e = PICK_CALLS.reduce((n, c) => n + count(s, `${c} end`), 0);
       if (b !== begun) { begun = b; quietSince = Date.now(); }
-      if (count(s, "config get end") >= 2 && e === b && Date.now() - quietSince >= 500) {
+      if (count(s, "config get end") >= 1 && e === b && Date.now() - quietSince >= 500) {
         await wait(200);
         return true;
       }
