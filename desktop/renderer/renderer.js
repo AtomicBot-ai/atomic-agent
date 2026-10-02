@@ -17974,8 +17974,8 @@ function tkStatusClass(status) {
 }
 /* Soft Tactile (ST-01): the Tasks toolbar — the filters as a segmented
    control (every TK_FILTER_ORDER value) with Refresh and New task, then
-   search and the auto-refresh readout. `.tuibar` stays on it: tkRefreshBar
-   finds the readout inside. */
+   search. The auto-refresh readout lives in the Settings window's status
+   line beside Done now (Д26). */
 function tkFilterBar(visibleCount) {
   const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
     + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
