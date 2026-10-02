@@ -1908,6 +1908,24 @@ function wsName(p) {
   return parts[parts.length - 1] || String(p || '');
 }
 
+/* Chat review (Д29, Д14): the working folder, read and written one way
+   wherever the window names it — the start screen's line, Settings › General
+   and Diagnostics, which said "macbook", "—" and "~" for the same folder.
+   WORKSPACE follows every status and a pick made here; the agent's own
+   /health answer is the fallback. The path is the real one: a folder inside
+   the home folder reads `~/Projects/app`, while the home folder itself and
+   anything outside it are written out whole, because a lone `~` (or the
+   account's name) told people nothing. */
+function workingDir() {
+  return String(WORKSPACE || S.live.workingDir || (SET.health && SET.health.workingDir) || '');
+}
+function workingDirLabel(p) {
+  const s = String(p || '').replace(IS_WIN ? /(?<=.)[\\/]+$/ : /(?<=.)\/+$/, '');
+  const home = homeDir();
+  const sep = IS_WIN ? '\\' : '/';
+  return home && s.startsWith(home + sep) && s.length > home.length + 1 ? '~' + s.slice(home.length) : s;
+}
+
 /** Every task, ordered as the TUI orders its rail (STATUS_RANK, then newest). */
 function sidebarTasks() {
   const all = TASKS.slice().sort((a, b) => {
@@ -2051,8 +2069,9 @@ function chatView() {
 
 function emptyChat() {
   /* Calm (S3): a greeting, and one quiet line saying where the agent will
-     work and which model will answer — the folder by its own name (the full
-     path is its tooltip) and the model by its human name. B.6's data plate
+     work and which model will answer — "Working in" and the folder's path
+     (chat review Д14: the folder's bare name, "macbook" for the home folder,
+     read as nothing) and the model by its human name. B.6's data plate
      (Workspace / Provider / Model / Build rows) read as a config dump; the
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
@@ -2065,12 +2084,12 @@ function emptyChat() {
 }
 /** The greeting and its quiet line (repainted alone when the catalogue lands). */
 function emptyPlateHTML() {
-  const wd = S.live.workingDir || WORKSPACE || '';
+  const wd = workingDir();
   // Calm (S6): no model is named while none is set up (U16), and the
   // managed route's "download model" call to action is not a model name.
   const active = activeModel();
   const model = composerNeedsSetup() || active === DOWNLOAD_MODEL_LABEL ? '' : active;
-  const meta = (wd ? '<span class="em-it" title="' + esc(wd) + '">' + ic('folder') + '<span>' + esc(wsName(wd)) + '</span></span>' : '')
+  const meta = (wd ? '<span class="em-it em-wd" title="' + esc(wd) + '">' + ic('folder') + '<span>Working in ' + esc(workingDirLabel(wd)) + '</span></span>' : '')
     + (wd && model ? '<span class="em-sep">\u00b7</span>' : '')
     + (model ? '<span class="em-it">' + modelMark(model, 'xs') + '<span>' + esc(modelWord(model)) + '</span></span>' : '');
   return '<div class="emptyplate">'
@@ -4504,9 +4523,8 @@ function generalPane() {
   const on = known && eff;
   const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
   const THEMES = [['light', 'Light'], ['dark', 'Dark'], ['system', 'System']];
-  const ws = BR ? WORKSPACE : '';
-  const home = homeDir();
-  const wsShort = ws && home && ws.startsWith(home) ? '~' + ws.slice(home.length) : ws;
+  // Chat review (Д29): the same folder, written the same way, as the chat and Diagnostics.
+  const ws = BR ? workingDir() : '';
   return '<div class="set-pane set-general">'
     + privacyNoticesHTML()
     + '<div class="tk-list set-setlist">'
@@ -4518,7 +4536,7 @@ function generalPane() {
       + '</div>'
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Working folder</div>'
-          + '<div class="d">' + (ws ? '<span class="mono set-path" title="' + esc(ws) + '">' + esc(wsShort) + '</span>' : 'Not chosen yet.') + '</div></div>'
+          + '<div class="d">' + (ws ? '<span class="mono set-path" title="' + esc(ws) + '">' + esc(workingDirLabel(ws)) + '</span>' : 'Not chosen yet.') + '</div></div>'
         + '<button class="btn btn-s sm" data-act="workspace:choose"' + (BR ? '' : ' disabled') + '>Change…</button>'
       + '</div>'
       + tpNotifyRowHTML()
@@ -4553,7 +4571,7 @@ function privacyNoticesHTML() {
 function diagnosticsPane() {
   const home = homeDir();
   const short = (p) => (p && home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
-  const wd = (SET.health && SET.health.workingDir) || WORKSPACE || S.live.workingDir || '';
+  const wd = workingDir();
   const llama = (SET.health && SET.health.llamaUrl) || (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '';
   const sd = (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || (FIRSTRUN && FIRSTRUN.stateDir) || '';
   const rows = [
@@ -4564,7 +4582,8 @@ function diagnosticsPane() {
           'Turns running in the agent right now, from any chat, task or bot']]
       : []),
     ['State folder', short(sd), sd],
-    ['Working folder', short(wd), wd],
+    // Chat review (Д29): written as the chat and Settings › General write it.
+    ['Working folder', workingDirLabel(wd), wd],
     ['Local model server', llama],
   ];
   return '<div class="set-pane set-diag">'

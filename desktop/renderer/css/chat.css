@@ -45,9 +45,14 @@
 /* ---------------- empty chat (CH-01) ----------------
    r4-ui item 1: renamed from `.empty`. The sidebar dot emits `sdot empty` as its
    state class, so a container rule of that name floored the 8px dot at its
-   padding. __emptyChatProbe asserts `display:flex` here. */
-.emptychat{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
-  gap:22px;padding:24px 28px 30px}
+   padding. __emptyChatProbe asserts `display:flex` here.
+   Chat review (Д13): it fills the scroller and stands in the middle of it, in
+   a column no wider than the transcript's, so a large window no longer leaves
+   it spread out along the composer. The extra bottom padding lifts it a little
+   above the true middle, where the eye expects a page's centre. */
+.emptychat{flex:1 0 auto;min-height:100%;width:100%;max-width:720px;margin:0 auto;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:22px;padding:24px 28px 64px}
 /* Calm (S3): a greeting and one quiet line, on the page — no card, no rows. */
 .emptyplate{width:min(560px,100%);display:grid;justify-items:center;gap:8px;text-align:center}
 .emptyhead{display:flex;align-items:center;gap:12px;font-size:20px;line-height:1.3;letter-spacing:-.02em;color:var(--ink)}
@@ -59,7 +64,7 @@
 .emptymeta .em-it > span{min-width:0;overflow-wrap:anywhere}
 .emptymeta .em-it > svg{width:14px;height:14px;flex:none;color:var(--ink-3)}
 .emptymeta .em-sep{color:var(--ink-3)}
-.ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:720px}
+.ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:560px}
 .ghostchip{display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:var(--r-pill);
   background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font-size:13px;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
