@@ -67,17 +67,42 @@ export class PostHogTransport {
     this.queue = [];
   }
 
-  /** Send what is queued. Resolves within `timeoutMs` whatever the network does. */
-  async flush(timeoutMs = 5_000): Promise<void> {
-    // A batch already on the wire finishes first; what was queued since goes next.
-    if (this.inFlight) await this.inFlight;
-    if (!this.queue.length) return;
+  /**
+   * Send what is queued: up to `maxBatches` batches of 100. The WHOLE call —
+   * waiting out a batch already on the wire included — resolves within
+   * `timeoutMs` whatever the network does; each request is aborted at that
+   * same deadline.
+   */
+  flush(timeoutMs = 5_000, maxBatches = 1): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const work = (async () => {
+      for (let i = 0; i < maxBatches; i++) {
+        // A batch already on the wire finishes first; what was queued since goes next.
+        if (this.inFlight) await this.inFlight;
+        if (!this.queue.length) return;
+        const left = deadline - Date.now();
+        if (left <= 0) return;
+        await this.sendOne(left);
+      }
+    })().catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+    return Promise.race([work, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  /** One batch on the wire, aborted after `timeoutMs`. */
+  private sendOne(timeoutMs: number): Promise<void> {
     if (!this.deps.canSend() || POSTHOG_PROJECT_KEY === POSTHOG_PLACEHOLDER_KEY) {
       this.queue = [];
-      return;
+      return Promise.resolve();
     }
     const distinctId = this.deps.distinctId();
-    if (!distinctId) return;
+    if (!distinctId) return Promise.resolve();
     const batch = this.queue.splice(0, MAX_BATCH);
     const body = JSON.stringify({
       api_key: POSTHOG_PROJECT_KEY,
@@ -96,8 +121,11 @@ export class PostHogTransport {
     const doFetch = this.deps.fetchImpl ?? fetch;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    this.inFlight = (async () => {
+    let sending: Promise<void> | null = null;
+    sending = (async () => {
       try {
+        // Yield once, so `sending` is assigned before anything below can finish.
+        await Promise.resolve();
         await doFetch(`${POSTHOG_HOST}/batch/`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -108,9 +136,10 @@ export class PostHogTransport {
         /* dropped: analytics never retries into a growing queue */
       } finally {
         clearTimeout(timer);
-        this.inFlight = null;
+        if (this.inFlight === sending) this.inFlight = null;
       }
     })();
-    return this.inFlight;
+    this.inFlight = sending;
+    return sending;
   }
 }

@@ -1025,10 +1025,8 @@ function wireIpc(client: AgentClient): void {
     if (typeof key !== "string" || typeof value !== "string") {
       return { ok: false, error: "key and value must be strings" };
     }
-    // Analytics: switching analytics off says so first (analytics_disabled), then stops sending.
-    await A.beforeAnalyticsWrite(key, value, via);
-    const res = await configSet(key, value);
-    A.afterAnalyticsWrite(key);
+    // Analytics: the write first; only a successful analytics.enabled false then says analytics_disabled and stops sending.
+    const res = await A.analyticsConfigWrite(key, value, via, () => configSet(key, value));
     A.telegramConfigWrite(key, value, res);
     return res;
   });
@@ -1442,7 +1440,7 @@ function wireIpc(client: AgentClient): void {
      Not a generation count: a newer switch can end without a restart (no key,
      a refused write), and then nothing restarts for it. */
   let switchesOnTheirWay = 0;
-  const switched = async (run: () => Promise<SwitchResult>, fusion?: Parameters<typeof A.switchEnd>[2]) => {
+  const switched = async (run: () => Promise<SwitchResult>, kind?: Parameters<typeof A.switchEnd>[2]) => {
     switchesOnTheirWay++;
     const began = A.switchBegin();
     let answer: unknown = null;
@@ -1450,12 +1448,12 @@ function wireIpc(client: AgentClient): void {
       return (answer = await applySwitch(await run()));
     } finally {
       switchesOnTheirWay--;
-      A.switchEnd(began, answer, fusion);   // backend_switched (+ fusion_configured, model_configured)
+      A.switchEnd(began, answer, kind);   // backend_switched (+ fusion_configured, model_configured)
     }
   };
   ipcMain.handle("cli:switchBackend", async (_event, kind: unknown) => {
     if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
-    return switched(() => switchBackend(kind));
+    return switched(() => switchBackend(kind), { explicit: true });
   });
   ipcMain.handle("cli:activateProvider", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
@@ -1804,8 +1802,7 @@ function wireIpc(client: AgentClient): void {
   // `atag config unset <leaf>` — the Telegram tab's `O clear owner` (telegram.ownerUserId back to its null default).
   ipcMain.handle("cli:configUnset", async (_event, key: unknown) => {
     if (typeof key !== "string") return { ok: false, error: "key must be a string" };
-    const res = await configUnset(key);
-    A.afterAnalyticsWrite(key);   // unset analytics.enabled = the default, on
+    const res = await A.analyticsConfigWrite(key, null, "settings", () => configUnset(key));   // unset analytics.enabled = back to the default
     A.telegramConfigWrite(key, null, res);
     return res;
   });
@@ -1903,7 +1900,7 @@ function wireIpc(client: AgentClient): void {
     return switched(() => enterFusion({
       ...(typeof p.orchestratorProvider === "string" ? { orchestratorProvider: p.orchestratorProvider } : {}),
       ...(typeof p.workerProvider === "string" ? { workerProvider: p.workerProvider } : {}),
-    }), { action: "enter" });
+    }), { action: "enter", explicit: true });
   });
   ipcMain.handle("cli:swapFusionLegs", async () => switched(() => swapFusionLegs(), { action: "swap_legs" }));
   /* Item 11: a ⇄ brings a daemon that is down up in the background and does
@@ -8576,7 +8573,7 @@ async function firstRunProbe(): Promise<void> {
 
 /* Analytics and error reporting, before the agent is spawned (the install id
    is resolved here). Gated live on analytics.enabled; a test run sends nothing. */
-A.initAnalytics({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR });
+A.initAnalytics({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, freshState: DESKTOP_STATE_WAS_FRESH });
 A.configureDownloads({ stateDir: DESKTOP_STATE_DIR, hostRamGb: () => FAKE_RAM_GB ?? hostRamGb() });
 A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
@@ -8659,7 +8656,7 @@ app.on("before-quit", (event) => {
     if (!quitShutdown.done) event.preventDefault();
     return;
   }
-  if (!agent) return;
+  if (!agent) { event.preventDefault(); const s = (quitShutdown = { done: false }); void analyticsClosed.finally(() => { s.done = true; app.quit(); }); return; }   // still the bounded last flush
   event.preventDefault();
   const client = agent;
   agent = null;

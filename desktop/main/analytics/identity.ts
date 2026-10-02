@@ -3,10 +3,12 @@
  * and the desktop's own once-flags file.
  *
  * Shared id file: `$ATOMIC_AGENT_INSTALL_ID_FILE`, else
- * `~/.atomic-agent-install-id` — plain text, one UUID line. Resolution:
+ * `~/.atomic-agent-install-id` — plain text, one UUID line. Resolution
+ * (core.ts installIdSources gives the order):
  *   1. the shared file holds a valid UUID → use it;
- *   2. else an `installId` in a local `analytics.json` (the desktop state
- *      dir's, then the terminal agent's) → write it to the shared file;
+ *   2. else an `installId` in a local `analytics.json` — the terminal
+ *      agent's (unless its config opted out), then the desktop state dir's
+ *      → write it to the shared file;
  *   3. else mint one and write it.
  * The shared file is only touched when the caller says writes are allowed
  * (analytics on, not a test run). Every fs failure falls back to an
@@ -14,6 +16,9 @@
  *
  * Once-flags live in `<DESKTOP_STATE_DIR>/desktop-analytics.json`, per
  * state dir, so `model_configured` fires once for the desktop surface.
+ * seedDesktopFlags: a desktop that was already set up before this file
+ * existed (an upgrade) gets modelConfiguredSent=true and no install date,
+ * so it never reports a fake first setup or a made-up install age.
  */
 
 import { randomUUID } from "node:crypto";
@@ -100,8 +105,12 @@ export interface DesktopFlags {
 
 export class DesktopFlagsStore {
   private flags: DesktopFlags;
+  /** The file was there (and readable) when the store was made. */
+  readonly existed: boolean;
   constructor(private readonly path: string, private readonly allowWrite: () => boolean) {
-    const raw: Record<string, unknown> = readJson(path) ?? {};
+    const json = readJson(path);
+    this.existed = json !== null;
+    const raw: Record<string, unknown> = json ?? {};
     const at = raw["installedAt"];
     this.flags = {
       installedAt: typeof at === "number" && Number.isFinite(at) ? at : null,
@@ -118,6 +127,13 @@ export class DesktopFlagsStore {
     this.flags = { ...this.flags, ...patch };
     if (this.allowWrite()) writeAtomic(this.path, `${JSON.stringify(this.flags, null, 2)}\n`);
   }
+}
+
+/** First sight of the flags file: a fresh install dates itself; an upgrade claims nothing. */
+export function seedDesktopFlags(store: DesktopFlagsStore, freshState: boolean, now: number = Date.now()): void {
+  if (store.existed) return;
+  if (freshState) store.set({ installedAt: now });
+  else store.set({ installedAt: null, modelConfiguredSent: true });
 }
 
 export function daysSince(at: number | null, now: number = Date.now()): number | undefined {

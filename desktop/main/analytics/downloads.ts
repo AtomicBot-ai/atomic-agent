@@ -13,7 +13,7 @@ import { curatedMeta } from "../model-catalog.js";
 import { DOWNLOAD_TRIGGERS } from "./catalog.js";
 import { downloadFailReason, fitFor, hfLookupResult, quantOf } from "./classify.js";
 import { readConfigFile } from "./environment.js";
-import { track } from "./core.js";
+import { analyticsEnabled, track } from "./core.js";
 
 interface Download {
   id: string;
@@ -80,6 +80,8 @@ export function describeModel(id: string, trigger: unknown): Record<string, unkn
 /** `cli:modelsPull` took the slot. */
 export function downloadStarted(id: string, trigger?: unknown): void {
   try {
+    current = null;
+    if (!analyticsEnabled()) return;   // describeModel reads the config: not while analytics is off
     const props = describeModel(id, trigger);
     current = { id, startedAt: Date.now(), props, maxPercent: 0, maxBytes: 0, cancelled: false };
     track("model_download_started", props);
@@ -128,6 +130,7 @@ export function downloadFinished(id: string, res: { ok?: boolean; error?: string
 /** A pull refused before it started because another download holds the slot. */
 export function downloadRefusedBusy(id: string, trigger?: unknown): void {
   try {
+    if (!analyticsEnabled()) return;
     track("model_download_finished", {
       ...describeModel(id, trigger),
       result: "failed",

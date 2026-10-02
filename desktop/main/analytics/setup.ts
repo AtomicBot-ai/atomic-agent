@@ -59,9 +59,22 @@ export function maybeModelConfigured(): void {
   }
 }
 
-/** Before a switch runs: the mode it leaves, and the clock. */
+/** Before a switch runs: the mode it leaves, and the clock. Reads nothing while analytics is off. */
 export function switchBegin(): { from: string | null; at: number } {
+  if (!analyticsEnabled()) return { from: null, at: Date.now() };
   return { from: currentRunMode() ?? refreshRunMode(), at: Date.now() };
+}
+
+/** What a `switched()` call was: a Fusion action, and whether the user asked for a mode change outright. */
+export interface SwitchKind {
+  action?: "enter" | "swap_legs" | "set_workers" | "pick_worker_model";
+  /** `cli:switchBackend` / `cli:enterFusion`: reported even when the mode stays (a refusal is news). */
+  explicit?: boolean;
+}
+
+/** backend_switched is about the run mode: an explicit switch, or any call that actually moved it. */
+export function shouldReportSwitch(kind: SwitchKind | undefined, from: string | null, to: string | null): boolean {
+  return kind?.explicit === true || from !== to;
 }
 
 type SwitchLike = {
@@ -69,30 +82,27 @@ type SwitchLike = {
   runMode?: { before?: string; after?: string; enteredFusion?: boolean };
 } & Parameters<typeof switchOutcome>[0];
 
-/** After `switched()`: `backend_switched`, any daemon effect, and `model_configured` the first time it lands. */
-export function switchEnd(
-  begin: { from: string | null; at: number },
-  res: unknown,
-  fusion?: { action: "enter" | "swap_legs" | "set_workers" | "pick_worker_model" },
-): void {
+/**
+ * After `switched()`: `backend_switched` (explicit switches and real mode
+ * changes only — picking a provider or a model inside the same mode is not
+ * one), any daemon effect, and `model_configured` the first time it lands.
+ * The cached run mode is refreshed after every result.
+ */
+export function switchEnd(begin: { from: string | null; at: number }, res: unknown, kind?: SwitchKind): void {
   try {
+    if (!analyticsEnabled()) return;
     const r = (res && typeof res === "object" ? res : null) as SwitchLike | null;
     const ms = Date.now() - begin.at;
     const to = refreshRunMode();
     const { result, refusal } = switchOutcome(r);
-    track("backend_switched", {
-      from: begin.from,
-      to,
-      result,
-      refusal,
-      restart: r?.restart === true,
-      ms,
-    });
+    if (shouldReportSwitch(kind, begin.from, to)) {
+      track("backend_switched", { from: begin.from, to, result, refusal, restart: r?.restart === true, ms });
+    }
     const effect = daemonEffect(r?.daemon);
     if (effect && effect !== "untouched" && effect !== "superseded" && effect !== "skipped") {
       track("local_backend_started", { via: "swap", result: effect, model_id: modelIdProp(r?.modelId), ms });
     }
-    if (fusion && r?.ok) fusionConfigured(fusion.action);
+    if (kind?.action && r?.ok) fusionConfigured(kind.action);
     if (r?.ok) maybeModelConfigured();
   } catch {
     /* never */

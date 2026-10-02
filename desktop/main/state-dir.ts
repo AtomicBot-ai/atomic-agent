@@ -130,7 +130,7 @@ export function claimPortsIn(cfg: Record<string, unknown>): boolean {
  */
 export function agentEnv(): NodeJS.ProcessEnv {
   // Analytics: the agent tags its own events surface=desktop, with this install channel and desktop version.
-  return { ...process.env, ...agentAnalyticsEnv(), ATOMIC_AGENT_STATE_DIR: DESKTOP_STATE_DIR };
+  return { ...process.env, ...agentAnalyticsEnv(DESKTOP_STATE_DIR), ATOMIC_AGENT_STATE_DIR: DESKTOP_STATE_DIR };
 }
 
 /** Is `p` the desktop's state directory, or inside it? */

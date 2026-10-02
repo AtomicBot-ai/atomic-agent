@@ -1,12 +1,11 @@
 /**
- * Desktop analytics (SPEC "Desktop analytics — shared contract (v1)").
+ * Desktop analytics (desktop/ANALYTICS.md).
  * main.ts reaches everything through this barrel as `A.*`, one line per hook.
  */
 
 export {
-  afterAnalyticsWrite,
+  analyticsConfigWrite,
   analyticsEnabled,
-  beforeAnalyticsWrite,
   currentRunMode,
   flushAnalytics,
   globalProps,
@@ -49,6 +48,7 @@ export {
   localBackendStarted,
   maybeModelConfigured,
   providerKeyChecked,
+  shouldReportSwitch,
   switchBegin,
   switchEnd,
 } from "./setup.js";

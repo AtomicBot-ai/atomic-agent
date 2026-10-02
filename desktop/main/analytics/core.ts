@@ -10,27 +10,29 @@
 import { join } from "node:path";
 
 import { validateEvent, type Props } from "./validate.js";
-import { daysSince, DesktopFlagsStore, resolveInstallId, sharedIdPath } from "./identity.js";
-import { analyticsEnabledIn, desktopVersion, installChannelFor, readConfigFile, runModeIn } from "./environment.js";
+import { daysSince, DesktopFlagsStore, resolveInstallId, seedDesktopFlags, sharedIdPath } from "./identity.js";
+import {
+  analyticsEnabledFor, desktopVersion, explicitAnalyticsEnabled, inheritedOptOut, installChannelFor, isTestRun,
+  readConfigFile, runModeIn, setAgentGate,
+} from "./environment.js";
+import { writeAnalyticsSwitch } from "./opt-out.js";
 import { PostHogTransport, type QueuedEvent } from "./transport.js";
 
 const UI_ACTION_CAP = 200;
+/** The quit drains at most this many batches (of 100) inside its 2 s. */
+const QUIT_BATCHES = 5;
 
-/** A run the test harness drives: nothing leaves the machine, nothing is written to the real home. */
-export function isTestRun(argv: readonly string[] = process.argv, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.VITEST !== undefined || env.NODE_ENV === "test") return true;
-  if (env.ATOMIC_DESKTOP_ANALYTICS === "off") return true;
-  return argv.some((a) =>
-    a === "--smoke" || a === "--first-run-probe" || a === "--models"
-    || a.startsWith("--smoke-") || a.startsWith("--remote-debugging-port") || a.startsWith("--fake-ram="),
-  );
-}
+export { isTestRun };
 
 interface State {
   stateDir: string;
   tuiStateDir: string;
   testRun: boolean;
   enabled: boolean;
+  /** The terminal agent's config said analytics.enabled false and the desktop's says nothing. */
+  inheritedOff: boolean;
+  /** The terminal agent's config opted out: its analytics.json id is not adopted. */
+  tuiOptedOut: boolean;
   installId: string | null;
   flags: DesktopFlagsStore | null;
   runMode: "local" | "cloud" | "fusion" | null;
@@ -42,6 +44,8 @@ const S: State = {
   tuiStateDir: "",
   testRun: true,
   enabled: false,
+  inheritedOff: false,
+  tuiOptedOut: false,
   installId: null,
   flags: null,
   runMode: null,
@@ -58,30 +62,57 @@ const transport = new PostHogTransport({
     : undefined,
 });
 
-export function initAnalytics(opts: { stateDir: string; tuiStateDir: string; testRun?: boolean }): void {
+/** Read both config files and set the gate from them (init, and after every analytics.enabled write). */
+function readGate(): boolean {
+  const cfg = readConfigFile(S.stateDir);
+  const tuiCfg = readConfigFile(S.tuiStateDir);
+  S.inheritedOff = inheritedOptOut(cfg, tuiCfg);
+  S.tuiOptedOut = explicitAnalyticsEnabled(tuiCfg) === false;
+  return analyticsEnabledFor(cfg, tuiCfg);
+}
+
+/**
+ * Call once, at module level in main.ts, BEFORE the agent is spawned: the
+ * install id is resolved here, so the agent's first run finds the shared
+ * file already written and adopts the same id.
+ */
+export function initAnalytics(opts: { stateDir: string; tuiStateDir: string; freshState: boolean; testRun?: boolean }): void {
   try {
     S.stateDir = opts.stateDir;
     S.tuiStateDir = opts.tuiStateDir;
     S.testRun = opts.testRun ?? isTestRun();
-    const cfg = readConfigFile(opts.stateDir);
-    S.enabled = analyticsEnabledIn(cfg);
-    S.runMode = runModeIn(cfg);
+    setAgentGate(() => ({ testRun: S.testRun, inheritedOff: S.inheritedOff }));
+    S.enabled = readGate();
     S.flags = new DesktopFlagsStore(join(opts.stateDir, "desktop-analytics.json"), () => !S.testRun);
-    if (S.flags.get().installedAt === null) S.flags.set({ installedAt: Date.now() });
+    seedDesktopFlags(S.flags, opts.freshState);
+    if (S.enabled) {
+      S.runMode = runModeIn(readConfigFile(opts.stateDir));
+      installId();
+    }
     transport.start();
   } catch {
     S.enabled = false;
   }
 }
 
-/** The shared install id, resolved on first use. Null while analytics is off (nothing needs one). */
+/**
+ * Where an install id is adopted from, in order (the shared file is read
+ * before all of them): the terminal agent's analytics.json, unless its
+ * config opted out, then the desktop state dir's.
+ */
+export function installIdSources(tuiStateDir: string, stateDir: string, tuiOptedOut: boolean): string[] {
+  return [...(tuiOptedOut ? [] : [join(tuiStateDir, "analytics.json")]), join(stateDir, "analytics.json")];
+}
+
+/** The shared install id. Null while analytics is off (nothing needs one). */
 export function installId(): string | null {
   if (S.installId) return S.installId;
   if (!S.enabled || !S.stateDir) return null;
   try {
     S.installId = resolveInstallId({
       sharedPath: sharedIdPath(),
-      localFiles: [join(S.stateDir, "analytics.json"), join(S.tuiStateDir, "analytics.json")],
+      localFiles: installIdSources(S.tuiStateDir, S.stateDir, S.tuiOptedOut),
+      // Tests and dev runs never write to the real home.
       allowWrite: !S.testRun,
     }).id;
   } catch {
@@ -111,6 +142,7 @@ function setEnabled(on: boolean): void {
   if (S.enabled === on) return;
   S.enabled = on;
   if (!on) transport.clear();
+  else refreshRunMode();   // not read while it was off
   for (const cb of enabledListeners) {
     try {
       cb(on);
@@ -135,8 +167,9 @@ export function currentRunMode(): "local" | "cloud" | "fusion" | null {
   return S.runMode;
 }
 
-/** Re-read the run mode from the config file (after a switch, at launch). */
+/** Re-read the run mode from the config file (after a switch, at launch). No read while analytics is off. */
 export function refreshRunMode(): "local" | "cloud" | "fusion" | null {
+  if (!S.enabled) return S.runMode;
   try {
     S.runMode = runModeIn(readConfigFile(S.stateDir));
   } catch {
@@ -176,49 +209,36 @@ export function trackFromRenderer(payload: unknown): void {
   }
 }
 
-export function flushAnalytics(timeoutMs = 2_000): Promise<void> {
+/** Send what is queued; the whole thing (an in-flight batch included) resolves within `timeoutMs`. */
+export function flushAnalytics(timeoutMs = 2_000, maxBatches = 1): Promise<void> {
   try {
-    return transport.flush(timeoutMs).catch(() => undefined);
+    return transport.flush(timeoutMs, maxBatches).catch(() => undefined);
   } catch {
     return Promise.resolve();
   }
 }
 
 /**
- * A config write is about to land (`cli:configSet` / `cli:configUnset`).
- * For `analytics.enabled` going off: `analytics_disabled` goes out first,
- * flushed, and only then does the switch take effect. Going on applies
- * after the write succeeds (`afterAnalyticsWrite`).
+ * Any config write from the window (`cli:configSet` / `cli:configUnset`).
+ * For `analytics.enabled` (opt-out.ts): the write first; only after it
+ * succeeded, `analytics_disabled` + a bounded flush when going off, then the
+ * live switch follows the files. Every other key is just the write.
  */
-export async function beforeAnalyticsWrite(key: string, value: string | null, via: unknown): Promise<void> {
-  try {
-    if (key !== "analytics.enabled") return;
-    const turningOff = value !== null && value.trim().toLowerCase() === "false";
-    if (!turningOff || !S.enabled) return;
-    const days = daysSince(S.flags?.get().installedAt ?? null);
-    track("analytics_disabled", {
-      via: via === "slash" || via === "config" ? via : "settings",
-      ...(days !== undefined ? { days_since_install: days } : {}),
-    });
-    await flushAnalytics(2_000);
-    setEnabled(false);
-  } catch {
-    setEnabled(false);
-  }
+export function analyticsConfigWrite<T>(key: string, value: string | null, via: unknown, write: () => Promise<T>): Promise<T> {
+  return writeAnalyticsSwitch(key, value, via, write, {
+    enabledNow: () => S.enabled,
+    enabledInFiles: () => readGate(),
+    announceDisabled: (v) => {
+      const days = daysSince(S.flags?.get().installedAt ?? null);
+      track("analytics_disabled", { via: v, ...(days !== undefined ? { days_since_install: days } : {}) });
+    },
+    flush: () => flushAnalytics(2_000),
+    setEnabled,
+  });
 }
 
-/** After the write: the switch reflects what the file now says (a failed write leaves the file as it was). */
-export function afterAnalyticsWrite(key: string): void {
-  try {
-    if (key !== "analytics.enabled") return;
-    setEnabled(analyticsEnabledIn(readConfigFile(S.stateDir)));
-  } catch {
-    /* keep the last state */
-  }
-}
-
-/** Stop the timer and send what is left, bounded — for the quit path. */
+/** Stop the timer and drain what is left (up to 5 batches), bounded — for the quit path. */
 export async function shutdownAnalytics(timeoutMs = 2_000): Promise<void> {
   transport.stop();
-  await flushAnalytics(timeoutMs);
+  await flushAnalytics(timeoutMs, QUIT_BATCHES);
 }

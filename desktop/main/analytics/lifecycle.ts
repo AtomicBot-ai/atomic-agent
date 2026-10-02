@@ -74,6 +74,7 @@ function maybeReady(): void {
   if (L.readySent || L.windowAt === null || L.backendUp === null) return;
   if (L.agentAt === null && !L.agentFailed) return;
   L.readySent = true;
+  refreshRunMode();   // app_ready carries the mode the launch settled in
   track("app_ready", {
     ms_to_window: L.windowAt - PROCESS_START,
     ms_to_agent: L.agentAt === null ? null : L.agentAt - PROCESS_START,
