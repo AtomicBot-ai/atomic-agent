@@ -472,7 +472,7 @@ const SERVER_SATURATED =
 const SERVER_UNREACHABLE =
   /stopped answering GET \/slots|it is unreachable|accepted the connection and answered nothing/i;
 const CREDIT_OR_QUOTA =
-  /\b402\b|\b429\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of credits?|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|rate[- ]limit|too many requests/i;
+  /\b402\b|\b429\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of (?:credits?|funds)|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|rate[- ]limit|too many requests/i;
 
 /**
  * A short remediation for a worker failure the orchestrator (or the

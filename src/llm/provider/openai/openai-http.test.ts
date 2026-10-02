@@ -9,6 +9,7 @@ import {
   type OpenAiHttpDeps,
 } from "./openai-http.js";
 import { classifyFailure } from "../../reliability/classify-failure.js";
+import { parseProviderErrorBody } from "./parse-provider-error-body.js";
 
 function depsWith(
   fetchImpl: typeof fetch,
@@ -188,6 +189,25 @@ describe("openAiPostJson", () => {
     expect((err as OpenAiHttpError).body?.text).toContain(
       "credit_balance_exhausted",
     );
+  });
+
+  it("does not retry a 429 whose words say the account is empty (item 40)", async () => {
+    const body = JSON.stringify({
+      error: {
+        message:
+          "Your account is suspended due to insufficient balance, please recharge your account",
+        type: "exceeded_current_quota_error",
+      },
+    });
+    const fetchImpl = vi.fn().mockResolvedValue(errorResponse(429, body));
+    const err = await openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/x",
+      {},
+      {},
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenAiHttpError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   describe("structured RetryInfo metadata", () => {
@@ -814,6 +834,89 @@ describe("humanizeOpenAiHttpError", () => {
     const said = humanizeOpenAiHttpError(withBody(400, body));
     expect(said).toContain("rejected the request (400). Please pass a valid API key");
     expect(said).not.toContain('"error"');
+  });
+
+  /* Item 40: a refusal because the account cannot pay names the provider,
+     quotes its own first sentence (links cut to their domain) and says
+     what helps. AI/ML API's 403 read "rejected the API key (403)", and
+     OpenAI's 429 insufficient_quota read as rate limiting, "Tried 3
+     times", for a request that was never retried. */
+  describe("a refusal because the account cannot pay", () => {
+    const aiml = (body: string): OpenAiHttpError =>
+      new OpenAiHttpError(
+        `openai provider 403: ${body}`,
+        403,
+        "https://api.aimlapi.com/v1/chat/completions",
+        false,
+        null,
+        "aimlapi",
+        undefined,
+        { body: parseProviderErrorBody(body) },
+      );
+
+    it("says AI/ML API's 403 in its own words, with the remedy", () => {
+      const said = humanizeOpenAiHttpError(
+        aiml(
+          JSON.stringify({
+            title: "Forbidden",
+            status: 403,
+            message:
+              "You've run out of funds. Please top up your balance or update your payment method to continue: https://aimlapi.com/app/billing",
+          }),
+        ),
+      );
+      expect(said).toBe(
+        '"aimlapi" refused the request: you\'ve run out of funds. Top up your balance with "aimlapi" or pick another provider in the Providers panel.',
+      );
+      expect(said).not.toContain("API key");
+    });
+
+    it("cuts a link in the quoted sentence to its domain", () => {
+      const said = humanizeOpenAiHttpError(
+        aiml(
+          JSON.stringify({
+            error: { message: "No funds left, add some at https://www.example.com/billing/top-up?ref=x" },
+          }),
+        ),
+      );
+      expect(said).toContain("refused the request: no funds left, add some at example.com.");
+      expect(said).not.toContain("https://");
+    });
+
+    it("words OpenAI's 429 insufficient_quota as the account, not a rate limit", () => {
+      const body = JSON.stringify({
+        error: {
+          message:
+            "You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.",
+          type: "insufficient_quota",
+          code: "insufficient_quota",
+        },
+      });
+      const said = humanizeOpenAiHttpError(
+        new OpenAiHttpError(
+          `openai provider 429: ${body}`,
+          429,
+          "https://api.openai.com/v1/chat/completions",
+          false,
+          null,
+          "openai",
+          undefined,
+          { body: parseProviderErrorBody(body) },
+        ),
+      );
+      expect(said).toBe(
+        '"openai" refused the request: you exceeded your current quota, please check your plan and billing details. Top up your balance with "openai" or pick another provider in the Providers panel.',
+      );
+      expect(said).not.toContain("rate-limiting");
+      expect(said).not.toContain("Tried");
+    });
+
+    it("leaves a 403 about the key and a plain 429 as they were", () => {
+      expect(
+        humanizeOpenAiHttpError(aiml(JSON.stringify({ error: { message: "Invalid API key" } }))),
+      ).toContain("rejected the API key (403)");
+      expect(humanizeOpenAiHttpError(mk(429))).toContain("rate-limiting this key (429)");
+    });
   });
 
   it("says only what it knows when the body carried nothing", () => {

@@ -41,10 +41,12 @@ import {
   isRequestSizeRejection,
 } from "../llm/index.js";
 import { readFailingLink } from "../llm/fallback/failed-attempts.js";
+import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
   classifyProviderWaitCause,
   type ProviderWaitCause,
+  type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
 import {
   composeSizeRejectionNotice,
@@ -848,6 +850,14 @@ export type AgentLoopEvent =
        * did not come through the chain or a pinned link.
        */
       providerId?: string;
+      /**
+       * The links that failed before the one waited on, in the order
+       * they were tried, each with its own cause. The provider the user
+       * picked is usually the first, and why it failed (an account out
+       * of funds, a refused key) is the part a UI says before the link
+       * it waits on (item 40). Absent when nothing failed before it.
+       */
+      fallbackFailures?: readonly ProviderWaitFailure[];
     }
   | {
       /** The provider answered again; the parked turn is running on. */
@@ -2476,8 +2486,16 @@ export class AgentLoop {
         // is told which provider refused. (A fallback link, when the
         // chain has one, has already been tried by the time the error
         // reaches here.)
+        //
+        // Paused, that is, once the task has done something to keep.
+        // Refused on its very first request, there is nothing to resume:
+        // the turn fails at once with the provider's own sentence ("…
+        // refused the request: you've run out of funds. Top up …"), the
+        // way a refused key does, instead of a "(paused …) after 0 steps"
+        // reply standing in for an answer (item 40).
         const verdict = cancelled ? null : readProviderErrorVerdict(err);
-        if (verdict?.kind === "credit_exhausted") {
+        const creditRefused = verdict?.kind === "credit_exhausted";
+        if (verdict?.kind === "credit_exhausted" && stepsTaken > 0) {
           stopCause = "credit_exhausted";
           creditStop = { provider: verdict.provider, detail: verdict.detail };
           reason = "max_steps";
@@ -2519,6 +2537,7 @@ export class AgentLoop {
         if (
           category === "transport" &&
           !cancelled &&
+          !creditRefused &&
           providerWaitCfg.enabled &&
           (isWaitableOutage(err) || retryHint !== null) &&
           outageWaitedMs < providerWaitCfg.maxWaitMs
@@ -2537,6 +2556,7 @@ export class AgentLoop {
           outageAttempts += 1;
           awaitingRecovery = true;
           const waitedOn = readFailingLink(err);
+          const failedBefore = describeFailedLinks(err);
           this.deps.onEvent?.({
             type: "provider_waiting",
             attempt: outageAttempts,
@@ -2546,6 +2566,9 @@ export class AgentLoop {
             reason: runError.message,
             cause: classifyProviderWaitCause(err),
             ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
+            ...(failedBefore.length > 0
+              ? { fallbackFailures: failedBefore }
+              : {}),
           });
           this.deps.logger?.warn("provider unreachable; parking the turn", {
             sessionId: state.id,

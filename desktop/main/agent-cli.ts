@@ -936,7 +936,56 @@ export interface ProviderVerification {
   error?: string;
   /** Backlog 32: the key has a character keys don't have, so it was refused here, unsent. */
   keyChars?: boolean;
+  /**
+   * Backlog 40: the provider took the key and turned the request down
+   * because the account has no funds (`ok` is true: the key works).
+   * `detail` is the provider's own sentence.
+   */
+  noFunds?: boolean;
+  detail?: string;
 }
+
+/* Backlog 40 — "the key works, but the account cannot pay".
+
+   AI/ML API answers a good key on an empty account with 403 "You've run out
+   of funds. Please top up your balance or update your payment method"; the
+   check read every 403 as "the provider rejected this key", so the setup
+   said "didn't accept this key" and threw the key away. The agent reads the
+   same answers as a billing refusal (readProviderErrorReason,
+   src/llm/provider/openai/parse-provider-error-body.ts); these are its
+   words, kept to what a key check sees: a 402; a 401 or 403 whose words say
+   the account is out of funds or credit, or (not about the key) name billing
+   or the payment method; a 429 that says the account is empty or carries
+   OpenAI's `insufficient_quota`. A 429 in quota or billing words alone is a
+   rate limit (Gemini's free tier), which a key check counts as a key that
+   works, as before. */
+const NO_FUNDS_WORDING =
+  /\b(?:out of (?:funds|credits?|balance|money)|insufficient[ _-]?(?:funds|balance|credits?|account[ _-]balance)|not enough (?:funds|credits?|balance|money)|(?:credit|account|wallet) balance (?:is )?(?:too low|exhausted|insufficient|empty|depleted)|(?:no|zero) (?:credits?|funds|balance) (?:left|remaining)|payment[ _-]required|top[ -]?up (?:your |the )?(?:balance|account|credits?|wallet)|recharge (?:your |the )?(?:account|balance|wallet)|credit_balance_exhausted|insufficient_quota)\b/i;
+const BILLING_WORDING = /\b(?:billing|payment[ _-]?method|payment details|add (?:a )?payment)\b/i;
+const KEY_WORDING = /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|access[ _-]?token)\b/i;
+
+/** Whether a key check's answer says the account cannot pay (see above). */
+export function accountCannotPay(status: number, body: string): boolean {
+  if (status === 402) return true;
+  if (status === 401 || status === 403) {
+    return NO_FUNDS_WORDING.test(body) || (BILLING_WORDING.test(body) && !KEY_WORDING.test(body));
+  }
+  if (status === 429) return NO_FUNDS_WORDING.test(body);
+  return false;
+}
+
+/** The provider's first sentence, links cut to their domain: "You've run out of funds". */
+function firstSentence(text: string): string {
+  const flat = text
+    .replace(/\bhttps?:\/\/(?:www\.)?([^\s/?#"'<>)]+)[^\s"'<>)]*/gi, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  const first = /^(.+?[.!?])(?=\s|$)/.exec(flat)?.[1] ?? flat;
+  return first.replace(/[\s.!?:;,]+$/, "").slice(0, 200);
+}
+
+/** What the key check says for a key on an account with no funds. */
+export const NO_FUNDS_CHECK_LINE = "Key works, but the account has no funds.";
 
 /** Ask the provider to complete one token, and report what it said. */
 export async function verifyProviderKey(
@@ -989,15 +1038,13 @@ export async function verifyProviderKey(
     return { ok: false, checked: false, error: `Could not reach ${new URL(url).host} — the key was not checked.` };
   }
   if (res.ok) return { ok: true, checked: true, status: res.status };
-  // 429 means the service knew who we were and throttled us. That is an
-  // ACCEPTED key: an unknown one gets 401 long before a rate limit.
-  if (res.status === 429) return { ok: true, checked: true, status: res.status };
   // The provider's own sentence is the useful one — "User not found",
   // "Insufficient credits", "model not available" — so pass it through
   // rather than replacing it with a status code.
   let detail = "";
+  let text = "";
   try {
-    const text = (await res.text()).slice(0, 2000);
+    text = (await res.text()).slice(0, 2000);
     const parsed: unknown = JSON.parse(text);
     // Google's OpenAI-compatible surface wraps the error object in an
     // array, `[{"error": {...}}]`; read as an object it had no message and
@@ -1012,11 +1059,25 @@ export async function verifyProviderKey(
     detail = "";
   }
   const say = (why: string) => (detail ? `${why}: ${detail.slice(0, 300)}` : why);
+  /* Backlog 40: the provider knew the key — it answered for its account —
+     and turned the request down for money. The key works; the setup says so
+     and lets it be saved. */
+  if (accountCannotPay(res.status, text)) {
+    const own = firstSentence(detail);
+    return {
+      ok: true,
+      checked: true,
+      status: res.status,
+      noFunds: true,
+      error: NO_FUNDS_CHECK_LINE,
+      ...(own ? { detail: own } : {}),
+    };
+  }
+  // 429 means the service knew who we were and throttled us. That is an
+  // ACCEPTED key: an unknown one gets 401 long before a rate limit.
+  if (res.status === 429) return { ok: true, checked: true, status: res.status };
   if (res.status === 401 || res.status === 403) {
     return { ok: false, checked: true, status: res.status, error: say("the provider rejected this key") };
-  }
-  if (res.status === 402) {
-    return { ok: false, checked: true, status: res.status, error: say("the key works but the account cannot pay for a request") };
   }
   /* Everything else — a 400 about the request shape, a 404 about the
      model, a 5xx — says nothing about the key, and guessing would be the

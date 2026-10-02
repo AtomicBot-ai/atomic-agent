@@ -149,6 +149,8 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
      to verify and offer the catalogue, once to save the choice. */
   models:[], modelPick:null, defaultModel:null, modelChosen:false, savedId:null,
   savedLabel:'', modelFilter:'', unverifiedNote:null,
+  /* Backlog 40: the key check found the key good and the account empty; the model step and the toast say so. */
+  noFundsNote:null,
   /* Calm (S6): the provider's raw words behind a plain error, {for, text}. */
   errorDetail:null,
   /* Backlog 18: opened on its own — by the download card's "Set up a cloud
@@ -247,6 +249,10 @@ PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
    already saved like that is named as such wherever its provider shows. */
 const KEY_INVISIBLE = /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 const KEY_CHAR_ERROR = 'That key has a character keys don’t have; paste it again.';
+/* Backlog 40: what the key check says when the provider took the key and
+   refused the request because the account has no funds (main's
+   NO_FUNDS_CHECK_LINE). The key is saved if the person says so. */
+const NO_FUNDS_KEY_LINE = 'Key works, but the account has no funds.';
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
 function keyCharsOk(key) { return /^[\x00-\x7f]*$/.test(String(key == null ? '' : key)); }
@@ -2839,7 +2845,7 @@ function composer() {
     : WAIT
     ? '<div class="statusstrip waiting">'
       + '<span class="ss-ic"><span class="ss-dot"></span></span>'
-      + '<span class="ann">Waiting for ' + esc(badKeyForWait(WAIT) ? (providerWord(selActiveProviderId()) || 'the provider') : waitProviderLabel(WAIT)) + '</span>'
+      + '<span class="ann">' + esc(waitAnn(WAIT)) + '</span>'
       + ((badKeyForWait(WAIT) || waitWhy(WAIT)) ? '<span class="ob-help ss-why">' + esc(badKeyForWait(WAIT) ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
       + '<span class="ss-grow"></span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
@@ -6447,6 +6453,38 @@ function waitWhy(wait) {
   return wait.reason ? humanWaitReason(wait.reason) : '';
 }
 
+/* Backlog 40: the provider the person picked failed before the link the turn
+   waits on. AI/ML API answered "You've run out of funds", the chain fell over
+   to the local server, and the strip and the transcript named only that
+   server. The agent lists the links that failed first on its frames
+   (`fallback_failures`, each with its own `cause`); the picked one and its
+   reason now come first: "AI/ML API: out of funds · waiting for Local models".
+   Without the list (an older agent), every word is as before. */
+function failedLinkWhy(f) {
+  const c = f && f.cause && typeof f.cause.kind === 'string' ? f.cause : null;
+  if (c && c.kind === 'billing') return 'out of funds';
+  if (c && c.kind === 'http' && c.status === 401) return 'API key rejected';
+  return (c && waitCauseWords(c, f.providerId)) || 'failed';
+}
+/** The picked provider's own failure when the turn waits on a later link: {name, why}, or null. */
+function waitPickedFailure(wait) {
+  const picked = selActiveProviderId();
+  if (!picked || !wait || !wait.providerId || wait.providerId === picked) return null;
+  const f = (wait.fallbackFailures || []).find((x) => x && x.providerId === picked);
+  return f ? {name: waitProviderName(picked), why: failedLinkWhy(f)} : null;
+}
+/** The strip's lead: "Waiting for …", after the picked provider's failure when there was one. */
+function waitAnn(wait) {
+  if (badKeyForWait(wait)) return 'Waiting for ' + (providerWord(selActiveProviderId()) || 'the provider');
+  const first = waitPickedFailure(wait);
+  return (first ? first.name + ': ' + first.why + ' · waiting for ' : 'Waiting for ') + waitProviderLabel(wait);
+}
+/** The same lead for the line a wait adds to the transcript: "AI/ML API: out of funds. ", or ''. */
+function waitLeadSentence(wait) {
+  const first = waitPickedFailure(wait);
+  return first ? first.name + ': ' + first.why + '. ' : '';
+}
+
 /** The agent's reason, in words. `fetch failed` is undici's, not a person's. */
 function humanWaitReason(reason) {
   const r = String(reason || '');
@@ -7396,6 +7434,10 @@ function turnFailureLine(ev) {
      reached it; whatever the chain's last link said ("fetch failed" from a
      local fallback) is not why the turn failed. */
   if (entry && savedKeyInvalid(entry)) return esc(savedKeyTurnLine(id) + (waited ? ' The turn gave up' + waited + '.' : ''));
+  /* Backlog 40: a provider that refused because the account cannot pay. Said
+     at once, not after a wait, so no "gave up after". */
+  const billing = billingFailureLine(ev, id);
+  if (billing) return esc(billing);
   /* Backlog 29: the agent names a key it could not use or that the provider
      refused ("… can't use its API key: …", "… rejected the API key (401) …").
      That sentence is the reason; "not answering" would send the person to
@@ -7414,6 +7456,42 @@ function turnFailureLine(ev) {
      either way: it is an enum name, not a word for a person. */
   return esc('The turn could not be completed' + waited + ': '
     + (ev.error || 'the agent gave no reason'));
+}
+
+/* Backlog 40: a turn that ended because a provider refused for money. The
+   agent marks it (`cause: {kind: 'billing'}` on the error frame) and words it:
+   '"aimlapi" refused the request: you've run out of funds. Top up your balance
+   with "aimlapi" or pick another provider in the Providers panel.' (a 402:
+   '… rejected the request (402). … Top up the account …'). That sentence is
+   the reason; "not answering" sent the person to the local server. When the
+   picked provider refused before a later link failed, the frame lists it in
+   `fallback_failures`, and that is the line. '' when it was neither. */
+function billingFailureLine(ev, pickedId) {
+  const p = (ev && ev.payload) || {};
+  const said = String((ev && ev.error) || '');
+  const marked = !!(p.cause && p.cause.kind === 'billing');
+  if (said && (marked || /\bTop up (?:your balance|the account)\b/.test(said))) return agentWordsForWindow(said);
+  const f = tpFallbackFailures(p).find((x) => x.providerId === pickedId && x.cause && x.cause.kind === 'billing');
+  if (!f) return '';
+  const name = waitProviderName(f.providerId);
+  return name + ' refused the request: ' + (providerFirstWords(f.reason) || 'the account is out of funds')
+    + '. Top up your balance with ' + name + ' or pick another provider in Settings › Models.';
+}
+/** The agent's sentence in the window's words: providers by name, the TUI's Providers panel as Settings › Models. */
+function agentWordsForWindow(said) {
+  return String(said)
+    .replace(/"([A-Za-z0-9][\w.-]{0,47})"/g, (m, id) => { const w = waitProviderName(id); return w && w !== id ? w : m; })
+    .replace(/the Providers panel/g, 'Settings › Models');
+}
+/** A provider's first sentence out of a raw failure line ('openai provider 403: {…"message":"You've run out of funds. …'), ready to follow a colon, or ''. */
+function providerFirstWords(reason) {
+  const m = /"message"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(String(reason || ''));
+  if (!m) return '';
+  let text = m[1].replace(/\\$/, '');
+  try { text = JSON.parse('"' + text + '"'); } catch (e) { /* as it came */ }
+  const first = ((/^(.+?[.!?])(?=\s|$)/.exec(text) || [])[1] || text).replace(/[\s.!?:;,…]+$/, '');
+  if (!first || first.length > 140) return '';
+  return /^[A-Z][a-z']/.test(first) ? first.charAt(0).toLowerCase() + first.slice(1) : first;
 }
 
 function onChatEvent(ev) {
@@ -7548,6 +7626,8 @@ function onChatEvent(ev) {
       // Item 29: the provider waited on and the cause, when the agent names them.
       providerId: typeof p.provider_id === 'string' && p.provider_id ? p.provider_id : null,
       cause: p.cause && typeof p.cause === 'object' && typeof p.cause.kind === 'string' ? p.cause : null,
+      // Backlog 40: the links that failed before the one waited on, the picked provider usually first.
+      fallbackFailures: tpFallbackFailures(p),
       until: Date.now() + (Number(p.next_retry_ms) || 0),
     };
     if (!WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
@@ -10781,6 +10861,9 @@ function wizModelStepHTML(withFoot) {
     + (WIZ.unverifiedNote
         ? '<div class="ob-err is-warn">' + esc(WIZ.unverifiedNote) + '</div>'
         : '')
+    + (WIZ.noFundsNote   // Backlog 40: the key works, the account is empty
+        ? '<div class="ob-err is-warn">' + esc(WIZ.noFundsNote) + '</div>'
+        : '')
     + '<div class="ob-help">'
       + esc(WIZ.defaultModel ? 'Our default for this provider is ' + WIZ.defaultModel + '.' : 'Pick the model this provider should answer with.')
     + '</div>'
@@ -10911,7 +10994,7 @@ function obWizardHTML() {
       ? '<div class="ob-foot">'
         + '<button class="btn btn-g" data-act="wiz:back">' + ic('chevL') + 'Back</button>'
         + '<span class="grow"></span>'
-        + '<button class="btn btn-s" data-act="wiz:saveUnchecked">Save unchecked</button>'
+        + '<button class="btn btn-s" data-act="wiz:saveUnchecked">' + (unchecked.noFunds ? 'Save key' : 'Save unchecked') + '</button>'
         + '<button class="btn btn-p" data-act="wiz:next">' + ic('retry') + 'Try again</button>'
         + '</div>'
       : '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
@@ -15970,7 +16053,7 @@ function wizardHTML() {
     + '</div>',
     unchecked
       ? '<button class="btn btn-g xs" data-act="wiz:back">Back</button><span class="grow"></span>'
-        + '<button class="btn btn-s xs" data-act="wiz:saveUnchecked">Save unchecked</button>'
+        + '<button class="btn btn-s xs" data-act="wiz:saveUnchecked">' + (unchecked.noFunds ? 'Save key' : 'Save unchecked') + '</button>'
         + '<button class="btn btn-p xs" data-act="wiz:next">Try again</button>'
       : '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
         + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
@@ -16176,14 +16259,28 @@ async function wizNextStep() {
     /* Backlog 32: `keyChars` is main refusing the key the agent would send (one
        read from .env, the field left blank) before asking anyone — not the
        provider turning it down. A refused key is never one to save unchecked. */
+    /* Backlog 40: a 402 (an account that cannot pay) is no longer an answer
+       here; main reports it as a key that works (noFunds, below). */
     WIZ.error = proof.keyChars ? KEY_CHAR_ERROR
-      : proof.status === 402
-      ? service + ' accepted this key, but the account cannot pay for a request.'
       : service + ' didn\u2019t accept this key. Check that you copied all of it.';
     WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false;
     const said = proof.keyChars ? '' : String(proof.error || '').replace(/^the provider rejected this key:\s*/, '');
     WIZ.errorDetail = said ? {for: WIZ.error, text: said} : null;
     render(); refreshLiveConfig();
+    return;
+  }
+  /* Backlog 40: the provider took the key and turned the request down because
+     the account has no funds (AI/ML API's 403 "You've run out of funds", a
+     402). The key works: this is neither "didn't accept this key" nor "could
+     not reach". The screen says so, with the provider's words as the Details,
+     and offers Save key (on to the model, as for a key that answered) or Try
+     again after a top-up. Nothing is rolled back. */
+  if (proof && proof.noFunds && !WIZ.acceptUnchecked && !WIZ.modelChosen) {
+    WIZ.phase = 'configure';
+    WIZ.uncheckedFor = {id, model, label: k.label.split(' (')[0], noFunds: true};
+    WIZ.error = proof.error || NO_FUNDS_KEY_LINE;
+    WIZ.errorDetail = proof.detail ? {for: WIZ.error, text: String(proof.detail)} : null;
+    render();
     return;
   }
   /* Unchecked is not passed.
@@ -16225,6 +16322,7 @@ async function wizNextStep() {
     WIZ.savedId = id;
     WIZ.savedLabel = k.label.split(' (')[0];
     WIZ.unverifiedNote = unverified;
+    WIZ.noFundsNote = proof && proof.noFunds ? (proof.error || NO_FUNDS_KEY_LINE) : null;   // Backlog 40
     render();
     return;
   }
@@ -16251,7 +16349,8 @@ async function wizNextStep() {
      step, where `closeSelector()` would close a popup that is not open
      and drop the flow on a blank screen. The reducer's own
      `providers_wizard_succeeded` branch decides where it goes next. */
-  const added = k.label.split(' (')[0] + ' \u00b7 ' + model + (unverified ? ' \u00b7 not verified: ' + unverified : '');
+  const added = k.label.split(' (')[0] + ' \u00b7 ' + model + (unverified ? ' \u00b7 not verified: ' + unverified : '')
+    + (WIZ.noFundsNote ? ' \u00b7 the account has no funds' : '');   // Backlog 40
   if (OB.open && OB.step === 'cloud') {
     OB.restarted = !!(sel && sel.restart);
     toast(unverified ? 'Provider added, key not checked' : 'Provider added', added);

@@ -437,6 +437,30 @@ describe("ProviderFallbackChain", () => {
       expect(chain.hasFallbackServed()).toBe(true);
     });
 
+    it("names the fallback that answered last as the serving one, through a failed probe, until the primary is back", () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "b", "c"]),
+        now: makeClock().now,
+      });
+      chain.advanceFrom("primary", http(503));
+      expect(chain.isServingFallback("b")).toBe(false);
+      chain.recordSuccess("b", false);
+      expect(chain.isServingFallback("b")).toBe(true);
+      expect(chain.isServingFallback("c")).toBe(false);
+      expect(chain.isServingFallback("primary")).toBe(false);
+      // A failed probe moves the pointer onto `b` again; `b` is still the route.
+      chain.advanceFrom("primary", http(503));
+      expect(chain.isServingFallback("b")).toBe(true);
+      // `c` answers after `b` failed: `c` is the route now.
+      chain.advanceFrom("b", new TypeError("fetch failed"));
+      chain.recordSuccess("c", false);
+      expect(chain.isServingFallback("c")).toBe(true);
+      expect(chain.isServingFallback("b")).toBe(false);
+      // The primary answers a probe: no fallback is serving.
+      chain.recordSuccess("primary", true);
+      expect(chain.isServingFallback("c")).toBe(false);
+    });
+
     it("does not apply to a primary that is down: its cooldown holds as before", () => {
       const chain = new ProviderFallbackChain({
         resolve: () => chainOf(["primary", "backup"]),

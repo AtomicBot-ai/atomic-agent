@@ -190,6 +190,7 @@ export class ProviderFallbackChain {
     if (id === p.overrideId) {
       p.overrideServed = true;
       p.fallbackServed = true;
+      p.servingId = id;
     }
 
     const { chain } = this.resolve();
@@ -231,6 +232,15 @@ export class ProviderFallbackChain {
     return this.partitions.get(partitionKey)?.fallbackServed ?? false;
   }
 
+  /**
+   * Whether `id` is the fallback `partitionKey` has been running on: the
+   * link that answered last since the chain left the primary.
+   */
+  isServingFallback(id: string, partitionKey = DEFAULT_PARTITION): boolean {
+    const servingId = this.partitions.get(partitionKey)?.servingId ?? null;
+    return servingId !== null && servingId === id;
+  }
+
   /** The override the next call starts on (no stand-in), for the route note. */
   standingOverrideFor(partitionKey: string): string | null {
     const p = this.partitions.get(partitionKey);
@@ -252,6 +262,7 @@ export class ProviderFallbackChain {
       p.announcedOverride = false;
       p.overrideServed = false;
       p.fallbackServed = false;
+      p.servingId = null;
     } else if (p.overrideId) {
       // Chain continued past a dead deeper link — keep the override
       // pointed at the newest working candidate.

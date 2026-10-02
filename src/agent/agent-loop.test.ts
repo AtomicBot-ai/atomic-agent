@@ -9,7 +9,10 @@ import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
-import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import {
+  humanizeOpenAiHttpError,
+  OpenAiHttpError,
+} from "../llm/provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
@@ -1460,8 +1463,24 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
   it("stops the turn resumable when the provider's body says the credit is exhausted (F29)", async () => {
     // The Codex attempt: a 429 carrying `credit_balance_exhausted` was
-    // parked and retried as rate limiting, 42 times per worker.
+    // parked and retried as rate limiting, 42 times per worker. The task
+    // has done a step by then, so there is work to resume (item 40 ends
+    // a turn refused on its first request instead, see below).
     const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
     const events: string[] = [];
     let calls = 0;
     const body = JSON.stringify({
@@ -1479,6 +1498,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async () => {
         calls += 1;
+        if (calls === 1) {
+          return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+        }
         throw new TransportError(
           '"openrouter" is rate-limiting this key (429).',
           429,
@@ -1521,15 +1543,16 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         signal: new AbortController().signal,
       },
     );
-    // One request, no park, no failure: paused where it stood.
-    expect(calls).toBe(1);
+    // One refused request after the step, no park, no failure: paused
+    // where it stood.
+    expect(calls).toBe(2);
     expect(Date.now() - started).toBeLessThan(1_000);
     expect(events).toEqual(["credit_exhausted", "loop_completed"]);
     expect(result.reason).toBe("max_steps");
     expect(result.stopCause).toBe("credit_exhausted");
     expect(result.session.status).toBe("stalled");
     expect(result.session.lastError).toBe(
-      'task_stopped:credit_exhausted: "openrouter" is out of credit after 0 steps',
+      'task_stopped:credit_exhausted: "openrouter" is out of credit after 1 steps',
     );
     const last = result.session.turns.at(-1);
     expect(last?.kind).toBe("assistant_reply");
@@ -1537,6 +1560,94 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       '"openrouter" reports the account is out of credit',
     );
     expect((last as { text: string }).text).toContain("say `continue`");
+  });
+
+  /* Item 40: a provider that refuses the very first request because the
+     account cannot pay leaves nothing to resume. The turn fails at once
+     with the provider's own sentence, as a refused key does, instead of
+     pausing on a "(paused …) after 0 steps" reply or parking on a 429. */
+  describe("a billing refusal on the task's first request", () => {
+    const refusedBy = (status: number, body: string, label: string) => {
+      const http = new OpenAiHttpError(
+        `openai provider ${status}: ${body}`,
+        status,
+        "https://api.aimlapi.com/v1/chat/completions",
+        false,
+        null,
+        label,
+        undefined,
+        { body: parseProviderErrorBody(body) },
+      );
+      return new TransportError(humanizeOpenAiHttpError(http), status, http.url, {
+        cause: http,
+      });
+    };
+
+    async function runRefused(err: TransportError) {
+      const events: AgentLoopEvent[] = [];
+      let calls = 0;
+      const loop = new AgentLoop({
+        registry: buildDefaultToolRegistry(),
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        llmComplete: async () => {
+          calls += 1;
+          throw err;
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        onEvent: (event) => events.push(event),
+      });
+      const started = Date.now();
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-billing", workingDir }),
+        {
+          userMessage: "hello",
+          maxSteps: 5,
+          taskMaxSteps: 5,
+          providerWaitEnabled: true,
+          signal: new AbortController().signal,
+        },
+      );
+      return { result, events, calls, elapsedMs: Date.now() - started };
+    }
+
+    it("fails the turn on AI/ML API's 403 with its sentence, without a wait or a pause", async () => {
+      const { result, events, calls, elapsedMs } = await runRefused(
+        refusedBy(
+          403,
+          '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance or update your payment method to continue: https://aimlapi.com/app/billing"}',
+          "aimlapi",
+        ),
+      );
+      expect(calls).toBe(1);
+      expect(elapsedMs).toBeLessThan(1_000);
+      expect(result.reason).toBe("failed");
+      expect(result.stopCause).toBeUndefined();
+      const types = events.map((e) => e.type);
+      expect(types).not.toContain("provider_waiting");
+      expect(types).not.toContain("credit_exhausted");
+      const failed = events.find((e) => e.type === "loop_failed");
+      expect(failed?.type === "loop_failed" && failed.error.message).toBe(
+        '"aimlapi" refused the request: you\'ve run out of funds. Top up your balance with "aimlapi" or pick another provider in the Providers panel.',
+      );
+      // Nothing the model said: no synthetic "(paused …)" reply was stored.
+      expect(result.session.turns.some((t) => t.kind === "assistant_reply")).toBe(false);
+    });
+
+    it("does not park on a 429 that says the account is empty, though a 429 is otherwise a wait", async () => {
+      const { result, events, calls } = await runRefused(
+        refusedBy(
+          429,
+          '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}',
+          "openai",
+        ),
+      );
+      expect(calls).toBe(1);
+      expect(result.reason).toBe("failed");
+      expect(events.map((e) => e.type)).not.toContain("provider_waiting");
+    });
   });
 
   it("waits as long as the provider asked, on a 402 the outage wait would otherwise refuse (F29)", async () => {
