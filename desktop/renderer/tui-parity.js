@@ -105,7 +105,8 @@ function tpWaitNotice(wait) {
   const budget = wait && wait.maxWaitMs ? ' for up to ' + tpSeconds(wait.maxWaitMs) : '';
   // Item 29: an agent that names the provider it waits on gets it named here.
   const who = wait && wait.providerId ? 'No answer from ' + waitProviderName(wait.providerId) : 'The model isn’t answering';
-  return who + (why ? ' (' + why + ')' : '') + '. The turn is paused and retries on its own'
+  // Backlog 40: the picked provider's own failure first, when the wait is on a later link.
+  return waitLeadSentence(wait) + who + (why ? ' (' + why + ')' : '') + '. The turn is paused and retries on its own'
     + budget + '. Stop ends it.';
 }
 
@@ -156,12 +157,14 @@ function tpWaitGaveUpEntry(wait) {
    not in the frame. The list sits under the error row, collapsed; the row's
    entry keeps `open`, so the shared [data-toggle] handler folds it. */
 
-/** The frame's list, cleaned; [] when there was no fallover. */
+/** The frame's list, cleaned; [] when there was no fallover. Backlog 40: each
+    entry keeps the agent's `cause` ({kind, status?}) when it sent one. */
 function tpFallbackFailures(payload) {
   const raw = payload && Array.isArray(payload.fallback_failures) ? payload.fallback_failures : [];
   return raw
     .filter((f) => f && typeof f.providerId === 'string' && f.providerId)
-    .map((f) => ({providerId: f.providerId, reason: typeof f.reason === 'string' ? f.reason : ''}));
+    .map((f) => ({providerId: f.providerId, reason: typeof f.reason === 'string' ? f.reason : '',
+      cause: f.cause && typeof f.cause === 'object' && typeof f.cause.kind === 'string' ? f.cause : null}));
 }
 
 function tpTriedHTML(m) {
