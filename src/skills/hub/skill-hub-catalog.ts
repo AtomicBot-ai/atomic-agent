@@ -43,6 +43,30 @@ export interface HubSkillEntry {
 const MANIFEST_FETCH_CONCURRENCY = 6;
 
 /**
+ * `task` over every item with at most `limit` running at once, the results
+ * in the items' order. A slot is refilled the moment it frees: unlike
+ * fixed batches, one slow file holds up one slot, not the five beside it.
+ */
+async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await task(items[i]!);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return out;
+}
+
+/**
  * Candidate default branches tried before spending an API call on
  * `GET /repos/{owner}/{repo}`. The overwhelming majority of public repos
  * use one of these, so resolving the tree against them directly saves one
@@ -92,38 +116,33 @@ export async function browseTap(
     tap.path,
   );
 
-  const entries: HubSkillEntry[] = [];
-  for (let i = 0; i < manifests.length; i += MANIFEST_FETCH_CONCURRENCY) {
-    const batch = manifests.slice(i, i + MANIFEST_FETCH_CONCURRENCY);
-    const resolved = await Promise.all(
-      batch.map(async (m) => {
-        try {
-          const content = await client.fetchTextFile(
-            owner,
-            repo,
-            ref,
-            m.manifestPath,
-          );
-          const { manifest } = parseSkillFile(content);
-          const entry: HubSkillEntry = {
-            identifier: formatSkillIdentifier(owner, repo, m.dir),
-            name: manifest.name,
-            description: manifest.description,
-            version: manifest.version,
-            repo: `${owner}/${repo}`,
-            dir: m.dir,
-            source: "github",
-          };
-          return entry;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    for (const e of resolved) {
-      if (e) entries.push(e);
-    }
-  }
+  const resolved = await mapBounded(
+    manifests,
+    MANIFEST_FETCH_CONCURRENCY,
+    async (m): Promise<HubSkillEntry | null> => {
+      try {
+        const content = await client.fetchTextFile(
+          owner,
+          repo,
+          ref,
+          m.manifestPath,
+        );
+        const { manifest } = parseSkillFile(content);
+        return {
+          identifier: formatSkillIdentifier(owner, repo, m.dir),
+          name: manifest.name,
+          description: manifest.description,
+          version: manifest.version,
+          repo: `${owner}/${repo}`,
+          dir: m.dir,
+          source: "github",
+        };
+      } catch {
+        return null;
+      }
+    },
+  );
+  const entries = resolved.filter((e): e is HubSkillEntry => e !== null);
   entries.sort((a, b) => a.name.localeCompare(b.name));
   return entries;
 }
@@ -131,7 +150,9 @@ export async function browseTap(
 /**
  * Browse every tap and return the union, deduplicated by identifier.
  * Per-tap failures are collected into `errors` so one unreachable repo
- * does not blank the whole list.
+ * does not blank the whole list. The taps are read side by side (each
+ * with its own bounded fan-out) and merged in the configured order, so
+ * the first tap still wins a duplicate and `errors` keeps that order.
  */
 export async function browseHub(
   client: SkillHubClient,
@@ -140,24 +161,31 @@ export async function browseHub(
   entries: HubSkillEntry[];
   errors: Array<{ repo: string; error: string }>;
 }> {
+  const results = await Promise.all(
+    taps.map((tap) =>
+      browseTap(client, tap).then(
+        (tapEntries) => ({ tapEntries, error: null }),
+        (err: unknown) => ({
+          tapEntries: [] as HubSkillEntry[],
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      ),
+    ),
+  );
   const seen = new Set<string>();
   const entries: HubSkillEntry[] = [];
   const errors: Array<{ repo: string; error: string }> = [];
-  for (const tap of taps) {
-    try {
-      const tapEntries = await browseTap(client, tap);
-      for (const e of tapEntries) {
-        if (seen.has(e.identifier)) continue;
-        seen.add(e.identifier);
-        entries.push(e);
-      }
-    } catch (err) {
-      errors.push({
-        repo: tap.repo,
-        error: err instanceof Error ? err.message : String(err),
-      });
+  results.forEach(({ tapEntries, error }, i) => {
+    if (error !== null) {
+      errors.push({ repo: taps[i]!.repo, error });
+      return;
     }
-  }
+    for (const e of tapEntries) {
+      if (seen.has(e.identifier)) continue;
+      seen.add(e.identifier);
+      entries.push(e);
+    }
+  });
   entries.sort((a, b) => a.name.localeCompare(b.name));
   return { entries, errors };
 }
