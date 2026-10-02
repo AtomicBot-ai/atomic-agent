@@ -613,7 +613,7 @@ describe("runWithFallback", () => {
             from: "cloud",
             to: "local",
             status: null,
-            code: "ENOTFOUND",
+            causeCode: "ENOTFOUND",
             reason: "fetch failed",
             sessionId: "s-2",
           },

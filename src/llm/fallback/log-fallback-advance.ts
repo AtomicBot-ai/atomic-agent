@@ -20,13 +20,16 @@ export type FallbackLogger = Pick<StructuredLogger, "warn">;
  * their messages from the status, the URL and the response body; request
  * headers never enter them, so no API key reaches this line.
  *
- * `code` is the errno the transport left on the error's `cause` chain
- * (`ECONNREFUSED`, `ENOTFOUND`, `UND_ERR_SOCKET`, …), present only when
- * there is one: a `status: null` with `reason: "fetch failed"` is the
- * same line for a link that is not running and one the network cannot
- * reach. It needs no category gate, unlike the trace's `error` row: only
- * a failure `shouldAdvance` accepted (`transport` or `model`) reaches
- * this line, and a cancellation never advances.
+ * `causeCode` is the errno the transport left on the error's `cause`
+ * chain (`ECONNREFUSED`, `ENOTFOUND`, `UND_ERR_SOCKET`, …), present only
+ * when there is one: a `status: null` with `reason: "fetch failed"` is
+ * the same line for a link that is not running and one the network
+ * cannot reach. Named as the trace's `error` row and the parking line
+ * name it; a bare `code` reads as a provider's own error code, which is
+ * what `code` means elsewhere in these lines. It needs no category gate,
+ * unlike the trace's `error` row: only a failure `shouldAdvance` accepted
+ * (`transport` or `model`) reaches this line, and a cancellation never
+ * advances.
  */
 export function logFallbackAdvance(
   logger: FallbackLogger | undefined,
@@ -38,12 +41,12 @@ export function logFallbackAdvance(
     error !== null && typeof error === "object"
       ? (error as { status?: unknown }).status
       : undefined;
-  const code = readErrnoCode(error);
+  const causeCode = readErrnoCode(error);
   logger.warn("provider failed; falling over to the next link", {
     from: advance.from,
     to: advance.to,
     ...(typeof status === "number" || status === null ? { status } : {}),
-    ...(code !== undefined ? { code } : {}),
+    ...(causeCode !== undefined ? { causeCode } : {}),
     reason: describeReason(error),
     ...(advance.sessionId ? { sessionId: advance.sessionId } : {}),
   });
