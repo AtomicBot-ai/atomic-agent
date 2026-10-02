@@ -11,6 +11,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { totalmem } from "node:os";
 
 import {
   resolveEmbeddingLogFilePath,
@@ -28,6 +29,7 @@ import {
   MANAGED_KV_CACHE_TYPE,
   resolveDeviceFreeVramMiB,
   resolveKvBudgetMiB,
+  UNIFIED_MEMORY_KV_SHARE,
   type KvLayoutSource,
 } from "./context-size.js";
 import {
@@ -36,7 +38,11 @@ import {
   readGgufMetadataSync,
   type GgufMetadata,
 } from "./gguf-metadata.js";
-import { listVulkanDevices, resolveManagedDevice } from "./gpu-devices.js";
+import {
+  listVulkanDevices,
+  resolveManagedDevice,
+  sharesSystemMemory,
+} from "./gpu-devices.js";
 import {
   resolveSwaFullDecision,
   type SwaFullDecision,
@@ -465,9 +471,12 @@ export function buildLlamaServerArgs(
  * Resolve the effective `--ctx-size` for a chat daemon launch. Impure
  * glue around the pure `estimateContextSize`: when auto-sizing on a GPU
  * device it enumerates `--list-devices` to read the target device's free
- * VRAM. Best-effort — any enumeration failure degrades to the no-VRAM
- * default. Skips the probe entirely when the operator pinned a value or
- * offload is CPU-only.
+ * VRAM, and on a device that shares the system's RAM (Apple silicon, an
+ * integrated GPU) the machine's physical memory too. Best-effort — any
+ * enumeration failure degrades to the no-VRAM default. Skips the probe
+ * entirely when the operator pinned a value or offload is CPU-only.
+ * `note` says why a unified-memory machine got less than its free figure
+ * would fit, for the daemon log.
  */
 async function resolveEffectiveContextSize(
   binPath: string,
@@ -483,14 +492,19 @@ async function resolveEffectiveContextSize(
     /** The model's attention layout from its header, when readable. */
     kvLayout?: KvLayoutSource | null;
   },
-): Promise<{ contextSize: number; kvBudgetBytes: number | null }> {
+): Promise<{ contextSize: number; kvBudgetBytes: number | null; note: string | null }> {
   let freeVramMiB: number | null = null;
+  let systemMemoryMiB: number | null = null;
   if (opts.configured <= 0 && device && device !== "cpu") {
     const devices = await listVulkanDevices(binPath);
     freeVramMiB = resolveDeviceFreeVramMiB(devices, device);
+    const target = devices.find((d) => d.id === device);
+    if (freeVramMiB !== null && target && sharesSystemMemory(target)) {
+      systemMemoryMiB = totalmem() / (1024 * 1024);
+    }
   }
   const mmprojSizeGb = opts.hasMmproj ? (model.mmprojFileSizeGb ?? 0) : 0;
-  const contextSize = estimateContextSize({
+  const input = {
     freeVramMiB,
     modelSizeGb: model.fileSizeGb,
     mmprojSizeGb,
@@ -498,7 +512,18 @@ async function resolveEffectiveContextSize(
     configuredContextSize: opts.configured,
     kvLayout: opts.kvLayout ? buildKvLayout(opts.kvLayout) : null,
     cacheType: MANAGED_KV_CACHE_TYPE,
-  });
+  };
+  const contextSize = estimateContextSize({ ...input, systemMemoryMiB });
+  let note: string | null = null;
+  if (systemMemoryMiB !== null) {
+    const fits = estimateContextSize(input);
+    if (fits > contextSize) {
+      note =
+        `held to ${Math.round(systemMemoryMiB / 1024)} GB of unified memory: ` +
+        `half left to the system, at most 1/${Math.round(1 / UNIFIED_MEMORY_KV_SHARE)} for the KV cache ` +
+        `(${fits} would fit the GPU's free figure)`;
+    }
+  }
   const kvBudgetBytes =
     freeVramMiB !== null && freeVramMiB > 0
       ? Math.max(
@@ -507,12 +532,13 @@ async function resolveEffectiveContextSize(
             freeVramMiB,
             modelSizeGb: model.fileSizeGb,
             mmprojSizeGb,
+            systemMemoryMiB,
           }),
         ) *
         1024 *
         1024
       : null;
-  return { contextSize, kvBudgetBytes };
+  return { contextSize, kvBudgetBytes, note };
 }
 
 /**
@@ -717,16 +743,15 @@ export async function startDaemon(
   const header = readModelHeader(modelPath);
   const kvLayout = header ? kvLayoutSourceFromMetadata(header) : null;
   const prefixReuse = header ? classifyPrefixReuse(header) : null;
-  const { contextSize, kvBudgetBytes } = await resolveEffectiveContextSize(
-    binPath,
-    device,
-    model,
-    {
-      configured: opts.contextSize ?? 0,
-      hasMmproj: Boolean(opts.mmprojFile),
-      kvLayout,
-    },
-  );
+  const {
+    contextSize,
+    kvBudgetBytes,
+    note: contextNote,
+  } = await resolveEffectiveContextSize(binPath, device, model, {
+    configured: opts.contextSize ?? 0,
+    hasMmproj: Boolean(opts.mmprojFile),
+    kvLayout,
+  });
   const swaFull =
     opts.swaFullFlag !== undefined
       ? {
@@ -787,7 +812,8 @@ export async function startDaemon(
             ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
             : " (header unreadable)"),
         `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
-          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback"),
+          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
+          (contextNote ? `, ${contextNote}` : ""),
         `[atomic-agent] launch: ${swaFull.reason}`,
         `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
         "",

@@ -8,6 +8,7 @@ import {
   parseListDevices,
   pickBestDevice,
   resolveManagedDevice,
+  sharesSystemMemory,
   type GpuDevice,
 } from "./gpu-devices.js";
 
@@ -311,5 +312,27 @@ describe("resolveManagedDevice", () => {
         }
       },
     );
+  });
+});
+
+describe("sharesSystemMemory", () => {
+  const device = (id: string, description: string): GpuDevice => ({
+    id,
+    description,
+    totalMemMiB: 10_922,
+    freeMemMiB: 10_922,
+  });
+
+  it("is true for Apple silicon's Metal device and for an integrated GPU", () => {
+    expect(sharesSystemMemory(device("MTL0", "Apple M4"))).toBe(true);
+    expect(sharesSystemMemory(device("Metal0", "Apple M1 Max"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan1", "Intel(R) Graphics (RPL-S)"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon(TM) Graphics"))).toBe(true);
+  });
+
+  it("is false for a card with memory of its own", () => {
+    expect(sharesSystemMemory(device("CUDA0", "NVIDIA GeForce RTX 4090"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon RX 7900 XTX"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "Intel(R) Arc(TM) A770 Graphics"))).toBe(false);
   });
 });

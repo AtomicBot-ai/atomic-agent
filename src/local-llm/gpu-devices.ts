@@ -143,6 +143,21 @@ export function deviceClassRank(description: string): 0 | 1 | 2 {
 }
 
 /**
+ * Whether the device's memory is the system's own RAM: Apple silicon's
+ * Metal device (`MTL0: Apple M4 …`) or an integrated GPU. The free figure
+ * such a device reports is a ceiling on what the GPU may map, not memory
+ * nobody else is using, so the context auto-size also holds the KV cache
+ * to a share of physical RAM there (`context-size.ts`). Pure — no IO.
+ */
+export function sharesSystemMemory(device: GpuDevice): boolean {
+  return (
+    /^(MTL|Metal)\d+$/i.test(device.id) ||
+    /\bApple\b/.test(device.description) ||
+    deviceClassRank(device.description) === 0
+  );
+}
+
+/**
  * Pick the best single device id for offloading, or `null` when there
  * is no usable GPU. Heuristic: drop software rasterizers, prefer a
  * discrete GPU over an integrated one, then break ties by larger VRAM.

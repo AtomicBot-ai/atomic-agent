@@ -168,6 +168,7 @@ export {
   pickBestDevice,
   listVulkanDevices,
   resolveManagedDevice,
+  sharesSystemMemory,
   type GpuDevice,
 } from "./gpu-devices.js";
 export {
