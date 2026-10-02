@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 // r5 integration: `homedir` is back for the wizard's import scan only — it
 // locates the OTHER agents' state dirs (~/.claude, ~/.codex …), never this
@@ -59,7 +60,21 @@ export function plainCliError(stderr: string): string {
     .join("\n").trim();
 }
 
+/* ATO-157: the smoke's count of the `atag` processes a switch spawns. A
+   stand-in answers the calls made inside `withCliStandIn`'s body — and only
+   those: the app's own reads and writes elsewhere (the supervisor, the
+   window's refreshes) run in other async contexts and still reach the real
+   agent, and nothing the stand-in is asked touches the real config. */
+export type CliStandIn = (args: string[], input?: string) => Promise<CliResult>;
+const cliStandIns = new AsyncLocalStorage<CliStandIn>();
+/** Smoke only: run `body` with every `atag` call it makes answered by `standIn`. */
+export function withCliStandIn<T>(standIn: CliStandIn, body: () => Promise<T>): Promise<T> {
+  return cliStandIns.run(standIn, body);
+}
+
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
+  const standIn = cliStandIns.getStore();
+  if (standIn) return standIn(args, input);
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {
@@ -1668,10 +1683,22 @@ export function setActiveTextProvider(id: string, opts: { leaveFusion?: boolean 
  * effective Fusion while its chip says cloud.
  */
 async function setActiveTextProviderNow(id: string, opts: { leaveFusion?: boolean } = {}): Promise<WriteResult> {
-  if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, changed: false, error: `not a provider id: ${id}` };
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
   const cfg = read.config;
+  const planned = applyActiveTextProvider(cfg, id, opts);
+  if (!planned.ok || !planned.changed) return planned;
+  const w = await writeWholeConfig(cfg);
+  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+}
+
+/**
+ * setActiveTextProvider's change, made on a config already read (ATO-157: a
+ * switch that reads the file once, under one hold of the lock, through
+ * rewriteWholeConfig). Mutates `cfg`; `changed` says it needs writing.
+ */
+export function applyActiveTextProvider(cfg: UserConfigShape, id: string, opts: { leaveFusion?: boolean } = {}): WriteResult {
+  if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, changed: false, error: `not a provider id: ${id}` };
   // A file without an llm block gets the synthesized one written, as the
   // TUI's writeUserConfigFileSync does unconditionally — even when the id
   // is the block's own default, so the file ends up carrying the block.
@@ -1693,8 +1720,7 @@ async function setActiveTextProviderNow(id: string, opts: { leaveFusion?: boolea
   if (leaving && run) {
     run.mode = providers.find((p) => p.id === id)?.kind === "llama-server" ? "local" : "cloud";
   }
-  const w = await writeWholeConfig(cfg);
-  return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+  return { ok: true, changed: true };
 }
 
 /** LocalModelsOrchestrator.useManagedMode: persistUserLocalModelsConfig({mode:"managed"}) + url sync. */
@@ -1702,14 +1728,20 @@ export function useManagedMode(): Promise<WriteResult> {
   return withConfigLock(useManagedModeNow);
 }
 
+/** useManagedMode's change on a config already read (ATO-157). Mutates `cfg`; answers whether it needs writing. */
+export function applyManagedMode(cfg: UserConfigShape): boolean {
+  const lm = (cfg.localModels ??= {});
+  if (lm.mode === "managed") return false;
+  lm.mode = "managed";
+  syncLocalLlamaProviderUrl(cfg);
+  return true;
+}
+
 async function useManagedModeNow(): Promise<WriteResult> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
   const cfg = read.config;
-  const lm = (cfg.localModels ??= {});
-  if (lm.mode === "managed") return { ok: true, changed: false };
-  lm.mode = "managed";
-  syncLocalLlamaProviderUrl(cfg);
+  if (!applyManagedMode(cfg)) return { ok: true, changed: false };
   const w = await writeWholeConfig(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
