@@ -129,7 +129,8 @@
    sits where a tool line's icon sits, so the column of steps lines up. */
 #scroller > .col720 > .tk-step + .tk-step{margin-top:-10px}
 
-/* reasoning disclosure — closed by default, "Reasoning · 1 step" */
+/* reasoning disclosure — closed by default, the one word "Reasoning" (chat
+   review Д16: the step count beside it was noise) */
 .disc{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;border-radius:var(--r-row);
   font-size:13.5px;color:var(--ink-3);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .disc svg{width:14px;height:14px}
@@ -263,25 +264,19 @@
 .appr.done .apprlbl .mono{color:var(--ink-2)}
 .appr.done .badge{margin-left:0;background:transparent;box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2)}
 
-/* ---------------- the end mark and the message actions ----------------
-   The agent's full stop: one mark at the end of a FINISHED turn, never one per
-   message, appended after the action row (so no `#turn-<id>` anchor moves).
-   It is seated ON the action row: 22px tall with a -22px top margin, so it
-   adds nothing to the column's height and the turn-end growth __streamActs
-   measures stays exactly its (zero) contribution. 16px wide at the left edge,
-   clear of the right-aligned buttons. The svg is 12px (asserted). */
-.endmark{position:relative;width:16px;height:22px;margin-top:-22px;display:grid;place-items:center;color:var(--ink-3)}
-.endmark svg{position:relative;width:12px;height:12px}
-/* Calm (S3): at rest only the newest finished turn shows its mark; an older
-   turn's mark comes back with its actions, on hover or keyboard focus. */
-.endmark:not(.latest){opacity:0}
-.turn:hover .endmark,.turn:focus-within .endmark{opacity:1}
+/* ---------------- the message actions ----------------
+   Chat review (Д18): the end mark — the small Atomic glyph under the last
+   reply, r4-ui's full stop for a finished turn — is gone. It read as a stray
+   icon, not as "done"; the composer's loader stopping already says the turn
+   ended.
 
-/* --- item 4: hover actions on a message ---
+   --- item 4: hover actions on a message ---
    The row always occupies its 22px box and only its paint changes, so revealing
    it on hover cannot move a pixel of the transcript. The box is reserved for
    the whole turn, not from the moment it ends: msgActs emits an EMPTY .msgacts
-   while a reply is streaming, so the 22px + 2px never materialises mid-view.
+   while a reply is streaming, so the 22px + 8px never materialises mid-view.
+   Chat review (Д17): 8px above the row (it was 2px), so copy and retry stand
+   clear of the bubble and the reply instead of touching them.
    Right-aligned on both kinds — "a copy icon at its end" — which puts it at the
    user bubble's right edge and at the right edge of the agent's content column,
    with the red retry immediately to copy's left on a user message.
@@ -293,7 +288,7 @@
    the row is at any instant is unambiguous. The hover-less media query pins
    them open on a touch surface, where there is no hover to reveal them with.
    The smoke reads the reveal rule's own text — keep it exactly as written. */
-.msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:2px;opacity:0;pointer-events:none}
+.msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:8px;opacity:0;pointer-events:none}
 .turn:hover .msgacts,.msgacts:focus-within{opacity:1;pointer-events:auto}
 @media (hover:none){.msgacts{opacity:1;pointer-events:auto}}
 .msgact{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill);color:var(--ink-2);
@@ -315,8 +310,8 @@
 .attach .filechip{vertical-align:0}
 
 /* ---------------- plan hand-off (item 1) ----------------
-   Under the last assistant message of a finished plan turn, below its end
-   mark. The button text is compared verbatim by the smoke (`▶ run it · auto`),
+   Under the last assistant message of a finished plan turn, below its action
+   row. The button text is compared verbatim by the smoke (`▶ run it · auto`),
    so the chord keycaps are drawn with ::after and stay out of textContent.
    Tones: amber tint for auto, critical tint for bypass, neutral for dismiss. */
 .planbar{margin-top:12px;display:grid;gap:10px;padding:12px 12px 12px 16px;border-radius:var(--r-card);

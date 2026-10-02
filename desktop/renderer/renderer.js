@@ -66,11 +66,11 @@ const SEL = {
 /* Item 1 (plan hand-off). The offer that follows a finished plan-mode turn,
    ported from src/tui/components/plan-handoff.tsx. `on` is the offer itself;
    `itemId` is the assistant entry it hangs under (it is never a log entry of
-   its own — endMarkIds walks the tail of a segment and a `k:'plan'` row there
-   would eat the turn's full stop); `sessionId` scopes it to the thread it was
-   raised in; `startedMode` is the stance the turn OPENED with, so a stance
-   that moved between start and end cannot put the bar over a turn that ran
-   unfettered; `busy` disables the buttons while the mode POST is in flight,
+   its own, so copy, history and the transcript never see it as a message);
+   `sessionId` scopes it to the thread it was raised in; `startedMode` is the
+   stance the turn OPENED with, so a stance that moved between start and end
+   cannot put the bar over a turn that ran unfettered; `busy` disables the
+   buttons while the mode POST is in flight,
    because submit() has no re-entrancy guard and a double click would send the
    execute message twice; `failMode` is the smoke seam for the "the POST came
    back !ok" branch, and `hold` the smoke seam that parks executePlan between
@@ -1797,17 +1797,18 @@ function render() {
 
 /* Calm (S1): the toolbar names the open chat and nothing else — no tool
    count, no "running" word (the sidebar dot and the composer already say
-   that). A chat that has not been saved yet is "New chat", until its first
-   message names its stand-in row (item 27). */
+   that). A chat that has not been saved yet has no title, until its first
+   message names its stand-in row (item 27): chat review Д15 — "New chat"
+   up here only repeated the sidebar's New chat button. */
 function roomTitle() {
   if (S.room === 'chat') {
     // Item 27: a new chat's stand-in names it here too, as its row does.
     const ses = S.sessionId ? chatById(S.sessionId) : null;
-    return ses && ses.t ? ses.t : 'New chat';
+    return ses && ses.t ? ses.t : '';
   }
   if (S.room === 'tasks')  return 'Tasks';
   if (S.room === 'skills') return 'Skills';
-  return 'New chat';
+  return '';
 }
 
 /* Calm (S1): four controls — sidebar toggle, title, Search, inspector
@@ -1818,7 +1819,7 @@ function renderToolbar() {
   $('#toolbar').innerHTML =
     '<div class="lights" aria-hidden="true"></div>'
     + sidebarToggleHTML()
-    + '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>'
+    + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
       + '<button class="searchbtn" data-act="palette" title="' + kbdText('Search and commands (⌘ K)') + '">' + ic('search') + '<span class="sec">Search</span></button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
@@ -2098,17 +2099,18 @@ function emptyPlateHTML() {
     + '</div>';
 }
 
-/* r4-ui item 3: `end` is true for the one item that closes a finished turn
-   (endMarkIds decides which). The user's words: "not use the cross from agent
-   or this weird line from user inside the chat. Use the cross from agent only
-   at the end of the whole message from the agent, the last message from the
-   agent only, so that it shows that the whole process is finished". So the
-   per-message glyphs are gone from both sides; the user row becomes a bubble
-   that leaves the grid, and the agent row keeps the grid with an EMPTY first
-   cell so its content column stays where it is. Tool cards, reasoning blocks
-   and approvals keep their own check/warn/running glyphs — those describe a
-   call's RESULT, not a message, and the fold depends on them. */
-function item(m, end) {
+/* r4-ui item 3: no per-message glyphs on either side. The user's words: "not
+   use the cross from agent or this weird line from user inside the chat". The
+   user row is a bubble that leaves the grid, and the agent row keeps the grid
+   with an EMPTY first cell so its content column stays where it is. Tool
+   cards, reasoning blocks and approvals keep their own check/warn/running
+   glyphs — those describe a call's RESULT, not a message, and the fold
+   depends on them.
+   Chat review (Д18): the one mark r4-ui kept, the agent's glyph under the
+   reply that closed a finished turn, went too. Small and grey under the last
+   reply it read as a stray icon ("some tiny figure"), not as "done", and the
+   composer's loader stopping already says the turn is over. */
+function item(m) {
   // The bubble text still goes through esc() only. A user message has never
   // been run through renderProse and must not start being, or a path someone
   // typed turns into a clickable chip inside their own message.
@@ -2120,16 +2122,13 @@ function item(m, end) {
   if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '"><div class="prose usr bubble">' + esc(m.text) + '</div>'
     + (m.steered ? '<div class="usrcap">steered into the running turn</div>' : '') + msgActs(m) + '</div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
-  /* r5 item 4: the action row goes after the attachment strip and BEFORE the
-     end mark. The mark is the turn's full stop and r4-ui's contract is that it
-     closes the column — the actions belong to this message, so they sit inside
-     it, above the mark. Nothing above them moves either way, so no
-     `#turn-<id>` anchor shifts and the fold/scroll-stability machinery is
-     untouched. */
-  /* Soft Tactile: `.tk-asst` names the content column only so chat.css can
-     seat the end mark on the action row; `.prose` stays its direct child
-     (cloud-setup.drive reads `.turn > div > .prose`). `tk-ph` greys the
-     desktop's own "(no reply)" / "(stopped)" backfill. */
+  /* r5 item 4: the action row goes after the attachment strip — the actions
+     belong to this message, so they sit inside its column. Nothing above them
+     moves, so no `#turn-<id>` anchor shifts and the fold/scroll-stability
+     machinery is untouched. */
+  /* Soft Tactile: `.tk-asst` names the reply's content column; `.prose` stays
+     its direct child (cloud-setup.drive reads `.turn > div > .prose`). `tk-ph`
+     greys the desktop's own "(no reply)" / "(stopped)" backfill. */
   /* Calm (S4): a turn that failed before it said anything has the failure
      row under it; the desktop's own "(no reply)" backfill above that row
      adds nothing, so it is not drawn (it stays in the log, where copy and
@@ -2140,16 +2139,15 @@ function item(m, end) {
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
   if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
     + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
-    + (end ? '<div class="endmark' + (end === 'latest' ? ' latest' : '') + '" title="Turn complete">' + MARK_MONO + '</div>' : '')
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
        last finalised assistant message of the plan turn (src/tui/components/
        chat-log.tsx:170-181 does the same), carries no id, and is not in S.log.
-       r5 integration (seam c): it goes BELOW the end mark and below item 4's
-       action row, so the bar is never inside `.msgacts` and never acquires the
-       copy/retry buttons — those belong to the message, this belongs to the
-       turn that just finished. */
+       r5 integration (seam c): it goes below item 4's action row, so the bar
+       is never inside `.msgacts` and never acquires the copy/retry buttons —
+       those belong to the message, this belongs to the turn that just
+       finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
     + '</div></div>';
   /* The one action that helps, on the row that reports the problem.
@@ -2164,11 +2162,12 @@ function item(m, end) {
      nothing that looks for "the reply" (drivers, end mark) mistakes it. */
   if (m.k === 'interim') return '<div class="turn interim"><div></div><div class="tk-interim"><div class="prose">'
     + renderProse(m.text) + '</div></div></div>';
-  /* Calm (S3): a quiet line, closed until asked — "Reasoning · 1 step",
-     with the plural right. What it holds is the model's working, not the
-     reply, so it sits in the muted ink and never in bold. */
+  /* Calm (S3): a quiet line, closed until asked — the one word "Reasoning"
+     (chat review Д16: "Reasoning · 1 step" counted something nobody reads).
+     What it holds is the model's working, not the reply, so it sits in the
+     muted ink and never in bold. */
   if (m.k === 'reason') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>'
-    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>Reasoning</span> <span class="disc-n">\u00b7 ' + plural(Number(m.steps) || 1, 'step') + '</span></button>'
+    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>Reasoning</span></button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
   if (m.k === 'tool') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
@@ -2269,9 +2268,9 @@ function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
      EMPTY rather than skipped. That empty row is the whole point — it holds the
-     same 22px box (plus its 2px margin) from the first frame of the reply, so
+     same 22px box (plus its 8px margin) from the first frame of the reply, so
      the buttons that appear when the turn ends appear INSIDE a box that was
-     already there and the transcript below does not jump 24px at turn end. It
+     already there and the transcript below does not jump 30px at turn end. It
      is reserved before the empty-text guard below, because the streaming item
      startLiveTurn pushes has no text at all for its first frames and a box that
      arrived with the first delta would shift the view just as badly.
@@ -3394,9 +3393,8 @@ function repaintEntry(m, anchorSel) {
   const old = document.getElementById('turn-' + m.id);
   if (!sc || !old) { render(); return; }
   const before = (old.querySelector(anchorSel) || old).getBoundingClientRect().top;
-  // r4-ui item 3: only tool and reason rows carry a `#turn-<id>` anchor, and
-  // this is the only way in here, so the end mark never applies to a repaint.
-  old.outerHTML = item(m, false);
+  // Only tool and reason rows carry a `#turn-<id>` anchor, and this is the only way in here.
+  old.outerHTML = item(m);
   const fresh = document.getElementById('turn-' + m.id);
   const anchor = fresh && (fresh.querySelector(anchorSel) || fresh);
   const drift = anchor ? anchor.getBoundingClientRect().top - before : 0;
@@ -3416,11 +3414,7 @@ function expandGroupInPlace(id) {
   if (!sc || !old || i < 0) { render(); return; }
   let j = i; while (j + 1 < S.log.length && S.log[j + 1].k === 'tool' && S.log[j + 1].name === S.log[i].name) j++;
   const before = (old.querySelector('.cardhead') || old).getBoundingClientRect().top;
-  // r4-ui item 3 review fix: `.map(item)` handed Array.prototype.map's INDEX
-  // to item()'s second parameter, so every member after the first unfolded
-  // with a truthy `end`. Harmless while the run is all tool cards, but the
-  // sibling call site (repaintEntry) passes an explicit false for a reason.
-  old.outerHTML = S.log.slice(i, j + 1).map((m) => item(m, false)).join('');
+  old.outerHTML = S.log.slice(i, j + 1).map((m) => item(m)).join('');
   const head = document.querySelector('#turn-' + id + ' .cardhead');
   const drift = head ? head.getBoundingClientRect().top - before : 0;
   if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
@@ -3443,7 +3437,7 @@ function expandGroupInPlace(id) {
      it. The composer (its focus, caret and running light), the sidebar and the
      rest of the window are not touched.
    - more reasoning: nothing in the transcript while its row is closed (the row
-     reads "Reasoning · 1 step" whatever the text is); an open row's body grows
+     reads "Reasoning" whatever the text is); an open row's body grows
      in place. The inspector's Reasoning well grows in place too.
    render() paints all of that, so it takes a waiting frame with it: the end of
    a turn renders, and so always draws the final text. */
@@ -14435,8 +14429,7 @@ function continueTurn() {
 function dismissPlan() {
   if (!PLAN.on) return;
   clearPlanOffer();
-  // `note:true`: endMarkIds walks back over trailing note rows, so the turn
-  // keeps its completion mark instead of losing it to this line.
+  // `note:true`: a notice about the session, not the turn's outcome.
   S.log.push({id:nid(), k:'system', note:true,
     text:'plan dismissed — still in plan mode; type to propose a different one'});
   render();
@@ -15809,57 +15802,14 @@ async function wizNextStep() {
 }
 
 
-/* r4-ui item 3: which item carries the agent's full stop.
-   A TURN is the span of S.log from one k:'user' item to the next, so this
-   works identically for a live stream and for a session replayed from
-   GET /api/sessions/{id}. The mark goes on the span's LAST item, and only
-   when that item is a non-empty assistant reply:
-     - last ITEM, not last assistant, so a reopened multi-step turn that
-       stored its reply before further tool calls does not float a full stop
-       above the cards it is supposed to close. On the live path the two rules
-       are identical anyway — tool and reasoning rows splice in AHEAD of the
-       streaming item;
-     - non-empty, because startLiveTurn pushes an empty assistant item before
-       the first delta arrives, so a turn aborted or failed before any text
-       would otherwise get a bare dot under an empty prose block.
-   The TAIL span gets nothing while S.busy or S.pending: that covers the item
-   still streaming, a turn blocked on an approval, and a session reopened while
-   its turn runs elsewhere. 0.5.5 exposes no turn controller, so a turn running
-   under another origin has no stream here and no mark — the same honest limit
-   the pulsating sidebar dot already carries. A turn that ends with a system
-   row (abort, "turn failed") gets no mark either, which is right: nothing
-   says the whole process finished.
-   Review fix: NOT every system row says that. A handful are notices ABOUT the
-   session rather than about the turn — the model stamp openSession appends
-   after replaying a stored transcript, the parked-steer recovery, the
-   `steer_undelivered` ack — and they are pushed after a turn that really did
-   finish. Left counted, they silently deleted the full stop of the last
-   completed turn, which is the one turn the operator is looking at. Those
-   rows carry `note:true` and are stepped over here; an abort or a failure
-   carries no such flag and still suppresses the mark. */
-function endMarkIds() {
-  const segs = [[]];
-  S.log.forEach((m) => { if (m.k === 'user') segs.push([]); segs[segs.length - 1].push(m); });
-  const ids = new Set();
-  segs.forEach((seg, i) => {
-    if (!seg.length) return;
-    if (i === segs.length - 1 && (S.busy || S.pending)) return;
-    let at = seg.length - 1;
-    while (at >= 0 && seg[at].k === 'system' && seg[at].note) at--;
-    const last = at >= 0 ? seg[at] : null;
-    if (last && last.k === 'assistant' && String(last.text || '').trim()) ids.add(last.id);
-  });
-  return ids;
-}
+/* Chat review (Д18): endMarkIds, which picked the reply that closed each
+   finished turn for r4-ui's end mark, went with the mark. The `note:true` flag
+   that told it to step over a notice about the session (a model stamp, the
+   parked-steer line, a dismissed plan) stays on those rows as what they are. */
 
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
-  const end = endMarkIds();
-  // Only while it is still the newest turn: once another question follows,
-  // that turn's own mark (when it finishes) takes over.
-  let lastEnd = Array.from(end).pop();
-  if (lastEnd && items.slice(items.findIndex((x) => x.id === lastEnd) + 1).some((x) => x.k === 'user')) lastEnd = null;
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
     if (m.k === 'tool') {
@@ -15883,10 +15833,7 @@ function renderItems() {
       const times = j - i + 1;
       if (times >= 2) { html += systemRun(m, times); i = j; continue; }
     }
-    /* Calm (S3): the latest finished turn keeps its full stop at rest; an
-       earlier turn's mark shows with that message's actions, on hover or
-       focus, so a long transcript is not a column of logos. */
-    html += item(m, end.has(m.id) ? (m.id === lastEnd ? 'latest' : true) : false);
+    html += item(m);
   }
   return html;
 }
@@ -21637,7 +21584,8 @@ if (typeof window !== 'undefined') {
 
   /* Item 3: what every transcript row is made of — its kind, whether a message
      glyph came back, whether the grid rows' first cell is empty, whether the row
-     carries the end mark, and where its content starts. */
+     carries an end mark (chat review Д18: none may), and where its content
+     starts. */
   window.__turnShape = () => [...document.querySelectorAll('#scroller .turn')].map((t) => {
     const body = t.querySelector('.prose,.card,.appr,.disc');
     const usr = t.classList.contains('usr');
@@ -21657,8 +21605,6 @@ if (typeof window !== 'undefined') {
             gutter: usr ? null : (t.firstElementChild ? t.firstElementChild.innerHTML.trim().length : 0),
             end: !!t.querySelector('.endmark'),
             strip: !!t.querySelector('.attach'),
-            // The mark is appended AFTER attachStrip(m), so on a reply that
-            // wrote files it must still be the last thing in the column.
             endLast: !!(t.lastElementChild && t.lastElementChild.lastElementChild
                         && t.lastElementChild.lastElementChild.classList.contains('endmark')),
             left: body ? Math.round(body.getBoundingClientRect().left) : 0};
@@ -21677,10 +21623,9 @@ if (typeof window !== 'undefined') {
             marginLeft: getComputedStyle(b).marginLeft, rowDisplay: getComputedStyle(b.parentElement).display,
             markW: mark ? Math.round(mark.getBoundingClientRect().width) : 0};
   };
-  /* Item 3: put the window back at rest before the transcript checks. The end
-     mark is deliberately withheld while a turn is streaming or an approval is
-     open, and the checks that run before these leave a turn going in another
-     chat — so without this the mark's absence proves nothing either way. This
+  /* Item 3: put the window back at rest before the transcript checks. The
+     checks that run before these leave a turn going in another chat, and a
+     transcript read mid-turn proves nothing about one at rest. This
      stops the leftover turn through the real abort path; it invents no state.
      A pending approval left without a running turn goes through the same call
      abort() makes (dropPendingApproval), so the sidebar's filled dot is dropped
@@ -21695,12 +21640,11 @@ if (typeof window !== 'undefined') {
   /* Item 3: a user message, pushed exactly as the composer's submit() pushes
      one — the counterpart of the existing __pushAssistant. */
   window.__pushUser = (text) => { S.log.push({id:nid(), k:'user', text: String(text)}); render(); return S.log.length; };
-  /* Item 3: the end mark never lands on a turn that is still running, and the
-     turns above it keep theirs. S.busy is SET AND PUT BACK here — this is a
-     synthetic busy, not a live stream: reading the transcript mid-delta is a
-     race the suite would lose on a slow reply. What it does prove is the guard
-     itself (drop `S.busy || S.pending` from endMarkIds and `during.last` flips).
-     The empty streaming item that path really pushes is covered at rest by
+  /* Item 3, chat review Д18: no end mark in any state — while a turn runs,
+     while an approval waits, or at rest. S.busy and S.pending are SET AND PUT
+     BACK here — a synthetic busy, not a live stream: reading the transcript
+     mid-delta is a race the suite would lose on a slow reply. The empty
+     streaming item that path really pushes is covered at rest by
      __emptyTurnMark below, which needs no poked flag at all. */
   window.__marksWhileBusy = () => {
     const count = () => {
@@ -21722,12 +21666,12 @@ if (typeof window !== 'undefined') {
     S.pending = pendBefore; render();
     return {during, duringPending, after: count()};
   };
-  /* Item 3: the other half of "never on a live turn", and the one that needs no
-     poked flag at all. startLiveTurn pushes an EMPTY assistant item before the
-     first delta arrives; a turn aborted, or one whose BR.chat call fails, leaves
-     that item in S.log at rest. It must not collect a full stop under an empty
-     prose block — that is what endMarkIds' non-empty-text test is for. The two
-     rows are pushed exactly as that path pushes them and then taken back out. */
+  /* Item 3: the turn that never produced a word, which needs no poked flag at
+     all. startLiveTurn pushes an EMPTY assistant item before the first delta
+     arrives; a turn aborted, or one whose BR.chat call fails, leaves that item
+     in S.log at rest, and nothing may be drawn under its empty prose block.
+     The two rows are pushed exactly as that path pushes them and then taken
+     back out. */
   window.__emptyTurnMark = () => {
     const before = document.querySelectorAll('#scroller .endmark').length;
     S.log.push({id:nid(), k:'user', text:'(smoke) a turn that produced nothing'});
@@ -22381,13 +22325,11 @@ if (typeof window !== 'undefined') {
    r4-ui's user bubbles
    ============================================================
    r4-feat writes the "this session ran on <provider>/<model>" notice into
-   the transcript, and r4-ui turned user rows into right-hand bubbles with
-   the agent's mark moved to the end of a finished turn. The notice is
-   neither: it is `k:'system'`, so `item()` must render it as a `.sysrow`
-   with no `.prose.usr.bubble` around it and no `.endmark` in it, and it
-   must not split a turn the way a real user message does (endMarkIds
-   segments on `k === 'user'`). Nothing asserted that across the two
-   lanes, because each was written before the other landed.
+   the transcript, and r4-ui turned user rows into right-hand bubbles. The
+   notice is neither: it is `k:'system'`, so `item()` must render it as a
+   `.sysrow` with no `.prose.usr.bubble` around it and no `.endmark` in it.
+   Nothing asserted that across the two lanes, because each was written
+   before the other landed.
 
    The probe pushes the notice through the REAL noteSessionModelStamp,
    renders, measures the DOM, then splices exactly what it added back out
@@ -22395,17 +22337,14 @@ if (typeof window !== 'undefined') {
    leaves. */
 if (typeof window !== 'undefined') {
   window.__stampRowShape = (metadata) => {
-    /* Review fix: the mark-count half of this probe was vacuous. At this point
-       in the run the transcript carries no end mark at all, so `markedAfter ===
-       markedBefore` compared 0 with 0 and could never have seen the notice
-       delete a mark. A finished turn is pushed first — user then a non-empty
-       assistant, exactly the shape endMarkIds marks — and taken back out with
-       the notice, so markedBefore is genuinely 1 and the sub-assertion bites. */
+    /* A finished turn is pushed first — user then a non-empty assistant — so
+       the notice lands where it does in a real reopened chat, and is taken
+       back out with it. (Chat review Д18: the end mark it once counted, and
+       could have taken away, is gone.) */
     const base = S.log.length;
     S.log.push({id:nid(), k:'user', text:'(smoke) a turn that finished'});
     S.log.push({id:nid(), k:'assistant', text:'and its reply'});
     const before = S.log.length;
-    const markedBefore = endMarkIds().size;
     // noteSessionModelStamp writes CTX055.stamp as well as the transcript, and
     // the checks around this one read it — so it is snapshotted, not zeroed.
     const stampBefore = CTX055.stamp;
@@ -22426,11 +22365,7 @@ if (typeof window !== 'undefined') {
         bubbles: tail.filter((n) => n.querySelector('.prose.usr.bubble') || n.classList.contains('usr')).length,
         endmarks: tail.filter((n) => n.querySelector('.endmark')).length,
         offers: tail.filter((n) => n.querySelector('[data-act="sessmodel:apply"]')).length,
-        // A system row must not open a new turn segment, so the number of
-        // end marks in the transcript cannot move because of it.
-        markedAfter: endMarkIds().size, markedBefore,
-        // The mark is only withheld from a running turn, so the count above
-        // means nothing unless the window is at rest — reported, not assumed.
+        // Reported, not assumed: the shape is read with the window at rest.
         busy: !!S.busy || !!S.pending,
       };
     } finally {
@@ -23439,7 +23374,7 @@ if (typeof window !== 'undefined') {
   /* A finished assistant reply must carry a copy button even though S.streamId
      still names it — nothing clears that when a turn ends. And the box it
      appears in must already be on screen while the reply streams, or the whole
-     transcript below would jump 24px at turn end. Both states are measured. */
+     transcript below would jump 30px at turn end. Both states are measured. */
   window.__streamActs = () => {
     const keep = {busy: S.busy, streamId: S.streamId};
     const last = S.log.slice().reverse().find((m) => m.k === 'assistant' && String(m.text || '').trim());
@@ -23448,10 +23383,9 @@ if (typeof window !== 'undefined') {
        from the top of the transcript column to the BOTTOM of the action row.
        Equal in both states means nothing at or above the row moved when the
        turn ended.
-       The column itself is not expected to be equal, and colHeight is here to
-       say why: r4-ui's end mark (`.endmark`, 12px + a 10px margin) is appended
-       BELOW the row when a turn finishes, and it did that long before this
-       lane. The check asserts the column's whole growth is that mark.
+       The column is measured too: with r4-ui's end mark gone (chat review
+       Д18) nothing is appended below the row when a turn finishes, so the
+       column must not grow at all; `endmark` reads 0 unless one comes back.
        Not #scroller.scrollHeight — with a short transcript that collapses to
        clientHeight, which moves when the composer grows its running strip. */
     const shot = () => {

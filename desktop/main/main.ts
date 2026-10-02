@@ -2090,9 +2090,11 @@ async function smokeTest(): Promise<void> {
       && sb0.subtitles === 0 && !sb0.skillsRow,
     sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
   );
-  // Calm (S1): the toolbar names the open chat; nothing is open at boot.
-  const tbTitle = await js<string>("document.querySelector('.tb-title b').textContent");
-  check("toolbar titled", tbTitle === "New chat", JSON.stringify(tbTitle));
+  // Calm (S1): the toolbar names the open chat; nothing is open at boot, and
+  // chat review Д15 took the "New chat" it said then away (the sidebar's New
+  // chat button already says it).
+  const tbTitle = await js<string | null>("(document.querySelector('.tb-title b') || {}).textContent || null");
+  check("toolbar carries no title for a chat not yet named", tbTitle === null, JSON.stringify(tbTitle));
   check("bridge exposed", await js<boolean>("!!window.atomic"));
   check(
     "no demo content",
@@ -2313,11 +2315,10 @@ async function smokeTest(): Promise<void> {
         `DIAG the model did not follow "reply with exactly" — ${JSON.stringify(said.slice(0, 60))}\n`,
       );
     }
-    // r4-ui item 3 review fix: the end mark's LIVE path. Every other check on
-    // the mark drives synthetic pushes (and, for the guard, a poked S.busy),
-    // so nothing proved that a turn the agent really streamed collects its
-    // full stop when its done frame lands. Asserted at rest, not mid-delta:
-    // reading the transcript between deltas is a race the suite would lose.
+    // Chat review Д18: r4-ui's end mark is gone, and this is its LIVE path —
+    // a turn the agent really streamed ends with nothing drawn under its
+    // reply. Asserted at rest, not mid-delta: reading the transcript between
+    // deltas is a race the suite would lose.
     if (reply.trim()) {
       let atRest = false;
       for (let i = 0; i < 40 && !atRest; i++) {
@@ -2328,16 +2329,13 @@ async function smokeTest(): Promise<void> {
       const liveRows = await js<MarkRow[]>("window.__turnShape()");
       const liveTail = liveRows[liveRows.length - 1];
       check(
-        "the turn the agent really streamed carries the end mark",
-        atRest && !!liveTail && liveTail.k === "assistant" && liveTail.end && liveTail.endLast
-          && liveRows.every((t) => !t.end || (t.k === "assistant" && t.endLast)),
+        "the turn the agent really streamed ends with no end mark under its reply",
+        atRest && !!liveTail && liveTail.k === "assistant" && liveRows.every((t) => !t.end && !t.endLast),
         `at rest=${atRest}, rows=${JSON.stringify(liveRows.map((t) => [t.k, t.end]))}`,
       );
     } else {
-      // A turn that produced no text is owed no mark — that is the rule this
-      // check exists to prove, and "agent replied" above has already gone red
-      // for the provider outage. Asserting here too would report one failure
-      // twice under a name that blames the mark.
+      // "agent replied" above has already gone red for the provider outage.
+      // Asserting here too would report one failure twice.
       process.stdout.write("SKIP the end mark's live path — the turn produced no reply\n");
     }
   }
@@ -6799,10 +6797,9 @@ async function uiTest(
     reducedErr || JSON.stringify([rmRun, rmFilled, running ? running.shadow : null]),
   );
 
-  // --- item 3: bubbles, empty gutters, one mark per finished turn -------------
-  // The end mark is withheld while a turn streams or an approval waits, and the
-  // sidebar checks above leave a turn running in another chat — so stop that
-  // first, or the mark's absence would prove nothing.
+  // --- item 3: bubbles, empty gutters, and (chat review Д18) no end mark -------
+  // The sidebar checks above leave a turn running in another chat, so stop
+  // that first: the transcript is read at rest.
   const quiet = await js<{ busy: boolean; pending: boolean; items: number }>("window.__quiesce()");
   check("item 3: the window is at rest before the transcript checks", !quiet.busy && !quiet.pending, JSON.stringify(quiet));
   await js<number>("window.__pushUser('a short one')");
@@ -6828,21 +6825,20 @@ async function uiTest(
     JSON.stringify(tail),
   );
   check(
-    "item 3: one mark, on the item that closes the finished turn",
-    tail.length === 3 && tail[0].k === "user" && !tail[0].end && !tail[1].end && tail[2].end && tail[2].endLast
-      && shape.every((t) => !t.end || (t.k === "assistant" && t.endLast)),
+    // Chat review Д18: the finished turn's reply is the last thing in its turn,
+    // with no end mark under it — on that turn or any other.
+    "item 3: no end mark under a finished turn, or anywhere in the transcript",
+    tail.length === 3 && tail[0].k === "user" && tail[2].k === "assistant" && shape.every((t) => !t.end && !t.endLast),
     JSON.stringify(shape.map((t) => [t.k, t.end])),
   );
   type Marks = { total: number; last: boolean };
   const busyMarks = await js<{ during: Marks; duringPending: Marks; after: Marks }>("window.__marksWhileBusy()");
   check(
-    // Both halves of the guard: a streaming turn and a turn blocked on an
-    // approval. The live path — a turn the agent really streamed — is asserted
-    // where the suite drives one, right after "agent replied".
-    "item 3: a running turn, or one waiting on an approval, carries no end mark",
-    !busyMarks.during.last && !busyMarks.duringPending.last && busyMarks.after.last
-      && busyMarks.during.total === busyMarks.after.total - 1
-      && busyMarks.duringPending.total === busyMarks.after.total - 1,
+    // A streaming turn, a turn blocked on an approval, and the window at rest.
+    // The live path — a turn the agent really streamed — is asserted where the
+    // suite drives one, right after "agent replied".
+    "item 3: no end mark while a turn runs, while an approval waits, or at rest",
+    busyMarks.during.total === 0 && busyMarks.duringPending.total === 0 && busyMarks.after.total === 0,
     JSON.stringify(busyMarks),
   );
   // The turn that never produced a word: startLiveTurn pushes an empty assistant
@@ -6854,9 +6850,9 @@ async function uiTest(
     emptyTurn.after === emptyTurn.before && !emptyTurn.lastHasMark,
     JSON.stringify(emptyTurn),
   );
-  // The mark is appended AFTER attachStrip(m), and the only case that can catch
-  // a wrong order is a reply that really wrote a file. Same recipe as the
-  // attachment-strip checks earlier in the run: a real file, the real collector.
+  // A reply that really wrote a file ends with its attachment strip and its
+  // action row, nothing under them. Same recipe as the attachment-strip
+  // checks earlier in the run: a real file, the real collector.
   const endmarkFile = join(app.getPath("temp"), "atomic-desktop-endmark.txt");
   writeFileSync(endmarkFile, "smoke\n");
   await js<unknown>(
@@ -6866,9 +6862,8 @@ async function uiTest(
   const stripShape = await js<Shape[]>("window.__turnShape()");
   const stripTail = stripShape[stripShape.length - 1];
   check(
-    "item 3: the mark closes the column below the attachment strip",
-    !!stripTail && stripTail.k === "assistant" && stripTail.strip && stripTail.end && stripTail.endLast
-      && stripShape.filter((t) => t.end).length === shape.filter((t) => t.end).length + 1,
+    "item 3: a reply with an attachment strip carries no end mark below it",
+    !!stripTail && stripTail.k === "assistant" && stripTail.strip && !stripTail.end && stripShape.every((t) => !t.end),
     JSON.stringify(stripShape.slice(-2)),
   );
   const bub = await js<{
@@ -6884,7 +6879,7 @@ async function uiTest(
       && Math.abs(bub.right - bub.colRight) <= 1 && bub.width < bub.colWidth / 2,
     JSON.stringify(bub),
   );
-  check("item 3: the end mark is 12px", !!bub && bub.markW === 12, bub ? String(bub.markW) : "no bubble");
+  check("item 3: no end mark is drawn (chat review Д18)", !!bub && bub.markW === 0, bub ? String(bub.markW) : "no bubble");
   // An unbroken 400-character message must not widen the column either.
   await js<number>("window.__pushUser('x'.repeat(400))");
   type Ov = { sw: number; cw: number; colRight: number; colWidth: number; track: number; maxRight: number };
@@ -8641,8 +8636,7 @@ async function r4SeamTest(
 ): Promise<void> {
   type Shape = {
     added: number; kinds: string[]; classes: string[];
-    bubbles: number; endmarks: number; offers: number;
-    markedBefore: number; markedAfter: number; busy: boolean;
+    bubbles: number; endmarks: number; offers: number; busy: boolean;
   };
   // A provider that is not configured takes the "no longer configured" arm,
   // which is the one notice this window can raise without a real session
@@ -8652,19 +8646,15 @@ async function r4SeamTest(
     "window.__stampRowShape({llm:{providerId:'no-such-provider-seam', chatModel:'ghost-model'}})",
   );
   check(
-    // Review fix: `markedAfter === markedBefore` used to compare 0 with 0 — the
-    // transcript here carried no end mark, so the notice could have eaten one
-    // unseen (it did: a trailing system row was the segment's last item).
-    // __stampRowShape now plants a finished turn first, so markedBefore is 1
-    // and the notice has a full stop it could take away.
+    // __stampRowShape plants a finished turn first, so the notice lands where
+    // it does in a reopened chat. (The end-mark count this check also made
+    // went with the mark, chat review Д18.)
     "seam: the session model-stamp notice is a system row, not a user bubble",
     gone.added === 1 && gone.kinds[0] === "system"
       && gone.classes.every((c) => /(^|\s)sysrow(\s|$)/.test(c))
-      && gone.bubbles === 0 && gone.endmarks === 0
-      && !gone.busy && gone.markedBefore === 1 && gone.markedAfter === 1,
+      && gone.bubbles === 0 && gone.endmarks === 0 && !gone.busy,
     `added=${gone.added} kinds=${JSON.stringify(gone.kinds)} classes=${JSON.stringify(gone.classes)}`
-      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} marks ${gone.markedBefore}→${gone.markedAfter}`
-      + ` busy=${gone.busy}`,
+      + ` bubbles=${gone.bubbles} endmarks=${gone.endmarks} busy=${gone.busy}`,
   );
 
   // The composer carries the microphone, the interim strip and the send
@@ -10405,15 +10395,15 @@ async function planHandoffTest(
       !plan.entryKinds.includes("plan") && plan.bars === 1,
       `kinds=${JSON.stringify(plan.entryKinds)} bars=${plan.bars}`,
     );
-    const anchored = await js<{ inTurn: boolean; withEndmark: boolean; inProse: boolean; tone: string[] }>(
-      "(() => { const b = document.querySelector('.planbar'); if (!b) return {inTurn:false, withEndmark:false, inProse:false, tone:[]};"
+    const anchored = await js<{ inTurn: boolean; withActs: boolean; inProse: boolean; tone: string[] }>(
+      "(() => { const b = document.querySelector('.planbar'); if (!b) return {inTurn:false, withActs:false, inProse:false, tone:[]};"
       + " const turn = b.closest('.turn');"
-      + " return {inTurn: !!turn, withEndmark: !!(turn && turn.querySelector('.endmark')), inProse: !!b.closest('.prose'),"
+      + " return {inTurn: !!turn, withActs: !!(turn && turn.querySelector('.msgacts')), inProse: !!b.closest('.prose'),"
       + " tone: [...b.querySelectorAll('[data-plan]')].map((n) => n.className)}; })()",
     );
     check(
-      "plan bar hangs inside the finished turn and leaves its end mark alone",
-      anchored.inTurn && anchored.withEndmark && !anchored.inProse
+      "plan bar hangs inside the finished turn, beside the reply's own action row",
+      anchored.inTurn && anchored.withActs && !anchored.inProse
         && anchored.tone.some((c) => /planrun warn/.test(c)) && anchored.tone.some((c) => /planrun bad/.test(c)),
       JSON.stringify(anchored),
     );
@@ -11422,15 +11412,15 @@ async function chromeTest(
     check(
       "item 4: the row's box is reserved while the reply streams, so nothing at or above it moves at turn end",
       !!streamed && streamed.streaming.count === streamed.finished.count
-        && streamed.streaming.reserved === 24 && streamed.finished.reserved === 24
+        && streamed.streaming.reserved === 30 && streamed.finished.reserved === 30
         && streamed.streaming.boxBottom === streamed.finished.boxBottom
-        // The column's whole growth is r4-ui's end mark, appended BELOW the row
-        // when a turn finishes — it did that long before this lane.
-        && streamed.streaming.endmark === 0
-        && streamed.finished.colHeight - streamed.streaming.colHeight === streamed.finished.endmark,
+        // Chat review Д18: nothing is appended below the row when a turn
+        // finishes any more (r4-ui's end mark is gone), so the column holds.
+        && streamed.streaming.endmark === 0 && streamed.finished.endmark === 0
+        && streamed.finished.colHeight === streamed.streaming.colHeight,
       `streaming ${JSON.stringify(streamed?.streaming)} vs finished ${JSON.stringify(streamed?.finished)}`
-      + " (22px row + 2px margin, present from the first frame of the reply, so the buttons appear inside a box"
-      + " that was already there; the column grows only by the end mark below it)",
+      + " (22px row + 8px margin since chat review Д17, present from the first frame of the reply, so the buttons"
+      + " appear inside a box that was already there; nothing is added below it)",
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup
@@ -11855,29 +11845,28 @@ async function r5SeamTest(
   type PlanChrome = {
     bars: number; insideActs: number; barButtons: string[];
     actsButtons: string[]; kinds: string[]; logLen: number;
-    barAfterMark: boolean; barInTurn: boolean;
+    barAfterActs: boolean; barInTurn: boolean;
   };
   const raised = await js<{ logLen: number }>("window.__planRaise({mode:'plan'})");
   const pc = await js<PlanChrome>(
     "(() => { const bar = document.querySelector('.planbar');" +
       " const turn = bar ? bar.closest('.turn') : null;" +
       " const acts = turn ? turn.querySelector('.msgacts') : null;" +
-      " const mark = turn ? turn.querySelector('.endmark') : null;" +
-      " const order = bar && mark ? (mark.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 : false;" +
+      " const order = bar && acts ? (acts.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 : false;" +
       " return {bars: document.querySelectorAll('.planbar').length," +
       "  insideActs: document.querySelectorAll('.msgacts .planbar, .msgacts [data-plan]').length," +
       "  barButtons: bar ? [...bar.querySelectorAll('button')].map((b) => b.dataset.plan || b.dataset.act || b.className) : []," +
       "  actsButtons: acts ? [...acts.querySelectorAll('button')].map((b) => b.dataset.act || b.title) : []," +
       "  kinds: window.__plan().entryKinds, logLen: window.__plan().logLen," +
-      "  barAfterMark: order, barInTurn: !!turn}; })()",
+      "  barAfterActs: order, barInTurn: !!turn}; })()",
   );
   check(
     "seam: the plan bar is under the message's action row, not inside it",
-    pc.bars === 1 && pc.insideActs === 0 && pc.barInTurn && pc.barAfterMark
+    pc.bars === 1 && pc.insideActs === 0 && pc.barInTurn && pc.barAfterActs
       && pc.barButtons.every((b) => ["auto", "bypass", "dismiss"].includes(b))
       && pc.actsButtons.length > 0
       && !pc.barButtons.some((b) => /copy|retry/i.test(b)),
-    `bar=${JSON.stringify(pc.barButtons)} acts=${JSON.stringify(pc.actsButtons)} insideActs=${pc.insideActs} afterMark=${pc.barAfterMark}`,
+    `bar=${JSON.stringify(pc.barButtons)} acts=${JSON.stringify(pc.actsButtons)} insideActs=${pc.insideActs} afterActs=${pc.barAfterActs}`,
   );
   check(
     "seam: the plan bar is still not a transcript row",
