@@ -103,6 +103,9 @@
 .selpop .ob-help{margin:0;padding:0 4px;max-width:none;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
 .selpop .ob-err{margin:0;padding:0 4px;max-width:none;font-size:12.5px;line-height:1.45;white-space:pre-wrap;color:var(--critical)}
 .selpop .ob-err.tk-help--warn{color:var(--amber-text)}
+/* ATO-161: the request for a key reads as a sentence in ink, not as a failure. */
+.selpop .ob-help.wiz-ask{color:var(--ink)}
+.selpop .ob-help.wiz-envnote{font-size:12px}
 
 /* Inside the popover the shell's own body is the scroller, so the list must
    not add a second one — two nested scrollers is how the footer ends up

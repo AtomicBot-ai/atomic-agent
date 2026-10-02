@@ -1195,6 +1195,34 @@ export async function checkProviderKey(entry: ProviderEntry, model: string): Pro
   return verifyProviderKey(saved, model);
 }
 
+/**
+ * ATO-161: whether a key field left empty has anything behind it — the saved
+ * entry's own key, or the variable the agent would read for this kind (the
+ * environment, then the state directory's .env). Only yes or no reaches the
+ * window, never the key. The add-provider step asks this before it saves or
+ * calls anyone, so an empty field with nothing behind it is a request for a
+ * key, not a provider saved without one.
+ */
+export async function providerKeyPresent(
+  entry: { id?: string; kind: string; apiKeyEnvVar?: string; baseUrl?: string },
+): Promise<{ ok: true; present: boolean } | { ok: false; error: string }> {
+  const probe = {
+    id: entry.id ?? "",
+    kind: entry.kind,
+    ...(entry.apiKeyEnvVar ? { apiKeyEnvVar: entry.apiKeyEnvVar } : {}),
+    ...(entry.baseUrl ? { baseUrl: entry.baseUrl } : {}),
+  } as ProviderEntry;
+  // A server on this machine needs no key (a custom URL on localhost included): nothing to ask for.
+  if (isKeylessLocalProviderEntry(probe)) return { ok: true, present: true };
+  if (resolveKeyValue(probe) !== null) return { ok: true, present: true };
+  if (!entry.id) return { ok: true, present: false };
+  const read = await readWholeConfig();
+  // A config that could not be read is not "no key": the window goes on and the key check answers, as before.
+  if (!read.ok || !read.config) return { ok: false, error: read.error ?? "could not read the config" };
+  const saved = (read.config.llm?.providers ?? []).find((p) => p.id === entry.id);
+  return { ok: true, present: !!saved && resolveKeyValue(saved) !== null };
+}
+
 /** Drop a provider entry by id — the rollback for a key that did not verify. */
 export function removeProvider(id: string): Promise<CliResult> {
   return withConfigLock(() => removeProviderNow(id));
