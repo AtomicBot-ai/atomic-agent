@@ -612,8 +612,9 @@ add_to_path() {
 }
 
 # Install channel marker for anonymous analytics (`install_channel`). The
-# file holds one fixed word and nothing else. A value some other installer
-# already wrote (e.g. a desktop package) is left alone.
+# file holds one fixed word and nothing else. Only an empty marker or one
+# of the two install-script words is overwritten; any other value is left
+# alone.
 record_install_channel() {
   _state_dir="${ATOMIC_AGENT_STATE_DIR:-$HOME/.atomic-agent}"
   _channel_file="$_state_dir/install-channel"

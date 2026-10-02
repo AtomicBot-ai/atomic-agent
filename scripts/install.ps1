@@ -421,9 +421,9 @@ function Add-ToUserPath($dir) {
 }
 
 # Install channel marker for anonymous analytics (`install_channel`). The
-# file holds one fixed word and nothing else. A value some other installer
-# already wrote (e.g. a desktop package) is left alone. Best effort: a
-# failure here never fails the install.
+# file holds one fixed word and nothing else. Only an empty marker or one
+# of the two install-script words is overwritten; any other value is left
+# alone. Best effort: a failure here never fails the install.
 function Write-InstallChannel {
   try {
     $stateDir = if ($env:ATOMIC_AGENT_STATE_DIR) {
