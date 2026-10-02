@@ -318,6 +318,19 @@
 .msgact:hover{background:var(--hover);color:var(--ink)}
 .msgact.danger{color:var(--critical)}
 .msgact.danger:hover{background:var(--critical-wash);color:var(--critical)}
+/* ATO-168: on a reply the actions start at the LEFT, under the text they copy
+   (Danya: on the right "it flies off who knows where"); the user bubble keeps
+   them at its right edge. The last reply's dot (replyDot) is a zero-height
+   element right before the row: its circle is drawn in the row's own 22px box
+   (8px margin + half of 22px = 19px down), always visible, while the buttons
+   keep their hover reveal. */
+.tk-asst .msgacts{justify-content:flex-start}
+.enddot{display:block;position:relative;height:0}
+.enddot::before{content:'';position:absolute;left:4px;top:15px;width:8px;height:8px;border-radius:50%;background:var(--brand)}
+.enddot + .msgacts{padding-left:20px}
+.enddot.live::before{animation:enddot-pulse 1.2s ease-in-out infinite}
+@keyframes enddot-pulse{0%,100%{opacity:.35;transform:scale(.75)}50%{opacity:1;transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.enddot.live::before{animation:none}}
 /* Calm (S3): no permanently shown row — the last message reveals its
    actions like every other (the old labelled row is gone; the names are the
    buttons' tooltips). */

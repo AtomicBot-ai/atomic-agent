@@ -282,9 +282,10 @@
 .cfoot .ctxbtn{width:30px;padding:0;justify-content:center;color:var(--ink-2)}
 .ctxring{width:20px;height:20px;flex:none}
 .ctxring circle{fill:none}
-.ctxring .bg{fill:color-mix(in srgb, var(--ink) 8%, transparent);stroke:color-mix(in srgb, var(--ink) 22%, transparent);stroke-width:1.5}
-/* A pie, never an arc: an arc beside the send button read as a spinner. */
-.ctxring .fg{stroke:var(--brand);stroke-width:7.5;stroke-linecap:butt}
+/* ATO-166: a donut — a full grey track and a thick arc on it, no fill. */
+.ctxring .bg{fill:none;stroke:color-mix(in srgb, var(--ink) 16%, transparent);stroke-width:3}
+/* Thick and still on its track: the thin arc it once was read as a spinner. */
+.ctxring .fg{stroke:var(--brand);stroke-width:3;stroke-linecap:butt}
 .ctxring.warn .fg{stroke:var(--amber)}
 .ctxring.crit .fg{stroke:var(--critical)}
 

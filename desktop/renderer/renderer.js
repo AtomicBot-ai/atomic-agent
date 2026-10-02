@@ -2017,11 +2017,11 @@ function renderSidebar() {
         + '</div>'
         : '')
     + '</div>'
-    // The bottom-left Settings entry: house icon and the word. The ⌘ , chord
+    // The bottom-left Settings entry: gear icon (ATO-166; it was a house) and the word. The ⌘ , chord
     // lives in the tooltip, the palette and the app menu, not on the button.
     + '<div class="sb-footwrap">'
       + '<button class="btn sb-settings" data-act="settings:open" title="' + kbdText('Settings (⌘ ,)') + '" aria-label="' + kbdText('Settings (⌘ ,)') + '">'
-        + '<span class="sb-settings-ic">' + ic('home') + '</span>'
+        + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
         + '<span class="sb-settings-lb">Settings</span>'
       + '</button></div>'
     ;
@@ -2215,13 +2215,10 @@ function emptyChat() {
 /** The greeting and its quiet line (repainted alone when the catalogue lands). */
 function emptyPlateHTML() {
   const wd = workingDir();
-  // Calm (S6): no model is named while none is set up (U16), and the
-  // managed route's "download model" call to action is not a model name.
-  const active = activeModel();
-  const model = composerNeedsSetup() || active === DOWNLOAD_MODEL_LABEL ? '' : active;
-  const meta = (wd ? '<span class="em-it em-wd" title="' + esc(wd) + '">' + ic('folder') + '<span>Working in ' + esc(workingDirLabel(wd)) + '</span></span>' : '')
-    + (wd && model ? '<span class="em-sep">\u00b7</span>' : '')
-    + (model ? '<span class="em-it">' + modelMark(model, 'xs') + '<span>' + esc(modelWord(model)) + '</span></span>' : '');
+  /* ATO-166: the model is not repeated here — the composer's chip right under
+     it already names it (Danya: "why is this here?"). The folder stays: it is
+     said nowhere else on this screen (Д14). */
+  const meta = wd ? '<span class="em-it em-wd" title="' + esc(wd) + '">' + ic('folder') + '<span>Working in ' + esc(workingDirLabel(wd)) + '</span></span>' : '';
   return '<div class="emptyplate">'
     + '<div class="emptyhead">' + MARK_COLOR + '<b>What should we work on?</b></div>'
     + (meta ? '<div class="emptymeta">' + meta + '</div>' : '')
@@ -2267,7 +2264,7 @@ function item(m) {
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
   if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
-    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + replyDot(m) + msgActs(m)
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -2396,6 +2393,31 @@ function workingTickStart() {
    lines are not messages. Reasoning blocks are excluded too: what they hold is
    the step trace the agent emitted while working, not the reply it wrote, and
    they already fold open into selectable text. */
+/* ATO-168 (Valera's call): a small dot under the LAST reply of the chat, where
+   Claude puts its mark — it pulses while that reply is still being written and
+   rests when the turn is done. Only the last reply carries it, so it reads as
+   "this is where the conversation is", not as a glyph on every message (what
+   Д18 took away). It sits in the action row's box (zero height of its own), at
+   the row's left, and the copy button moves to its right; nothing below moves. */
+function replyDot(m) {
+  if (m.k !== 'assistant' || m.placeholder) return '';
+  const streaming = m.id === S.streamId && S.busy;
+  if (!streaming && !String(m.text || '').trim()) return '';
+  // Review: before the first words, "Working…" is the wait's one loader — no second one under it.
+  if (workingShown(m)) return '';
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const x = S.log[i];
+    // The desktop's own "(no reply)" / "(stopped)" backfill is not a reply: the last real one keeps the dot.
+    if (x.k !== 'assistant' || x.placeholder) continue;
+    if (x.id !== m.id) return '';
+    /* The transcript is rebuilt on every streamed delta (repaintTranscript), and
+       a rebuilt element starts its animation from 0% — the pulse would sit dim
+       while words arrive. A phase taken from one clock keeps it breathing. */
+    return '<span class="enddot' + (streaming ? ' live" style="animation-delay:-' + Math.round(performance.now() % 1200) + 'ms' : '')
+      + '" aria-hidden="true"></span>';
+  }
+  return '';
+}
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -4035,7 +4057,8 @@ function overlayMotionExit(was) {
 function overlayScrollKey(el) {
   // Some rows carry an index, not an id, so the first row's words are part of the key.
   const rows = el.querySelectorAll('[data-wizmodel], [data-obrow], [data-obwiz], [data-sel-row]');
-  const first = rows.length ? rows[0] : null;
+  // ATO-167: the local model list leads with its Download row now; the first MODEL keys the list.
+  const first = [...rows].find((r) => !(r.dataset.selRow && SEL.rows[+r.dataset.selRow] && SEL.rows[+r.dataset.selRow].type === 'action')) || rows[0] || null;
   return el.className + '|' + rows.length + '|' + (first ? (first.dataset.wizmodel || '') + first.textContent.slice(0, 60) : '');
 }
 function overlayScrollsBefore(o) {
@@ -6959,6 +6982,11 @@ document.addEventListener('keydown', (e) => {
 
   if (k === 'Escape') {
     e.preventDefault();
+    /* ATO-167 review: with Done gone from the model and mode popovers, Escape
+       is a keyboard way out of them — so an open popover closes FIRST, before
+       the scroll-to-bottom and before Escape's stop of a running turn (which
+       used to win, and stopped the answer of someone closing a list). */
+    if (!OB.open && (SEL.open || WIZ.phase || S.alert)) { act('close'); return; }
     const sc = $('#scroller');
     if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
     if (S.busy) { abort(); return; }
@@ -14194,8 +14222,10 @@ function selRows() {
           note};
       });
     // The TUI's deep-link row (model:local:download-more), outside the filter —
-    // the `local` branch only, exactly as modelRows has it.
-    if (!custom) rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens Settings › Models', active:false});
+    // the `local` branch only, exactly as modelRows has it. ATO-167: FIRST, not
+    // last: under a long list it was the row nobody found (Danya: "the download
+    // button should be higher").
+    if (!custom) rows.unshift({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens Settings › Models', active:false});
     return rows;
   }
   // A local orchestrator has no cloud catalogue: the TUI's modelRows lists nothing there.
@@ -14414,8 +14444,8 @@ function selectorHTML() {
     : SEL.kind === 'provider' ? 'Provider' : SEL.kind === 'workers' ? 'Workers' : 'Model';
 
   // An empty list is not a list — it is one action. The provider and
-  // local model panes always end in the TUI's action row ("Add a new
-  // provider" / "Download more models…"), so, as in the TUI, an empty
+  // local model panes always carry the TUI's action row ("Add a new
+  // provider" last / "Download more models…" first, ATO-167), so, as in the TUI, an empty
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
   if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
@@ -14434,14 +14464,14 @@ function selectorHTML() {
      the wizard's own (modelPickNote). The first `.cap` in a row is its detail
      — integration.drive reads it. */
   const out = selOutOfReach();
-  /* The out-of-reach names sit after the models and before the trailing
-     "Download more models…" row, as the wizard keeps its Hugging Face row last. */
+  /* ATO-167: the out-of-reach names sit at the very bottom, after every model
+     that can run here ("the list of unavailable models to the very bottom");
+     "Download more models…" is the list's first row now. */
   const outHTML = out.length ? '<div class="selouth">' + esc('Needs more memory than ' + THIS_MACHINE + ' has') + '</div>'
     + out.map((m) => '<div class="selout" data-id="' + esc(m.id) + '">' + modelMark(m.id, 'xs')
       + '<span class="nm">' + selHilite(llmModelName(m), SEL.filter) + '</span>'
       + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This (Mac|computer) has.*$/, '')) + '</span></div>').join('')
     : '';
-  const firstAction = rows.findIndex((r) => r.type === 'action');
   const list = '<div class="sellist">'
     + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
     + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
@@ -14458,8 +14488,7 @@ function selectorHTML() {
              confirm, not a fault we found. It goes out when a turn succeeds. */
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
         const name = selRowName(r);
-        return (i === firstAction ? outHTML : '')
-          + (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
+        return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
           + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
           + selRowLead(r)
           + '<span class="col"><span class="nm">'
@@ -14467,16 +14496,20 @@ function selectorHTML() {
           + (r.note ? '<span class="selnote2' + (r.note.v === 'tight' ? ' tight' : '') + '">' + esc(r.note.text) + '</span>' : '')
           + '</span>'
           + (right ? '<span class="selr">' + right + '</span>' : '')
-          + '</button>';
+          + '</button>'
+          // ATO-167: a leading action row (Download more models…) is set off from the models under it.
+          + (r.type === 'action' && i === 0 && rows.length > 1 ? '<div class="tk-sep selsep"></div>' : '');
       }).join('')
-    + (firstAction < 0 ? outHTML : '')
+    // Review: set the out-of-reach block off when the list above it is only the Download row.
+    + (outHTML && rows.length === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '')
+    + outHTML
     + (!real.length && !out.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
-  // Adding a provider is the pane's own trailing row now, as in the TUI.
-  const foot = '<button class="btn btn-s xs" data-act="close">Done</button>';
-
-  return selShell(title, search + list, foot);
+  /* ATO-167: no Done. A pick applies at once and a click outside closes the
+     popover, so the button did nothing a person could see (Danya: "useless
+     button"). Adding a provider is the pane's own trailing row, as in the TUI. */
+  return selShell(title, search + list, '');
 }
 
 /** One popup shell: fixed height, its own scroll, anchored to the chip.
@@ -14838,12 +14871,13 @@ function contextChip() {
   const tip = (proj ? '~' : '') + tokensWord(CTX.tokens)
     + (CTX.window ? ' of ' + tokensWord(CTX.window) : ' used · window size unknown')
     + (proj ? ' · projected' : '');
-  /* A filled pie on a disc, not an arc on a track: a thin blue arc at 10-25%
-     (where an empty chat sits, the system prompt alone) read as a loading
-     spinner that never stopped. The wedge is a circle of r 3.75 stroked 7.5
-     wide, so its dash (circumference 23.56) paints a slice of the disc. */
+  /* ATO-166: a donut, as Claude draws it (Danya: the filled pie read as a
+     clock). It was a thin arc once, and a thin blue arc at 10-25% read as a
+     spinner that never stopped — so this one is thick (3px) on a full grey
+     track, starts at 12 o'clock, and never moves. Circumference of r 7.5 is
+     47.12. */
   const ring = '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
-    + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="3.75" stroke-dasharray="' + (23.56 * pct / 100).toFixed(2) + ' 23.56" transform="rotate(-90 10 10)"/>' : '')
+    + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.12 * pct / 100).toFixed(2) + ' 47.12" transform="rotate(-90 10 10)"/>' : '')
     + '</svg>';
   return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context"'
     + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + '</button>';
@@ -14900,7 +14934,7 @@ function codingModeChip() {
 function modesHTML() {
   const off = MODE.supported === false;
   /* Soft Tactile (CM-12…14): a titled menu of four radio rows whose word takes
-     the chip's colour, the note under them and Done — and, on an agent without
+     the chip's colour and the note under them (no Done since ATO-167) — and, on an agent without
      the route, the version it needs with Update agent in the footer. */
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover modepop tk-pop" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
@@ -14941,9 +14975,10 @@ function modesHTML() {
                 + ' of ' + MAX_APPROVAL_LEVEL + ', so Ask first already approves everything. Lower the approval level to make the modes differ.</p>'
               : ''))
     + '</div>'
-    + '<div class="popfoot">'
-    + (off ? '<button class="btn btn-p xs" data-act="agent:update">' + ic('download') + 'Update agent</button><span class="grow"></span>' : '')
-    + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
+    /* ATO-167: no Done — a mode applies as it is picked and a click outside
+       closes the popover. The footer stays only for Update agent. */
+    + (off ? '<div class="popfoot"><button class="btn btn-p xs" data-act="agent:update">' + ic('download') + 'Update agent</button></div>' : '')
+    + '</div></div>';
 }
 
 /* Item 6 review fix: S.level has three writers and the diagnostics line
@@ -17774,8 +17809,8 @@ function chipSwap(el, html) {
  */
 function bswRepaint() {
   composerChipRepaint();
-  // Calm (S3): the empty chat's quiet line names the model too — the same
-  // catalogue name, swapped in place (the plate has no input to disturb).
+  // Calm (S3): the empty chat's quiet line is re-drawn in place (the plate has
+  // no input to disturb); since ATO-166 it names only the folder, not the model.
   const plate = document.querySelector('.emptychat .emptyplate');
   if (plate) {
     const fresh = emptyPlateHTML();
@@ -24943,7 +24978,12 @@ if (typeof window !== 'undefined') {
        the number that goes red if `justify-content:flex-end` is ever dropped
        and the icons slide to the start of the message. */
     const last = btns[btns.length - 1];
+    // ATO-168: a reply's actions start at the LEFT (after the last reply's dot), so its first button's left edge is reported too.
+    const dot = t.querySelector('.enddot');
     return {present: true, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
+            btnLeft: btns[0] ? Math.round(btns[0].getBoundingClientRect().left) : null,
+            anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
+            dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
             order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : '?'),
             titles: btns.map((b) => b.getAttribute('title')),

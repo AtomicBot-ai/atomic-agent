@@ -29,7 +29,7 @@
  *    Manage menu ("Escape button should open the menu" — the user's words,
  *    renderer.js:4018), and the settings window it raises then covers the
  *    composer, so the next click lands on the overlay. A person closes a
- *    switch with its own `Done` button; so does this script.
+ *    switch with a click outside it (its Done went in ATO-167); so does this script.
  *  - **The `custom` route cannot be entered by clicking.** Its backend row
  *    deep-links to Settings › LLM › External, which only saves a base URL
  *    after a `/health` probe answers as llama.cpp — there is no such server
@@ -171,10 +171,10 @@ async function popupRows(app, { timeoutMs = 30000 } = {}) {
   return app.snap(POPUP);
 }
 
-/** A person's way out of a switch: its own Done button. NOT Escape. */
+/** A person's way out of a switch: a click outside it (ATO-167 took its Done away). NOT Escape. */
 async function done(app) {
-  const r = await app.clickSel('.selpop .popfoot [data-act="close"]', { settle: 500 });
-  if (!r.ok) await app.clickSel('.selpop [data-act="close"]', { settle: 500 });
+  await app.eval(`(() => { const s = document.querySelector('#overlays .scrim[data-close]'); if (s) s.click(); })()`);
+  await new Promise((r) => setTimeout(r, 500));
 }
 
 /** A person's way out of the settings window: its close button. */

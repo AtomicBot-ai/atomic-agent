@@ -125,7 +125,7 @@ Give every concurrent run its own debugging port.
 - **Never press Escape to close a popup.** Escape in this app opens the Manage
   menu — the user asked for that — and the settings window it raises then
   covers the composer, so the next click lands on the overlay and reports
-  "covered by DIV". Click the popup's own Done button, as a person does.
+  "covered by DIV". Click outside the popup, as a person does (its Done went in ATO-167).
 - **Wait for the screen to stop moving.** The composer paints the route the
   operator clicked before the write lands (`SWX.want`), and a fresh window
   draws its chips from defaults until the first `/api/config` answer arrives.

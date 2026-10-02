@@ -14,7 +14,9 @@ import { join } from "node:path";
  *   Д15 No "New chat" title in the toolbar for a chat not yet named.
  *   Д16 The reasoning line says "Reasoning", with no step count.
  *   Д17 Copy and retry stand 6–8 px clear of the message they belong to.
- *   Д18 No end mark (the small glyph) under a finished reply.
+ *   Д18 No end mark (the small glyph) under a finished reply. (ATO-168 later
+ *       gave the LAST reply a dot, Valera's call, as `.enddot` — `.endmark`
+ *       stays absent, and smoke 56 owns the dot.)
  *   Д19 A short conversation sits on the composer, a long one still scrolls
  *       from its first line, and a bubble never runs past the column. The
  *       download card does not cover a short chat's end: a one-turn chat

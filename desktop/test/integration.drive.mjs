@@ -123,12 +123,12 @@ const selError = (app) => app.eval(`[...document.querySelectorAll('.selpop .cap'
 const systemSays = (app) => app.eval(`[...document.querySelectorAll('#scroller .col720 .sysrow')]
   .map((n) => (n.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(-3).join(' | ')`);
 
-/** Close a popover the way a person does — its own Done button.
-    NEVER Escape: Escape opens the Manage menu in this app (the user asked
-    for that), and the settings window it raises then covers the composer. */
+/** Close a popover the way a person does — a click outside it (ATO-167 took
+    its Done away). NEVER Escape: Escape opens the Manage menu in this app (the
+    user asked for that), and the settings window it raises then covers the composer. */
 async function closeSel(app) {
   if (await app.eval(`!!document.querySelector('.selpop')`)) {
-    await app.clickText('Done', { scope: '.selpop' });
+    await app.eval(`(() => { const s = document.querySelector('#overlays .scrim[data-close]'); if (s) s.click(); })()`);
     await app.waitFor(`!document.querySelector('.selpop')`, 'the popover closed', { quiet: true });
   }
 }
