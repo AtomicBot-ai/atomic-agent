@@ -1192,6 +1192,10 @@ const IMP_SOURCE_META = {
 };
 const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', sessions:'Sessions', cron:'Cron jobs', secrets:'Secrets'};
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
+/* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
+   server's log shown there — open or not, its last read, the poll's timer. */
+const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null };
+const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 
@@ -4550,7 +4554,13 @@ function privacyNoticesHTML() {
    model server — plus the two things you do when something is wrong: read
    the llama-server log and write a debug bundle. The agent's routes carry
    no version of their own (/health, /api/capabilities on 0.6.3), so the
-   agent is named by the binary that answered, as the footer did. */
+   agent is named by the binary that answered, as the footer did.
+   Д55–Д59 (Danya, 30.09): a line under the title says what the screen is
+   for; every value and the log can be copied; the bundle is "Save report
+   for support" with what it holds in words; the model server's log opens
+   here (it used to send you to Models, so logs lived in two places); and
+   the TUI's status line, which repeated the rows above, is gone from view —
+   Copy details still carries it. */
 function diagnosticsPane() {
   const home = homeDir();
   const short = (p) => (p && home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
@@ -4568,18 +4578,120 @@ function diagnosticsPane() {
     ['Working folder', short(wd), wd],
     ['Local model server', llama],
   ];
+  // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
+  DIAG.copy = rows.map(([k, v]) => ({label:k, value:v || ''}));
+  diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
+    + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
     + '<div class="tk-list set-setlist set-diaglist">'
-      + rows.map(([k, v, full]) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
-        + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div></div>').join('')
+      + rows.map(([k, v, full], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
+        + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+        + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
+          : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
     + '</div>'
     + '<div class="set-diagacts">'
-      + '<button class="btn btn-s sm" data-act="diag:llmlogs">' + ic('log') + 'LLM logs</button>'
-      + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Write debug bundle</button>'
-      + '<span class="set-cap">A bundle holds the agent log and your config with every secret removed.</span>'
+      + '<button class="btn btn-p sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
+      + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
     + '</div>'
-    + '<div class="set-diagline"><div class="tk-sh">Status line</div><div class="set-diagcode mono">' + esc(diagLine()) + '</div></div>'
+    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. It is not sent anywhere: attach it when you write to us.</p>'
+    + diagLogHTML()
     + '</div>';
+}
+/* Д58: the model server's log, read the way Models › LLM logs read it (the
+   tail of llama-server.log in the data dir `models status` names), on a 2 s
+   poll that runs only while it is open on screen. */
+function diagVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'diagnostics'; }
+function diagRepaint() { if (diagVisible()) paneRepaintKeepFocus(diagnosticsPane()); }
+function diagLogTone(line) {
+  const lower = line.toLowerCase();
+  if (/\b(error|fatal|fail|abort)\b/.test(lower)) return 'set-log-err';
+  if (/\b(warn|warning)\b/.test(lower)) return 'set-log-warn';
+  if (/\b(loading|loaded|ready|listening)\b/.test(lower)) return 'set-log-ok';
+  return '';
+}
+function diagBytes(n) { return n < 1024 ? n + ' B' : n < 1024 * 1024 ? (n / 1024).toFixed(1) + ' KB' : (n / (1024 * 1024)).toFixed(1) + ' MB'; }
+function diagLogHTML() {
+  const open = DIAG.logOpen;
+  const l = DIAG.log;
+  let html = '<div class="set-diaglog' + (open ? ' on' : '') + '"><div class="set-diaglog-head">'
+    + '<button class="set-disc" data-act="diag:log" aria-expanded="' + open + '">' + ic('chevR') + 'Model server log</button><span class="grow"></span>';
+  if (open) {
+    const meta = l && typeof l.size === 'number' ? diagBytes(l.size) + (l.lastReadAt ? ' · read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') : '';
+    html += (meta ? '<span class="set-cap">' + esc(meta) + '</span>' : '')
+      + '<button class="iconbtn sm" data-act="diag:logRefresh" title="Refresh" aria-label="Refresh the log">' + ic('refresh') + '</button>'
+      + '<button class="btn btn-g xs" data-act="diag:copylog"' + (l && l.text ? '' : ' disabled') + '>' + ic('copy') + 'Copy</button>';
+  }
+  html += '</div>';
+  if (open) {
+    const home = homeDir();
+    const path = l && l.path ? (home && l.path.startsWith(home) ? '~' + l.path.slice(home.length) : l.path) : '';
+    const tail = l ? l.text.split('\n').filter((x) => x.length > 0).slice(-DIAG_LOG_LINES) : [];
+    html += (path ? '<div class="set-meta set-logpath" title="' + esc(l.path) + '">' + esc(path) + '</div>' : '')
+      + (l && l.error ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(l.error) + '</span></div>' : '')
+      + (!l ? '<p class="set-cap">Reading the log…</p>'
+        : l.external ? '<p class="set-cap">You run this model server yourself, so its log is wherever you started it.</p>'
+        : tail.length ? '<pre class="tk-out set-log">' + tail.map((line) => '<span class="' + diagLogTone(line) + '">' + esc(line) + '</span>').join('\n') + '</pre>'
+        : l.error ? '' : '<p class="set-cap">No log yet. It starts the first time the local model server runs.</p>');
+  }
+  return html + '</div>';
+}
+async function diagLogRefresh() {
+  if (!BR || !BR.llamaLogTail || DIAG.logBusy) return;
+  DIAG.logBusy = true;
+  try {
+    let dataDir = LLMP.status && LLMP.status.dataDir;
+    if (!dataDir) { await llmRefreshStatus(true); dataDir = LLMP.status && LLMP.status.dataDir; }
+    const key = (x) => JSON.stringify(x && [x.path, x.size, x.text.length, x.error, !!x.external]);
+    const before = key(DIAG.log);
+    const none = (extra) => Object.assign({path:null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:null}, extra);
+    if (!dataDir) {
+      // An external llama.cpp route has no data dir: the server, and its log, are the user's own.
+      if (LLMP.status && LLMP.status.mode === 'external') DIAG.log = none({external:true});
+      else if (LLMP.statusErr) DIAG.log = none({error:'Could not find the model server’s folder: ' + LLMP.statusErr});
+      // Otherwise `models status` has not answered yet: the next tick asks again.
+    } else {
+      const res = await BR.llamaLogTail(dataDir);
+      DIAG.log = res && res.ok ? res : {path:(res && res.path) || null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:'Could not read the log: ' + ((res && res.error) || 'unknown error')};
+    }
+    if (before !== key(DIAG.log)) diagRepaint();
+  } finally { DIAG.logBusy = false; }
+}
+function diagLogStop() { if (DIAG.logTimer) { clearInterval(DIAG.logTimer); DIAG.logTimer = null; } }
+/* The poll follows the pane: diagnosticsPane() starts it when the log is open
+   (also after Settings closes and opens again), and it stops by itself once
+   the log is closed or off screen. */
+function diagEnsureLogPoll() {
+  if (!DIAG.logOpen || DIAG.logTimer || !BR) return;
+  setTimeout(diagLogRefresh, 0); // read now: what an earlier opening read may be stale
+  DIAG.logTimer = setInterval(() => { if (!diagVisible() || !DIAG.logOpen) { diagLogStop(); return; } diagLogRefresh(); }, 2000);
+}
+function diagAct(what) {
+  if (what === 'log') { DIAG.logOpen = !DIAG.logOpen; if (!DIAG.logOpen) diagLogStop(); render(); return; }
+  if (what === 'logRefresh') { diagLogRefresh(); return; }
+  if (what === 'copylog') {
+    if (DIAG.log && DIAG.log.text) copyText(DIAG.log.text, 'Log copied');
+    else toast('Nothing to copy', 'the model server has not written a log yet', 'bad');
+    return;
+  }
+  if (what === 'copyall') {
+    const rows = (DIAG.copy || []).map((r) => r.label + ': ' + (r.value || '—'));
+    copyText(rows.concat(diagLine()).join('\n'), 'Details copied');
+    return;
+  }
+  if (what.startsWith('copy:')) {
+    const row = (DIAG.copy || [])[Number(what.slice(5))];
+    if (row && row.value) copyText(row.value, 'Copied', row.label);
+    return;
+  }
+  /* Diagnostics' log, opened from wherever asks for it (Models › LLM logs
+     included): Settings on Diagnostics, the log open and scrolled into view. */
+  if (what === 'llmlogs') {
+    const opened = !S.settings;
+    S.settings = 1; S.settingsPane = 'diagnostics'; LLMP.logsBack = null; DIAG.logOpen = true;
+    render(); settingsPaneEntered(opened);
+    const box = document.querySelector('#settings .set-diaglog');
+    if (box && box.scrollIntoView) box.scrollIntoView({block:'nearest'});
+  }
 }
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
    + session grants, no ladder. The desktop's approval path only offers
@@ -4871,7 +4983,7 @@ function act(a) {
       + '&body=' + encodeURIComponent(body);
     if (BR && BR.debugBundle) {
       BR.debugBundle().then((res) => {
-        if (res && res.ok) toast('Debug bundle written', res.path + ' — attach it if you want to');
+        if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
       }).catch(() => {});
     }
     if (BR && BR.openExternal) BR.openExternal(url);
@@ -4973,10 +5085,10 @@ function act(a) {
      the agent log, the config with every secret removed, and the build. */
   if (a === 'dump') {
     close(); render();
-    if (!BR || !BR.debugBundle) { toast('Write debug bundle', 'not available in this build', 'bad'); return; }
+    if (!BR || !BR.debugBundle) { toast('Save report for support', 'not available in this build', 'bad'); return; }
     BR.debugBundle().then((res) => {
-      if (res && res.ok) { toast('Debug bundle written', res.path); if (BR.openPath) BR.openPath(res.path); }
-      else toast('Could not write the bundle', (res && res.error) || '', 'bad');
+      if (res && res.ok) { toast('Report saved', res.path); if (BR.openPath) BR.openPath(res.path); }
+      else toast('Could not save the report', (res && res.error) || '', 'bad');
     });
     return;
   }
@@ -5026,8 +5138,8 @@ function act(a) {
   if (a === 'analytics') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = 'general'; render(); settingsPaneEntered(opened); return; }
   // Calm (S5): the sidebar button, ⌘ , and the app menu open Settings on the last section shown (General the first time).
   if (a === 'settings:open') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsOpenPane(); render(); settingsPaneEntered(opened); return; }
-  // Diagnostics › LLM logs: the Models pane's log view, whose Back returns here.
-  if (a === 'diag:llmlogs') { close(); S.settings = 1; S.settingsPane = 'llm'; LLMP.logsBack = 'diagnostics'; render(); llmAct('logs'); return; }
+  // Diagnostics' own verbs (Д56/Д58): copy a value, the details or the log; open the model server's log here.
+  if (k === 'diag') { close(); diagAct(v || ''); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }

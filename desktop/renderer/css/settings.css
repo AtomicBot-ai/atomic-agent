@@ -239,12 +239,30 @@ button.set-search:hover{border-color:var(--bd)}
 .set-diaglist .tk-setrow{min-height:40px;gap:24px}
 .set-diagrow .t{flex:none;width:150px;font-weight:500;font-size:13px}
 .set-diagv{flex:1;min-width:0;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text;text-align:right}
+/* Д56: each value's Copy, close to it; an empty value keeps the column. */
+.set-diagrow .set-copybtn{flex:none;width:26px;margin:0 -8px 0 -16px;color:var(--ink-3)}
+.set-diagrow .iconbtn.set-copybtn:hover{color:var(--ink)}
+.set-diagrow .set-copybtn svg{width:14px;height:14px}
 .set-diagacts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
-.set-diagacts .set-cap{flex:1 1 220px}
-.set-diagline{display:flex;flex-direction:column;gap:6px}
-.set-diagline .tk-sh{padding:0;min-height:20px;color:var(--ink-2);font-weight:500}
-.set-diagcode{padding:10px 12px;border-radius:var(--r-block);background:var(--well);font-size:11.5px;line-height:1.55;color:var(--ink-2);
-  overflow-wrap:anywhere;user-select:text}
+/* Д55/Д57: what the screen is for, and what the report holds. */
+.set-diagintro{max-width:62ch}
+.set-diagwhat{max-width:62ch;margin-top:-6px}
+/* Д58: the model server's log, opened in place. */
+.set-diaglog{display:flex;flex-direction:column;gap:8px;min-width:0;padding-top:10px;border-top:1px solid var(--divider)}
+.set-diaglog-head{display:flex;align-items:center;gap:8px;min-width:0}
+.set-diaglog-head .grow{flex:1;min-width:0}
+.set-diaglog-head .set-cap{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.set-disc{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px 0 6px;border:0;border-radius:var(--r-pill);background:transparent;
+  font:600 13px/1 var(--font-ui);color:var(--ink);cursor:pointer;transition:background var(--t-state) var(--ease)}
+.set-disc:hover{background:var(--hover)}
+.set-disc:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.set-disc > svg{width:14px;height:14px;color:var(--ink-3);transition:transform var(--t-state) var(--ease)}
+.set-diaglog.on .set-disc > svg{transform:rotate(90deg)}
+.set-logpath{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text}
+.set-log{margin:0;padding:12px 16px;border-radius:var(--r-block);font-size:12px;line-height:1.7;user-select:text}
+.set-log .set-log-err{color:var(--critical)}
+.set-log .set-log-warn{color:var(--amber-text)}
+.set-log .set-log-ok{color:var(--blue)}
 .set-privnote{margin:0 22px}
 /* Д48: what Session grants said, as one line under the switch it is about. */
 .set-setlist .tk-help.set-privgrant{margin-top:4px;max-width:62ch}

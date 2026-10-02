@@ -23,6 +23,7 @@ import { promisify } from "node:util";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
+import { redactSecrets } from "./report-redact.js";
 import {
   configGet,
   configSet,
@@ -1817,18 +1818,6 @@ function wireIpc(client: AgentClient): void {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const out = join(app.getPath("downloads"), `atomic-agent-debug-${stamp}.txt`);
       const cfg = await readWholeConfig();
-      const redact = (v: unknown): unknown => {
-        if (Array.isArray(v)) return v.map(redact);
-        if (v && typeof v === "object") {
-          const o: Record<string, unknown> = {};
-          for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-            o[k] = /key|token|secret|password/i.test(k) && typeof val === "string" && val
-              ? `<redacted ${val.length} chars>` : redact(val);
-          }
-          return o;
-        }
-        return v;
-      };
       let log = "";
       try { log = readFileSync(agentLogPath(), "utf8").slice(-400_000); } catch { log = "(no agent.log yet)"; }
       writeFileSync(out, [
@@ -1836,7 +1825,8 @@ function wireIpc(client: AgentClient): void {
         `written ${new Date().toISOString()}`,
         "",
         "--- config (secrets removed) ---",
-        JSON.stringify(cfg.ok ? redact(cfg.config) : { error: cfg.error }, null, 2),
+        // Release fix 49 (Д57): by key name alone it kept an MCP server's Authorization header, a --api-key argument, a password in a URL.
+        JSON.stringify(cfg.ok ? redactSecrets(cfg.config) : { error: cfg.error }, null, 2),
         "",
         "--- agent log (tail) ---",
         log,
