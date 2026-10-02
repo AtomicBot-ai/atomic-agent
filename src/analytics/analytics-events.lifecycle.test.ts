@@ -8,6 +8,7 @@ import {
   ANALYTICS_EVENTS,
   captureAnalyticsDisabled,
   captureAppInstalled,
+  captureAppOpened,
 } from "./analytics-events.js";
 import { AnalyticsStateStore } from "./analytics-state-store.js";
 
@@ -66,5 +67,25 @@ describe("app_installed / analytics_disabled", () => {
 
   it("analytics_disabled is a no-op without a client", () => {
     expect(() => captureAnalyticsDisabled(null, store, "config")).not.toThrow();
+  });
+});
+
+describe("captureAppOpened", () => {
+  it("fires on every call — it is per-launch, not per-install", () => {
+    const client = fakeClient();
+    captureAppOpened(client);
+    captureAppOpened(client);
+    expect(client.capture).toHaveBeenCalledTimes(2);
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.appOpened);
+  });
+
+  it("no-ops when analytics is disabled (null client)", () => {
+    expect(() => captureAppOpened(null)).not.toThrow();
+  });
+
+  it("carries no properties — platform and app_version come from the client", () => {
+    const client = fakeClient();
+    captureAppOpened(client);
+    expect(client.capture.mock.calls[0]).toHaveLength(1);
   });
 });
