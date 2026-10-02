@@ -4576,13 +4576,15 @@ async function settingsTest(
   // the tab's count is checked against what the store holds up to the TUI's
   // 200-row list limit — not against the same 200-row call the tab makes.
   const storeCount = await agent!.tasksList(500).then((r) => ((r as { tasks?: unknown[] }).tasks ?? []).length).catch(() => -1);
-  const taskState = await js<{ rows: number; body: string; heads: string[]; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
+  const taskState = await js<{ rows: number; body: string; heads: string[]; refresh: boolean; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
     "(() => ({rows: window.__tasksRows(), body: window.__settingsBody(), win: window.__tasksWindow(),"
+    + " refresh: !!document.querySelector('#settings .setbody .set-toolbar [data-act=\"tasks:refresh\"]'),"
     + " heads: [...document.querySelectorAll('#settings .setbody .set-tktbl thead th')].map((th) => th.textContent.trim())}))()",
   );
   // No rows: the empty state in one sentence (Calm S5: its n / f / r hint buttons left; New task, the filter and Refresh are the toolbar's). Rows: the table's column headers.
+  // Release fix 49 (Д40): Refresh is an icon beside the filters now, so it is found by its act, not its word.
   const tasksCopy = taskState.rows === 0
-    ? ["No tasks yet", "A task sends a message to the agent on a schedule.", "New task", "Refresh"].every((s) => taskState.body.includes(s)) && !taskState.body.includes("cycle filter")
+    ? ["No tasks yet", "A task sends a message to the agent on a schedule.", "New task"].every((s) => taskState.body.includes(s)) && taskState.refresh && !taskState.body.includes("cycle filter")
     : same(taskState.heads, ["Status", "Schedule", "Next run", "Session", "Message"]);
   // The route is called with limit=500 (agent-client tasks(); item 6 needs the
   // whole list so the sidebar's Load more pages over real rows); the TAB then

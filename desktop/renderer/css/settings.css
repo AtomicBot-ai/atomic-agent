@@ -147,6 +147,10 @@ button.set-search:hover{border-color:var(--bd)}
 .set-scan{color:var(--critical);max-height:140px}
 
 /* ---------------- Tasks (ST-01…05) ---------------- */
+/* Д40: Refresh and New task on the filters' row; on a narrow window the pair
+   wraps under the filters as one, still on the right. */
+.set-tbrow.set-tbrow--wrap{flex-wrap:wrap;row-gap:10px}
+.set-tbacts{display:flex;align-items:center;gap:8px;margin-left:auto}
 .set-tblcard{padding:4px;overflow-x:auto}
 .set-tktbl th{height:34px}
 .set-tktbl td{height:40px}

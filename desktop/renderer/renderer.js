@@ -16941,9 +16941,9 @@ function tkStatusClass(status) {
   return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
 }
 /* Soft Tactile (ST-01): the Tasks toolbar — the filters as a segmented
-   control (every TK_FILTER_ORDER value), then search, the auto-refresh
-   readout, Refresh and New task. `.tuibar` stays on it: tkRefreshBar finds the
-   readout inside. */
+   control (every TK_FILTER_ORDER value) with Refresh and New task, then
+   search and the auto-refresh readout. `.tuibar` stays on it: tkRefreshBar
+   finds the readout inside. */
 function tkFilterBar(visibleCount) {
   const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
     + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
@@ -16952,14 +16952,18 @@ function tkFilterBar(visibleCount) {
     ? '<label class="tk-inpwrap set-search is-open">' + ic('search') + '<input id="tk-search" value="' + esc(TK.search) + '" placeholder="Search tasks" autocomplete="off" spellcheck="false"></label>'
     : '<button class="tk-inpwrap set-search" data-act="tasks:search" title="Search (/)">' + ic('search')
       + (TK.search.length ? '<span class="v">' + esc(TK.search) + '</span>' : '<span class="ph">Search tasks</span>') + '</button>';
+  /* Д40: Refresh and New task share the filters' row (alone on the row below
+     they left a hole beside the filters); on a window too narrow for all of
+     it, the pair wraps under the filters as one, still on the right. */
   return '<div class="tuibar tk-bar set-toolbar">'
-    + '<div class="set-tbrow">' + seg + '</div>'
+    + '<div class="set-tbrow set-tbrow--wrap">' + seg
+      + '<span class="set-tbacts">'
+        + '<button class="iconbtn sm" data-act="tasks:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
+        + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
+      + '</span></div>'
     + '<div class="set-tbrow">' + search
       + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
       + tkReadoutHTML(visibleCount)
-      + '<span class="grow"></span>'
-      + '<button class="btn btn-s sm" data-act="tasks:refresh" title="r refresh">' + ic('refresh') + 'Refresh</button>'
-      + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
     + '</div></div>';
 }
 /* The readout tkRefreshBar repaints on each poll: `auto · refreshed 4s ago ·
@@ -18299,7 +18303,11 @@ function memListHTML() {
   if (!rows.length) {
     if (MEM.lastRefreshedAt === null) return '<div class="tk-empty"><span class="tk-spin"></span><p>loading…</p></div>';
     const none = {profile:'Nothing about you yet', notes:'No notes yet', lessons:'No lessons yet', procedures:'No procedures yet', links:'No links yet', votes:'No votes yet'}[MEM.channel] || 'Nothing here yet';
-    const what = {profile:'What the agent learns about you in chats shows up here.', notes:'Notes the agent keeps while it works show up here.'}[MEM.channel] || '';
+    // Д39: every channel says what would be here, not only About you and Notes ("No votes yet" stood alone).
+    const what = {profile:'What the agent learns about you in chats shows up here.', notes:'Notes the agent keeps while it works show up here.',
+      lessons:'Lessons the agent draws from earlier chats show up here.', procedures:'Step-by-step guides the agent writes for work it repeats show up here.',
+      links:'Links the agent makes between related notes show up here.',
+      votes:'After each reply the agent rates the memories it used, so helpful ones stay and unhelpful ones fade out.'}[MEM.channel] || '';
     return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('memory') + '</span><h4>' + esc(none) + '</h4>'
       + (what ? '<p>' + esc(what) + '</p>' : '') + '</div>';
   }
