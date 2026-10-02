@@ -124,3 +124,37 @@ test("a 402 and OpenAI's 429 insufficient_quota are an empty account; a rate lim
   assert.equal(refused.noFunds, undefined);
   assert.match(refused.error, /^the provider rejected this key/);
 });
+
+test("the key check reads money the way the agent does: rate limits, cooldowns, the key's words and every 401 stay what they were", async () => {
+  const ask = async (status, body, headers = {}) => {
+    globalThis.fetch = async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+    return verifyProviderKey({ id: "p", kind: "openai-compatible", baseUrl: "https://api.example.com", apiKey: "sk-dummy-check" }, "m");
+  };
+  // A 429 that talks money in a rate limit's words is a rate limit: a key that works.
+  for (const message of [
+    "Too many requests. Please top up your account to increase your rate limits.",
+    "Out of credits for this minute",
+  ]) {
+    assert.deepEqual(await ask(429, { error: { message } }), { ok: true, checked: true, status: 429 }, message);
+  }
+  // So is an empty account's 429 that asked for a cooldown.
+  assert.deepEqual(
+    await ask(429, { error: { message: "insufficient balance" } }, { "retry-after": "30" }),
+    { ok: true, checked: true, status: 429 },
+  );
+  // A 402 that only asked to wait (OpenRouter's in-flight budget) is a key that works too.
+  assert.deepEqual(
+    await ask(402, { error: { code: "in_flight_budget_exhausted", message: "Too many requests in flight for your balance" } }),
+    { ok: true, checked: true, status: 402 },
+  );
+  // Authentication or token words beside billing words are about the key, and a 401 always is.
+  for (const [status, message] of [
+    [403, "Authentication failed. Please check your billing details."],
+    [403, "Invalid token. Check billing."],
+    [401, "Insufficient balance"],
+  ]) {
+    const res = await ask(status, { error: { message } });
+    assert.equal(res.ok, false, message);
+    assert.equal(res.noFunds, undefined, message);
+  }
+});

@@ -866,9 +866,46 @@ describe("humanizeOpenAiHttpError", () => {
         ),
       );
       expect(said).toBe(
-        '"aimlapi" refused the request: you\'ve run out of funds. Top up your balance with "aimlapi" or pick another provider in the Providers panel.',
+        "AI/ML API refused the request: you've run out of funds. Top up your balance with AI/ML API or pick another provider in the Providers panel.",
       );
       expect(said).not.toContain("API key");
+    });
+
+    it("names a preset or a numbered entry by its service, and quotes an id it does not know", () => {
+      const body = JSON.stringify({ error: { message: "Insufficient Balance" } });
+      const as = (label: string): string =>
+        humanizeOpenAiHttpError(
+          new OpenAiHttpError(`openai provider 403: ${body}`, 403, "https://api.example.com/v1/chat/completions", false, null, label, undefined, {
+            body: parseProviderErrorBody(body),
+          }),
+        );
+      expect(as("deepseek")).toMatch(/^DeepSeek refused the request: insufficient Balance\. Top up your balance with DeepSeek /);
+      expect(as("aimlapi-2")).toMatch(/^AI\/ML API refused the request/);
+      expect(as("dashscope")).toMatch(/^Qwen refused the request/);
+      expect(as("my-proxy")).toMatch(/^"my-proxy" refused the request/);
+    });
+
+    /* OpenRouter relays the upstream vendor's refusal (a key of the user's
+       own at that vendor) as "Provider returned error", with the vendor's
+       body in metadata.raw: the F29 case. */
+    it("quotes the upstream vendor OpenRouter relays, and sends the top-up there", () => {
+      const relayed = (metadata: Record<string, unknown>): string => {
+        const body = JSON.stringify({ error: { message: "Provider returned error", code: 429, metadata } });
+        return humanizeOpenAiHttpError(
+          new OpenAiHttpError(`openai provider 429: ${body}`, 429, "https://openrouter.ai/api/v1/chat/completions", false, null, "openrouter", undefined, {
+            body: parseProviderErrorBody(body),
+          }),
+        );
+      };
+      const raw =
+        '{"type":"error","error":{"type":"credit_balance_exhausted","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}';
+      expect(relayed({ provider_name: "Anthropic", raw })).toBe(
+        "OpenRouter refused the request: Anthropic says your credit balance is too low to access the Anthropic API. Top up your balance with Anthropic or pick another provider in the Providers panel.",
+      );
+      expect(relayed({ raw })).toBe(
+        "OpenRouter refused the request: your credit balance is too low to access the Anthropic API. Top up your balance with the provider behind OpenRouter or pick another provider in the Providers panel.",
+      );
+      expect(relayed({ provider_name: "Anthropic", raw })).not.toContain("provider returned error");
     });
 
     it("cuts a link in the quoted sentence to its domain", () => {

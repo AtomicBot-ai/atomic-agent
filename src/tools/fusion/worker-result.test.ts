@@ -760,7 +760,7 @@ describe("workerFailureHint", () => {
     ["insufficient credits on this API key", WORKER_HINT_QUOTA],
     // AI/ML API's 403, as the agent words a billing refusal (item 40).
     [
-      '"aimlapi" refused the request: you\'ve run out of funds. Top up your balance with "aimlapi" or pick another provider in the Providers panel.',
+      "AI/ML API refused the request: you've run out of funds. Top up your balance with AI/ML API or pick another provider in the Providers panel.",
       WORKER_HINT_QUOTA,
     ],
   ])("recognises %s", (message, hint) => {

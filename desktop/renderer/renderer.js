@@ -7684,12 +7684,13 @@ function turnFailureLine(ev) {
 
 /* Backlog 40: a turn that ended because a provider refused for money. The
    agent marks it (`cause: {kind: 'billing'}` on the error frame) and words it:
-   '"aimlapi" refused the request: you've run out of funds. Top up your balance
-   with "aimlapi" or pick another provider in the Providers panel.' (a 402:
-   '… rejected the request (402). … Top up the account …'). That sentence is
-   the reason; "not answering" sent the person to the local server. When the
-   picked provider refused before a later link failed, the frame lists it in
-   `fallback_failures`, and that is the line. '' when it was neither. */
+   'AI/ML API refused the request: you've run out of funds. Top up your balance
+   with AI/ML API or pick another provider in the Providers panel.' (a custom
+   entry by its quoted id; a 402: '… rejected the request (402). … Top up the
+   account …'). That sentence is the reason; "not answering" sent the person to
+   the local server. When the picked provider refused before a later link
+   failed, the frame lists it in `fallback_failures`, and that is the line. ''
+   when it was neither. */
 function billingFailureLine(ev, pickedId) {
   const p = (ev && ev.payload) || {};
   const said = String((ev && ev.error) || '');

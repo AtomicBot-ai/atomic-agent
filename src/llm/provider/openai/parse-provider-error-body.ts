@@ -27,6 +27,12 @@ export interface ProviderErrorBody {
   /** Upstream vendor name from OpenRouter's `metadata.provider_name`. */
   readonly upstream?: string;
   /**
+   * The upstream vendor's own message out of OpenRouter's `metadata.raw`,
+   * when it has one: "Your credit balance is too low to access the
+   * Anthropic API" behind OpenRouter's "Provider returned error".
+   */
+  readonly upstreamMessage?: string;
+  /**
    * A cooldown the body's *text* asked for ("retry in 120 s", "try
    * again in 2 minutes"). Headers and structured `RetryInfo` are read
    * elsewhere; this is the fallback for providers that only say it.
@@ -72,9 +78,24 @@ const NO_FUNDS_WORDING =
 const BILLING_WORDING =
   /\b(?:billing|payment[ _-]?method|payment details|add (?:a )?payment)\b/i;
 
-/** Words about the key itself: a 403 that has them is not read for `BILLING_WORDING`. */
-const KEY_WORDS =
-  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|access[ _-]?token)\b/i;
+/**
+ * A provider's words for a credential problem. One rule for every reader:
+ * the fallback chain's refused-key check (`isCredentialRejection`) and the
+ * billing wording below, which a 403 that also talks about its key or
+ * authentication ("Authentication failed. Please check your billing
+ * details.") is not read for.
+ */
+export const CREDENTIAL_WORDING =
+  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token)\b/i;
+
+/**
+ * A rate limit in so many words. On a 429 it outweighs any wording about
+ * money ("Too many requests. Please top up your account to increase your
+ * rate limits.", "Out of credits for this minute"): such a 429 is a
+ * billing refusal only by an explicit code (`CREDIT_CODES`).
+ */
+const RATE_LIMIT_WORDING =
+  /\b(?:rate[ _-]?limit\w*|too many requests|requests? per|tokens? per|per[ -](?:second|minute|hour|day)|(?:this|a|each|every|the next) (?:second|minute|hour)|[RT]PM|throttl\w*|slow down)\b/i;
 
 /** "retry in 120 s", "retry after 2 minutes", "try again in 30 seconds". */
 const RETRY_HINT =
@@ -94,12 +115,14 @@ export function parseProviderErrorBody(text: string): ProviderErrorBody {
   const code = readCode(error?.code);
   const type = readString(error?.type);
   const upstream = readString(readObject(error?.metadata)?.provider_name);
+  const upstreamMessage = raw !== null ? readUpstreamMessage(raw) : undefined;
   const hint = retryHintMs(`${message ?? ""}\n${raw ?? ""}\n${bounded}`);
   return {
     ...(message !== undefined ? { message } : {}),
     ...(code !== undefined ? { code } : {}),
     ...(type !== undefined ? { type } : {}),
     ...(upstream !== undefined ? { upstream } : {}),
+    ...(upstreamMessage !== undefined ? { upstreamMessage } : {}),
     ...(hint !== null ? { retryHintMs: hint } : {}),
     text: raw !== null && !bounded.includes(raw) ? `${bounded}\n${raw}` : bounded,
   };
@@ -126,9 +149,10 @@ export const IN_FLIGHT_BUDGET_DEFAULT_WAIT_MS = 30_000;
  *
  * `credit_exhausted` is every billing refusal: a code that says so, a
  * 402 that asked for no cooldown, and a 403 or 429 whose words say the
- * account cannot pay (`NO_FUNDS_WORDING`; a 403 also `BILLING_WORDING`).
- * A 429 counts only when it asked for no cooldown either: a rate limit
- * that names one stays a wait. Item 40: AI/ML API's 403 "You've run out
+ * account cannot pay (`NO_FUNDS_WORDING`; a 403 also `BILLING_WORDING`
+ * when it says nothing about its key). A 429 counts only when it asked
+ * for no cooldown and says nothing of a rate limit: a rate limit stays a
+ * wait. Item 40: AI/ML API's 403 "You've run out
  * of funds" read as nothing at all, so its fallback chain parked the turn
  * on a stopped local server and the window named that server.
  */
@@ -180,10 +204,17 @@ function saysAccountCannotPay(
   if (status === 402 || status === 403) {
     if (NO_FUNDS_WORDING.test(text)) return true;
     return (
-      BILLING_WORDING.test(text) && (status === 402 || !KEY_WORDS.test(text))
+      BILLING_WORDING.test(text) &&
+      (status === 402 || !CREDENTIAL_WORDING.test(text))
     );
   }
-  if (status === 429) return hinted === null && NO_FUNDS_WORDING.test(text);
+  if (status === 429) {
+    return (
+      hinted === null &&
+      NO_FUNDS_WORDING.test(text) &&
+      !RATE_LIMIT_WORDING.test(text)
+    );
+  }
   return false;
 }
 
@@ -204,6 +235,22 @@ function retryHintMs(text: string): number | null {
       ? amount * 60_000
       : amount * 1_000;
   return Math.round(ms);
+}
+
+/**
+ * The upstream body's own message: `error.message` or a top-level
+ * `message` when it is JSON, the text itself when it is a short plain
+ * sentence.
+ */
+function readUpstreamMessage(raw: string): string | undefined {
+  const root = tryParseJson(raw);
+  if (root !== null) {
+    return readString(readObject(root.error)?.message) ?? readString(root.message);
+  }
+  const plain = raw.trim();
+  return plain.length > 0 && plain.length <= 300 && !plain.includes("<")
+    ? plain
+    : undefined;
 }
 
 /** OpenRouter's `metadata.raw`: the upstream body, as text or as an object. */
