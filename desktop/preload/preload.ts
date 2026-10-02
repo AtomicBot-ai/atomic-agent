@@ -135,6 +135,9 @@ contextBridge.exposeInMainWorld("atomic", {
   fileMenu: (path: string) => ipcRenderer.invoke("app:fileMenu", path),
   // item 5: existence check for the files a turn wrote (fs.stat only)
   statPaths: (paths: string[]) => ipcRenderer.invoke("app:statPaths", paths),
+  // Chat review Д23: which paths a reply names are files in the home folder, and opening one
+  replyPaths: (paths: string[]) => ipcRenderer.invoke("app:replyPaths", paths),
+  openReplyPath: (path: string) => ipcRenderer.invoke("app:openReplyPath", path),
   micStatus: () => ipcRenderer.invoke("app:micStatus"),
   micRequest: () => ipcRenderer.invoke("app:micRequest"),
   resetMicPermission: () => ipcRenderer.invoke("app:resetMicPermission"),

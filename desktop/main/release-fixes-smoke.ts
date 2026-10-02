@@ -33,6 +33,7 @@ import { checks38 } from "./smoke-tasks/t38.js";
 import { checks40 } from "./smoke-tasks/t40.js";
 import { checks41 } from "./smoke-tasks/t41.js";
 import { checks43 } from "./smoke-tasks/t43.js";
+import { checks46 } from "./smoke-tasks/t46.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -69,7 +70,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "38", "40", "41", "43", "49", "50"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "38", "40", "41", "43", "46", "49", "50"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -652,6 +653,9 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));
+
+  // 46 — the chat items of the 01.10 review (Д13–Д24, Д29): start screen, transcript, composer, Where it runs, paths in replies.
+  if (want.has("46")) await guarded("46", check, () => checks46(js, check));
 
   await wait(100);
 }

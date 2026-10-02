@@ -114,19 +114,21 @@ try {
   await app.waitFor(`!!document.querySelector('#composer .cfoot [data-sel-open="backend"]')`, 'the composer controls');
   check('boots on the cloud route', await chip('backend') === 'cloud', JSON.stringify(await chips()));
 
-  /* A — one provider with a key, nothing on disk: Fusion says why not. */
+  /* A — one provider with a key, nothing on disk: Fusion says why not, and offers Add provider. */
   await app.clickSel('#composer .cfoot [data-sel-open="backend"]');
-  const blocked = 'needs a second provider for the workers — Settings › Models';
+  const blocked = 'needs a second provider for the workers';
   await until(async () => (await fusionRowCap()) === blocked, 'the fusion row with its pre-flight line', 30000);
   const rowsA = await popRows();
   check('A: Where it runs lists cloud · local · custom · fusion, fusion carrying the pre-flight line',
     JSON.stringify(rowsA.map((r) => r[0])) === '["cloud","local","custom","fusion"]' && rowsA[3][1] === blocked, JSON.stringify(rowsA));
   await shot('A-where-it-runs-blocked');
   const beforeA = JSON.stringify(cfg());
+  check('A: the blocked row carries Add provider', await app.eval(`!!document.querySelector('.selpop .modelrow[data-id="fusion"] .seladd')`));
   await app.clickSel('.selpop .modelrow', { nth: 3 });
-  const errA = await until(() => app.eval(`(() => { const e = document.querySelector('.selpop .selerr'); return e ? e.textContent.trim() : null; })()`), 'the refusal in the popover', 10000);
-  check('A: clicking it refuses in the TUI words and writes nothing', errA === 'fusion: ' + blocked && JSON.stringify(cfg()) === beforeA, errA);
-  await closePopover();
+  // Chat review Д21: no red refusal growing the menu — the row opens Settings › Models with the provider setup.
+  const openedA = await until(() => app.eval(`!!document.querySelector('#settings') && !document.querySelector('.selpop .selerr') && window.__settingsPane() === 'llm'`), 'Settings › Models opened to add a provider', 10000);
+  check('A: clicking it opens Settings › Models to add a provider and writes nothing', !!openedA && JSON.stringify(cfg()) === beforeA);
+  await app.eval(`(() => { act('close'); window.__settingsClose(); return true; })()`);
 
   /* B — a second provider has a key: the row unblocks, one click enters Fusion. */
   writeFileSync(envPath, /^OPENROUTER_API_KEY=/m.test(env0)

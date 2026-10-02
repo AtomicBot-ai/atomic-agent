@@ -66,11 +66,11 @@ const SEL = {
 /* Item 1 (plan hand-off). The offer that follows a finished plan-mode turn,
    ported from src/tui/components/plan-handoff.tsx. `on` is the offer itself;
    `itemId` is the assistant entry it hangs under (it is never a log entry of
-   its own — endMarkIds walks the tail of a segment and a `k:'plan'` row there
-   would eat the turn's full stop); `sessionId` scopes it to the thread it was
-   raised in; `startedMode` is the stance the turn OPENED with, so a stance
-   that moved between start and end cannot put the bar over a turn that ran
-   unfettered; `busy` disables the buttons while the mode POST is in flight,
+   its own, so copy, history and the transcript never see it as a message);
+   `sessionId` scopes it to the thread it was raised in; `startedMode` is the
+   stance the turn OPENED with, so a stance that moved between start and end
+   cannot put the bar over a turn that ran unfettered; `busy` disables the
+   buttons while the mode POST is in flight,
    because submit() has no re-entrancy guard and a double click would send the
    execute message twice; `failMode` is the smoke seam for the "the POST came
    back !ok" branch, and `hold` the smoke seam that parks executePlan between
@@ -175,6 +175,24 @@ function openFilePath(p) {
   LAST_OPEN_PATH = p;
   if (OPEN_PATH_DRYRUN) return Promise.resolve({ok:true, dryRun:true});
   return BR.openPath(p);
+}
+/* Chat review (Д23): a path a reply names is a chip only once main has found
+   it on disk inside the home folder (main/reply-paths.ts); until then, and for
+   one that is not there, it stays text. REPLY_PATHS keeps main's answer per
+   path as the reply wrote it — `{ok, abs, kind, reveal, at}`, or 'asking'
+   while the question is out — and a path that was not there is asked about
+   again after REPLY_PATH_RETRY_MS, for a file the turn writes after naming
+   it. Declared up here because the first render() runs long before
+   renderProse's own part of the file. A reply chip opens through main's own
+   check again (openReplyPath), through the same dry-run seam as above. */
+const REPLY_PATHS = new Map();
+const REPLY_PATH_ASK = new Set();
+const REPLY_PATH_RETRY_MS = 15000;
+let REPLY_PATH_TIMER = 0;
+function openReplyPath(p) {
+  LAST_OPEN_PATH = p;
+  if (OPEN_PATH_DRYRUN) return Promise.resolve({ok:true, dryRun:true});
+  return BR.openReplyPath ? BR.openReplyPath(p) : Promise.resolve({ok:false, error:'Not available in this build.'});
 }
 /* Lane B — context before the first message (item 3). `source` is
    'provider' | 'estimate' (the trace, after a turn), 'built' (the branch
@@ -1650,19 +1668,23 @@ const PAL = [
 ];
 
 /* ---------------- state ---------------- */
-/** A per-viewer pane flag from localStorage: 'open' or anything else. */
-function readPaneFlag(key) {
-  try { return localStorage.getItem(key) === 'open'; } catch (e) { return false; }
-}
+/** A per-viewer pane flag in localStorage: 'open' or 'closed'. */
 function writePaneFlag(key, on) {
   try { localStorage.setItem(key, on ? 'open' : 'closed'); } catch (e) { /* no storage: the choice lasts this launch */ }
 }
+/* Chat review (Д22): the side panel (Steps · Reasoning · World) starts closed
+   on every launch. Calm (S1) had it remember being open, so a panel opened
+   once to look stayed beside the transcript in every later session, with a
+   second scrollbar next to the transcript's. ⌥⌘0 and the toolbar button open
+   it for the rest of the launch; the flag older builds stored is dropped. A
+   function declaration, so it is hoisted and safe to call in S below. */
+function inspectorAtLaunch() {
+  try { localStorage.removeItem('atag.inspector'); } catch (e) { /* no storage: nothing was kept */ }
+  return false;
+}
 const S = {
   room:'chat', theme:'system',
-  // Calm (S1): the inspector is closed until the viewer opens it, and it
-  // remembers that choice per viewer, like atag.theme. readPaneFlag is a
-  // function declaration, so it is hoisted and safe to call here.
-  inspector: readPaneFlag('atag.inspector'), inspTab:'steps',
+  inspector: inspectorAtLaunch(), inspTab:'steps',
   sidebar:'open',   // r5 item 2: 'open' | 'rail' — the class on #sidebar is derived from this
 
   consoleOpen:false, consoleTab:'agent',
@@ -1837,17 +1859,18 @@ function render() {
 
 /* Calm (S1): the toolbar names the open chat and nothing else — no tool
    count, no "running" word (the sidebar dot and the composer already say
-   that). A chat that has not been saved yet is "New chat", until its first
-   message names its stand-in row (item 27). */
+   that). A chat that has not been saved yet has no title, until its first
+   message names its stand-in row (item 27): chat review Д15 — "New chat"
+   up here only repeated the sidebar's New chat button. */
 function roomTitle() {
   if (S.room === 'chat') {
     // Item 27: a new chat's stand-in names it here too, as its row does.
     const ses = S.sessionId ? chatById(S.sessionId) : null;
-    return ses && ses.t ? ses.t : 'New chat';
+    return ses && ses.t ? ses.t : '';
   }
   if (S.room === 'tasks')  return 'Tasks';
   if (S.room === 'skills') return 'Skills';
-  return 'New chat';
+  return '';
 }
 
 /* Calm (S1): four controls — sidebar toggle, title, Search, inspector
@@ -1858,7 +1881,7 @@ function renderToolbar() {
   $('#toolbar').innerHTML =
     '<div class="lights" aria-hidden="true"></div>'
     + sidebarToggleHTML()
-    + '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>'
+    + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
       + '<button class="searchbtn" data-act="palette" title="' + kbdText('Search and commands (⌘ K)') + '">' + ic('search') + '<span class="sec">Search</span></button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
@@ -1946,6 +1969,24 @@ function renderSidebar() {
 function wsName(p) {
   const parts = String(p || '').replace(IS_WIN ? /[\\/]+$/ : /\/+$/, '').split(SEP_RE);
   return parts[parts.length - 1] || String(p || '');
+}
+
+/* Chat review (Д29, Д14): the working folder, read and written one way
+   wherever the window names it — the start screen's line, Settings › General
+   and Diagnostics, which said "macbook", "—" and "~" for the same folder.
+   WORKSPACE follows every status and a pick made here; the agent's own
+   /health answer is the fallback. The path is the real one: a folder inside
+   the home folder reads `~/Projects/app`, while the home folder itself and
+   anything outside it are written out whole, because a lone `~` (or the
+   account's name) told people nothing. */
+function workingDir() {
+  return String(WORKSPACE || S.live.workingDir || (SET.health && SET.health.workingDir) || '');
+}
+function workingDirLabel(p) {
+  const s = String(p || '').replace(IS_WIN ? /(?<=.)[\\/]+$/ : /(?<=.)\/+$/, '');
+  const home = homeDir();
+  const sep = IS_WIN ? '\\' : '/';
+  return home && s.startsWith(home + sep) && s.length > home.length + 1 ? '~' + s.slice(home.length) : s;
 }
 
 /** Every task, ordered as the TUI orders its rail (STATUS_RANK, then newest). */
@@ -2091,8 +2132,9 @@ function chatView() {
 
 function emptyChat() {
   /* Calm (S3): a greeting, and one quiet line saying where the agent will
-     work and which model will answer — the folder by its own name (the full
-     path is its tooltip) and the model by its human name. B.6's data plate
+     work and which model will answer — "Working in" and the folder's path
+     (chat review Д14: the folder's bare name, "macbook" for the home folder,
+     read as nothing) and the model by its human name. B.6's data plate
      (Workspace / Provider / Model / Build rows) read as a config dump; the
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
@@ -2105,12 +2147,12 @@ function emptyChat() {
 }
 /** The greeting and its quiet line (repainted alone when the catalogue lands). */
 function emptyPlateHTML() {
-  const wd = S.live.workingDir || WORKSPACE || '';
+  const wd = workingDir();
   // Calm (S6): no model is named while none is set up (U16), and the
   // managed route's "download model" call to action is not a model name.
   const active = activeModel();
   const model = composerNeedsSetup() || active === DOWNLOAD_MODEL_LABEL ? '' : active;
-  const meta = (wd ? '<span class="em-it" title="' + esc(wd) + '">' + ic('folder') + '<span>' + esc(wsName(wd)) + '</span></span>' : '')
+  const meta = (wd ? '<span class="em-it em-wd" title="' + esc(wd) + '">' + ic('folder') + '<span>Working in ' + esc(workingDirLabel(wd)) + '</span></span>' : '')
     + (wd && model ? '<span class="em-sep">\u00b7</span>' : '')
     + (model ? '<span class="em-it">' + modelMark(model, 'xs') + '<span>' + esc(modelWord(model)) + '</span></span>' : '');
   return '<div class="emptyplate">'
@@ -2119,17 +2161,18 @@ function emptyPlateHTML() {
     + '</div>';
 }
 
-/* r4-ui item 3: `end` is true for the one item that closes a finished turn
-   (endMarkIds decides which). The user's words: "not use the cross from agent
-   or this weird line from user inside the chat. Use the cross from agent only
-   at the end of the whole message from the agent, the last message from the
-   agent only, so that it shows that the whole process is finished". So the
-   per-message glyphs are gone from both sides; the user row becomes a bubble
-   that leaves the grid, and the agent row keeps the grid with an EMPTY first
-   cell so its content column stays where it is. Tool cards, reasoning blocks
-   and approvals keep their own check/warn/running glyphs — those describe a
-   call's RESULT, not a message, and the fold depends on them. */
-function item(m, end) {
+/* r4-ui item 3: no per-message glyphs on either side. The user's words: "not
+   use the cross from agent or this weird line from user inside the chat". The
+   user row is a bubble that leaves the grid, and the agent row keeps the grid
+   with an EMPTY first cell so its content column stays where it is. Tool
+   cards, reasoning blocks and approvals keep their own check/warn/running
+   glyphs — those describe a call's RESULT, not a message, and the fold
+   depends on them.
+   Chat review (Д18): the one mark r4-ui kept, the agent's glyph under the
+   reply that closed a finished turn, went too. Small and grey under the last
+   reply it read as a stray icon ("some tiny figure"), not as "done", and the
+   composer's loader stopping already says the turn is over. */
+function item(m) {
   // The bubble text still goes through esc() only. A user message has never
   // been run through renderProse and must not start being, or a path someone
   // typed turns into a clickable chip inside their own message.
@@ -2141,16 +2184,13 @@ function item(m, end) {
   if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '"><div class="prose usr bubble">' + esc(m.text) + '</div>'
     + (m.steered ? '<div class="usrcap">steered into the running turn</div>' : '') + msgActs(m) + '</div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
-  /* r5 item 4: the action row goes after the attachment strip and BEFORE the
-     end mark. The mark is the turn's full stop and r4-ui's contract is that it
-     closes the column — the actions belong to this message, so they sit inside
-     it, above the mark. Nothing above them moves either way, so no
-     `#turn-<id>` anchor shifts and the fold/scroll-stability machinery is
-     untouched. */
-  /* Soft Tactile: `.tk-asst` names the content column only so chat.css can
-     seat the end mark on the action row; `.prose` stays its direct child
-     (cloud-setup.drive reads `.turn > div > .prose`). `tk-ph` greys the
-     desktop's own "(no reply)" / "(stopped)" backfill. */
+  /* r5 item 4: the action row goes after the attachment strip — the actions
+     belong to this message, so they sit inside its column. Nothing above them
+     moves, so no `#turn-<id>` anchor shifts and the fold/scroll-stability
+     machinery is untouched. */
+  /* Soft Tactile: `.tk-asst` names the reply's content column; `.prose` stays
+     its direct child (cloud-setup.drive reads `.turn > div > .prose`). `tk-ph`
+     greys the desktop's own "(no reply)" / "(stopped)" backfill. */
   /* Calm (S4): a turn that failed before it said anything has the failure
      row under it; the desktop's own "(no reply)" backfill above that row
      adds nothing, so it is not drawn (it stays in the log, where copy and
@@ -2161,16 +2201,15 @@ function item(m, end) {
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
   if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
     + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
-    + (end ? '<div class="endmark' + (end === 'latest' ? ' latest' : '') + '" title="Turn complete">' + MARK_MONO + '</div>' : '')
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
        last finalised assistant message of the plan turn (src/tui/components/
        chat-log.tsx:170-181 does the same), carries no id, and is not in S.log.
-       r5 integration (seam c): it goes BELOW the end mark and below item 4's
-       action row, so the bar is never inside `.msgacts` and never acquires the
-       copy/retry buttons — those belong to the message, this belongs to the
-       turn that just finished. */
+       r5 integration (seam c): it goes below item 4's action row, so the bar
+       is never inside `.msgacts` and never acquires the copy/retry buttons —
+       those belong to the message, this belongs to the turn that just
+       finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
     + '</div></div>';
   /* The one action that helps, on the row that reports the problem.
@@ -2185,11 +2224,12 @@ function item(m, end) {
      nothing that looks for "the reply" (drivers, end mark) mistakes it. */
   if (m.k === 'interim') return '<div class="turn interim"><div></div><div class="tk-interim"><div class="prose">'
     + renderProse(m.text) + '</div></div></div>';
-  /* Calm (S3): a quiet line, closed until asked — "Reasoning · 1 step",
-     with the plural right. What it holds is the model's working, not the
-     reply, so it sits in the muted ink and never in bold. */
+  /* Calm (S3): a quiet line, closed until asked — the one word "Reasoning"
+     (chat review Д16: "Reasoning · 1 step" counted something nobody reads).
+     What it holds is the model's working, not the reply, so it sits in the
+     muted ink and never in bold. */
   if (m.k === 'reason') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>'
-    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>Reasoning</span> <span class="disc-n">\u00b7 ' + plural(Number(m.steps) || 1, 'step') + '</span></button>'
+    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>Reasoning</span></button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
   if (m.k === 'tool') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
@@ -2293,9 +2333,9 @@ function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
      EMPTY rather than skipped. That empty row is the whole point — it holds the
-     same 22px box (plus its 2px margin) from the first frame of the reply, so
+     same 22px box (plus its 8px margin) from the first frame of the reply, so
      the buttons that appear when the turn ends appear INSIDE a box that was
-     already there and the transcript below does not jump 24px at turn end. It
+     already there and the transcript below does not jump 30px at turn end. It
      is reserved before the empty-text guard below, because the streaming item
      startLiveTurn pushes has no text at all for its first frames and a box that
      arrived with the first delta would shift the view just as badly.
@@ -3178,12 +3218,20 @@ function micButton() {
   if (BR && BR.voiceSupported === false) return '';
   const rec = VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing';
   const off = VOICE.available === false;
+  const checking = VOICE.available === null;
   const title = off ? VOICE.reason
-    : VOICE.available === null ? 'Checking for the on-device speech model…'
+    : checking ? 'Checking for the on-device speech model…'
     : rec ? 'Stop and insert · Esc to discard'
     : 'Dictate (click to start, click again to insert) · right-click to choose the language';
-  return '<button class="micbtn' + (rec ? ' rec' : '') + '" data-mic="1"'
-    + (off || VOICE.available === null ? ' disabled' : '')
+  /* Chat review (Д24): a microphone that works is drawn in the full ink, the
+     way a live control looks; it was the secondary grey, and read as switched
+     off. One that cannot work (no speech helper in this build, macOS too old,
+     no microphone access…) is greyed and says why: in its tooltip, and in a
+     toast when it is pressed anyway. It is `aria-disabled`, not `disabled`, so
+     the hover that shows the reason and the press that explains it still
+     reach it; voiceToggle refuses the press. */
+  return '<button class="micbtn' + (rec ? ' rec' : '') + (off ? ' off' : '') + '" data-mic="1"'
+    + (off || checking ? ' aria-disabled="true"' : '')
     + ' title="' + esc(title) + '" aria-label="' + esc(title) + '">' + ic('mic') + '</button>';
 }
 
@@ -3418,9 +3466,8 @@ function repaintEntry(m, anchorSel) {
   const old = document.getElementById('turn-' + m.id);
   if (!sc || !old) { render(); return; }
   const before = (old.querySelector(anchorSel) || old).getBoundingClientRect().top;
-  // r4-ui item 3: only tool and reason rows carry a `#turn-<id>` anchor, and
-  // this is the only way in here, so the end mark never applies to a repaint.
-  old.outerHTML = item(m, false);
+  // Only tool and reason rows carry a `#turn-<id>` anchor, and this is the only way in here.
+  old.outerHTML = item(m);
   const fresh = document.getElementById('turn-' + m.id);
   const anchor = fresh && (fresh.querySelector(anchorSel) || fresh);
   const drift = anchor ? anchor.getBoundingClientRect().top - before : 0;
@@ -3440,11 +3487,7 @@ function expandGroupInPlace(id) {
   if (!sc || !old || i < 0) { render(); return; }
   let j = i; while (j + 1 < S.log.length && S.log[j + 1].k === 'tool' && S.log[j + 1].name === S.log[i].name) j++;
   const before = (old.querySelector('.cardhead') || old).getBoundingClientRect().top;
-  // r4-ui item 3 review fix: `.map(item)` handed Array.prototype.map's INDEX
-  // to item()'s second parameter, so every member after the first unfolded
-  // with a truthy `end`. Harmless while the run is all tool cards, but the
-  // sibling call site (repaintEntry) passes an explicit false for a reason.
-  old.outerHTML = S.log.slice(i, j + 1).map((m) => item(m, false)).join('');
+  old.outerHTML = S.log.slice(i, j + 1).map((m) => item(m)).join('');
   const head = document.querySelector('#turn-' + id + ' .cardhead');
   const drift = head ? head.getBoundingClientRect().top - before : 0;
   if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
@@ -3467,7 +3510,7 @@ function expandGroupInPlace(id) {
      it. The composer (its focus, caret and running light), the sidebar and the
      rest of the window are not touched.
    - more reasoning: nothing in the transcript while its row is closed (the row
-     reads "Reasoning · 1 step" whatever the text is); an open row's body grows
+     reads "Reasoning" whatever the text is); an open row's body grows
      in place. The inspector's Reasoning well grows in place too.
    render() paints all of that, so it takes a waiting frame with it: the end of
    a turn renders, and so always draws the final text. */
@@ -4547,9 +4590,8 @@ function generalPane() {
   const on = known && eff;
   const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
   const THEMES = [['light', 'Light'], ['dark', 'Dark'], ['system', 'System']];
-  const ws = BR ? WORKSPACE : '';
-  const home = homeDir();
-  const wsShort = ws && home && ws.startsWith(home) ? '~' + ws.slice(home.length) : ws;
+  // Chat review (Д29): the same folder, written the same way, as the chat and Diagnostics.
+  const ws = BR ? workingDir() : '';
   return '<div class="set-pane set-general">'
     + privacyNoticesHTML()
     + '<div class="tk-list set-setlist">'
@@ -4561,7 +4603,7 @@ function generalPane() {
       + '</div>'
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Working folder</div>'
-          + '<div class="d">' + (ws ? '<span class="mono set-path" title="' + esc(ws) + '">' + esc(wsShort) + '</span>' : 'Not chosen yet.') + '</div></div>'
+          + '<div class="d">' + (ws ? '<span class="mono set-path" title="' + esc(ws) + '">' + esc(workingDirLabel(ws)) + '</span>' : 'Not chosen yet.') + '</div></div>'
         + '<button class="btn btn-s sm" data-act="workspace:choose"' + (BR ? '' : ' disabled') + '>Change…</button>'
       + '</div>'
       + tpNotifyRowHTML()
@@ -4602,7 +4644,7 @@ function privacyNoticesHTML() {
 function diagnosticsPane() {
   const home = homeDir();
   const short = (p) => (p && home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
-  const wd = (SET.health && SET.health.workingDir) || WORKSPACE || S.live.workingDir || '';
+  const wd = workingDir();
   const llama = (SET.health && SET.health.llamaUrl) || (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '';
   const sd = (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || (FIRSTRUN && FIRSTRUN.stateDir) || '';
   const rows = [
@@ -4613,7 +4655,8 @@ function diagnosticsPane() {
           'Turns running in the agent right now, from any chat, task or bot']]
       : []),
     ['State folder', short(sd), sd],
-    ['Working folder', short(wd), wd],
+    // Chat review (Д29): written as the chat and Settings › General write it.
+    ['Working folder', workingDirLabel(wd), wd],
     ['Local model server', llama],
   ];
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
@@ -4998,6 +5041,10 @@ function act(a) {
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
   if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
+  /* Chat review (Д21): Where it runs › Add provider. Settings › Models on its
+     cloud providers, with the provider setup started — what that pane's own
+     Add provider button does (llm:add). */
+  if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -5198,7 +5245,7 @@ function act(a) {
     if (v === 'chat') S.settings = null;
     S.room = v; render(); return;
   }
-  if (k === 'insp')      { close(); S.inspector = true; writePaneFlag('atag.inspector', true); S.inspTab = v; render(); return; }
+  if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
@@ -5209,7 +5256,7 @@ function act(a) {
     close(); toast('The sidebar is a rail on a narrow window', 'widen the window past 1000px to open it', 'bad'); return;
   }
   if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
-                           else if (v === 'inspector') { S.inspector = !S.inspector; writePaneFlag('atag.inspector', S.inspector); }
+                           else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
   if (k === 'theme')     { close(); S.theme = v;
@@ -5786,7 +5833,8 @@ document.addEventListener('click', (e) => {
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   const fchip = t.closest('[data-file]');
-  if (fchip && BR) { openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
+  // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
+  if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
   /* Calm (S4): the approval card's Details is a native <details>; the click
@@ -6130,7 +6178,9 @@ function voiceMouseUp() {
 }
 
 function voiceToggle() {
-  if (VOICE.available === false) return;
+  // Chat review (Д24): a press on a microphone that cannot work says why.
+  if (VOICE.available === false) { toast('Voice input is off', VOICE.reason || VOICE_REASONS['voice-helper-failed'], 'bad'); return; }
+  if (VOICE.available !== true) return;   // still checking: nothing to start yet
   if (VOICE.state === 'idle' || VOICE.state === 'error') voiceStart();
   else if (VOICE.state === 'recording' || VOICE.state === 'starting') voiceStop();
 }
@@ -10016,6 +10066,13 @@ function dlCardOverChat(el) {
   const cs = getComputedStyle(col);
   const left = c.left + (parseFloat(cs.paddingLeft) || 0), right = c.right - (parseFloat(cs.paddingRight) || 0);
   if (!(f.width > 0) || f.right <= left || f.left >= right || f.top >= s.bottom) return 0;
+  /* Chat review (Д19): the transcript sits on the composer now, so room made
+     under one too short to scroll would lift the whole chat each time the
+     card came, folded or went — the move this card exists not to make
+     (T18c). Such a chat keeps its place and the card floats over its end;
+     one that scrolls still ends clear of it. Judged without the room the
+     card already holds, so the answer does not feed on itself. */
+  if (sc.scrollHeight - Math.max(0, (DLC.chat || 0) - 16) <= sc.clientHeight) return 0;
   return Math.max(0, Math.round(s.bottom - f.top + DLC_EDGE));
 }
 
@@ -13696,13 +13753,20 @@ function selRows() {
     const customUrl = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
     /* Calm (S7): the rows speak the chip's words ("Cloud", "Local models",
        "Custom server", "Fusion" — backendWord, drawn in selectorHTML) and
-       each detail is one plain line. `id` stays the route, `label` the id. */
+       each detail is one plain line. `id` stays the route, `label` the id.
+       Chat review (Д21): a row with nothing to run on — Cloud with no cloud
+       provider at all, Fusion short of a leg — carries an Add provider button
+       (`addProvider`), and choosing the row goes there too, instead of a line
+       that only named a screen ("add one in Settings › Models") or a red
+       refusal that grew the menu under the pointer. */
     const customHost = customUrl ? hostOf(customUrl) : '';
+    const noCloud = BSW.readyLoaded && ready === 0 && !selProviders().length;
+    const fzBlocked = BSW.readyLoaded ? fzBlocker() : null;
     return [
       {type:'backend', id:'cloud', label:'cloud',
        detail: !BSW.readyLoaded ? 'checking keys…' : ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready'
-         : 'no provider yet · add one in Settings › Models',
-       active: here === 'cloud'},
+         : noCloud ? 'no provider yet' : 'no API key yet',
+       addProvider: noCloud, active: here === 'cloud'},
       {type:'backend', id:'local', label:'local',
        detail: 'a model Atomic Agent runs on ' + THIS_MACHINE,
        active: here === 'local'},
@@ -13713,8 +13777,8 @@ function selRows() {
       // mode built on two of them. The detail is the pre-flight's one line, or
       // what it would run.
       {type:'backend', id:'fusion', label:'fusion',
-       detail: !BSW.readyLoaded ? 'checking keys…' : (fzBlocker() || fzDetail(rmNow())),
-       active: here === 'fusion'},
+       detail: !BSW.readyLoaded ? 'checking keys…' : fzBlocked ? fzBlocked.replace(/ — Settings › .*$/, '') : fzDetail(rmNow()),
+       addProvider: !!fzBlocked, active: here === 'fusion'},
     ];
   }
   if (SEL.kind === 'provider' && selBackend() === 'fusion') return fzProviderRows();
@@ -13792,6 +13856,8 @@ async function selActivate(row) {
     // the operator runs needs the URL probed first, which is the External
     // pane's job. Open it instead of writing anything here.
     if (row.id === 'custom') { closeSelector(); act('settings:llm'); llmSetMode('external'); return; }
+    // Chat review (Д21): nothing to run on — the row's Add provider, not a refusal.
+    if (row.addProvider) { act('sel:addProvider'); return; }
     if (row.id === 'fusion') { selChooseFusion(); return; }
     selChooseBackend(row.id); return;
   }
@@ -14031,7 +14097,12 @@ function selectorHTML() {
     + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
     + rows.map((r, i) => {
         const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
-        const right = (r.type === 'backend' ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
+        /* Chat review (Д21): the row's own way out. A span, not a button: it
+           sits inside the row's <button>, and the click delegate takes its
+           data-act before the row's (a keyboard Enter on the row lands in the
+           same place, selActivate). */
+        const right = (r.addProvider ? '<span class="btn btn-s xs seladd" data-act="sel:addProvider">' + ic('plus') + 'Add provider</span>' : '')
+          + (r.type === 'backend' && !r.addProvider ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
@@ -14988,8 +15059,7 @@ function continueTurn() {
 function dismissPlan() {
   if (!PLAN.on) return;
   clearPlanOffer();
-  // `note:true`: endMarkIds walks back over trailing note rows, so the turn
-  // keeps its completion mark instead of losing it to this line.
+  // `note:true`: a notice about the session, not the turn's outcome.
   S.log.push({id:nid(), k:'system', note:true,
     text:'plan dismissed — still in plan mode; type to propose a different one'});
   render();
@@ -16395,57 +16465,14 @@ async function wizNextStep() {
 }
 
 
-/* r4-ui item 3: which item carries the agent's full stop.
-   A TURN is the span of S.log from one k:'user' item to the next, so this
-   works identically for a live stream and for a session replayed from
-   GET /api/sessions/{id}. The mark goes on the span's LAST item, and only
-   when that item is a non-empty assistant reply:
-     - last ITEM, not last assistant, so a reopened multi-step turn that
-       stored its reply before further tool calls does not float a full stop
-       above the cards it is supposed to close. On the live path the two rules
-       are identical anyway — tool and reasoning rows splice in AHEAD of the
-       streaming item;
-     - non-empty, because startLiveTurn pushes an empty assistant item before
-       the first delta arrives, so a turn aborted or failed before any text
-       would otherwise get a bare dot under an empty prose block.
-   The TAIL span gets nothing while S.busy or S.pending: that covers the item
-   still streaming, a turn blocked on an approval, and a session reopened while
-   its turn runs elsewhere. 0.5.5 exposes no turn controller, so a turn running
-   under another origin has no stream here and no mark — the same honest limit
-   the pulsating sidebar dot already carries. A turn that ends with a system
-   row (abort, "turn failed") gets no mark either, which is right: nothing
-   says the whole process finished.
-   Review fix: NOT every system row says that. A handful are notices ABOUT the
-   session rather than about the turn — the model stamp openSession appends
-   after replaying a stored transcript, the parked-steer recovery, the
-   `steer_undelivered` ack — and they are pushed after a turn that really did
-   finish. Left counted, they silently deleted the full stop of the last
-   completed turn, which is the one turn the operator is looking at. Those
-   rows carry `note:true` and are stepped over here; an abort or a failure
-   carries no such flag and still suppresses the mark. */
-function endMarkIds() {
-  const segs = [[]];
-  S.log.forEach((m) => { if (m.k === 'user') segs.push([]); segs[segs.length - 1].push(m); });
-  const ids = new Set();
-  segs.forEach((seg, i) => {
-    if (!seg.length) return;
-    if (i === segs.length - 1 && (S.busy || S.pending)) return;
-    let at = seg.length - 1;
-    while (at >= 0 && seg[at].k === 'system' && seg[at].note) at--;
-    const last = at >= 0 ? seg[at] : null;
-    if (last && last.k === 'assistant' && String(last.text || '').trim()) ids.add(last.id);
-  });
-  return ids;
-}
+/* Chat review (Д18): endMarkIds, which picked the reply that closed each
+   finished turn for r4-ui's end mark, went with the mark. The `note:true` flag
+   that told it to step over a notice about the session (a model stamp, the
+   parked-steer line, a dismissed plan) stays on those rows as what they are. */
 
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
-  const end = endMarkIds();
-  // Only while it is still the newest turn: once another question follows,
-  // that turn's own mark (when it finishes) takes over.
-  let lastEnd = Array.from(end).pop();
-  if (lastEnd && items.slice(items.findIndex((x) => x.id === lastEnd) + 1).some((x) => x.k === 'user')) lastEnd = null;
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
     if (m.k === 'tool') {
@@ -16469,10 +16496,7 @@ function renderItems() {
       const times = j - i + 1;
       if (times >= 2) { html += systemRun(m, times); i = j; continue; }
     }
-    /* Calm (S3): the latest finished turn keeps its full stop at rest; an
-       earlier turn's mark shows with that message's actions, on hover or
-       focus, so a long transcript is not a column of logos. */
-    html += item(m, end.has(m.id) ? (m.id === lastEnd ? 'latest' : true) : false);
+    html += item(m);
   }
   return html;
 }
@@ -16717,10 +16741,14 @@ function renderMarkdown(escaped) {
 
 function renderProse(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
-  const FILE_RE = /(?<![\w\/])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g;
+  // Chat review (Д23): letters of any script, so `~/Документы/отчёт.docx` reads as a path too,
+  // and extensions up to ten characters (`run.command`): main decides what each one is.
+  // The root is `~/` or `/` — with a bare `~` there, `~/notes/a.md` used to match
+  // from its slash, as `/notes/a.md`.
+  const FILE_RE = /(?<![\p{L}\p{N}_\/])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu;
   // Windows: not the tail of `C:/dir/file` either — that whole path is the
   // drive-letter chip below.
-  const FILE_RE_HERE = IS_WIN ? /(?<![\w\/:])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g : FILE_RE;
+  const FILE_RE_HERE = IS_WIN ? /(?<![\p{L}\p{N}_\/:])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu : FILE_RE;
   const md = renderMarkdown(esc(text));
   let html = md.html;
   html = html.replace(URL_RE, (u) => {
@@ -16729,19 +16757,75 @@ function renderProse(text) {
     const href = core.startsWith('www.') ? 'https://' + core : core;
     return '<a class="msglink" href="#" data-url="' + href + '">' + core + '</a>' + trail;
   });
-  html = html.replace(FILE_RE_HERE, (p) => {
-    const name = p.split('/').pop();
-    return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
-  });
+  // Chat review (Д23): a chip only for a file main found in the home folder; text until then.
+  html = html.replace(FILE_RE_HERE, (p) => replyPathChip(p, p));
   if (IS_WIN) {
     // Windows: `C:\dir\file.ext` (either separator), the same chip.
     const WIN_FILE_RE = /(?<![\w\\/])([A-Za-z]:[\\/](?:[\w.@+-]+[\\/])*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\\/])/g;
-    html = html.replace(WIN_FILE_RE, (p) => {
-      const name = pathBase(p);
-      return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
-    });
+    html = html.replace(WIN_FILE_RE, (p) => replyPathChip(p, p));
   }
-  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => md.held[+i]);
+  /* Chat review (Д23): most models write a path in a code span
+     (`~/Desktop/report.docx`), which this pass used to leave as code. A code
+     span holding nothing but a path (spaces and all) is that path too, on the
+     same terms; a fence stays code, and so does a span with anything else in
+     it. */
+  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => {
+    const h = md.held[+i];
+    const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
+    const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
+    return raw && codeSpanIsPath(raw) ? replyPathChip(raw, h) : h;
+  });
+}
+/** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
+function codeSpanIsPath(s) {
+  if (s.length > 1024 || /[\0\n<>"]/.test(s) || /:\/\//.test(s)) return false;
+  return IS_WIN ? /^(?:~[\\/]|[A-Za-z]:[\\/])\S/.test(s) : /^(?:~\/|\/)[^\/\s]/.test(s);
+}
+/** The chip for a path a reply names, once main found it in the home folder;
+    `shown` — the html it was — until then, and for good when it is not there.
+    While main has not answered, `shown` is wrapped in a `[data-rpath]` span,
+    so the answer can put the chip in its place without a repaint. */
+function replyPathChip(raw, shown) {
+  const v = replyPathKnown(raw);
+  if (!v) return '<span data-rpath="' + esc(raw) + '">' + shown + '</span>';
+  if (!v.ok || !v.abs) return shown;
+  const name = pathBase(String(raw).replace(IS_WIN ? /[\\/]+$/ : /\/+$/, '')) || raw;
+  return '<button class="filechip" data-file="' + esc(v.abs) + '" data-reply="1" title="' + esc(v.abs) + '">'
+    + ic(v.kind === 'dir' ? 'folder' : 'doc') + '<span>' + esc(name) + '</span></button>';
+}
+/** Main's answer about a path, or null while there is none — asking for it then. */
+function replyPathKnown(raw) {
+  const v = REPLY_PATHS.get(raw);
+  if (v && v !== 'asking' && (v.ok || Date.now() - v.at < REPLY_PATH_RETRY_MS)) return v;
+  if (v !== 'asking' && BR && BR.replyPaths) {
+    REPLY_PATHS.set(raw, 'asking'); REPLY_PATH_ASK.add(raw);
+    if (!REPLY_PATH_TIMER) REPLY_PATH_TIMER = setTimeout(replyPathsAsk, 0);
+  }
+  return null;
+}
+/** One round trip for every path waiting (64 at a time, main's cap). A path
+    that turned out to be a file takes its chip in place, wherever its text is
+    on screen: nothing else is rebuilt, so no scroll, caret or focus moves. */
+async function replyPathsAsk() {
+  REPLY_PATH_TIMER = 0;
+  const batch = [...REPLY_PATH_ASK].slice(0, 64);
+  batch.forEach((p) => REPLY_PATH_ASK.delete(p));
+  if (REPLY_PATH_ASK.size) REPLY_PATH_TIMER = setTimeout(replyPathsAsk, 0);
+  let res = null;
+  try { res = await BR.replyPaths(batch); } catch (e) { res = null; }
+  const files = res && res.ok && Array.isArray(res.files) ? res.files : [];
+  let landed = false;
+  batch.forEach((p, i) => {
+    const f = files[i] && files[i].path === p ? files[i] : null;
+    const v = {ok: !!(f && f.ok && f.abs), abs: (f && f.abs) || null, kind: (f && f.kind) || null, reveal: !!(f && f.reveal), at: Date.now()};
+    REPLY_PATHS.set(p, v);
+    if (v.ok) landed = true;
+  });
+  if (!landed) return;
+  document.querySelectorAll('[data-rpath]').forEach((n) => {
+    const v = REPLY_PATHS.get(n.dataset.rpath);
+    if (v && v !== 'asking' && v.ok) n.outerHTML = replyPathChip(n.dataset.rpath, n.innerHTML);
+  });
 }
 function homeDir() {
   const wd = S.live.workingDir || '';
@@ -22351,7 +22435,8 @@ if (typeof window !== 'undefined') {
 
   /* Item 3: what every transcript row is made of — its kind, whether a message
      glyph came back, whether the grid rows' first cell is empty, whether the row
-     carries the end mark, and where its content starts. */
+     carries an end mark (chat review Д18: none may), and where its content
+     starts. */
   window.__turnShape = () => [...document.querySelectorAll('#scroller .turn')].map((t) => {
     const body = t.querySelector('.prose,.card,.appr,.disc');
     const usr = t.classList.contains('usr');
@@ -22371,8 +22456,6 @@ if (typeof window !== 'undefined') {
             gutter: usr ? null : (t.firstElementChild ? t.firstElementChild.innerHTML.trim().length : 0),
             end: !!t.querySelector('.endmark'),
             strip: !!t.querySelector('.attach'),
-            // The mark is appended AFTER attachStrip(m), so on a reply that
-            // wrote files it must still be the last thing in the column.
             endLast: !!(t.lastElementChild && t.lastElementChild.lastElementChild
                         && t.lastElementChild.lastElementChild.classList.contains('endmark')),
             left: body ? Math.round(body.getBoundingClientRect().left) : 0};
@@ -22391,10 +22474,9 @@ if (typeof window !== 'undefined') {
             marginLeft: getComputedStyle(b).marginLeft, rowDisplay: getComputedStyle(b.parentElement).display,
             markW: mark ? Math.round(mark.getBoundingClientRect().width) : 0};
   };
-  /* Item 3: put the window back at rest before the transcript checks. The end
-     mark is deliberately withheld while a turn is streaming or an approval is
-     open, and the checks that run before these leave a turn going in another
-     chat — so without this the mark's absence proves nothing either way. This
+  /* Item 3: put the window back at rest before the transcript checks. The
+     checks that run before these leave a turn going in another chat, and a
+     transcript read mid-turn proves nothing about one at rest. This
      stops the leftover turn through the real abort path; it invents no state.
      A pending approval left without a running turn goes through the same call
      abort() makes (dropPendingApproval), so the sidebar's filled dot is dropped
@@ -22409,12 +22491,11 @@ if (typeof window !== 'undefined') {
   /* Item 3: a user message, pushed exactly as the composer's submit() pushes
      one — the counterpart of the existing __pushAssistant. */
   window.__pushUser = (text) => { S.log.push({id:nid(), k:'user', text: String(text)}); render(); return S.log.length; };
-  /* Item 3: the end mark never lands on a turn that is still running, and the
-     turns above it keep theirs. S.busy is SET AND PUT BACK here — this is a
-     synthetic busy, not a live stream: reading the transcript mid-delta is a
-     race the suite would lose on a slow reply. What it does prove is the guard
-     itself (drop `S.busy || S.pending` from endMarkIds and `during.last` flips).
-     The empty streaming item that path really pushes is covered at rest by
+  /* Item 3, chat review Д18: no end mark in any state — while a turn runs,
+     while an approval waits, or at rest. S.busy and S.pending are SET AND PUT
+     BACK here — a synthetic busy, not a live stream: reading the transcript
+     mid-delta is a race the suite would lose on a slow reply. The empty
+     streaming item that path really pushes is covered at rest by
      __emptyTurnMark below, which needs no poked flag at all. */
   window.__marksWhileBusy = () => {
     const count = () => {
@@ -22436,12 +22517,12 @@ if (typeof window !== 'undefined') {
     S.pending = pendBefore; render();
     return {during, duringPending, after: count()};
   };
-  /* Item 3: the other half of "never on a live turn", and the one that needs no
-     poked flag at all. startLiveTurn pushes an EMPTY assistant item before the
-     first delta arrives; a turn aborted, or one whose BR.chat call fails, leaves
-     that item in S.log at rest. It must not collect a full stop under an empty
-     prose block — that is what endMarkIds' non-empty-text test is for. The two
-     rows are pushed exactly as that path pushes them and then taken back out. */
+  /* Item 3: the turn that never produced a word, which needs no poked flag at
+     all. startLiveTurn pushes an EMPTY assistant item before the first delta
+     arrives; a turn aborted, or one whose BR.chat call fails, leaves that item
+     in S.log at rest, and nothing may be drawn under its empty prose block.
+     The two rows are pushed exactly as that path pushes them and then taken
+     back out. */
   window.__emptyTurnMark = () => {
     const before = document.querySelectorAll('#scroller .endmark').length;
     S.log.push({id:nid(), k:'user', text:'(smoke) a turn that produced nothing'});
@@ -22588,7 +22669,7 @@ if (typeof window !== 'undefined') {
   // screen while a take is running, and the button's tooltip says this.
   document.addEventListener('contextmenu', (e) => {
     const b = e.target.closest && e.target.closest('[data-mic]');
-    if (!b || b.disabled) return;
+    if (!b || b.disabled || b.getAttribute('aria-disabled') === 'true') return;
     e.preventDefault();
     voiceAct('voice:lang');
   });
@@ -22650,7 +22731,9 @@ if (typeof window !== 'undefined') {
     const b = document.querySelector('.composer .field .micbtn');
     const field = document.querySelector('.composer .field');
     return {
-      present: !!b, disabled: !!(b && b.disabled), title: b ? b.getAttribute('title') : '',
+      // Chat review Д24: an unavailable microphone is aria-disabled (its reason
+      // stays reachable on hover), so that is what "disabled" reads.
+      present: !!b, disabled: !!(b && (b.disabled || b.getAttribute('aria-disabled') === 'true')), title: b ? b.getAttribute('title') : '',
       order: field ? Array.prototype.map.call(field.children, (n) => n.className || n.tagName).join('|') : '',
     };
   };
@@ -23095,13 +23178,11 @@ if (typeof window !== 'undefined') {
    r4-ui's user bubbles
    ============================================================
    r4-feat writes the "this session ran on <provider>/<model>" notice into
-   the transcript, and r4-ui turned user rows into right-hand bubbles with
-   the agent's mark moved to the end of a finished turn. The notice is
-   neither: it is `k:'system'`, so `item()` must render it as a `.sysrow`
-   with no `.prose.usr.bubble` around it and no `.endmark` in it, and it
-   must not split a turn the way a real user message does (endMarkIds
-   segments on `k === 'user'`). Nothing asserted that across the two
-   lanes, because each was written before the other landed.
+   the transcript, and r4-ui turned user rows into right-hand bubbles. The
+   notice is neither: it is `k:'system'`, so `item()` must render it as a
+   `.sysrow` with no `.prose.usr.bubble` around it and no `.endmark` in it.
+   Nothing asserted that across the two lanes, because each was written
+   before the other landed.
 
    The probe pushes the notice through the REAL noteSessionModelStamp,
    renders, measures the DOM, then splices exactly what it added back out
@@ -23109,17 +23190,14 @@ if (typeof window !== 'undefined') {
    leaves. */
 if (typeof window !== 'undefined') {
   window.__stampRowShape = (metadata) => {
-    /* Review fix: the mark-count half of this probe was vacuous. At this point
-       in the run the transcript carries no end mark at all, so `markedAfter ===
-       markedBefore` compared 0 with 0 and could never have seen the notice
-       delete a mark. A finished turn is pushed first — user then a non-empty
-       assistant, exactly the shape endMarkIds marks — and taken back out with
-       the notice, so markedBefore is genuinely 1 and the sub-assertion bites. */
+    /* A finished turn is pushed first — user then a non-empty assistant — so
+       the notice lands where it does in a real reopened chat, and is taken
+       back out with it. (Chat review Д18: the end mark it once counted, and
+       could have taken away, is gone.) */
     const base = S.log.length;
     S.log.push({id:nid(), k:'user', text:'(smoke) a turn that finished'});
     S.log.push({id:nid(), k:'assistant', text:'and its reply'});
     const before = S.log.length;
-    const markedBefore = endMarkIds().size;
     // noteSessionModelStamp writes CTX055.stamp as well as the transcript, and
     // the checks around this one read it — so it is snapshotted, not zeroed.
     const stampBefore = CTX055.stamp;
@@ -23140,11 +23218,7 @@ if (typeof window !== 'undefined') {
         bubbles: tail.filter((n) => n.querySelector('.prose.usr.bubble') || n.classList.contains('usr')).length,
         endmarks: tail.filter((n) => n.querySelector('.endmark')).length,
         offers: tail.filter((n) => n.querySelector('[data-act="sessmodel:apply"]')).length,
-        // A system row must not open a new turn segment, so the number of
-        // end marks in the transcript cannot move because of it.
-        markedAfter: endMarkIds().size, markedBefore,
-        // The mark is only withheld from a running turn, so the count above
-        // means nothing unless the window is at rest — reported, not assumed.
+        // Reported, not assumed: the shape is read with the window at rest.
         busy: !!S.busy || !!S.pending,
       };
     } finally {
@@ -24153,7 +24227,7 @@ if (typeof window !== 'undefined') {
   /* A finished assistant reply must carry a copy button even though S.streamId
      still names it — nothing clears that when a turn ends. And the box it
      appears in must already be on screen while the reply streams, or the whole
-     transcript below would jump 24px at turn end. Both states are measured. */
+     transcript below would jump 30px at turn end. Both states are measured. */
   window.__streamActs = () => {
     const keep = {busy: S.busy, streamId: S.streamId};
     const last = S.log.slice().reverse().find((m) => m.k === 'assistant' && String(m.text || '').trim());
@@ -24162,10 +24236,9 @@ if (typeof window !== 'undefined') {
        from the top of the transcript column to the BOTTOM of the action row.
        Equal in both states means nothing at or above the row moved when the
        turn ended.
-       The column itself is not expected to be equal, and colHeight is here to
-       say why: r4-ui's end mark (`.endmark`, 12px + a 10px margin) is appended
-       BELOW the row when a turn finishes, and it did that long before this
-       lane. The check asserts the column's whole growth is that mark.
+       The column is measured too: with r4-ui's end mark gone (chat review
+       Д18) nothing is appended below the row when a turn finishes, so the
+       column must not grow at all; `endmark` reads 0 unless one comes back.
        Not #scroller.scrollHeight — with a short transcript that collapses to
        clientHeight, which moves when the composer grows its running strip. */
     const shot = () => {

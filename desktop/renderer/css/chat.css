@@ -11,24 +11,32 @@
    of the explicit drift correction and is lost anyway whenever #scroller is
    rebuilt.
 
-   The column is TOP-anchored on purpose. The reference bottom-anchors a short
-   transcript (justify-content:flex-end), but then folding a card in a chat
-   that does not scroll yet moves everything above it — the card's own head
-   included — and repaintEntry can only correct drift through scrollTop, which
-   a non-scrolling transcript does not have. Keeping the head still wins.
+   Chat review (Д19): the column is BOTTOM-anchored, as a chat app keeps its
+   conversation: a short transcript sits on the composer and grows upward, and
+   the first message no longer hangs alone under the toolbar. The scroller is a
+   flex column and the column takes `margin-top:auto`, which is all the free
+   space above a short transcript and nothing once it scrolls, so a long one
+   lays out and scrolls exactly as before (justify-content:flex-end would push
+   an overflowing column's top out of reach). The price is the one the
+   top-anchored column was avoiding: folding a card in a chat too short to
+   scroll moves what is above it, since the column's bottom stays put. Once
+   the transcript scrolls, repaintEntry keeps a card's head still as it did.
 
    The top fade is a mask on the scroller's own box, so it never moves content
    or changes a measurement; the column's top padding is taller than the fade,
    so nothing is faded at scrollTop 0. */
 .scroller{overflow-anchor:none}
-#scroller{-webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
+#scroller{display:flex;flex-direction:column;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
   mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px)}
-#scroller > .col720{max-width:720px;margin:0 auto;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
+#scroller > .col720{flex:none;width:100%;max-width:720px;margin:auto auto 0;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
 /* Backlog 18 review: the download card floats over the bottom-right of the
    transcript. --dlcard-chat (renderer dlCardOverChat) is how far up it reaches
    over this column, so the column's end — the newest reply, an approval's
    buttons — scrolls clear of it. 0 while the card is away or beside the
-   column. The empty chat has no column: its greeting stays as it is. */
+   column, and for a chat too short to scroll, which keeps its place on the
+   composer (chat review Д19). The empty chat has no column: its greeting
+   stays as it is. */
 #scroller > .col720{padding-bottom:max(16px, var(--dlcard-chat, 0px))}
 #scroller > .col720 > *{min-width:0}
 
@@ -45,9 +53,14 @@
 /* ---------------- empty chat (CH-01) ----------------
    r4-ui item 1: renamed from `.empty`. The sidebar dot emits `sdot empty` as its
    state class, so a container rule of that name floored the 8px dot at its
-   padding. __emptyChatProbe asserts `display:flex` here. */
-.emptychat{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
-  gap:22px;padding:24px 28px 30px}
+   padding. __emptyChatProbe asserts `display:flex` here.
+   Chat review (Д13): it fills the scroller and stands in the middle of it, in
+   a column no wider than the transcript's, so a large window no longer leaves
+   it spread out along the composer. The extra bottom padding lifts it a little
+   above the true middle, where the eye expects a page's centre. */
+.emptychat{flex:1 0 auto;min-height:100%;width:100%;max-width:720px;margin:0 auto;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:22px;padding:24px 28px 64px}
 /* Calm (S3): a greeting and one quiet line, on the page — no card, no rows. */
 .emptyplate{width:min(560px,100%);display:grid;justify-items:center;gap:8px;text-align:center}
 .emptyhead{display:flex;align-items:center;gap:12px;font-size:20px;line-height:1.3;letter-spacing:-.02em;color:var(--ink)}
@@ -59,7 +72,7 @@
 .emptymeta .em-it > span{min-width:0;overflow-wrap:anywhere}
 .emptymeta .em-it > svg{width:14px;height:14px;flex:none;color:var(--ink-3)}
 .emptymeta .em-sep{color:var(--ink-3)}
-.ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:720px}
+.ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:560px}
 .ghostchip{display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:var(--r-pill);
   background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font-size:13px;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
@@ -73,11 +86,15 @@
    it to the column's right edge. `overflow-wrap:anywhere` on top of the
    inherited pre-wrap means a single unbroken 400-character token still cannot
    widen the transcript. The bottom-right corner is the tightened one: the
-   outgoing-tail convention without drawing a tail. */
-.turn.usr{display:block}
-.prose.usr.bubble{width:fit-content;max-width:74%;margin-left:auto;padding:10px 15px;
+   outgoing-tail convention without drawing a tail.
+   Chat review (Д19): nothing in a message may carry the bubble past the
+   column's edge — a path, a link or a token with no break in it wraps inside,
+   and the row itself never outgrows the column (t46 measures it with the
+   side panel open, narrowing the column). */
+.turn.usr{display:block;max-width:100%}
+.prose.usr.bubble{width:fit-content;max-width:74%;min-width:0;margin-left:auto;padding:10px 15px;
   border-radius:22px 22px 6px 22px;background:var(--brand);color:var(--on-strong);
-  font-size:14.5px;line-height:1.5;overflow-wrap:anywhere}
+  font-size:14.5px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
 
 /* ---------------- assistant prose and markdown ----------------
    A model writes markdown and renderMarkdown turns it into tags of its own,
@@ -124,7 +141,8 @@
    sits where a tool line's icon sits, so the column of steps lines up. */
 #scroller > .col720 > .tk-step + .tk-step{margin-top:-10px}
 
-/* reasoning disclosure — closed by default, "Reasoning · 1 step" */
+/* reasoning disclosure — closed by default, the one word "Reasoning" (chat
+   review Д16: the step count beside it was noise) */
 .disc{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;border-radius:var(--r-row);
   font-size:13.5px;color:var(--ink-3);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .disc svg{width:14px;height:14px}
@@ -258,25 +276,19 @@
 .appr.done .apprlbl .mono{color:var(--ink-2)}
 .appr.done .badge{margin-left:0;background:transparent;box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2)}
 
-/* ---------------- the end mark and the message actions ----------------
-   The agent's full stop: one mark at the end of a FINISHED turn, never one per
-   message, appended after the action row (so no `#turn-<id>` anchor moves).
-   It is seated ON the action row: 22px tall with a -22px top margin, so it
-   adds nothing to the column's height and the turn-end growth __streamActs
-   measures stays exactly its (zero) contribution. 16px wide at the left edge,
-   clear of the right-aligned buttons. The svg is 12px (asserted). */
-.endmark{position:relative;width:16px;height:22px;margin-top:-22px;display:grid;place-items:center;color:var(--ink-3)}
-.endmark svg{position:relative;width:12px;height:12px}
-/* Calm (S3): at rest only the newest finished turn shows its mark; an older
-   turn's mark comes back with its actions, on hover or keyboard focus. */
-.endmark:not(.latest){opacity:0}
-.turn:hover .endmark,.turn:focus-within .endmark{opacity:1}
+/* ---------------- the message actions ----------------
+   Chat review (Д18): the end mark — the small Atomic glyph under the last
+   reply, r4-ui's full stop for a finished turn — is gone. It read as a stray
+   icon, not as "done"; the composer's loader stopping already says the turn
+   ended.
 
-/* --- item 4: hover actions on a message ---
+   --- item 4: hover actions on a message ---
    The row always occupies its 22px box and only its paint changes, so revealing
    it on hover cannot move a pixel of the transcript. The box is reserved for
    the whole turn, not from the moment it ends: msgActs emits an EMPTY .msgacts
-   while a reply is streaming, so the 22px + 2px never materialises mid-view.
+   while a reply is streaming, so the 22px + 8px never materialises mid-view.
+   Chat review (Д17): 8px above the row (it was 2px), so copy and retry stand
+   clear of the bubble and the reply instead of touching them.
    Right-aligned on both kinds — "a copy icon at its end" — which puts it at the
    user bubble's right edge and at the right edge of the agent's content column,
    with the red retry immediately to copy's left on a user message.
@@ -288,7 +300,7 @@
    the row is at any instant is unambiguous. The hover-less media query pins
    them open on a touch surface, where there is no hover to reveal them with.
    The smoke reads the reveal rule's own text — keep it exactly as written. */
-.msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:2px;opacity:0;pointer-events:none}
+.msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:8px;opacity:0;pointer-events:none}
 .turn:hover .msgacts,.msgacts:focus-within{opacity:1;pointer-events:auto}
 @media (hover:none){.msgacts{opacity:1;pointer-events:auto}}
 .msgact{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill);color:var(--ink-2);
@@ -310,8 +322,8 @@
 .attach .filechip{vertical-align:0}
 
 /* ---------------- plan hand-off (item 1) ----------------
-   Under the last assistant message of a finished plan turn, below its end
-   mark. The button text is compared verbatim by the smoke (`▶ run it · auto`),
+   Under the last assistant message of a finished plan turn, below its action
+   row. The button text is compared verbatim by the smoke (`▶ run it · auto`),
    so the chord keycaps are drawn with ::after and stay out of textContent.
    Tones: amber tint for auto, critical tint for bypass, neutral for dismiss. */
 .planbar{margin-top:12px;display:grid;gap:10px;padding:12px 12px 12px 16px;border-radius:var(--r-card);
