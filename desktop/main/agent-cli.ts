@@ -950,27 +950,56 @@ export interface ProviderVerification {
    AI/ML API answers a good key on an empty account with 403 "You've run out
    of funds. Please top up your balance or update your payment method"; the
    check read every 403 as "the provider rejected this key", so the setup
-   said "didn't accept this key" and threw the key away. The agent reads the
-   same answers as a billing refusal (readProviderErrorReason,
-   src/llm/provider/openai/parse-provider-error-body.ts); these are its
-   words, kept to what a key check sees: a 402; a 401 or 403 whose words say
-   the account is out of funds or credit, or (not about the key) name billing
-   or the payment method; a 429 that says the account is empty or carries
-   OpenAI's `insufficient_quota`. A 429 in quota or billing words alone is a
-   rate limit (Gemini's free tier), which a key check counts as a key that
-   works, as before. */
-const NO_FUNDS_WORDING =
-  /\b(?:out of (?:funds|credits?|balance|money)|insufficient[ _-]?(?:funds|balance|credits?|account[ _-]balance)|not enough (?:funds|credits?|balance|money)|(?:credit|account|wallet) balance (?:is )?(?:too low|exhausted|insufficient|empty|depleted)|(?:no|zero) (?:credits?|funds|balance) (?:left|remaining)|payment[ _-]required|top[ -]?up (?:your |the )?(?:balance|account|credits?|wallet)|recharge (?:your |the )?(?:account|balance|wallet)|credit_balance_exhausted|insufficient_quota)\b/i;
-const BILLING_WORDING = /\b(?:billing|payment[ _-]?method|payment details|add (?:a )?payment)\b/i;
-const KEY_WORDING = /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|access[ _-]?token)\b/i;
+   said "didn't accept this key" and threw the key away.
 
-/** Whether a key check's answer says the account cannot pay (see above). */
-export function accountCannotPay(status: number, body: string): boolean {
-  if (status === 402) return true;
-  if (status === 401 || status === 403) {
-    return NO_FUNDS_WORDING.test(body) || (BILLING_WORDING.test(body) && !KEY_WORDING.test(body));
+   The rule is the agent's own (readProviderErrorReason and
+   isCredentialRejection, src/llm/provider/openai/parse-provider-error-body.ts
+   and src/llm/fallback/link-failure-kind.ts), with the same patterns, copied
+   because the window does not load the agent's code; keep the two in step.
+   A 401 is always the key. A billing code (insufficient_quota, …) is the
+   account. A 402 is the account unless it asked for a cooldown or is
+   OpenRouter's in-flight budget. A 403 is the account when its words say it
+   is out of funds or credit, or name billing or the payment method without
+   talking about the key or authentication. A 429 is the account only when
+   its words say so, it asked for no cooldown and it says nothing of a rate
+   limit: a rate limit in quota or billing words (Gemini's free tier, "Too
+   many requests. Please top up your account to increase your rate limits")
+   is a key that works, as before. */
+const CREDIT_CODES =
+  /\b(?:credit_balance_exhausted|insufficient_credits|insufficient_quota)\b/i;
+const IN_FLIGHT_BUDGET = /\bin_flight_budget_exhausted\b/i;
+const NO_FUNDS_WORDING =
+  /\b(?:out of (?:funds|credits?|balance|money)|insufficient[ _-]?(?:funds|balance|credits?|account[ _-]balance)|not enough (?:funds|credits?|balance|money)|(?:credit|account|wallet) balance (?:is )?(?:too low|exhausted|insufficient|empty|depleted)|(?:no|zero) (?:credits?|funds|balance) (?:left|remaining)|payment[ _-]required|top[ -]?up (?:your |the )?(?:balance|account|credits?|wallet)|recharge (?:your |the )?(?:account|balance|wallet))\b/i;
+const BILLING_WORDING =
+  /\b(?:billing|payment[ _-]?method|payment details|add (?:a )?payment)\b/i;
+const CREDENTIAL_WORDING =
+  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token)\b/i;
+const RATE_LIMIT_WORDING =
+  /\b(?:rate[ _-]?limit\w*|too many requests|requests? per|tokens? per|per[ -](?:second|minute|hour|day)|(?:this|a|each|every|the next) (?:second|minute|hour)|[RT]PM|throttl\w*|slow down)\b/i;
+const RETRY_HINT =
+  /\b(?:retry|try again|please wait)(?:\s+\w+){0,2}?\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?)\b/i;
+
+/**
+ * Whether a key check's answer says the account cannot pay (see above).
+ * `cooldownAsked`: the response named a cooldown outside its body text
+ * (a `retry-after` header, Google's `RetryInfo`).
+ */
+export function accountCannotPay(status: number, body: string, cooldownAsked = false): boolean {
+  if (status === 401) return false;
+  if (CREDIT_CODES.test(body)) return true;
+  if (status === 402 && /\bcredits?\b/i.test(body)) return true;
+  const hinted = cooldownAsked || RETRY_HINT.test(body);
+  const inFlight = IN_FLIGHT_BUDGET.test(body);
+  if (!inFlight && saysAccountCannotPay(status, body, hinted)) return true;
+  return status === 402 && !inFlight && !hinted;
+}
+
+function saysAccountCannotPay(status: number, text: string, hinted: boolean): boolean {
+  if (status === 402 || status === 403) {
+    if (NO_FUNDS_WORDING.test(text)) return true;
+    return BILLING_WORDING.test(text) && (status === 402 || !CREDENTIAL_WORDING.test(text));
   }
-  if (status === 429) return NO_FUNDS_WORDING.test(body);
+  if (status === 429) return !hinted && NO_FUNDS_WORDING.test(text) && !RATE_LIMIT_WORDING.test(text);
   return false;
 }
 
@@ -1062,7 +1091,8 @@ export async function verifyProviderKey(
   /* Backlog 40: the provider knew the key — it answered for its account —
      and turned the request down for money. The key works; the setup says so
      and lets it be saved. */
-  if (accountCannotPay(res.status, text)) {
+  const cooldownAsked = res.headers.get("retry-after") !== null || /"retryDelay"\s*:/.test(text);
+  if (accountCannotPay(res.status, text, cooldownAsked)) {
     const own = firstSentence(detail);
     return {
       ok: true,
@@ -1074,8 +1104,9 @@ export async function verifyProviderKey(
     };
   }
   // 429 means the service knew who we were and throttled us. That is an
-  // ACCEPTED key: an unknown one gets 401 long before a rate limit.
-  if (res.status === 429) return { ok: true, checked: true, status: res.status };
+  // ACCEPTED key: an unknown one gets 401 long before a rate limit. So is a
+  // 402 that only asked for a cooldown (OpenRouter's in-flight budget).
+  if (res.status === 429 || res.status === 402) return { ok: true, checked: true, status: res.status };
   if (res.status === 401 || res.status === 403) {
     return { ok: false, checked: true, status: res.status, error: say("the provider rejected this key") };
   }

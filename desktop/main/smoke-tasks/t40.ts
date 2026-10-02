@@ -44,6 +44,9 @@ const AIML_403 = JSON.stringify({
 });
 /** What the agent says for it (src/llm/provider/openai/openai-http.ts, billingRefusalSentence). */
 const AGENT_SENTENCE =
+  "AI/ML API refused the request: you've run out of funds. Top up your balance with AI/ML API or pick another provider in the Providers panel.";
+/** The same as an older agent wrote it, with the provider's quoted id. */
+const QUOTED_SENTENCE =
   '"aimlapi" refused the request: you\'ve run out of funds. Top up your balance with "aimlapi" or pick another provider in the Providers panel.';
 
 /** Each dummy key, and what main's stand-in fetch answers for it. */
@@ -122,12 +125,34 @@ async function keyCheck(check: Check, calls: string[]): Promise<void> {
       && /rejected this key/.test(String(bad.error)) && forbidden.ok === false && !forbidden.noFunds,
     show({ rate, bad, forbidden }),
   );
+  const rule = {
+    "402": accountCannotPay(402, ""),
+    "402 asked to wait": accountCannotPay(402, '{"message":"Server busy, retry in 5 s"}'),
+    "402 in flight": accountCannotPay(402, '{"error":{"code":"in_flight_budget_exhausted"}}'),
+    "403 out of funds": accountCannotPay(403, AIML_403),
+    "403 billing": accountCannotPay(403, '{"message":"Billing is not enabled"}'),
+    "403 key and billing": accountCannotPay(403, '{"message":"Invalid API key. Check your billing."}'),
+    "403 authentication and billing": accountCannotPay(403, '{"message":"Authentication failed. Please check your billing details."}'),
+    "403 token and billing": accountCannotPay(403, '{"message":"Invalid token. Check billing."}'),
+    "403 plain": accountCannotPay(403, '{"message":"Forbidden"}'),
+    "401 out of funds": accountCannotPay(401, '{"message":"insufficient balance"}'),
+    "429 empty account": accountCannotPay(429, '{"message":"insufficient balance, please recharge your account"}'),
+    "429 insufficient_quota": accountCannotPay(429, '{"error":{"message":"Rate limit reached","code":"insufficient_quota"}}'),
+    "429 empty, asked to wait": accountCannotPay(429, '{"message":"insufficient balance"}', true),
+    "429 quota words, cooldown": accountCannotPay(429, '{"message":"You exceeded your current quota, please check your plan and billing details. Please retry in 30s."}'),
+    "429 top up for rate limits": accountCannotPay(429, '{"message":"Too many requests. Please top up your account to increase your rate limits."}'),
+    "429 credits this minute": accountCannotPay(429, '{"message":"Out of credits for this minute"}'),
+  };
+  const want: Record<string, boolean> = {
+    "402": true, "402 asked to wait": false, "402 in flight": false, "403 out of funds": true, "403 billing": true,
+    "403 key and billing": false, "403 authentication and billing": false, "403 token and billing": false, "403 plain": false,
+    "401 out of funds": false, "429 empty account": true, "429 insufficient_quota": true, "429 empty, asked to wait": false,
+    "429 quota words, cooldown": false, "429 top up for rate limits": false, "429 credits this minute": false,
+  };
   check(
-    "T40: the rule main shares with the agent: 402 always, 403 for funds or billing words (not the key's), 429 only for an empty account",
-    accountCannotPay(402, "") && accountCannotPay(403, AIML_403) && accountCannotPay(403, '{"message":"Billing is not enabled"}')
-      && !accountCannotPay(403, '{"message":"Invalid API key. Check your billing."}') && !accountCannotPay(403, '{"message":"Forbidden"}')
-      && !accountCannotPay(429, '{"message":"You exceeded your current quota, please check your plan and billing details. Please retry in 30s."}')
-      && accountCannotPay(429, '{"message":"insufficient balance, please recharge your account"}'),
+    "T40: main's rule is the agent's: a 401 is the key, 402 unless it asked to wait, 403 for funds or billing words not about the key, 429 only for an empty account that names no rate limit or cooldown",
+    Object.entries(want).every(([k, v]) => rule[k as keyof typeof rule] === v),
+    show(Object.fromEntries(Object.entries(rule).filter(([k, v]) => want[k] !== v))),
   );
 }
 
@@ -156,11 +181,12 @@ async function failureLine(js: Js, check: Check): Promise<void> {
     const r = await js<Record<string, string>>(`(() => {
       const text = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d.textContent || ''; };
       const said = ${q(AGENT_SENTENCE)};
+      const quoted = ${q(QUOTED_SENTENCE)};
       const raw = 'openai provider 403: ' + ${q(AIML_403)};
       return {
         marked: text(turnFailureLine({kind: 'error', category: 'transport', error: said,
           payload: {error: said, category: 'transport', cause: {kind: 'billing', status: 403}}})),
-        unmarked: text(turnFailureLine({kind: 'error', category: 'transport', error: said})),
+        unmarked: text(turnFailureLine({kind: 'error', category: 'transport', error: quoted})),
         listed: text(turnFailureLine({kind: 'error', category: 'transport', error: 'fetch failed',
           payload: {error: 'fetch failed', category: 'transport',
             fallback_failures: [{providerId: 'aimlapi', reason: raw.slice(0, 180), cause: {kind: 'billing', status: 403}}]}})),
@@ -190,31 +216,46 @@ async function failureLine(js: Js, check: Check): Promise<void> {
   }
 }
 
-type Strip = { shown: boolean; ann: string; why: string; note: string; recovered: boolean };
+type Strip = { skipped: boolean; shown: boolean; ann: string; why: string; note: string; clean: boolean };
 
 /* One provider_waiting frame through the window's own handler, read back as a
-   person sees it, then ended (provider_recovered). The turn id is the one on
-   screen, or a probe's while none is; the strip is drawn in the chat room. */
+   person sees it: the strip, and the line the wait put in the transcript
+   (item 29's WAIT_VIEW reads the same row). It runs only while the window
+   has no turn of its own, and puts back what it touched: the frame goes to a
+   stand-in turn whose streaming row sits on a copy of the transcript, the
+   wait is dropped without a provider_recovered (no "answered again" status
+   line), and the transcript, the room and the status line are restored.
+   `clean` says the window is as it was afterwards. */
 const WAIT_PROBE = (payload: Record<string, unknown>) => `(() => {
-  const keepTurn = S.turnId;
-  const keepRoom = S.room;
-  const turnId = keepTurn || 'smoke-t40-wait';
-  S.turnId = turnId;
-  if (S.room !== 'chat') { S.room = 'chat'; render(); }
+  if (S.turnId || S.streamId || S.busy || RUNNING.size > 0 || WAIT) return {skipped: true};
+  const keep = {room: S.room, log: S.log, text: APPSTATUS.text, tone: APPSTATUS.tone, logs: LOGS.length};
+  const turnId = 'smoke-t40-wait';
+  const stream = {id: 'smoke-t40-stream', k: 'assistant', text: ''};
+  S.log = keep.log.concat([stream]);
+  S.turnId = turnId; S.streamId = stream.id;
+  S.room = 'chat';
+  render();
+  let seen = {skipped: false, shown: false, ann: '', why: '', note: ''};
   try {
     onChatEvent({turnId, kind: 'provider_waiting', payload: ${q(payload)}});
     const strip = document.querySelector('.statusstrip.waiting');
-    const seen = {shown: !!strip,
+    const notes = S.log.filter((m) => m.k === 'system' && m.sev === 'pause' && m.note);
+    const last = notes[notes.length - 1];
+    seen = {skipped: false, shown: !!strip,
       ann: strip ? (strip.querySelector('.ann') || {}).textContent || '' : '',
       why: strip ? (strip.querySelector('.ss-why') || {}).textContent || '' : '',
-      note: WAIT ? tpWaitNotice(WAIT) : ''};
-    onChatEvent({turnId, kind: 'provider_recovered', payload: {waited_ms: 1000}});
-    return Object.assign(seen, {recovered: !WAIT});
+      note: last ? String(last.text || '') : ''};
   } finally {
-    S.turnId = keepTurn;
-    S.room = keepRoom;
+    WAIT = null;
+    if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
+    S.turnId = null; S.streamId = null;
+    S.log = keep.log; S.room = keep.room;
+    APPSTATUS.text = keep.text; APPSTATUS.tone = keep.tone; LOGS.length = keep.logs;
     render();
   }
+  const clean = !WAIT && !document.querySelector('.statusstrip.waiting') && S.log === keep.log
+    && !S.log.some((m) => m.id === 'smoke-t40-stream') && APPSTATUS.text === keep.text;
+  return Object.assign(seen, {clean});
 })()`;
 
 const FRAME = {
@@ -233,20 +274,24 @@ async function waitStrip(js: Js, check: Check): Promise<void> {
         { providerId: "aimlapi", reason: `openai provider 403: ${AIML_403}`.slice(0, 180), cause: { kind: "billing", status: 403 } },
       ],
     }));
+    if (listed.skipped) {
+      check("T40: the wait probes run with no turn of the window's own live", false, "a turn was live; nothing was injected into it");
+      return;
+    }
     // The local server's own words after the lead are item 29's (and whatever
     // later items make of a stopped server); this item owns the lead.
     check(
-      "T40: a wait on a later link names the picked provider and its reason first: \"AI/ML API: out of funds · waiting for Local models\"",
+      "T40: a wait on a later link names the picked provider and its reason first, in the strip and in the transcript: \"AI/ML API: out of funds · waiting for Local models\"",
       pick.picked === "aimlapi" && listed.shown && listed.ann === `${pick.name}: out of funds · waiting for Local models`
-        && listed.note.startsWith(`${pick.name}: out of funds. `) && listed.recovered,
+        && listed.note.startsWith(`${pick.name}: out of funds. `),
       show({ pick, listed }),
     );
     // Item 29's frame, with nothing failed before the link waited on: no lead.
     const plain = await js<Strip>(WAIT_PROBE(FRAME));
     check(
       "T40: a wait with no earlier failure has no lead, as before (item 29)",
-      plain.shown && plain.ann === "Waiting for Local models" && !plain.note.includes(pick.name)
-        && !plain.note.includes("out of funds"),
+      !plain.skipped && plain.shown && plain.ann === "Waiting for Local models" && plain.note.length > 0
+        && !plain.note.includes(pick.name) && !plain.note.includes("out of funds"),
       show(plain),
     );
     // The picked provider waited on itself: no lead, whatever the list says.
@@ -256,8 +301,13 @@ async function waitStrip(js: Js, check: Check): Promise<void> {
     }));
     check(
       "T40: a wait on the picked provider itself is not led by its own name twice",
-      self.shown && self.ann === `Waiting for ${pick.name}`,
+      !self.skipped && self.shown && self.ann === `Waiting for ${pick.name}` && !self.note.startsWith(`${pick.name}: `),
       show(self),
+    );
+    check(
+      "T40: the wait probes leave the window as they found it: no wait, no stand-in row, the transcript and status line its own",
+      listed.clean && plain.clean && self.clean,
+      show({ listed: listed.clean, plain: plain.clean, self: self.clean }),
     );
   } finally {
     await js<boolean>(UNPICK);
