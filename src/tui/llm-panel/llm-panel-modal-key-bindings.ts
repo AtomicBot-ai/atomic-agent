@@ -50,7 +50,10 @@ export function handleLlmModalKey(
       dispatch({ type: "providers_remove_closed" });
       return true;
     }
-    if (key.return || input.toLowerCase() === "y") {
+    // `y` only, like removing a local model: Enter is the pane's
+    // "selected action" key, so a second Enter after `d` must not
+    // delete a provider by accident.
+    if (input.toLowerCase() === "y") {
       dispatch({ type: "providers_remove_confirm_started" });
       callbacks.onProvidersRemove?.(state.providersPanel.removeConfirm.id);
       return true;

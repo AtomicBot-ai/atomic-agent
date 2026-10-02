@@ -88,10 +88,11 @@ export function LlmPanelModals({
         title={`Remove provider ${state.providersPanel.removeConfirm.id}?`}
       >
         <Text color={theme.colors.muted}>
-          Drops it from config and the fallback chain. An API key kept in .env
-          is left in place.
+          Drops it from config, the fallback chain and any Fusion pin. If it
+          serves embeddings, they move to another provider. An API key kept
+          in .env is left in place.
         </Text>
-        <Text color={theme.colors.muted}>y/Enter confirm · n/Esc cancel</Text>
+        <Text color={theme.colors.muted}>y confirm · n/Esc cancel</Text>
       </PromptBox>
     );
   }

@@ -541,6 +541,28 @@ describe("handleLlmPanelKey: d removes a cloud provider", () => {
     expect(onProvidersRemove).toHaveBeenCalledWith("openrouter");
   });
 
+  it("Enter on the confirm does not remove, like a local model", () => {
+    const base = cloudState();
+    const state = {
+      ...base,
+      providersPanel: {
+        ...base.providersPanel,
+        removeConfirm: { id: "openrouter" },
+      },
+    };
+    const dispatched: TuiAction[] = [];
+    const onProvidersRemove = vi.fn();
+    const handled = handleLlmPanelKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks({ onProvidersRemove }),
+    });
+    // The modal still swallows the key, so nothing behind it reacts.
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([]);
+    expect(onProvidersRemove).not.toHaveBeenCalled();
+  });
+
   it("n and Esc close the confirm without removing", () => {
     const base = cloudState();
     const state = {
