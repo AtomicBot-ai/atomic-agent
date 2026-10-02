@@ -1,14 +1,17 @@
 import { LlamaServerError } from "../llama-server-client.js";
-import { OpenAiHttpError } from "../provider/openai/openai-http.js";
+import {
+  isCreditExhausted,
+  OpenAiHttpError,
+} from "../provider/openai/openai-http.js";
 import { TransportError } from "../reliability/llm-failures.js";
 import { isNetworkError } from "../reliability/network-error.js";
 import { readProviderErrorVerdict } from "../reliability/provider-error-verdict.js";
 
 /**
- * Two questions the chain asks about a link that failed, beyond
+ * Three questions the chain asks about a link that failed, beyond
  * `shouldAdvance`'s "is another link worth a try". Every cloud failure
  * advances, so the advance decision cannot tell a service that is down
- * from one that refused what it was sent; these two can.
+ * from one that refused what it was sent; these can.
  */
 
 /** A provider's words for a credential problem, in a 403's message. */
@@ -33,7 +36,26 @@ export function isCredentialRejection(err: unknown): boolean {
   if (!(err instanceof OpenAiHttpError) || err.timedOut) return false;
   if (err.status === 401) return true;
   if (err.status !== 403) return false;
-  return err.keyProblem !== undefined || KEY_WORDING.test(err.message);
+  if (err.keyProblem !== undefined) return true;
+  // "Please top up your balance or update your payment method": the
+  // account, not the key (item 40), whatever else the body mentions.
+  if (isCreditExhausted(err)) return false;
+  return KEY_WORDING.test(err.message);
+}
+
+/**
+ * Did the link refuse because the account cannot pay?
+ *
+ * A 402, or a 403 / 429 whose body says the account is out of funds or
+ * credit (`isCreditExhausted`: AI/ML API's 403 "You've run out of funds",
+ * OpenAI's 429 `insufficient_quota`). The link answered and said no; the
+ * key is fine and waiting changes nothing until someone tops up. Like a
+ * refused key it outranks the outage a later link reports when the chain
+ * runs out (`runWithFallback`), so the turn ends on its sentence instead
+ * of parking on a stopped local server (item 40).
+ */
+export function isBillingRefusal(err: unknown): boolean {
+  return err instanceof OpenAiHttpError && !err.timedOut && isCreditExhausted(err);
 }
 
 /**
@@ -48,6 +70,8 @@ export function isCredentialRejection(err: unknown): boolean {
  * completion) is the link saying no, and waiting does not change it.
  */
 export function isOutageFailure(err: unknown): boolean {
+  // An empty account is a "no", even on a 429.
+  if (isBillingRefusal(err)) return false;
   const status = statusOf(err);
   if (status === null) return true;
   if (status !== undefined) {

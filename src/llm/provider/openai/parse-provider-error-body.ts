@@ -18,7 +18,7 @@
  * a cycle through the reliability layer.
  */
 export interface ProviderErrorBody {
-  /** `error.message`, when the body parsed. */
+  /** `error.message`, when the body parsed; a top-level `message` when it has no `error` object. */
   readonly message?: string;
   /** `error.code` as a string (a numeric code is kept as its digits). */
   readonly code?: string;
@@ -50,15 +50,47 @@ const CREDIT_CODES =
 /** OpenRouter's "you have too many requests in flight for your balance". */
 const IN_FLIGHT_BUDGET = /\bin_flight_budget_exhausted\b/i;
 
+/**
+ * An empty account in a provider's words, for the bodies that carry no
+ * code for it: AI/ML API's 403 "You've run out of funds", DeepSeek's 402
+ * "Insufficient Balance", Moonshot's 429 "suspended due to insufficient
+ * balance, please recharge your account", "Your credit balance is too
+ * low", "Payment Required".
+ *
+ * Deliberately not "quota" or "billing" on their own: a per-minute rate
+ * limit says "You exceeded your current quota, please check your plan and
+ * billing details" too (Gemini's free tier, a 429 with a cooldown), and
+ * must keep its wait.
+ */
+const NO_FUNDS_WORDING =
+  /\b(?:out of (?:funds|credits?|balance|money)|insufficient[ _-]?(?:funds|balance|credits?|account[ _-]balance)|not enough (?:funds|credits?|balance|money)|(?:credit|account|wallet) balance (?:is )?(?:too low|exhausted|insufficient|empty|depleted)|(?:no|zero) (?:credits?|funds|balance) (?:left|remaining)|payment[ _-]required|top[ -]?up (?:your |the )?(?:balance|account|credits?|wallet)|recharge (?:your |the )?(?:account|balance|wallet))\b/i;
+
+/**
+ * Billing words a 402 or a 403 is read for (never a 429, see above):
+ * "billing is not enabled", "update your payment method".
+ */
+const BILLING_WORDING =
+  /\b(?:billing|payment[ _-]?method|payment details|add (?:a )?payment)\b/i;
+
+/** Words about the key itself: a 403 that has them is not read for `BILLING_WORDING`. */
+const KEY_WORDS =
+  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|access[ _-]?token)\b/i;
+
 /** "retry in 120 s", "retry after 2 minutes", "try again in 30 seconds". */
 const RETRY_HINT =
   /\b(?:retry|try again|please wait)(?:\s+\w+){0,2}?\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?)\b/i;
 
 export function parseProviderErrorBody(text: string): ProviderErrorBody {
   const bounded = text.slice(0, BODY_TEXT_MAX);
-  const error = readErrorObject(bounded);
+  const root = tryParseJson(bounded);
+  const error = readObject(root?.error);
   const raw = error !== null ? readRaw(error.metadata) : null;
-  const message = readString(error?.message);
+  // A body with no `error` object says it at the top: AI/ML API answers
+  // `{"title": "Forbidden", "status": 403, "message": "You've run out of
+  // funds. …"}`, and that sentence is the one worth quoting.
+  const message =
+    readString(error?.message) ??
+    (error === null ? readString(root?.message) : undefined);
   const code = readCode(error?.code);
   const type = readString(error?.type);
   const upstream = readString(readObject(error?.metadata)?.provider_name);
@@ -91,6 +123,14 @@ export const IN_FLIGHT_BUDGET_DEFAULT_WAIT_MS = 30_000;
  * Read the reason out of a parsed body plus the transport facts around
  * it. `retryAfterMs` is the header / `RetryInfo` value the HTTP client
  * already extracted, when any.
+ *
+ * `credit_exhausted` is every billing refusal: a code that says so, a
+ * 402 that asked for no cooldown, and a 403 or 429 whose words say the
+ * account cannot pay (`NO_FUNDS_WORDING`; a 403 also `BILLING_WORDING`).
+ * A 429 counts only when it asked for no cooldown either: a rate limit
+ * that names one stays a wait. Item 40: AI/ML API's 403 "You've run out
+ * of funds" read as nothing at all, so its fallback chain parked the turn
+ * on a stopped local server and the window named that server.
  */
 export function readProviderErrorReason(input: {
   status: number | null;
@@ -109,9 +149,13 @@ export function readProviderErrorReason(input: {
   if (status === 402 && /\bcredits?\b/i.test(text)) {
     return { kind: "credit_exhausted", code: "402" };
   }
-  if (!isCooldownStatus(status)) return null;
   const hinted = input.retryAfterMs ?? input.body?.retryHintMs ?? null;
-  if (IN_FLIGHT_BUDGET.test(text)) {
+  const inFlight = IN_FLIGHT_BUDGET.test(text);
+  if (!inFlight && saysAccountCannotPay(status, text, hinted)) {
+    return { kind: "credit_exhausted", code: String(status) };
+  }
+  if (!isCooldownStatus(status)) return null;
+  if (inFlight) {
     return {
       kind: "retry_after",
       delayMs: hinted ?? IN_FLIGHT_BUDGET_DEFAULT_WAIT_MS,
@@ -121,7 +165,26 @@ export function readProviderErrorReason(input: {
   if (hinted !== null) {
     return { kind: "retry_after", delayMs: hinted, code: code || null };
   }
+  // Payment Required that asked for no cooldown: the account's answer,
+  // whatever its words.
+  if (status === 402) return { kind: "credit_exhausted", code: "402" };
   return null;
+}
+
+/** A 402, 403 or 429 whose words say the account cannot pay. */
+function saysAccountCannotPay(
+  status: number | null,
+  text: string,
+  hinted: number | null,
+): boolean {
+  if (status === 402 || status === 403) {
+    if (NO_FUNDS_WORDING.test(text)) return true;
+    return (
+      BILLING_WORDING.test(text) && (status === 402 || !KEY_WORDS.test(text))
+    );
+  }
+  if (status === 429) return hinted === null && NO_FUNDS_WORDING.test(text);
+  return false;
 }
 
 /** Statuses whose body may legitimately ask for a cooldown. */
@@ -141,12 +204,6 @@ function retryHintMs(text: string): number | null {
       ? amount * 60_000
       : amount * 1_000;
   return Math.round(ms);
-}
-
-function readErrorObject(text: string): Record<string, unknown> | null {
-  const parsed = tryParseJson(text);
-  const error = readObject(parsed?.error);
-  return error;
 }
 
 /** OpenRouter's `metadata.raw`: the upstream body, as text or as an object. */

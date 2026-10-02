@@ -3,7 +3,7 @@ import {
   attachFailingLink,
   type FailedAttempt,
 } from "./failed-attempts.js";
-import { isCredentialRejection } from "./link-failure-kind.js";
+import { isBillingRefusal, isCredentialRejection } from "./link-failure-kind.js";
 import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import { shouldAdvance } from "./should-advance.js";
 
@@ -38,6 +38,17 @@ import { shouldAdvance } from "./should-advance.js";
  * advance log. A fallback that has been serving is the route the user
  * is actually on, so its outage still gets the outage wait, as before.
  *
+ * **The same for an account that cannot pay** (`isBillingRefusal`: a
+ * 402, AI/ML API's 403 "You've run out of funds", OpenAI's 429
+ * `insufficient_quota`). The primary's billing refusal outranks the
+ * links after it on the same terms as its refused key (item 40: the
+ * turn parked on a stopped local server and the window named that
+ * server). And a fallback that has been serving this partition and now
+ * says the account is empty is the route the user is on saying no: when
+ * the chain runs out after it, its refusal is thrown, with the links
+ * that failed before it recorded beside it, rather than a later link's
+ * outage. Every billing refusal ends the turn without the outage wait.
+ *
  * Every thrown error also carries the id of the link that threw it
  * (`attachFailingLink`), for the hosts that say which link a parked turn
  * is waiting on.
@@ -68,8 +79,14 @@ export async function runWithFallback<T>(
   // the primary's real refusal was last mentioned anywhere.
   const cause = pick.isProbe ? null : chain.overrideCause(partitionKey);
   const failed: FailedAttempt[] = cause ? [cause] : [];
-  /** The primary's own refusal of its key, when this call asked it. */
+  /** The primary's own refusal of its key or its account, when this call asked it. */
   let primaryRefusal: { providerId: string; error: unknown } | null = null;
+  /** The serving fallback's billing refusal, and the links that failed before it. */
+  let routeRefusal: {
+    providerId: string;
+    error: unknown;
+    before: FailedAttempt[];
+  } | null = null;
 
   for (;;) {
     try {
@@ -77,6 +94,8 @@ export async function runWithFallback<T>(
       chain.recordSuccess(currentId, wasProbe, partitionKey);
       return result;
     } catch (err) {
+      // Read before `advanceFrom` moves the override past this link.
+      const serving = chain.isServingFallback(currentId, partitionKey);
       const nextId = chain.advanceFrom(currentId, err, partitionKey);
       if (nextId === null) {
         // `null` is also the answer for an error that must not fall over
@@ -90,12 +109,22 @@ export async function runWithFallback<T>(
           attachFailingLink(primaryRefusal.error, primaryRefusal.providerId);
           throw primaryRefusal.error;
         }
+        if (routeRefusal !== null && shouldAdvance(err).advance) {
+          attachFailedAttempts(routeRefusal.error, routeRefusal.before);
+          attachFailingLink(routeRefusal.error, routeRefusal.providerId);
+          throw routeRefusal.error;
+        }
         attachFailedAttempts(err, failed);
         attachFailingLink(err, currentId);
         throw err;
       }
-      if (isCredentialRejection(err) && chain.isPrimary(currentId)) {
+      if (
+        chain.isPrimary(currentId) &&
+        (isCredentialRejection(err) || isBillingRefusal(err))
+      ) {
         primaryRefusal = { providerId: currentId, error: err };
+      } else if (routeRefusal === null && serving && isBillingRefusal(err)) {
+        routeRefusal = { providerId: currentId, error: err, before: [...failed] };
       }
       failed.push({ providerId: currentId, error: err });
       currentId = nextId;

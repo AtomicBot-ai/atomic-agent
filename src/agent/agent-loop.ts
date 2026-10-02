@@ -2476,8 +2476,16 @@ export class AgentLoop {
         // is told which provider refused. (A fallback link, when the
         // chain has one, has already been tried by the time the error
         // reaches here.)
+        //
+        // Paused, that is, once the task has done something to keep.
+        // Refused on its very first request, there is nothing to resume:
+        // the turn fails at once with the provider's own sentence ("…
+        // refused the request: you've run out of funds. Top up …"), the
+        // way a refused key does, instead of a "(paused …) after 0 steps"
+        // reply standing in for an answer (item 40).
         const verdict = cancelled ? null : readProviderErrorVerdict(err);
-        if (verdict?.kind === "credit_exhausted") {
+        const creditRefused = verdict?.kind === "credit_exhausted";
+        if (verdict?.kind === "credit_exhausted" && stepsTaken > 0) {
           stopCause = "credit_exhausted";
           creditStop = { provider: verdict.provider, detail: verdict.detail };
           reason = "max_steps";
@@ -2519,6 +2527,7 @@ export class AgentLoop {
         if (
           category === "transport" &&
           !cancelled &&
+          !creditRefused &&
           providerWaitCfg.enabled &&
           (isWaitableOutage(err) || retryHint !== null) &&
           outageWaitedMs < providerWaitCfg.maxWaitMs

@@ -7,6 +7,7 @@ import {
 } from "../provider/openai/openai-http.js";
 import { OpenAiProvider } from "../provider/openai/openai-provider.js";
 import { OpenAiSseError } from "../provider/openai/openai-stream-consumer.js";
+import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import { TransportError } from "./llm-failures.js";
 import { classifyProviderWaitCause } from "./provider-wait-cause.js";
 
@@ -56,6 +57,34 @@ describe("classifyProviderWaitCause", () => {
     expect(
       classifyProviderWaitCause(asStepFailure(fromStream(null, "stream error"))),
     ).toEqual({ kind: "stream_error", status: null });
+  });
+
+  it("a provider that refused because the account cannot pay is billing, through the wrapper", () => {
+    // Item 40: AI/ML API's 403 for an empty account, and OpenAI's 429
+    // insufficient_quota. The TransportError carries the status alone.
+    const aiml = '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance"}';
+    const out = new OpenAiHttpError(`openai provider 403: ${aiml}`, 403, URL, false, null, "aimlapi", undefined, {
+      body: parseProviderErrorBody(aiml),
+    });
+    expect(classifyProviderWaitCause(asStepFailure(out))).toEqual({ kind: "billing", status: 403 });
+    expect(classifyProviderWaitCause(out)).toEqual({ kind: "billing", status: 403 });
+    const quota = '{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}';
+    expect(
+      classifyProviderWaitCause(
+        asStepFailure(
+          new OpenAiHttpError(`openai provider 429: ${quota}`, 429, URL, false, null, "openai", undefined, {
+            body: parseProviderErrorBody(quota),
+          }),
+        ),
+      ),
+    ).toEqual({ kind: "billing", status: 429 });
+    // A rate limit, and a 403 about the key, stay what they were.
+    expect(
+      classifyProviderWaitCause(asStepFailure(new OpenAiHttpError("openai provider 429: slow down", 429, URL))),
+    ).toEqual({ kind: "http", status: 429 });
+    expect(
+      classifyProviderWaitCause(asStepFailure(new OpenAiHttpError("openai provider 403: Invalid API key", 403, URL))),
+    ).toEqual({ kind: "http", status: 403 });
   });
 
   it("an HTTP status only when a response carried one", () => {
