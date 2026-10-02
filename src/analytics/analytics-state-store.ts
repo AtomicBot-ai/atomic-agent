@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { resolveSharedInstallId } from "./shared-install-id.js";
+import { resolveSharedInstallId } from "./resolve-shared-install-id.js";
+import type { AnalyticsSurface } from "./resolve-surface.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -52,15 +53,17 @@ export class AnalyticsStateStore {
 
   /**
    * The machine-wide id shared with the other surface (see
-   * `resolveSharedInstallId`). While analytics is disabled the shared
+   * `resolveSharedInstallId`). `surface: "desktop"` lets a fresh shared
+   * file adopt the terminal's id. While analytics is disabled the shared
    * file is not touched and the local id is returned. Cached once
    * resolved with analytics on.
    */
-  getSharedInstallId(enabled: boolean): string {
+  getSharedInstallId(enabled: boolean, surface?: AnalyticsSurface): string {
     if (this.sharedInstallId !== undefined) return this.sharedInstallId;
     const id = resolveSharedInstallId({
       localId: this.state.installId,
       enabled,
+      ...(surface ? { surface } : {}),
     });
     if (enabled) this.sharedInstallId = id;
     return id;

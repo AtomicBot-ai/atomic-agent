@@ -36,6 +36,7 @@ export {
   INSTALL_CHANNEL_ENV,
   INSTALL_CHANNEL_FILE,
   INSTALL_CHANNELS,
+  otherSurfaceAnalyticsExists,
   parseInstallChannel,
   resolveAnalyticsDimensions,
   resolveDesktopVersion,
@@ -50,8 +51,20 @@ export {
   isValidInstallId,
   resolveSharedInstallId,
   resolveSharedInstallIdPath,
-} from "./shared-install-id.js";
+} from "./resolve-shared-install-id.js";
+export {
+  ANALYTICS_KILL_SWITCH_ENV,
+  isAnalyticsKilledByEnv,
+} from "./read-analytics-kill-switch.js";
 export { reportAnalyticsOptOut } from "./report-analytics-opt-out.js";
+export {
+  buildRuntimeTelemetry,
+  createTelemetryToggle,
+} from "./toggle-runtime-telemetry.js";
+export type {
+  RuntimeTelemetry,
+  RuntimeTelemetryFactories,
+} from "./toggle-runtime-telemetry.js";
 export { TurnUsageMeter } from "./turn-usage-meter.js";
 export type { TurnUsageSnapshot } from "./turn-usage-meter.js";
 export { sanitizeModelAlias } from "./sanitize-model-alias.js";

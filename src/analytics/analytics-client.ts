@@ -5,6 +5,7 @@ import {
   POSTHOG_PLACEHOLDER_KEY,
   POSTHOG_PROJECT_KEY,
 } from "./posthog-config.js";
+import { isAnalyticsKilledByEnv } from "./read-analytics-kill-switch.js";
 import type { AnalyticsDimensions } from "./resolve-analytics-dimensions.js";
 
 /**
@@ -122,9 +123,10 @@ export class AnalyticsClient {
 
 /**
  * Construct an {@link AnalyticsClient}, or return `null` when analytics is
- * disabled by config or the project key is the placeholder sentinel. A
- * `null` client is the runtime's "analytics off" signal — callers guard
- * on it before emitting events.
+ * disabled by config, forced off by `ATOMIC_AGENT_ANALYTICS=off`, or the
+ * project key is the placeholder sentinel. A `null` client is the
+ * runtime's "analytics off" signal — callers guard on it before emitting
+ * events.
  */
 export function createAnalyticsClient(options: {
   enabled: boolean;
@@ -134,8 +136,11 @@ export function createAnalyticsClient(options: {
   dimensions?: AnalyticsDimensions;
   logger?: AnalyticsLogger;
   posthog?: Pick<PostHog, "capture" | "shutdown">;
+  /** Test seam for the kill-switch env (defaults to `process.env`). */
+  env?: NodeJS.ProcessEnv;
 }): AnalyticsClient | null {
   if (!options.enabled) return null;
+  if (isAnalyticsKilledByEnv(options.env)) return null;
   // Never open a real connection under the test runner — otherwise the
   // suite would pollute production analytics on every run. An injected
   // fake `posthog` bypasses this guard for the module's own unit tests.

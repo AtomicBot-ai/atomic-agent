@@ -50,6 +50,36 @@ describe("config set analytics.enabled false", () => {
     });
   });
 
+  it("sends it once for a whole-file write that turns analytics off", async () => {
+    const code = await configCommand([
+      "set",
+      JSON.stringify({ analytics: { enabled: false } }),
+    ]);
+    expect(code).toBe(0);
+    expect(reportAnalyticsOptOut).toHaveBeenCalledTimes(1);
+    expect(reportAnalyticsOptOut.mock.calls[0]![0]).toMatchObject({
+      via: "config",
+    });
+  });
+
+  it("does not send it for a whole-file write that leaves analytics on", async () => {
+    const code = await configCommand([
+      "set",
+      JSON.stringify({ analytics: { enabled: true } }),
+    ]);
+    expect(code).toBe(0);
+    expect(reportAnalyticsOptOut).not.toHaveBeenCalled();
+  });
+
+  it("does not send it when analytics was already off", async () => {
+    await configCommand(["set", "analytics.enabled", "false"]);
+    reportAnalyticsOptOut.mockClear();
+    resetConfigCache();
+    const code = await configCommand(["set", "analytics.enabled", "false"]);
+    expect(code).toBe(0);
+    expect(reportAnalyticsOptOut).not.toHaveBeenCalled();
+  });
+
   it("skips it when the desktop app runs the command", async () => {
     process.env.ATOMIC_AGENT_SURFACE = "desktop";
     const code = await configCommand(["set", "analytics.enabled", "false"]);

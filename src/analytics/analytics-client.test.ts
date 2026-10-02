@@ -131,6 +131,18 @@ describe("AnalyticsClient", () => {
     expect(client).toBeNull();
   });
 
+  it("createAnalyticsClient returns null under ATOMIC_AGENT_ANALYTICS=off", () => {
+    const client = createAnalyticsClient({
+      enabled: true,
+      installId: "x",
+      platform: "darwin",
+      version: "1.0.0",
+      posthog: fakePosthog(),
+      env: { ATOMIC_AGENT_ANALYTICS: "off" },
+    });
+    expect(client).toBeNull();
+  });
+
   it("createAnalyticsClient builds a client when enabled", () => {
     const client = createAnalyticsClient({
       enabled: true,

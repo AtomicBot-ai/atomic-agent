@@ -243,13 +243,13 @@ import type { ApprovalRequest } from "../approval/approval-gate.js";
 
 import {
   AnalyticsStateStore,
-  createAnalyticsClient,
-  captureAnalyticsDisabled,
+  buildRuntimeTelemetry,
   captureAppInstalled,
   captureAppOpened,
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
+  createTelemetryToggle,
   detectOtherSurfaceInstalled,
   resolveAnalyticsDimensions,
   sanitizeModelAlias,
@@ -260,7 +260,6 @@ import type {
   AnalyticsSurface,
 } from "../analytics/index.js";
 import {
-  createSentryClient,
   installGlobalErrorHandlers,
   captureError,
 } from "../error-reporting/index.js";
@@ -837,14 +836,23 @@ export async function createAgentRuntime(
   // hot-swap them without a process restart. The `runTurn` / `onEvent` /
   // `shutdown` closures read these variables at call time, so a reassign
   // is picked up on the next event.
-  let analytics = createAnalyticsClient({
-    enabled: config.analytics.enabled,
-    installId: analyticsStateStore.getSharedInstallId(config.analytics.enabled),
-    platform: process.platform,
-    version: getAppVersion(),
-    dimensions: analyticsDimensions,
-    logger,
-  });
+  //
+  // Anonymous error reporting (Sentry) shares the opt-out flag
+  // (`config.analytics.enabled`, or `ATOMIC_AGENT_ANALYTICS=off` for the
+  // process) and the anonymous install id with product analytics. Strict
+  // allowlist: only error type / category / safe scalar codes /
+  // path-stripped stack frames ever leave the machine — never message
+  // content, paths, tool args, or IP (see `src/error-reporting/`). Each
+  // client is `null` when disabled or its key/DSN is the placeholder.
+  const buildTelemetry = (enabled: boolean) =>
+    buildRuntimeTelemetry({
+      enabled,
+      store: analyticsStateStore,
+      dimensions: analyticsDimensions,
+      version: getAppVersion(),
+      logger,
+    });
+  let { analytics, errorReporter } = buildTelemetry(config.analytics.enabled);
   captureAppInstalled(analytics, analyticsStateStore, appInstalledContext());
   // Every interactive launch, not just the first: `app_installed` alone
   // cannot tell a download that never ran from one that ran and stalled.
@@ -853,84 +861,38 @@ export async function createAgentRuntime(
   if (options.interactiveLaunch === true) {
     captureAppOpened(analytics);
   }
-
-  // Anonymous error reporting (Sentry). Shares the opt-out flag
-  // (`config.analytics.enabled`) and the anonymous install id with
-  // product analytics. Strict allowlist: only error type / category /
-  // safe scalar codes / path-stripped stack frames ever leave the
-  // machine — never message content, paths, tool args, or IP (see
-  // `src/error-reporting/`). `null` when disabled or the DSN is still
-  // the placeholder sentinel.
-  let errorReporter = createSentryClient({
-    enabled: config.analytics.enabled,
-    installId: analyticsStateStore.getSharedInstallId(config.analytics.enabled),
-    release: getAppVersion(),
-    platform: process.platform,
-    dimensions: analyticsDimensions,
-    logger,
-  });
   // Read the current reporter lazily so a hot-toggle is reflected without
   // re-installing the process-global handlers.
   installGlobalErrorHandlers(() => errorReporter);
-  // Live intent mirror for `setAnalyticsEnabled`. Tracks the operator's
-  // choice, which is distinct from "is a client non-null" — the factories
-  // still return `null` in test env / on a placeholder key/DSN even when
-  // enabled.
-  let analyticsEnabled = config.analytics.enabled;
 
   /**
    * Hot-toggle anonymous analytics (PostHog) and error reporting
-   * (Sentry) — they share the single `config.analytics.enabled` opt-out.
-   * Persisting the flag to `config.json` is the caller's job (the TUI
-   * settings tab); this method only rebuilds the in-memory clients so the
-   * change takes effect without a restart. Idempotent: a no-op when the
-   * requested value already matches the live intent.
+   * (Sentry). Persisting the flag to `config.json` is the caller's job
+   * (the TUI settings tab); this only rebuilds the in-memory clients so
+   * the change applies without a restart. Idempotent against the live
+   * intent; turning off sends `analytics_disabled` first (see
+   * `createTelemetryToggle`).
    */
+  const toggleTelemetry = createTelemetryToggle({
+    initialEnabled: config.analytics.enabled,
+    store: analyticsStateStore,
+    get: () => ({ analytics, errorReporter }),
+    set: (next) => {
+      ({ analytics, errorReporter } = next);
+    },
+    rebuild: () => buildTelemetry(true),
+    // Fire the one-time `app_installed` event if it never went out
+    // while analytics was disabled (guarded by the state store).
+    onEnabled: () =>
+      captureAppInstalled(analytics, analyticsStateStore, appInstalledContext()),
+  });
   const setAnalyticsEnabled = async (
     enabled: boolean,
-    via: AnalyticsDisabledVia = "settings",
+    via?: AnalyticsDisabledVia,
   ): Promise<void> => {
-    if (enabled === analyticsEnabled) return;
-    analyticsEnabled = enabled;
-    // The opt-out's last event, sent before the client is torn down so
-    // the shutdown below flushes it. A no-op when no client is live.
-    if (!enabled) captureAnalyticsDisabled(analytics, analyticsStateStore, via);
-    // Tear down the previous clients (fire-safe: `shutdown` swallows its
-    // own errors) before rebuilding so queued events are flushed.
-    if (analytics) {
-      await analytics.shutdown();
-      analytics = null;
+    if (await toggleTelemetry(enabled, via)) {
+      logger.info("analytics toggled", { enabled });
     }
-    if (errorReporter) {
-      await errorReporter.shutdown();
-      errorReporter = null;
-    }
-    if (enabled) {
-      analytics = createAnalyticsClient({
-        enabled: true,
-        installId: analyticsStateStore.getSharedInstallId(true),
-        platform: process.platform,
-        version: getAppVersion(),
-        dimensions: analyticsDimensions,
-        logger,
-      });
-      // Fire the one-time `app_installed` event if it never went out
-      // while analytics was disabled (guarded by the state store).
-      captureAppInstalled(
-        analytics,
-        analyticsStateStore,
-        appInstalledContext(),
-      );
-      errorReporter = createSentryClient({
-        enabled: true,
-        installId: analyticsStateStore.getSharedInstallId(true),
-        release: getAppVersion(),
-        platform: process.platform,
-        dimensions: analyticsDimensions,
-        logger,
-      });
-    }
-    logger.info("analytics toggled", { enabled });
   };
 
   // Both read `analytics` at call time, so a hot-toggle is picked up

@@ -37,6 +37,22 @@ describe("reportAnalyticsOptOut", () => {
     expect(posthog.shutdown).toHaveBeenCalledTimes(1);
   });
 
+  it("sends and writes nothing under ATOMIC_AGENT_ANALYTICS=off", async () => {
+    const posthog = {
+      capture: vi.fn(),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+    };
+    await reportAnalyticsOptOut({
+      stateDir: dir,
+      version: "1",
+      via: "config",
+      posthog,
+      env: { ATOMIC_AGENT_ANALYTICS: "off" },
+    });
+    expect(posthog.capture).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, "analytics.json"))).toBe(false);
+  });
+
   it("is a no-op under the test runner without an injected client", async () => {
     await reportAnalyticsOptOut({ stateDir: dir, version: "1", via: "config" });
     expect(existsSync(join(dir, "analytics.json"))).toBe(false);
