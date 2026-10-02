@@ -2403,11 +2403,18 @@ function replyDot(m) {
   if (m.k !== 'assistant' || m.placeholder) return '';
   const streaming = m.id === S.streamId && S.busy;
   if (!streaming && !String(m.text || '').trim()) return '';
+  // Review: before the first words, "Working…" is the wait's one loader — no second one under it.
+  if (workingShown(m)) return '';
   for (let i = S.log.length - 1; i >= 0; i--) {
     const x = S.log[i];
-    if (x.k !== 'assistant') continue;
+    // The desktop's own "(no reply)" / "(stopped)" backfill is not a reply: the last real one keeps the dot.
+    if (x.k !== 'assistant' || x.placeholder) continue;
     if (x.id !== m.id) return '';
-    return '<span class="enddot' + (streaming ? ' live' : '') + '" aria-hidden="true"></span>';
+    /* The transcript is rebuilt on every streamed delta (repaintTranscript), and
+       a rebuilt element starts its animation from 0% — the pulse would sit dim
+       while words arrive. A phase taken from one clock keeps it breathing. */
+    return '<span class="enddot' + (streaming ? ' live" style="animation-delay:-' + Math.round(performance.now() % 1200) + 'ms' : '')
+      + '" aria-hidden="true"></span>';
   }
   return '';
 }
@@ -4050,7 +4057,8 @@ function overlayMotionExit(was) {
 function overlayScrollKey(el) {
   // Some rows carry an index, not an id, so the first row's words are part of the key.
   const rows = el.querySelectorAll('[data-wizmodel], [data-obrow], [data-obwiz], [data-sel-row]');
-  const first = rows.length ? rows[0] : null;
+  // ATO-167: the local model list leads with its Download row now; the first MODEL keys the list.
+  const first = [...rows].find((r) => !(r.dataset.selRow && SEL.rows[+r.dataset.selRow] && SEL.rows[+r.dataset.selRow].type === 'action')) || rows[0] || null;
   return el.className + '|' + rows.length + '|' + (first ? (first.dataset.wizmodel || '') + first.textContent.slice(0, 60) : '');
 }
 function overlayScrollsBefore(o) {
@@ -6974,6 +6982,11 @@ document.addEventListener('keydown', (e) => {
 
   if (k === 'Escape') {
     e.preventDefault();
+    /* ATO-167 review: with Done gone from the model and mode popovers, Escape
+       is a keyboard way out of them — so an open popover closes FIRST, before
+       the scroll-to-bottom and before Escape's stop of a running turn (which
+       used to win, and stopped the answer of someone closing a list). */
+    if (!OB.open && (SEL.open || WIZ.phase || S.alert)) { act('close'); return; }
     const sc = $('#scroller');
     if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
     if (S.busy) { abort(); return; }
@@ -14431,8 +14444,8 @@ function selectorHTML() {
     : SEL.kind === 'provider' ? 'Provider' : SEL.kind === 'workers' ? 'Workers' : 'Model';
 
   // An empty list is not a list — it is one action. The provider and
-  // local model panes always end in the TUI's action row ("Add a new
-  // provider" / "Download more models…"), so, as in the TUI, an empty
+  // local model panes always carry the TUI's action row ("Add a new
+  // provider" last / "Download more models…" first, ATO-167), so, as in the TUI, an empty
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
   if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
@@ -14487,6 +14500,8 @@ function selectorHTML() {
           // ATO-167: a leading action row (Download more models…) is set off from the models under it.
           + (r.type === 'action' && i === 0 && rows.length > 1 ? '<div class="tk-sep selsep"></div>' : '');
       }).join('')
+    // Review: set the out-of-reach block off when the list above it is only the Download row.
+    + (outHTML && rows.length === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '')
     + outHTML
     + (!real.length && !out.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
@@ -14919,7 +14934,7 @@ function codingModeChip() {
 function modesHTML() {
   const off = MODE.supported === false;
   /* Soft Tactile (CM-12…14): a titled menu of four radio rows whose word takes
-     the chip's colour, the note under them and Done — and, on an agent without
+     the chip's colour and the note under them (no Done since ATO-167) — and, on an agent without
      the route, the version it needs with Update agent in the footer. */
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover modepop tk-pop" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
@@ -17794,8 +17809,8 @@ function chipSwap(el, html) {
  */
 function bswRepaint() {
   composerChipRepaint();
-  // Calm (S3): the empty chat's quiet line names the model too — the same
-  // catalogue name, swapped in place (the plate has no input to disturb).
+  // Calm (S3): the empty chat's quiet line is re-drawn in place (the plate has
+  // no input to disturb); since ATO-166 it names only the folder, not the model.
   const plate = document.querySelector('.emptychat .emptyplate');
   if (plate) {
     const fresh = emptyPlateHTML();

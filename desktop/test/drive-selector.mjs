@@ -29,7 +29,7 @@
  *    Manage menu ("Escape button should open the menu" — the user's words,
  *    renderer.js:4018), and the settings window it raises then covers the
  *    composer, so the next click lands on the overlay. A person closes a
- *    switch with its own `Done` button; so does this script.
+ *    switch with a click outside it (its Done went in ATO-167); so does this script.
  *  - **The `custom` route cannot be entered by clicking.** Its backend row
  *    deep-links to Settings › LLM › External, which only saves a base URL
  *    after a `/health` probe answers as llama.cpp — there is no such server

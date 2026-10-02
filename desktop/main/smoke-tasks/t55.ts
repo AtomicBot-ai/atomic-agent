@@ -24,10 +24,12 @@ const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function checks55(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, unknown>>(`(async () => {
-    const keep = {open: SEL.open, kind: SEL.kind, overlay: S.overlay};
+    const keep = {open: SEL.open, kind: SEL.kind, overlay: S.overlay, filter: SEL.filter, err: SEL.err, cursor: SEL.cursor};
     try {
       openSelector('model');
-      await new Promise((res) => setTimeout(res, 300));
+      // The local list is read from the agent: wait for it, so the order below is checked on real rows.
+      for (let i = 0; i < 100 && (SEL.localBusy || SEL.modelsBusy); i++) await new Promise((res) => setTimeout(res, 50));
+      await new Promise((res) => setTimeout(res, 100));
       const pop = document.querySelector('#overlays .selpop');
       const rows = pop ? [...pop.querySelectorAll('.sellist > .modelrow, .sellist > .selouth, .sellist > .selout')] : [];
       const ids = rows.map((n) => n.classList.contains('modelrow') ? (n.dataset.id || '?') : n.classList.contains('selouth') ? '#out-head' : '#out');
@@ -35,10 +37,10 @@ export async function checks55(js: Js, check: Check): Promise<void> {
         backend: selBackend()};
       act('close');
       S.overlay = 'modes'; render();
-      const mp = document.querySelector('.popover');
+      const mp = document.querySelector('#overlays .modepop') || document.querySelector('#overlays .popover');
       const modes = {pop: !!mp, done: mp ? mp.querySelectorAll('[data-act="close"]').length : null};
       return {model, modes};
-    } finally { S.overlay = keep.overlay; SEL.open = keep.open; SEL.kind = keep.kind; render(); }
+    } finally { S.overlay = keep.overlay; Object.assign(SEL, {open: keep.open, kind: keep.kind, filter: keep.filter, err: keep.err, cursor: keep.cursor}); render(); }
   })()`);
   const model = (r["model"] ?? {}) as { pop?: boolean; done?: number; ids?: string[]; backend?: string };
   const modes = (r["modes"] ?? {}) as { pop?: boolean; done?: number };
@@ -50,7 +52,7 @@ export async function checks55(js: Js, check: Check): Promise<void> {
   const lastModel = Math.max(...ids.map((x, i) => (x.startsWith("#") || x === "downloadMore" ? -1 : i)));
   check(
     "T55: on the local route, Download more models… is the first row and the models this Mac cannot run come after every model",
-    model.backend !== "local" ? true : dl === 0 && (outAt < 0 || outAt > lastModel),
+    model.backend !== "local" ? true : dl === 0 && lastModel > 0 && (outAt < 0 || outAt > lastModel),
     model.backend !== "local" ? `not on the local route (${model.backend}): the ordering is the local list's` : show(ids),
   );
 }
