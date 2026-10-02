@@ -6,7 +6,11 @@
  *  - the message is dropped unless the error type is on STATIC_MESSAGE_ERRORS
  *    (empty, like the agent's: add a type only after auditing every place
  *    that constructs it);
- *  - the type name is kept when it looks like an identifier, else `Error`;
+ *  - the type name is kept only when it is `SomethingError` /
+ *    `SomethingException` or one of the shell's own names (KNOWN_TYPES),
+ *    else `Error` — a thrown non-Error's "name" can be anything;
+ *  - the stack's `Name: message` header (which repeats the message, and can
+ *    span lines) is cut off before any frame is read;
  *  - stack frames keep file basename + line/col + function only — the home
  *    directory and every absolute path prefix go (file://, C:\…, /Users/…);
  *  - at most 30 frames. No breadcrumbs, argv or env are ever read.
@@ -24,13 +28,18 @@ export interface StackFrame {
 export const STATIC_MESSAGE_ERRORS = new Set<string>([]);
 export const MAX_FRAMES = 30;
 
-const TYPE_RE = /^[A-Za-z_$][\w$.]{0,63}$/;
+const TYPE_RE = /^[A-Z][A-Za-z0-9]{0,50}(Error|Exception)$/;
+/** Names the shell itself gives its tag-only reports (handlers.ts) and the renderer's stand-ins. */
+export const KNOWN_TYPES = new Set<string>([
+  "Error", "NonError", "UnhandledRejection", "ChildProcessGone", "RenderProcessGone", "WindowUnresponsive",
+  "DidFailLoad", "AgentExited",
+]);
 const FUNC_RE = /^[\w$.<>\[\] ]{1,128}$/;
 /** V8: `at fn (loc:1:2)` / `at loc:1:2` / `at async fn (loc:1:2)`. */
 const V8_FRAME_RE = /^\s*at (?:(.+?) \()?(.+?):(\d+):(\d+)\)?\s*$/;
 
 export function safeType(name: unknown): string {
-  return typeof name === "string" && TYPE_RE.test(name) ? name : "Error";
+  return typeof name === "string" && (KNOWN_TYPES.has(name) || TYPE_RE.test(name)) ? name : "Error";
 }
 
 /** The message, only for a type whose messages are known to be static. */
@@ -54,10 +63,26 @@ function safeFunction(fn: string | undefined): string | undefined {
   return FUNC_RE.test(clean) ? clean : undefined;
 }
 
-export function sanitizeStack(stack: unknown): StackFrame[] {
+/**
+ * The frame lines after the header. With the message known, everything up to
+ * its end is the header; without it, every line before the first frame line
+ * is. A message line that merely looks like a frame is therefore never read.
+ */
+function frameLines(stack: string, message: unknown): string[] {
+  let body = stack;
+  if (typeof message === "string" && message) {
+    const at = stack.indexOf(message);
+    if (at >= 0) body = stack.slice(at + message.length);
+  }
+  const lines = body.split("\n");
+  const first = lines.findIndex((l) => V8_FRAME_RE.test(l));
+  return first < 0 ? [] : lines.slice(first);
+}
+
+export function sanitizeStack(stack: unknown, message?: unknown): StackFrame[] {
   if (typeof stack !== "string") return [];
   const frames: StackFrame[] = [];
-  for (const line of stack.split("\n")) {
+  for (const line of frameLines(stack, message)) {
     const m = V8_FRAME_RE.exec(line);
     if (!m) continue;
     const [, fn, loc, lineno, colno] = m;

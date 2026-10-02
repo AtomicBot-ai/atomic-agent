@@ -7,4 +7,4 @@ export {
   wireProcessErrorReporting,
   wireWindowErrorReporting,
 } from "./handlers.js";
-export { MAX_FRAMES, safeBasename, safeMessage, safeTag, safeType, sanitizeStack, STATIC_MESSAGE_ERRORS } from "./scrub.js";
+export { KNOWN_TYPES, MAX_FRAMES, safeBasename, safeMessage, safeTag, safeType, sanitizeStack, STATIC_MESSAGE_ERRORS } from "./scrub.js";

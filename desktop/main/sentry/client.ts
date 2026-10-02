@@ -61,7 +61,7 @@ export function reportError(input: ErrorInput): void {
       const t = safeTag(v);
       if (t && /^[a-z_]{1,32}$/.test(k)) tags[k] = t;
     }
-    const frames = sanitizeStack(input.stack);
+    const frames = sanitizeStack(input.stack, input.message);
     const signature = `${type}|${tags.source ?? ""}|${tags.kind ?? ""}|${tags.reason ?? ""}|${frames[0]?.filename ?? ""}:${frames[0]?.lineno ?? ""}`;
     const n = seen.get(signature) ?? 0;
     if (sent >= MAX_PER_SESSION || n >= MAX_PER_SIGNATURE) return;
