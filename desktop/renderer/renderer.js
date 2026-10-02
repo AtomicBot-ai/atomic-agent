@@ -1083,18 +1083,22 @@ let ERR_COUNT = 0;
    line for the last action; `restart` marks the ones the running `atag
    serve` only picks up after a restart (its registry is boot-time). */
 const SKP = {
-  mode:'list', cursor:0, filter:'all', auto:true, busy:false,
+  mode:'list', cursor:0, filter:'all', busy:false,
+  listRefreshing:false, // Д44: a Refresh the person pressed is in flight (its button spins; the 5 s refresh shows nothing)
   detailName:null, detailBody:null, lastError:null, msg:null,
   hubRows:[], hubCursor:0, hubQuery:'', hubSearchEditing:false, hubLoading:false, hubError:null, hubSeq:0,
+  hubFor:null, hubSavedAt:null, // Д45: the query (its cache key) the rows on screen answer, and when they were fetched
   installing:false, installError:null, installConfirm:null,
-  hubCard:null, hubCardLoading:false, cardScroll:0, removeConfirm:null, timer:null,
+  hubCard:null, hubCardLoading:false, removeConfirm:null, timer:null,
+  cardSeq:0, cardSource:false, cardCache:new Map(), // Д45/Д46: the open card's detail read, its "Show source" fold, and the details read this session
   detailSource:null, // 'route' (GET /api/skills/{name}) | 'skillShow' (`atag skill show`) — which source filled detailBody
   routeOverride:null, // --smoke only: a substitute answer for the route, so the skill-show fallback can be driven on 0.5.4 (its registry never 404s a skill disabled after boot)
   view:'skills', // Item 09: 'skills' (the rows, under `filter`) | 'tools' (the agent's built-in tools) — the segment beside the filters
   toolsLoading:false, toolsError:null, // Item 09: the Built-in tools list's own GET /api/capabilities read
 };
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
-const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32, SKP_CARD_LINES = 24; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx / HUB_CARD_BODY_WINDOW
+const SKP_FILTER_LABELS = {all:'All', enabled:'Enabled', disabled:'Disabled'}; // Д43: the tabs, each with its count
+const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx
 /* Memory panel — the TUI's MemoryPanelState. Rows come from read-only
    sqlite over <stateDir>/memory.sqlite (app:memoryQuery, named statements). */
 const MEM = {
@@ -17489,12 +17493,14 @@ function skpTyping() { const el = document.activeElement; return !!el && el.id =
    Here every refresh is an `atag skill list` subprocess, so the timer runs
    only while the tab is visible, restarts on every entry (the first tick is
    5 s after entering, never on the click) and stops while a detail, the
-   hub, the Built-in tools list or a modal is open. `a auto` turns it off. */
+   hub, the Built-in tools list or a modal is open. Д44: the `● auto / manual`
+   readout that turned it off read as a status and was a button; it is gone,
+   the refresh always runs, and Refresh asks at once. */
 function ensureSkillsPoll() {
   if (!BR || SKP.timer) return;
   SKP.timer = setInterval(() => {
     if (!skillsVisible()) { clearInterval(SKP.timer); SKP.timer = null; return; }
-    if (SKP.auto && SKP.mode === 'list' && SKP.view === 'skills' && !SKP.removeConfirm && !SKP.busy) refreshSkillList();
+    if (SKP.mode === 'list' && SKP.view === 'skills' && !SKP.removeConfirm && !SKP.busy) refreshSkillList();
   }, 5000);
 }
 function skillsTabEntered() {
@@ -17519,36 +17525,35 @@ function skillsTab() {
   // raised from instead of replacing it; the same two states win as before.
   const overlay = SKP.installConfirm ? skpInstallConfirmHTML() : SKP.removeConfirm ? skpRemoveConfirmHTML() : '';
   let view;
+  // Д45: a card is drawn from its hub row at once (only its source waits for the detail read), so no view-wide loader here.
   if (SKP.hubCard) view = skpHubCardHTML();
-  else if (SKP.mode === 'hub') {
-    view = SKP.hubCardLoading ? '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading skill card…</p></div>' : skpHubListHTML();
-  } else {
+  else if (SKP.mode === 'hub') view = skpHubListHTML();
+  else {
     const rows = SK.rows || [];
     const visible = skpVisibleRows();
     const enabledCount = rows.filter((r) => r.enabled).length;
     // Item 09: the Built-in tools segment shows the agent's own tools in place of the skill rows.
     const tools = SKP.mode === 'list' && SKP.view === 'tools';
-    const groups = tools ? skpBuiltinTools() : null;
-    const toolCount = groups ? groups.reduce((n, g) => n + g.tools.length, 0) : 0;
-    // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools` —
-    // a segmented control (the filters and Built-in tools), the counts, the auto readout and the Skills Hub (ST-06).
+    const groups = skpBuiltinTools();
+    const toolCount = groups ? groups.reduce((n, g) => n + g.tools.length, 0) : null;
+    // FilterBar (ST-06): a segmented control — the three filters and Built-in tools — Refresh and the Skills Hub.
+    // Д43: `N shown · E enabled · D disabled` is gone; every tab carries its own count (All 18 · Enabled 18 · Disabled 0),
+    // shown once its list has been read. Д44: so is the `● auto / manual` readout (a button that read as a status, whose
+    // `manual` cut the counts off); the list refreshes on its own and Refresh asks at once. Д42: Browse Skills Hub is
+    // the one big blue button; the Skills Hub card under the list said the same thing a second time.
+    const counts = {all: rows.length, enabled: enabledCount, disabled: rows.length - enabledCount};
+    const num = (n) => ' <span class="n">' + n + '</span>';
     const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
       + '<div class="tk-seg set-seg" role="group" aria-label="Show">'
-        + SKP_FILTERS.map((f) => { const on = !tools && f === SKP.filter; return '<button class="skpf' + (on ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + on + '">' + f + '</button>'; }).join('')
+        + SKP_FILTERS.map((f) => { const on = !tools && f === SKP.filter; return '<button class="skpf' + (on ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + on + '">' + SKP_FILTER_LABELS[f] + (SK.rows ? num(counts[f]) : '') + '</button>'; }).join('')
         // Item 09: this was a toolbar button that closed Settings for the inspector. It is a segment of its own, not one of
         // SKP_FILTERS (the `f` cycle), and it replaces the button: both in this no-wrap row overflow it by 50px on a
         // 940px window and cut Browse Skills Hub off at the pane's edge.
-        + '<button class="skpf' + (tools ? ' on' : '') + '" data-act="skills:tools" aria-pressed="' + tools + '" title="/tools">Built-in tools</button>'
+        + '<button class="skpf' + (tools ? ' on' : '') + '" data-act="skills:tools" aria-pressed="' + tools + '" title="/tools">Built-in tools' + (toolCount !== null ? num(toolCount) : '') + '</button>'
       + '</div>'
-      + (tools
-        ? '<span class="set-counts">' + (groups ? toolCount + (toolCount === 1 ? ' tool' : ' tools') : '') + '</span>'
-        : '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>'
-          + '<button class="set-readout" data-act="skills:auto" title="Auto-refresh every 5 s — a toggles">'
-            + (SK.busy ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (SKP.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
-            + '<span>' + (SKP.auto ? 'auto' : 'manual') + (SK.busy ? ' · …' : '') + '</span></button>')
       + '<span class="grow"></span>'
-      + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
-      + '<button class="btn btn-t sm" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
+      + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh"' + (SKP.listRefreshing ? ' disabled aria-busy="true">' + '<span class="tk-spin"></span>' : '>' + ic('refresh')) + '</button>'
+      + '<button class="btn btn-blue" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
       + '</div></div>';
     view = bar
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
@@ -17570,22 +17575,23 @@ function skpSourceChip(source) {
 function skpListHTML(visible) {
   if (!SK.rows && !SK.err) return '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading skill list…</p></div>';
   if (!visible.length) {
-    // The hint strip and the Skills Hub card below carry the three ways out.
+    // The toolbar carries the ways out: the other tabs and Browse Skills Hub.
     return '<div class="tk-empty set-empty">'
       + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('skills') + '</span>'
       + '<h4>No skills match the current filter</h4>'
       + '<p>Try another filter, or find one in the Skills Hub.</p></div>'
-      + skpHintsHTML() + skpHubCtaHTML();
+      + skpHintsHTML();
   }
   const cur = Math.max(0, Math.min(SKP.cursor, visible.length - 1));
   const start = computeWindowStart(cur, visible.length, SKP_MAX_ROWS);
   const page = visible.slice(start, start + SKP_MAX_ROWS);
   const hiddenBefore = start;
   const hiddenAfter = Math.max(0, visible.length - start - page.length);
-  // ST-06: one row per skill — switch · name · source · version · description. The switch is the
-  // `e toggle` of that row (a span: the row itself is the button that opens the detail).
+  // ST-06: one row per skill — switch · name · source · description (Д41: no Version column; the
+  // detail still shows it). The switch is the `e toggle` of that row (a span: the row itself is the
+  // button that opens the detail).
   return '<div class="tk-list set-sklist">'
-    + '<div class="set-skcols"><span>Enabled</span><span>Name</span><span>Source</span><span>Version</span><span>Description</span></div>'
+    + '<div class="set-skcols"><span>Enabled</span><span>Name</span><span>Source</span><span>Description</span></div>'
     + (hiddenBefore > 0 ? '<button class="tuimore" data-act="skills:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
     + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
@@ -17593,23 +17599,15 @@ function skpListHTML(visible) {
         + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="e toggle" data-act="skills:toggle:' + esc(r.name) + '"></span>'
         + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
         + '<span class="set-src">' + skpSourceChip(r.source) + '</span>'
-        + '<span class="m">v' + esc(r.version) + '</span>'
         + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + '</span></button>';
     }).join('')
     + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
     + '</div>'
-    + skpHintsHTML() + skpHubCtaHTML();
+    + skpHintsHTML();
 }
 function skpHintsHTML() {
   return tuiHints(['j/k move', ['Enter detail', 'skills:detail'], ['e toggle', 'skills:toggle'], ['d remove', 'skills:remove'],
-    ['r refresh', 'skills:refresh'], ['a auto', 'skills:auto'], ['f filter', 'skills:filter']]);
-}
-function skpHubCtaHTML() {
-  return '<div class="tk-list set-hubcta"><button class="tk-li skphub" data-act="skills:hub">'
-    + '<span class="tk-ico tk-ico--blue">' + ic('download') + '</span>'
-    + '<span class="body"><span class="t">Skills Hub</span>'
-      + '<span class="d">Browse and install skills from ClawHub</span></span>'
-    + ic('chevR') + '</button></div>';
+    ['r refresh', 'skills:refresh'], ['f filter', 'skills:filter']]);
 }
 /* Item 09: the agent's built-in tools — GET /api/capabilities `tools` less the
    MCP servers' own `mcp.<server>.*` (Connections › MCP servers lists those);
@@ -17663,7 +17661,7 @@ function skpToolsHTML(groups) {
 function skpShowTools() {
   if (SKP.view !== 'tools') skpListTop();
   SKP.view = 'tools'; SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null;
-  SKP.hubCard = null; SKP.hubSearchEditing = false;
+  SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; SKP.hubSearchEditing = false;
   if (SKP.removeConfirm && !SKP.removeConfirm.submitting) SKP.removeConfirm = null;
   if (SKP.installConfirm && !SKP.installing) SKP.installConfirm = null;
   if (!LIVE_CAPS) skpToolsRefresh();
@@ -17685,7 +17683,7 @@ async function skpToolsRefresh(read) {
 /* ST-07: name, state, source and version, then SKILL.md itself. */
 function skpDetailHTML() {
   const name = SKP.detailName;
-  const back = '<button class="btn btn-g sm" data-act="skills:back" title="Esc back">' + ic('chevL') + 'All skills</button>';
+  const back = '<button class="btn btn-g sm set-flush" data-act="skills:back" title="Esc back">' + ic('chevL') + 'All skills</button>';
   if (!name) return '<div class="tk-bar">' + back + '</div><p class="set-cap">(no skill selected)</p>';
   const row = (SK.rows || []).find((r) => r.name === name);
   const enabled = row ? row.enabled : true;
@@ -17752,10 +17750,17 @@ function formatDownloads(n) {
   if (n < 1000000) return trim(n / 1000) + 'k';
   return trim(n / 1000000) + 'M';
 }
-/* ST-09: the hub — back to Installed, the search box, the count, and one row per result. */
+/* ST-09: the hub — back to Installed, the search box, the count, and one row per result.
+   Д45: one loader at a time. Placeholder rows in the list's own shape while
+   nothing is on screen yet (the first browse ever, a new search); while rows
+   are shown — a kept answer, the last search — and newer ones are on their
+   way, only Browse again's own spinner. Д46: no `claw` / `gh` chip on the
+   rows; a ClawHub row shows its downloads, a GitHub tap row says GitHub. */
 function skpHubListHTML() {
   const q = SKP.hubQuery;
   const n = SKP.hubRows.length;
+  const first = SKP.hubLoading && !n;
+  const refreshing = SKP.hubLoading && n > 0;
   // Not editing: a button that opens the search (`/`), showing the query, or the placeholder while every row is listed.
   const search = SKP.hubSearchEditing
     ? '<label class="tk-inpwrap set-search set-hubsearch is-open">' + ic('search')
@@ -17763,7 +17768,7 @@ function skpHubListHTML() {
     : '<button class="tk-inpwrap set-search set-hubsearch" data-act="skills:hubSearch" title="/ search">' + ic('search')
       + '<span class="' + (q.length ? 'v' : 'ph') + '">' + esc(q.length ? q : 'Search ClawHub and GitHub taps') + '</span></button>';
   let body;
-  if (SKP.hubLoading && !n) body = '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>browsing the skill hub…</p></div>';
+  if (first) body = skpHubSkeletonHTML();
   else if (!n) {
     body = '<div class="tk-empty set-empty">'
       + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('search') + '</span><h4>No skills found</h4>'
@@ -17778,11 +17783,11 @@ function skpHubListHTML() {
       + page.map((r, idx) => {
         const i = idx + start, sel = i === cur;
         const claw = r.source === 'clawhub';
-        // HubRow: source · identifier · downloads · description.
+        // HubRow: identifier · description · downloads (GitHub taps count none).
         return '<button class="tk-li set-hubrow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:card:' + i + '"' + (sel ? ' aria-selected="true"' : '') + '>'
-          + '<span class="tk-chip tk-chip--sm set-srcchip' + (claw ? ' tk-chip--blue' : '') + '">' + (claw ? 'claw' : 'gh') + '</span>'
           + '<span class="body"><span class="t mono" title="' + esc(r.identifier) + '">' + esc(skpHubIdLabel(r.identifier)) + '</span><span class="d">' + esc(r.description) + '</span></span>'
-          + '<span class="m">↓' + esc(formatDownloads(r.downloads)) + '</span></button>';
+          + (claw ? '<span class="m" title="' + esc(skpDownloadsWords(r.downloads)) + '">↓' + esc(formatDownloads(r.downloads)) + '</span>'
+            : '<span class="m">GitHub</span>') + '</button>';
       }).join('')
       + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:hubPage:down">↓ ' + hiddenAfter + ' below</button>' : '')
       + '</div>';
@@ -17790,8 +17795,9 @@ function skpHubListHTML() {
   return '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
       + '<button class="btn btn-g sm" data-act="skills:back" title="Esc back">' + ic('chevL') + 'Installed</button>'
       + search
-      + '<span class="set-counts">' + n + ' result' + (n === 1 ? '' : 's') + '</span>' + (SKP.hubLoading ? '<span class="tk-spin"></span>' : '')
-      + '<button class="btn btn-s sm" data-act="skills:rebrowse" title="r re-browse">' + ic('refresh') + 'Browse again</button>'
+      + (first ? '' : '<span class="set-counts">' + n + ' result' + (n === 1 ? '' : 's') + '</span>')
+      + '<button class="btn btn-s sm" data-act="skills:rebrowse" title="r re-browse"' + (SKP.hubLoading ? ' disabled' : '') + (refreshing ? ' aria-busy="true"' : '') + '>'
+        + (refreshing ? '<span class="tk-spin"></span>' : ic('refresh')) + 'Browse again</button>'
     + '</div></div>'
     + (SKP.hubError ? '<div class="tuierr tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(SKP.hubError) + '</span></div>' : '')
     + (SKP.installError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">install failed: ' + esc(SKP.installError) + '</span></div>' : '')
@@ -17799,40 +17805,62 @@ function skpHubListHTML() {
     + body
     + tuiHints(['j/k move', ['Enter open card', 'skills:card'], ['/ search', 'skills:hubSearch'], ['r re-browse', 'skills:rebrowse'], ['Esc back', 'skills:back']]);
 }
-/* ST-10: owner, downloads, version and the SKILL.md preview before installing. */
+/* Д45: eight rows in the hub list's shape, its only loader while it has nothing to show. */
+function skpHubSkeletonHTML() {
+  return '<div class="tk-list set-hublist set-skel" role="status" aria-busy="true" aria-label="Loading the Skills Hub">'
+    + '<div class="tk-li set-hubrow" aria-hidden="true"><span class="body"><span class="sk sk-t"></span><span class="sk sk-d"></span></span><span class="sk sk-m"></span></div>'.repeat(8)
+    + '</div>';
+}
+/* "482,149 downloads", for a count the row prints as ↓482k. */
+function skpDownloadsWords(n) {
+  return typeof n === 'number' ? n.toLocaleString('en-US') + (n === 1 ? ' download' : ' downloads') : '';
+}
+/* Д46: the meta line a person reads — "482k downloads · by pskoett · v4.0.2", "From GitHub · anthropics/skills". */
+function skpHubMeta(c) {
+  if (c.source !== 'clawhub') return ['From GitHub', c.repo].filter(Boolean).join(' · ');
+  const parts = [];
+  if (typeof c.downloads === 'number') parts.push(formatDownloads(c.downloads) + (c.downloads === 1 ? ' download' : ' downloads'));
+  if (c.repo && c.repo !== 'clawhub') parts.push('by ' + c.repo);
+  if (c.version) parts.push('v' + c.version);
+  return parts.join(' · ');
+}
+/* ST-10, Д46: the skill page. Back to the results flush with the title; the
+   title, the meta line and Install on one line, Install centred on them; the
+   summary; the published SKILL.md folded under Show source (open, it is the
+   whole file, and the pane scrolls). No `claw` / `gh` badge: the meta line
+   says where the skill comes from. Д45: drawn from the hub row at once, the
+   detail read (ClawHub's /api/v1/skills/{slug}) fills in the name, version
+   and source when it answers. */
 function skpHubCardHTML() {
   const c = SKP.hubCard;
   const claw = c.source === 'clawhub';
-  const badge = claw ? 'claw' : 'gh';
-  let body;
-  if (c.body === null) {
-    body = c.bodyError
-      ? '<div class="tk-notice set-softnote">' + ic('info') + '<span class="grow">' + esc(c.bodyError) + '</span></div>'
-      : '<div class="tk-out set-skmd set-loading"><span class="tk-spin"></span>loading SKILL.md…</div>';
-  } else {
-    const lines = c.body.split('\n');
-    const start = Math.max(0, Math.min(SKP.cardScroll, Math.max(0, lines.length - SKP_CARD_LINES)));
-    const win = lines.slice(start, start + SKP_CARD_LINES);
-    const below = Math.max(0, lines.length - (start + win.length));
-    body = (start > 0 ? '<button class="tuimore" data-act="skills:cardScroll:up">↑ ' + start + ' more line' + (start === 1 ? '' : 's') + ' above</button>' : '')
-      + '<pre class="tk-out set-skmd">' + esc(win.join('\n')) + '</pre>'
-      + (below > 0 ? '<button class="tuimore" data-act="skills:cardScroll:down">↓ ' + below + ' more line' + (below === 1 ? '' : 's') + ' below</button>' : '');
-  }
   const canInstall = !!c.installId;
-  return '<div class="tk-bar"><button class="btn btn-g sm" data-act="skills:back" title="[n] cancel">' + ic('chevL') + 'Results</button><span class="grow"></span>'
-      + (SKP.installing ? '<span class="tk-spin"></span><span class="set-cap">installing…</span>'
-        : '<button class="btn btn-p sm" data-act="skills:install"' + (canInstall ? '' : ' disabled') + ' title="i install">' + ic('download') + 'Install</button>')
+  const meta = skpHubMeta(c);
+  return '<div class="tk-bar"><button class="btn btn-g sm set-flush" data-act="skills:back" title="Esc back">' + ic('chevL') + 'Results</button></div>'
+    + '<div class="set-cardhead">'
+      + '<div class="set-cardtitle"><h3 class="set-dtitle" title="' + esc(c.identifier) + '">' + esc(c.name) + '</h3>'
+        + (meta ? '<p class="set-cardmeta">' + esc(meta) + '</p>' : '') + '</div>'
+      + (SKP.installing ? '<span class="set-installing"><span class="tk-spin"></span>Installing…</span>'
+        : '<button class="btn btn-blue" data-act="skills:install"' + (canInstall ? '' : ' disabled') + ' title="i install">' + ic('download') + 'Install</button>')
     + '</div>'
-    + '<div class="set-titlerow"><span class="tk-chip tk-chip--sm' + (claw ? ' tk-chip--blue' : '') + '" title="' + (claw ? 'ClawHub' : 'GitHub tap') + '">' + badge + '</span>'
-      + '<h3 class="set-dtitle">' + esc(c.name) + '</h3><span class="mono set-meta">' + esc(c.identifier) + '</span></div>'
-    + '<p class="set-meta">owner ' + esc(c.repo) + ' · ↓' + esc(formatDownloads(c.downloads)) + ' · v' + esc(c.version === null ? '—' : c.version) + '</p>'
-    + (c.version === null ? '<p class="set-cap">(version is not printed by `atag skill browse`)</p>' : '')
     + (c.description ? '<p class="set-desc">' + esc(c.description) + '</p>' : '')
-    + body
+    + skpCardSourceHTML(c)
     + (SKP.installError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">install failed: ' + esc(SKP.installError) + '</span></div>' : '')
     + (SKP.installing ? '' : tuiHints([['[i] install', 'skills:install', {disabled: !canInstall}], ['[n] cancel', 'skills:back'], 'j/k scroll']))
     // `atag skill install` takes `@owner/slug`; a catalog-browse row carries only the slug (ClawHub's browse API prints no owner) and the detail answer carries none either.
     + (!canInstall && claw ? '<p class="set-cap">(install needs `@owner/slug` — this browse row has no owner; `/` search lists owner-qualified rows)</p>' : '');
+}
+/* Д46: the raw SKILL.md, folded. While the detail read is out, the fold's
+   own line waits (the page's one loader); a GitHub tap or a failed read says
+   why there is nothing to show. */
+function skpCardSourceHTML(c) {
+  if (c.body === null && c.bodyError) return '<div class="tk-notice set-softnote">' + ic('info') + '<span class="grow">' + esc(c.bodyError) + '</span></div>';
+  if (c.body === null) return '<div class="set-srcfold"><span class="set-srcwait"><span class="tk-spin"></span>Loading SKILL.md…</span></div>';
+  const open = SKP.cardSource;
+  return '<div class="set-srcfold">'
+    + '<button class="btn btn-g sm set-flush" data-act="skills:source" aria-expanded="' + open + '">' + ic(open ? 'chevD' : 'chevR') + (open ? 'Hide source' : 'Show source') + '</button>'
+    + (open ? '<pre class="tk-out set-skmd set-srcbody">' + esc(c.body) + '</pre>' : '')
+    + '</div>';
 }
 
 /* Loaders and actions. */
@@ -17902,23 +17930,54 @@ function skpToHubRow(r) {
   }
   return row;
 }
-async function skpBrowse(query) {
+/* Д45: the hub opens on its last answer for the query, kept by main
+   (main/skills-hub-cache.ts), and asks `atag skill browse|search` again only
+   when main says that answer is no longer fresh, or on Browse again (`force`).
+   Rows already on screen for the same query stay there while newer ones are
+   fetched; anything else starts on placeholder rows. */
+async function skpBrowse(query, force) {
   if (!BR) return;
-  SKP.mode = 'hub'; SKP.hubLoading = true; SKP.hubError = null; SKP.hubCard = null; SKP.installConfirm = null; SKP.hubSearchEditing = false;
-  SKP.hubQuery = query || '';
-  render();
+  const q = query || '';
+  const key = skpHubKey(q);
+  SKP.mode = 'hub'; SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; SKP.installConfirm = null; SKP.hubSearchEditing = false;
+  SKP.hubQuery = q;
+  if (SKP.hubFor !== key) { SKP.hubRows = []; SKP.hubFor = null; SKP.hubSavedAt = null; SKP.hubError = null; SKP.hubCursor = 0; }
   const seq = ++SKP.hubSeq;
-  const res = await BR.skillBrowse(SKP.hubQuery);
+  // Nothing of this query on screen: its placeholders while the kept answer is looked up (a moment) or fetched.
+  SKP.hubLoading = !SKP.hubRows.length || !!force;
+  render();
+  let fresh = false;
+  if (!force && BR.skillBrowseCached) {
+    const kept = await BR.skillBrowseCached(q).catch(() => null); // no kept answer is a miss, never a stuck hub
+    if (seq !== SKP.hubSeq) return;
+    if (kept && kept.ok && Array.isArray(kept.rows)) { skpSetHubRows(key, kept.rows, kept.hubError, kept.savedAt); fresh = !!kept.fresh; }
+  }
+  if (fresh) { SKP.hubLoading = false; skpHubPaint(); return; }
+  SKP.hubLoading = true; skpHubPaint();
+  const res = await BR.skillBrowse(q).catch((e) => ({ok:false, error:String((e && e.message) || e)}));
   if (seq !== SKP.hubSeq) return;
   SKP.hubLoading = false;
-  if (!res || !res.ok) {
+  if (res && res.ok) skpSetHubRows(key, res.rows || [], res.hubError, res.savedAt || Date.now());
+  else if (SKP.hubRows.length) {
+    // The rows on screen stay; the note says how old they are.
+    SKP.hubError = 'Could not refresh the Skills Hub: ' + ((res && res.error) || 'no answer') + '. Showing the list from ' + relTime(SKP.hubSavedAt || Date.now()) + '.';
+  } else {
     SKP.hubRows = []; SKP.hubError = (res && res.error) || 'skill hub failed';
     SKP.msg = {text:'skill hub failed: ' + SKP.hubError};
-  } else {
-    SKP.hubRows = (res.rows || []).map(skpToHubRow); SKP.hubError = res.hubError || null; SKP.hubCursor = 0;
   }
-  render();
+  skpHubPaint();
 }
+function skpHubKey(q) { return String(q || '').trim().replace(/\s+/g, ' ').toLowerCase(); } // main's hubCacheKey
+/* New rows for the query `key`: the cursor stays on the row it was on when that row is still listed. */
+function skpSetHubRows(key, rows, hubError, savedAt) {
+  const same = SKP.hubFor === key;
+  const was = same && SKP.hubRows[SKP.hubCursor] ? SKP.hubRows[SKP.hubCursor].identifier : null;
+  SKP.hubRows = rows.map(skpToHubRow); SKP.hubError = hubError || null; SKP.hubSavedAt = savedAt || null; SKP.hubFor = key;
+  const at = was ? SKP.hubRows.findIndex((r) => r.identifier === was) : -1;
+  SKP.hubCursor = at >= 0 ? at : same ? Math.min(SKP.hubCursor, Math.max(0, SKP.hubRows.length - 1)) : 0;
+}
+/* A late answer repaints the hub, never under the caret in its search box (the next paint shows it). */
+function skpHubPaint() { if (skillsVisible() && !skpTyping()) render(); }
 async function skpClawhubApiBase() {
   const c = LIVE_CONFIG && LIVE_CONFIG.skills && LIVE_CONFIG.skills.clawhub;
   if (c && typeof c.apiBase === 'string' && c.apiBase) return c.apiBase;
@@ -17926,31 +17985,41 @@ async function skpClawhubApiBase() {
   const res = BR.configGetKey ? await BR.configGetKey('skills.clawhub.apiBase') : null;
   return res && res.ok && typeof res.value === 'string' ? res.value : null;
 }
+/* Д45: the card is drawn from its row at once — name, summary, downloads, owner and Install — and
+   ClawHub's detail read fills in the display name, version and SKILL.md when it answers. A detail
+   read once is kept for the session. An answer for a card no longer open is kept, never drawn. */
 async function skpOpenCard(i) {
   const row = SKP.hubRows[i];
   if (!BR || !row) return;
-  SKP.hubCursor = i; SKP.cardScroll = 0; SKP.installError = null;
+  SKP.hubCursor = i; SKP.installError = null; SKP.cardSource = false;
+  const seq = ++SKP.cardSeq;
   if (row.source !== 'clawhub') {
+    SKP.hubCardLoading = false;
     SKP.hubCard = {identifier:row.identifier, source:'github', name:row.name, repo:row.repo, description:row.description, version:null, downloads:null,
       body:null, bodyError:'preview unavailable for GitHub taps (SKILL.md is pulled at install)', installId:row.identifier};
     render(); return;
   }
-  SKP.hubCardLoading = true; render();
+  const card = {identifier:row.identifier, source:'clawhub', name:row.name, repo:row.owner || 'clawhub', description:row.description, version:null,
+    downloads:row.downloads, body:null, bodyError:null, installId:row.owner ? row.identifier : null};
+  const known = SKP.cardCache.get(row.identifier);
+  SKP.hubCard = known ? Object.assign(card, known) : card;
+  SKP.hubCardLoading = !known;
+  render();
+  if (known) return;
   const apiBase = await skpClawhubApiBase();
   const res = apiBase ? await BR.clawhubSkillDetail(apiBase, row.slug, row.owner) : {ok:false, error:'skills.clawhub.apiBase is not known'};
-  SKP.hubCardLoading = false;
-  let body = null, bodyError = null, name = row.name, version = null, downloads = row.downloads, repo = row.owner;
+  let fill;
   if (res && res.ok && res.detail) {
     const d = res.detail;
-    body = d.skillMd && d.skillMd.length ? d.skillMd : null;
-    if (body === null) bodyError = 'no SKILL.md published for this skill';
-    name = d.displayName || row.slug; version = d.version; downloads = d.downloads; repo = d.ownerHandle || row.owner;
-  } else {
-    bodyError = (res && res.error) || 'skill detail failed';
-  }
-  SKP.hubCard = {identifier:row.identifier, source:'clawhub', name, repo:repo || 'clawhub', description:row.description, version, downloads,
-    body, bodyError, installId:row.owner ? row.identifier : null};
-  render();
+    const body = d.skillMd && d.skillMd.length ? d.skillMd : null;
+    fill = {name:d.displayName || row.slug, version:d.version, downloads:d.downloads, repo:d.ownerHandle || row.owner || 'clawhub',
+      body, bodyError:body === null ? 'no SKILL.md published for this skill' : null};
+    SKP.cardCache.set(row.identifier, fill);
+  } else fill = {bodyError:(res && res.error) || 'skill detail failed'};
+  if (seq !== SKP.cardSeq || !SKP.hubCard || SKP.hubCard.identifier !== row.identifier) return;
+  SKP.hubCardLoading = false;
+  Object.assign(SKP.hubCard, fill);
+  skpHubPaint();
 }
 async function skpInstall(ack) {
   if (!BR || SKP.installing) return;
@@ -17960,7 +18029,7 @@ async function skpInstall(ack) {
   const res = await BR.skillInstall(id, !!ack);
   SKP.installing = false;
   if (res && res.ok) {
-    SKP.installConfirm = null; SKP.hubCard = null; SKP.mode = 'list';
+    SKP.installConfirm = null; SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; SKP.mode = 'list';
     SKP.view = 'skills'; // Item 09: the hub can be opened from Built-in tools; the new skill is on the skills list
     SKP.msg = {text:res.line || ('installed from ' + id), restart:true}; // the CLI's own `installed <name> (v…) from <id> — <scan>` line
     await skpReloadRows(); render(); return;
@@ -17982,11 +18051,13 @@ function skillsAct(what) {
   if (verb === 'removeCancel') { SKP.removeConfirm = null; render(); return; }
   if (verb === 'refresh') {
     if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); render(); return; } // Item 09: the list on screen is the agent's tools
-    refreshSkillList();
-    if (SKP.mode === 'detail' && SKP.detailName) skpOpenDetail(SKP.detailName);
+    if (SKP.mode === 'detail' && SKP.detailName) { refreshSkillList(); skpOpenDetail(SKP.detailName); return; }
+    // Д44: the button spins until the list is read again (behind a refresh already in flight), the one sign it was pressed.
+    if (SKP.listRefreshing) return;
+    SKP.listRefreshing = true; render();
+    skpReloadRows().finally(() => { SKP.listRefreshing = false; if (skillsVisible() && !skpTyping()) render(); });
     return;
   }
-  if (verb === 'auto') { SKP.auto = !SKP.auto; render(); return; }
   if (verb === 'filter') {
     if (SKP.view !== 'skills') { SKP.view = 'skills'; skpListTop(); } // Item 09: back from the Built-in tools list
     SKP.filter = arg && SKP_FILTERS.includes(arg) ? arg : SKP_FILTERS[(SKP_FILTERS.indexOf(SKP.filter) + 1) % SKP_FILTERS.length]; SKP.cursor = 0; render(); return;
@@ -17995,17 +18066,17 @@ function skillsAct(what) {
   if (verb === 'page') { const n = skpVisibleRows().length; SKP.cursor = Math.max(0, Math.min(SKP.cursor + (arg === 'up' ? -SKP_MAX_ROWS : SKP_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'back') {
     if (SKP.installConfirm) { SKP.installConfirm = null; render(); return; }
-    if (SKP.hubCard) { SKP.hubCard = null; render(); return; }
+    if (SKP.hubCard) { SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; render(); return; }
     if (SKP.mode === 'hub' && SKP.hubSearchEditing) { SKP.hubSearchEditing = false; render(); return; }
     SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null; render(); return;
   }
   if (verb === 'hub') { skpBrowse(''); return; }
   if (verb === 'search') { skpBrowse(arg); return; }
   if (verb === 'hubSearch') { SKP.mode = 'hub'; SKP.hubSearchEditing = true; render(); const n = $('#skp-hubq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
-  if (verb === 'rebrowse') { skpBrowse(SKP.hubQuery); return; }
+  if (verb === 'rebrowse') { skpBrowse(SKP.hubQuery, true); return; } // Д45: past the kept answer, to the hub itself
   if (verb === 'hubPage') { const n = SKP.hubRows.length; SKP.hubCursor = Math.max(0, Math.min(SKP.hubCursor + (arg === 'up' ? -SKP_HUB_ROWS : SKP_HUB_ROWS), n - 1)); render(); return; }
   if (verb === 'card') { const i = arg === '' ? SKP.hubCursor : +arg; skpOpenCard(i); return; }
-  if (verb === 'cardScroll') { SKP.cardScroll = Math.max(0, SKP.cardScroll + (arg === 'up' ? -SKP_CARD_LINES : SKP_CARD_LINES)); render(); return; }
+  if (verb === 'source') { SKP.cardSource = !SKP.cardSource; render(); return; } // Д46: the skill page's Show source fold
   if (verb === 'install') { skpInstall(false); return; }
   if (verb === 'installAck') { skpInstall(true); return; }
   if (verb === 'installCancel') { const id = SKP.installConfirm ? SKP.installConfirm.identifier : ''; SKP.installConfirm = null; SKP.msg = {text:'install cancelled: ' + id}; render(); return; }
@@ -18032,8 +18103,13 @@ function skillsKey(e, k, inText) {
   if (SKP.hubCard) {
     if (k === 'i' || k === 'y' || k === 'Enter') { e.preventDefault(); if (SKP.hubCard.installId) skpInstall(false); return true; } // handleHubCardKey: i / y / Enter
     if (k === 'n' || k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
-    if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); SKP.cardScroll++; render(); return true; }
-    if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); SKP.cardScroll = Math.max(0, SKP.cardScroll - 1); render(); return true; }
+    // Д46: the page scrolls (the source unfolds in it, whole): the settings body, or the Skills room's scroller.
+    if (k === 'j' || k === 'ArrowDown' || k === 'k' || k === 'ArrowUp') {
+      e.preventDefault();
+      const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .scroller');
+      if (box) box.scrollTop += (k === 'j' || k === 'ArrowDown' ? 60 : -60);
+      return true;
+    }
     return false;
   }
   if (SKP.mode === 'hub') {
@@ -18042,7 +18118,7 @@ function skillsKey(e, k, inText) {
     if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); SKP.hubCursor = Math.max(SKP.hubCursor - 1, 0); render(); return true; }
     if (k === 'Enter') { e.preventDefault(); if (n) skpOpenCard(Math.min(SKP.hubCursor, n - 1)); return true; }
     if (k === '/') { e.preventDefault(); skillsAct('hubSearch'); return true; }
-    if (k === 'r') { e.preventDefault(); skpBrowse(SKP.hubQuery); return true; }
+    if (k === 'r') { e.preventDefault(); skillsAct('rebrowse'); return true; }
     if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
     return false;
   }
@@ -18062,7 +18138,7 @@ function skillsKey(e, k, inText) {
   if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); SKP.cursor = Math.min(SKP.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
   if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); SKP.cursor = Math.max(SKP.cursor - 1, 0); render(); return true; }
   if (k === 'Enter') { e.preventDefault(); skillsAct('detail'); return true; }
-  const map = {e:'toggle', d:'remove', r:'refresh', a:'auto', f:'filter', i:'hub'};
+  const map = {e:'toggle', d:'remove', r:'refresh', f:'filter', i:'hub'};
   if (map[k]) { e.preventDefault(); skillsAct(map[k]); return true; }
   return false;
 }
@@ -19003,9 +19079,10 @@ if (typeof window !== 'undefined') {
   window.__skillsRows = () => (SK.rows ? SK.rows.length : 0); // every `atag skill list` row, as loaded (the list paints a 14-row window of them)
   window.__skillsWindow = () => ({painted: document.querySelectorAll('#settings [data-skill-row]').length, visible: skpVisibleRows().length, max: SKP_MAX_ROWS,
     above: (document.querySelector('#settings [data-act="skills:page:up"]') || {}).textContent || '', below: (document.querySelector('#settings [data-act="skills:page:down"]') || {}).textContent || ''});
-  window.__skillsState = () => ({mode: SKP.mode, view: SKP.view, cursor: SKP.cursor, filter: SKP.filter, auto: SKP.auto, busy: SKP.busy, detailName: SKP.detailName,
+  window.__skillsState = () => ({mode: SKP.mode, view: SKP.view, cursor: SKP.cursor, filter: SKP.filter, busy: SKP.busy, listRefreshing: SKP.listRefreshing, detailName: SKP.detailName,
     detailBody: SKP.detailBody, detailSource: SKP.detailSource, lastError: SKP.lastError, msg: SKP.msg ? SKP.msg.text : '', restart: !!(SKP.msg && SKP.msg.restart),
     hubRows: SKP.hubRows.map((r) => ({identifier: r.identifier, source: r.source, downloads: r.downloads})), hubLoading: SKP.hubLoading, hubError: SKP.hubError,
+    hubFor: SKP.hubFor, hubSavedAt: SKP.hubSavedAt, cardSource: SKP.cardSource,
     hubCard: SKP.hubCard ? {identifier: SKP.hubCard.identifier, name: SKP.hubCard.name, repo: SKP.hubCard.repo, version: SKP.hubCard.version,
       bodyLines: SKP.hubCard.body === null ? 0 : SKP.hubCard.body.split('\n').length, bodyError: SKP.hubCard.bodyError, installId: SKP.hubCard.installId} : null,
     hubCardLoading: SKP.hubCardLoading, installConfirm: SKP.installConfirm, removeConfirm: SKP.removeConfirm ? Object.assign({}, SKP.removeConfirm) : null, installError: SKP.installError});
