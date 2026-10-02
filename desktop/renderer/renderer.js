@@ -4672,7 +4672,7 @@ function diagnosticsPane() {
       + '<button class="btn btn-p sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
       + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
     + '</div>'
-    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. It is not sent anywhere: attach it when you write to us.</p>'
+    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us.</p>'
     + diagLogHTML()
     + '</div>';
 }

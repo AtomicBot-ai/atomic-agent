@@ -23,7 +23,7 @@ import { promisify } from "node:util";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
-import { redactSecrets } from "./report-redact.js";
+import { logTail, redactSecrets, scrubText } from "./report-redact.js";
 import {
   configGet,
   configSet,
@@ -1872,14 +1872,18 @@ function wireIpc(client: AgentClient): void {
      anything but screenshots of a scrolling pane. This
      writes what the app actually holds — the agent log on disk, the config
      with every secret removed, and what this build is — next to the state
-     directory, and answers with the path so the window can reveal it. */
+     directory, and answers with the path so the window can reveal it.
+     The log's tail goes through the same scrubber as the config's strings:
+     `atag serve`'s own lines are in agent.log now (provider errors, URLs,
+     command lines), and the screen promises the keys are out. It starts at
+     a whole line, so a secret cut at its start cannot slip past it. */
   ipcMain.handle("app:debugBundle", async () => {
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const out = join(app.getPath("downloads"), `atomic-agent-debug-${stamp}.txt`);
       const cfg = await readWholeConfig();
       let log = "";
-      try { log = readFileSync(agentLogPath(), "utf8").slice(-400_000); } catch { log = "(no agent.log yet)"; }
+      try { log = scrubText(logTail(readFileSync(agentLogPath(), "utf8"), 400_000)); } catch { log = "(no agent.log yet)"; }
       writeFileSync(out, [
         `Atomic Agent ${app.getVersion()} · ${process.platform} ${process.arch}`,
         `written ${new Date().toISOString()}`,
