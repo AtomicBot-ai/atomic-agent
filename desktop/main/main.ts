@@ -8842,7 +8842,7 @@ async function r4SeamTest(
     bubbles: number; endmarks: number; offers: number;
     turnsBefore: number; turnsAfter: number; busy: boolean;
   };
-  // A provider that is not configured takes the "no longer configured" arm,
+  // A provider that is not configured takes the "no longer set up" arm,
   // which is the one notice this window can raise without a real session
   // history behind it. Its shape in the DOM is what is under test, not its
   // wording — hfAndDeltaTest already pins the sentence verbatim.

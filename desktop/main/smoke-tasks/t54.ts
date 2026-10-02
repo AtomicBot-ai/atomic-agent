@@ -23,7 +23,7 @@ export async function checks54(js: Js, check: Check): Promise<void> {
     const host = document.createElement('div');
     host.innerHTML = apprCard({state: 'approved', at: '13:19:45', cat: 'fusion_fanout', kind: CATEGORY_LABEL.fusion_fanout});
     const badge = host.querySelector('.badge');
-    const keep = {log: S.log, cfg: LIVE_CONFIG, want: SWX.want};
+    const keep = {log: S.log, cfg: LIVE_CONFIG, want: SWX.want, stamp: CTX055.stamp};
     S.log = [];
     let stamp = [];
     try {
@@ -37,7 +37,7 @@ export async function checks54(js: Js, check: Check): Promise<void> {
       stamp = S.log.map((m) => { const d = document.createElement('div'); d.innerHTML = m.text; return d.textContent || ''; });
       return {badge: badge ? badge.textContent : null, title: badge ? badge.getAttribute('title') : null,
         live: LIVE_ELSEWHERE_LINE, stamp, liveProvider: live};
-    } finally { S.log = keep.log; LIVE_CONFIG = keep.cfg; SWX.want = keep.want; CTX055.stamp = null; render(); }
+    } finally { S.log = keep.log; LIVE_CONFIG = keep.cfg; SWX.want = keep.want; CTX055.stamp = keep.stamp; render(); }
   })()`);
   check(
     "T54: an approval's receipt says what was allowed in words, with the agent's category label as its tooltip",

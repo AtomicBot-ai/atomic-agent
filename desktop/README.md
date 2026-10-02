@@ -91,7 +91,7 @@ provider and model that session last ran on. It is reported and never applied:
 a child restart, and a restart aborts every turn this process is streaming,
 including ones in chats the user is not looking at. The offer is refused
 outright while anything is running. When the stamped provider is gone the
-window says so in the TUI's words and keeps the current model. The comparison
+window says so in plain words and keeps the current model. The comparison
 is the agent's own: the FULL model id against the provider entry's
 `defaultChatModel ?? model`, the pair 0.5.5's `planModelRestore` tests — not
 the chip's display label and not the basename, which would read
