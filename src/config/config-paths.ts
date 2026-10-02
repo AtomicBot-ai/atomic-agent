@@ -1,14 +1,9 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { USER_CONFIG_DEFAULTS } from "./config-schema.js";
 import { ConfigValidationError } from "./config-validation-error.js";
+import { writeOwnerOnlyFileAtomicSync } from "./owner-only-file.js";
 
 /**
  * Dotted-key addressing for `atomic-agent config get|set|unset|list`.
@@ -258,7 +253,7 @@ export function writeConfigPath(
 
 /**
  * Atomically write a *sparse* config tree — only the keys the user has
- * actually set — using the same tmp + rename discipline as
+ * actually set — using the same owner-only tmp + rename discipline as
  * `writeUserConfigFileSync`.
  *
  * Separate from `writeUserConfigFileSync` on purpose: that one takes a
@@ -276,9 +271,7 @@ export function writeRawUserConfigFileSync(
 ): void {
   mkdirSync(dirname(path), { recursive: true });
   const payload = JSON.stringify(tree, null, 2) + "\n";
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, payload, "utf8");
-  renameSync(tmp, path);
+  writeOwnerOnlyFileAtomicSync(path, payload);
 }
 
 /**
