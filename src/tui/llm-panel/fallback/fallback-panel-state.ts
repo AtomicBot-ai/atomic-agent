@@ -28,6 +28,13 @@ export interface FallbackLinkRow {
    * `appendLocal`.
    */
   isAppendedLocal: boolean;
+  /**
+   * True when the runtime will pass this link over for having no key
+   * (`lacksRequiredApiKeyIn`, as `createFallbackChainResolver` applies
+   * it). Never set on the head: the primary is never skipped. Optional so
+   * rows built by hand read as "not skipped".
+   */
+  skippedNoKey?: boolean;
 }
 
 /**

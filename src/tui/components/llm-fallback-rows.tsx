@@ -171,6 +171,9 @@ function formatLink(link: FallbackLinkRow, index: number): string {
 
 function linkNote(link: FallbackLinkRow): string {
   if (link.isActive) return "active (primary)";
+  // Before the other tags: whatever else the link is, it will not be
+  // tried until it has a key, and that is what the operator can fix.
+  if (link.skippedNoKey) return "no key, skipped";
   if (link.isAppendedLocal) return "local last resort (appendLocal)";
   return "fallover link";
 }

@@ -69,6 +69,27 @@ describe("FallbackRows", () => {
     expect(out).toContain("+ add link");
   });
 
+  it("says on the row when a link will be skipped for having no key", () => {
+    const state = fallbackState({
+      links: [
+        link("cloud-a", { isActive: true }),
+        link("cloud-b", { skippedNoKey: true }),
+        link("cloud-c"),
+      ],
+      addableProviderIds: [],
+      appendLocal: false,
+    });
+    const { lastFrame } = render(
+      <LlmModeRows rows={[]} state={state} maxRows={20} />,
+    );
+    const lines = strip(lastFrame() ?? "").split("\n");
+    const b = lines.find((l) => l.includes("2. cloud-b"));
+    const c = lines.find((l) => l.includes("3. cloud-c"));
+    expect(b).toContain("no key, skipped");
+    expect(c).toContain("fallover link");
+    expect(c).not.toContain("no key");
+  });
+
   it("shows the empty-state hint when no chain is configured", () => {
     const state = fallbackState({ links: [], addableProviderIds: ["cloud-a"] });
     const { lastFrame } = render(

@@ -89,4 +89,30 @@ describe("buildFallbackChainView", () => {
     );
     expect(view.addableProviderIds).toEqual(["cloud-b", "local-llama"]);
   });
+
+  it("flags a fallback link the runtime skips for having no key", () => {
+    // cloud-b is an `aimlapi` entry with no key: the runtime passes it over.
+    // The local link needs none, and the head is never skipped, keyless or
+    // not, because the primary is always tried.
+    const view = buildFallbackChainView(
+      resolved({ fallback: { chain: ["cloud-a", "cloud-b"], appendLocal: true } }),
+    );
+    const byId = new Map(view.links.map((l) => [l.providerId, l]));
+    expect(byId.get("cloud-a")!.skippedNoKey).toBe(false);
+    expect(byId.get("cloud-b")!.skippedNoKey).toBe(true);
+    expect(byId.get("local-llama")!.skippedNoKey).toBe(false);
+  });
+
+  it("does not flag a fallback link once it has a key", () => {
+    const view = buildFallbackChainView(
+      resolved({
+        providers: [
+          { id: "cloud-a", kind: "openrouter", defaultChatModel: "vendor/a" },
+          { id: "cloud-b", kind: "aimlapi", apiKey: "sk-test" },
+        ],
+        fallback: { chain: ["cloud-a", "cloud-b"], appendLocal: false },
+      }),
+    );
+    expect(view.links.map((l) => l.skippedNoKey)).toEqual([false, false]);
+  });
 });
