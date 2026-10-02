@@ -1897,8 +1897,8 @@ function wireIpc(client: AgentClient): void {
       : `[desktop] started the local model daemon (${r.modelId})`;
     console.error(line);
     send("agent:log", { stream: "stderr", line });
-    // The launch start was only ever a log line; a ⇄'s also tells the window.
-    if (r.via === "swap") send("cli:daemon", r);
+    // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
+    if (r.via !== "launch") send("cli:daemon", r);
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };

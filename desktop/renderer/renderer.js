@@ -19701,14 +19701,16 @@ function llmRouteCardHTML() {
 }
 /* llm-panel.tsx StatusLines: one line, the first that applies, else "status: ready". */
 function llmStatusLine() {
-  // ATO-123: what main's supervisor is doing about the local server, on every pane — under Fusion too.
-  const watching = dwatchStatusLine();
-  if (watching) return watching;
   const m = LLMP.mode;
+  // ATO-123: what main's supervisor is doing about the local server — after the local pane's own errors (why a Start failed), and on every other pane, Fusion's included.
+  const watching = dwatchStatusLine();
   if (m === 'local') {
     if (LLMP.localBusy && LLMP.lastRefreshedAt === null) return 'local catalog: loading';
     if (LLMP.localErr) return 'local catalog: ' + LLMP.localErr;
     if (LLMP.statusErr) return 'local daemon: ' + LLMP.statusErr;
+    if (watching) return watching;
+  } else if (watching) {
+    return watching;
   } else if (m === 'external') {
     if (LLMP.statusLine && LLMP.statusSource === 'external') return LLMP.statusLine;
   } else {

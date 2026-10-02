@@ -431,7 +431,8 @@ async function onDisk(modelId: string): Promise<boolean> {
    nothing after. */
 export interface BringUpSteps { signal: AbortSignal; superseded(): boolean; starting(): void }
 interface Background { superseded: boolean; starting: boolean; abort: AbortController; done: Promise<BringUp> }
-export type BringUpReport = (r: BringUp & { modelId: string; via: "swap" | "launch" }) => void;
+/** `update` (ATO-123): the server the llama.cpp update stopped, started again after it. */
+export type BringUpReport = (r: BringUp & { modelId: string; via: "swap" | "launch" | "update" }) => void;
 const SUPERSEDED: BringUp = { daemon: "superseded" };
 let background: Background | null = null;
 let reportBringUp: BringUpReport = () => {};
@@ -486,7 +487,7 @@ async function startIfDown(s: BringUpSteps): Promise<BringUp> {
   if (st.notStarted) return SUPERSEDED;
   return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
 }
-function report(r: BringUp, modelId: string, via: "swap" | "launch"): void {
+function report(r: BringUp, modelId: string, via: "swap" | "launch" | "update"): void {
   if (r.daemon !== "started" && r.daemon !== "start-failed") return;   // nothing started, or it was superseded
   try { reportBringUp({ ...r, modelId, via }); } catch { /* a report never fails the bring-up */ }
 }
@@ -505,10 +506,14 @@ function bringUpBehindSwap(modelId: string): void {
  * model on disk), as the background bring-up. One already on its way — a ⇄'s
  * — is adopted, and says how it went itself: the start is logged once.
  */
-export function bringUpAtLaunch(modelId: string): Promise<BringUp> {
+export function bringUpAtLaunch(modelId: string, via: "launch" | "update" = "launch"): Promise<BringUp> {
   const { done, adopted } = startInBackground(startIfDown);
-  if (!adopted) void done.then((r) => report(r, modelId, "launch"));
+  if (!adopted) void done.then((r) => report(r, modelId, via));
   return done;
+}
+/** ATO-123: the mark every stop, switch, model change and the quit move (supersedeBringUp) — whether one came since a moment. */
+export function stopsMark(): number {
+  return startsMark;
 }
 /** Settings › Models › Start: in its turn, and no second `models start` for a daemon that is already up. */
 export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean }> {

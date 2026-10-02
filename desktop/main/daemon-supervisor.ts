@@ -233,7 +233,9 @@ export class DaemonSupervisor {
     if (this.incidentSince === null && !this.gaveUp) return;
     if (this.timer === null || this.deps.wanted()) return;
     if (this.gaveUp) {
+      // And the server that kept dying is nobody's any more: only a start the person makes listens again.
       this.gaveUp = false;
+      this.owned = false;
       this.notify({ kind: "clear" });
       return;
     }

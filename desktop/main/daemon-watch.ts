@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
-import { bringUpAtLaunch, bringUpInFlight, daemonTurnsOnTheirWay, runModeWantsDaemon } from "./backend-switch.js";
+import { bringUpAtLaunch, bringUpInFlight, daemonTurnsOnTheirWay, runModeWantsDaemon, stopsMark } from "./backend-switch.js";
 import {
   DaemonSupervisor,
   type DaemonLook,
@@ -151,8 +151,14 @@ let host: DaemonWatchHost = { notify: () => {}, say: () => {}, busy: () => false
  * update), a background bring-up, a `models start` — else what probe() says.
  */
 async function look(): Promise<DaemonLook> {
-  if (daemonTurnsOnTheirWay() > 0 || startsInFlight() > 0 || bringUpInFlight() || host.busy()) return "busy";
-  return probe();
+  if (busyNow()) return "busy";
+  const seen = await probe();
+  // The probe takes up to 2.5 s: one of those may have begun meanwhile, and then what it saw is moot.
+  return busyNow() ? "busy" : seen;
+}
+
+function busyNow(): boolean {
+  return daemonTurnsOnTheirWay() > 0 || startsInFlight() > 0 || bringUpInFlight() !== null || host.busy();
 }
 
 /** Down when the pid file names a dead pid or the port refuses; any HTTP answer (503 while a model loads), or a listener too busy to answer in time, is a server that is there. */
@@ -185,16 +191,23 @@ async function restart(): Promise<{ ok: boolean; superseded?: boolean; error?: s
  * server — and afterUpdate puts back what it took.
  */
 export interface UpdateHold {
-  /** The server was the app's when the update began. */
+  /** The server was the app's, with the supervisor on, when the update began. */
   wasOwned: boolean;
+  /** backend-switch's stops mark then: a stop, a switch or a model change since is the last word. */
+  mark: number;
 }
 
-/** main.ts, as a llama.cpp update begins in its daemon turn. */
+/**
+ * main.ts, as a llama.cpp update begins in its daemon turn. Only with the
+ * supervisor on — in every real run, and never in a smoke run, whose checks
+ * (T18) count each `models start` an update is followed by.
+ */
 export function updateBegins(): UpdateHold {
-  const wasOwned = daemonWatch.state().owned;
+  const st = daemonWatch.state();
+  const wasOwned = st.armed && st.owned;
   daemonWatch.noteStopped();
   if (wasOwned) host.say("[desktop] local-llm: the llama.cpp update may stop the model server to replace its binary — it is started again after a successful update");
-  return { wasOwned };
+  return { wasOwned, mark: stopsMark() };
 }
 
 /**
@@ -204,9 +217,13 @@ export function updateBegins(): UpdateHold {
  * one it is left as the update left it, and the update's answer says so — the
  * line Settings › Models shows for it.
  */
-export async function afterUpdate<T extends { ok: boolean; error?: string }>(res: T, hold: UpdateHold): Promise<T> {
-  if (!hold.wasOwned) return res;
-  if ((await probe()) === "up") {
+export async function afterUpdate<T extends { ok: boolean; error?: string; stdout?: string }>(res: T, hold: UpdateHold): Promise<T> {
+  // A stop, a switch or a model change while the update ran (Settings' Stop stays live through it): theirs is the last word.
+  const movedOn = () => stopsMark() !== hold.mark;
+  if (!hold.wasOwned || movedOn()) return res;
+  const now = await probe();
+  if (movedOn()) return res;
+  if (now === "up") {
     daemonWatch.noteStarted();
     return res;
   }
@@ -216,12 +233,16 @@ export async function afterUpdate<T extends { ok: boolean; error?: string }>(res
       error: `${res.error ?? "the update failed"} — the local model server it stopped is still stopped; start it in Settings › Models`,
     };
   }
-  if (routeNeedsDaemon(readConfig())) {
-    const modelId = readConfig()?.localModels?.managed?.modelId ?? "";
-    // The launch's background bring-up: in its turn, and ended at once by a stop or a switch; its start makes the server the app's again.
-    void bringUpAtLaunch(modelId).catch(() => undefined);
-  }
-  return res;
+  if (!routeNeedsDaemon(readConfig())) return res;
+  const modelId = readConfig()?.localModels?.managed?.modelId ?? "";
+  /* The background bring-up: in its turn, and ended at once by a stop or a
+     switch; its start makes the server the app's again, and the window hears
+     how it went as it hears a ⇄'s (via "update"). The update's own last line
+     tells the terminal to start it by hand; here the app does. */
+  void bringUpAtLaunch(modelId, "update").catch(() => undefined);
+  return typeof res.stdout === "string"
+    ? { ...res, stdout: `${res.stdout.trimEnd()}\nthe local model server is starting again on the new backend` }
+    : res;
 }
 
 const deps: DaemonSupervisorDeps = {
