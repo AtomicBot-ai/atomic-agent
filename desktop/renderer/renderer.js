@@ -14924,11 +14924,23 @@ async function fzSetWorkers(n) {
   }
   if (res.notice) {
     appSay(res.notice);
-    if (S.settings && settingsPaneId(S.settingsPane) === 'llm') LLMP.msg = {text: res.notice};
+    if (S.settings && settingsPaneId(S.settingsPane) === 'llm') LLMP.msg = fzWorkersMsg(n, res.notice);
     else toast(res.notice);
   }
   render();
   return res;
+}
+/* Backlog 39: the worker count's notice on Settings › Models is Fusion's.
+   `fusion: N workers` says what was written; the " — restart the local model
+   …" that main adds (run-mode.ts planFusionWorkers) is for a local model that
+   serves Fusion's workers and was already up when the count changed: it keeps
+   the slots it started with until it restarts. So the notice remembers which
+   server was up (its pid), and llmMsgNow draws it only while Fusion is what
+   runs, its restart half only while that same server serves the workers. */
+function fzWorkersMsg(n, notice) {
+  const st = LLMP.status;
+  return {text: notice, workers: {short: 'fusion: ' + n + ' worker' + (n === 1 ? '' : 's'),
+    pid: st && st.daemonRunning ? st.daemonPid : null}};
 }
 /** `/runmode status` — a system message, from the resolver. */
 function fzStatus() {
@@ -19500,6 +19512,7 @@ function llmPanelHTML() {
   const mode = LLMP.mode;
   const status = llmStatusLine();
   const tone = llmStatusTone(status);
+  const msg = llmMsgNow();
   return llmBarHTML(mode, status, tone)
     // External reports its probe under its own row (ST-24); the other panes report at the top.
     + (mode !== 'external' ? llmStatusNoteHTML(status, tone) : '')
@@ -19507,7 +19520,7 @@ function llmPanelHTML() {
       ? '<div class="tk-notice tk-notice--blue llm-start"><span class="tk-spin"></span><span class="grow"><b>The model is starting</b>'
         + '<span class="llm-note">Loading it into memory. Chats wait until it is ready.</span></span></div>' : '')
     + (mode === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
-    + (LLMP.msg ? (LLMP.msg.restart ? restartLine(LLMP.msg.text) : llmMsgHTML(LLMP.msg.text)) : '')
+    + (msg ? (msg.restart ? restartLine(msg.text) : llmMsgHTML(msg.text)) : '')
     + llmRunModeHTML()
     + (mode === 'fallback' ? llmFallbackHTML() : mode === 'cloud' ? llmCloudHTML() : mode === 'external' ? llmExternalHTML() : llmLocalHTML())
     + llmAdvancedHTML(mode);
@@ -19549,6 +19562,23 @@ function llmBarHTML(mode, status, tone) {
     + '<span class="grow"></span>'
     + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
     + '</div>';
+}
+/* The pane's message as it stands now. A Fusion workers notice
+   (fzWorkersMsg) that outlived Fusion — Local models or Cloud picked since —
+   is dropped: nothing fans out there, and its "restart the local model" read
+   as advice for a mode not in use. Under Fusion its restart half goes once
+   the workers are in the cloud, or the local model has restarted (or was not
+   up) and so already runs the new count. */
+function llmMsgNow() {
+  const m = LLMP.msg;
+  if (!m || !m.workers) return m;
+  const rm = rmNow();
+  if (rm.effective !== 'fusion') { LLMP.msg = null; return null; }
+  const leg = rm.workerProviderId ? llmProvider(rm.workerProviderId) : null;
+  const st = LLMP.status;
+  const sameServer = !!leg && leg.kind === 'llama-server' && m.workers.pid !== null
+    && !!st && !!st.daemonRunning && st.daemonPid === m.workers.pid;
+  return sameServer ? m : {text: m.workers.short};
 }
 function llmMsgHTML(text) {
   const bad = /^! /.test(text);
