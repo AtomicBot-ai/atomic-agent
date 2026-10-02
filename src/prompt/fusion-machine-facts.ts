@@ -56,8 +56,10 @@ export interface FusionMachineFacts {
   /**
    * Tokens one local worker occupies in the server's shared context — its
    * prompt, what it reads and its reply (`workerSlotFootprint` at
-   * `localModels.completionMaxTokens`). `null` for a cloud leg, which has
-   * no shared pool to overflow.
+   * `localModels.completionMaxTokens`, whose reply part is held to
+   * `workerReplyAllowance` — the cap local workers are actually sent, so a
+   * 96k cap does not tell the orchestrator a worker needs ~112k). `null`
+   * for a cloud leg, which has no shared pool to overflow.
    */
   workerTokenBudget: number | null;
   /** The model serving workers, or `null` when nothing names it. */

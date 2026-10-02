@@ -104,12 +104,48 @@ describe("ContextPanel", () => {
   });
 
   /**
+   * `completionMaxTokens: 96000` on a 32.8k window: the reply can never
+   * get 96k there, and drawing it as reserved left "free" at zero for
+   * good. The line shows what the budget holds back on this window.
+   */
+  /**
+   * A prompt past half the window leaves less than the budget's half for
+   * the reply: the row shows what is left, and "free" is zero, not negative.
+   */
+  it("never reserves more than the prompt left of the window", () => {
+    const body = lines(
+      usage({ tokens: 20_000, contextWindow: 32_768, percent: 61 }),
+      100,
+      24,
+      96_000,
+    ).join("\n");
+    // 32768 − 20000 = 12768, under the 16384 the budget would hold.
+    expect(body).toContain("reserved for reply    12.8k");
+    expect(body).toContain("free                      0   0%");
+  });
+
+  it("holds a reply cap bigger than the window to what the window allows", () => {
+    const body = lines(
+      usage({ tokens: 9000, contextWindow: 32_768, percent: 27 }),
+      100,
+      24,
+      96_000,
+    ).join("\n");
+    expect(body).toContain("reserved for reply    16.4k");
+    // 32768 − 9000 − 16384 = 7384
+    expect(body).toContain("free                   7.4k");
+  });
+
+  /**
    * The estimator over-counts, so a prompt can measure larger than the
    * window it fit into. Negative free space would read as a bug.
    */
   it("floors free space at zero when the estimate overshoots", () => {
     const body = lines(usage({ tokens: 140_000, percent: 100 })).join("\n");
     expect(body).toContain("free                      0   0%");
+    // Nothing is left for the reply either: no reservation row claiming
+    // room the window does not have.
+    expect(body).not.toContain("reserved for reply");
   });
 
   it("drops the window accounting entirely when the window is unknown", () => {

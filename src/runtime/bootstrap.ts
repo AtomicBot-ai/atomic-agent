@@ -1266,8 +1266,12 @@ export async function createAgentRuntime(
   const warnOnSmallContextWindow = (
     candidate: ReturnType<typeof detectModelProfile>,
   ): void => {
+    // Judged against the reply reserve the budget really holds on this
+    // window, so a cap raised past the window (96k on a 32k model) does
+    // not make every model "too small".
     const minUsableCtx = minUsableContextWindow(
       config.localModels.completionMaxTokens,
+      candidate.contextWindow,
     );
     if (candidate.contextWindow && candidate.contextWindow < minUsableCtx) {
       logger.warn("context window too small for the agent prompt", {
