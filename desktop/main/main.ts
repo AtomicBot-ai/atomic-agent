@@ -4369,7 +4369,8 @@ async function settingsTest(
     ["Run", "Steer the running turn", null], ["Run", "Expand all tool cards", null], ["Run", "Collapse all tool cards", null],
     ["Setup", "Theme…", "h"], ["Setup", "Mouse…", null], ["Setup", "Hide or show the sidebar", null], ["Setup", "Analytics", null],
     ["Setup", "Enable or disable a skill…", null], ["Setup", "Create, cancel or run a task…", null],
-    ["Help", "Commands", null], ["Help", "List built-in tools", null], ["Help", "Write debug bundle", "d"],
+    // Release fix 49 (Д57): the TUI's "Write debug bundle" is named as Settings › Diagnostics names it; the chord is the TUI's.
+    ["Help", "Commands", null], ["Help", "List built-in tools", null], ["Help", "Save report for support", "d"],
     // The TUI's `/report` (help.report) reaches the runtime directly and has
     // no route behind it; this is the desktop's own version of the same
     // intent, so it takes the same chord.
@@ -6521,12 +6522,13 @@ async function settingsTestPartC(
   } else {
     /* Release fix 49 (Д36): the fact rows (State `unknown`, telegram.enabled,
        TELEGRAM_BOT_TOKEN in .env) became one status, Connected only with a
-       paired owner and Telegram not turned off, over rows in words. */
+       paired owner, Telegram turned on and no restart owed, over rows in words. */
     const tgView = await js<{ status: string; titles: string[] }>(
       "(() => { const st = document.querySelector('#settings .setbody [data-tg-status]');"
       + " return {status: st ? st.textContent.trim() : '', titles: [...document.querySelectorAll('#settings .setbody .sd-rows .tk-setrow .body .t')].map((t) => t.textContent.trim())}; })()",
     );
-    const wantStatus = tg.owner !== null && tg.enabled !== false ? "Connected" : "Not connected";
+    // Connected: paired, turned on (unknown is not on), and no change still waiting for a restart (`restart`).
+    const wantStatus = tg.owner !== null && tg.enabled === true && !tg.restart ? "Connected" : "Not connected";
     check(
       "telegram tab: a token is present → one status in words, no config keys or .env, plain tab label",
       tg.hasToken === true && tgView.status === wantStatus && tgView.titles.includes("Bot token")

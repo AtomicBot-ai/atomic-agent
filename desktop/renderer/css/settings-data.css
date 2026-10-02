@@ -129,7 +129,8 @@ textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/
 /* Д51: the header carries Preview import and stays at the top of the pane
    while the form scrolls under it; its title never wraps, so the button
    keeps one place whatever the source. */
-.sd-imp > .sd-imphead{position:sticky;top:0;z-index:2;flex-wrap:nowrap;max-width:640px;padding-bottom:8px;margin-bottom:-8px;background:var(--lift)}
+/* padding-top: room for the keyboard ring (4 px) the form cursor draws around the button at the scrollport's edge. */
+.sd-imp > .sd-imphead{position:sticky;top:0;z-index:2;flex-wrap:nowrap;max-width:640px;padding:6px 0 8px;margin-bottom:-8px;background:var(--lift)}
 .sd-imphead .sd-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sd-imphead > .btn{flex:none}
 .sd-imp > .tk-notice{max-width:640px}
