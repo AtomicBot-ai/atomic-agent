@@ -35,7 +35,13 @@ function reply(text: string): CompletionResult {
  * back. Side calls (naming, reflection) on other ids answer at once.
  */
 function hangingModel(unwindMs = 0) {
-  const state = { target: "", entered: 0, aborted: 0 };
+  const state: {
+    target: string;
+    entered: number;
+    aborted: number;
+    /** The signal the turn's model call was made with. */
+    signal: AbortSignal | undefined;
+  } = { target: "", entered: 0, aborted: 0, signal: undefined };
   const llamaComplete = async (params: {
     sessionId: string;
     signal?: AbortSignal;
@@ -43,6 +49,7 @@ function hangingModel(unwindMs = 0) {
     if (params.sessionId !== state.target) return reply("ok");
     state.entered += 1;
     const signal = params.signal;
+    state.signal = signal;
     await new Promise<void>((resolve) => {
       if (signal?.aborted) {
         resolve();
@@ -192,6 +199,36 @@ describe("a chat's session when serve shuts down mid-turn", () => {
       } finally {
         store.close();
       }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
+
+describe("closing serve with a streamed turn in flight", () => {
+  it("has told the turn its client is gone by the time close() resolves", async () => {
+    // `serve` shuts the runtime down the moment the server's close()
+    // resolves. Node's own close callback comes before the sockets have
+    // closed, so the turn had not yet been aborted when the runtime began
+    // closing its stores under it.
+    const model = hangingModel();
+    model.state.target = "status-close";
+    const harness = await startTestHarness({
+      llamaComplete: model.llamaComplete,
+    });
+    try {
+      const res = await fetch(
+        `${harness.baseUrl}/v1/chat/completions`,
+        chatInit("status-close", new AbortController().signal),
+      );
+      expect(res.status).toBe(200);
+      const drained = res.text().catch(() => "");
+      expect(await waitFor(() => model.state.entered === 1)).toBe(true);
+      expect(model.state.signal?.aborted).toBe(false);
+
+      await harness.handle.close();
+      expect(model.state.signal?.aborted).toBe(true);
+      await drained;
     } finally {
       await harness.cleanup();
     }
