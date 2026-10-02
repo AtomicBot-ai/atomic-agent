@@ -539,8 +539,13 @@ export function buildStreamEventHook(
          shows one sentence per failed turn is told about the FIRST recorded
          link instead — the provider the operator picked, its refusal in its
          own words and its own category — with every earlier link listed
-         beside it. A single-link failure is reported exactly as before. */
-      const first = readFailedAttempts(event.error)[0];
+         beside it. A single-link failure is reported exactly as before.
+         A cancelled turn is reported as cancelled: whatever the chain went
+         through before the stop is not why the turn ended. */
+      const first =
+        event.category === "cancelled"
+          ? undefined
+          : readFailedAttempts(event.error)[0];
       if (first) {
         const primary = first.error;
         const message = primary instanceof Error && primary.message.trim()
