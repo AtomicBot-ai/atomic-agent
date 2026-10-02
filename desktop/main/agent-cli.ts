@@ -2877,19 +2877,27 @@ export interface KeyMoveResult {
 }
 
 /**
- * Does config.json carry a provider key of its own? A raw look, so a launch
- * with nothing to move costs no `atag` run; a file that cannot be read or
- * parsed answers no, and the agent's own read reports it.
+ * The keys config.json holds on its provider entries, from a raw look: so a
+ * launch with nothing to move costs no `atag` run, and so whatever the move
+ * says can be cleared of every one of them. A file that cannot be read or
+ * parsed holds none here; the agent's own read reports it. Never logged.
  */
-export function configHoldsProviderKeys(stateDir: string): boolean {
+function inlineProviderKeys(stateDir: string): string[] {
   try {
     const parsed = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as { llm?: { providers?: unknown } } | null;
     const providers = parsed?.llm?.providers;
-    return Array.isArray(providers)
-      && providers.some((p) => !!p && typeof (p as { apiKey?: unknown }).apiKey === "string" && ((p as { apiKey: string }).apiKey).length > 0);
+    if (!Array.isArray(providers)) return [];
+    return providers
+      .map((p) => (p && typeof p === "object" ? (p as { apiKey?: unknown }).apiKey : undefined))
+      .filter((k): k is string => typeof k === "string" && k.length > 0);
   } catch {
-    return false;
+    return [];
   }
+}
+
+/** Does config.json carry a provider key of its own? (inlineProviderKeys) */
+export function configHoldsProviderKeys(stateDir: string): boolean {
+  return inlineProviderKeys(stateDir).length > 0;
 }
 
 /**
@@ -2902,8 +2910,11 @@ export function configHoldsProviderKeys(stateDir: string): boolean {
  * nothing moves.
  */
 export function moveProviderKeysToDotenv(): Promise<KeyMoveResult> {
-  if (!configHoldsProviderKeys(DESKTOP_STATE_DIR)) return Promise.resolve({ ok: true, moved: [], left: [] });
-  return withConfigLock(() => moveProviderKeysIn(desktopKeyStore()));
+  const inline = inlineProviderKeys(DESKTOP_STATE_DIR);
+  if (inline.length === 0) return Promise.resolve({ ok: true, moved: [], left: [] });
+  // What it says goes to the log: not one of the keys, whichever step failed.
+  return withConfigLock(() => moveProviderKeysIn(desktopKeyStore()))
+    .then((r) => (r.error ? { ...r, error: redactKeys(r.error, inline) } : r));
 }
 
 /** moveProviderKeysToDotenv against any key store, without taking the lock. */
