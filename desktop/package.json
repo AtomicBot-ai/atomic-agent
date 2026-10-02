@@ -83,7 +83,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "gatekeeperAssess": false,
       "extendInfo": {
-        "LSMinimumSystemVersion": "12.0",
+        "LSMinimumSystemVersion": "14.0",
         "NSMicrophoneUsageDescription": "Atomic Agent records your voice only while you hold the microphone button in the composer, and transcribes it on this Mac.",
         "NSSpeechRecognitionUsageDescription": "Atomic Agent transcribes what you dictate using the on-device speech model. Nothing is sent to Apple."
       },

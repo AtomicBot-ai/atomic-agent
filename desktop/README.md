@@ -677,8 +677,9 @@ Honestly degraded, and labelled as such in the UI:
   never while you speak, and it would send your voice to a third party.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
-  `Voice input needs macOS 26 or later`; the app itself still runs from
-  macOS 12. Off macOS it says `Voice input works only on macOS`, and a
+  `Voice input needs macOS 26 or later`; the app itself runs from
+  macOS 14 (ATO-115: Electron 44 needs 13 and a 12.x Mac crashed at launch
+  on `_OBJC_CLASS_$_SMAppService`, so the floor is 14, not 12). Off macOS it says `Voice input works only on macOS`, and a
   build without the helper says so too. 43 languages are available
   on-device: 30 through `SpeechTranscriber`, which punctuates and cases,
   and 13 more — Russian, Arabic, Dutch, Turkish, Thai, Vietnamese, Hebrew,
