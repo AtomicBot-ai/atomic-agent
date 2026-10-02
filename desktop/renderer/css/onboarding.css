@@ -48,12 +48,18 @@
 .prow-tick svg{width:15px;height:15px;stroke-width:2.2}
 .prow-more{font:600 12.5px/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;margin:16px 0 8px 10px}
 
-/* ---------------- the layer ---------------- */
+/* ---------------- the layer ----------------
+   `--ob-col` is the step column's one width: every card, field, notice and
+   the action bar stop at it, so they share one right edge on every step.
+   Cards used to stop at 640, 660 or 720px while the action bar ran the full
+   column, and the cards ended short of Continue (Danya, 01.10). Paragraphs
+   keep their own measure: text is not a box with an edge. */
 #onboarding{
   position:absolute;inset:0;z-index:40;
   display:grid;grid-template-columns:400px minmax(0,1fr);
   background:var(--well);color:var(--ink);
   -webkit-app-region:drag;
+  --ob-col:720px;
 }
 #onboarding > *{-webkit-app-region:no-drag}
 
@@ -128,10 +134,10 @@
 #onboarding .ob-title{margin:0;max-width:760px;font:600 34px/1.15 var(--font-ui);letter-spacing:-.04em;color:var(--ink)}
 #onboarding .ob-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:14px;
   margin:10px -16px 0;padding:4px 16px 14px;overflow-y:auto;overscroll-behavior:contain}
-#onboarding .ob-body > *{max-width:720px;flex-shrink:0}
+#onboarding .ob-body > *{max-width:var(--ob-col);flex-shrink:0}
 #onboarding .ob-body > .ob-scroll,#onboarding .ob-body > .ob-wiz{flex-shrink:1}
-/* The wizard carries its own action bar, which spans the column like every
-   other step's; its content is held to 720px below. */
+/* The wizard carries its own action bar, held to the column's width like
+   every other step's; so is its content, below. */
 #onboarding .ob-body > .ob-wiz{max-width:none}
 #onboarding .ob-explain{font-size:15.5px;line-height:1.5;color:var(--ink-2);max-width:60ch;white-space:pre-line}
 #onboarding .ob-body > .ob-explain:first-child{margin:-4px 0 8px}
@@ -175,7 +181,7 @@
 #onboarding .ob-row > .tk-ico--sm{width:30px;height:30px}
 
 /* Route cards (ON-02): three lifted cards, the one under the cursor ringed. */
-#onboarding .ob-routes{gap:12px;max-width:660px}
+#onboarding .ob-routes{gap:12px}
 #onboarding .ob-routes .ob-row{gap:16px;padding:14px 18px;border-radius:var(--r-block);background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .ob-routes .ob-row:hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
 #onboarding .ob-routes .ob-row:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
@@ -220,11 +226,11 @@
 /* ---------------- fields ---------------- */
 #onboarding .ob-lbl{display:block;margin:4px 0 -6px 2px;font:600 13px/1.4 var(--font-ui);color:var(--ink)}
 #onboarding .ob-lbl .ob-explain{display:inline;font-size:inherit;line-height:inherit;font-weight:500;color:var(--ink-2);white-space:normal}
-#onboarding .ob-inp{height:52px;max-width:640px;padding:0 18px;border:0;background:var(--lift);
+#onboarding .ob-inp{height:52px;max-width:var(--ob-col);padding:0 18px;border:0;background:var(--lift);
   box-shadow:inset 0 0 0 1px var(--bd-2);font-size:14.5px}
 #onboarding .ob-inp:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--ink-3)}
 #onboarding .ob-inp:focus{background:var(--lift);box-shadow:inset 0 0 0 1.5px var(--brand),var(--focus-ring)}
-#onboarding .ob-field{display:flex;align-items:center;gap:10px;width:100%;max-width:640px;height:52px;padding:0 8px 0 18px;
+#onboarding .ob-field{display:flex;align-items:center;gap:10px;width:100%;max-width:var(--ob-col);height:52px;padding:0 8px 0 18px;
   border-radius:var(--r-pill);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-3);
   transition:box-shadow var(--t-state) var(--ease)}
 #onboarding .ob-field:hover{box-shadow:inset 0 0 0 1px var(--ink-3)}
@@ -250,11 +256,11 @@
 
 /* Errors: a red notice under the control that caused it; a surface error
    sits above the action bar in the same shape. */
-#onboarding .ob-err{display:flex;align-items:flex-start;gap:10px;max-width:640px;padding:10px 14px;border-radius:18px;
+#onboarding .ob-err{display:flex;align-items:flex-start;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
   background:color-mix(in srgb,var(--critical) 8%,var(--lift));color:var(--ink);font-size:13px;line-height:1.5;white-space:pre-wrap}
 #onboarding .ob-err > svg{width:16px;height:16px;flex:none;margin-top:2px;color:var(--critical)}
 #onboarding .ob-err > span{min-width:0}
-#onboarding .ob-note{display:flex;align-items:center;gap:10px;max-width:720px;padding:10px 14px;border-radius:18px;
+#onboarding .ob-note{display:flex;align-items:center;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
   font-size:13px;line-height:1.45;color:var(--ink);white-space:normal}
 #onboarding .ob-note > svg{width:16px;height:16px;flex:none}
 #onboarding .ob-note.is-blue{background:color-mix(in srgb,var(--brand) 9%,var(--lift))}
@@ -264,9 +270,9 @@
 
 /* ---------------- the cloud wizard (ON-09…15) ---------------- */
 #onboarding .ob-wiz{flex:1 1 auto;min-height:0;gap:12px}
-#onboarding .ob-wiz > *{max-width:720px;flex-shrink:0}
-#onboarding .ob-wiz > .ob-wizlist{flex:0 1 auto;min-height:120px;margin:0 -16px;padding:4px 16px 14px;max-width:752px}
-#onboarding .ob-wiz > .ob-foot{max-width:none;margin-top:auto}
+#onboarding .ob-wiz > *{max-width:var(--ob-col);flex-shrink:0}
+#onboarding .ob-wiz > .ob-wizlist{flex:0 1 auto;min-height:120px;margin:0 -16px;padding:4px 16px 14px;max-width:calc(var(--ob-col) + 32px)}
+#onboarding .ob-wiz > .ob-foot{margin-top:auto}
 #onboarding .ob-wizlist .prows{padding:6px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .prow .nm{font-size:14.5px}
 #onboarding .prow .ann.lit{height:22px}
@@ -299,8 +305,9 @@
    onboarding-mouse.mjs still measures it. */
 #onboarding .ob-foot .btn-g{padding:0 18px 0 14px;border:1px solid var(--bd-2)}
 #onboarding .ob-foot .btn-g:hover{background:var(--hover);color:var(--ink)}
-/* r2: the action bar is the last thing in the column now (no hint strip). */
-#onboarding .ob > .ob-foot{padding-bottom:28px}
+/* r2: the action bar is the last thing in the column now (no hint strip).
+   It stops where the cards above it stop (`--ob-col`). */
+#onboarding .ob > .ob-foot{padding-bottom:28px;max-width:var(--ob-col)}
 
 /* ---------------- the closing screen (r2) ----------------
    A small comet crosses the middle of the column while setup settles: a
@@ -326,7 +333,7 @@
    `.ob-dlprog` is the one box a progress sample repaints (refreshDlProgress);
    its rows are fixed-width and never wrap, so a sample cannot move the
    offer card a pointer rests on. */
-#onboarding .ob-dlprog{display:grid;gap:14px;max-width:640px;padding:18px 20px 16px;border-radius:var(--r-card);
+#onboarding .ob-dlprog{display:grid;gap:14px;max-width:var(--ob-col);padding:18px 20px 16px;border-radius:var(--r-card);
   background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .ob-phase{display:grid;grid-template-columns:24px max-content minmax(48px,1fr) 23ch;align-items:center;gap:12px;white-space:nowrap}
 #onboarding .ob-phase .tk-ico{width:24px;height:24px}
@@ -342,10 +349,10 @@
 #onboarding .ob-dlprog > .ob-err{padding:0;background:transparent;color:var(--critical)}
 /* Calm (S1, U5): the strip's Cancel, drawn under the progress card while
    setup covers the window. Outside .ob-dlprog, so samples never rebuild it. */
-#onboarding .ob-dlcancel{display:flex;justify-content:flex-end;max-width:640px;margin-top:-4px}
+#onboarding .ob-dlcancel{display:flex;justify-content:flex-end;max-width:var(--ob-col);margin-top:-4px}
 #onboarding .ob-dlcancel .btn{color:var(--ink-2)}
 #onboarding .ob-dlcancel .btn:hover{color:var(--ink)}
-#onboarding .ob-offer:not(.ob-offer-inline){display:flex;align-items:center;gap:14px;width:100%;max-width:640px;min-height:64px;margin:0;
+#onboarding .ob-offer:not(.ob-offer-inline){display:flex;align-items:center;gap:14px;width:100%;max-width:var(--ob-col);min-height:64px;margin:0;
   padding:12px 16px;border:0;border-radius:var(--r-block);background:var(--lift);box-shadow:var(--sh-card);
   color:var(--ink);text-align:left;cursor:pointer;
   transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
@@ -375,19 +382,19 @@
 #onboarding .ob-out > :not(.logo):not(.tk-ico){grid-column:2}
 #onboarding .ob-applogo svg{width:100%;height:100%}
 #onboarding .ob-list.is-busy{opacity:.7}
-#onboarding .ob-scanstrip{display:flex;align-items:center;gap:10px;max-width:680px;padding:10px 14px;border-radius:18px;
+#onboarding .ob-scanstrip{display:flex;align-items:center;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
   background:color-mix(in srgb,var(--amber) 13%,var(--lift));font-size:13px;color:var(--ink)}
 #onboarding .ob-scanstrip .tk-spin{border-color:var(--amber-wash);border-top-color:var(--amber)}
 #onboarding .ob-scanstrip .ob-scan-k{font-weight:700}
 #onboarding .ob-scanstrip .readout{font:400 12px/1 var(--font-mono);color:var(--ink);min-width:0}
 #onboarding .ob-scanstrip .ob-help{padding:0;font-size:13px;color:var(--ink-2)}
-#onboarding .ob-summary{display:grid;gap:8px;max-width:700px;padding:16px 18px;border-radius:var(--r-card);
+#onboarding .ob-summary{display:grid;gap:8px;max-width:var(--ob-col);padding:16px 18px;border-radius:var(--r-card);
   background:var(--lift);box-shadow:var(--sh-card);white-space:normal;font-size:14px;color:var(--ink-2)}
 #onboarding .ob-sumrow{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px}
 #onboarding .ob-sumrow .k{font-weight:600;color:var(--ink)}
 #onboarding .ob-sumrow .v.is-warn{color:var(--amber-text)}
 #onboarding .ob-failures{display:flex;flex-wrap:wrap;gap:8px}
-#onboarding .ob-failtbl{max-width:700px;padding:4px 6px 8px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-failtbl{max-width:var(--ob-col);padding:4px 6px 8px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
 #onboarding .ob-failtbl td:first-child{font:500 12px/1 var(--font-mono)}
 
 /* Hugging Face file pick (ON-06). */
