@@ -185,9 +185,11 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
 
   const pBlocked = await probe(cfgs.cloud, { readyIds: ["aimlapi"], localLoaded: true, local: [] });
   const rowBlocked = pBlocked.rows.backend.find((r) => r.id === "fusion");
+  // Chat review Д21: the row says what is missing; the way to it is the row's
+  // Add provider button, so the pre-flight's "— Settings › Models" tail is not repeated.
   check("fusion: the backend popover lists fusion last, carrying the pre-flight's line",
     same(pBlocked.rows.backend.map((r) => r.id), ["cloud", "local", "custom", "fusion"])
-      && rowBlocked?.detail === "needs a second provider for the workers — Settings › Models" && !rowBlocked.active
+      && rowBlocked?.detail === "needs a second provider for the workers" && !rowBlocked.active
       && pBlocked.backend === "cloud" && pBlocked.kinds.length === 3 && !pBlocked.swap && chip(pBlocked, "workers") === null,
     JSON.stringify(rowBlocked));
   const pReady = await probe(cfgs.cloud, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [] });

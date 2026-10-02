@@ -4854,6 +4854,10 @@ function act(a) {
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
   if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
+  /* Chat review (Д21): Where it runs › Add provider. Settings › Models on its
+     cloud providers, with the provider setup started — what that pane's own
+     Add provider button does (llm:add). */
+  if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -13148,13 +13152,20 @@ function selRows() {
     const customUrl = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
     /* Calm (S7): the rows speak the chip's words ("Cloud", "Local models",
        "Custom server", "Fusion" — backendWord, drawn in selectorHTML) and
-       each detail is one plain line. `id` stays the route, `label` the id. */
+       each detail is one plain line. `id` stays the route, `label` the id.
+       Chat review (Д21): a row with nothing to run on — Cloud with no cloud
+       provider at all, Fusion short of a leg — carries an Add provider button
+       (`addProvider`), and choosing the row goes there too, instead of a line
+       that only named a screen ("add one in Settings › Models") or a red
+       refusal that grew the menu under the pointer. */
     const customHost = customUrl ? hostOf(customUrl) : '';
+    const noCloud = BSW.readyLoaded && ready === 0 && !selProviders().length;
+    const fzBlocked = BSW.readyLoaded ? fzBlocker() : null;
     return [
       {type:'backend', id:'cloud', label:'cloud',
        detail: !BSW.readyLoaded ? 'checking keys…' : ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready'
-         : 'no provider yet · add one in Settings › Models',
-       active: here === 'cloud'},
+         : noCloud ? 'no provider yet' : 'no API key yet',
+       addProvider: noCloud, active: here === 'cloud'},
       {type:'backend', id:'local', label:'local',
        detail: 'a model Atomic Agent runs on ' + THIS_MACHINE,
        active: here === 'local'},
@@ -13165,8 +13176,8 @@ function selRows() {
       // mode built on two of them. The detail is the pre-flight's one line, or
       // what it would run.
       {type:'backend', id:'fusion', label:'fusion',
-       detail: !BSW.readyLoaded ? 'checking keys…' : (fzBlocker() || fzDetail(rmNow())),
-       active: here === 'fusion'},
+       detail: !BSW.readyLoaded ? 'checking keys…' : fzBlocked ? fzBlocked.replace(/ — Settings › .*$/, '') : fzDetail(rmNow()),
+       addProvider: !!fzBlocked, active: here === 'fusion'},
     ];
   }
   if (SEL.kind === 'provider' && selBackend() === 'fusion') return fzProviderRows();
@@ -13244,6 +13255,8 @@ async function selActivate(row) {
     // the operator runs needs the URL probed first, which is the External
     // pane's job. Open it instead of writing anything here.
     if (row.id === 'custom') { closeSelector(); act('settings:llm'); llmSetMode('external'); return; }
+    // Chat review (Д21): nothing to run on — the row's Add provider, not a refusal.
+    if (row.addProvider) { act('sel:addProvider'); return; }
     if (row.id === 'fusion') { selChooseFusion(); return; }
     selChooseBackend(row.id); return;
   }
@@ -13483,7 +13496,12 @@ function selectorHTML() {
     + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
     + rows.map((r, i) => {
         const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
-        const right = (r.type === 'backend' ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
+        /* Chat review (Д21): the row's own way out. A span, not a button: it
+           sits inside the row's <button>, and the click delegate takes its
+           data-act before the row's (a keyboard Enter on the row lands in the
+           same place, selActivate). */
+        const right = (r.addProvider ? '<span class="btn btn-s xs seladd" data-act="sel:addProvider">' + ic('plus') + 'Add provider</span>' : '')
+          + (r.type === 'backend' && !r.addProvider ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
