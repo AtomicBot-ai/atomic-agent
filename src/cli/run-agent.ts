@@ -22,7 +22,7 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
-import { stderrSink } from "../tracing/structured-logger.js";
+import { createStderrSink } from "../tracing/structured-logger.js";
 import {
   isFailedSessionStatus,
   type SessionState,
@@ -467,7 +467,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
             : "";
         process.stderr.write(`[${status.channel}] ${status.state}${suffix}\n`);
       },
-      logSinks: [stderrSink()],
+      logSinks: [createStderrSink()],
     },
   });
 

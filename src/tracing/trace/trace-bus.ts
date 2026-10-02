@@ -12,7 +12,7 @@ export interface TraceBus {
 
 /**
  * Fan-out helper: relays each event to every sink and swallows
- * individual sink errors. Mirrors the contract of `stderrSink` in
+ * individual sink errors. Mirrors the contract of `StructuredLogger` in
  * `structured-logger.ts` — observability must never disrupt execution.
  */
 export function createTraceBus(sinks: readonly TraceSink[]): TraceBus {
