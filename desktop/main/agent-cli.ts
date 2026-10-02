@@ -5,7 +5,7 @@ import { execFile, spawn } from "node:child_process";
 import { homedir, totalmem } from "node:os";
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 // Item 7 part C (LLM / Telegram / Import tabs): the .env writer and llama log tail.
 import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -14,6 +14,10 @@ import { promisify } from "node:util";
 import { commandOf, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
+import { localLlamaKeyFor } from "./local-llama-key.js";
+
+// Moved next to the key lookup that needs it; main.ts still imports it from here.
+export { managedDataDir } from "./local-llama-key.js";
 // r7 models — the description + RAM figures `atag models list` cannot print.
 import { curatedMeta } from "./model-catalog.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
@@ -1673,19 +1677,6 @@ export async function modelsStop(): Promise<CliResult> {
   return cli(["models", "stop"], 30_000);
 }
 
-/**
- * The managed daemons' data dir as the CLI resolves it (src/config/load-config.ts:
- * `localModels.managed.dataDirOverride`, else `<stateDir>/models`; `~` is the
- * home directory, a relative path is taken from this process's directory, which
- * the CLI children inherit).
- */
-export function managedDataDir(override: string | null | undefined): string {
-  const raw = typeof override === "string" ? override.trim() : "";
-  if (!raw) return join(DESKTOP_STATE_DIR, "models");
-  if (raw.startsWith("~")) return resolvePath(homedir(), raw.slice(2));
-  return resolvePath(raw);
-}
-
 /** The pids the daemons' pid files name (`llama-server.pid`, `llama-embed.pid`, src/local-llm/backend-paths.ts). */
 export function daemonPidsIn(dataDir: string): number[] {
   const pids: number[] = [];
@@ -2845,7 +2836,8 @@ function describeLlamaHealthFailure(kind: LlamaProbeResult["kind"], error: strin
 export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok: boolean; url?: string; probe?: LlamaProbeResult; error?: string }> {
   const url = normalizeLocalLlmBaseUrl(rawUrl);
   if (!url) return { ok: false, error: "invalid URL" };
-  const apiKey = process.env["ATOMIC_AGENT_LLAMA_API_KEY"] || null;
+  // The env key, else the managed daemon's own key when this is its address (#582).
+  const apiKey = localLlamaKeyFor(url);
   const headers: Record<string, string> = { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
   const start = Date.now();
   let result: LlamaProbeResult;

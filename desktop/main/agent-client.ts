@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 // r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
+import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
 import {
   agentBinaryCandidates,
@@ -680,9 +681,13 @@ export class AgentClient extends EventEmitter {
    */
   async llamaProps(url: string, apiKey?: string): Promise<{ ok: boolean; n_ctx: number | null; model?: string | null; error?: string }> {
     if (!/^https?:\/\//.test(url)) return { ok: false, n_ctx: null, model: null, error: "not an http url" };
+    // The renderer's key, when its config carries one; otherwise the env key,
+    // or the managed daemon's own key when `url` is its address (#582) —
+    // without it a keyed daemon answers 401 and the window falls back to a guess.
+    const key = apiKey || localLlamaKeyFor(url) || undefined;
     try {
       const res = await fetch(`${url.replace(/\/$/, "")}/props`, {
-        headers: { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+        headers: { accept: "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) return { ok: false, n_ctx: null, model: null, error: `HTTP ${res.status}` };
