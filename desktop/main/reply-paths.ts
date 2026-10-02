@@ -6,16 +6,17 @@
  * that exists inside the person's home folder: written `~/…` or absolute,
  * never a URL, with `..` and symlinks resolved before the home check, and
  * nothing outside the home folder touched to find out. Opening one never runs
- * anything: an app, a script, an installer, a link file, or an extensionless
- * file with an execute bit (which macOS hands to Terminal) is shown in the
- * file manager instead of being opened.
+ * anything: an app, a script, an installer, a link file, a Finder alias, or an
+ * extensionless file with an execute bit (which macOS hands to Terminal) is
+ * shown in the file manager instead of being opened — judged on the real path
+ * a symlink leads to, which is the one that opens.
  *
  * Pure but for the file system reads: no Electron import, so the unit suite
  * loads it from `out/main` and drives it against a throwaway "home".
  */
 
 import type { Stats } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { open, realpath, stat } from "node:fs/promises";
 
 import { expandHome, isAbsoluteOn, isUnder, pathFor, type Platform } from "./platform.js";
 
@@ -40,9 +41,10 @@ const RUNS = new Set([
   // scripts
   ".sh", ".bash", ".zsh", ".csh", ".tcsh", ".ksh", ".fish", ".py", ".pyw", ".pyc", ".rb", ".pl", ".php", ".lua", ".tcl",
   // Windows
-  ".exe", ".bat", ".cmd", ".com", ".msi", ".msp", ".msix", ".appx", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse",
-  ".wsf", ".wsh", ".hta", ".scr", ".lnk", ".url", ".reg", ".cpl", ".msc", ".pif", ".scf", ".appref-ms",
-  ".application", ".gadget", ".inf", ".sct", ".shb", ".shs",
+  ".exe", ".bat", ".cmd", ".com", ".msi", ".msp", ".msu", ".msix", ".msixbundle", ".appx", ".appxbundle", ".appinstaller",
+  ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".ws", ".wsc", ".wsf", ".wsh", ".hta", ".scr", ".lnk", ".url",
+  ".website", ".reg", ".cpl", ".msc", ".pif", ".scf", ".appref-ms", ".application", ".gadget", ".inf", ".sct",
+  ".shb", ".shs", ".chm", ".diagcab", ".jnlp",
   // Linux
   ".desktop", ".run", ".bin", ".appimage", ".deb", ".rpm", ".snap", ".flatpakref",
 ]);
@@ -55,9 +57,39 @@ const BUNDLES = new Set([
 /** Would opening this run something? `mode` is the stat's; an execute bit counts only without an extension. */
 export function runsWhenOpened(platform: Platform, p: string, kind: "file" | "dir", mode: number): boolean {
   const ext = pathFor(platform).extname(p).toLowerCase();
-  if (kind === "dir") return BUNDLES.has(ext);
+  // A folder can be an installer too (a flat-folder .pkg or .mpkg).
+  if (kind === "dir") return BUNDLES.has(ext) || RUNS.has(ext);
   if (RUNS.has(ext)) return true;
   return platform !== "win32" && ext === "" && (mode & 0o111) !== 0;
+}
+
+/** A Finder alias: a bookmark file (`book␀␀␀␀mark…`), which realpath leaves as it
+    is and macOS follows when it is opened — to whatever it names. */
+export async function isFinderAlias(p: string): Promise<boolean> {
+  const fh = await open(p, "r").catch(() => null);
+  if (!fh) return false;
+  try {
+    const head = Buffer.alloc(12);
+    const { bytesRead } = await fh.read(head, 0, 12, 0);
+    return bytesRead === 12 && head.toString("latin1", 0, 4) === "book" && head.toString("latin1", 8, 12) === "mark";
+  } catch {
+    return false;
+  } finally {
+    await fh.close().catch(() => undefined);
+  }
+}
+
+/** The real path behind `p` (symlinks resolved), what it is, and whether
+    opening it would run something; null when there is nothing there. */
+export async function openTarget(p: string, platform: Platform): Promise<{ real: string; kind: "file" | "dir"; reveal: boolean } | null> {
+  const real = await realpath(p).catch(() => null);
+  if (!real) return null;
+  const st: Stats | null = await stat(real).catch(() => null);
+  const kind = !st ? null : st.isDirectory() ? "dir" : st.isFile() ? "file" : null;
+  if (!st || !kind) return null;
+  const reveal = runsWhenOpened(platform, real, kind, st.mode)
+    || (platform === "darwin" && kind === "file" && await isFinderAlias(real));
+  return { real, kind, reveal };
 }
 
 const no = (path: string, why: NonNullable<ReplyPath["why"]>): ReplyPath =>
@@ -85,7 +117,8 @@ export async function replyPathVerdict(raw: unknown, home: string, platform: Pla
   if (!isUnder(platform, realHome, real)) return no(path, "outside-home");
   const st: Stats | null = await stat(real).catch(() => null);
   if (!st) return no(path, "missing");
-  const kind = st.isDirectory() ? "dir" : st.isFile() ? "file" : null;
-  if (!kind) return no(path, "not-a-file");
-  return { path, abs: real, ok: true, kind, reveal: runsWhenOpened(platform, real, kind, st.mode) };
+  if (!st.isDirectory() && !st.isFile()) return no(path, "not-a-file");
+  const target = await openTarget(real, platform);
+  if (!target) return no(path, "missing");
+  return { path, abs: target.real, ok: true, kind: target.kind, reveal: target.reveal };
 }

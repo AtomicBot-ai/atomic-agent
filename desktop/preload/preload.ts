@@ -132,7 +132,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Shell affordances. */
   chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
-  fileMenu: (path: string) => ipcRenderer.invoke("app:fileMenu", path),
+  // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
+  fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),
   // item 5: existence check for the files a turn wrote (fs.stat only)
   statPaths: (paths: string[]) => ipcRenderer.invoke("app:statPaths", paths),
   // Chat review Д23: which paths a reply names are files in the home folder, and opening one

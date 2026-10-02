@@ -16264,7 +16264,8 @@ document.addEventListener('contextmenu', (e) => {
   const f = e.target.closest('[data-file]');
   if (!f || !BR) return;
   e.preventDefault();
-  BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'));
+  // Chat review (Д23): a chip from a reply's text says so, and main checks its path again.
+  BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'), !!f.dataset.reply);
 });
 
 /* ============================================================
