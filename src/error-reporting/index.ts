@@ -16,7 +16,11 @@ export {
 } from "./error-scrubber.js";
 export type { ScrubbedErrorEvent, SentryStackFrame } from "./error-scrubber.js";
 export { buildEnvelope, buildSentryAuthHeader } from "./sentry-envelope.js";
-export type { EnvelopeMeta, BuiltEnvelope } from "./sentry-envelope.js";
+export type {
+  EnvelopeMeta,
+  BuiltEnvelope,
+  ErrorReportDimensions,
+} from "./sentry-envelope.js";
 export { SentryClient, createSentryClient } from "./sentry-client.js";
 export type {
   SentryClientOptions,

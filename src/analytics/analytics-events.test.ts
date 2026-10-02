@@ -4,7 +4,6 @@ import type { AnalyticsClient } from "./analytics-client.js";
 import {
   ANALYTICS_EVENTS,
   captureAppInstalled,
-  captureAppOpened,
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
@@ -48,7 +47,10 @@ describe("captureAppInstalled", () => {
     const client = fakeClient();
     const store = fakeStore();
     captureAppInstalled(client, store);
-    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.appInstalled);
+    expect(client.capture).toHaveBeenCalledWith(
+      ANALYTICS_EVENTS.appInstalled,
+      {},
+    );
     expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
   });
 
@@ -207,26 +209,6 @@ describe("captureMessageSent", () => {
     const store = fakeStore();
     expect(() => captureMessageSent(null, store, ctx)).not.toThrow();
     expect(store.markFirstMessageSent).not.toHaveBeenCalled();
-  });
-});
-
-describe("captureAppOpened", () => {
-  it("fires on every call — it is per-launch, not per-install", () => {
-    const client = fakeClient();
-    captureAppOpened(client);
-    captureAppOpened(client);
-    expect(client.capture).toHaveBeenCalledTimes(2);
-    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.appOpened);
-  });
-
-  it("no-ops when analytics is disabled (null client)", () => {
-    expect(() => captureAppOpened(null)).not.toThrow();
-  });
-
-  it("carries no properties — platform and app_version come from the client", () => {
-    const client = fakeClient();
-    captureAppOpened(client);
-    expect(client.capture.mock.calls[0]).toHaveLength(1);
   });
 });
 
