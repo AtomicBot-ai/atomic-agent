@@ -3286,7 +3286,8 @@ function exitAfterAgentStop(code: number): void {
   stopForQuit();
   const client = agent;
   agent = null;
-  const shutdown = (client ? client.stop() : Promise.resolve()).then(stopLocalDaemonOnQuit);
+  // close, not stop: no restart, workspace change or import still on its way starts another agent after it.
+  const shutdown = (client ? client.close() : Promise.resolve(true)).then(stopLocalDaemonOnQuit);
   void Promise.race([shutdown, new Promise((r) => setTimeout(r, 10_000))])
     .catch(() => undefined)
     .finally(() => app.exit(code));
@@ -8711,7 +8712,10 @@ app.on("before-quit", (event) => {
   agent = null;
   const shutdown = { done: false };
   quitShutdown = shutdown;
-  void client.stop().catch(() => undefined).then(stopLocalDaemonOnQuit).finally(() => {
+  /* close, not stop: a restart, a workspace change or an import whose stop
+     this joins would otherwise start `atag serve` again behind the quitting
+     app (agent-client start). */
+  void client.close().catch(() => undefined).then(stopLocalDaemonOnQuit).finally(() => {
     shutdown.done = true;
     app.quit();
   });

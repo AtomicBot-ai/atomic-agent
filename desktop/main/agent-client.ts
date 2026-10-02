@@ -104,6 +104,13 @@ const HEALTH_POLL_MS = 300;
  */
 const STOP_GRACE_MS = 4_000;
 const KILL_WAIT_MS = 3_000;
+/**
+ * An agent still there after its SIGKILL is let go of (one stuck in the
+ * kernel, on a Mac deep in swap): this is how long the next start — or a
+ * later stop asked whether the agent is gone — waits for it, without
+ * blocking the main thread. It holds the databases while it is there.
+ */
+const LINGER_WAIT_MS = 5_000;
 
 /**
  * Where the agent might be, in order of preference.
@@ -168,6 +175,8 @@ async function freePort(): Promise<number> {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** `4 s`, `0.3 s`: a wait as the log says it. */
+const seconds = (ms: number) => `${Number.isInteger(ms / 1000) ? ms / 1000 : (ms / 1000).toFixed(1)} s`;
 
 /* ------------------------------------------------------- orphan reaping ---
    r6 (human-scenario round). `before-quit` stops the child, and that is the
@@ -259,10 +268,17 @@ function taskkillTree(pid: number): Promise<void> {
  * without its record being cleared, and the one thing that did that — the
  * old child's exit handler clearing the record of the child started after it
  * — is gone (childExited only acts for the child it was registered on, and
- * only ever clears the record that names that child's pid). `path` is the
- * record of one AgentClient: the app's own, or a smoke check's.
+ * only ever clears the record that names that child's pid). The other one is
+ * a child a stop let go of when it was still there after its SIGKILL: its
+ * record is kept for the next launch, and `own` names it so this run leaves
+ * it alone — it is not an orphan of a previous run, it has had its SIGKILL
+ * already, and the blocking wait below would freeze the window for nothing.
+ * `path` is the record of one AgentClient: the app's own, or a smoke check's.
  */
-export function reapOrphanedServe(path: string = serveRecordPath()): { pid: number; killed: boolean } | null {
+export function reapOrphanedServe(
+  path: string = serveRecordPath(),
+  own: ReadonlySet<number> = new Set(),
+): { pid: number; killed: boolean } | null {
   let rec: ServeRecord;
   try {
     rec = JSON.parse(readFileSync(path, "utf8")) as ServeRecord;
@@ -273,6 +289,7 @@ export function reapOrphanedServe(path: string = serveRecordPath()): { pid: numb
     forgetServeRecord(path);
     return null;
   }
+  if (own.has(rec.pid)) return null;
   if (!looksLikeOurServe(rec.pid, rec.port)) {
     // Gone already, or the pid belongs to something else now. Either way the
     // record is stale, and killing a stranger's pid is the one thing this
@@ -367,6 +384,15 @@ export interface AgentClientOptions {
   healthBudgetMs?: number;
   /** SIGTERM → SIGKILL (default STOP_GRACE_MS). */
   stopGraceMs?: number;
+  /** SIGKILL → let go of an agent still there (default KILL_WAIT_MS). */
+  killWaitMs?: number;
+  /** How long a start waits for an agent a stop let go of (default LINGER_WAIT_MS). */
+  lingerWaitMs?: number;
+  /**
+   * How a signal reaches the agent (default `child.kill`). A check stands in
+   * a SIGKILL that does not take, as for an agent stuck in the kernel.
+   */
+  signal?: (child: ChildProcess, signal: NodeJS.Signals) => void;
 }
 
 /** How a fresh agent's wait for /health ended. */
@@ -408,13 +434,27 @@ export class AgentClient extends EventEmitter {
   /** The start on its way: a second caller shares it. */
   private starting: Promise<AgentStatus> | null = null;
   /** The stop on its way: a second caller shares it, and a start waits for it. */
-  private stopInFlight: Promise<void> | null = null;
+  private stopInFlight: Promise<boolean> | null = null;
   /** Moves at every stop: a start that began before it gives up at its next look. */
   private stopEpoch = 0;
+  /**
+   * Moves at every stop() call, one that joins the stop on its way too. A
+   * start waiting behind a stop gives way to a stop asked for while it
+   * waited: it spawns nothing, and the stop's caller starts what it wants.
+   */
+  private stopRequests = 0;
+  /** Set by close(): the app is quitting, and no start spawns an agent again. */
+  private closed = false;
   /** The children a stop has ended or is ending: their exit is that stop's doing, never a crash. */
   private readonly stopped = new WeakSet<ChildProcess>();
-  /** Each child's own end, on its way: two stops of one child share one SIGTERM → SIGKILL. */
-  private readonly ending = new WeakMap<ChildProcess, Promise<boolean>>();
+  /**
+   * Children a stop let go of while they were still there after their
+   * SIGKILL. Each leaves the set when its exit comes at last. The next start
+   * waits for them (bounded, without blocking) and never reaps them as
+   * orphans of a previous run; a stop does not call the agent gone while
+   * one is still there.
+   */
+  private readonly lingering = new Set<ChildProcess>();
   private readonly opts: AgentClientOptions;
   private readonly recordPath: string;
 
@@ -475,11 +515,19 @@ export class AgentClient extends EventEmitter {
    * Start `atag serve`, unless it is running or starting already — a second
    * caller gets the start on its way. A start asked for while a stop runs
    * waits for that stop first, so it never joins a start the stop is ending.
+   * When another stop was asked for while it waited, it gives way and spawns
+   * nothing: whoever asked for that stop starts what it wants after it. And
+   * once the client is closed (the quit), no start spawns anything: Cmd+Q
+   * during a restart, a workspace change or an import joined the stop on its
+   * way, and the start that came after that stop brought `atag serve` up
+   * behind the quitting app.
    */
   async start(): Promise<AgentStatus> {
+    const asked = this.stopRequests;
     while (this.stopInFlight) await this.stopInFlight;
-    if (this.child) return this.status;
+    if (this.closed || this.stopRequests !== asked) return this.status;
     if (this.starting) return this.starting;
+    if (this.child) return this.status;
     const run = this.spawnAndWait().finally(() => {
       if (this.starting === run) this.starting = null;
     });
@@ -501,12 +549,31 @@ export class AgentClient extends EventEmitter {
     // A stop from here on ends this start: it spawns nothing, or its child is the stop's to end.
     const epoch = this.stopEpoch;
     const superseded = () => this.stopEpoch !== epoch;
+    /* Ended by a stop: a restart, not a failure. It answers "stopped", never
+       the status an earlier agent left (agent:restart hands this answer to
+       the window, which would report that agent's error again). */
+    const gaveWay = (): AgentStatus => {
+      this.port = null;
+      this.setStatus({ state: "stopped", port: null, llama: null, error: null });
+      return this.status;
+    };
     this.stopping = false;
+    /* An agent the last stop let go of, still there after its SIGKILL, holds
+       the port it had and the databases: wait for it to go, without blocking
+       the window. One that outlasts the wait is said, and the next agent
+       starts beside it. */
+    if (!(await this.lingeringGone())) {
+      const pids = [...this.lingering].map((c) => c.pid ?? "?").join(", ");
+      this.say(`[desktop] the agent a stop let go of (pid ${pids}) has still not exited — starting the next one beside it`);
+    }
+    if (superseded()) return gaveWay();
     /* r6: before anything else, come back for the child the LAST run left
        behind. A live desktop app always holds its own child, so whatever
        serve.json still names at this moment outlived its parent — Force Quit,
-       a crash, a SIGKILL — and would otherwise sit there for ever. */
-    const orphan = reapOrphanedServe(this.recordPath);
+       a crash, a SIGKILL — and would otherwise sit there for ever. A child
+       this client let go of is not that, and is left alone (reapOrphanedServe). */
+    const own = new Set([...this.lingering].map((c) => c.pid).filter((pid): pid is number => pid !== undefined));
+    const orphan = reapOrphanedServe(this.recordPath, own);
     if (orphan) {
       // Both places a person might look: the Diagnostics pane, and the
       // terminal when the app was started from one.
@@ -515,10 +582,14 @@ export class AgentClient extends EventEmitter {
     const token = randomBytes(24).toString("hex");
     const port = await freePort();
     // Backlog 41: a stop came while the port was found. Nothing was spawned, and there is nothing to say.
-    if (superseded()) return this.status;
+    if (superseded()) return gaveWay();
     this.token = token;
     this.port = port;
     this.setStatus({ state: "starting", binary, port, error: null });
+    /* A "status" listener runs inside that call, and one that stopped the
+       client has already looked for a child to end and found none: nothing
+       is spawned behind its back. */
+    if (superseded()) return gaveWay();
 
     const child = spawn(
       binary,
@@ -562,7 +633,11 @@ export class AgentClient extends EventEmitter {
     if (child.pid) rememberServeRecord(this.recordPath, child.pid, port);
 
     // Backlog 41: registered per child, and acting only for the child it was registered on.
-    child.on("exit", (code, signal) => this.childExited(child, code, signal));
+    child.on("exit", (code, signal) => {
+      // A child a stop let go of is gone at last: nothing waits for it any more, and its record goes.
+      if (this.lingering.delete(child) && child.pid !== undefined) forgetServeRecord(this.recordPath, child.pid);
+      this.childExited(child, code, signal);
+    });
     /* A child that could not be spawned at all (not executable, say) emits
        `error` and has no pid. Unheard, that event is an uncaught exception in
        main. A failed kill emits `error` too, on a child that has a pid: that
@@ -577,13 +652,13 @@ export class AgentClient extends EventEmitter {
     /* Backlog 41: "did not become healthy" is said only when the budget really
        ran out with this agent still running. An agent that exited while it
        booted has already said how (childExited); one a stop ended is a
-       restart, not a failure, and the stop says "stopped" itself. */
+       restart, not a failure. */
     else if (verdict === "timeout") {
       this.setStatus({
         state: "error",
         error: `The agent did not become healthy within ${Math.round(budget / 1000)}s.`,
       });
-    }
+    } else if (verdict === "superseded") return gaveWay();
     return this.status;
   }
 
@@ -1132,8 +1207,13 @@ export class AgentClient extends EventEmitter {
    * Stop `atag serve` and come back once it is gone, a start on its way
    * included: that start spawns nothing more, and the child it spawned is
    * ended here. One at a time: a second caller shares the stop on its way.
+   *
+   * Answers whether the agent is gone. False when one is still there after
+   * its SIGKILL: it still holds the databases, and an import must not
+   * replace them under it (tui-import).
    */
-  stop(): Promise<void> {
+  stop(): Promise<boolean> {
+    this.stopRequests++;
     if (this.stopInFlight) return this.stopInFlight;
     const run = this.stopNow().finally(() => {
       if (this.stopInFlight === run) this.stopInFlight = null;
@@ -1142,7 +1222,17 @@ export class AgentClient extends EventEmitter {
     return run;
   }
 
-  private async stopNow(): Promise<void> {
+  /**
+   * The app is quitting: stop the agent, and from now on no start spawns
+   * one — not the restart, the workspace change or the import whose stop
+   * this joins, and not one asked for after it.
+   */
+  close(): Promise<boolean> {
+    this.closed = true;
+    return this.stop();
+  }
+
+  private async stopNow(): Promise<boolean> {
     this.stopping = true;
     this.stopEpoch++;
     for (const controller of this.turns.values()) controller.abort();
@@ -1156,51 +1246,64 @@ export class AgentClient extends EventEmitter {
     // A start on its way gives up at its next look; the child it had spawned, if any, was `child`.
     if (starting) await starting.catch(() => undefined);
     this.port = null;
-    /* r6: a clean stop leaves nothing for the next launch to reap. An agent
-       still there after its SIGKILL keeps its record: the reaper is what comes
-       back for it. */
-    if (exited) forgetServeRecord(this.recordPath);
+    /* r6: a clean stop leaves nothing for the next launch to reap: the record
+       of the child it ended goes, and only that one. With no child, the
+       record is an orphan's from the last run, which the next start still has
+       to come back for. An agent still there after its SIGKILL keeps its
+       record until it exits (lingering). */
+    if (child && exited && child.pid !== undefined) forgetServeRecord(this.recordPath, child.pid);
     if (this.status.state === "starting" || this.status.state === "connected") {
       this.setStatus({ state: "stopped", port: null, llama: null });
     }
+    return exited && (await this.lingeringGone());
+  }
+
+  /** Waits, bounded and without blocking, for the children a stop let go of; answers whether all of them are gone. */
+  private async lingeringGone(): Promise<boolean> {
+    if (this.lingering.size === 0) return true;
+    const exits = Promise.all([...this.lingering].map((child) => exitOf(child)));
+    return settlesWithin(exits, this.opts.lingerWaitMs ?? LINGER_WAIT_MS);
+  }
+
+  /** A signal to the agent, through the stand-in a check gave (AgentClientOptions.signal). */
+  private sendSignal(child: ChildProcess, sig: NodeJS.Signals): void {
+    if (this.opts.signal) this.opts.signal(child, sig);
+    else child.kill(sig);
   }
 
   /**
    * End one child: SIGTERM (on Windows taskkill, which ends its tree), up to
    * the grace for it to close by itself, then SIGKILL and a bounded wait for
-   * the exit. Whenever its exit comes it reads as stopped (childExited). Two
-   * stops of one child share one sequence. Answers whether it exited; one
-   * still there after all that is let go of, so the next start can begin.
+   * the exit. Whenever its exit comes it reads as stopped (childExited).
+   * Answers whether it exited; one still there after all that is let go of
+   * (lingering), so the next start can begin. stop() runs one at a time and
+   * a stopped child is no longer the client's, so no two calls end one child.
    */
-  private endChild(child: ChildProcess): Promise<boolean> {
-    const pending = this.ending.get(child);
-    if (pending) return pending;
+  private async endChild(child: ChildProcess): Promise<boolean> {
     this.stopped.add(child);
-    const run = (async () => {
-      const exited = exitOf(child);
-      if (process.platform === "win32" && child.pid) {
-        // No SIGTERM on Windows: end the agent and the processes it started.
-        void taskkillTree(child.pid);
-      } else {
-        child.kill("SIGTERM");
-      }
-      const grace = this.opts.stopGraceMs ?? STOP_GRACE_MS;
-      if (await settlesWithin(exited, grace)) return true;
-      // Do not leave an orphan holding the port if SIGTERM is ignored.
-      const who = `the agent (pid ${child.pid ?? "?"})`;
-      this.say(`[desktop] ${who} did not close within ${Math.round(grace / 1000)} s of being stopped — ending it with SIGKILL`);
-      child.kill("SIGKILL");
-      if (await settlesWithin(exited, KILL_WAIT_MS)) return true;
-      this.say(`[desktop] ${who} was still there ${KILL_WAIT_MS / 1000} s after SIGKILL — going on without it`);
-      // Let go of it: its exit, whenever it comes, changes nothing (childExited).
-      if (this.child === child) {
-        this.child = null;
-        this.port = null;
-      }
-      return false;
-    })();
-    this.ending.set(child, run);
-    return run;
+    const exited = exitOf(child);
+    if (process.platform === "win32" && child.pid) {
+      // No SIGTERM on Windows: end the agent and the processes it started.
+      void taskkillTree(child.pid);
+    } else {
+      this.sendSignal(child, "SIGTERM");
+    }
+    const grace = this.opts.stopGraceMs ?? STOP_GRACE_MS;
+    if (await settlesWithin(exited, grace)) return true;
+    // Do not leave an orphan holding the port if SIGTERM is ignored.
+    const who = `the agent (pid ${child.pid ?? "?"})`;
+    this.say(`[desktop] ${who} did not close within ${seconds(grace)} of being stopped — ending it with SIGKILL`);
+    this.sendSignal(child, "SIGKILL");
+    const killWait = this.opts.killWaitMs ?? KILL_WAIT_MS;
+    if (await settlesWithin(exited, killWait)) return true;
+    this.say(`[desktop] ${who} was still there ${seconds(killWait)} after SIGKILL — going on without it`);
+    // Let go of it: its exit, whenever it comes, changes nothing but its own record and this set (childExited).
+    this.lingering.add(child);
+    if (this.child === child) {
+      this.child = null;
+      this.port = null;
+    }
+    return false;
   }
 }
 

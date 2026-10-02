@@ -88,9 +88,14 @@ export interface TuiImportResult {
  * throws. Everything else (providers, keys, skills) is safe with it running.
  */
 export interface TuiImportHooks {
-  stopAgent: () => Promise<unknown>;
+  /** Answers whether the agent is gone: false when one is still there after its SIGKILL (AgentClient.stop). */
+  stopAgent: () => Promise<boolean>;
   startAgent: () => Promise<unknown>;
 }
+
+/** What an import says when the agent's stop could not end it. */
+export const IMPORT_AGENT_STILL_RUNNING =
+  "the agent did not stop, so its sessions and memory were left as they were — try the import again in a moment";
 
 const NOTHING = (): TuiImportResult["copied"] => ({ providers: 0, keys: 0, skills: 0, sessions: 0, memory: false });
 
@@ -488,7 +493,14 @@ export async function importFromTui(opts: TuiImportOptions, hooks?: TuiImportHoo
     if (want.sessions || want.memory) {
       // See TuiImportHooks: the destination databases belong to a running
       // agent. Down for the copy, back up afterwards, whatever happens.
-      if (hooks) await hooks.stopAgent();
+      if (hooks && !(await hooks.stopAgent())) {
+        /* Its stop let go of an agent still there after SIGKILL: it holds
+           these databases yet, and replacing them (and dropping their -wal)
+           under it is the very damage the stop is here to prevent. Nothing
+           is copied; the app gets its agent back. */
+        await hooks.startAgent();
+        return { ok: false, copied, error: IMPORT_AGENT_STILL_RUNNING };
+      }
       try {
         if (want.sessions) {
           const dst = join(DESKTOP_STATE_DIR, "sessions.sqlite");
