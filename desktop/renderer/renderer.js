@@ -1631,19 +1631,23 @@ const PAL = [
 ];
 
 /* ---------------- state ---------------- */
-/** A per-viewer pane flag from localStorage: 'open' or anything else. */
-function readPaneFlag(key) {
-  try { return localStorage.getItem(key) === 'open'; } catch (e) { return false; }
-}
+/** A per-viewer pane flag in localStorage: 'open' or 'closed'. */
 function writePaneFlag(key, on) {
   try { localStorage.setItem(key, on ? 'open' : 'closed'); } catch (e) { /* no storage: the choice lasts this launch */ }
 }
+/* Chat review (Д22): the side panel (Steps · Reasoning · World) starts closed
+   on every launch. Calm (S1) had it remember being open, so a panel opened
+   once to look stayed beside the transcript in every later session, with a
+   second scrollbar next to the transcript's. ⌥⌘0 and the toolbar button open
+   it for the rest of the launch; the flag older builds stored is dropped. A
+   function declaration, so it is hoisted and safe to call in S below. */
+function inspectorAtLaunch() {
+  try { localStorage.removeItem('atag.inspector'); } catch (e) { /* no storage: nothing was kept */ }
+  return false;
+}
 const S = {
   room:'chat', theme:'system',
-  // Calm (S1): the inspector is closed until the viewer opens it, and it
-  // remembers that choice per viewer, like atag.theme. readPaneFlag is a
-  // function declaration, so it is hoisted and safe to call here.
-  inspector: readPaneFlag('atag.inspector'), inspTab:'steps',
+  inspector: inspectorAtLaunch(), inspTab:'steps',
   sidebar:'open',   // r5 item 2: 'open' | 'rail' — the class on #sidebar is derived from this
 
   consoleOpen:false, consoleTab:'agent',
@@ -5049,7 +5053,7 @@ function act(a) {
     if (v === 'chat') S.settings = null;
     S.room = v; render(); return;
   }
-  if (k === 'insp')      { close(); S.inspector = true; writePaneFlag('atag.inspector', true); S.inspTab = v; render(); return; }
+  if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
@@ -5060,7 +5064,7 @@ function act(a) {
     close(); toast('The sidebar is a rail on a narrow window', 'widen the window past 1000px to open it', 'bad'); return;
   }
   if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
-                           else if (v === 'inspector') { S.inspector = !S.inspector; writePaneFlag('atag.inspector', S.inspector); }
+                           else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
   if (k === 'theme')     { close(); S.theme = v;

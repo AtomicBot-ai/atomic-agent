@@ -141,17 +141,20 @@
    band never jumps back.
    Everything sits under the text (z-index:-1 inside the card's stacking
    context), takes no layout, ignores the pointer, and is only in the DOM
-   while a turn runs or fades out. Reduced motion: a still, soft glow. */
+   while a turn runs or fades out. Reduced motion: a still, soft glow.
+   Chat review (Д20): the band drew the eye away from the reply it was
+   waiting on. It is a 1px line now (it was 2px), laps the card in 7 s
+   instead of 4.2 s, and its inward bloom is fainter. */
 .composer{--cl-edge:color-mix(in oklab, var(--brand) 78%, var(--ink));
   --cl-mid:var(--brand);--cl-tail:color-mix(in srgb, var(--indigo) 85%, transparent);
-  --cl-bloom:color-mix(in srgb, var(--brand) 24%, transparent);--cl-lap:4.2s}
+  --cl-bloom:color-mix(in srgb, var(--brand) 14%, transparent);--cl-lap:7s}
 .cloader{position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
   animation:cl-in 300ms var(--ease) both}
 .composer.cl-out .cloader{animation:cl-out 300ms var(--ease) both}
 @keyframes cl-in{from{opacity:0}to{opacity:1}}
 @keyframes cl-out{from{opacity:1}to{opacity:0}}
-/* The rim: a 2px ring cut out of the card's edge. */
-.cl-rim{position:absolute;inset:0;border-radius:inherit;padding:2px;
+/* The rim: a 1px ring cut out of the card's edge. */
+.cl-rim{position:absolute;inset:0;border-radius:inherit;padding:1px;
   -webkit-mask:linear-gradient(var(--ink) 0 0) content-box,linear-gradient(var(--ink) 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude}
 /* The inward bloom: clipped to the card, so only its inner half shows. */

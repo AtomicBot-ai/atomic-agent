@@ -257,6 +257,15 @@ svg{display:block;flex:none}
 .rule-title.red{background:var(--bd)}
 .rule-hair{border:0;height:1px;background:var(--bd);margin:0}
 .scroller,#content,.pane,.tabbody{scrollbar-gutter:stable}
+/* Chat review (Д22): scrollbars in the theme's own ink — a quiet thumb on no
+   track — instead of the system's white track on the grey window ground. The
+   property is inherited, so this one rule reaches every scroller in the page;
+   being the standard property, it leaves macOS's overlay bars overlay where
+   the system draws them that way. The onboarding lists draw their own always-
+   visible bars with the -webkit- pseudo-elements, which this property would
+   switch off, so they opt out (onboarding.css explains why they need them). */
+body{scrollbar-color:color-mix(in srgb, var(--ink) 24%, transparent) transparent}
+#onboarding .ob-scroll,#onboarding .ob-wizlist{scrollbar-color:auto}
 
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @keyframes spin{to{transform:rotate(360deg)}}
