@@ -13,6 +13,7 @@ import {
 import type { LlmStreamParams } from "../agent/step-executor.js";
 import { TurnController } from "./turn-controller.js";
 import { SteeringInbox } from "./steering-inbox.js";
+import { SHUTDOWN_TURN_GRACE_MS, TurnsInFlight } from "./turns-in-flight.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
 
@@ -196,6 +197,7 @@ import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 
 import {
   SessionStore,
+  INTERRUPTED_TURN_ENDING,
   createEmptySessionState,
   createFusionWorkerSession,
   readFusionWorkerMeta,
@@ -1540,6 +1542,26 @@ export async function createAgentRuntime(
   // column-only `listRecentWorkingDirs` projection, so the store must
   // exist by the time `registerOsTools` wires the closure below.
   const sessionStore = new SessionStore();
+  // A row still marked `running` by a process that is gone is a turn that
+  // will never write its end — the app was killed or crashed mid-turn —
+  // and every list would show it running for ever. End those before
+  // anything reads the table (the retention pass below included: it
+  // never prunes a live row, so a ghost would also be kept for ever).
+  // Rows a live process still owns — a second window, a `serve` beside a
+  // TUI — are left alone. Never blocks boot.
+  try {
+    const recovered = sessionStore.recoverInterruptedTurns();
+    if (recovered.length > 0) {
+      logger.info("sessions left mid-turn by a stopped agent marked cancelled", {
+        count: recovered.length,
+        sessionIds: recovered.join(","),
+      });
+    }
+  } catch (err) {
+    logger.warn("could not end sessions left mid-turn; continuing", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   // `sessions.sqlite` and the traces beside it are the only state this
   // runtime never shrinks (§"Session retention"). One bounded pass here,
   // opt-in, and wrapped so that a prune can never be the reason a
@@ -2787,10 +2809,37 @@ export async function createAgentRuntime(
    * `shutdownCalled`'s job, checked on both sides of the completion.
    */
   const pendingSessionNamings = new Set<AbortController>();
+  /**
+   * The turns `executeTurn` is running, so `shutdown` can let the ones
+   * their hosts stopped write their own end before the session store
+   * closes (`TurnsInFlight`).
+   */
+  const turnsInFlight = new TurnsInFlight();
+  /**
+   * Record every turn this runtime still has marked `running` as
+   * interrupted. Shutdown only: by then a turn that has not written its
+   * end cannot be counted on to, and a row left `running` would show a
+   * turn nothing is running until some later boot cleans it up.
+   */
+  const releaseTurnsInterrupted = (): void => {
+    try {
+      sessionStore.releaseOwnTurns(INTERRUPTED_TURN_ENDING);
+    } catch (err) {
+      logger.warn("could not record the turns this shutdown interrupted", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
   let shutdownCalled = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
+    // Say now, while the store is certainly open, that the turns still
+    // running were interrupted: a stop that turns into a kill partway
+    // through this teardown — the desktop gives it 4 s — still leaves
+    // every row right. A turn that writes its own end before the store
+    // closes (below) replaces this with what really happened.
+    releaseTurnsInterrupted();
     // Nothing will drain the inbox after this point; drop pending
     // steers so a message cannot resurface in a later process.
     steeringInbox.clearAll();
@@ -2856,6 +2905,23 @@ export async function createAgentRuntime(
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    // The turns their hosts stopped — `serve`'s dropped connections, the
+    // TUI's and the sidecar's aborts, the channels above — are unwinding
+    // now. Closing the store under them is how a turn cancelled by a quit
+    // used to lose its end: it saved a moment after `close`, and its row
+    // kept what it held before the turn. Give them a moment first; a
+    // turn nobody stopped (a scheduled task) is not waited for.
+    const stillEnding = await turnsInFlight.settleCancelled(
+      SHUTDOWN_TURN_GRACE_MS,
+    );
+    if (stillEnding > 0) {
+      logger.warn("stopped turns still running at shutdown; recorded as interrupted", {
+        count: stillEnding,
+      });
+    }
+    // A turn that did not end in time, or that started after the release
+    // at the top, is recorded the same way before the store goes away.
+    releaseTurnsInterrupted();
     try {
       sessionStore.close();
     } catch {
@@ -3246,6 +3312,55 @@ export async function createAgentRuntime(
     }
   };
 
+  /**
+   * Mark the session's row `running` for the turn about to run, so the
+   * store says what is happening while it happens and a turn cut off by
+   * a kill or a crash is recognised at the next boot
+   * (`SessionStore.beginTurn`). Bookkeeping only: a mark that cannot be
+   * written must not stop the turn.
+   */
+  const markTurnRunning = (sessionId: string): void => {
+    try {
+      sessionStore.beginTurn(sessionId);
+    } catch (err) {
+      logger.warn("could not mark the session running", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  /**
+   * End a turn that has no state to save — it threw — on the status it
+   * actually ended with: `cancelled` when it had been told to stop (an
+   * abort can surface as any error), `failed` with the error otherwise.
+   * The transcript stays what it was before the turn; there is nothing
+   * truer to put there.
+   */
+  const releaseThrownTurn = (
+    sessionId: string,
+    err: unknown,
+    signal: AbortSignal | undefined,
+  ): void => {
+    try {
+      sessionStore.releaseTurn(
+        sessionId,
+        signal?.aborted === true
+          ? { status: "cancelled" }
+          : {
+              status: "failed",
+              lastError: err instanceof Error ? err.message : String(err),
+            },
+      );
+    } catch (releaseErr) {
+      logger.warn("could not record how a turn ended", {
+        sessionId,
+        error:
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
+      });
+    }
+  };
+
   const executeTurn = async (
     session: SessionState,
     userMessage: string,
@@ -3337,6 +3452,10 @@ export async function createAgentRuntime(
       });
     }
     return turnContext.run({ sessionId: session.id }, async () => {
+      // Registered before the mark and ended after the turn's end is
+      // written, so `shutdown` waiting on it waits for the row to be right.
+      const inFlight = turnsInFlight.begin(runOptions.signal);
+      markTurnRunning(session.id);
       try {
         // Recorded for `fusion.delegate`, which quotes it to the workers.
         const turnRequest = pickOriginalRequest({
@@ -3378,7 +3497,8 @@ export async function createAgentRuntime(
             [SESSION_ROUTE_METADATA_KEY]: turnRoute,
           },
         };
-        sessionStore.save(finished);
+        // The turn's end replaces its `running` mark (`beginTurn`).
+        sessionStore.finishTurn(finished);
         // Name the thread once, from its first prompt, after the first
         // turn that actually answered. Fire-and-forget on purpose: the
         // turn is already saved and already returned, and an unnamed
@@ -3390,7 +3510,15 @@ export async function createAgentRuntime(
         // `finish` ended the whole session: its kept jobs go with it.
         if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };
+      } catch (err) {
+        // The loop hands back a state for every ending it can classify —
+        // reply, finish, max steps, failed, cancelled — so this is a turn
+        // that threw, or whose save did. Its row must not go on saying
+        // `running`.
+        releaseThrownTurn(session.id, err, runOptions.signal);
+        throw err;
       } finally {
+        inFlight.end();
         // The turn is over, however it ended: the shell jobs it started
         // and did not `keep` are stopped here — the one choke point
         // every turn passes through (§"A turn is a task, not a step
