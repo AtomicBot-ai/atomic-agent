@@ -17,7 +17,8 @@
    ============================================================ */
 
 /* ---------------- Window ---------------- */
-/* The settings window's size and the room around it.
+/* The window's size and the room around it, on #window so the toasts (a
+   sibling of #settings) can be placed inside it too (Д27).
    Item 36: the system's own controls sit over the top 52px band of the
    window — macOS's traffic lights at its left (hiddenInset, at 20,20; in
    full screen the menu bar and the lights slide in over the same band when
@@ -46,6 +47,15 @@ body.electron #settings{-webkit-app-region:no-drag}
    !important: paint() pins the layer with an INLINE z-index of 20, which beat this rule, so the wizard
    opened from Settings › LLM (Add provider, the "… detected" prompt) was drawn behind the settings sheet. */
 #window:has(#settings) #overlays{z-index:29 !important}
+/* Д27: the toasts stood at the top right of the app window, so over Settings
+   they straddled the settings window's right edge and sat on its close
+   control. They stand inside it now, in the body card's bottom right corner:
+   clear of the header and the toolbars, and never out past the card's edge.
+   The same sums as #settings and .setwin below: the gap beside the settings
+   window, then 8px of the card's margin and 16px inside the card. */
+#window:has(#settings) #toasts{top:auto;
+  right:calc(max(var(--set-gx), (100% - var(--set-w)) / 2) + 24px);
+  bottom:calc(max(var(--set-gy), (100% - var(--set-h)) / 2) + 24px)}
 
 .setwin{position:relative;width:min(var(--set-w), 100%);height:min(var(--set-h), 100%);
   display:grid;grid-template-columns:230px minmax(0,1fr);

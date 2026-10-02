@@ -4844,7 +4844,8 @@ function toastsClearCard() {
   const live = [...box.children].filter((n) => !n.classList.contains('out'));
   live.forEach((n) => { if (n.hidden) n.hidden = false; });
   const card = document.getElementById('dlcard');
-  if (!card || card.hidden || live.length < 2) return;
+  // Д27: over Settings the toasts stand inside its window, and the card is under its backdrop.
+  if (!card || card.hidden || live.length < 2 || S.settings) return;
   const limit = card.getBoundingClientRect().top - DLC_GAP;
   for (let i = 0; i < live.length - 1 && live[live.length - 1].getBoundingClientRect().bottom > limit; i++) {
     live[i].hidden = true;
