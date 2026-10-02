@@ -35,6 +35,7 @@ import {
   isModelDownloaded,
   listLocalModels,
   listVulkanDevices,
+  AUTO_UPDATE_RECHECK_MS,
   maybeAutoUpdateBackend,
   readBackendVersion,
   readDownloadJob,
@@ -457,6 +458,11 @@ export async function runLocalModelsStart(): Promise<number> {
       // for. It still needs a deadline — a stalled-open connection would
       // otherwise pin the command forever with a progress bar at 12%.
       signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+      // Each `models start` is a fresh process (the desktop runs one on
+      // every switch to the local model), so the release cache never
+      // survives from one to the next: a check from the last few hours,
+      // recorded in the data dir, stands instead of a GitHub round trip.
+      recheckAfterMs: AUTO_UPDATE_RECHECK_MS,
       onProgress: (p: number, t: number, tot: number) => {
         const line = renderPullProgress("backend zip", p, t, tot);
         if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);

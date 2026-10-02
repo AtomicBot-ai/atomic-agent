@@ -44,6 +44,16 @@ export function resolveVersionFilePath(dataDir: string): string {
   return join(resolveBackendDir(dataDir), "backend-version.json");
 }
 
+/**
+ * What the last release check before a managed start found
+ * (`ensure-latest-backend.ts`), so a start in another process trusts a
+ * recent check instead of asking GitHub again. Next to the pid file, not
+ * in `backend/`, which an update replaces wholesale.
+ */
+export function resolveBackendCheckFilePath(dataDir: string): string {
+  return join(dataDir, "llama-backend-check.json");
+}
+
 export function resolvePidFilePath(dataDir: string): string {
   return join(dataDir, "llama-server.pid");
 }
