@@ -170,13 +170,24 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
   }
   if (err.status === 402) {
-    // Reached only after the credit-limit retry declined or failed, so
-    // the ceiling is not the fixable part any more — say what is.
-    return (
-      `${who} refused the request for lack of credit (402). ` +
+    /* Reached only after the credit-limit retry declined or failed, so the
+       ceiling is not the fixable part any more — say what is.
+
+       And say what the PROVIDER said, when it said anything. Two branches
+       met here in the desktop merge: one explaining the mechanism (the
+       service reserves the whole output ceiling against your balance), one
+       insisting that a 402 must not throw away the provider's own sentence,
+       because OpenRouter's reads "This request requires more credits, or
+       fewer max_tokens. You requested up to 8192 tokens, but can only afford
+       7181" — an instruction with the actual numbers in it. Neither is worth
+       losing, so a 402 carries both when the body has something to carry. */
+    const own = providerReason(err);
+    const mechanism =
       `Top up the account, or lower localModels.completionMaxTokens: ` +
-      `the service reserves the whole output ceiling against your balance.`
-    );
+      `the service reserves the whole output ceiling against your balance.`;
+    return own
+      ? `${who} rejected the request (402). ${own} ${mechanism}`
+      : `${who} rejected the request (402). ${mechanism}`;
   }
   if (err.status === 429) {
     return `${who} is rate-limiting this key (429). Tried ${OPENAI_MAX_ATTEMPTS} times — wait a minute and retry.`;
@@ -184,8 +195,91 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status >= 500) {
     return `${who} is having server trouble (${err.status}). Tried ${OPENAI_MAX_ATTEMPTS} times — this is on the provider, not your setup.`;
   }
-  return `${who} rejected the request (${err.status}).`;
+  // Everything else — 400 bad request, 413, 422 — has no wording of its own
+  // here, and a bare "rejected the request (400)" throws away the only
+  // sentence that could have helped. The
+  // provider already said what was wrong and what to do about it:
+  // OpenRouter's 402 reads "This request requires more credits, or fewer
+  // max_tokens. You requested up to 8192 tokens, but can only afford
+  // 7181", which is an instruction, not a status code. Pass it on.
+  const reason = providerReason(err);
+  return reason
+    ? `${who} rejected the request (${err.status}). ${reason}`
+    : `${who} rejected the request (${err.status}).`;
 }
+
+/**
+ * The provider's own explanation, dug out of the body `httpErrorFromResponse`
+ * folded into the message as `openai provider <status>: <body>`.
+ *
+ * OpenAI-compatible errors are `{"error": {"message": …}}`; a few
+ * providers send `{"message": …}` or `{"error": "…"}`, and some send
+ * plain text. Anything unrecognisable is passed through as trimmed text
+ * rather than dropped — an unhelpful sentence is still better evidence
+ * than a status code alone. Bounded so a provider that echoes the whole
+ * request cannot flood a chat row.
+ */
+function providerReason(err: OpenAiHttpError): string {
+  const body = err.message.replace(/^openai provider \d+:\s*/, "").trim();
+  if (!body) return "";
+  let text: string;
+  try {
+    // Structured body: the message is the only part worth reading out
+    // loud. If it parsed but carries no message (`{}`, an empty error
+    // object), say nothing rather than reading braces at the operator.
+    text = messageFromErrorJson(JSON.parse(body));
+  } catch {
+    // Not parseable — which is the NORMAL case for a long error, because
+    // `httpErrorFromResponse` folds only the first
+    // `OPENAI_ERROR_DETAIL_MAX_LEN` characters of the body into the
+    // message and a cut-off JSON object no longer parses. OpenRouter's
+    // 402 is exactly that shape, so relying on `JSON.parse` alone read
+    // the operator a wall of braces. Lift the first `"message"` out by
+    // hand; failing that, the raw text is still better than nothing.
+    text = messageFromTruncatedJson(body) || body;
+  }
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  return flat.length > OPENAI_REASON_MAX_LEN
+    ? `${flat.slice(0, OPENAI_REASON_MAX_LEN)}…`
+    : flat;
+}
+
+function messageFromErrorJson(parsed: unknown): string {
+  if (!parsed || typeof parsed !== "object") return "";
+  const root = parsed as { error?: unknown; message?: unknown };
+  if (typeof root.message === "string" && root.message.trim()) {
+    return root.message;
+  }
+  if (typeof root.error === "string" && root.error.trim()) return root.error;
+  if (root.error && typeof root.error === "object") {
+    const inner = root.error as { message?: unknown };
+    if (typeof inner.message === "string" && inner.message.trim()) {
+      return inner.message;
+    }
+  }
+  return "";
+}
+
+/**
+ * The first `"message": "…"` in a body that did not survive truncation.
+ * Matched against the raw text (escapes intact) and unescaped through
+ * `JSON.parse` so `\"` and `\n` come back as themselves; a value that was
+ * itself cut in half simply does not match, and the caller falls back.
+ */
+function messageFromTruncatedJson(body: string): string {
+  const m = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(body);
+  if (!m || !m[1]) return "";
+  try {
+    const value: unknown = JSON.parse(`"${m[1]}"`);
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Cap on the provider sentence folded into a chat message. */
+const OPENAI_REASON_MAX_LEN = 220;
 
 function hostOf(url: string): string {
   try {
