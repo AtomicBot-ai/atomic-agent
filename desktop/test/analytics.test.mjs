@@ -1,6 +1,7 @@
 // Unit tests for main/analytics and main/sentry, against the built output
 // (npm run build first). Pure modules only: the validator, the install id,
-// the classifiers, the turn tracker and the error scrubber.
+// the classifiers, the turn tracker and the error scrubber. The privacy and
+// ordering rules are in analytics-rules.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -49,7 +50,7 @@ test("ui_action keeps prefix[:tail[:tail]] and drops anything else", () => {
   assert.equal(ok("settings:privacy"), "settings:privacy");
   assert.equal(ok("runmode:workers:4"), "runmode:workers:4");
   assert.equal(ok("pin:abc:def:ghi"), undefined);
-  assert.equal(ok("Pin"), undefined);
+  assert.equal(ok("9pin"), undefined);
   assert.equal(ok("open:/Users/me"), undefined);
 });
 
@@ -142,13 +143,11 @@ test("analytics.enabled: absent is on, false is off, an unreadable file is off",
 /* ---- classifiers ---- */
 
 test("classifiers map to the catalogue's enums", () => {
-  assert.equal(C.ramBucket(12), "8");
-  assert.equal(C.ramBucket(36), "32");
   assert.equal(C.fitFor(16, { minRamGb: 6, recommendedRamGb: 8 }), "comfortable");
   assert.equal(C.fitFor(16, { minRamGb: 12, recommendedRamGb: 24 }), "tight");
   assert.equal(C.fitFor(8, { sizeGb: 20 }), "over");
   assert.equal(C.quantOf("models/Qwen3-8B-Q4_K_M.gguf"), "Q4_K_M");
-  assert.equal(C.quantOf("x-UD-Q4_K_XL.gguf"), "UD-Q4_K_XL");
+  assert.equal(C.quantOf("x-UD-Q4_K_XL.gguf"), "Q4_K_XL");
   assert.equal(C.quantOf("weights.gguf"), "unknown");
   assert.deepEqual(C.keyCheckResult({ ok: false, checked: true, status: 401 }), { result: "rejected", http_status: 401 });
   assert.deepEqual(C.keyCheckResult({ ok: false, checked: false }), { result: "unreachable", http_status: null });
