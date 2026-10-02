@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { formatFallbackStatusLine } from "../format-provider-fallover.js";
 import {
   selectFallbackPaneRows,
   type FallbackPaneRow,
@@ -77,7 +78,9 @@ export function FallbackRows({ state }: { state: TuiState }): ReactElement {
  * The one live signal the pane has. The runtime breaker instance is not
  * reachable from the TUI, so this shows the last announced switch (from a
  * `provider_switched` event), never an invented cooldown countdown. With
- * no switch yet, the head link is simply "active".
+ * no switch yet, the head link is simply "active". A fallover says which
+ * kind of failure it was and what to do about it (see
+ * `formatFallbackStatusLine`).
  */
 function StatusLine({ state }: { state: TuiState }): ReactElement {
   const { lastSwitch, statusLine } = state.fallbackPanel;
@@ -97,10 +100,7 @@ function StatusLine({ state }: { state: TuiState }): ReactElement {
       </Box>
     );
   }
-  const line =
-    lastSwitch.direction === "away"
-      ? `status: failed over ${lastSwitch.from} -> ${lastSwitch.to} (${lastSwitch.reason})`
-      : `status: recovered primary ${lastSwitch.to}`;
+  const line = formatFallbackStatusLine(lastSwitch);
   return (
     <Box marginBottom={1}>
       <Text
