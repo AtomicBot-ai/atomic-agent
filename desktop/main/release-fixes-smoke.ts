@@ -31,6 +31,8 @@ import { checks49 } from "./smoke-tasks/t49.js";
 import { checks50 } from "./smoke-tasks/t50.js";
 import { checks38 } from "./smoke-tasks/t38.js";
 import { checks40 } from "./smoke-tasks/t40.js";
+import { checks41 } from "./smoke-tasks/t41.js";
+import { checks43 } from "./smoke-tasks/t43.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -67,7 +69,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "38", "40", "49", "50"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "38", "40", "41", "43", "49", "50"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -500,6 +502,10 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("34")) await guarded("34", check, () => checks34(js, check, downloads));
   // 40 — AI/ML API was out of funds, and the window named the local model server (and the key check called the key bad).
   if (want.has("40")) await guarded("40", check, () => checks40(js, check));
+  // 41 — a restart's own SIGKILL read as the agent failing, and the agent after it lost track of.
+  if (want.has("41")) await guarded("41", check, () => checks41(js, check));
+  // 43 — ATO-123: the local model server brought back when it dies under the app that started it.
+  if (want.has("43")) await guarded("43", check, () => checks43(js, check));
 
   if (want.has("23")) {
     // 23 — "This Mac" named the local route on every platform, Windows and Linux included.

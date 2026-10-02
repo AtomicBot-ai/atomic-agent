@@ -573,6 +573,54 @@ describe("runWithFallback", () => {
       );
     });
 
+    it("names the errno the failed link's transport left behind", async () => {
+      const warn = vi.fn();
+      const chain = new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["cloud", "local"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        logger: { warn },
+      });
+      // No response, so no status: without the errno this line reads
+      // the same for a host the network cannot resolve and for one that
+      // refused the connection.
+      const unreachable = new OpenAiHttpError(
+        "fetch failed",
+        null,
+        "http://x",
+        false,
+        null,
+        "p",
+        "ENOTFOUND",
+      );
+
+      await expect(
+        runWithFallback(
+          chain,
+          async (id) => {
+            if (id === "cloud") throw unreachable;
+            return id;
+          },
+          "s-2",
+        ),
+      ).resolves.toBe("local");
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "provider failed; falling over to the next link",
+          {
+            from: "cloud",
+            to: "local",
+            status: null,
+            code: "ENOTFOUND",
+            reason: "fetch failed",
+            sessionId: "s-2",
+          },
+        ],
+      ]);
+    });
+
     it("does not warn about a failure that does not advance", async () => {
       const warn = vi.fn();
       const chain = new ProviderFallbackChain({

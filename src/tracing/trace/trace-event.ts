@@ -1,5 +1,6 @@
 import type { AgentLoopReason } from "../../agent/agent-loop.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
+import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import type { MemorySubcallKind } from "../../memory/health/index.js";
 
 /**
@@ -236,6 +237,21 @@ export interface TraceProviderWaiting extends TraceEventBase {
   maxWaitMs: number;
   nextRetryMs: number;
   reason: string;
+  /**
+   * What the failure was, as data (`classifyProviderWaitCause`): `kind`,
+   * plus `status` only when a response had one — the shape the
+   * `provider_waiting` SSE frame carries. Absent on rows recorded before
+   * the trace kept it.
+   */
+  cause?: { kind: ProviderWaitCause["kind"]; status?: number };
+  /**
+   * The errno-like code the transport left on the failure's `cause`
+   * chain (`ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`, `UND_ERR_SOCKET`, …).
+   * `reason` is often a bare `fetch failed`; this is what tells a local
+   * server that is not running from a network that is down. Absent when
+   * the transport left none.
+   */
+  causeCode?: string;
   /** The provider link the turn waits on, when the loop knows it. */
   providerId?: string;
 }
@@ -592,6 +608,17 @@ export interface TraceError extends TraceEventBase {
    * new traces always carry it.
    */
   category?: LlmFailureCategory;
+  /**
+   * For a `transport` failure: the errno-like code (`ECONNREFUSED`,
+   * `ETIMEDOUT`, `ENOTFOUND`, `ECONNRESET`, `UND_ERR_SOCKET`, …) the
+   * transport left on the `cause` chain of the error `message` came
+   * from. A `message` of `fetch failed` says only that no answer came;
+   * the code says why — a refused connection is a server that is not
+   * running. Absent for every other category (an abort can carry
+   * `ABORT_ERR`, which is not a network cause) and when the transport
+   * left no code.
+   */
+  causeCode?: string;
   /**
    * Fallback-chain links that failed before the one `message` came from —
    * present only when the chain fell over, or the turn was already on a

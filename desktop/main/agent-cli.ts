@@ -685,6 +685,25 @@ export function closeStarts(): () => void {
   return () => { startsClosed = false; };
 }
 
+/* ATO-123: the managed server's supervisor (daemon-watch.ts) is told of every
+   start the app makes and of every stop it makes on purpose, so it brings
+   back only a server the app brought up, and never one the app stopped. */
+export type DaemonLifecycle = "started" | "stopping";
+let lifecycle: (e: DaemonLifecycle) => void = () => {};
+/** Where starts and stops on purpose are told. Hands back the undo. */
+export function onDaemonLifecycle(fn: (e: DaemonLifecycle) => void): () => void {
+  const was = lifecycle;
+  lifecycle = fn;
+  return () => { if (lifecycle === fn) lifecycle = was; };
+}
+function tell(e: DaemonLifecycle): void {
+  try { lifecycle(e); } catch { /* a listener never fails a start or a stop */ }
+}
+/** ATO-123: the `models start` runs on their way — a model loading, for the supervisor. */
+export function startsInFlight(): number {
+  return startsOnTheirWay.size;
+}
+
 /** What a start that spawned nothing says: the app is quitting. */
 export const START_REFUSED_QUITTING = "the app is quitting — the model server was not started";
 /** What a start that spawned nothing says: a stop or a switch came after it was asked for. */
@@ -733,6 +752,7 @@ export async function modelsStart(
     if (res.ok) {
       const speed = parseChatStartSpeed(res.stdout);
       if (speed) lastChatSpeed = speed;
+      tell("started");
     }
     return res;
   } finally {
@@ -1684,7 +1704,8 @@ export async function localDaemonRunning(opts: { reapWedged?: boolean } = {}): P
   // `health:` is not `ok` while a model loads either (the agent reads llama-server's 503 as `down`), so the port itself is asked.
   const port = portOfUrl(daemon[2] ?? "");
   if (port === null || !(await refusesThroughout(port, WEDGED_GRACE_MS))) return true;
-  const stop = await modelsStop();
+  // Stopped to be started again by the caller: not a stop on purpose (ATO-123).
+  const stop = await modelsStop({ repair: true });
   console.error(
     `[desktop] the model server (pid ${daemon[1]}) was alive with its port closed — `
       + (stop.ok ? "stopped it" : `could not stop it: ${stop.error ?? "unknown error"}`),
@@ -1733,8 +1754,14 @@ async function refusesThroughout(port: number, ms: number): Promise<boolean> {
   }
 }
 
-/** LocalModelsOrchestrator.stopDaemon's process half: stops chat + embedding daemons. */
-export async function modelsStop(): Promise<CliResult> {
+/**
+ * LocalModelsOrchestrator.stopDaemon's process half: stops chat + embedding daemons.
+ * ATO-123: a stop on purpose unless `repair` (a wedged server stopped so its
+ * caller can start a fresh one); told before it runs, so the supervisor never
+ * brings back a server it watches going down.
+ */
+export async function modelsStop(opts: { repair?: boolean } = {}): Promise<CliResult> {
+  if (!opts.repair) tell("stopping");
   return cli(["models", "stop"], 30_000);
 }
 

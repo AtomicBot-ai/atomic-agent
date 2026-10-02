@@ -104,6 +104,8 @@ import {
   type SwitchResult,
 } from "./backend-switch.js";
 import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
+// ATO-123: the managed model server, brought back when it dies under the app that started it.
+import { daemonWatch, daemonWatchState, hostDaemonWatch, onAgentFrame } from "./daemon-watch.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
 import {
   RELEASE_FIX_TASKS,
@@ -386,7 +388,10 @@ function stopForQuit(): () => void {
   hfProjector?.controller.abort();
   settingsUpdate?.abort();
   const reopen = closeDaemonTurns();
-  return () => { quitting = false; reopen(); };
+  // ATO-123: nothing brings the model server back while the app goes.
+  const watched = daemonWatch.state().armed;
+  daemonWatch.disarm();
+  return () => { quitting = false; reopen(); if (watched) daemonWatch.arm(); };
 }
 /* Backlog 18: the llama.cpp update — Settings' (cli:modelsUpdate) and the
    setup's runtime download (cli:modelsUpdateStream), both `models update` —
@@ -1308,7 +1313,12 @@ function wireIpc(client: AgentClient): void {
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
-  ipcMain.handle("cli:modelsStart", () => startDaemonNow());
+  // ATO-123: a server Settings' Start finds already up is the app's to bring back from here on.
+  ipcMain.handle("cli:modelsStart", async () => {
+    const res = await startDaemonNow();
+    if (res.ok && res.alreadyRunning) daemonWatch.noteStarted();
+    return res;
+  });
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
     if (!ownDir(stateDir) || typeof sessionId !== "string") {
@@ -2001,6 +2011,22 @@ function wireIpc(client: AgentClient): void {
   client.on("status", (status) => send("agent:status", status));
   client.on("chat", (event) => send("agent:chat", event));
   client.on("chat", (event) => turnNotifier.observe(event));
+  /* ATO-123: a turn waiting on the managed model server because it refuses
+     connections is the agent seeing the server gone; the supervisor looks at
+     once instead of after its next two looks. Its notices go to the window
+     (the waiting strip, Settings › Models) and its lines to the agent log. */
+  client.on("chat", (event) => onAgentFrame(event));
+  hostDaemonWatch({
+    notify: (notice) => send("app:daemonWatch", notice),
+    say: (line) => {
+      console.error(line);
+      send("agent:log", { stream: "stderr", line });
+      appendAgentLog(`${new Date().toISOString()} ERR ${line}`);
+    },
+    // The llama.cpp update stops the server and replaces its binary: never a moment to bring it back.
+    busy: () => settingsUpdate !== null || pullUpdate?.kind === "runtime",
+  });
+  ipcMain.handle("app:daemonWatch", () => daemonWatchState());
   client.on("approval", (event) => send("agent:approval", event));
   client.on("log", (event) => send("agent:log", event));
   /* The agent's own last words, kept for the smoke fixture. `atag serve`
@@ -8405,7 +8431,9 @@ async function startLocalDaemonAtBoot(): Promise<void> {
        model loads queues behind it rather than starting a second daemon, and
        a stop (a cloud switch, Settings › Stop) ends it at once instead of
        waiting out the load. It says how it went through onBackgroundBringUp. */
-    await bringUpAtLaunch(st.status.activeModel);
+    const up = await bringUpAtLaunch(st.status.activeModel);
+    // ATO-123: one found already up (a server the app left running) is the app's to bring back as well.
+    if (up.daemon === "untouched") daemonWatch.noteStarted();
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -8540,6 +8568,10 @@ void app.whenReady().then(async () => {
   win.on("closed", () => voice.kill());
   buildMenu((command) => send("app:menu", command));
   wireIpc(agent);
+  /* ATO-123: armed for every real run. A smoke run leaves it off: its checks
+     kill model servers by hand on purpose and assert what happens next (T30,
+     T31); T43 arms it for itself. */
+  if (!SMOKE && !FIRST_RUN_PROBE) daemonWatch.arm();
 
   win.webContents.once("did-finish-load", () => {
     send("agent:status", agent?.status);

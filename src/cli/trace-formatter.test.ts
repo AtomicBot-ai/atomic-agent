@@ -62,6 +62,65 @@ describe("formatTraceChronology error", () => {
       / message=fetch failed \(after "openrouter" failed: openai provider 404: No endpoints found\)$/,
     );
   });
+
+  it("names the errno right after the message it explains", () => {
+    expect(render([{ ...row, causeCode: "ECONNREFUSED" }])).toMatch(
+      / message=fetch failed code=ECONNREFUSED$/,
+    );
+  });
+
+  it("keeps the errno with the last link's message, ahead of the links before it", () => {
+    expect(
+      render([
+        {
+          ...row,
+          causeCode: "ECONNREFUSED",
+          fallbackFailures: [
+            {
+              providerId: "openrouter",
+              reason: "openai provider 404: No endpoints found",
+            },
+          ],
+        },
+      ]),
+    ).toMatch(
+      / message=fetch failed code=ECONNREFUSED \(after "openrouter" failed: openai provider 404: No endpoints found\)$/,
+    );
+  });
+});
+
+describe("formatTraceChronology provider_waiting", () => {
+  const row = {
+    type: "provider_waiting" as const,
+    seq: 4,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    stepIndex: 2,
+    attempt: 1,
+    waitedMs: 0,
+    maxWaitMs: 300_000,
+    nextRetryMs: 2_000,
+    reason: "fetch failed",
+  };
+
+  it("prints the wait as it always has when the row carries no errno", () => {
+    expect(render([row])).toMatch(
+      / attempt=1 waited=0s\/300s next=2s reason=fetch failed$/,
+    );
+  });
+
+  it("names the errno last, so a refused server reads apart from a dead network", () => {
+    expect(
+      render([
+        {
+          ...row,
+          cause: { kind: "refused" as const },
+          causeCode: "ECONNREFUSED",
+        },
+      ]),
+    ).toMatch(/ reason=fetch failed code=ECONNREFUSED$/);
+  });
 });
 
 describe("formatTraceChronology profile rows (issue #407)", () => {

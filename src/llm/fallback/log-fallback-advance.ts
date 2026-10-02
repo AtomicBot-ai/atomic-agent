@@ -1,4 +1,5 @@
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import { readErrnoCode } from "../errno-code.js";
 import { describeReason } from "./describe-reason.js";
 
 /** What `ProviderFallbackChain` logs through; a subset so tests can pass a spy. */
@@ -18,6 +19,14 @@ export type FallbackLogger = Pick<StructuredLogger, "warn">;
  * text the switch notice already shows in chat. The HTTP clients build
  * their messages from the status, the URL and the response body; request
  * headers never enter them, so no API key reaches this line.
+ *
+ * `code` is the errno the transport left on the error's `cause` chain
+ * (`ECONNREFUSED`, `ENOTFOUND`, `UND_ERR_SOCKET`, …), present only when
+ * there is one: a `status: null` with `reason: "fetch failed"` is the
+ * same line for a link that is not running and one the network cannot
+ * reach. It needs no category gate, unlike the trace's `error` row: only
+ * a failure `shouldAdvance` accepted (`transport` or `model`) reaches
+ * this line, and a cancellation never advances.
  */
 export function logFallbackAdvance(
   logger: FallbackLogger | undefined,
@@ -29,10 +38,12 @@ export function logFallbackAdvance(
     error !== null && typeof error === "object"
       ? (error as { status?: unknown }).status
       : undefined;
+  const code = readErrnoCode(error);
   logger.warn("provider failed; falling over to the next link", {
     from: advance.from,
     to: advance.to,
     ...(typeof status === "number" || status === null ? { status } : {}),
+    ...(code !== undefined ? { code } : {}),
     reason: describeReason(error),
     ...(advance.sessionId ? { sessionId: advance.sessionId } : {}),
   });

@@ -42,6 +42,7 @@ import {
 } from "../llm/index.js";
 import { readFailingLink } from "../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
+import { readErrnoCode } from "../llm/errno-code.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
   classifyProviderWaitCause,
@@ -842,6 +843,16 @@ export type AgentLoopEvent =
        * for logs and traces.
        */
       cause?: ProviderWaitCause;
+      /**
+       * The errno-like code the transport left on the failure's `cause`
+       * chain (`ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`, `ECONNRESET`,
+       * `UND_ERR_SOCKET`, …), as `readErrnoCode` reads it. `reason` is
+       * often a bare `fetch failed`, which looks the same for a local
+       * server that is not running (refused) and a network that is down
+       * (unreachable, timed out); this is the fact that tells them apart
+       * in a trace or a log. Absent when the transport left no code.
+       */
+      causeCode?: string;
       /**
        * The provider link the turn is waiting on: the one whose failure
        * parked it. With a fallback chain that is the last link tried,
@@ -2557,6 +2568,12 @@ export class AgentLoop {
           awaitingRecovery = true;
           const waitedOn = readFailingLink(err);
           const failedBefore = describeFailedLinks(err);
+          // The errno behind the outage: `fetch failed` is the same
+          // sentence for a local server that is not running and for a
+          // network that is down. Read only here, for a `transport`
+          // failure (the condition above), so a user's abort, which
+          // classifies `cancelled`, never lends its `ABORT_ERR` to it.
+          const causeCode = readErrnoCode(err);
           this.deps.onEvent?.({
             type: "provider_waiting",
             attempt: outageAttempts,
@@ -2565,6 +2582,7 @@ export class AgentLoop {
             nextRetryMs,
             reason: runError.message,
             cause: classifyProviderWaitCause(err),
+            ...(causeCode !== undefined ? { causeCode } : {}),
             ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
             ...(failedBefore.length > 0
               ? { fallbackFailures: failedBefore }
@@ -2577,6 +2595,7 @@ export class AgentLoop {
             waitedMs: outageWaitedMs,
             nextRetryMs,
             error: runError.message,
+            ...(causeCode !== undefined ? { causeCode } : {}),
             ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
           });
           await abortableSleep(nextRetryMs, options.signal);
@@ -2620,11 +2639,22 @@ export class AgentLoop {
           runError = truncationRetry.original;
           category = classifyFailure(runError);
         }
+        // Same errno as the wait above, for the turn that fails instead
+        // of parking (waiting disabled, budget spent, a refusal that
+        // will not fix itself). Read off `runError`, which the swap just
+        // above may have replaced, and only for `transport`: any other
+        // category's code — an abort's `ABORT_ERR` — is not a network
+        // cause.
+        const failureCauseCode =
+          category === "transport" ? readErrnoCode(runError) : undefined;
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,
           stepIndex: i,
           error: runError.message,
           category,
+          ...(failureCauseCode !== undefined
+            ? { causeCode: failureCauseCode }
+            : {}),
         });
         this.deps.onEvent?.({
           type: "loop_failed",
