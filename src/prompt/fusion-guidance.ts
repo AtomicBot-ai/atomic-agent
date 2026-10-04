@@ -64,11 +64,11 @@ export function isFusionActive(
 export const FUSION_GUIDANCE = [
   "You orchestrate: read enough to decide, plan, delegate the doing, review what comes back.",
   "Plan in the open, then delegate in the same turn — never stop at the plan: list the independent parts, a big one per worker, small ones shared.",
-  "One task per part, in one `fusion.delegate` call; its `files` name the paths it will produce (approved once by the operator, so the workers can write). Each `instructions` must stand alone: workers see the operator's request, not this chat, and cannot ask.",
+  "One task per part in one `fusion.delegate`; `files` name worker paths. Briefs stand alone: workers see the operator's request, not this chat, and cannot ask.",
   "You choose `maxWorkers` per call; prefer sending more parts over doing any yourself.",
   "Tools that change things are refused for you: the workers build, you do not — the mode working, not a fault.",
   "Keep the design and the judgement: read every reply against its brief.",
-  "Before accepting a fan-out: `verify.syntax` on the declared files and `verify.run` on what the request must do.",
+  "Before accepting a fan-out: `verify.syntax` on the declared files and `verify.run` on what the request must do; for shared `provides.shape`, add a semantic boundary assertion to `contract.checks`.",
   "Rework goes back out: `failed`, `cancelled`, `needs_orchestrator` or not good enough is another `fusion.delegate` saying what was wrong and what good looks like.",
   // F43: the status table now says `replaced the user's file sales.csv
   // (2,401 → 9 lines)` on the row; this is what to do about it.

@@ -17,6 +17,7 @@ import {
 import type { DelegateContract } from "./contract.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { WorkerTaskResult } from "./worker-result.js";
+import { runChecks as runVerifyChecks } from "../verify/run-verify.js";
 
 function row(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
   return {
@@ -225,6 +226,65 @@ describe("runContractChecks", () => {
     const runner = vi.fn<ContractCheckRunner>();
     expect(await runContractChecks([], runner, ctx)).toEqual({ outcomes: [] });
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("catches the #491 producer/consumer field-meaning mismatch with a real boundary fixture", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-contract-boundary-"));
+    mkdirSync(join(dir, "js"));
+    const drawPath = join(dir, "js", "bodies-draw.js");
+    // The producer is correct: w is world-space and o is the local offset.
+    writeFileSync(
+      join(dir, "js", "bodies.js"),
+      "globalThis.PHYS={corners:(b)=>[{w:{x:b.pos.x+1,y:b.pos.y+2,z:b.pos.z+3},o:{x:1,y:2,z:3}}]};",
+    );
+    const checkScript = [
+      "const fs=require(\"fs\"),vm=require(\"vm\");",
+      "vm.runInThisContext(fs.readFileSync(\"js/bodies.js\",\"utf8\"));",
+      "vm.runInThisContext(fs.readFileSync(\"js/bodies-draw.js\",\"utf8\"));",
+      "const b={pos:{x:10,y:20,z:30}};",
+      "const c=globalThis.PHYS.corners(b)[0];",
+      "const shapeOk=c.w.x===11&&c.w.y===22&&c.w.z===33&&c.o.x===1&&c.o.y===2&&c.o.z===3;",
+      "const consumerOk=globalThis.drawProjectedX(b)===11;",
+      "if(!shapeOk||!consumerOk){console.error(JSON.stringify({c,projected:globalThis.drawProjectedX(b)}));process.exit(1);}",
+    ].join("");
+    const checks = [
+      {
+        task: "draw",
+        kind: "command",
+        cmd: process.execPath,
+        args: ["-e", checkScript],
+        checks: ["exit 0"],
+      },
+    ];
+    const runCtx = { workingDir: dir, signal: new AbortController().signal };
+    try {
+      // Exact #491 failure: the consumer projects o as though it were the world point.
+      writeFileSync(
+        drawPath,
+        "globalThis.drawProjectedX=(b)=>globalThis.PHYS.corners(b)[0].o.x;",
+      );
+      const broken = await runContractChecks(checks, runVerifyChecks, runCtx);
+      expect(broken.outcomes).toHaveLength(1);
+      expect(broken.outcomes[0]?.ok).toBe(false);
+      expect(
+        applyCheckOutcomes([row({ id: "draw" })], broken.outcomes)[0],
+      ).toMatchObject({ status: "failed" });
+
+      // Corrected consumer uses the world-space field described by provides.shape.
+      writeFileSync(
+        drawPath,
+        "globalThis.drawProjectedX=(b)=>globalThis.PHYS.corners(b)[0].w.x;",
+      );
+      const fixed = await runContractChecks(checks, runVerifyChecks, runCtx);
+      expect(fixed.outcomes).toEqual([
+        expect.objectContaining({ task: "draw", ok: true }),
+      ]);
+      expect(
+        applyCheckOutcomes([row({ id: "draw" })], fixed.outcomes)[0],
+      ).toMatchObject({ status: "ok" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("hands the runner the specs WITHOUT the task key and pairs results back by index", async () => {
