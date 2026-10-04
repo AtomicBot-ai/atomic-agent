@@ -1,16 +1,27 @@
 /**
+ * The maximum repetition depth `llama.cpp`'s GBNF parser supports in a
+ * `{0,N}` quantifier. `llama-server` rejects grammars whose expanded
+ * repetition exceeds ~1,000 rules with HTTP 400 "failed to parse grammar".
+ * The default budget (1,500 tokens × 4 = 6,000 chars) exceeds this limit.
+ * See: https://github.com/AtomicBot-ai/atomic-agent/issues/600.
+ */
+const LLAMA_SERVER_GBNF_MAX_REPETITION = 1000;
+
+/**
  * The reasoning prelude of a grammar-served thinking model: the rules
  * that admit a think block ahead of the tool-call array, and the two
  * per-request variants a step swaps in (F49).
  *
- * The base grammar carries the BOUNDED prelude: `think-body ::=
- * think-char{0,N}` with `N = localModels.reasoningBudgetTokens × 4`. Past
+ * The base grammar carries the BOUNDED prelude: `think-body ::=`
+ * `think-char{0,N}` with `N = localModels.reasoningBudgetTokens × 4`. Past
  * N matches the sampler admits only the close sentinel, so the model is
  * forced to close the block and emit the call. llama.cpp expands `{0,N}`
  * into N nested optional rules server-side — the string sent stays
- * small; the expansion is linear in N and parses in milliseconds at the
- * default (6,000 rules). The unbounded form (`budgetChars === 0`) is the
- * pre-F49 text, kept byte-identical.
+ * small; the expansion is linear in N. The unbounded form (`budgetChars
+ * === 0`) is the pre-F49 text, kept byte-identical.
+ *
+ * `budgetChars` is clamped to `LLAMA_SERVER_GBNF_MAX_REPETITION` so the
+ * GBNF parser (depth ≤ 1,000) never rejects the grammar (#600).
  */
 
 /** `think-body ::= think-char{0,N}` — the line the bounded base grammar carries. */
@@ -35,6 +46,11 @@ export function buildReasoningPreludeRules(
   const preludeRule = `${ruleStem}-prelude`;
   const bodyRule = `${ruleStem}-body`;
   const bounded = budgetChars > 0;
+  // llama.cpp's GBNF parser rejects `{0,N}` when N > 1,000 (HTTP 400).
+  // Clamp so the default 6,000-char budget stays within the parser limit.
+  const clampedBudgetChars = bounded
+    ? Math.min(budgetChars, LLAMA_SERVER_GBNF_MAX_REPETITION)
+    : 0;
   // Bounded: one character per repetition (a `<`-led alternative still
   // spans its whole prefix), so `{0,N}` is a bound in characters.
   // Unbounded: today's greedy `[^<]+` fragment, byte for byte.
@@ -61,7 +77,7 @@ export function buildReasoningPreludeRules(
   // bound the failure mode.
   return [
     `${preludeRule} ::= ${openLiteral}${bodyRule} ${quoteGbnf(sentinel)} prelude-trail-ws`,
-    `${bodyRule} ::= ${bounded ? `${unitRule}{0,${budgetChars}}` : `${unitRule}*`}`,
+    `${bodyRule} ::= ${bounded ? `${unitRule}{0,${clampedBudgetChars}}` : `${unitRule}*`}`,
     `${unitRule} ::= ${fragments.join(" | ")}`,
     `prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}`,
   ].join("\n");
