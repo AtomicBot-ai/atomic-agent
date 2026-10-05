@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  CONFLICT_JITTER_MS,
+  CONFLICT_RETRY_MS,
   RECONNECT_STABLE_UP_MS,
   TelegramReconnect,
+  classifyTelegramFailure,
+  formatGivingUpError,
+  formatLockWaitError,
   formatReconnectingError,
-  isFatalTelegramError,
 } from "./telegram-reconnect.js";
 
 /** grammy's `GrammyError` as the channel sees it: Telegram answered no. */
@@ -15,13 +19,22 @@ function botApiError(code: number, description: string): Error {
   );
 }
 
-describe("isFatalTelegramError", () => {
+describe("classifyTelegramFailure", () => {
   it.each([
     [401, "Unauthorized"],
     [404, "Not Found"],
-    [409, "Conflict: terminated by other getUpdates request"],
-  ])("gives up on a %i", (code, description) => {
-    expect(isFatalTelegramError(botApiError(code, description))).toBe(true);
+  ])("gives up on a %i: the token itself was rejected", (code, description) => {
+    expect(classifyTelegramFailure(botApiError(code, description))).toBe(
+      "fatal",
+    );
+  });
+
+  it("waits out a 409 instead of giving up: another poller may go away", () => {
+    expect(
+      classifyTelegramFailure(
+        botApiError(409, "Conflict: terminated by other getUpdates request"),
+      ),
+    ).toBe("conflict");
   });
 
   it.each([
@@ -29,22 +42,43 @@ describe("isFatalTelegramError", () => {
     [500, "Internal Server Error"],
     [502, "Bad Gateway"],
   ])("retries a %i", (code, description) => {
-    expect(isFatalTelegramError(botApiError(code, description))).toBe(false);
+    expect(classifyTelegramFailure(botApiError(code, description))).toBe(
+      "transient",
+    );
   });
 
-  it("retries a network failure, which carries no Bot API code", () => {
-    const httpError = Object.assign(
-      new Error("Network request for 'getUpdates' failed!"),
-      { name: "HttpError", error: new Error("ECONNRESET") },
-    );
-    expect(isFatalTelegramError(httpError)).toBe(false);
-  });
+  it.each(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND"])(
+    "retries a network failure (%s), which carries no Bot API code",
+    (code) => {
+      const httpError = Object.assign(
+        new Error("Network request for 'getUpdates' failed!"),
+        { name: "HttpError", error: Object.assign(new Error(code), { code }) },
+      );
+      expect(classifyTelegramFailure(httpError)).toBe("transient");
+    },
+  );
 
   it("classifies by shape, not by prose that merely mentions a code", () => {
-    expect(isFatalTelegramError(new Error("409: Conflict"))).toBe(false);
-    expect(isFatalTelegramError({ error_code: "401" })).toBe(false);
-    expect(isFatalTelegramError("401")).toBe(false);
-    expect(isFatalTelegramError(undefined)).toBe(false);
+    expect(classifyTelegramFailure(new Error("409: Conflict"))).toBe(
+      "transient",
+    );
+    expect(classifyTelegramFailure({ error_code: "401" })).toBe("transient");
+    expect(classifyTelegramFailure("401")).toBe("transient");
+    expect(classifyTelegramFailure(undefined)).toBe("transient");
+  });
+});
+
+describe("lastError wording", () => {
+  it("keeps the lock wait constant, so its retries emit no fresh status", () => {
+    expect(formatLockWaitError("channel-locked: already running (pid 7)")).toBe(
+      "channel-locked: already running (pid 7) — will start here once it stops",
+    );
+  });
+
+  it("says why it gave up and what ends it", () => {
+    expect(formatGivingUpError("(401: Unauthorized)")).toBe(
+      "(401: Unauthorized) — Telegram rejected the bot token; not retrying until it is replaced",
+    );
   });
 });
 
@@ -54,11 +88,18 @@ describe("formatReconnectingError", () => {
       formatReconnectingError("polling stopped: boom", {
         attempt: 2,
         delayMs: 2_001,
+        kind: "transient",
+        firstOfKind: false,
       }),
     ).toBe("polling stopped: boom — reconnecting in 3s (attempt 2)");
-    expect(formatReconnectingError("x", { attempt: 1, delayMs: 500 })).toBe(
-      "x — reconnecting in 1s (attempt 1)",
-    );
+    expect(
+      formatReconnectingError("x", {
+        attempt: 1,
+        delayMs: 500,
+        kind: "transient",
+        firstOfKind: true,
+      }),
+    ).toBe("x — reconnecting in 1s (attempt 1)");
   });
 });
 
@@ -73,11 +114,72 @@ describe("TelegramReconnect", () => {
     const reconnect = new TelegramReconnect({ random: () => 1 });
     const armed = [1, 2, 3, 4].map(() => reconnect.schedule(() => undefined));
     expect(armed).toEqual([
-      { attempt: 1, delayMs: 2_500 },
-      { attempt: 2, delayMs: 4_500 },
-      { attempt: 3, delayMs: 8_500 },
-      { attempt: 4, delayMs: 16_500 },
+      { attempt: 1, delayMs: 2_500, kind: "transient", firstOfKind: true },
+      { attempt: 2, delayMs: 4_500, kind: "transient", firstOfKind: false },
+      { attempt: 3, delayMs: 8_500, kind: "transient", firstOfKind: false },
+      { attempt: 4, delayMs: 16_500, kind: "transient", firstOfKind: false },
     ]);
+    reconnect.cancel();
+  });
+
+  it("keeps retrying for ever, capped at a minute between attempts", () => {
+    vi.useFakeTimers();
+    const run = vi.fn();
+    const reconnect = new TelegramReconnect({ random: () => 1 });
+    for (let i = 0; i < 200; i += 1) reconnect.schedule(run);
+    expect(reconnect.currentAttempt()).toBe(200);
+    expect(reconnect.schedule(run).delayMs).toBe(60_500);
+    reconnect.cancel();
+  });
+
+  it("steps back for the conflict wait whatever the rung, with jitter", () => {
+    vi.useFakeTimers();
+    const run = vi.fn();
+    const low = new TelegramReconnect({ random: () => 0 });
+    expect(low.schedule(run, "conflict")).toEqual({
+      attempt: 1,
+      delayMs: CONFLICT_RETRY_MS,
+      kind: "conflict",
+      firstOfKind: true,
+    });
+    low.cancel();
+
+    const high = new TelegramReconnect({ random: () => 0.999 });
+    high.schedule(run);
+    high.schedule(run);
+    const conflict = high.schedule(run, "conflict");
+    expect(conflict.attempt).toBe(3);
+    expect(conflict.delayMs).toBeGreaterThanOrEqual(CONFLICT_RETRY_MS);
+    expect(conflict.delayMs).toBeLessThan(
+      CONFLICT_RETRY_MS + CONFLICT_JITTER_MS,
+    );
+    vi.advanceTimersByTime(conflict.delayMs - 1);
+    expect(run).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    high.cancel();
+  });
+
+  it("flags only the first retry of each cause, so a long wait is reported once", () => {
+    vi.useFakeTimers();
+    const reconnect = new TelegramReconnect({ random: () => 0 });
+    const kinds = [
+      "locked",
+      "locked",
+      "transient",
+      "transient",
+      "conflict",
+      "conflict",
+    ] as const;
+    const flags = kinds.map(
+      (kind) => reconnect.schedule(() => undefined, kind).firstOfKind,
+    );
+    expect(flags).toEqual([true, false, true, false, true, false]);
+    // A new outage reports again.
+    reconnect.cancel();
+    expect(reconnect.schedule(() => undefined, "conflict").firstOfKind).toBe(
+      true,
+    );
     reconnect.cancel();
   });
 
@@ -140,9 +242,10 @@ describe("TelegramReconnect", () => {
     expect(reconnect.schedule(() => undefined).attempt).toBe(2);
     reconnect.markUp();
     now += RECONNECT_STABLE_UP_MS;
-    expect(reconnect.schedule(() => undefined)).toEqual({
+    expect(reconnect.schedule(() => undefined)).toMatchObject({
       attempt: 1,
       delayMs: 2_500,
+      firstOfKind: true,
     });
     // A retry that never reached `up` does not open the window.
     now += 10 * RECONNECT_STABLE_UP_MS;

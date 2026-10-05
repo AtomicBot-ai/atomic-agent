@@ -319,6 +319,69 @@ describe("ApprovalBridge.cancelAll", () => {
   });
 });
 
+describe("ApprovalBridge across a reconnect", () => {
+  it("rebind() keeps pending approvals, so a click through the new bot resolves them", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7);
+    const answerCallbackQuery = vi.fn(async () => undefined);
+    const editMessageText = vi.fn(async () => undefined);
+
+    h.bridge.rebind(
+      { sendMessage: vi.fn(), answerCallbackQuery, editMessageText },
+      42,
+    );
+    await h.bridge.handleCallback(callback("abc", "y"));
+
+    expect(h.approvals.decisions).toEqual([
+      { approvalId: "abc", approved: true, reason: "telegram" },
+    ]);
+    // Answered and edited through the reconnected bot, not the dead one.
+    expect(answerCallbackQuery).toHaveBeenCalledTimes(1);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    expect(h.api.answerCallbackQuery).not.toHaveBeenCalled();
+    expect(h.scheduled[0]!.cancelled).toBe(true);
+  });
+
+  it("rebind() picks up an owner that changed while the channel was down", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7);
+    h.bridge.rebind(h.api as unknown as ApprovalBridgeDeps["api"], 43);
+
+    await h.bridge.handleCallback(callback("abc", "y", 42));
+    expect(h.approvals.decisions).toEqual([]);
+    await h.bridge.handleCallback(callback("abc", "y", 43));
+    expect(h.approvals.decisions).toHaveLength(1);
+  });
+
+  it("expireAll() denies every pending approval at once and stops their timers", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("a-1"), 7);
+    await h.bridge.dispatch(req("a-2"), 8);
+
+    h.bridge.expireAll("telegram channel down");
+
+    expect(h.approvals.decisions).toEqual([
+      { approvalId: "a-1", approved: false, reason: "telegram channel down" },
+      { approvalId: "a-2", approved: false, reason: "telegram channel down" },
+    ]);
+    expect(h.bridge.pendingCount()).toBe(0);
+    expect(h.scheduled.every((e) => e.cancelled)).toBe(true);
+    // A late click is a stale button, never a second resolution.
+    await h.bridge.handleCallback(callback("a-1", "y"));
+    expect(h.approvals.decisions).toHaveLength(2);
+  });
+
+  it("never holds the process open while an approval waits", async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const h = makeHarness({ schedule: undefined });
+    await h.bridge.dispatch(req("abc"), 7);
+    const timer = setTimeoutSpy.mock.results.at(-1)?.value as NodeJS.Timeout;
+    expect(timer.hasRef()).toBe(false);
+    h.bridge.cancelAll();
+    setTimeoutSpy.mockRestore();
+  });
+});
+
 describe("ApprovalBridge.dispatch — forum topics", () => {
   it("carries message_thread_id when a topic id is given", async () => {
     const h = makeHarness();

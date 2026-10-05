@@ -1,7 +1,12 @@
+import type { Transformer } from "grammy";
+
 import type { InboundCallbackUpdate } from "./approval-bridge.js";
 import type { InboundTextUpdate } from "./inbound-handler.js";
 import type { BotFactory, BotInstance } from "./telegram-channel.js";
-import { scrubErrorMessage } from "./telegram-channel-types.js";
+import {
+  scrubErrorMessage,
+  type BotFactoryHooks,
+} from "./telegram-channel-types.js";
 import {
   pickTelegramFile,
   type InboundFileUpdate,
@@ -30,6 +35,126 @@ const TELEGRAM_FILE_BASE = "https://api.telegram.org/file/bot";
 const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /**
+ * How long a `getUpdates` may run past its own long-poll `timeout`
+ * before it is given up on. Telegram answers an empty long poll at the
+ * timeout to the second; a request still open well after that is on a
+ * connection that died without a FIN (sleep, a Wi-Fi switch, a NAT that
+ * dropped the flow). Without this it inherited grammy's 500 s client
+ * timeout, and the channel sat `up` for eight minutes receiving nothing.
+ */
+export const GET_UPDATES_GRACE_MS = 15_000;
+
+/** The parts of a Bot API answer the poll-health transformer reads. */
+interface PollAnswer {
+  ok: boolean;
+  result?: unknown;
+  error_code?: number;
+  description?: string;
+}
+
+/** The abort-signal surface grammy hands a transformer. */
+interface PollSignal {
+  aborted: boolean;
+  addEventListener(type: "abort", listener: () => void): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+}
+
+/** Highest `update_id` in a `getUpdates` result, `null` when empty. */
+function highestUpdateId(result: unknown): number | null {
+  if (!Array.isArray(result)) return null;
+  let highest: number | null = null;
+  for (const update of result as Array<{ update_id?: unknown }>) {
+    const id = update?.update_id;
+    if (typeof id === "number" && (highest === null || id > highest)) {
+      highest = id;
+    }
+  }
+  return highest;
+}
+
+/**
+ * Wrap every `getUpdates` grammy sends -- its polling loop's and
+ * `stop()`'s closing one -- with a deadline, a resume offset, and a
+ * report to the channel of how it went. grammy retries a failed poll
+ * every 3 s inside its loop and tells only its debug logger, so this is
+ * the one place the channel can learn the connection is gone.
+ *
+ * Every other method passes through untouched: a deadline here would
+ * also cut a large `sendDocument`.
+ */
+function pollHealth(
+  hooks: BotFactoryHooks | undefined,
+  retired: AbortSignal,
+): Transformer {
+  return async (prev, method, payload, signal) => {
+    if (method !== "getUpdates") return prev(method, payload, signal);
+    if (retired.aborted) throw new Error("telegram poller was abandoned");
+    const poll = payload as unknown as { offset?: number; timeout?: number };
+    const resumeAfter = hooks?.resumeAfterUpdateId?.() ?? null;
+    const outgoing =
+      resumeAfter !== null && (poll.offset ?? 0) <= resumeAfter
+        ? { ...poll, offset: resumeAfter + 1 }
+        : poll;
+    const deadlineMs = (poll.timeout ?? 0) * 1000 + GET_UPDATES_GRACE_MS;
+    const outer = signal as unknown as PollSignal | undefined;
+    const controller = new AbortController();
+    let timedOut = false;
+    const abort = (): void => controller.abort();
+    const deadline = setTimeout(() => {
+      timedOut = true;
+      abort();
+    }, deadlineMs);
+    // A poll waiting on its deadline must never hold a process open.
+    deadline.unref?.();
+    outer?.addEventListener("abort", abort);
+    retired.addEventListener("abort", abort);
+    if (outer?.aborted) abort();
+    try {
+      const res = await prev(
+        method,
+        outgoing as unknown as typeof payload,
+        controller.signal as unknown as typeof signal,
+      );
+      const answer = res as unknown as PollAnswer;
+      if (answer.ok) {
+        hooks?.onPollAnswered?.(highestUpdateId(answer.result));
+      } else if ((answer.error_code ?? 0) >= 500) {
+        hooks?.onPollFailed?.(
+          new Error(
+            `getUpdates failed (${answer.error_code}: ${answer.description ?? "no description"})`,
+          ),
+        );
+      } else {
+        // 401 and 409 grammy rethrows, ending its loop -- the channel
+        // hears of those through `onStopped`. A 429 is Telegram answering
+        // with a `retry_after` grammy honours. Either way the line is up.
+        hooks?.onPollAnswered?.(null);
+      }
+      return res;
+    } catch (err) {
+      // A stop or an abandon cancels the poll on purpose; neither says
+      // anything about the connection.
+      if (!outer?.aborted && !retired.aborted) {
+        hooks?.onPollFailed?.(
+          timedOut
+            ? new Error(
+                `getUpdates got no answer within ${Math.round(deadlineMs / 1000)}s`,
+              )
+            : err instanceof Error
+              ? err
+              : new Error(String(err)),
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(deadline);
+      outer?.removeEventListener("abort", abort);
+      retired.removeEventListener("abort", abort);
+    }
+  };
+}
+
+/**
  * Default `BotFactory` — wraps `grammy.Bot` to satisfy `BotInstance`.
  * grammy is loaded lazily via dynamic import so the (relatively
  * heavy) module graph stays out of the runtime image when the
@@ -47,6 +172,10 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
     const cause = err instanceof Error ? err : new Error(String(err));
     hooks?.onError?.(cause);
   });
+  // Aborted by `abandon()`: cancels the polls in flight and refuses the
+  // rest, `stop()`'s closing confirmation included.
+  const retired = new AbortController();
+  bot.api.config.use(pollHealth(hooks, retired.signal));
   let textHandler: ((u: InboundTextUpdate) => void | Promise<void>) | null =
     null;
   let callbackHandler:
@@ -272,6 +401,11 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
     },
     async stop() {
       await bot.stop();
+    },
+    abandon() {
+      retired.abort();
+      // Ends grammy's loop; its closing `getUpdates` now fails at once.
+      void bot.stop().catch(() => undefined);
     },
   };
   return instance;

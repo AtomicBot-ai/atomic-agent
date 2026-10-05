@@ -92,6 +92,12 @@ interface PendingState {
  *    in-flight approvals comes from the caller's own abort signal
  *    (`runtime.shutdown()` aborts every in-flight turn, which aborts
  *    the gate via `ApprovalGate`'s `signal` parameter).
+ * 5. **Pending approvals outlive a reconnect.** The channel keeps one
+ *    bridge across a poller it lost and the one that replaces it, and
+ *    `rebind()` points it at the new bot: the keyboards are still in
+ *    the chat, and their clicks now arrive through the new poller. When
+ *    the channel gives up for good, `expireAll()` denies what is
+ *    pending at once instead of leaving each turn to its timer.
  *
  * Known UX gap (non-functional, deferred to slice 3):
  *
@@ -119,7 +125,8 @@ interface PendingState {
  *   surface that is already going to touch this file.
  */
 export class ApprovalBridge {
-  private readonly deps: ApprovalBridgeDeps;
+  /** Not readonly: `rebind()` swaps the bot and owner after a reconnect. */
+  private deps: ApprovalBridgeDeps;
   private readonly pending = new Map<string, PendingState>();
   private readonly timeoutMs: number;
 
@@ -253,6 +260,33 @@ export class ApprovalBridge {
     this.pending.clear();
   }
 
+  /**
+   * Point the bridge at a reconnected bot. Pending approvals stay
+   * pending -- their keyboards are still in the chat, and a click on
+   * one now arrives through the new bot's poller, so it has to find
+   * its approval here. The owner is re-read too: it may have changed
+   * while the channel was down.
+   */
+  rebind(api: TelegramApi, ownerUserId: number | null): void {
+    this.deps = { ...this.deps, api, ownerUserId };
+  }
+
+  /**
+   * Deny every pending approval now, with `reason`. For a channel that
+   * gave up (the token was rejected): no click can reach this bridge
+   * again, so waiting out each timer would only hold the turns for
+   * eight minutes. The keyboards are left as they are -- the bot that
+   * could edit them is the one Telegram just refused.
+   */
+  expireAll(reason: string): void {
+    const ids = [...this.pending.keys()];
+    for (const state of this.pending.values()) state.cancelTimer();
+    this.pending.clear();
+    for (const approvalId of ids) {
+      this.deps.approvals.resolve({ approvalId, approved: false, reason });
+    }
+  }
+
   pendingCount(): number {
     return this.pending.size;
   }
@@ -278,6 +312,9 @@ export class ApprovalBridge {
     };
     if (this.deps.schedule) return this.deps.schedule(fire, this.timeoutMs);
     const handle = setTimeout(fire, this.timeoutMs);
+    // A pending approval must never be what keeps a shutting-down
+    // process alive for eight minutes.
+    handle.unref?.();
     return () => clearTimeout(handle);
   }
 

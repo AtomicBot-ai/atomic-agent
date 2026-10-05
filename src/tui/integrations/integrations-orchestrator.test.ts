@@ -173,7 +173,14 @@ describe("IntegrationsOrchestrator — live channel controls", () => {
     // "DM your bot now" in front of a channel that never came up is
     // exactly the trap: the operator messages a bot nothing is
     // listening to and has no way to tell.
-    const channel = makeChannel({ getMeError: new Error("401: Unauthorized") });
+    // grammy's `GrammyError` shape: a rejected token gives up rather than
+    // retrying in the background.
+    const channel = makeChannel({
+      getMeError: Object.assign(
+        new Error("Call to 'getMe' failed! (401: Unauthorized)"),
+        { name: "GrammyError", error_code: 401, description: "Unauthorized" },
+      ),
+    });
     const { hub, bus } = makeHub(channel);
     await hub.saveField("telegram", "botToken", TOKEN);
     expect(channel.state()).toBe("down");

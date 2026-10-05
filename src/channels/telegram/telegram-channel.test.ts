@@ -21,8 +21,16 @@ import {
 
 import { formatChannelLockHeld } from "../channel-lock-error.js";
 import { TelegramLockfile } from "./telegram-lockfile.js";
-import { RECONNECT_STABLE_UP_MS } from "./telegram-reconnect.js";
 import {
+  CONFLICT_JITTER_MS,
+  CONFLICT_RETRY_MS,
+  POLL_STALL_MS,
+  RECONNECT_STABLE_UP_MS,
+  formatGivingUpError,
+  formatLockWaitError,
+} from "./telegram-reconnect.js";
+import {
+  STOP_POLLING_TIMEOUT_MS,
   TASK_REPORT_QUEUE_LIMIT,
   TelegramChannel,
   scrubErrorMessage,
@@ -30,6 +38,7 @@ import {
   type BotInstance,
   type ChannelLock,
 } from "./telegram-channel.js";
+import type { BotFactoryHooks } from "./telegram-channel-types.js";
 
 interface FakeBotState {
   startCalls: number;
@@ -44,6 +53,9 @@ interface FakeBotState {
   sendMessageCalls: Array<{ chatId: number; text: string }>;
   /** Simulate the polling loop ending. Set once `start()` has run. */
   killPolling: ((error?: unknown) => void) | null;
+  /** The hooks the channel handed the most recently built bot. */
+  hooks: BotFactoryHooks | undefined;
+  abandonCalls: number;
 }
 
 interface FakeBotOptions {
@@ -51,6 +63,8 @@ interface FakeBotOptions {
   setMyCommandsError?: Error;
   /** When set, every `sendMessage` rejects with this error. */
   sendMessageError?: Error;
+  /** `stop()` never settles, like grammy's on a dead network. */
+  stopHangs?: boolean;
 }
 
 function makeBotFactory(opts: FakeBotOptions = {}): {
@@ -67,8 +81,11 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
     fileHandler: null,
     sendMessageCalls: [],
     killPolling: null,
+    hooks: undefined,
+    abandonCalls: 0,
   };
-  const factory: BotFactory = () => {
+  const factory: BotFactory = (_token, hooks) => {
+    state.hooks = hooks;
     const bot: BotInstance = {
       api: {
         sendMessage: vi.fn(async (chatId: number, text: string) => {
@@ -111,6 +128,10 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
       },
       async stop() {
         state.stopCalls += 1;
+        if (opts.stopHangs) await new Promise(() => undefined);
+      },
+      abandon() {
+        state.abandonCalls += 1;
       },
     };
     return bot;
@@ -236,6 +257,7 @@ describe("TelegramChannel", () => {
     expect(channel.state()).toBe("down");
     expect(channel.lastError()).toMatch(/Conflict/);
     expect(statuses.map((s) => s.state)).toEqual(["starting", "up", "down"]);
+    await channel.stop();
   });
 
   it("adopts a token written to the env after construction", async () => {
@@ -429,6 +451,9 @@ describe("TelegramChannel", () => {
     await channel.start();
     expect(channel.state()).toBe("down");
     expect(channel.lastError()).toContain("lockfile held");
+    // No `starting` flash: the lock is taken before the channel says so.
+    expect(statuses.map((s) => s.state)).toEqual(["down"]);
+    await channel.stop();
   });
 
   it("leaves the winner's lock file intact when start() loses the race", async () => {
@@ -459,6 +484,8 @@ describe("TelegramChannel", () => {
     expect(channel.lastError()).toContain("already running");
     expect(state.startCalls).toBe(0);
     expect(readFileSync(lockPath, "utf8")).toBe(String(process.ppid));
+    await channel.stop();
+    expect(readFileSync(lockPath, "utf8")).toBe(String(process.ppid));
   });
 
   it("emits down with scrubbed error when getMe fails", async () => {
@@ -483,6 +510,7 @@ describe("TelegramChannel", () => {
     expect(channel.lastError()).not.toContain(realisticToken);
     expect(lockStub.acquired).toBe(1);
     expect(lockStub.released).toBe(1);
+    await channel.stop();
   });
 
   it("stop() releases the lock and transitions through stopping → disabled", async () => {
@@ -1450,10 +1478,32 @@ describe("TelegramChannel per-chat approval bindings", () => {
     ).toEqual([42, -100, 42]);
   });
 
-  it("drops the bindings when polling dies, so the reconnected bot's bridge takes the next approval", async () => {
-    // Button clicks arrive through whichever bot is polling. A binding
-    // left on the dead bot's bridge would post keyboards whose clicks
-    // the reconnected bot's bridge has never heard of.
+  /** An approval the agent asks for in session `sessionId`. */
+  function approvalRequest(approvalId: string, sessionId = "s-1") {
+    return {
+      approvalId,
+      sessionId,
+      tool: "os.shell.run",
+      category: "shell" as const,
+      preview: "git push",
+    };
+  }
+
+  /** The owner's click on a keyboard button the bridge sent. */
+  function click(approvalId: string, kind: "y" | "n") {
+    return {
+      id: `cb-${approvalId}`,
+      from: { id: 42 },
+      message: { chat: { id: 42 }, message_id: 1 },
+      data: `appr:${approvalId}:${kind}`,
+    };
+  }
+
+  it("keeps a pending approval across a reconnect: the click arrives through the new bot and resolves it", async () => {
+    // Button clicks arrive through whichever bot is polling. The bridge
+    // and its bindings outlive the lost poller, so a keyboard sent before
+    // the drop still works after it -- instead of the click being
+    // ignored and the turn auto-denied eight minutes later.
     const { factory, state } = makeBotFactory();
     const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
     const setHandler = vi.fn(() => {
@@ -1461,8 +1511,9 @@ describe("TelegramChannel per-chat approval bindings", () => {
       unsubscribes.push(u);
       return u;
     });
+    const runtime = turnRuntime(setHandler);
     const channel = new TelegramChannel({
-      runtime: turnRuntime(setHandler),
+      runtime,
       config: makeConfig(dir),
       token: "1234:abcdef",
       logger,
@@ -1479,15 +1530,77 @@ describe("TelegramChannel per-chat approval bindings", () => {
     };
     await state.textHandler!(dm);
     expect(setHandler).toHaveBeenCalledTimes(1);
+    const route = setHandler.mock.calls[0]![1] as unknown as (
+      request: ReturnType<typeof approvalRequest>,
+    ) => void;
+    route(approvalRequest("a-1"));
+    await new Promise((r) => setImmediate(r));
+    expect(state.sendMessageCalls.at(-1)?.text).toContain(
+      "Approval requested",
+    );
 
     state.killPolling?.(networkError());
-    expect(unsubscribes[0]!).toHaveBeenCalledTimes(1);
+    expect(unsubscribes[0]!).not.toHaveBeenCalled();
 
     // What the retry timer runs; a manual start supersedes it.
     await channel.start();
+    expect(channel.state()).toBe("up");
+    await state.callbackHandler!(click("a-1", "y"));
+
+    expect(runtime.approvals.resolve).toHaveBeenCalledWith({
+      approvalId: "a-1",
+      approved: true,
+      reason: "telegram",
+    });
+    // The binding was never dropped, so the next turn needs no re-bind.
     await state.textHandler!({ ...dm, message_id: 2 });
-    expect(setHandler).toHaveBeenCalledTimes(2);
-    expect(setHandler.mock.calls.map((c) => c[0])).toEqual(["s-1", "s-1"]);
+    expect(setHandler).toHaveBeenCalledTimes(1);
+    await channel.stop();
+    expect(unsubscribes[0]!).toHaveBeenCalledTimes(1);
+  });
+
+  it("denies a pending approval at once when Telegram rejects the token", async () => {
+    // No click can reach a channel that gave up; waiting out the
+    // eight-minute timer would only hold the turn.
+    const { factory, state } = makeBotFactory();
+    const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
+    const setHandler = vi.fn(() => {
+      const u = vi.fn();
+      unsubscribes.push(u);
+      return u;
+    });
+    const runtime = turnRuntime(setHandler);
+    const channel = new TelegramChannel({
+      runtime,
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock: fakeLock().lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    await state.textHandler!({
+      from: { id: 42 },
+      chat: { id: 42, type: "private" },
+      text: "hi",
+      message_id: 1,
+    });
+    const route = setHandler.mock.calls[0]![1] as unknown as (
+      request: ReturnType<typeof approvalRequest>,
+    ) => void;
+    route(approvalRequest("a-1"));
+    await new Promise((r) => setImmediate(r));
+
+    state.killPolling?.(botApiError(401, "Unauthorized"));
+
+    expect(channel.state()).toBe("down");
+    expect(runtime.approvals.resolve).toHaveBeenCalledWith({
+      approvalId: "a-1",
+      approved: false,
+      reason: "telegram channel down: bot token rejected",
+    });
+    expect(unsubscribes[0]!).toHaveBeenCalledTimes(1);
     await channel.stop();
   });
 });
@@ -1719,12 +1832,8 @@ describe("TelegramChannel polling reconnect", () => {
   it.each([
     [401, "Unauthorized"],
     [404, "Not Found"],
-    [
-      409,
-      "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running",
-    ],
   ])(
-    "stays down on a %i from the poller instead of retrying",
+    "gives up on a %i from the poller, and says so once",
     async (code, description) => {
       const { factory, state } = makeBotFactory();
       const lockState = fakeLock();
@@ -1735,7 +1844,9 @@ describe("TelegramChannel polling reconnect", () => {
 
       expect(channel.state()).toBe("down");
       expect(channel.lastError()).toBe(
-        `Call to 'getUpdates' failed! (${code}: ${description})`,
+        formatGivingUpError(
+          `Call to 'getUpdates' failed! (${code}: ${description})`,
+        ),
       );
       expect(lockState.released).toBe(1);
       vi.advanceTimersByTime(10 * 60_000);
@@ -1743,8 +1854,47 @@ describe("TelegramChannel polling reconnect", () => {
       expect(state.startCalls).toBe(1);
       expect(armed()).toEqual([]);
       expect(vi.getTimerCount()).toBe(0);
+      expect(records.filter((r) => r.level === "error")).toMatchObject([
+        { message: "telegram: giving up, the bot token was rejected" },
+      ]);
     },
   );
+
+  it("steps back for minutes on a 409, reports it once, and polls again after", async () => {
+    // Another process polling this bot is not fatal -- often it is a
+    // second install closed again a minute later -- but retrying on the
+    // normal schedule would only keep terminating each other's polls.
+    const { factory, state } = makeBotFactory();
+    const lockState = fakeLock();
+    const channel = channelWith({ factory, lock: lockState.lock });
+    await channel.start();
+    const conflict = botApiError(
+      409,
+      "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running",
+    );
+    const delay = CONFLICT_RETRY_MS + Math.floor(0.5 * CONFLICT_JITTER_MS);
+
+    state.killPolling?.(conflict);
+
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toBe(
+      `polling stopped: ${conflict.message} — reconnecting in ${Math.ceil(delay / 1000)}s (attempt 1)`,
+    );
+    expect(lockState.released).toBe(1);
+    vi.advanceTimersByTime(delay - 1);
+    await settle();
+    expect(state.startCalls).toBe(1);
+    vi.advanceTimersByTime(1);
+    await settle();
+    expect(channel.state()).toBe("up");
+    expect(state.startCalls).toBe(2);
+
+    // Still there: the same conflict, waited out without a second warn.
+    state.killPolling?.(conflict);
+    expect(channel.lastError()).toMatch(/\(attempt 2\)$/);
+    expect(armed()).toEqual([[1, delay]]);
+    await channel.stop();
+  });
 
   it("ends the outage when a retry finds the token revoked", async () => {
     const base = makeBotFactory();
@@ -1763,7 +1913,7 @@ describe("TelegramChannel polling reconnect", () => {
 
     expect(channel.state()).toBe("down");
     expect(channel.lastError()).toBe(
-      "Call to 'getMe' failed! (401: Unauthorized)",
+      formatGivingUpError("Call to 'getMe' failed! (401: Unauthorized)"),
     );
     vi.advanceTimersByTime(10 * 60_000);
     await settle();
@@ -1771,7 +1921,7 @@ describe("TelegramChannel polling reconnect", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("ends the outage when a retry finds another process holding the lock", async () => {
+  it("waits out another process holding the lock, quietly, and takes over once it is free", async () => {
     const { factory, state } = makeBotFactory();
     let heldElsewhere = false;
     const lock: ChannelLock = {
@@ -1782,7 +1932,8 @@ describe("TelegramChannel polling reconnect", () => {
         // nothing to give back in this fake
       },
     };
-    const channel = channelWith({ factory, lock });
+    const statuses: ChannelStatus[] = [];
+    const channel = channelWith({ factory, lock, statuses });
     await channel.start();
     state.killPolling?.(networkError());
     // While this process was down another atomic-agent took the bot over.
@@ -1790,26 +1941,62 @@ describe("TelegramChannel polling reconnect", () => {
 
     vi.advanceTimersByTime(1_500);
     await settle();
-
     expect(channel.state()).toBe("down");
-    expect(channel.lastError()).toBe(formatChannelLockHeld(4242));
-    vi.advanceTimersByTime(10 * 60_000);
+    // The prefix stays first, so the Integrations hub still reads this as
+    // "running elsewhere" rather than as a failure.
+    expect(channel.lastError()).toBe(
+      formatLockWaitError(formatChannelLockHeld(4242)),
+    );
+    const emitted = statuses.length;
+
+    vi.advanceTimersByTime(2_500);
     await settle();
-    expect(state.startCalls).toBe(1);
-    expect(armed()).toEqual([[1, 1_500]]);
-    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(4_500);
+    await settle();
+    // Two more tries, no new status and no new warn: nothing changed.
+    expect(statuses.length).toBe(emitted);
+    expect(armed()).toEqual([
+      [1, 1_500],
+      [2, 2_500],
+    ]);
+
+    heldElsewhere = false;
+    vi.advanceTimersByTime(8_500);
+    await settle();
+    expect(channel.state()).toBe("up");
+    expect(state.startCalls).toBe(2);
+    expect(statuses.slice(emitted).map((s) => s.state)).toEqual([
+      "starting",
+      "up",
+    ]);
+    await channel.stop();
   });
 
-  it("a first start that cannot reach Telegram stays down without arming a retry", async () => {
+  it("a first start that cannot reach Telegram keeps retrying until it can", async () => {
+    // A machine that boots offline used to leave the channel `down`
+    // until someone restarted the agent.
     const base = makeBotFactory();
     const channel = channelWith({
-      factory: withGetMePlan(base.factory, [unreachable]),
+      factory: withGetMePlan(base.factory, [unreachable, unreachable]),
       lock: fakeLock().lock,
     });
     await channel.start();
     expect(channel.state()).toBe("down");
-    expect(channel.lastError()).toBe("Network request for 'getMe' failed!");
-    expect(vi.getTimerCount()).toBe(0);
+    expect(channel.lastError()).toBe(
+      "Network request for 'getMe' failed! — reconnecting in 2s (attempt 1)",
+    );
+
+    vi.advanceTimersByTime(1_500);
+    await settle();
+    expect(channel.lastError()).toBe(
+      "reconnect failed: Network request for 'getMe' failed! — reconnecting in 3s (attempt 2)",
+    );
+    vi.advanceTimersByTime(2_500);
+    await settle();
+
+    expect(channel.state()).toBe("up");
+    expect(base.state.startCalls).toBe(1);
+    await channel.stop();
   });
 
   it("stop() while a retry is waiting: the timer never starts the channel again", async () => {
@@ -1931,4 +2118,109 @@ describe("TelegramChannel polling reconnect", () => {
       await channel.stop();
     },
   );
+
+  it("rides out a short blip, but calls the connection lost once polls fail for POLL_STALL_MS", async () => {
+    // The zombie this pins: grammy retries a failing getUpdates every
+    // 3 s for ever and tells no one, so a dead network read as a healthy
+    // `up` channel that simply received nothing.
+    const { factory, state } = makeBotFactory();
+    const statuses: ChannelStatus[] = [];
+    const channel = channelWith({ factory, lock: fakeLock().lock, statuses });
+    await channel.start();
+    const firstBot = state.hooks!;
+
+    // A blip: grammy retries it by itself and the channel stays up.
+    vi.advanceTimersByTime(10_000);
+    firstBot.onPollFailed?.(networkError());
+    expect(channel.state()).toBe("up");
+    firstBot.onPollAnswered?.(null);
+
+    // Then nothing answers for a full POLL_STALL_MS.
+    vi.advanceTimersByTime(POLL_STALL_MS - 1);
+    firstBot.onPollFailed?.(networkError());
+    expect(channel.state()).toBe("up");
+    vi.advanceTimersByTime(1);
+    firstBot.onPollFailed?.(new Error("getUpdates got no answer within 45s"));
+
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toBe(
+      "connection lost: getUpdates got no answer within 45s — reconnecting in 2s (attempt 1)",
+    );
+    // The old poller is cut loose rather than left retrying beside the next.
+    expect(state.abandonCalls).toBe(1);
+    expect(
+      records.find(
+        (r) => r.message === "telegram: polling stalled, replacing the poller",
+      ),
+    ).toMatchObject({ level: "warn" });
+
+    // Late reports from the abandoned bot change nothing.
+    firstBot.onPollFailed?.(networkError());
+    vi.advanceTimersByTime(1_500);
+    await settle();
+    expect(channel.state()).toBe("up");
+    expect(state.startCalls).toBe(2);
+    firstBot.onPollFailed?.(networkError());
+    expect(channel.state()).toBe("up");
+    expect(armed()).toEqual([[1, 1_500]]);
+    expect(statuses.map((s) => s.state)).toEqual([
+      "starting",
+      "up",
+      "down",
+      "starting",
+      "up",
+    ]);
+    await channel.stop();
+  });
+
+  it("a replacement bot resumes after the last update already fetched; a new token starts afresh", async () => {
+    // The lost poller never confirmed its last batch; without the resume
+    // point Telegram hands those messages out again and their turns run
+    // twice.
+    const { factory, state } = makeBotFactory();
+    const channel = channelWith({ factory, lock: fakeLock().lock });
+    await channel.start();
+    expect(state.hooks?.resumeAfterUpdateId?.()).toBeNull();
+    state.hooks?.onPollAnswered?.(17);
+    state.hooks?.onPollAnswered?.(12);
+    state.hooks?.onPollAnswered?.(null);
+
+    state.killPolling?.(networkError());
+    vi.advanceTimersByTime(1_500);
+    await settle();
+    expect(state.startCalls).toBe(2);
+    expect(state.hooks?.resumeAfterUpdateId?.()).toBe(17);
+
+    // Update ids are per bot: another bot's numbering means nothing here.
+    await channel.setToken("5678:ghijkl");
+    expect(state.startCalls).toBe(3);
+    expect(state.hooks?.resumeAfterUpdateId?.()).toBeNull();
+    await channel.stop();
+  });
+
+  it("stop() does not wait on a bot.stop() that hangs, and no second poller starts meanwhile", async () => {
+    const { factory, state } = makeBotFactory({ stopHangs: true });
+    const statuses: ChannelStatus[] = [];
+    const channel = channelWith({ factory, lock: fakeLock().lock, statuses });
+    await channel.start();
+
+    let stopped = false;
+    const stopping = channel.stop().then(() => {
+      stopped = true;
+    });
+    await settle();
+    expect(stopped).toBe(false);
+    // The old poller is still being stopped: a start now must not put a
+    // second one beside it.
+    await channel.start();
+    expect(state.startCalls).toBe(1);
+
+    vi.advanceTimersByTime(STOP_POLLING_TIMEOUT_MS);
+    await stopping;
+
+    expect(channel.state()).toBe("disabled");
+    expect(state.abandonCalls).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(statuses[statuses.length - 1]?.state).toBe("disabled");
+  });
 });
