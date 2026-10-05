@@ -120,6 +120,20 @@ describe("the ### fusion prefix section", () => {
     expect(FUSION_GUIDANCE).toContain("needs_orchestrator");
   });
 
+  it("tells shaped shared contracts to verify meaning at the boundary (#491)", () => {
+    expect(FUSION_GUIDANCE).toContain("`provides.shape`");
+    expect(FUSION_GUIDANCE).toContain("`contract.checks`");
+    expect(FUSION_GUIDANCE).toMatch(/semantic boundary check/i);
+  });
+
+  it("pins behavior acceptance before delegation and across repairs (#539)", () => {
+    expect(FUSION_GUIDANCE).toContain("`contract.checks`");
+    expect(FUSION_GUIDANCE).toMatch(/derive named .* from the request/i);
+    expect(FUSION_GUIDANCE).toContain("FAIL or UNCHECKED");
+    expect(FUSION_GUIDANCE).toMatch(/after each fix rerun the same full checklist/i);
+    expect(FUSION_GUIDANCE).toContain("prior PASS items");
+  });
+
   it("says a task that replaced a user's file is not done until it is restored or the replacement was wanted (F43)", () => {
     // The status table carries `replaced the user's file sales.csv
     // (2,401 → 9 lines)` on the row; without this line the orchestrator
@@ -128,6 +142,15 @@ describe("the ### fusion prefix section", () => {
     expect(FUSION_GUIDANCE).toContain(
       "A task that replaced a pre-existing file is not done until the file is restored (`os.fs.restore` in a worker) or the replacement was asked for.",
     );
+  });
+
+  it("keeps the operator's one-time write approval in the brief (#603)", () => {
+    expect(FUSION_GUIDANCE).toContain("approved once by the operator");
+    expect(FUSION_GUIDANCE).toContain("so the workers can write");
+  });
+
+  it("limits behavior-check guidance to executable behavior (#605)", () => {
+    expect(FUSION_GUIDANCE).toContain("For scriptable behavior");
   });
 
   it("stays short enough to live in every turn's prefix", () => {

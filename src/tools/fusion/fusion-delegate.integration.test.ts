@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,7 +29,21 @@ const completion = (content: string) => ({
 });
 
 const delegateCall = (tasks: unknown[]) =>
-  JSON.stringify([{ tool: "fusion.delegate", args: { tasks } }]);
+  JSON.stringify([{
+    tool: "fusion.delegate",
+    args: {
+      tasks,
+      contract: {
+        checks: [{
+          item: "delegated work passes the integration acceptance check",
+          kind: "command",
+          cmd: process.execPath,
+          args: ["-e", "process.exit(0)"],
+          checks: ["exit 0"],
+        }],
+      },
+    },
+  }]);
 const replyCall = (text: string) =>
   JSON.stringify([{ tool: "reply", args: { text } }]);
 
@@ -104,6 +118,107 @@ describe("fusion.delegate end to end", () => {
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     delete process.env.ATOMIC_AGENT_GRAMMARS_DIR;
     resetConfigCache();
+  });
+
+  it("wires the optional checklist policy through the real runtime and reads changes live", async () => {
+    let workerCalls = 0;
+    const runtime = await createAgentRuntime({
+      workingDir, approvalLevel: 5,
+      overrides: {
+        browserBackend: backend, skipLlamaHealthCheck: true,
+        llamaComplete: async (params: LlmStreamParams) => {
+          if (params.sessionId.startsWith(FUSION_WORKER_ID_PREFIX)) workerCalls += 1;
+          return completion(replyCall("worker reviewed the wording"));
+        },
+      },
+    });
+    try {
+      const session = runtime.createSession();
+      const invoke = () => runtime.toolRegistry.invoke("fusion.delegate", {
+        tasks: [{ id: "wording", instructions: "Review the wording; no executable acceptance check is needed." }],
+      }, { workingDir, sessionId: session.id, stepIndex: 0, signal: new AbortController().signal });
+      const setRequired = (required: boolean) => {
+        const path = join(stateDir, "config.json");
+        const cfg = JSON.parse(readFileSync(path, "utf8"));
+        cfg.llm.runMode.fusion.requireBehaviorChecklist = required;
+        writeFileSync(path, JSON.stringify(cfg), "utf8");
+        resetConfigCache();
+      };
+      const optional = await invoke();
+      expect(optional.status).toBe("ok");
+      expect(optional.details.checklistPassed).toBeUndefined();
+      expect(workerCalls).toBeGreaterThan(0);
+      const callsBefore = workerCalls;
+      setRequired(true);
+      const required = await invoke();
+      expect(required.details.reason).toBe("behavior-checklist-required");
+      expect(workerCalls).toBe(callsBefore);
+      setRequired(false);
+      expect((await invoke()).status).toBe("ok");
+      expect(workerCalls).toBeGreaterThan(callsBefore);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it.each(["reply", "finish"].flatMap((terminal) =>
+    ["policy", "policy-argument-error", "declared-items"].map((scenario) => ({ terminal, scenario })),
+  ))("handles $scenario through the real runtime before $terminal", async ({ terminal, scenario }) => {
+    const configPath = join(stateDir, "config.json");
+    const setRequired = (required: boolean) => {
+      const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+      cfg.llm.runMode.fusion.requireBehaviorChecklist = required;
+      writeFileSync(configPath, JSON.stringify(cfg), "utf8");
+      resetConfigCache();
+    };
+    setRequired(true);
+    const finalFanout = scenario === "policy" ? 2 : 3;
+    let step = 0;
+    let workerCalls = 0;
+    const runtime = await createAgentRuntime({
+      workingDir, approvalLevel: 5,
+      overrides: {
+        browserBackend: backend, skipLlamaHealthCheck: true,
+        llamaComplete: async (params: LlmStreamParams) => {
+          if (params.providerId === LOCAL) {
+            workerCalls += 1;
+            return completion(replyCall("wording reviewed"));
+          }
+          step += 1;
+          if (step === finalFanout) setRequired(false);
+          if (step <= finalFanout) {
+            const tasks = scenario === "policy-argument-error" && step === 2 ? []
+              : [{ id: "wording", instructions: "Review wording." }];
+            const contract = scenario === "declared-items" && step === 1 ? { checks: [
+              { item: "wall", kind: "command", cmd: process.execPath, args: ["-e", "process.exit(0)"] },
+              { kind: "command", cmd: process.execPath, args: ["-e", "process.exit(0)"] },
+            ] } : undefined;
+            return completion(JSON.stringify([{ tool: "fusion.delegate", args: { tasks, ...(contract ? { contract } : {}) } }]));
+          }
+          return completion(JSON.stringify([{
+            tool: terminal, args: terminal === "reply" ? { text: "wording reviewed" } : { summary: "wording reviewed" },
+          }]));
+        },
+      },
+    });
+    try {
+      const result = await runtime.runTurn(runtime.createSession(), "review the wording", { maxSteps: 7 });
+      const last = JSON.stringify(result.session.turns.at(-1));
+      if (scenario === "declared-items") {
+        expect(workerCalls).toBe(0);
+        expect(result.reason).toBe("failed");
+        expect(result.session.status).toBe("failed");
+        expect(last).toContain("wall=UNCHECKED");
+      } else {
+        expect(workerCalls).toBeGreaterThan(0);
+        expect(result.reason).toBe(terminal);
+        expect(result.session.status).not.toBe("failed");
+        expect(last).toContain("wording reviewed");
+        expect(last).not.toContain("Behavior checklist blocked");
+      }
+    } finally {
+      await runtime.shutdown();
+    }
   });
 
   it("fans three workers out on the local leg and merges their replies", async () => {
@@ -226,7 +341,7 @@ describe("fusion.delegate end to end", () => {
       expect(result.reason).toBe("reply"); // the orchestrator merged
       expect(result.session.turns.at(-1)).toMatchObject({
         kind: "assistant_reply",
-        text: "merged all three parts",
+        text: expect.stringContaining("merged all three parts\ncontract: checklist: delegated work passes the integration acceptance check=PASS"),
       });
 
       // Three workers really ran, and at least two at once.

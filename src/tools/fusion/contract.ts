@@ -14,9 +14,10 @@
  * must pass. It is prepended to every brief (`worker-prompt.ts`) and
  * checked for presence after the fan-out (`contract-checks.ts`).
  *
- * Presence is all this module can promise. A grep sees that `HD.Ship`
- * appears in `js/ship.js`; whether it is a class or an object is what
- * `checks` — a runtime — is for.
+ * Presence is all this module can promise for `provides`. A grep sees that
+ * `HD.Ship` appears in `js/ship.js`; behavior belongs in `checks`, which are
+ * named checklist items executed by `verify.run` and reported PASS / FAIL /
+ * UNCHECKED. Fusion treats FAIL or UNCHECKED as a failed acceptance gate.
  *
  * Two things the contract can declare are *warnings*, not refusals
  * (F44): a `requires` entry that names nothing any task provides, and a
@@ -100,7 +101,7 @@ export interface ContractRequire {
  * One `verify.run` spec, plus the task it is attributed to. The spec's
  * own keys are owned by the verify tool and pass through untouched.
  */
-export type ContractCheck = { task?: string } & Record<string, unknown>;
+export type ContractCheck = { task?: string; item?: string } & Record<string, unknown>;
 
 export interface DelegateContract {
   /** The operator's own files: edited in place by any worker, replaced by none (`contract-inputs.ts`). */
@@ -123,6 +124,8 @@ export interface DelegateContract {
 
 export const MAX_CONTRACT_PROVIDES = 64;
 export const MAX_CONTRACT_CHECKS = 16;
+/** Human-readable checklist item carried beside a verify.run spec. */
+export const MAX_CONTRACT_CHECK_ITEM_CHARS = 120;
 /** Bound on the shared block every worker pays for in its context. */
 export const MAX_CONTRACT_RENDERED_CHARS = 8000;
 
@@ -230,13 +233,14 @@ export function contractWarnings(
 }
 
 function renderCheck(check: ContractCheck): string {
-  const { task, ...spec } = check;
+  const { task, item, ...spec } = check;
   const json = JSON.stringify(spec);
   const clipped =
     json.length > CHECK_RENDER_CHARS
       ? `${json.slice(0, CHECK_RENDER_CHARS)}…`
       : json;
-  return task === undefined ? `- ${clipped}` : `- [${task}] ${clipped}`;
+  const named = item === undefined ? clipped : `${item}: ${clipped}`;
+  return task === undefined ? `- ${named}` : `- [${task}] ${named}`;
 }
 
 /**

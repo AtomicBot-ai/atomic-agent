@@ -46,6 +46,7 @@ export {
 export {
   applyCheckOutcomes,
   applyContractFindings,
+  contractChecklistPasses,
   contentProvides,
   describeMissing,
   inspectContractProvides,
