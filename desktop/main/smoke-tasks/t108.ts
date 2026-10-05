@@ -370,6 +370,7 @@ async function gateNotices(js: Js, check: Check): Promise<void> {
 async function approvalCards(js: Js, check: Check, agent: StandIn): Promise<void> {
   type R = {
     ended: string[]; pending: string | null; waiting: string | null; noRecord: string[]; replaced: string[];
+    handed: { cards: string[]; pending: string | null; waiting: string | null; kept: string | null };
     late: { state: string | null; closedForGood: boolean; note: boolean; pending: string | null; again: number };
     seen: string[]; answered: number;
   };
@@ -402,6 +403,15 @@ async function approvalCards(js: Js, check: Check, agent: StandIn): Promise<void
       // With no record of the turn's rows, every card in its window closes, as before.
       closeChatApprovals(sid, 'expired', rec.startedAt, null);
       const noRecord = cards();
+      // Telegram's request came first and ours after it: ours closes, and the chat waits on Telegram's again.
+      S.log = [{id: nid(), k: 'user', text: 'smoke t108'}, tool, item];
+      ask('${PREFIX}tg2', 'os.fs.write', 'fs_write_workspace', 'todo.txt');
+      ask('${PREFIX}ours2', 'os.shell.run', 'shell', 'du -sh .');
+      closeChatApprovals(sid, 'stopped', rec.startedAt, turnToolNames(rec));
+      const strip = (x) => (x ? String(x).replace('${PREFIX}', '') : null);
+      const handed = {cards: cards(), pending: strip(S.pending && S.pending.approvalId), waiting: strip(PENDING_APPROVALS.get(sid)),
+        kept: strip(APPROVAL_CARDS.get(sid) && APPROVAL_CARDS.get(sid).approvalId)};
+      closeChatApprovals(sid, 'expired', rec.startedAt, null);
       // A newer request for the same call replaces the older one.
       S.log = [{id: nid(), k: 'user', text: 'smoke t108'}, item];
       ask('${PREFIX}r1', 'os.shell.run', 'shell', 'ls');
@@ -417,7 +427,9 @@ async function approvalCards(js: Js, check: Check, agent: StandIn): Promise<void
       ask('${PREFIX}late', 'os.shell.run', 'shell', 'rm -rf build');   // the stream replays it: nothing opens
       const late = {state: req ? req.state || null : null, closedForGood: CLOSED_APPROVALS.has('${PREFIX}late'), note,
         pending: S.pending ? S.pending.approvalId : null, again: S.log.filter((m) => m.k === 'approval' && !m.state).length};
-      return {ended, pending, waiting, noRecord, replaced, late, seen, answered};
+      // Stop marks a card stopped (abort → stoppedCard): that is an unanswered card too.
+      stoppedCard({k: 'approval', approvalId: '${PREFIX}stop', drawn: true});
+      return {ended, pending, waiting, noRecord, handed, replaced, late, seen, answered};
     } finally {
       ANX.apprClosed = keep.closed; ANX.apprAnswered = keep.answered;
       PENDING_APPROVALS.delete(sid); APPROVAL_CARDS.delete(sid); ATTN.delete(sid);
@@ -439,14 +451,20 @@ async function approvalCards(js: Js, check: Check, agent: StandIn): Promise<void
     show(r.noRecord),
   );
   check(
+    "T108 (ATO-203): when Telegram's request came first, our turn's end closes ours and hands the chat's waiting (dot, kept card, composer) back to Telegram's",
+    show(r.handed.cards) === show(["tg2:open", "ours2:stopped"]) && r.handed.pending === "tg2" && r.handed.waiting === "tg2" && r.handed.kept === "tg2",
+    show(r.handed),
+  );
+  check(
     "T108 (ATO-203): an answer the agent no longer waits for (its 404) closes the card calmly, for good, and says nothing was decided",
     agent.calls.includes(`approve ${PREFIX}late`) && r.late.state === "expired" && r.late.closedForGood && r.late.note
       && r.late.pending === null && r.late.again === 0,
     show(r.late),
   );
   check(
-    "T108 (ATO-203): each card closed with no answer is one analytics event — stopped, expired, replaced, not_waiting",
-    show(r.seen) === show([`${PREFIX}ours:stopped`, `${PREFIX}tg:expired`, `${PREFIX}r1:replaced`, `${PREFIX}late:not_waiting`])
+    "T108 (ATO-203): each card closed with no answer is one analytics event — stopped (the turn's end, and Stop), expired, replaced, not_waiting",
+    show(r.seen) === show([`${PREFIX}ours:stopped`, `${PREFIX}tg:expired`, `${PREFIX}ours2:stopped`, `${PREFIX}tg2:expired`,
+      `${PREFIX}r1:replaced`, `${PREFIX}late:not_waiting`, `${PREFIX}stop:stopped`])
       && show(r.replaced) === show(["r1:expired", "r2:open"]) && r.answered === 1,
     show({ seen: r.seen, replaced: r.replaced, answered: r.answered }),
   );

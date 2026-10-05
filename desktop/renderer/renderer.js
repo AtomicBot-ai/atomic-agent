@@ -5986,7 +5986,9 @@ function dropStaleGateNotices() {
     the start's (loadResources), Settings › LLM, MCP and Telegram, the model
     snapshot (bswSnapshot). A provider added or a model picked in Settings was
     read there, not by refreshLiveConfig, and "no local model is selected"
-    stayed. Callers that draw nothing themselves render once it went. */
+    stayed. The Settings panes leave the transcript to the next render (the
+    one that closes Settings), so a pane being typed in is not drawn again
+    under the caret; the snapshot, which runs over the chat, renders. */
 function dropGateNoticesIfCleared() {
   if (!S.log.some((m) => m && m.gateNotice)) return false;
   const kind = localTurnGate().kind;
@@ -8893,13 +8895,21 @@ function chatApprovalCards(sid) {
   return [...out];
 }
 
-/* ATO-203: the tools turn `rec` (LIVE_TURNS) called, from its own rows; null
-   when the window keeps no record of it, or when it fanned out (Fusion): a
-   worker's calls are lines in its feed, not cards, so any request may be its. */
+/* ATO-203: the tools turn `rec` (LIVE_TURNS) called: its own rows, and the
+   frames kept while its chat was not on screen (liveKeep). Null when the
+   window does not know them all: no record of it, a turn taken over from an
+   earlier page (adoptLiveTurns: what it did before is not here), or one that
+   fanned out (Fusion: a worker's calls are lines in its feed, not cards). */
 function turnToolNames(rec) {
   if (!rec) return null;
   try {
-    const names = new Set(liveSegment(rec).filter((m) => m && m.k === 'tool' && m.name).map((m) => m.name));
+    const rows = liveSegment(rec);
+    if (rows.some((m) => m && m.k === 'system' && m.text === LIVE_TAKEN_LINE)) return null;
+    const names = new Set(rows.filter((m) => m && m.k === 'tool' && m.name).map((m) => m.name));
+    for (const f of rec.missed || []) {
+      const name = f && f.kind === 'tool_progress' ? pick(f.payload, 'tool', 'name') : null;
+      if (name) names.add(name);
+    }
     return names.has('fusion.delegate') ? null : names;
   } catch (e) { return null; }
 }
@@ -8988,8 +8998,20 @@ function closeChatApprovals(sid, state, since, tools) {
   closed.forEach((req) => closeApprovalCard(req, state, at));
   const kept = APPROVAL_CARDS.get(sid);
   if (!kept || closed.includes(kept)) {
-    PENDING_APPROVALS.delete(sid);
-    APPROVAL_CARDS.delete(sid);
+    /* ATO-203: a card left open (another surface's, raised before or while
+       this turn ran) is what the chat waits on now — its dot, the card kept
+       for it, the composer's y/n — as approvalAnswered hands over. Left
+       untracked, it kept live buttons nothing else could reach, and
+       approvalOver could never close it. */
+    const still = chatApprovalCards(sid).filter((c) => !closed.includes(c) && approvalOpen(c)).pop() || null;
+    if (still) {
+      PENDING_APPROVALS.set(sid, still.approvalId);
+      APPROVAL_CARDS.set(sid, still);
+      if (!S.pending && S.log.includes(still) && approvalOnScreen(sid)) S.pending = still;
+    } else {
+      PENDING_APPROVALS.delete(sid);
+      APPROVAL_CARDS.delete(sid);
+    }
   }
 }
 
@@ -9102,6 +9124,7 @@ function stoppedCard(req) {
   if (!req || req.state) return;
   req.state = 'stopped';
   req.at = new Date().toTimeString().slice(0, 8);
+  if (req.drawn) ANX.apprClosed(req, 'stopped');   // ATO-203: Stop is the commonest way a card goes unanswered
 }
 
 function pick(obj, ...keys) {
