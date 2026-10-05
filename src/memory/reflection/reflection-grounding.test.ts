@@ -113,6 +113,7 @@ describe("filterUngroundedReflection", () => {
           note("I am Alex."),
           note("I am Alex and I like Rust."),
           note("Call me Alex."),
+          note("The user is Alex."),
         ],
       },
       { userTexts: ["Can you summarise this article about Rust?"] },
@@ -360,6 +361,101 @@ describe("filterUngroundedReflection — review regressions", () => {
       { userTexts: ["My name is Nadia, the dose is 5 µg"] },
     );
     expect(out.facts).toEqual([]);
+  });
+});
+
+// Second review round.
+describe("filterUngroundedReflection — re-review regressions", () => {
+  const B09_TOOL_NOTE = B09_NOTES[1]!;
+
+  it("R1: a marker elsewhere in the message does not lift a one-off probe", () => {
+    const quick = filterUngroundedReflection(
+      {
+        facts: [],
+        notes: [note("The user prefers not to use tools."), note("The user prefers quick answers.")],
+      },
+      { userTexts: ["Reply exactly OK, no tools, I prefer quick answers"] },
+    );
+    expect(quick.notes.map((n) => n.body)).toEqual(["The user prefers quick answers."]);
+    expect(quick.dropped[0]?.reason).toBe("one_off_tool_restriction");
+
+    for (const userText of [
+      "Reply exactly LOCAL_OK. Do not use tools. I prefer short answers.",
+      "Never mind. Reply exactly LOCAL_OK. Do not use tools.",
+    ]) {
+      const out = filterUngroundedReflection(
+        { facts: [], notes: [B09_TOOL_NOTE] },
+        { userTexts: [userText] },
+      );
+      expect(out.notes).toEqual([]);
+      expect(out.dropped[0]?.reason).toBe("one_off_payload");
+    }
+  });
+
+  it("R1: a marker-only clause right before the probe still makes it last", () => {
+    for (const userText of ["Запомни, отвечай только JSON", "From now on, reply only JSON"]) {
+      const out = filterUngroundedReflection(
+        { facts: [fact("reply_format", "JSON")], notes: [note("The user wants replies in JSON.")] },
+        { userTexts: [userText] },
+      );
+      expect(out.facts).toHaveLength(1);
+      expect(out.notes).toHaveLength(1);
+    }
+    const tools = filterUngroundedReflection(
+      { facts: [], notes: [note("The user does not want the agent to use tools.")] },
+      { userTexts: ["Remember: do not use tools"] },
+    );
+    expect(tools.notes).toHaveLength(1);
+  });
+
+  it("R2: ordinary lower-case Russian words do not vouch for invented names", () => {
+    const userText =
+      "покажи данные по анализу и категории, сделай макет максимально быстро, маркетинг на март, никогда не трогай алерты";
+    for (const name of ["Dan", "Anna", "Kate", "Max", "Mark", "Nick", "Alex"]) {
+      const out = filterUngroundedReflection(
+        { facts: [fact("name", name)], notes: [] },
+        { userTexts: [userText] },
+      );
+      expect(out.facts).toEqual([]);
+    }
+  });
+
+  it("R2: still grounds Russian names after a naming lead, even in lower case", () => {
+    for (const [userText, name] of [
+      ["зови меня надей", "Nadya"],
+      ["Зови меня Надей", "Nadya"],
+      ["называй меня сашей", "Sasha"],
+      ["меня зовут дима", "Dima"],
+    ] as const) {
+      const out = filterUngroundedReflection(
+        { facts: [fact("name", name)], notes: [] },
+        { userTexts: [userText] },
+      );
+      expect(out.facts.map((f) => f.value)).toEqual([name]);
+    }
+  });
+
+  it("R3: checks third-person 'The user is X.' but keeps demonyms", () => {
+    const dropped = filterUngroundedReflection(
+      { facts: [], notes: [note("The user is Alex."), note("The user is Alex and likes Rust.")] },
+      { userTexts: ["Summarise this article about Rust"] },
+    );
+    expect(dropped.notes).toEqual([]);
+    expect(dropped.dropped.every((d) => d.reason === "ungrounded_identity")).toBe(true);
+
+    const kept = filterUngroundedReflection(
+      {
+        facts: [],
+        notes: [
+          note("The user is Brazilian."),
+          note("The user is Russian."),
+          note("The user is Russian-speaking."),
+          note("The user is Nadia."),
+        ],
+      },
+      { userTexts: ["I'm Nadia from Brazil"] },
+    );
+    expect(kept.notes).toHaveLength(4);
   });
 });
 

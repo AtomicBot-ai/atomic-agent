@@ -44,10 +44,17 @@
  *  - Short Latin names (≤ 4 letters after normalisation) must match a
  *    user word exactly, so "Sam" is not vouched for by "same" — and a
  *    user who wrote "Samm" will not get "Sam" either.
+ *  - A one-off probe is lifted only by a marker in the same clause or a
+ *    marker-only clause right before it ("Запомни, отвечай только
+ *    JSON"); "Always: reply only JSON" phrased differently may still be
+ *    treated as one-off.
  * The opposite risk (an invented name slipping through) exists where
- * matching is loose on purpose: Russian stems ("над" vouches for
- * "Nadia"), and names written in a script other than Latin / Cyrillic,
- * which fail open.
+ * matching is loose on purpose: stems of name-like Russian words
+ * (capitalised, or right after "зови меня" / "меня зовут" / "я" — so a
+ * sentence-initial «Данные» still vouches for "Dan"), "The user is X"
+ * where X ends like a demonym ("Ivan", "Dmitri" are not checked), and
+ * names written in a script other than Latin / Cyrillic, which fail
+ * open.
  * Everything that is not an identity claim, assistant persona, echo
  * payload or one-off tool restriction passes through untouched.
  */
@@ -166,11 +173,24 @@ function wordTokens(text: string): string[] {
 }
 
 function hasPersistenceMarker(text: string): boolean {
-  const lowered = lower(text);
+  // "Never mind" dismisses; it does not ask for anything to last.
+  const lowered = lower(text).replace(/\bnever\s*mind\b/g, " ");
   for (const token of wordTokens(lowered)) {
     if (PERSISTENCE_WORDS.has(token)) return true;
   }
   return PERSISTENCE_PHRASES.some((re) => re.test(lowered));
+}
+
+/**
+ * A fragment that is nothing but a persistence marker — "Запомни",
+ * "From now on", "Remember", "Отныне" — and so scopes the fragment
+ * right after it ("Запомни, отвечай только JSON").
+ */
+const MARKER_ONLY_FRAGMENT =
+  /^(?:please\s+|пожалуйста\s+)?(?:remember(?: this| that)?|from now on|going forward|henceforth|by default|always|in (?:the )?future|запомни(?:те)?(?: это| что)?|помни|отныне|впредь|всегда|по умолчанию|с этого момента)\s*:?$/;
+
+function isMarkerOnlyFragment(fragment: string): boolean {
+  return MARKER_ONLY_FRAGMENT.test(lower(fragment).replace(/\s+/g, " ").trim());
 }
 
 function hasPersonalMarker(text: string): boolean {
@@ -418,6 +438,19 @@ const NAMED_LEAD =
 const FIRST_PERSON_LEAD =
   /(?:^|[^\p{L}])(?:I am|I'm|Im|i am|i'm)\s+([^\s,.;:!?]+)(?:\s+(\p{Lu}[^\s,.;:!?]*))?(?=\s*(?:$|[,.;:!?)])|\s+and\b)/gu;
 
+/**
+ * Third-person "The user is Alex." — the form the prompt now asks for.
+ * Counted only for a single capitalised, unhyphenated token that ends
+ * the clause or is followed by "and" (a hyphen fails the lookahead, so
+ * "Russian-speaking" is never captured); demonyms are filtered out in
+ * `claimedNames` so "Brazilian" / "Russian" stay attributes.
+ */
+const USER_IS_LEAD =
+  /(?:^|[^\p{L}])[Uu]ser is\s+(\p{Lu}[\p{L}'’]*)(?=\s*(?:$|[,.;:!?)])|\s+and\b)/gu;
+
+/** Demonym / adjective endings: "Brazilian", "Japanese", "Polish", "Israeli", "Slavic". */
+const DEMONYM_SUFFIX = /(?:an|ian|ese|ish|i|ic)$/i;
+
 /** Capitalised words that follow a lead without being a name. */
 const NON_NAME_CAPITALISED: ReadonlySet<string> = new Set([
   "a",
@@ -631,6 +664,24 @@ interface Vocabulary {
   unverifiable: boolean;
 }
 
+/** Two-word Russian naming leads ("зови меня Надей", "меня зовут Надя"). */
+const RU_NAMING_LEADS_2: ReadonlySet<string> = new Set([
+  "зови меня",
+  "называй меня",
+  "меня зовут",
+  "звать меня",
+  "мое имя",
+  "моё имя",
+]);
+
+/** `true` when `tokens[i]` directly follows a Russian naming lead. */
+function followsRuNamingLead(tokens: readonly string[], i: number): boolean {
+  const prev1 = i >= 1 ? lower(tokens[i - 1]!) : "";
+  const prev2 = i >= 2 ? lower(tokens[i - 2]!) : "";
+  if (prev1 === "я") return true;
+  return RU_NAMING_LEADS_2.has(`${prev2} ${prev1}`);
+}
+
 function buildVocabulary(ctx: GroundingContext): Vocabulary {
   const entries: VocabEntry[] = [];
   const seen = new Set<string>();
@@ -644,11 +695,23 @@ function buildVocabulary(ctx: GroundingContext): Vocabulary {
   let otherScriptLetters = 0;
   const addText = (text: string, alwaysFuzzy: boolean): void => {
     otherScriptLetters += text.match(OTHER_SCRIPT_GLOBAL)?.length ?? 0;
-    for (const token of text.match(/[\p{L}\p{N}]+/gu) ?? []) {
+    const tokens = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+    for (let i = 0; i < tokens.length; i += 1) {
+      const token = tokens[i]!;
       const cyrillic = /\p{Script=Cyrillic}/u.test(token);
-      const fuzzy = alwaysFuzzy || cyrillic || /^\p{Lu}/u.test(token);
-      add({ raw: lower(token), key: looseKey(token), fuzzy, cyrillic });
-      if (cyrillic) {
+      // Name-like: capitalised, a stored profile name, or right after a
+      // Russian naming lead ("зови меня надей"). Ordinary lower-case
+      // words — Latin "same"/"make" or Russian «данные»/«макет»/«алерты» —
+      // only ever match exactly, never fuzzily or by stem.
+      const nameLike =
+        alwaysFuzzy || /^\p{Lu}/u.test(token) || (cyrillic && followsRuNamingLead(tokens, i));
+      add({
+        raw: lower(token),
+        key: looseKey(token),
+        fuzzy: nameLike,
+        cyrillic: cyrillic && nameLike,
+      });
+      if (cyrillic && nameLike) {
         for (const stem of cyrillicStems(token)) {
           add({ raw: stem, key: looseKey(stem), fuzzy: true, cyrillic: true });
         }
@@ -736,6 +799,12 @@ function claimedNames(text: string): string[] {
     out.push(...namePartsOf(first));
     if (match[2]) out.push(...namePartsOf(match[2]));
   }
+  for (const match of text.matchAll(USER_IS_LEAD)) {
+    const word = cleanWord(match[1] ?? "");
+    if (word.length < 2 || DEMONYM_SUFFIX.test(word)) continue;
+    if (NON_NAME_CAPITALISED.has(lower(word))) continue;
+    out.push(word);
+  }
   return out;
 }
 
@@ -767,10 +836,23 @@ function collectOneOffSignals(userTexts: readonly string[]): OneOffSignals {
   const payloadCounts = new Map<string, number>();
   let toolRestriction = false;
   for (const text of userTexts) {
-    if (hasPersistenceMarker(text)) continue;
-    for (const fragment of splitFragments(text)) {
+    const fragments = splitFragments(text);
+    for (let i = 0; i < fragments.length; i += 1) {
+      const fragment = fragments[i]!;
       const probe = classifyFragment(fragment);
       if (!probe) continue;
+      // Persistence is decided per fragment, not per message: "Reply
+      // exactly OK, no tools, I prefer quick answers" keeps "no tools"
+      // one-off. A probe is lasting only when it carries a marker
+      // itself or directly follows a marker-only fragment
+      // ("Запомни, отвечай только JSON", "From now on, reply only JSON").
+      const previous = i > 0 ? fragments[i - 1]! : null;
+      if (
+        hasPersistenceMarker(fragment) ||
+        (previous !== null && isMarkerOnlyFragment(previous))
+      ) {
+        continue;
+      }
       if (probe.kind === "tool_restriction") toolRestriction = true;
       if (probe.kind === "echo" && probe.payload) {
         for (const token of probe.payload.match(/[\p{L}\p{N}_]+/gu) ?? []) {
