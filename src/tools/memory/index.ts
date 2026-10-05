@@ -3,6 +3,7 @@ import type { MemoryStore } from "../../memory/memory-store.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
 import type { LessonStore } from "../../memory/lessons/lesson-store.js";
 import type { ProcedureStore } from "../../memory/procedures/procedure-store.js";
+import type { GroundingConversationSource } from "../../memory/name-grounding.js";
 
 import { buildProfileSetTool } from "./profile-set.js";
 import { buildProfileRemoveTool } from "./profile-remove.js";
@@ -56,6 +57,12 @@ export interface RegisterMemoryToolsOptions {
    */
   procedureStore?: ProcedureStore;
   proceduresEnabled?: boolean;
+  /**
+   * ATO-200. Every stored session's user messages, for the name checks
+   * in `memory.profile.set` and `memory.notes.store`. Optional: without
+   * it only the current session's messages count.
+   */
+  nameGroundingSource?: GroundingConversationSource;
 }
 
 /**
@@ -73,7 +80,14 @@ export function registerMemoryTools(
   options: RegisterMemoryToolsOptions,
 ): void {
   if (options.profileEnabled) {
-    registry.register(buildProfileSetTool({ store: options.profileStore }));
+    registry.register(
+      buildProfileSetTool({
+        store: options.profileStore,
+        ...(options.nameGroundingSource
+          ? { groundingSource: options.nameGroundingSource }
+          : {}),
+      }),
+    );
     registry.register(buildProfileRemoveTool({ store: options.profileStore }));
     registry.register(buildProfileListTool({ store: options.profileStore }));
     registry.register(buildProfileHistoryTool({ store: options.profileStore }));
@@ -83,6 +97,9 @@ export function registerMemoryTools(
       buildNotesStoreTool({
         store: options.notesStore,
         maxContentChars: options.notesMaxContentChars,
+        ...(options.nameGroundingSource
+          ? { groundingSource: options.nameGroundingSource }
+          : {}),
       }),
     );
     registry.register(

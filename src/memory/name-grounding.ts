@@ -44,6 +44,25 @@ export interface ChatLine {
 }
 
 /**
+ * A live transcript (`SessionState.turns`) as chat lines: user messages
+ * and closing replies, the same projection `listChatLines` makes in SQL.
+ * Structural so this module needs nothing from `src/session/`.
+ */
+export function chatLinesOf(
+  turns: readonly { kind: string; text?: unknown; progressNote?: unknown }[],
+): ChatLine[] {
+  const out: ChatLine[] = [];
+  for (const turn of turns) {
+    if (typeof turn.text !== "string") continue;
+    if (turn.kind === "user") out.push({ kind: "user", text: turn.text });
+    else if (turn.kind === "assistant_reply" && turn.progressNote !== true) {
+      out.push({ kind: "assistant_reply", text: turn.text });
+    }
+  }
+  return out;
+}
+
+/**
  * The texts of one conversation that may vouch for a name the user
  * gave: every user message, never the assistant's words.
  */

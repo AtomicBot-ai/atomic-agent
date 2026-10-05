@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  chatLinesOf,
   groundingTextsOf,
   nameGroundingAcrossSessions,
   sessionGroundingSource,
@@ -70,6 +71,23 @@ describe("groundingTextsOf", () => {
     expect(groundingTextsOf([user("hi"), reply("Привет, Анна!"), user("thanks")])).toEqual([
       "hi",
       "thanks",
+    ]);
+  });
+});
+
+describe("chatLinesOf", () => {
+  it("projects a live transcript like listChatLines does", () => {
+    expect(
+      chatLinesOf([
+        { kind: "user", text: "Меня зовут Надя" },
+        { kind: "assistant_tool_call" },
+        { kind: "tool_result", text: "Анна" },
+        { kind: "assistant_reply", text: "one moment", progressNote: true },
+        { kind: "assistant_reply", text: "Привет, Надя!" },
+      ]),
+    ).toEqual([
+      { kind: "user", text: "Меня зовут Надя" },
+      { kind: "assistant_reply", text: "Привет, Надя!" },
     ]);
   });
 });

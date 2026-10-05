@@ -4,6 +4,7 @@ import {
   filterUngroundedReflection,
   isTrivialReflectionWindow,
   nameGroundingIn,
+  ungroundedClaimedNames,
 } from "./reflection-grounding.js";
 import type { ReflectionFact, ReflectionNote } from "./reflection-parser.js";
 
@@ -488,5 +489,37 @@ describe("nameGroundingIn", () => {
     expect(nameGroundingIn("小明", ["hello"])).toBe("unverifiable");
     // Nothing to compare at all: no verdict either way.
     expect(nameGroundingIn("J", ["hello"])).toBe("unverifiable");
+  });
+});
+
+// ATO-200: the agent wrote "Пользователь Анна…" for a user who never
+// wrote that name. Russian third-person phrasings now count as a claim.
+describe("ungroundedClaimedNames", () => {
+  it("finds a Russian third-person name the user never wrote", () => {
+    for (const text of [
+      "Пользователь Анна просит отвечать кратко",
+      "Пользователя зовут Анна.",
+      "Имя пользователя — Анна",
+      "Имя пользователя: Анна",
+    ]) {
+      expect(ungroundedClaimedNames(text, ["сделай макет"])).toEqual(["Анна"]);
+    }
+  });
+
+  it("does not count a product after «пользователь», or a name the user gave", () => {
+    expect(ungroundedClaimedNames("Пользователь Windows жалуется на тормоза", [])).toEqual([]);
+    expect(
+      ungroundedClaimedNames("Пользователь Надя просит отвечать кратко", ["Меня зовут Надя"]),
+    ).toEqual([]);
+    expect(ungroundedClaimedNames("The user prefers short answers.", [])).toEqual([]);
+  });
+
+  it("drops the same claim from a reflection note", () => {
+    const out = filterUngroundedReflection(
+      { facts: [], notes: [note("Пользователь Анна предпочитает краткие ответы.")] },
+      { userTexts: ["Отвечай кратко"] },
+    );
+    expect(out.notes).toEqual([]);
+    expect(out.dropped[0]?.reason).toBe("ungrounded_identity");
   });
 });

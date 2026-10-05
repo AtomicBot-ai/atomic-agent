@@ -1756,6 +1756,7 @@ export async function createAgentRuntime(
     lessonsEnabled: config.memory.lessons.enabled,
     procedureStore,
     proceduresEnabled: config.memory.procedures.enabled,
+    nameGroundingSource,
   });
 
   // Vision provider wiring is deferred until after `profileManager` is

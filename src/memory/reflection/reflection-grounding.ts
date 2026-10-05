@@ -453,6 +453,16 @@ const FIRST_PERSON_LEAD =
 const USER_IS_LEAD =
   /(?:^|[^\p{L}])[Uu]ser is\s+(\p{Lu}[\p{L}'’]*)(?=\s*(?:$|[,.;:!?)])|\s+and\b)/gu;
 
+/**
+ * Russian third person — "Пользователь Анна …", "Пользователя зовут
+ * Анна", "Имя пользователя — Анна" (ATO-200: the agent stored a note
+ * "Пользователь Анна…" for a user who never wrote that name). Only a
+ * capitalised Cyrillic word counts: "Пользователь Windows / Figma" is a
+ * product, not a name.
+ */
+const RU_USER_LEAD =
+  /(?:^|[^\p{L}])(?:[Пп]ользовател(?:ь|я|ю|ем|е)|[Ии]мя пользователя)(?:\s+(?:зовут|по имени))?\s*[:—–-]?\s+([А-ЯЁ][а-яё]+)(?![\p{L}-])/gu;
+
 /** Demonym / adjective endings: "Brazilian", "Japanese", "Polish", "Israeli", "Slavic". */
 const DEMONYM_SUFFIX = /(?:an|ian|ese|ish|i|ic)$/i;
 
@@ -804,6 +814,10 @@ function claimedNames(text: string): string[] {
     out.push(...namePartsOf(first));
     if (match[2]) out.push(...namePartsOf(match[2]));
   }
+  for (const match of text.matchAll(RU_USER_LEAD)) {
+    const word = match[1] ?? "";
+    if (word.length >= 2) out.push(word);
+  }
   for (const match of text.matchAll(USER_IS_LEAD)) {
     const word = cleanWord(match[1] ?? "");
     if (word.length < 2 || DEMONYM_SUFFIX.test(word)) continue;
@@ -956,6 +970,27 @@ export function filterUngroundedReflection(
     notes.push(note);
   }
   return { facts, notes, dropped };
+}
+
+/**
+ * ATO-200. The names `text` claims for the user ("The user is Anna",
+ * "Пользователь Анна …", "my name is Anna") that no text in `texts` —
+ * the user's own messages — vouches for. Empty when every claimed name
+ * is grounded or cannot be compared. Used by `memory.notes.store`, which
+ * keeps the note but must not let it pass for a known name.
+ */
+export function ungroundedClaimedNames(
+  text: string,
+  texts: readonly string[],
+): string[] {
+  const vocab = buildVocabulary({ userTexts: texts });
+  if (vocab.unverifiable) return [];
+  const out: string[] = [];
+  for (const word of claimedNames(text.replace(/’/g, "'"))) {
+    if (OTHER_SCRIPT.test(word)) continue;
+    if (!isGrounded(word, vocab) && !out.includes(word)) out.push(word);
+  }
+  return out;
 }
 
 /**
