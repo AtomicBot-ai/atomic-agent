@@ -5964,8 +5964,27 @@ function approvalOpen(req) {
   return !!req && !req.state && !(req.approvalId && CLOSED_APPROVALS.has(req.approvalId));
 }
 
+/* ATO-226: the key a shortcut was pressed on, whatever the keyboard layout.
+   e.key is the character the layout types: on a Russian layout ⌘. comes as
+   'ю' and ⌘K as 'л', and no shortcut matched. A character outside ASCII is
+   read by its physical key instead (e.code: KeyK is 'k', Period is '.'); an
+   ASCII one is kept, so a Latin layout (AZERTY, Dvorak) keeps a shortcut on
+   the key that prints it, as before. The keypad's Enter is Enter and its
+   decimal key is '.' (',' on some layouts; Delete with Num Lock off stays). */
+function shortcutKey(e) {
+  const k = e.key || '';
+  const c = e.code || '';
+  if (c === 'NumpadEnter') return 'Enter';
+  if (c === 'NumpadDecimal' && k !== 'Delete') return '.';
+  if (k.length !== 1 || k.charCodeAt(0) < 128) return k;
+  if (/^Key[A-Z]$/.test(c)) return e.shiftKey ? c.slice(3) : c.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(c)) return c.slice(5);
+  return {Period: '.', Comma: ',', Slash: '/', Enter: 'Enter'}[c] || k;
+}
+
 /* 05.10: the approval chord a keydown is, if any: 'y' for ⌘↩ (Ctrl+↩ off
-   macOS), 'n' for ⌘. (Ctrl+.). On macOS Ctrl+. stays Stop. */
+   macOS), 'n' for ⌘. (Ctrl+.). On macOS Ctrl+. stays Stop. `k` is the
+   keydown's shortcutKey (ATO-226), so these work on any layout. */
 function apprChordOf(e, k) {
   const mod = IS_MAC ? (e.metaKey && !e.ctrlKey) : (e.ctrlKey && !e.metaKey);
   if (!mod || e.altKey || e.shiftKey) return null;
@@ -7026,9 +7045,13 @@ function acceptSlash(name) {
 document.addEventListener('keydown', (e) => {
   if (e.isComposing) return;
   const k = e.key;
+  /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
+     physical key on a non-Latin layout (shortcutKey). `k` stays the typed
+     character for everything that reads text. */
+  const sk = shortcutKey(e);
   const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
   // Item 7: the TUI's ctrl+g menu chords, live everywhere as in the TUI.
-  if (chordKey(e, k)) return;
+  if (chordKey(e, sk)) return;
 
   // Item 2 (voice input): Escape cancels a live recording BEFORE anything
   // else looks at it. Five later Escape branches return first — a pending
@@ -7055,7 +7078,7 @@ document.addEventListener('keydown', (e) => {
      Abort run is the card's button. The Tasks form and the Add MCP server box
      keep their own ⌘↩ (below). On Windows the menu's Send and Stop share these
      chords and may fire too; onMenu drops them right after a card took one. */
-  const apprKey = apprChordOf(e, k);
+  const apprKey = apprChordOf(e, sk);
   if (apprKey && !(e.target.dataset && e.target.dataset.tkField) && e.target.id !== 'mcp-json' && apprOnScreen()) {
     e.preventDefault(); ANX.via('key'); APPR_CHORD_AT = Date.now(); answer(apprKey); return;
   }
@@ -7088,7 +7111,7 @@ document.addEventListener('keydown', (e) => {
      blocked. */
   if (PLAN.on && !inText && !S.pending && !S.settings && !S.overlay && !S.menuOpen
       && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-    const pk = k.toLowerCase();
+    const pk = sk.toLowerCase();
     if (pk === 'y' || pk === 'b' || pk === 'd') ANX.via('plan_bar');
     if (pk === 'y') { e.preventDefault(); executePlan('auto'); return; }
     if (pk === 'b') { e.preventDefault(); executePlan('bypass'); return; }
@@ -7100,14 +7123,20 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
+  /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
+     too. ⌘N, ⌘0, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
+     and Windows already match on a Russian layout; with the page taking
+     them as well, that layout now goes the way a Latin one always has.
+     ⌘↩ and ⌘. are only shown in the menu (menu.ts), so nothing fires them
+     twice. */
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts'};
-    if (map[k.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[k.toLowerCase()]); return; }
-    if (k === 'Enter') { e.preventDefault(); submit(); return; }
+    if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
+    if (sk === 'Enter') { e.preventDefault(); submit(); return; }
   }
-  if (mod && e.shiftKey && k.toLowerCase() === 'y') { e.preventDefault(); ANX.via('shortcut'); act('toggle:console'); return; }
+  if (mod && e.shiftKey && sk.toLowerCase() === 'y') { e.preventDefault(); ANX.via('shortcut'); act('toggle:console'); return; }
 
   // palette
   if (S.overlay === 'palette') {
