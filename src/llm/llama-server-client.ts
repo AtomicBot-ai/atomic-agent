@@ -2,6 +2,7 @@ import { ENV_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { readErrnoCode } from "./errno-code.js";
+import { discardResponseBody } from "./discard-response-body.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -62,8 +63,9 @@ const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
  *    hostile server from pinning a slot forever by dribbling one byte
  *    just under the idle budget.
  *  - `first-token-stall` — while waiting for the first byte, `/slots`
- *    kept answering and showed no work anywhere — this session's slot
- *    idle, every other slot idle, nothing changed — for a whole idle
+ *    kept answering and showed no work anywhere — every slot idle, or a
+ *    slot marked processing whose task and counters never moved (see
+ *    `judgeSlotProgress`), nothing changed — for a whole idle
  *    budget (`requestTimeoutMs`). A busy server is queueing or
  *    evaluating; a server that is provably doing nothing is not going
  *    to answer, and waiting the full first-token budget on it is what
@@ -251,11 +253,27 @@ export type SlotProgressVerdict =
  * Compare a `/slots` answer with the previous one. Pure. `slotId` is the
  * slot this request is pinned to (`-1`: unknown, any slot counts).
  *
- * Progress is generous on purpose: a slot marked `is_processing` is
- * working even when its counters do not move (prompt evaluation shows no
- * decoded tokens), and another slot working means this request is
- * queued behind it. Only a server whose every slot is idle and whose
- * answer is byte-for-byte what it was last time has nothing going on.
+ * Progress is generous on purpose: another slot working means this
+ * request is queued behind it, and a slot marked `is_processing` is
+ * working while anything about it moves between two answers.
+ *
+ * A processing slot whose task and counters read the same in two
+ * consecutive answers is not working, it is stuck — a cancelled task the
+ * server never released, or a loop that runs and gets nowhere. `/slots`
+ * is answered by the inference loop *between* batches, so a slot doing
+ * real work, prompt evaluation included, has advanced its counters by the
+ * time the next answer can be produced. Read as `idle`, a run of those
+ * answers spanning an idle budget ends the wait as `first-token-stall`;
+ * read as progress (as it used to be), it held every later request for
+ * the full first-token budget while `/health` kept answering.
+ *
+ * That reading needs a counter for each phase: `n_prompt_tokens_processed`
+ * (or `prompt_progress`) through prompt evaluation, `n_decoded` through
+ * generation. A build whose processing slot lacks either shows that
+ * phase exactly as it shows a frozen slot — a long prompt eval with only
+ * `n_decoded` reported reads 0 the whole time — so on such a build a
+ * processing slot still counts as progress, as it always did. The
+ * supervisor's wedge watch makes the same exception.
  */
 export function judgeSlotProgress(
   body: unknown,
@@ -265,14 +283,28 @@ export function judgeSlotProgress(
   if (!Array.isArray(body)) return { kind: "unknown" };
   let anyProcessing = false;
   let ownProcessing = false;
+  // A processing slot this build does not report both counters for.
+  let blindProcessing = false;
   const parts: string[] = [];
   for (const raw of body) {
     if (!raw || typeof raw !== "object") continue;
     const slot = raw as Record<string, unknown>;
-    const next = (slot.next_token ?? {}) as Record<string, unknown>;
+    const next = readNextToken(slot.next_token);
     const processing = slot.is_processing === true;
     anyProcessing ||= processing;
     if (slotId >= 0 && slot.id === slotId && processing) ownProcessing = true;
+    // Frozen can only be told from working when both phases have a
+    // counter: one that moves through prompt evaluation and one that
+    // moves through generation. Missing either, this slot is read
+    // generously, as before.
+    const promptCounter =
+      typeof slot.n_prompt_tokens_processed === "number" ||
+      (slot.prompt_progress !== undefined && slot.prompt_progress !== null);
+    const decodeCounter =
+      typeof (next.n_decoded ?? slot.n_decoded) === "number";
+    if (processing && !(promptCounter && decodeCounter)) {
+      blindProcessing = true;
+    }
     parts.push(
       [
         String(slot.id ?? "?"),
@@ -286,14 +318,33 @@ export function judgeSlotProgress(
     );
   }
   const snapshot = parts.join("|");
-  if (ownProcessing || anyProcessing) return { kind: "progress", snapshot };
+  // Anything that changed since the last answer is movement, processing
+  // or not — and a first answer is a baseline with nothing to compare.
+  const moved = previousSnapshot !== null && previousSnapshot !== snapshot;
+  if (ownProcessing || anyProcessing) {
+    if (previousSnapshot === null || moved || blindProcessing) {
+      return { kind: "progress", snapshot };
+    }
+    // Processing, counters reported, and not one of them moved.
+    return { kind: "idle", snapshot };
+  }
   // A first answer with nothing processing is a baseline, not evidence
   // of work: the stall clock keeps running from the send, so a server
   // that was idle from the start is caught after one idle budget.
-  if (previousSnapshot !== null && previousSnapshot !== snapshot) {
-    return { kind: "progress", snapshot };
-  }
+  if (moved) return { kind: "progress", snapshot };
   return { kind: "idle", snapshot };
+}
+
+/**
+ * `next_token` as llama.cpp serialises it: an object on current builds,
+ * a one-element array on the builds the supervisor's wedge watch was
+ * written against. Either way, the fields of the first entry.
+ */
+function readNextToken(raw: unknown): Record<string, unknown> {
+  const entry = Array.isArray(raw) ? raw[0] : raw;
+  return entry !== null && typeof entry === "object"
+    ? (entry as Record<string, unknown>)
+    : {};
 }
 
 export class LlamaServerError extends Error {
@@ -497,6 +548,16 @@ export class LlamaServerClient {
    * endpoint, would blind the watch for the rest of the session.
    */
   private slotsUnavailableFor: string | null = null;
+  /**
+   * The `/slots` poll in flight per base URL, shared by every progress
+   * watch on this client. N workers waiting for their first token used to
+   * send N polls per tick, each one a task llama.cpp's inference loop has
+   * to answer between batches and an HTTP thread parked until it does —
+   * the same question, asked N times, at the moment the server is least
+   * able to answer it. Each watch still judges the shared answer against
+   * its own previous one.
+   */
+  private readonly slotsPollsInFlight = new Map<string, Promise<unknown>>();
 
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
@@ -715,6 +776,26 @@ export class LlamaServerClient {
   }
 
   /**
+   * `fetchSlots()` for the progress watch, single-flight per base URL: a
+   * watch whose tick lands while another watch's poll of the same server
+   * is still out joins that poll instead of sending its own. Bounded like
+   * any poll — `fetchSlots` aborts at its own deadline — so a joined poll
+   * settles when the original does, and the entry is dropped as it does.
+   */
+  private sharedSlotsPoll(): Promise<unknown> {
+    const base = this.baseUrlOverride ?? getConfig().localModels.url;
+    const pending = this.slotsPollsInFlight.get(base);
+    if (pending !== undefined) return pending;
+    const poll = this.fetchSlots().finally(() => {
+      if (this.slotsPollsInFlight.get(base) === poll) {
+        this.slotsPollsInFlight.delete(base);
+      }
+    });
+    this.slotsPollsInFlight.set(base, poll);
+    return poll;
+  }
+
+  /**
    * `GET /health` — the one question a busy llama-server can still
    * answer, and the discriminator the progress watch was missing.
    *
@@ -749,11 +830,15 @@ export class LlamaServerClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      await this.fetchImpl(url, {
+      const response = await this.fetchImpl(url, {
         method: "GET",
         headers: this.buildHeaders(false),
         signal: controller.signal,
       });
+      // Only the status line was the answer. An unread body keeps its
+      // connection out of undici's pool until the GC gets to it, and
+      // this probe runs every poll of every waiting request.
+      discardResponseBody(response);
       return "answered";
     } catch {
       return "unanswered";
@@ -1131,7 +1216,7 @@ export class LlamaServerClient {
       try {
         if (slotsAsked) {
           verdict = judgeSlotProgress(
-            await this.fetchSlots(),
+            await this.sharedSlotsPoll(),
             watch?.slotId ?? -1,
             previousSnapshot,
           );
@@ -1378,8 +1463,9 @@ export class LlamaServerClient {
     if (timedOut === "first-token-stall") {
       return new LlamaServerError(
         `llama-server sent no first token and showed no progress for ${this.requestTimeoutMs}ms — ` +
-          `/slots kept answering with every slot idle and nothing changing, so this request is not being ` +
-          `processed (a busy server would show a slot working or stop answering /slots); ` +
+          `/slots kept answering with nothing moving — every slot idle, or a slot marked processing whose task ` +
+          `and counters never changed — so this request is not being processed (a busy server shows its ` +
+          `counters moving or stops answering /slots); ` +
           `check the server, then retry — the retry reuses this session's slot`,
         null,
         url,

@@ -151,12 +151,17 @@ describe("createAgentRuntime fusion seams", () => {
       ).toBe(false);
       // Not a person sending a message.
       expect(captureMessageSent).not.toHaveBeenCalled();
+      // Nor does it keep a slot pin: the worker id is never seen again.
+      expect(runtime.slotManager.pinnedSlot(worker.id)).toBeNull();
 
       // Control: the same runtime still counts and saves a real turn.
       const real = await runtime.runTurn(parent, "hello", { maxSteps: 3 });
       expect(real.reason).toBe("reply");
       expect(runtime.sessionStore.load(parent.id)).not.toBeNull();
       expect(captureMessageSent).toHaveBeenCalledTimes(1);
+      // …and a real session keeps the slot the server named, so the
+      // null above is the worker's release, not a harness that never pins.
+      expect(runtime.slotManager.pinnedSlot(parent.id)).toBe(0);
     } finally {
       await runtime.shutdown();
     }

@@ -79,6 +79,7 @@ import { registerTaskTools } from "../tools/tasks/index.js";
 import {
   buildFusionDelegateTool,
   pickOriginalRequest,
+  readSlotOccupancy,
 } from "../tools/fusion/index.js";
 import { confineReads } from "../tools/read-scope/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
@@ -3499,6 +3500,12 @@ export async function createAgentRuntime(
           lastTurnContextUsage.delete(session.id);
           // A worker's turn is its whole life: nothing waits on its jobs.
           shellJobs.endSession(session.id);
+          // …nor on its slot pin. The step executor pinned whatever slot
+          // the server put the worker's prompt in; the session id is never
+          // seen again, so the entry would outlive it for the life of the
+          // process, one per worker ever run, and `reserveReflectionSlot`
+          // would keep treating those slots as taken by a live session.
+          slotManager.release(session.id);
         }
       });
     }
@@ -3827,6 +3834,16 @@ export async function createAgentRuntime(
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
       localTokensPerSecond: () => llama.measuredTokensPerSecond(),
+      // The same client again, for the one `/slots` read a local
+      // worker's queue watchdog makes before it gives up on the worker:
+      // the hint on that row is chosen from what the server was doing.
+      probeSlotOccupancy: async () => {
+        try {
+          return readSlotOccupancy(await llama.fetchSlots());
+        } catch {
+          return null;
+        }
+      },
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,

@@ -23,6 +23,8 @@
  * *server*, and a restart is what ends the request's wait early.
  */
 
+import { discardResponseBody } from "../../llm/discard-response-body.js";
+
 export const WEDGE_SILENCE_MS = 90_000;
 export const WEDGE_STALL_MS = 120_000;
 
@@ -107,6 +109,9 @@ export async function probeEndpoint(
       signal: AbortSignal.timeout(timeoutMs),
       ...(apiKey ? { headers: { authorization: `Bearer ${apiKey}` } } : {}),
     });
+    // A non-OK answer is read for its status alone; let its body go so
+    // the connection returns to the pool (see `discardResponseBody`).
+    if (!res.ok) discardResponseBody(res);
     const slots = res.ok ? await res.json().catch(() => undefined) : undefined;
     return { answered: true, slots };
   } catch {
