@@ -4,10 +4,13 @@ import {
   assistantReplyTurn,
   assistantToolCallTurn,
   findCurrentMacroTurnStart,
+  findReadRepeats,
   isFinalReplyTurn,
   isStoppedTurnMarker,
   macroTurnBoundaries,
   packConversation,
+  pairTokenCosts,
+  readRepeatRefs,
   renderToolResultBody,
   renderTurnForPrompt,
   STOPPED_TURN_MARKER_TEXT,
@@ -16,7 +19,9 @@ import {
   trimTurnsToTokens,
   userTurn,
   type ConversationTurn,
+  type ReadTurnIdentity,
 } from "./conversation-turn.js";
+import { estimateTokens } from "../prompt/token-budget.js";
 
 describe("conversation-turn helpers", () => {
   it("builds typed turns with expected fields", () => {
@@ -732,5 +737,217 @@ describe("a stop marker closes the stopped request (ATO-233)", () => {
     // The stopped story is history; only the new message is current.
     expect(findCurrentMacroTurnStart(turns)).toBe(2);
     expect(macroTurnBoundaries(turns)).toEqual([0, 2]);
+
+// ATO-60: a re-read of an unchanged range that is still in the prompt
+// renders as a pointer to the earlier read, never when that read is out
+// of view, and the packer prices it the way it renders.
+describe("repeated os.fs.read results", () => {
+  const identity: ReadTurnIdentity = {
+    path: "/repo/src/a.ts",
+    contentHash: "h1",
+    startLine: 1,
+    endLine: 80,
+    numbered: false,
+  };
+  const text = Array.from(
+    { length: 80 },
+    (_, i) => `line ${i + 1} ${"z".repeat(40)}`,
+  ).join("\n");
+
+  function readRow(
+    overrides: Partial<ReadTurnIdentity> = {},
+    summary = text,
+    status: "ok" | "error" = "ok",
+  ): ConversationTurn {
+    return toolResultTurn({
+      tool: "os.fs.read",
+      status,
+      summary,
+      read: { ...identity, ...overrides },
+    });
+  }
+
+  function call(): ConversationTurn {
+    return assistantToolCallTurn({
+      tool: "os.fs.read",
+      args: { path: "src/a.ts" },
+    });
+  }
+
+  it("keeps the read identity on the row", () => {
+    const row = readRow();
+    expect(row).toMatchObject({ kind: "tool_result", read: identity });
+    expect(
+      toolResultTurn({ tool: "os.fs.read", status: "ok", summary: "x" }),
+    ).not.toHaveProperty("read");
+  });
+
+  it("matches only the same file version, range, rendering and stored text", () => {
+    const turns: ConversationTurn[] = [
+      userTurn("go"),
+      readRow(), // 1
+      readRow(), // 2: repeat of 1
+      readRow({ contentHash: "h2" }), // 3: the file changed
+      readRow({ startLine: 2 }), // 4: another range
+      readRow({ numbered: true }), // 5: another rendering
+      readRow({}, `${text}\n… [cut]`), // 6: a different cut
+      readRow({}, text, "error"), // 7: a failed call
+      toolResultTurn({ tool: "os.fs.read", status: "ok", summary: text }), // 8: no identity
+      readRow(), // 9: no match — the latest row of this identity (6) holds another cut
+    ];
+    expect(findReadRepeats(turns)).toEqual([
+      -1, -1, 1, -1, -1, -1, -1, -1, -1, -1,
+    ]);
+  });
+
+  it("points a chain of repeats at the read that holds the text", () => {
+    const turns: ConversationTurn[] = [
+      userTurn("go"),
+      call(),
+      readRow(),
+      call(),
+      toolResultTurn({ tool: "os.fs.list", status: "ok", summary: "a.ts" }),
+      call(),
+      readRow(),
+      call(),
+      readRow(),
+    ];
+    const refs = readRepeatRefs(turns);
+    expect(refs[2]).toBeUndefined();
+    expect(refs[6]).toEqual({ resultsBack: 2 });
+    // The third read points past the second (itself a pointer).
+    expect(refs[8]).toEqual({ resultsBack: 3 });
+  });
+
+  it("renders a repeat as a pointer, flat and structured alike", () => {
+    const row = readRow();
+    const options = { readRepeat: { resultsBack: 1 } };
+    const line = renderTurnForPrompt(row, options);
+    expect(line).toBe(
+      "tool_result[os.fs.read ok]: [unchanged since your earlier read: same 80 lines (1-80), identical text — see the os.fs.read result just above; not repeated here]",
+    );
+    expect(line).toBe(
+      `tool_result[os.fs.read ok]: ${renderToolResultBody(
+        row as Extract<ConversationTurn, { kind: "tool_result" }>,
+        options,
+      )}`,
+    );
+    expect(
+      renderTurnForPrompt(readRow(), { readRepeat: { resultsBack: 4 } }),
+    ).toContain("see the os.fs.read result 4 tool results above");
+  });
+
+  it("drops the truncated mark from a pointer, which is whole", () => {
+    const row = toolResultTurn({
+      tool: "os.fs.read",
+      status: "ok",
+      summary: text,
+      truncated: true,
+      read: identity,
+    });
+    expect(renderTurnForPrompt(row)).toMatch(/\(truncated\)$/);
+    expect(
+      renderTurnForPrompt(row, { readRepeat: { resultsBack: 1 } }),
+    ).not.toContain("(truncated)");
+  });
+
+  it("keeps a short read whole when the pointer would be longer", () => {
+    const row = readRow({ endLine: 1 }, "x = 1");
+    expect(renderTurnForPrompt(row, { readRepeat: { resultsBack: 1 } })).toBe(
+      "tool_result[os.fs.read ok]: x = 1",
+    );
+  });
+
+  it("ignores the pointer option on any other tool", () => {
+    const row = toolResultTurn({
+      tool: "os.fs.grep",
+      status: "ok",
+      summary: text,
+      read: identity,
+    });
+    expect(renderTurnForPrompt(row, { readRepeat: { resultsBack: 1 } })).toBe(
+      `tool_result[os.fs.grep ok]: ${renderToolResultBody(
+        row as Extract<ConversationTurn, { kind: "tool_result" }>,
+        {},
+      )}`,
+    );
+  });
+
+  /** Tokens the visible turns cost as the prompt renders them. */
+  function renderedCost(visible: readonly ConversationTurn[]): number {
+    const refs = readRepeatRefs(visible);
+    const currentStart = findCurrentMacroTurnStart(visible);
+    return visible.reduce((sum, turn, i) => {
+      const ref = refs[i];
+      return (
+        sum +
+        estimateTokens(
+          renderTurnForPrompt(turn, {
+            inCurrentMacroTurn: i >= currentStart,
+            ...(ref !== undefined ? { readRepeat: ref } : {}),
+          }),
+        ) +
+        1
+      );
+    }, 0);
+  }
+
+  /** Three tasks re-reading one file, then a short current request. */
+  function rereadingTasks(): ConversationTurn[] {
+    return [
+      userTurn("read a.ts"),
+      call(),
+      readRow(),
+      assistantReplyTurn("read it"),
+      userTurn("read it again"),
+      call(),
+      readRow(),
+      assistantReplyTurn("same as before"),
+      userTurn("and again"),
+      call(),
+      readRow(),
+      assistantReplyTurn("still the same"),
+      userTurn("thanks"),
+    ];
+  }
+
+  it("prices a repeat as its pointer, so history that fits only that way is kept", () => {
+    const turns = rereadingTasks();
+    const asRendered = renderedCost(turns);
+    const inFull = turns.reduce(
+      (sum, turn) => sum + estimateTokens(renderTurnForPrompt(turn)) + 1,
+      0,
+    );
+    expect(asRendered).toBeLessThan(inFull / 2);
+    const packed = packConversation(turns, asRendered);
+    expect(packed.droppedCount).toBe(0);
+    // The readout's per-task projection charges a repeat that points into
+    // an earlier task in full (that task may be cut first): it may run
+    // high, never low.
+    const pairs = pairTokenCosts(turns);
+    expect(pairs.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(asRendered);
+  });
+
+  it("charges a repeat in full once its earlier read is cut, at every budget", () => {
+    const turns = rereadingTasks();
+    for (let budget = 100; budget <= 4_000; budget += 50) {
+      const packed = packConversation(turns, budget);
+      // Nothing pinned here but the short last request, so whatever the
+      // cut kept must fit the budget as it actually renders.
+      expect(renderedCost(packed.visibleTurns)).toBeLessThanOrEqual(budget);
+      const rendered = packed.visibleTurns
+        .map((turn, i) => {
+          const ref = readRepeatRefs(packed.visibleTurns)[i];
+          return renderTurnForPrompt(
+            turn,
+            ref !== undefined ? { readRepeat: ref } : {},
+          );
+        })
+        .join("\n");
+      // Whenever a read is in view, its text is too.
+      if (rendered.includes("tool_result[os.fs.read ok]")) {
+        expect(rendered).toContain("line 1 ");
+      }
+    }
   });
 });

@@ -15,6 +15,7 @@ import {
 } from "./batch-executor.js";
 import type { ToolLoopTracker } from "./loop-detector.js";
 import { capBatchSummaries } from "./batch-summary-cap.js";
+import { readTurnIdentity } from "./read-coverage.js";
 import {
   gatedCallRunsUnattended,
   isBatchable,
@@ -125,6 +126,7 @@ import {
   assistantReplyTurn,
   assistantToolCallTurn,
   toolResultTurn,
+  type ReadTurnIdentity,
 } from "../session/conversation-turn.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { userNamedPaths } from "../tools/read-scope/index.js";
@@ -3715,6 +3717,7 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
             summary: cappedSummary,
             ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
             ...(result.approvals ? { approvals: result.approvals } : {}),
+            ...readTurnField(result),
           }),
         );
       }
@@ -3773,10 +3776,26 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
         summary: cappedSummary,
         ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
         ...(result.approvals ? { approvals: result.approvals } : {}),
+        ...readTurnField(result),
       }),
     );
   }
   return next;
+}
+
+/**
+ * The `read` field of a result row: what an `os.fs.read` read, so the
+ * prompt can show a repeat of it as a pointer while the first read is in
+ * view (`findReadRepeats`). Taken from the result, so a row whose text
+ * a batch cap cut still names the whole read; a pointer is only drawn
+ * between rows whose stored texts match, so a cut row never stands for,
+ * or is stood for by, a different cut of the same lines.
+ */
+function readTurnField(result: CompressedToolResult): {
+  read?: ReadTurnIdentity;
+} {
+  const read = readTurnIdentity(result.tool, result);
+  return read !== null ? { read } : {};
 }
 
 /**
