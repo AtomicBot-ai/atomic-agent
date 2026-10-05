@@ -299,6 +299,77 @@ describe("TurnController", () => {
     expect(controller.isBusy("s1")).toBe(false);
   });
 
+  it("keeps the waiter behind a cancelled one queued until the running turn ends", async () => {
+    // A runs; B waits behind it with a signal; C waits behind B. B is
+    // cancelled while A is still running. C must not start until A is
+    // over: releasing B's place at the moment of the abort used to start
+    // C alongside A — two run()s on one session.
+    const controller = new TurnController();
+    const a = defer();
+    const c = defer();
+    const bRan = vi.fn();
+
+    const pa = controller.enqueue({ sessionId: "s1", origin: "http", run: a.body });
+    const ac = new AbortController();
+    const pb = controller.enqueue({
+      sessionId: "s1",
+      origin: "http",
+      signal: ac.signal,
+      run: async () => {
+        bRan();
+      },
+    });
+    const pc = controller.enqueue({ sessionId: "s1", origin: "http", run: c.body });
+
+    await waitUntil(() => a.started());
+    ac.abort(new Error("gave up waiting"));
+    await expect(pb).rejects.toThrow("gave up waiting");
+    // Plenty of microtasks for a premature release to reach C.
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(c.started()).toBe(false);
+    expect(bRan).not.toHaveBeenCalled();
+
+    a.release();
+    await pa;
+    await waitUntil(() => c.started());
+    expect(bRan).not.toHaveBeenCalled();
+    c.release();
+    await pc;
+    expect(controller.isBusy("s1")).toBe(false);
+  });
+
+  it("queues a new submission behind the running turn after the only waiter was cancelled", async () => {
+    // A runs; B (the only waiter) is cancelled; D arrives afterwards.
+    // B's queue entry used to be dropped on the abort, so D found the
+    // session "idle" and started while A was still running.
+    const controller = new TurnController();
+    const a = defer();
+    const d = defer();
+
+    const pa = controller.enqueue({ sessionId: "s1", origin: "http", run: a.body });
+    const ac = new AbortController();
+    const pb = controller.enqueue({
+      sessionId: "s1",
+      origin: "http",
+      signal: ac.signal,
+      run: async () => undefined,
+    });
+    await waitUntil(() => a.started());
+    ac.abort(new Error("cancelled"));
+    await expect(pb).rejects.toThrow("cancelled");
+
+    const pd = controller.enqueue({ sessionId: "s1", origin: "http", run: d.body });
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(d.started()).toBe(false);
+
+    a.release();
+    await pa;
+    await waitUntil(() => d.started());
+    d.release();
+    await pd;
+    expect(controller.isBusy("s1")).toBe(false);
+  });
+
   it("rejects synchronously when the signal is already aborted", async () => {
     const controller = new TurnController();
     const ac = new AbortController();
