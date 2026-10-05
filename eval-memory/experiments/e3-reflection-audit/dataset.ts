@@ -164,4 +164,22 @@ export const REFLECTION_AUDIT_CASES: readonly ReflectionAuditCase[] = [
       "Score keeping the old TypeScript preference at 1 — contradicts the input.",
     ].join("\n"),
   },
+  {
+    // B09 (desktop 02.10, Qwen 3.5 4B): this smoke-test prompt produced
+    // "I am Alex and you are my personal assistant…" and "I prefer using
+    // local_ok instead of tools…". In production the runner now skips
+    // this window as trivial before asking the model; E3 calls the
+    // prompt directly, so this case measures the prompt on its own.
+    id: "one-off-probe",
+    label: "one-off smoke-test instruction",
+    userMessage: "Reply exactly LOCAL_OK. Do not use tools.",
+    assistantReply: "LOCAL_OK",
+    expectation: "expects_none",
+    rubric: [
+      "This is a one-turn test instruction. Nothing here is durable; the correct output is NONE.",
+      "Score 1 (wrong) for any name or identity claim (e.g. 'I am Alex', name=Alex) — the user never stated a name.",
+      "Score 1 (wrong) for any lasting preference about LOCAL_OK, reply format or avoiding tools — the instruction applies to this reply only.",
+      "Score 1 (wrong) for anything describing the assistant ('you are my personal assistant').",
+    ].join("\n"),
+  },
 ];

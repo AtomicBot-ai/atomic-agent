@@ -3,7 +3,7 @@
 **Status:** shipped (judge-bound).
 
 **Cost:** ~5-15 min of llama-server time + 1 OpenRouter call per
-extracted entry (≤ 8 cases × ≤ 6 entries ≈ 30-50 judge calls per run).
+extracted entry (≤ 9 cases × ≤ 6 entries ≈ 30-50 judge calls per run).
 
 ## What this proves
 

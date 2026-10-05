@@ -59,7 +59,7 @@ SET has two flavours:
 
 Bi-temporal versioning:
 - Every SET preserves history automatically — re-writing the same key never erases the previous version. The earlier value is still available via the \`memory.profile.history\` tool.
-- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET full_name=Alex [supersedes=name]) marks both rows in a single write.
+- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET new_key=value [supersedes=old_key]) marks both rows in a single write.
 - The valid_from token must be the literal "now"; the runtime stamps the actual timestamp.
 
 NOTE types (pick exactly one per line):
@@ -75,6 +75,11 @@ Forbidden in every NOTE:
 
 Rules:
 - Only durable content explicitly stated by the user or that the user asked to remember.
+- Use only what the USER wrote. Never invent or guess a name, nickname, role, age, location or any other identity detail; record a name only if the USER literally typed it.
+- Instructions for the current reply only ("reply exactly X", "answer in one word", "do not use tools", test or ping messages) are NOT preferences. Record a preference only when the user says it should last ("from now on", "always", "remember").
+- Never copy wording or example values from these instructions into the output.
+- Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
+- When unsure, output NONE.
 - Use SET for anything that looks like a stable attribute of the user. Prefer short snake_case keys (e.g. name, timezone, trip_lisbon_plan). Keep each SET value under 200 characters.
 - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
 - Use NOTE [type=X] for anything episodic, behavioural, knowledge-bearing, or skill-shaped that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional trailing tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
@@ -161,11 +166,16 @@ SET has two flavours:
 
 Bi-temporal versioning:
 - Every SET preserves history automatically — re-writing the same key never erases the previous version. The earlier value is still available via the \`memory.profile.history\` tool.
-- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET full_name=Alex [supersedes=name]) marks both rows in a single write.
+- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET new_key=value [supersedes=old_key]) marks both rows in a single write.
 - The valid_from token must be the literal "now"; the runtime stamps the actual timestamp.
 
 Rules:
 - Only durable content explicitly stated by the user or that the user asked to remember.
+- Use only what the USER wrote. Never invent or guess a name, nickname, role, age, location or any other identity detail; record a name only if the USER literally typed it.
+- Instructions for the current reply only ("reply exactly X", "answer in one word", "do not use tools", test or ping messages) are NOT preferences. Record a preference only when the user says it should last ("from now on", "always", "remember").
+- Never copy wording or example values from these instructions into the output.
+- Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
+- When unsure, output NONE.
 - Skip trivia, chit-chat, weather, transient moods, facts about the AI itself.
 - Use SET for anything that looks like a stable attribute of the user. Prefer short snake_case keys (e.g. name, timezone, trip_lisbon_plan). Keep each SET value under 200 characters.
 - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
