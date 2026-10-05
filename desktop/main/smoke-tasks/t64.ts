@@ -69,6 +69,7 @@ const ASK_1 = `${PREFIX}approval-1`;   // the turn's first request
 const ASK_2 = `${PREFIX}approval-2`;   // the same call asked again
 const ASK_3 = `${PREFIX}approval-3`;   // the next turn's request, for the keys
 const ASK_4 = `${PREFIX}approval-4`;   // the same call asked again, for ⌘.
+const ASK_5 = `${PREFIX}approval-5`;   // a card under a dialog
 const ASK_R = `${PREFIX}approval-r`;   // another call of the same step, waiting at the same time
 const B = `${PREFIX}chat-b`;           // a chat with a row whose request is replayed into a page that just loaded
 const C = `${PREFIX}chat-c`;           // a session with no row anywhere (a one-shot task's)
@@ -388,6 +389,29 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       yes.empty.pending === ASK_4 && show(sent) === show([`${ASK_3} allow-once`, `${ASK_4} deny`])
         && yes.denied.pending === null && yes.draftAfterDeny === DRAFT_D && yes.focus === "entry",
       `yes=${show(yes)} sent=${show(sent)}`,
+    );
+
+    // (d2) A dialog over the chat while its card waits: ⌘↩ meant for the dialog does not allow the call;
+    // once the dialog is gone it does. (The box is empty, so ⌘↩ sends nothing either.)
+    const mark3 = agent.approved.length;
+    const dialog = await js<{ under: View; after: View }>(`(async () => { ${H}
+      S.draft = ''; render();
+      ask(${q(ASK_5)});
+      S.alert = {title: 'smoke t64', msg: 'a dialog over the card', ok: 'OK', act: 'close'};
+      render();
+      press('Enter', {metaKey: IS_MAC, ctrlKey: !IS_MAC});
+      await tick(150);
+      const under = view();
+      S.alert = null; render();
+      press('Enter', {metaKey: IS_MAC, ctrlKey: !IS_MAC});
+      await tick(150);
+      return {under, after: view()};
+    })()`);
+    const sent3 = agent.approved.slice(mark3);
+    check(
+      "T64 (05.10): with a dialog over the chat, ⌘↩ does not allow the card under it; with the dialog gone it does",
+      dialog.under.pending === ASK_5 && show(sent3) === show([`${ASK_5} allow-once`]) && dialog.after.pending === null,
+      `dialog=${show(dialog)} sent=${show(sent3)}`,
     );
 
     // (e) A page that just loaded, its chat list not read yet, gets the replay of chat B's request (B has a

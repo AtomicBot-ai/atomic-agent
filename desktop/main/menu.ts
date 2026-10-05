@@ -114,8 +114,13 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
     {
       label: "Run",
       submenu: [
-        item("Send", "send", "CommandOrControl+Return"),
-        item("Stop", "stop", "CommandOrControl+."),
+        /* 05.10: shown, not registered. ⌘↩ and ⌘. also answer the approval
+           card on screen (Allow once, Deny), which only the page knows about;
+           registered here they could fire Send / Stop alongside (Windows,
+           Linux). The page's own keys run Send and Stop when no card takes
+           them (renderer.js keydown: mod+Enter submit, mod+. stop). */
+        { ...item("Send", "send", "CommandOrControl+Return"), registerAccelerator: false },
+        { ...item("Stop", "stop", "CommandOrControl+."), registerAccelerator: false },
         // Not off macOS: Ctrl+Backspace is delete-previous-word in every
         // Windows and Linux text field, and here it would wipe the transcript.
         item("Clear Transcript", "clear", mac ? "CommandOrControl+Backspace" : undefined),

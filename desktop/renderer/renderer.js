@@ -5951,10 +5951,13 @@ function apprChordOf(e, k) {
 }
 /* 05.10: the request those chords answer: the open one whose card is drawn in
    the chat on screen (its own, or a request with no chat of its own drawn
-   here), and not while Settings or an overlay is over it. */
+   here), and not while Settings, an overlay, a dialog, a popover or the
+   menu is over it: ⌘↩ meant to confirm a dialog never allows the call
+   underneath. */
 function apprOnScreen() {
   const req = S.pending;
   if (!approvalOpen(req) || S.settings || S.overlay) return null;
+  if (S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open) return null;
   const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
   return card ? req : null;
 }
