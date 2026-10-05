@@ -185,7 +185,9 @@ function updVersionRowHTML(st) {
   const line = st ? updResultLine(st) : {text: '', tone: ''};
   return '<div class="tk-setrow" id="set-upd-ver">'
       + '<div class="body"><div class="t">Version</div>'
-        + '<div class="d">Atomic Agent <span class="mono">' + esc(st ? st.currentVersion : (BUILD ? BUILD.version : '')) + '</span></div>'
+        + '<div class="d">Atomic Agent <span class="mono">' + esc(st ? st.currentVersion : (BUILD ? BUILD.version : '')) + '</span>'
+          // ATO-241: every team build is 0.0.1; the commit and the CI run say which one this is.
+          + (BUILD && BUILD.build ? ' <span class="mono upd-build">(' + esc(BUILD.build) + ')</span>' : '') + '</div>'
         + (line.text ? '<div class="tk-help upd-result' + (line.tone ? ' tk-help--' + line.tone : '') + '" role="status">' + esc(line.text) + '</div>' : '')
       + '</div>'
       + (st ? updVersionButtons(st) : '')

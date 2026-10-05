@@ -17,11 +17,22 @@
  *                          app reads: `<channel>-mac.yml` (macOS) and
  *                          `<channel>.yml` (Windows).
  *
+ * ATO-241, which build this is (every team build is 0.0.1):
+ *
+ *   ATAG_BUILD_RUN         the workflow's run number, set by the desktop
+ *   ATAG_BUILD_RUN_ID      workflow; with the commit (git, here) they go into
+ *                          the app's package.json as `atagBuild`, which the
+ *                          support report and Settings › General › Version
+ *                          print (main/build-stamp.ts). Unset: a hand-made
+ *                          build carries the commit alone.
+ *
  * See desktop/README.md "App updates" for what a release must upload.
  * Signing is unchanged: mac.identity stays null here (the CI passes the
  * Developer ID with -c.mac.identity), Windows signs through
  * scripts/win-sign.cjs.
  */
+
+const { execFileSync } = require("node:child_process");
 
 const feedUrl = (process.env.ATAG_UPDATE_FEED_URL || "").trim().replace(/\/+$/, "");
 const channel = (process.env.ATAG_UPDATE_CHANNEL || "stable").trim() || "stable";
@@ -183,6 +194,26 @@ const config = {
     "priority": "optional"
   },
   "afterPack": "scripts/after-pack.mjs"
+};
+
+/* ATO-241: the commit this was built from (the checkout's, which is the one
+   the workflow's `ref` input picked, not always the run's own sha) and the run. */
+function gitShortSha() {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--short=8", "HEAD"], { cwd: __dirname, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return /^[0-9a-f]{7,40}$/.test(out) ? out.slice(0, 8) : null;
+  } catch {
+    return null;
+  }
+}
+const runNumber = (process.env.ATAG_BUILD_RUN || "").trim();
+const runId = (process.env.ATAG_BUILD_RUN_ID || "").trim();
+config.extraMetadata = {
+  atagBuild: {
+    sha: gitShortSha(),
+    run: /^\d+$/.test(runNumber) ? runNumber : null,
+    runId: /^\d+$/.test(runId) ? runId : null,
+  },
 };
 
 /* null, not left out: with no publish key electron-builder guesses a GitHub

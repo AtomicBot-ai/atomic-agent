@@ -4945,7 +4945,7 @@ function diagnosticsPane() {
   const llama = (SET.health && SET.health.llamaUrl) || (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '';
   const sd = (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || (FIRSTRUN && FIRSTRUN.stateDir) || '';
   const rows = [
-    ['App', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
+    ['App', BUILD ? BUILD.version + (BUILD.build ? ' (' + BUILD.build + ')' : '') + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
     ['Agent', S.live.binary ? short(S.live.binary) : 'not started', S.live.binary || ''],
     ...(SET.health && SET.health.pid !== null && SET.health.busyTurns !== null
       ? [['Agent process', 'pid ' + SET.health.pid + ' · ' + (SET.health.busyTurns === 0 ? 'idle' : SET.health.busyTurns + (SET.health.busyTurns === 1 ? ' turn running' : ' turns running')),
@@ -5393,7 +5393,7 @@ function act(a) {
     const b2 = BUILD || {};
     const body = [
       'What happened:', '', '', 'What I expected:', '', '',
-      '---', 'Atomic Agent ' + (b2.version || '?') + ' · ' + (b2.platform || '?') + ' ' + (b2.arch || '?'),
+      '---', 'Atomic Agent ' + (b2.version || '?') + (b2.build ? ' (' + b2.build + ')' : '') + ' · ' + (b2.platform || '?') + ' ' + (b2.arch || '?'),
       'Agent: ' + (S.live.binary || 'not started'),
     ].join('\n');
     const url = 'https://github.com/AtomicBot-ai/atomic-agent/issues/new'

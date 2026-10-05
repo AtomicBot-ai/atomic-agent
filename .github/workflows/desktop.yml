@@ -328,6 +328,9 @@ jobs:
           # The dispatch inputs (test builds) win over the repository variables.
           ATAG_UPDATE_FEED_URL: ${{ inputs.feed_url || vars.ATAG_UPDATE_FEED_URL }}
           ATAG_UPDATE_CHANNEL: ${{ inputs.channel || vars.ATAG_UPDATE_CHANNEL || 'stable' }}
+          # ATO-241: the run goes into the app (with the commit, electron-builder.cjs), so a support report names its build.
+          ATAG_BUILD_RUN: ${{ github.run_number }}
+          ATAG_BUILD_RUN_ID: ${{ github.run_id }}
         run: |
           mac_signing=()
           if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" == "true" ]]; then

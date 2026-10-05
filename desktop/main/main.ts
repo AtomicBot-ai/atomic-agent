@@ -193,6 +193,7 @@ import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
+import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -264,6 +265,9 @@ const FAKE_RAM_GB = (() => {
  * as a test run for analytics.
  */
 const FAKE_UPDATE = fakeUpdateArg();
+/* ATO-241: read once, when first asked (a dev run asks git for its commit). */
+let BUILD_STAMP: BuildStamp | null = null;
+const buildStamp = (): BuildStamp => (BUILD_STAMP ??= readBuildStamp(app.getAppPath(), app.isPackaged));
 
 let win: BrowserWindow | null = null;
 /** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
@@ -2105,8 +2109,11 @@ function wireIpc(client: AgentClient): void {
       const cfg = await readWholeConfig();
       let log = "";
       try { log = scrubText(logTail(readFileSync(agentLogPath(), "utf8"), 400_000)); } catch { log = "(no agent.log yet)"; }
+      // ATO-241: every team build is 0.0.1; the commit and the CI run tell them apart.
+      const b = buildStamp();
       writeFileSync(out, [
-        `Atomic Agent ${app.getVersion()} · ${process.platform} ${process.arch}`,
+        `Atomic Agent ${app.getVersion()} (${buildStampLabel(b)}) · ${process.platform} ${process.arch}`,
+        `build: commit ${b.sha ?? "unknown"}${b.run ? ` · CI run ${b.run}` : ""}${b.runId ? ` (run id ${b.runId})` : ""}`,
         `written ${new Date().toISOString()}`,
         "",
         "--- config (secrets removed) ---",
@@ -2178,6 +2185,7 @@ function wireIpc(client: AgentClient): void {
     version: app.getVersion(),
     platform: process.platform,
     arch: process.arch,
+    build: buildStampLabel(buildStamp()),   // ATO-241: "225f9470 · run 812"
   }));
 
   ipcMain.handle("app:firstRun", (event) => ({

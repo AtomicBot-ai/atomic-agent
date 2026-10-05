@@ -378,3 +378,5 @@ button.set-search:hover{border-color:var(--bd)}
 /* Skills left out of the prompt (tui-parity.js). */
 .set-skills .set-skomit{display:flex;align-items:center;gap:6px;margin:0 0 8px}
 .set-skills .set-skomit svg{width:13px;height:13px;flex:none}
+/* ATO-241: which build, beside the version in General, small and quiet. */
+.tk-setrow .upd-build{font-size:11.5px;color:var(--ink-3)}
