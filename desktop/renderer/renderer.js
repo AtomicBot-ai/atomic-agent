@@ -5857,7 +5857,9 @@ function bswGatedTurn(text) {
     // comes off again — the message lives in the editor, not twice.
     const last = S.log[S.log.length - 1];
     if (last && last.k === 'user' && last.text === text) S.log.pop();
-    S.log.push({id:nid(), k:'system', text: esc(gate.text + ' (message returned to the editor)')});
+    // B02: one refusal on screen at a time; `gateNotice` lets it go once the route can run (dropStaleGateNotices).
+    dropStaleGateNotices();
+    S.log.push({id:nid(), k:'system', gateNotice:true, text: esc(gate.text + ' (message returned to the editor)')});
     S.draft = text;
     ctxDraftChanged();
     render(); // afterChat() puts S.draft back into #entry
@@ -5867,6 +5869,26 @@ function bswGatedTurn(text) {
   }
   if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   startLiveTurn(text);
+}
+/* B02 (QA build 02.10): the gate's refusal above is a pre-send notice.
+   Nothing ran and the message went back to the editor, so the line is only
+   true while the route still cannot run a turn. It stayed in the chat after
+   the person added a provider (or picked a model) and the next turn
+   answered, and read as if that answer had failed. It goes once a turn gets
+   past the gate (startLiveTurn) or the route changes so that one would
+   (refreshLiveConfig). A failed turn's own error is never marked
+   `gateNotice`, so it stays. In place: rec.log and the gate's `typedIn.log`
+   compare the array itself. */
+function dropStaleGateNotices() {
+  let gone = false;
+  for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i] && S.log[i].gateNotice) { S.log.splice(i, 1); gone = true; }
+  return gone;
+}
+/** refreshLiveConfig: the config moved; the refusals go if a turn would now get past the gate. */
+function dropGateNoticesIfCleared() {
+  if (!S.log.some((m) => m && m.gateNotice)) return false;
+  const kind = localTurnGate().kind;
+  return (kind === 'run' || kind === 'notice') && dropStaleGateNotices();
 }
 /** droppedPreview (src/tui/detached-turns.ts): one flat line, 60 columns. */
 function droppedPreview(text) {
@@ -7349,6 +7371,8 @@ function startLiveTurn(text) {
   // puts the old plan's bar away before the new plan turn starts. The steer
   // path deliberately does NOT clear it — a steer is not a new turn.
   clearPlanOffer();
+  // B02: this turn got past the local gate, so its earlier refusals are no longer true.
+  dropStaleGateNotices();
   // The stance this turn OPENS with. The bar is raised against this, not
   // against what the chip says when the turn ends, so a stance that moved
   // mid-flight cannot put a plan bar over a turn that ran unfettered.
@@ -8259,6 +8283,7 @@ function onChatEvent(ev) {
     // so a failed turn printed the bare sentence `turn failed: `. The
     // bracketed category mirrors the TUI's `failed [${category}]: …`.
     if (ev.kind === 'error' && item && WAIT) S.log.push(tpWaitGaveUpEntry(WAIT));
+    if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       text: turnFailureLine(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
@@ -13801,6 +13826,7 @@ async function refreshLiveConfig() {
   }
   const managed = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed;
   if (managed && managed.modelId) S.localModel = managed.modelId;
+  dropGateNoticesIfCleared();   // B02: a provider or model now set retires "no local model is selected"
   render();
   bswRefreshFacts();
   llmRefreshKeyNames();
