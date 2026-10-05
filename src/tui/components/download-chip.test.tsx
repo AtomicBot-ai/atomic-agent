@@ -1,6 +1,6 @@
 import { render } from "ink-testing-library";
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DownloadChip } from "./download-chip.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 
@@ -19,6 +19,29 @@ function pull(over: Partial<LocalModelsPullState> = {}): LocalModelsPullState {
   };
 }
 
+/**
+ * `useTransferRate` stamps each sample with `Date.now()` and drops a
+ * sample whose elapsed time is zero. A render and its rerender usually
+ * land in the same millisecond, so on the wall clock the rate — and the
+ * ETA these tests look for — existed only when the two effects happened
+ * to straddle a millisecond boundary. A clock that ticks once per read
+ * keeps every pair of samples apart, and by 1 ms so the ETA stays in the
+ * "less than a minute" range whatever else reads the clock in between.
+ */
+function tickingClock(): void {
+  let now = 1_700_000_000_000;
+  vi.spyOn(Date, "now").mockImplementation(() => (now += 1));
+}
+
+/** Lets the rerender's passive effect run and its rate update commit. */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 60));
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("DownloadChip", () => {
   it("names the model and its progress in one row", () => {
     const view = render(<DownloadChip pull={pull()} />);
@@ -32,6 +55,7 @@ describe("DownloadChip", () => {
 
   /** Two samples, so the rate — and therefore the ETA — exists. */
   async function frameAt(budget: number): Promise<string> {
+    tickingClock();
     const view = render(
       <DownloadChip
         pull={pull({ transferredBytes: 2_000_000_000 })}
@@ -39,7 +63,7 @@ describe("DownloadChip", () => {
       />,
     );
     view.rerender(<DownloadChip pull={pull()} budget={budget} />);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await settle();
     return strip(view.lastFrame() ?? "");
   }
 
@@ -114,6 +138,7 @@ describe("DownloadChip", () => {
 
     it("draws at most 30 label columns, ellipsis included, in the full form", async () => {
       // Two renders so the rate — and therefore the ETA — exists.
+      tickingClock();
       const view = render(
         <DownloadChip
           pull={pull({ modelId: LONG_ID, transferredBytes: 2_000_000_000 })}
@@ -123,7 +148,7 @@ describe("DownloadChip", () => {
       view.rerender(
         <DownloadChip pull={pull({ modelId: LONG_ID })} budget={100} />,
       );
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await settle();
       const frame = strip(view.lastFrame() ?? "");
       expect(frame).toContain(SHOWN);
       expect(frame).not.toContain(LONG_ID);
