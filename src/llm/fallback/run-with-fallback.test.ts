@@ -78,7 +78,7 @@ describe("runWithFallback", () => {
     expect(seen).toEqual(["backup"]);
   });
 
-  it("rethrows the last error when the whole chain is down", async () => {
+  it("rethrows when the whole chain is down, having tried every link", async () => {
     const chain = makeChain(["a", "b"]);
     const lastErr = http(500);
     let attempts = 0;
