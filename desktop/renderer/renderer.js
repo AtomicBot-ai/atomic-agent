@@ -816,6 +816,9 @@ const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating
    and nothing else holds the agent (`flushTimer`, fzFlushSoon).
    Declared here, before the first render(), because composer() reads it. */
 const FZ = { live:[], swapQueued:false, flushTimer:null };
+/* ATO-187: whether the approval card is in view, so the waiting strip draws
+   no Jump to request (apprJumpWatch). Before the first render() too. */
+const APPR_JUMP = { seen:false, io:null, card:null };
 /* src/tui/run-mode/fusion-intro.ts FUSION_MARK: one model on top deciding,
    several underneath doing. */
 const FUSION_MARK = [
@@ -3034,7 +3037,8 @@ function composer() {
     ? '<div class="statusstrip gated">'
       + '<span class="ss-ic warn">' + ic('shield') + '</span><span class="ss-text">Waiting for your approval</span>'
       + '<span class="ss-grow"></span>'
-      + '<button class="btn btn-g xs ss-jump" data-act="jump:appr">Jump to request' + ic('up') + '</button></div>'
+      // ATO-187: Jump only while the card is out of view (apprJumpWatch); the words stay, drivers read them.
+      + '<button class="btn btn-g xs ss-jump" data-act="jump:appr"' + (APPR_JUMP.seen ? ' hidden' : '') + '>Jump to request' + ic('up') + '</button></div>'
     /* A parked turn says so, and says when it tries again. The
        shape: WAITING · <provider> · ATTEMPT n · NEXT TRY 30s, with a Stop.
        Caution, not critical: nothing has failed yet. */
@@ -3575,6 +3579,7 @@ function afterChat(keep, hadFocus, caret) {
     sc.addEventListener('scroll', () => {
       S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
       $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
+      apprJumpSync();
     });
     if (S.stick) sc.scrollTop = sc.scrollHeight;
     // Scroll-stable cards: a scrolled-up user is put back at the same pixel
@@ -3593,7 +3598,42 @@ function afterChat(keep, hadFocus, caret) {
      button's. Focusing the first Deny on the page let an Enter or a Space
      meant for the box deny a call. The card's keys (⌘↩, ⌘.) work wherever
      the focus is; a person who tabs to the card or a button gets it there. */
+  apprJumpWatch();
 }
+/* ATO-187: "Waiting for your approval · Jump to request ↑" stood over the
+   composer with the card in full view right above it. The words stay (the
+   turn is waiting, and drivers read them); Jump is drawn only while the card
+   is out of view. Looked again on every paint, on a scroll of the transcript,
+   on a resize, and by an IntersectionObserver for what moves the card
+   without a scroll (rows that come under it, an expanded card above it).
+   In view: the whole card, or as much of it as the transcript can show.
+   APPR_JUMP is declared up by FZ, before the first render(). */
+function apprCardInView(card, sc) {
+  if (!card || !sc || !card.isConnected) return false;
+  const r = card.getBoundingClientRect(), v = sc.getBoundingClientRect();
+  if (!r.height || !v.height) return false;
+  const shown = Math.min(r.bottom, v.bottom) - Math.max(r.top, v.top);
+  return shown >= Math.min(r.height, v.height) - 2;
+}
+function apprJumpSync() {
+  APPR_JUMP.seen = apprCardInView(document.getElementById('apprcard'), $('#scroller'));
+  const b = document.querySelector('.statusstrip.gated .ss-jump');
+  if (b && b.hidden !== APPR_JUMP.seen) b.hidden = APPR_JUMP.seen;
+}
+function apprJumpWatch() {
+  const card = document.getElementById('apprcard');
+  if (card !== APPR_JUMP.card) {
+    if (APPR_JUMP.io) { APPR_JUMP.io.disconnect(); APPR_JUMP.io = null; }
+    APPR_JUMP.card = card;
+    const sc = $('#scroller');
+    if (card && sc && typeof IntersectionObserver !== 'undefined') {
+      APPR_JUMP.io = new IntersectionObserver(() => apprJumpSync(), {root: sc, threshold: [0, 0.25, 0.5, 0.75, 0.9, 1]});
+      APPR_JUMP.io.observe(card);
+    }
+  }
+  apprJumpSync();
+}
+if (typeof window !== 'undefined') window.addEventListener('resize', () => apprJumpSync());
 function autosize(e) { e.style.height = 'auto'; e.style.height = Math.min(e.scrollHeight, 180) + 'px'; }
 
 /* ---- Scroll-stable cards ----
