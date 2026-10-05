@@ -6047,6 +6047,11 @@ function apprOnScreen() {
   const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
   return card ? req : null;
 }
+/* ATO-224: whether a dialog, a popover, a sheet, Settings or the menu is
+   open over the chat — the layers ⌘↩ must not send the composer from under. */
+function layerOverChat() {
+  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open);
+}
 /** 05.10: the keys named on the card's buttons and in the shortcuts sheet. */
 function apprKeyLabel(which) {
   return (IS_MAC ? '⌘' : 'Ctrl+') + (which === 'y' ? '↩' : '.');
@@ -7179,7 +7184,14 @@ document.addEventListener('keydown', (e) => {
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts'};
     if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
-    if (sk === 'Enter') { e.preventDefault(); submit(); return; }
+    /* ATO-224: ⌘↩ (Ctrl+↩) is Send only with nothing over the chat. With a
+       dialog, a popover or a sheet open (Delete chat?, the model picker, the
+       provider wizard, the mode or context popover, the palette, Settings)
+       it sent the composer's draft from under it. It does nothing there now:
+       Delete chat? is a destructive confirm whose Enter is Cancel, and no
+       other layer has a ⌘↩ of its own (the Tasks form and the Add MCP
+       server box took theirs above). */
+    if (sk === 'Enter') { e.preventDefault(); if (!layerOverChat()) submit(); return; }
   }
   if (mod && e.shiftKey && sk.toLowerCase() === 'y') { e.preventDefault(); ANX.via('shortcut'); act('toggle:console'); return; }
 
