@@ -10901,10 +10901,10 @@ function dlCardOverChat(el) {
   const col = sc && sc.querySelector(':scope > .col720');
   const face = el.firstElementChild;
   if (!col || !face) return 0;
-  /* Chat review (Д19): the transcript sits on the composer now, so even a
-     chat too short to scroll has its newest reply, or an approval's buttons,
-     where the card stands, and it takes the room too: it lifts clear of the
-     card when the card comes and settles back when it goes. Folded to its
+  /* Chat review (Д19): a chat too short to scroll takes the room too, so a
+     newest reply or an approval's buttons that reach down to the card lift
+     clear of it when the card comes and settle back when it goes (since
+     06.10 the transcript starts at the top, so a short one rarely does). Folded to its
      badge, the card keeps the room it took open, so folding and opening
      move nothing (T18c). */
   if (DLC.collapsed && DLC.openRoom !== null) return DLC.openRoom;

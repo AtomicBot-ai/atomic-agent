@@ -17,7 +17,8 @@ import { join } from "node:path";
  *   Д18 No end mark (the small glyph) under a finished reply. (ATO-168 later
  *       gave the LAST reply a dot, Valera's call, as `.enddot` — `.endmark`
  *       stays absent, and smoke 56 owns the dot.)
- *   Д19 A short conversation sits on the composer, a long one still scrolls
+ *   Д19 A short conversation starts at the top (Nadya, 06.10: it used to sit
+ *       on the composer; smoke 105 has the why), a long one still scrolls
  *       from its first line, and a bubble never runs past the column. The
  *       download card does not cover a short chat's end: a one-turn chat
  *       ending on an approval keeps its buttons within reach above the card,
@@ -193,8 +194,8 @@ async function transcript(js: Js, check: Check): Promise<void> {
   );
   check("T46 Д18: no end mark under a finished reply", s.marks === 0, q({ marks: s.marks }));
   check(
-    "T46 Д19: a short conversation sits on the composer, with the free space above it",
-    s.scrolls === false && Math.abs(Number(s.onComposer)) <= 1 && Number(s.above) > 100,
+    "T46 Д19: a short conversation starts at the top, with the free space below it (06.10)",
+    s.scrolls === false && Math.abs(Number(s.above)) <= 1 && Number(s.onComposer) > 100,
     q({ onComposer: s.onComposer, above: s.above, scrolls: s.scrolls }),
   );
   check("T46 Д19: a long one scrolls, and its first line is there at the top", l.scrolls === true && Math.abs(Number(l.colTop)) <= 1, q(l));
@@ -206,8 +207,9 @@ async function transcript(js: Js, check: Check): Promise<void> {
 }
 
 /* Д19, its review — the download card over a one-turn chat ending on an
-   approval, as T18-F6 stages a long one: the transcript sits on the composer
-   now, right where the card stands. Staged rows and a seeded download (no
+   approval, as T18-F6 stages a long one. (It was staged when the transcript
+   sat on the composer, right where the card stands; since 06.10 it starts at
+   the top, and the buttons have to stay within reach all the same.) Staged rows and a seeded download (no
    download runs); both are taken back out. */
 async function downloadCard(js: Js, check: Check): Promise<void> {
   type Box = { top: number; bottom: number; left: number; right: number } | null;
