@@ -8894,11 +8894,13 @@ function chatApprovalCards(sid) {
 }
 
 /* ATO-203: the tools turn `rec` (LIVE_TURNS) called, from its own rows; null
-   when the window keeps no record of it. */
+   when the window keeps no record of it, or when it fanned out (Fusion): a
+   worker's calls are lines in its feed, not cards, so any request may be its. */
 function turnToolNames(rec) {
   if (!rec) return null;
   try {
-    return new Set(liveSegment(rec).filter((m) => m && m.k === 'tool' && m.name).map((m) => m.name));
+    const names = new Set(liveSegment(rec).filter((m) => m && m.k === 'tool' && m.name).map((m) => m.name));
+    return names.has('fusion.delegate') ? null : names;
   } catch (e) { return null; }
 }
 
