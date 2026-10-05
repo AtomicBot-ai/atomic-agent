@@ -94,6 +94,7 @@ interface ReflectCall {
   userMessage: string;
   assistantReply: string;
   transcript: readonly { user: string; assistant: string }[] | undefined;
+  groundingTexts: readonly string[] | undefined;
 }
 
 function captureReflectionRunner(calls: ReflectCall[]): ReflectionRunner {
@@ -104,6 +105,7 @@ function captureReflectionRunner(calls: ReflectCall[]): ReflectionRunner {
         userMessage: input.userMessage,
         assistantReply: input.assistantReply,
         transcript: input.transcript,
+        groundingTexts: input.groundingTexts,
       });
     },
     abortPending() {
@@ -183,6 +185,8 @@ describe("AgentLoop reflection segmentation (phase B)", () => {
     expect(calls[0]!.userMessage).toBe("hello");
     expect(calls[0]!.assistantReply).toBe("hi");
     expect(calls[0]!.transcript).toBeUndefined();
+    // ATO-201: the session's user messages ride along as name evidence.
+    expect(calls[0]!.groundingTexts).toEqual(["hello"]);
   });
 
   it("enabled: skips reflection on intermediate turns and fires on cadence turn with transcript window", async () => {

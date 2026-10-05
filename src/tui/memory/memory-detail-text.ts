@@ -6,6 +6,7 @@ import type {
   ProcedureStep,
 } from "../../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../../memory/profile-store.js";
+import { nameGroundingMarker } from "../../memory/profile-name-keys.js";
 import type { VoteEventRow } from "../../memory/voting/vote-store.js";
 import type { MemoryLinkNeighbor } from "./memory-panel-state.js";
 
@@ -31,6 +32,10 @@ export function formatProfileHistoryBody(
     }
     if (row.voteScore !== 0) {
       lines.push(`  vote_score: ${row.voteScore}`);
+    }
+    const grounding = row.supersededBy === null ? nameGroundingMarker(row) : null;
+    if (grounding !== null) {
+      lines.push(`  ${grounding}`);
     }
   }
   return truncateDetail(lines.join("\n"));

@@ -78,4 +78,26 @@ describe("memory.profile.list", () => {
     expect(deploy.pinned).toBe(false);
     expect(deploy.keywords).toEqual(["deploy", "release"]);
   });
+
+  // ATO-199: an invented name stays listed — marked — so the user can
+  // confirm or remove it; a grounded one carries no marker.
+  it("lists an unconfirmed name with a marker the agent can act on", async () => {
+    store.set("name", "Анна", { nameGrounding: "ungrounded" }, 1_000);
+    store.set("first_name", "Надя", { nameGrounding: "grounded" }, 1_000);
+    store.set("nickname", "Ann", 1_000);
+    const tool = buildProfileListTool({ store });
+    const result = await tool.run({}, makeCtx());
+    expect(result.summary).toContain("- * name: Анна (unconfirmed: the user never wrote this name");
+    expect(result.summary).toContain("- * nickname: Ann (not checked yet");
+    expect(result.summary).toContain("- * first_name: Надя\n");
+    const facts = result.details.facts as Array<{
+      key: string;
+      nameGrounding?: string;
+      unconfirmed?: boolean;
+    }>;
+    const name = facts.find((f) => f.key === "name")!;
+    expect(name.nameGrounding).toBe("ungrounded");
+    expect(name.unconfirmed).toBe(true);
+    expect(facts.find((f) => f.key === "first_name")?.unconfirmed).toBeUndefined();
+  });
 });

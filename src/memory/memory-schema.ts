@@ -12,7 +12,10 @@
  *
  * Schema evolution: bump `MEMORY_SCHEMA_VERSION` and extend
  * `applyMigrations` with a new step. The `schema_meta` table records the
- * version actually present on disk so upgrades are idempotent.
+ * version actually present on disk so upgrades are idempotent. A purely
+ * additive nullable column that older binaries can ignore may instead be
+ * added in place without a bump (see `NAME_GROUNDING_COLUMNS`), so those
+ * binaries keep opening the file.
  */
 export const MEMORY_SCHEMA_VERSION = 10 as const;
 
@@ -549,6 +552,57 @@ CREATE TRIGGER procedures_au AFTER UPDATE ON procedures BEGIN
 END;
 `;
 
+// Name grounding on `profile_facts` (ATO-199). Two nullable columns,
+// added in place rather than behind a version bump:
+//
+//   - `name_grounding`   `'grounded' | 'ungrounded' | 'unverifiable'` for
+//                        a name-like fact (`isNameProfileKey`), set once
+//                        the user's stored messages have been checked
+//                        for that name; NULL = not checked yet, and
+//                        always NULL for every other key.
+//   - `name_checked_at`  wall-clock ms of that check, so an `ungrounded`
+//                        name is re-checked later against only the
+//                        sessions written since.
+//
+// Why no `MEMORY_SCHEMA_VERSION` bump: `applyMigrations` refuses a
+// version newer than its own, so a bump would stop every older binary
+// sharing this state dir (a previous desktop build, the terminal) from
+// opening memory.sqlite at all. An extra nullable column is invisible
+// to them — every statement they run names its columns — and a row they
+// write lands as NULL, i.e. "not checked yet", which the next start of
+// a newer binary checks. Same approach as `turn_owner` on
+// sessions.sqlite.
+const NAME_GROUNDING_COLUMNS: readonly { name: string; sql: string }[] = [
+  {
+    name: "name_grounding",
+    sql: `ALTER TABLE profile_facts ADD COLUMN name_grounding TEXT`,
+  },
+  {
+    name: "name_checked_at",
+    sql: `ALTER TABLE profile_facts ADD COLUMN name_checked_at INTEGER`,
+  },
+];
+
+function ensureNameGroundingColumns(db: MemoryDatabaseLike): void {
+  for (const column of NAME_GROUNDING_COLUMNS) {
+    const present = db
+      .prepare(
+        `SELECT 1 AS present FROM pragma_table_info('profile_facts') WHERE name = ?`,
+      )
+      .get(column.name);
+    if (present) continue;
+    try {
+      db.exec(column.sql);
+    } catch (err) {
+      // Another process sharing the file added it between the check and
+      // the ALTER (the desktop and a terminal opening at once).
+      if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) {
+        throw err;
+      }
+    }
+  }
+}
+
 export interface MemoryDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -595,6 +649,9 @@ export function applyMigrations(db: MemoryDatabaseLike): void {
   if (current < 10) {
     db.exec(V10_MIGRATION);
   }
+  // Every open, after the versioned steps: the v7 rebuild above creates
+  // `profile_facts` without these columns. Idempotent.
+  ensureNameGroundingColumns(db);
   if (current === MEMORY_SCHEMA_VERSION) return;
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)

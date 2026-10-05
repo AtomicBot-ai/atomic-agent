@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ProfileFact } from "../memory/profile-store.js";
+import { nameGroundingMarker } from "../memory/profile-name-keys.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -146,8 +147,14 @@ function formatProfileSystemMessage(facts: readonly ProfileFact[]): string {
   }
   const sorted = [...facts].sort((a, b) => a.key.localeCompare(b.key));
   const header = `user profile (${sorted.length} fact${sorted.length === 1 ? "" : "s"})`;
-  const lines = sorted.map((f) => `  - ${f.key}: ${f.value}`);
+  const lines = sorted.map((f) => `  - ${formatProfileFactLine(f)}`);
   return [header, ...lines].join("\n");
+}
+
+/** `key: value`, with the ATO-199 marker on a name the user never wrote. */
+function formatProfileFactLine(fact: ProfileFact): string {
+  const grounding = nameGroundingMarker(fact);
+  return `${fact.key}: ${fact.value}${grounding !== null ? ` (${grounding})` : ""}`;
 }
 
 /**
@@ -1102,7 +1109,7 @@ export class ChatOrchestrator {
       for (const fact of sorted) {
         this.bus.emit({
           type: "runtime_info",
-          line: `  - ${fact.key}: ${fact.value}`,
+          line: `  - ${formatProfileFactLine(fact)}`,
         });
       }
     } catch (err) {

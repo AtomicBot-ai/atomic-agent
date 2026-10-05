@@ -83,6 +83,7 @@ import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
+import { chatLinesOf, groundingTextsOf } from "../memory/name-grounding.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import type { MemoryHealthWarning } from "../memory/health/index.js";
 import { executeStep } from "./step-executor.js";
@@ -282,7 +283,9 @@ export interface AgentLoopDependencies {
    * Invoked once per step to produce the current user-profile snapshot.
    * The resulting array is rendered into the `### profile` section of
    * the prompt tail. `undefined` suppresses the section entirely — wire
-   * this only when the memory fabric is enabled.
+   * this only when the memory fabric is enabled. Bootstrap wires
+   * `profileStore.listForPrompt()`, so a name the user never wrote
+   * (ATO-199) is not in it.
    */
   profileFactsProvider?: () => readonly ProfileFact[];
   /**
@@ -1709,7 +1712,7 @@ export class AgentLoop {
           : durationCeilingMs - elapsedMs,
       );
       try {
-        // `profileFactsProvider` is a raw `profileStore.list()`.
+        // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
         // pinned facts regardless of the contextual gate, so this step
         // renders with no `### profile` section at all — but it is the
@@ -2915,7 +2918,7 @@ export class AgentLoop {
           // renderer surfaces them whenever they are pinned or pass
           // the contextual-keyword gate. Sourcing them here keeps the
           // decorator's hydration cheap.
-          // `profileFactsProvider` is a raw `profileStore.list()`.
+          // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
           // It is only ever an input to the fire-and-forget reflection
           // below, so a store failure here must not fail the turn the
           // user is waiting on — an empty allowlist just means the
@@ -2982,6 +2985,10 @@ export class AgentLoop {
               ...(segmentationActive && transcript.length > 0
                 ? { transcript }
                 : {}),
+              // ATO-201. What may vouch for a name besides the window:
+              // the session's user messages, and a naming question the
+              // user answered "yes".
+              groundingTexts: groundingTextsOf(chatLinesOf(state.turns)),
             })
             .catch((err: unknown) => {
               this.deps.logger?.warn("reflection failed after dispatch", {

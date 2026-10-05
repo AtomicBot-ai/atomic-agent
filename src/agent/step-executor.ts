@@ -152,6 +152,7 @@ import {
 } from "../llm/provider/adapters/tool-call-adapter.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import type { ProfileFact } from "../memory/profile-store.js";
+import { chatLinesOf, groundingTextsOf } from "../memory/name-grounding.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { StepEvent } from "./step-events.js";
@@ -1713,6 +1714,10 @@ async function executeStepInner(
   // transcript every step so a path named mid-turn (steering) counts on
   // the next call, and nothing the model wrote ever widens it.
   const readRoots = userNamedPaths(ctx.session.turns);
+  // What may vouch for a name `memory.profile.set` is asked to store
+  // (ATO-200): the user's own messages so far, re-read every step for the
+  // same reason, and never anything the model wrote.
+  const userGroundingTexts = groundingTextsOf(chatLinesOf(ctx.session.turns));
   const runBatch = runInOrder ? executeCallsInOrder : executeBatch;
   const batchOutcome = await runBatch(inputs, deps.registry, {
     workingDir: ctx.session.workingDir,
@@ -1720,6 +1725,7 @@ async function executeStepInner(
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(readRoots.length > 0 ? { readRoots } : {}),
+    userGroundingTexts,
     // A pinned step (fusion worker) runs its model-calling tools on the
     // same provider as its completions — `vision.describe` reads this.
     ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),
