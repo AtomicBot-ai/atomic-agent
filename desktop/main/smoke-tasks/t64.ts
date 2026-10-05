@@ -13,15 +13,22 @@ import { BrowserWindow } from "electron";
  * drew each of them as a live card, and the turn's end closed none.
  *
  * Now a call has one open card: a newer request of the chat for the same
- * call closes the older one (another call waiting at the same time keeps its
- * own); the end of the chat's turn here (an error, done, stopped) closes
- * every card of it and the composer stops waiting; a copy of a closed request
- * arriving later draws nothing.
+ * call closes the older one for good (a copy of it draws nothing). Another
+ * call waiting at the same time keeps its own card, and that card's buttons
+ * answer it. The end of the chat's turn here (an error, done, stopped)
+ * closes every card of it and the composer stops waiting; a request the
+ * agent replays after that (it replays only what its gate still holds: one
+ * another surface raised in the chat) opens its card again.
  *
  * B06 — after that, ⌘N denied a stale card (`n`) instead of opening a new
  * chat. Now y / n / Esc answer only as bare keys, and only an open request:
- * Alt+N, Alt+Y, Ctrl+Y and ⌘Y with a card up answer nothing, and ⌘N opens a
- * new chat. A bare y still allows the open request.
+ * Alt+N, Alt+Y and ⌘Y with a card up answer nothing, Ctrl+Esc and Alt+Esc
+ * open nothing over it, and ⌘N opens a new chat. Ctrl+Y (the TUI's chord)
+ * and the bare y still allow the open request.
+ *
+ * Not covered here: a window that loads again (reload, reopened from the
+ * dock) asks the agent to replay what is pending (main.ts did-finish-load →
+ * AgentClient.reopenApprovalStream); that needs a real agent and a reload.
  *
  * Nothing reaches the agent and the config is not touched. The requests go
  * through the real onApprovalEvent, the turn's end through the real
@@ -43,6 +50,7 @@ const TURN = `${PREFIX}turn-a`;
 const ASK_1 = `${PREFIX}approval-1`;   // the turn's first request
 const ASK_2 = `${PREFIX}approval-2`;   // the same call asked again
 const ASK_3 = `${PREFIX}approval-3`;   // the next turn's request, for the keys
+const ASK_4 = `${PREFIX}approval-4`;   // the same call asked again, for the bare y
 const ASK_R = `${PREFIX}approval-r`;   // another call of the same step, waiting at the same time
 const QUIET = "smoke t64: not answered while the check runs";
 const q = (v: unknown) => JSON.stringify(v);
@@ -90,6 +98,10 @@ const H = String.raw`
   const tick = (ms) => new Promise((r) => setTimeout(r, ms));
   const ask = (approvalId) => onApprovalEvent({approvalId, tool: 'os.shell.run', category: 'shell',
     reason: 'smoke t64', preview: 'df -h /', sessionId: ${JSON.stringify(A)}});
+  // Another call of the same step: a read outside the working folder.
+  const askRead = () => onApprovalEvent({approvalId: ${JSON.stringify(`${PREFIX}approval-r`)}, tool: 'os.fs.read',
+    category: 'fs_read_outside', reason: 'smoke t64', preview: '/etc/hosts', affectedResources: ['/etc'],
+    sessionId: ${JSON.stringify(A)}});
   // A key pressed with focus outside the editor, the transcript at its bottom (as t25's press).
   const press = (key, mods) => {
     const a = document.activeElement;
@@ -107,12 +119,12 @@ const H = String.raw`
       waiting: [...PENDING_APPROVALS].filter(([s]) => mine(s)).map(([s, a]) => s + '>' + a),
       kept: [...APPROVAL_CARDS].filter(([s, r]) => mine(s) && !r.state).map(([s, r]) => s + '>' + r.approvalId),
       gated: !!document.querySelector('#composer .statusstrip.gated'),
-      busy: !!S.busy};
+      busy: !!S.busy, settings: !!S.settings || !!S.overlay};
   };
 `;
 type View = {
   sessionId: string; agentSession: string | null; pending: string | null;
-  rows: string[]; cards: string[]; waiting: string[]; kept: string[]; gated: boolean; busy: boolean;
+  rows: string[]; cards: string[]; waiting: string[]; kept: string[]; gated: boolean; busy: boolean; settings: boolean;
 };
 
 const KEEP = `(() => {
@@ -192,11 +204,7 @@ export async function checks64(js: Js, check: Check): Promise<void> {
     );
 
     // (a2) Another call of the same step asks while that one waits (a read outside the folder): both stay open.
-    const other = await js<View>(`(() => { ${H}
-      onApprovalEvent({approvalId: ${q(ASK_R)}, tool: 'os.fs.read', category: 'fs_read_outside', reason: 'smoke t64',
-        preview: '/etc/hosts', affectedResources: ['/etc'], sessionId: ${q(A)}});
-      return view();
-    })()`);
+    const other = await js<View>(`(() => { ${H} askRead(); return view(); })()`);
     check(
       "T64 (B01): a request for another call of the same chat does not close the open one",
       other.pending === ASK_R && show(other.cards) === show([ASK_2, ASK_R])
@@ -204,37 +212,70 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       show(other),
     );
 
-    // (b) The turn ends with the card unanswered ("terminated"), then the events stream replays both requests.
-    const ended = await js<{ end: View; replay: View }>(`(async () => { ${H}
-      onChatEvent({turnId: ${q(TURN)}, kind: 'error', error: 'terminated'});
-      const end = view();
-      ask(${q(ASK_1)}); ask(${q(ASK_2)});
-      onApprovalEvent({approvalId: ${q(ASK_R)}, tool: 'os.fs.read', category: 'fs_read_outside', reason: 'smoke t64',
-        preview: '/etc/hosts', affectedResources: ['/etc'], sessionId: ${q(A)}});
-      await tick(50);
-      return {end, replay: view()};
+    // (a3) The older of the two open cards is answered with its own button; the newer one still waits.
+    const markOld = agent.approved.length;
+    const older = await js<View>(`(async () => { ${H}
+      const yes = document.querySelector('#scroller .appr[data-appr-id=' + JSON.stringify(${q(ASK_2)}) + '] [data-appr="y"]');
+      if (yes) yes.click();
+      await tick(150);
+      return view();
     })()`);
-    const closedRows = show([`${ASK_1}:expired`, `${ASK_2}:expired`, `${ASK_R}:expired`]);
+    const sentOld = agent.approved.slice(markOld);
     check(
-      "T64 (B01): when the chat's turn ends with a request open, its cards close, nothing waits for an approval and the composer stops saying so",
-      ended.end.pending === null && ended.end.cards.length === 0 && show(ended.end.rows) === closedRows
-        && ended.end.waiting.length === 0 && ended.end.kept.length === 0 && !ended.end.gated && !ended.end.busy,
-      show(ended.end),
-    );
-    check(
-      "T64 (B01): a request of a turn that ended here, replayed afterwards, draws no card and opens nothing again",
-      ended.replay.pending === null && ended.replay.cards.length === 0 && show(ended.replay.rows) === closedRows
-        && ended.replay.waiting.length === 0 && !ended.replay.gated,
-      show(ended.replay),
+      "T64 (B01): with two calls of a chat waiting, the older card's own Allow once answers it, and the chat still waits on the other",
+      show(sentOld) === show([`${ASK_2} allow-once`]) && older.pending === ASK_R && show(older.cards) === show([ASK_R])
+        && show(older.waiting) === show([`${A}>${ASK_R}`]) && older.gated,
+      `older=${show(older)} sent=${show(sentOld)}`,
     );
 
-    // (c) The next turn of the chat asks. Chords with n and y answer nothing; ⌘N opens a new chat.
+    // (b) The turn ends with a card unanswered ("terminated").
+    const end = await js<View>(`(() => { ${H}
+      onChatEvent({turnId: ${q(TURN)}, kind: 'error', error: 'terminated'});
+      return view();
+    })()`);
+    check(
+      "T64 (B01): when the chat's turn ends with a request open, its cards close, nothing waits for an approval and the composer stops saying so",
+      end.pending === null && end.cards.length === 0
+        && show(end.rows) === show([`${ASK_1}:expired`, `${ASK_2}:approved`, `${ASK_R}:expired`])
+        && end.waiting.length === 0 && end.kept.length === 0 && !end.gated && !end.busy,
+      show(end),
+    );
+
+    // (b2) The agent replays what its gate still holds. The request a newer one replaced and the answered
+    // one draw nothing; one it still waits on (another surface's, in the same chat) opens again, and answers.
+    const markR = agent.approved.length;
+    const replay = await js<{ replay: View; denied: View }>(`(async () => { ${H}
+      ask(${q(ASK_1)}); ask(${q(ASK_2)}); askRead();
+      await tick(50);
+      const replay = view();
+      const no = document.querySelector('#scroller .appr[data-appr-id=' + JSON.stringify(${q(ASK_R)}) + '] [data-appr="n"]');
+      if (no) no.click();
+      await tick(150);
+      return {replay, denied: view()};
+    })()`);
+    const sentR = agent.approved.slice(markR);
+    check(
+      "T64 (B01): after the turn's end, a replay of a replaced or answered request opens nothing; a request the agent still waits on opens its card again",
+      replay.replay.pending === ASK_R && show(replay.replay.cards) === show([ASK_R])
+        && show(replay.replay.rows) === show([`${ASK_1}:expired`, `${ASK_2}:approved`, ASK_R])
+        && show(replay.replay.waiting) === show([`${A}>${ASK_R}`]) && replay.replay.gated,
+      show(replay.replay),
+    );
+    check(
+      "T64 (B01): the card opened again answers its request",
+      show(sentR) === show([`${ASK_R} deny`]) && replay.denied.pending === null && replay.denied.waiting.length === 0,
+      `denied=${show(replay.denied)} sent=${show(sentR)}`,
+    );
+
+    // (c) The next turn of the chat asks. Chords with n and y (bar Ctrl+Y) answer nothing, Esc with a
+    // modifier opens nothing over the card, and ⌘N opens a new chat.
     const mark = agent.approved.length;
     const keys = await js<{ asked: View; chords: View; fresh: View }>(`(async () => { ${H}
       RUNNING.set(${q(`${TURN}-2`)}, ${q(A)});
       ask(${q(ASK_3)});
       const asked = view();
-      press('n', {altKey: true}); press('y', {altKey: true}); press('y', {ctrlKey: true}); press('y', {metaKey: true});
+      press('n', {altKey: true}); press('y', {altKey: true}); press('y', {metaKey: true});
+      press('Escape', {ctrlKey: true}); press('Escape', {altKey: true});
       await tick(50);
       const chords = view();
       press('n', {metaKey: true});
@@ -243,9 +284,10 @@ export async function checks64(js: Js, check: Check): Promise<void> {
     })()`);
     const chordAnswers = agent.approved.slice(mark);
     check(
-      "T64 (B06): with an approval card up, chords with n and y answer nothing, and the card stays open",
+      "T64 (B06): with an approval card up, chords with n and y and Esc with a modifier answer nothing, open nothing, and the card stays open",
       keys.asked.pending === ASK_3 && show(keys.asked.cards) === show([ASK_3])
-        && keys.chords.pending === ASK_3 && show(keys.chords.cards) === show([ASK_3]) && chordAnswers.length === 0,
+        && keys.chords.pending === ASK_3 && show(keys.chords.cards) === show([ASK_3]) && !keys.chords.settings
+        && chordAnswers.length === 0,
       `asked=${show(keys.asked)} chords=${show(keys.chords)} sent=${show(chordAnswers)}`,
     );
     check(
@@ -255,21 +297,26 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       `fresh=${show(keys.fresh)} sent=${show(chordAnswers)}`,
     );
 
-    // (d) Back in the chat, the bare y still allows its open request.
+    // (d) Back in the chat, Ctrl+Y (the TUI's chord) allows its open request; then the bare y allows the next one.
     const mark2 = agent.approved.length;
-    const yes = await js<View>(`(async () => { ${H}
+    const yes = await js<{ ctrl: View; bare: View }>(`(async () => { ${H}
       S.sessionId = ${q(A)}; S.agentSession = ${q(A)};
       const req = APPROVAL_CARDS.get(${q(A)});
       S.log = [{id: nid(), k: 'user', text: 'smoke t64: check free disk space'}, req];
       S.pending = req; S.apprFocused = true;
+      press('y', {ctrlKey: true});
+      await tick(150);
+      const ctrl = view();
+      ask(${q(ASK_4)});
       press('y');
       await tick(150);
-      return view();
+      return {ctrl, bare: view()};
     })()`);
     const sent = agent.approved.slice(mark2);
     check(
-      "T64 (B06): the bare y still allows the chat's open request, once",
-      show(sent) === show([`${ASK_3} allow-once`]) && yes.pending === null && !yes.waiting.some((w) => w.startsWith(`${A}>`)),
+      "T64 (B06): Ctrl+Y and the bare y still allow the chat's open request, once each",
+      show(sent) === show([`${ASK_3} allow-once`, `${ASK_4} allow-once`]) && yes.ctrl.pending === null
+        && yes.bare.pending === null && !yes.bare.waiting.some((w) => w.startsWith(`${A}>`)),
       `yes=${show(yes)} sent=${show(sent)}`,
     );
     // What the turn's end set off (the session list re-read) is answered before the stand-ins go.

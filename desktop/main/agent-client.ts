@@ -782,6 +782,23 @@ export class AgentClient extends EventEmitter {
     return ended() ?? "timeout";
   }
 
+  /**
+   * B01 review: a window that loads (a new one after the last was closed, a
+   * reload, a renderer that crashed) has no card for a request raised before
+   * it. The agent replays what is still pending only when the stream
+   * connects, and since the agent keeps the stream alive (`: keepalive`) it
+   * no longer drops and reconnects every 300 s, so the new window would wait
+   * for a card that never comes while the turn waits for an answer. Opening
+   * the stream again asks for that replay. False when no agent is up with a
+   * stream open (it opens one itself once healthy).
+   */
+  reopenApprovalStream(): boolean {
+    const child = this.child;
+    if (!child || !this.events || this.events.signal.aborted || this.stopping) return false;
+    this.openApprovalStream(child);
+    return true;
+  }
+
   /** SSE stream of approval requests, reconnected while this child lives. */
   private openApprovalStream(child: ChildProcess): void {
     this.events?.abort();

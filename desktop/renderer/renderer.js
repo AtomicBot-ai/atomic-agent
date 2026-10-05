@@ -6089,8 +6089,14 @@ document.addEventListener('click', (e) => {
        request is no longer open answers nothing. */
     const box = ap.closest('[data-appr-id]');
     const req = box ? S.log.find((m) => m.k === 'approval' && !m.state && m.approvalId && m.approvalId === box.dataset.apprId) : null;
+    /* B01 review: any open card, not only the chat's newest request. Two
+       calls of one step can wait at once (a browser call and a read outside
+       the folder run concurrently), and PENDING_APPROVALS names only the
+       newest, so the older card's buttons answered nothing and its call
+       waited for good. A card whose request is over has a state now (its
+       turn's end, a newer request for the same call, approvalOver). */
     if (req && req !== S.pending) {
-      if (req.sessionId && PENDING_APPROVALS.get(req.sessionId) === req.approvalId && approvalOpen(req)) answerLive(req, ap.dataset.appr);
+      if (approvalOpen(req)) answerLive(req, ap.dataset.appr);
       return;
     }
     // B01: a card that names its request answers that request or nothing, never the newest one (S.pending).
@@ -6947,9 +6953,17 @@ document.addEventListener('keydown', (e) => {
   /* B06: and only the bare key. ⌘N with a card up denied it (`n`) instead of
      opening a new chat, and the menu never saw the chord: a chord is a
      command (the map below), never an answer. Only an open request answers
-     (approvalOpen): a card whose turn is over takes no key. */
-  if (approvalOpen(S.pending) && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel) // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
-      && !e.metaKey && !e.ctrlKey && !e.altKey) {
+     (approvalOpen): a card whose turn is over takes no key. Two chords stay
+     the card's: Ctrl+Y allows, as in the TUI (APPROVAL_CHORDS.approve in
+     src/tui/app-key-bindings.ts; not its Ctrl+N or Ctrl+D, which are a new
+     chat on Windows and a delete here), and Esc with a modifier does
+     nothing rather than fall through to the settings menu over the card. */
+  const apprKeys = approvalOpen(S.pending) && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel); // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
+  if (apprKeys && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && k.toLowerCase() === 'y') {
+    e.preventDefault(); ANX.via('key'); answer('y'); return;
+  }
+  if (apprKeys && k === 'Escape' && (e.metaKey || e.ctrlKey || e.altKey)) { e.preventDefault(); return; }
+  if (apprKeys && !e.metaKey && !e.ctrlKey && !e.altKey) {
     const kk = k.toLowerCase();
     // Item 1 (approval parity): `s` and `a` are gone. They fired answer() for
     // the two session-grant buttons, which a LIVE request never draws (the
@@ -8644,12 +8658,37 @@ function chatApprovalCards(sid) {
 }
 
 /* B01: a card whose request is over says so (`state`), answers nothing, and
-   is not the request the composer, y/n or Esc act on. Its approvalId is
-   closed for good: a replay of it draws nothing. */
-function closeApprovalCard(req, state, at) {
-  if (req.approvalId) CLOSED_APPROVALS.add(req.approvalId);
+   is not the request the composer, y/n or Esc act on. `forGood` (a newer
+   request for the same call replaced it) closes its approvalId for good: a
+   replay of it draws nothing. A card closed because its turn ended here is
+   not: the agent replays only requests its gate still holds, so a replay of
+   one (a request another surface raised in the chat, still waiting) opens
+   the card again (onApprovalEvent). */
+function closeApprovalCard(req, state, at, forGood) {
+  if (forGood && req.approvalId) CLOSED_APPROVALS.add(req.approvalId);
   if (!req.state) { req.state = state; req.at = at; }
   if (S.pending === req) S.pending = null;
+}
+
+/* B01 review: `req` is answered. Its chat stops waiting on it: the row's
+   dot, the card kept for the chat, and the composer (S.pending) go to
+   another of the chat's calls still waiting, if one is (two calls of a step
+   can wait at once), or stop waiting. A chat whose newest request is
+   another one keeps waiting on that. */
+function approvalAnswered(req) {
+  const sid = req && req.sessionId;
+  if (!sid) { if (S.pending === req) S.pending = null; return; }
+  const mapped = PENDING_APPROVALS.get(sid);
+  if (mapped !== undefined && mapped !== req.approvalId) { if (S.pending === req) S.pending = null; return; }
+  const still = chatApprovalCards(sid).filter((c) => c !== req && approvalOpen(c)).pop() || null;
+  if (!still) {
+    PENDING_APPROVALS.delete(sid);
+    if (S.pending === req) S.pending = null;
+    return;
+  }
+  PENDING_APPROVALS.set(sid, still.approvalId);
+  APPROVAL_CARDS.set(sid, still);
+  if (S.pending === req) S.pending = S.log.includes(still) ? still : null;
 }
 
 /* B01: the same call asked for again: same chat, tool, category, preview and target. */
@@ -8686,7 +8725,7 @@ function closeChatApprovals(sid, state, since) {
 
 function onApprovalEvent(payload) {
   if (!payload || !payload.approvalId) return;
-  // B01: a request whose turn ended here, or that a newer one replaced, is not open again.
+  // B01: a request that a newer one for the same call replaced is not open again.
   if (CLOSED_APPROVALS.has(payload.approvalId)) return;
   const sid = payload.sessionId || null;
   /* Q60: one request is one card. The same approvalId again (the events
@@ -8697,8 +8736,8 @@ function onApprovalEvent(payload) {
      stopped or no longer waited for) is wrong: the agent says the request
      is still open, so the card opens again. */
   const drawn = S.log.find((m) => m.k === 'approval' && m.approvalId === payload.approvalId) || null;
-  const kept = sid ? APPROVAL_CARDS.get(sid) : null;
-  const again = drawn || (kept && kept.approvalId === payload.approvalId ? kept : null);
+  // B01 review: kept for its chat, or among the rows a turn kept for it (item 38), as well.
+  const again = drawn || (sid ? chatApprovalCards(sid).find((m) => m.approvalId === payload.approvalId) : null) || null;
   if (again && again.state && (again.landed === true || again.answering)) return;
   if (again && again.state) { delete again.state; delete again.at; delete again.landed; }
   const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
@@ -8735,9 +8774,12 @@ function onApprovalEvent(payload) {
      outside the folder, say). */
   if (sid && !again) {
     const at = new Date().toTimeString().slice(0, 8);
-    chatApprovalCards(sid).filter((old) => sameApprovalCall(old, req)).forEach((old) => closeApprovalCard(old, 'expired', at));
+    chatApprovalCards(sid).filter((old) => old.approvalId !== req.approvalId && sameApprovalCall(old, req))
+      .forEach((old) => closeApprovalCard(old, 'expired', at, true));
   }
-  req.seenAt = Date.now();   // Q60 review: a status read before this proves nothing about it (approvalOver)
+  // Q60 review: a status read before this proves nothing about it (approvalOver).
+  // B01 review: a replay is the same request, still as old as when it first came (closeChatApprovals).
+  if (!again || !req.seenAt) req.seenAt = Date.now();
   if (sid) { PENDING_APPROVALS.set(sid, req.approvalId); APPROVAL_CARDS.set(sid, req); }
   // Q60: another chat's request: its dot, not a card in this chat, and not this chat's y/n.
   // Q60 review: unless it has no chat to be found in (approvalReachable).
@@ -8823,8 +8865,7 @@ function answerLive(req, key) {
   ANX.apprAnswered(req, key);
   // Backlog 25: an older card answered by its own button (see the click
   // delegator) leaves the newest request, and its card, open.
-  if (S.pending === req) S.pending = null;
-  if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // item 6: the row stops asking
+  approvalAnswered(req);   // item 6: the row stops asking (B01 review: unless another call of the chat still waits)
   req.state = approve ? 'approved' : 'denied';
   req.at = new Date().toTimeString().slice(0, 8);
   if (key === 's' || key === 'a') {
@@ -8890,7 +8931,7 @@ async function denyByProse(req, text, post) {
   const typedIn = {sid:S.agentSession, key:queueKey()};   // Backlog 26: read at Enter, as steerOrQueue does
   ANX.apprAnswered(req, 'prose');
   S.pending = null;
-  if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // the row stops asking
+  approvalAnswered(req);   // the row stops asking (B01 review: unless another call of the chat still waits)
   req.at = new Date().toTimeString().slice(0, 8);
   req.state = 'denying';   // in flight — not yet a fact, and the card says so
   req.answering = true; delete req.landed;   // Q60 review: see answerLive
