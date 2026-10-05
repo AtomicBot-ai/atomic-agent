@@ -345,27 +345,38 @@ export function parseLlmRunModeConfig(
 /**
  * Drop fusion leg pins that name a provider being removed. The parser
  * refuses a pin to an unknown id, so leaving one behind would make the
- * file unreadable on the next start. Returns the input untouched when
- * nothing is pinned to `removedId`.
+ * file unreadable on the next start. A leg's model pin goes with its
+ * provider pin: it named a model of the removed provider, and left
+ * behind it would label and price the leg that takes over. Returns the
+ * input untouched when nothing is pinned to `removedId`.
  */
 export function scrubRunModeProviderPins(
   runMode: UserLlmRunModeConfig | undefined,
   removedId: string,
 ): UserLlmRunModeConfig | undefined {
   if (!runMode?.fusion) return runMode;
-  const { orchestratorProvider, workerProvider, ...rest } = runMode.fusion;
-  if (orchestratorProvider !== removedId && workerProvider !== removedId)
-    return runMode;
+  const {
+    orchestratorProvider,
+    orchestratorModel,
+    workerProvider,
+    workerModel,
+    ...rest
+  } = runMode.fusion;
+  const keepOrchestrator = orchestratorProvider !== removedId;
+  const keepWorker = workerProvider !== removedId;
+  if (keepOrchestrator && keepWorker) return runMode;
   return {
     ...runMode,
     fusion: {
       ...rest,
-      ...(orchestratorProvider && orchestratorProvider !== removedId
+      ...(orchestratorProvider && keepOrchestrator
         ? { orchestratorProvider }
         : {}),
-      ...(workerProvider && workerProvider !== removedId
-        ? { workerProvider }
+      ...(orchestratorModel !== undefined && keepOrchestrator
+        ? { orchestratorModel }
         : {}),
+      ...(workerProvider && keepWorker ? { workerProvider } : {}),
+      ...(workerModel !== undefined && keepWorker ? { workerModel } : {}),
     },
   };
 }
