@@ -1169,7 +1169,7 @@ const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-pan
    sqlite over <stateDir>/memory.sqlite (app:memoryQuery, named statements). */
 const MEM = {
   mode:'list', channel:'profile', available:['profile','notes'], rows:[], cursor:0, search:'',
-  notesFilter:'active', lastRefreshedAt:null, loading:false, auto:true,
+  notesFilter:'active', lastRefreshedAt:null, loading:false, loadingAt:0, auto:true,
   detailRowKey:null, detail:null, lastError:null, channelHint:null, timer:null, seq:0,
   cfg:null, cfgBusy:false, // `atag config get memory` — the effective flags when the user file has no memory.* key
   expandRuns:0, expandQueries:0, // g expand graph: completed walks and the links.outgoing/incoming statements they ran (the smoke tells a walk from the no-op)
@@ -19950,14 +19950,31 @@ function ensureMemoryPoll() {
   if (!BR || MEM.timer) return;
   MEM.timer = setInterval(() => {
     if (!memoryVisible()) { clearInterval(MEM.timer); MEM.timer = null; return; }
-    if (MEM.auto && MEM.mode === 'list') memRefresh(true);
+    memAutoRefresh();
   }, 5000);
+}
+/* ATO-196: the line said "Refreshes every 5 s" over rows and a time that
+   stayed as they were until Refresh. Each tick started a read that dropped
+   the one before it (MEM.seq), so reads slower than the tick never landed;
+   coming back to the tab showed what it held when it was left; and a window
+   in the background, whose timers the browser slows, came back stale. A
+   tick now lets a read on its way land, and the tab reads again when it is
+   shown and when the window comes back to the front. */
+function memAutoRefresh() {
+  if (!BR || !memoryVisible() || !MEM.auto || MEM.mode !== 'list') return;
+  if (MEM.loading && Date.now() - MEM.loadingAt < 30000) return;
+  memRefresh(true);
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('focus', () => memAutoRefresh());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) memAutoRefresh(); });
 }
 function memoryTabEntered() {
   if (MEM.timer) { clearInterval(MEM.timer); MEM.timer = null; }
   ensureMemoryPoll();
   memEnsureCfg();
-  if (MEM.lastRefreshedAt === null && !MEM.loading) memRefresh();
+  if (MEM.lastRefreshedAt === null) { if (!MEM.loading) memRefresh(); }
+  else memAutoRefresh();   // ATO-196: shown again, read again; the rows on screen stay until the answer
 }
 async function memQ(name, params) {
   const dir = memStateDir();
@@ -20076,7 +20093,7 @@ function memSelected() {
 }
 async function memRefresh(quiet) {
   if (!BR) return;
-  MEM.loading = true; MEM.lastError = null;
+  MEM.loading = true; MEM.loadingAt = Date.now(); MEM.lastError = null;
   MEM.available = memAvailableChannels();
   if (!MEM.available.includes(MEM.channel)) MEM.channel = MEM.available[0] || 'profile';
   if (!quiet) render();

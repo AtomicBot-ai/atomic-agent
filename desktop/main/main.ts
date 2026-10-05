@@ -5401,13 +5401,22 @@ async function settingsTestPartB(
     await promisify(execFile)("/usr/bin/sqlite3", [join(stateDir, "memory.sqlite"), sql], { timeout: 10_000 });
   };
   const memory = () => js<MemState>("window.__memory()");
-  const mem = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
+  let mem = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
   const memCfg = await configGetKey("memory");
   const mc = (memCfg.ok && memCfg.value && typeof memCfg.value === "object" ? memCfg.value : {}) as Record<string, { enabled?: boolean }>;
   const expectedChannels = ["profile", "notes", ...(mc.lessons?.enabled ? ["lessons"] : []), ...(mc.procedures?.enabled ? ["procedures"] : []), ...(mc.links?.enabled ? ["links"] : []), ...(mc.voting?.enabled ? ["votes"] : [])];
   const memChannelsOk = await until(memory, (m) => same(m.channels, expectedChannels), 10_000);
   check("memory tab: channels follow memory.*.enabled as resolveAvailableChannels does", same(memChannelsOk.channels, expectedChannels), `${JSON.stringify(memChannelsOk.channels)} vs ${JSON.stringify(expectedChannels)}`);
-  const profileSql = await js<{ ok: boolean; rows?: unknown[]; via?: string; error?: string }>("window.__memQuery('profile.list', [])");
+  /* ATO-232: the agent writes profile facts in the background, so the tab's
+     first read and the SQL below could straddle a write. The tab reads again
+     right before the SQL, and once more with it when the two still differ. */
+  type ProfileSql = { ok: boolean; rows?: unknown[]; via?: string; error?: string };
+  let profileSql: ProfileSql = { ok: false, error: "not read" };
+  for (let i = 0; i < 2; i++) {
+    mem = await js<MemState>("window.__memoryRefresh()");
+    profileSql = await js<ProfileSql>("window.__memQuery('profile.list', [])");
+    if (!profileSql.ok || mem.rows === (profileSql.rows ?? []).length) break;
+  }
   // What the tab draws: the one pressed channel button, the painted rows (a
   // 14-row window, memory-panel.tsx maxRows), the profile table's headers, the empty state's title.
   type MemView = { pressed: string[]; painted: number; heads: string[]; empty: string };
