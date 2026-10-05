@@ -51,6 +51,8 @@ export const FIRST_CHECK_DELAY_MS = 10_000;
 export const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 /** While Restart waits for a running turn, how often it looks again. */
 const TURN_POLL_MS = 2_000;
+/** quitAndInstall that has not ended the app by then failed. */
+const INSTALL_TIMEOUT_MS = 120_000;
 
 export type UpdatePhase =
   /** Nothing found (or not looked yet). */
@@ -160,7 +162,9 @@ function writeUpdatePrefs(prefs: UpdatePrefs): void {
 /** -1, 0, 1 for two `x.y.z[-pre]` versions; a prerelease sorts before its release. */
 export function compareVersions(a: string, b: string): number {
   const split = (v: string) => {
-    const [core = "", pre = ""] = v.split("-", 2);
+    const dash = v.indexOf("-");
+    const core = dash < 0 ? v : v.slice(0, dash);
+    const pre = dash < 0 ? "" : v.slice(dash + 1);
     return { nums: core.split(".").map((n) => Number(n) || 0), pre };
   };
   const x = split(a);
@@ -265,6 +269,7 @@ export class AppUpdateController {
   private firstTimer: ReturnType<typeof setTimeout> | null = null;
   private everyTimer: ReturnType<typeof setInterval> | null = null;
   private installAsking = false;
+  private installTimer: ReturnType<typeof setTimeout> | null = null;
 
   /* Test hooks (the smoke). */
   private fakeTurnBusy: boolean | null = null;
@@ -283,11 +288,9 @@ export class AppUpdateController {
 
   private whyDisabled(feed: string | null): Disabled {
     if (this.fakeVersion) return null;
+    // macOS and Windows only for now: Linux packages (AppImage, deb) get new versions from the download page.
+    if (process.platform !== "darwin" && process.platform !== "win32") return { text: "Updates are not set up for this build." };
     if (!feed || !existsSync(feed)) return { text: "Updates are not set up for this build." };
-    // electron-updater updates a Linux AppImage, not a .deb (that one comes from the package manager).
-    if (process.platform === "linux" && !process.env.APPIMAGE) {
-      return { text: "This install updates through your package manager." };
-    }
     return null;
   }
 
@@ -371,7 +374,8 @@ export class AppUpdateController {
     if (this.everyTimer) clearInterval(this.everyTimer);
     if (this.waitTimer) clearInterval(this.waitTimer);
     if (this.fakeTimer) clearInterval(this.fakeTimer);
-    this.firstTimer = this.everyTimer = this.waitTimer = this.fakeTimer = null;
+    if (this.installTimer) clearTimeout(this.installTimer);
+    this.firstTimer = this.everyTimer = this.waitTimer = this.fakeTimer = this.installTimer = null;
   }
 
   /** The timer's check: nothing when the switch is off; quiet on failure. */
@@ -407,6 +411,8 @@ export class AppUpdateController {
       if (trigger === "manual") this.emit();
       try {
         const found = await this.lookUp();
+        // An answer supersedes the error an earlier Check now left in Settings.
+        if (this.manualCheck?.result.kind === "error") this.manualCheck = null;
         // Update was clicked while the feed was read again: the download owns the state now.
         if (this.phase !== "checking" && this.phase !== "available") {
           return { kind: "available", version: this.version ?? this.currentVersion };
@@ -448,7 +454,11 @@ export class AppUpdateController {
     }
     const updater = this.ensureUpdater();
     const res = await updater.checkForUpdates();
-    const info: UpdateInfo | undefined = res?.updateInfo;
+    /* electron-updater can answer a newer version that is not for this
+       machine (a staged rollout, minimumSystemVersion): isUpdateAvailable is
+       false then, and downloadUpdate would refuse it. */
+    if (!res?.isUpdateAvailable) return null;
+    const info: UpdateInfo | undefined = res.updateInfo;
     return info && cleanVersion(info.version) ? { version: info.version, releaseNotes: info.releaseNotes } : null;
   }
 
@@ -685,6 +695,11 @@ export class AppUpdateController {
       if (process.platform !== "darwin") await this.deps.prepareQuit();
       // Silent installer on Windows (the person already said yes), and the app starts again after it.
       this.ensureUpdater().quitAndInstall(true, true);
+      /* Squirrel.Mac fetches the zip from electron-updater only now; an app
+         still here after two minutes was not taken over, and says so. */
+      this.installTimer = setTimeout(() => {
+        if (this.phase === "installing") this.installFailed(new Error("the installer did not take over within 2 min"));
+      }, INSTALL_TIMEOUT_MS);
     } catch (err) {
       this.installFailed(err);
     }
@@ -694,6 +709,8 @@ export class AppUpdateController {
      honest way on is a fresh start of the app, which offers the update again. */
   private installFailed(err: unknown): void {
     console.error(`[updater] install failed: ${err instanceof Error ? err.message : String(err)}`);
+    if (this.installTimer) clearTimeout(this.installTimer);
+    this.installTimer = null;
     this.prefs.pendingInstall = null;
     writeUpdatePrefs(this.prefs);
     this.phase = "ready";

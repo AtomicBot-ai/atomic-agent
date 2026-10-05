@@ -66,8 +66,10 @@ function updToastHTML(st) {
       btn('btn-s', 'later', 'Later'));
   }
   if (st.phase === 'installing') {
+    // The fake installs nothing, so its toast has a way out; a real one ends with the app.
     return ico('refresh') + body(st.fake ? 'Test mode: the app would restart now' : 'Restarting to update…',
-      st.fake ? 'Atomic Agent ' + v + ' would be installed. Nothing was changed.' : 'Atomic Agent ' + v + ' is being installed.', '');
+      st.fake ? 'Atomic Agent ' + v + ' would be installed. Nothing was changed.' : 'Atomic Agent ' + v + ' is being installed.',
+      st.fake ? btn('btn-s', 'later', 'Close') : '');
   }
   // available
   return ico('download') + body('Atomic Agent ' + v + ' is available',

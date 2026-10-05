@@ -160,8 +160,10 @@ const config = {
   "afterPack": "scripts/after-pack.mjs"
 };
 
-if (feedUrl) {
-  config.publish = [{ provider: "generic", url: feedUrl, channel }];
-}
+/* null, not left out: with no publish key electron-builder guesses a GitHub
+   publisher whenever GH_TOKEN / GITHUB_TOKEN is in the environment, and would
+   write an app-update.yml nobody chose. Only macOS and Windows read it (the
+   app's updater is off on Linux). */
+config.publish = feedUrl ? [{ provider: "generic", url: feedUrl, channel }] : null;
 
 module.exports = config;

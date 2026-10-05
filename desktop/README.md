@@ -1292,7 +1292,10 @@ the update files into `desktop/release/`. Everything a release uploads to
 |---|---|
 | macOS | `stable-mac.yml`, `Atomic Agent-<version>-arm64-mac.zip` (+ `.blockmap`), the `.dmg` (+ `.blockmap`) |
 | Windows | `stable.yml`, `Atomic-Agent-Setup-<version>-x64.exe` (+ `.blockmap`) |
-| Linux (AppImage only) | `stable-linux.yml` / `stable-linux-arm64.yml`, the `.AppImage` |
+
+Linux is not updated from inside the app yet (the updater is off there and
+Settings says so); AppImage and deb users take new versions from the
+download page.
 
 The `.yml` files name the installers by file name and carry their sha512, so
 the installers go up first and the `.yml` last (a client must never read a
