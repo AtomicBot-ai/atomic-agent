@@ -87,6 +87,92 @@ export function estimateWorkerTimeoutMs(input: {
 }
 
 /**
+ * How much of a local worker's time one answer may fill, and the least
+ * a reply cap sized that way goes down to (ATO-214).
+ *
+ * The reply cap is a token count (`completionMaxTokens`, 16,384 by
+ * default) and the worker's limit is a clock, and nothing tied the two
+ * together. At 3–4.3 tok/s, 16,384 tokens is about 64 minutes — more
+ * than the 45-minute budget — and that is how the worker in issue #490
+ * went: its first answer ran to 7–11k tokens, the clock cut it
+ * mid-generation, and the task came back with 0 steps and nothing that
+ * said why. Sized to 80% of the time left, an answer that long stops at
+ * the cap instead, with a fifth of the budget still free for the loop's
+ * truncation retry, which tells the model to keep its reasoning brief
+ * and emit the tool call. The floor keeps a slow measurement from
+ * shrinking the cap below one tool call with a short think.
+ */
+export const WORKER_REPLY_TIME_SHARE = 0.8;
+export const WORKER_REPLY_CAP_FLOOR_TOKENS = 1_024;
+
+/**
+ * Servers stop a token or two short of the cap they were sent; an
+ * answer this close to it spent it (`classifyTruncation` uses the same
+ * margin).
+ */
+const REPLY_CAP_SLACK_TOKENS = 16;
+
+/**
+ * A local worker's reply cap fitted to the time it has left, or
+ * `undefined` when the clock does not bind: no measured speed (a cloud
+ * leg, or nothing has completed on the local one yet), or a fitted cap
+ * at or above `capTokens`, the cap already in force — which then goes
+ * out exactly as before. `capTokens` `undefined` or `0` is "no cap".
+ */
+export function fitReplyCapToTime(input: {
+  tokensPerSecond: number | null | undefined;
+  remainingMs: number;
+  capTokens: number | undefined;
+}): number | undefined {
+  const { tokensPerSecond, capTokens } = input;
+  if (
+    tokensPerSecond === null ||
+    tokensPerSecond === undefined ||
+    !Number.isFinite(tokensPerSecond) ||
+    tokensPerSecond <= 0 ||
+    !Number.isFinite(input.remainingMs)
+  ) {
+    return undefined;
+  }
+  const fitted = Math.max(
+    WORKER_REPLY_CAP_FLOOR_TOKENS,
+    Math.floor(
+      tokensPerSecond *
+        (Math.max(0, input.remainingMs) / 1000) *
+        WORKER_REPLY_TIME_SHARE,
+    ),
+  );
+  const capped =
+    capTokens !== undefined && Number.isFinite(capTokens) && capTokens > 0;
+  return capped && fitted >= capTokens ? undefined : fitted;
+}
+
+/**
+ * What a worker row says when its first answer spent the time-fitted
+ * cap and no step completed after it (ATO-214). "0 steps" over a
+ * timeout read as a worker that had done nothing, when it had written
+ * thousands of tokens the clock had no room for; the remedy is a longer
+ * limit or a smaller task, not a retry of the same one.
+ */
+export function describeFirstAnswerCut(input: {
+  cutAtTokens: number;
+  capTokens: number;
+  tokensPerSecond: number;
+  timeoutMs: number;
+}): { reply: string; note: string; hint: string } {
+  const budget =
+    input.timeoutMs < 60_000
+      ? `${Math.max(0, Math.round(input.timeoutMs / 1000))} s`
+      : `${Math.round(input.timeoutMs / 60_000)} min`;
+  const cut = `the first answer was cut at ${input.cutAtTokens} tokens by the time limit`;
+  return {
+    reply: `${cut}, before any step completed`,
+    note: `${cut}: at the measured ${input.tokensPerSecond.toFixed(1)} tok/s a ${budget} limit leaves room for about ${input.capTokens} tokens per answer, and no step completed`,
+    hint: "the model's answers run longer than this machine can generate within the limit: give the task a longer timeoutMs, split it into smaller tasks, or lower the worker reasoning effort",
+  };
+}
+
+/**
  * How much of its own budget a worker may spend waiting for its first
  * token. A third: long enough that a busy two-slot server still serves
  * a queued worker rather than failing it, short enough that a worker
@@ -402,7 +488,11 @@ export interface RunWorkerTasksOptions {
   localLeg?: boolean;
   /** `runMode.fusion.workerReasoning`, sent with every worker completion. */
   workerReasoning?: ReasoningEffort;
-  /** `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. */
+  /**
+   * `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. A
+   * measured local leg may send less: what fits the worker's time
+   * (`fitReplyCapToTime`).
+   */
   workerMaxOutputTokens?: number;
   /**
    * Directories these workers may write in without asking, as approved
@@ -796,6 +886,25 @@ async function runOneTask(
   let queuedOutcome = false;
   let timedOutOutcome = false;
 
+  // ATO-214: on a measured local leg one answer has to fit the time the
+  // worker has. The wall clock starts at the first token, so when the
+  // first completion is answered the time left is all of `timeoutMs`;
+  // the cap is sized from that, rides as the turn's output ceiling, and
+  // only ever lowers the cap already in force. Later steps keep it —
+  // the loop takes one ceiling per turn — and a later step the clock
+  // cuts leaves steps behind it, which is not the failure this fixes.
+  const timeFittedCap = fitReplyCapToTime({
+    tokensPerSecond: options.localTokensPerSecond,
+    remainingMs: timeoutMs,
+    capTokens:
+      options.workerMaxOutputTokens ??
+      getConfig().localModels.completionMaxTokens,
+  });
+  const replyCap = timeFittedCap ?? options.workerMaxOutputTokens;
+  // How long the first answer ran when it spent the time-fitted cap
+  // before any step had completed; read once the turn is over.
+  let firstCutTokens: number | undefined;
+
   let result: WorkerTaskResult;
   try {
     const turn = await deps.runTurn(session, brief, {
@@ -808,9 +917,7 @@ async function runOneTask(
       ...(options.workerReasoning === undefined
         ? {}
         : { reasoningEffort: options.workerReasoning }),
-      ...(options.workerMaxOutputTokens === undefined
-        ? {}
-        : { maxOutputTokens: options.workerMaxOutputTokens }),
+      ...(replyCap === undefined ? {} : { maxOutputTokens: replyCap }),
       signal: AbortSignal.any([options.signal, timeLimit, handBack.signal]),
       eventHook: (event) => {
         // The first token — not `turn_started`, which fires before the
@@ -850,6 +957,23 @@ async function runOneTask(
           event.event.type === "llm_completed"
         ) {
           announceUsage(event.event.completion.timing?.promptTokens ?? 0);
+          // Counted rather than read off `finish_reason`: llama-server's
+          // own endpoint reports none, and the count is what says the
+          // cap, not the context window, was the wall.
+          const completion = event.event.completion;
+          const spent =
+            completion.usage?.completionTokens ??
+            completion.timing?.predictedTokens ??
+            0;
+          if (
+            timeFittedCap !== undefined &&
+            firstCutTokens === undefined &&
+            stepsFinished === 0 &&
+            spent > 0 &&
+            spent + REPLY_CAP_SLACK_TOKENS >= timeFittedCap
+          ) {
+            firstCutTokens = spent;
+          }
         }
         if (
           event.type === "llm_event" &&
@@ -1028,6 +1152,37 @@ async function runOneTask(
         ...(result.notes ?? []),
         `handed back early: declared files but wrote none by half the budget (${completed} steps completed, none a successful write)${stall === undefined ? "" : ` (stalled: ${stall})`} — re-brief with a narrower task or the exact content to write`,
       ],
+    };
+  }
+
+  // The first answer spent the time-fitted cap and nothing completed a
+  // step after it (ATO-214): say that, rather than leave a bare
+  // "0 steps" and "(the worker produced no reply)" over a worker that
+  // generated for most of its budget. Beside the error, never in place
+  // of it, and not on a worker the operator cancelled.
+  // Widened by hand: it is assigned inside the event hook, which the
+  // compiler's flow analysis does not follow.
+  const cutAt = firstCutTokens as number | undefined;
+  if (
+    cutAt !== undefined &&
+    timeFittedCap !== undefined &&
+    stepsFinished === 0 &&
+    result.stepCount === 0 &&
+    (result.status === "timeout" ||
+      result.status === "failed" ||
+      result.status === "max_steps")
+  ) {
+    const cut = describeFirstAnswerCut({
+      cutAtTokens: cutAt,
+      capTokens: timeFittedCap,
+      tokensPerSecond: options.localTokensPerSecond ?? 0,
+      timeoutMs,
+    });
+    result = {
+      ...result,
+      ...(result.reply.length === 0 ? { reply: cut.reply } : {}),
+      hint: result.hint ?? cut.hint,
+      notes: [cut.note, ...(result.notes ?? [])],
     };
   }
 
