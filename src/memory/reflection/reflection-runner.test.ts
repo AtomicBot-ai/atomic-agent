@@ -214,8 +214,10 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "hi",
-      assistantReply: "hello",
+      // Not a bare greeting: that window is skipped as trivial before
+      // the model is asked, and this test pins the model's NONE path.
+      userMessage: "what is the capital of France?",
+      assistantReply: "Paris.",
     });
 
     expect(traced).toEqual([{ sessionId: "s1", outcome: "none" }]);
@@ -258,8 +260,8 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "hi",
-      assistantReply: "hello",
+      userMessage: "what is the capital of France?",
+      assistantReply: "Paris.",
     });
 
     expect(h.store.list()).toHaveLength(0);
@@ -540,7 +542,9 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "remember this",
+      // The name has to come from the user: the grounding guard drops
+      // a `name` fact the user never typed.
+      userMessage: "remember this, my name is Alex",
       assistantReply: "ok",
     });
 
@@ -630,7 +634,7 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "u",
+      userMessage: "my name is Alex",
       assistantReply: "a",
     });
 
@@ -731,5 +735,144 @@ describe("createReflectionRunner", () => {
       (e) => e.name === "agent.memory.reflection",
     );
     expect(counters[0]!.tags?.outcome).toBe("aborted");
+  });
+
+  // --------------------------------------------------------------------------
+  // B09: reflection grounding (desktop 02.10, Qwen 3.5 4B). A smoke-test
+  // prompt produced two invented notes: "I am Alex and you are my personal
+  // assistant…" and "I prefer using local_ok instead of tools…".
+  // --------------------------------------------------------------------------
+
+  const B09_COMPLETION =
+    [
+      "NOTE I am Alex and you are my personal assistant. You should remember me as Alex.",
+      "NOTE I prefer using local_ok instead of tools. This is important because I want to avoid tool usage.",
+    ].join("\n") + "\n";
+
+  it("B09: skips reflection entirely for a 'Reply exactly LOCAL_OK. Do not use tools.' turn", async () => {
+    let calls = 0;
+    const traced: Array<{ sessionId: string; outcome: string; reason?: string }> = [];
+    const runner = createReflectionRunner({
+      llmComplete: async () => {
+        calls += 1;
+        return completion(B09_COMPLETION);
+      },
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+      emitTrace: (event) => traced.push(event),
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Reply exactly LOCAL_OK. Do not use tools.",
+      assistantReply: "LOCAL_OK",
+    });
+
+    expect(calls).toBe(0);
+    expect(h.store.list()).toHaveLength(0);
+    expect(h.notesStore.list()).toHaveLength(0);
+    expect(traced).toEqual([
+      { sessionId: "s1", outcome: "none", reason: "trivial_window" },
+    ]);
+  });
+
+  it("B09: drops the invented notes even when the window is not trivial", async () => {
+    let calls = 0;
+    const runner = createReflectionRunner({
+      llmComplete: async () => {
+        calls += 1;
+        return completion(B09_COMPLETION);
+      },
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Reply exactly LOCAL_OK. Do not use tools. Also, what is 2+2?",
+      assistantReply: "LOCAL_OK. 4.",
+    });
+
+    expect(calls).toBe(1);
+    expect(h.notesStore.list()).toHaveLength(0);
+    const counters = h.metricEvents.filter(
+      (e) => e.name === "agent.memory.reflection",
+    );
+    expect(counters[0]!.tags?.outcome).toBe("none");
+    expect(
+      h.logEvents.filter((e) => e.message === "reflection.ungrounded_dropped"),
+    ).toHaveLength(2);
+  });
+
+  it("B09: keeps a legit 'my name is Nadia' + 'remember I prefer TypeScript' session", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion(
+          "SET name=Nadia\nNOTE The user prefers TypeScript for new projects [tags=lang]\n",
+        ),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Remember that I prefer TypeScript for new projects.",
+      assistantReply: "Noted.",
+      transcript: [
+        { user: "My name is Nadia.", assistant: "Nice to meet you, Nadia!" },
+        {
+          user: "Remember that I prefer TypeScript for new projects.",
+          assistant: "Noted.",
+        },
+      ],
+    });
+
+    expect(h.store.list().map((f) => `${f.key}=${f.value}`)).toEqual([
+      "name=Nadia",
+    ]);
+    expect(h.notesStore.list().map((n) => n.content)).toEqual([
+      "The user prefers TypeScript for new projects",
+    ]);
+  });
+
+  it("B09: drops a name fact the user never typed but keeps the rest of the batch", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion("SET name=Alex\nSET timezone=Europe/Lisbon\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Please use Europe/Lisbon as my timezone",
+      assistantReply: "Done.",
+    });
+
+    expect(h.store.list().map((f) => `${f.key}=${f.value}`)).toEqual([
+      "timezone=Europe/Lisbon",
+    ]);
   });
 });
