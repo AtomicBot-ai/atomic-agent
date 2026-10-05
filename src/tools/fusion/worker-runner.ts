@@ -19,12 +19,14 @@ import {
 } from "./worker-prompt.js";
 import {
   WorkerRunCollector,
-  WORKER_HINT_QUEUED,
-  WORKER_HINT_UNSERVED,
   WORKER_QUEUED_NOTE,
+  formatWaitMs,
+  queuedWorkerHint,
   unservedWorkerHint,
+  type SlotOccupancy,
   type WorkerTaskResult,
 } from "./worker-result.js";
+import type { StructuredLogger } from "../../tracing/index.js";
 import { getConfig } from "../../config/index.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
@@ -94,6 +96,36 @@ export function estimateWorkerTimeoutMs(input: {
 export const WORKER_QUEUE_BUDGET_DIVISOR = 3;
 
 /**
+ * The least time a LOCAL worker is given, whatever the orchestrator
+ * asked for, and the least of it that may go on waiting for the first
+ * token (ATO-234).
+ *
+ * A cloud planner sized a task for a cloud model — `timeoutMs: 60000` —
+ * and the runner took it at its word: a 60 s budget, a third of it
+ * (20 s) for the first token, and a Qwen 3.5 4B worker reading its brief
+ * was aborted exactly 20 s after the operator approved the fan-out, both
+ * times, when a plain local reply on that machine took about 45 s. The
+ * planner's number is raised to the floor (and the row says so); both
+ * floors still stop at the configured values, so an operator who set a
+ * shorter `workerTimeoutMs` or `localModels.firstTokenTimeoutMs` keeps
+ * it. A cloud leg keeps the planner's number as before.
+ */
+export const LOCAL_WORKER_TASK_BUDGET_FLOOR_MS = 300_000;
+export const LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS = 120_000;
+
+/**
+ * How long the queue watchdog waits for `/slots` before it ends the
+ * worker anyway. The client's own poll is bounded tighter; this only
+ * keeps a probe that never settles from holding a dead worker open.
+ */
+export const QUEUE_SLOT_PROBE_TIMEOUT_MS = 5_000;
+
+/** The floor of a local worker's task budget, never above the configured one. */
+export function localTaskBudgetFloorMs(configuredMs: number): number {
+  return Math.min(LOCAL_WORKER_TASK_BUDGET_FLOOR_MS, configuredMs);
+}
+
+/**
  * Events that prove the server answered THIS worker, ending its queue
  * wait. Deliberately not `prompt_built`, `turn_started` or
  * `step_started`: all three fire before the request is answered, and a
@@ -150,23 +182,26 @@ export function clampTaskBudget(
  * turn with no deadline of its own. A worker has one, and giving it a
  * first-token budget it cannot outlive is what let a queued worker burn
  * 45 minutes producing nothing.
+ *
+ * `floorMs` (a local worker's `LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS`) lifts
+ * a third that is too short to read a brief in, but never above the
+ * configured first-token wait or the worker's own budget.
  */
 export function resolveQueueBudgetMs(
   timeoutMs: number,
   firstTokenTimeoutMs?: number,
+  floorMs = 0,
 ): number {
   const configured =
     firstTokenTimeoutMs ?? getConfig().localModels.firstTokenTimeoutMs;
-  const share = Math.floor(timeoutMs / WORKER_QUEUE_BUDGET_DIVISOR);
-  const bounded = Math.min(
+  const usable =
     typeof configured === "number" &&
-      Number.isFinite(configured) &&
-      configured > 0
-      ? configured
-      : share,
-    share,
-  );
-  return Math.max(1, bounded);
+    Number.isFinite(configured) &&
+    configured > 0;
+  const share = Math.floor(timeoutMs / WORKER_QUEUE_BUDGET_DIVISOR);
+  const bounded = Math.min(usable ? configured : share, share);
+  const floor = Math.min(floorMs, usable ? configured : floorMs, timeoutMs);
+  return Math.max(1, bounded, floor);
 }
 
 /** Tools whose success counts as "the worker wrote something". */
@@ -307,6 +342,17 @@ export interface WorkerRunnerDeps {
   /** Progress into the PARENT session's frame. */
   emitEvent: (sessionId: string, event: AgentLoopEvent) => void;
   workingDir: string;
+  /**
+   * The local server's slot table at this moment (`GET /slots`, read by
+   * `readSlotOccupancy`), `null` when it gave no readable answer. Asked
+   * once, by a local worker's queue watchdog just before it ends the
+   * worker, so the hint on the row says what the server was doing rather
+   * than guessing from the worker count. Absent (tests, embedders, a
+   * cloud leg) nothing is probed and the hint says only what is known.
+   */
+  probeSlotOccupancy?: () => Promise<SlotOccupancy | null>;
+  /** Where a raised task budget is logged. Absent, it is only noted on the row. */
+  logger?: Pick<StructuredLogger, "info">;
 }
 
 export interface RunWorkerTasksOptions {
@@ -336,6 +382,14 @@ export interface RunWorkerTasksOptions {
    * has completed yet. Absent for a cloud leg, which keeps the ceiling.
    */
   localTokensPerSecond?: number | null;
+  /**
+   * The workers run on a local (slot-affine) leg. Turns on the local
+   * floors (`LOCAL_WORKER_TASK_BUDGET_FLOOR_MS`,
+   * `LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS`) and the slot probe. Explicit
+   * because `localTokensPerSecond` is `null` both on a cloud leg and on
+   * a local one nothing has been measured on yet.
+   */
+  localLeg?: boolean;
   /** `runMode.fusion.workerReasoning`, sent with every worker completion. */
   workerReasoning?: ReasoningEffort;
   /** `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. */
@@ -536,13 +590,33 @@ async function runOneTask(
   // configured defaults, byte for byte as before.
   const stepBudget = clampTaskBudget(task.maxSteps, options.workerMaxSteps);
   const timeBudget = clampTaskBudget(task.timeoutMs, options.workerTimeoutMs);
+  // A local worker gets at least the local floor, however small a
+  // number the planner sized the task with (ATO-234).
+  const timeFloorMs =
+    options.localLeg === true
+      ? localTaskBudgetFloorMs(options.workerTimeoutMs)
+      : 0;
+  const timeRaised = timeBudget.value < timeFloorMs;
+  const taskTimeMs = Math.max(timeBudget.value, timeFloorMs);
   const budgetNotes: string[] = [];
   if (stepBudget.clamped) {
     budgetNotes.push(
       `maxSteps ${task.maxSteps} was clamped to ${stepBudget.value} (${WORKER_BUDGET_CEILING_FACTOR}x the configured ${options.workerMaxSteps})`,
     );
   }
-  if (timeBudget.clamped) {
+  if (timeRaised) {
+    budgetNotes.push(
+      `timeoutMs ${task.timeoutMs} was raised to ${taskTimeMs}, the least a local worker is given: a local model can spend a minute reading its brief before the first token`,
+    );
+    deps.logger?.info(
+      "fusion: raised a local worker's task budget to the floor",
+      {
+        taskId: task.id,
+        requestedMs: task.timeoutMs ?? null,
+        timeoutMs: taskTimeMs,
+      },
+    );
+  } else if (timeBudget.clamped) {
     budgetNotes.push(
       `timeoutMs ${task.timeoutMs} was clamped to ${timeBudget.value} (${WORKER_BUDGET_CEILING_FACTOR}x the configured ${options.workerTimeoutMs})`,
     );
@@ -555,7 +629,7 @@ async function runOneTask(
     briefChars: brief.length,
     declaredFiles,
     tokensPerSecond: options.localTokensPerSecond,
-    ceilingMs: timeBudget.value,
+    ceilingMs: taskTimeMs,
   });
 
   // The worker's own clock, kept apart from the operator's signal: when
@@ -590,13 +664,53 @@ async function runOneTask(
       ),
     );
   };
-  const queueBudgetMs = resolveQueueBudgetMs(timeoutMs);
+  const queueBudgetMs = resolveQueueBudgetMs(
+    timeoutMs,
+    undefined,
+    options.localLeg === true ? LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS : 0,
+  );
   let queuedOut = false;
   let servedAt: number | null = null;
   let wallTimer: ReturnType<typeof setTimeout> | undefined;
-  const queueTimer = setTimeout(() => {
+  // What the server's slot table said when the queue wait ran out:
+  // `undefined` while nothing has probed it (see `queuedWorkerHint`).
+  let occupancy: SlotOccupancy | null | undefined;
+  // Set once the turn has ended, so a probe still in flight then does
+  // not abort a signal nobody is listening to.
+  let settled = false;
+  const probe =
+    options.localLeg === true ? deps.probeSlotOccupancy : undefined;
+  const endQueueWait = (): void => {
     queuedOut = true;
     abortForTime();
+  };
+  const queueTimer = setTimeout(() => {
+    if (probe === undefined) {
+      endQueueWait();
+      return;
+    }
+    // Read the slot table BEFORE the abort: afterwards the server has
+    // dropped this worker's request and the table describes the wrong
+    // moment. Bounded, so a probe that never settles still ends the wait.
+    let probeTimer: ReturnType<typeof setTimeout> | undefined;
+    void Promise.race([
+      probe().catch(() => null),
+      new Promise<null>((resolve) => {
+        probeTimer = setTimeout(
+          () => resolve(null),
+          QUEUE_SLOT_PROBE_TIMEOUT_MS,
+        );
+        probeTimer.unref?.();
+      }),
+    ]).then((seen) => {
+      clearTimeout(probeTimer);
+      if (settled) return;
+      // The first token landed while the table was being read: the
+      // worker is served, and its wall timer is already running.
+      if (servedAt !== null) return;
+      occupancy = seen;
+      endQueueWait();
+    });
   }, queueBudgetMs);
   queueTimer.unref?.();
   /**
@@ -783,6 +897,7 @@ async function runOneTask(
         : { error: error instanceof Error ? error.message : String(error) }),
     });
   } finally {
+    settled = true;
     clearTimeout(queueTimer);
     if (wallTimer !== undefined) clearTimeout(wallTimer);
     // Always: the gate is process-wide and a stale refusal policy keyed
@@ -820,25 +935,41 @@ async function runOneTask(
   // once, because both doors onto that silence ask the same question:
   // the queue watchdog below, and the transport failure after it.
   const ranAlone = options.maxWorkers <= 1 || options.tasks.length <= 1;
+  const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
 
-  // A worker that never got a slot is not a worker that failed, ran out
-  // of steps or was cancelled: it produced nothing because the machine
-  // had nothing to give it. Saying so is the whole row — and it is the
-  // fan-out's WIDTH that has to change, not the task or its budget, so
-  // the status carries that hint rather than a bigger-deadline one.
+  // A worker that never got a token is not a worker that failed, ran
+  // out of steps or was cancelled: it produced nothing because the
+  // server had not answered it yet. Why is the whole row — a full
+  // server, a dead one, or a model still reading — and only the slot
+  // table can tell those apart, so the hint is chosen from it
+  // (`queuedWorkerHint`), not from how many workers were running.
   if (queuedOutcome) {
     const { error: _dropped, ...rest } = result;
+    // Widened by hand: it is assigned inside the timer callback, which
+    // the compiler's flow analysis does not follow.
+    const table = occupancy as SlotOccupancy | null | undefined;
+    const seen =
+      table === undefined
+        ? ""
+        : table === null
+          ? " — the server's slot table could not be read"
+          : ` — the server reported ${table.busy} of ${table.total} slot${table.total === 1 ? "" : "s"} busy`;
     result = {
       ...rest,
       status: "queued",
       reply: WORKER_QUEUED_NOTE,
       stepCount: 0,
-      hint: ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_QUEUED,
+      hint: queuedWorkerHint({
+        ranAlone,
+        width,
+        occupancy: table,
+        waitMs: queueBudgetMs,
+      }),
       notes: [
         ...(result.notes ?? []),
         ranAlone
-          ? `no first token within ${Math.round(queueBudgetMs / 60_000)} min, and it was the only worker on the leg — nothing was occupying the server`
-          : `no first token within ${Math.round(queueBudgetMs / 60_000)} min of being sent, while its own budget was ${Math.round(timeoutMs / 60_000)} min — up to ${options.maxWorkers} workers were sharing the server`,
+          ? `no first token within ${formatWaitMs(queueBudgetMs)}, and it was the only worker on the leg${seen}`
+          : `no first token within ${formatWaitMs(queueBudgetMs)} of being sent, while its own budget was ${formatWaitMs(timeoutMs)} — up to ${width} workers were sharing the server${seen}`,
       ],
     };
   }

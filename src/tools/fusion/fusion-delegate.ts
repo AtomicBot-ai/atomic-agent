@@ -128,8 +128,9 @@ function error(
  * (`details.outcome`): `ok` while any task delivered anything — partial
  * results are the whole value of a fan-out, and an orchestrator handed
  * a bare error learns nothing about which parts survived — and `error`
- * only when every task failed or was cancelled. Per-task status lives
- * in the output and in `details.tasks` either way.
+ * when none did: every task failed, was cancelled, never got a first
+ * token, or ran out of time before its first step (`deliveredNothing`).
+ * Per-task status lives in the output and in `details.tasks` either way.
  *
  * **Width is the model's call.** `args.maxWorkers` is honoured as asked;
  * `llm.runMode.fusion.workers` only fills in for a call that named
@@ -384,6 +385,7 @@ export function buildFusionDelegateTool(
             workerMaxSteps: mode.workerMaxSteps,
             workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond,
+            localLeg: Number.isFinite(poolSize),
             ...(mode.workerReasoning === undefined
               ? {}
               : { workerReasoning: mode.workerReasoning }),
@@ -479,6 +481,8 @@ export function buildFusionDelegateTool(
       // The call's own status is the tasks' summary: a fan-out where
       // every worker failed used to come back `ok`, and an orchestrator
       // reading only the status merged nothing as if it were something.
+      // Workers that were never served or timed out before a single step
+      // count as nothing delivered too (ATO-234).
       const outcome = delegateOutcome(results);
       // What the fan-out cost on the worker leg, when its model is priced
       // (a cloud leg with a catalogue entry); a local leg resolves to no

@@ -764,6 +764,39 @@ describe("fusion.delegate", () => {
     expect(result.summary).toContain("[t2] failed");
   });
 
+  it("is status:error when every worker was cut off before its first token (ATO-234)", async () => {
+    // Two local workers aborted before they said anything came back
+    // `partial` and therefore `ok`: the UI drew "Delegated 2 tasks ✓"
+    // and the planner read it as work to merge.
+    vi.useFakeTimers();
+    try {
+      const tool = buildFusionDelegateTool(
+        deps({
+          runTurn: (_session, _message, options) =>
+            new Promise<RunTurnResult>((resolve) => {
+              options.signal?.addEventListener("abort", () =>
+                resolve(turnResult({ reason: "cancelled", stepCount: 0 })),
+              );
+            }),
+          probeSlotOccupancy: async () => ({ total: 4, busy: 2 }),
+        }),
+      );
+      const pending = tool.run({ tasks: TASKS, maxWorkers: 2 }, ctx());
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      const result = await pending;
+      expect(result.status).toBe("error");
+      expect(result.details.outcome).toBe("all_failed");
+      const rows = result.details.tasks as WorkerTaskResult[];
+      expect(rows.map((r) => r.status)).toEqual(["queued", "queued"]);
+      // Two slots of four were free: not a full server.
+      for (const row of rows) {
+        expect(row.hint).not.toMatch(/had no free slot/);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("survives an aborted orchestrator turn without throwing, and reports it as every task cancelled", async () => {
     const controller = new AbortController();
     controller.abort();
