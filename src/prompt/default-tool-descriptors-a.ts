@@ -57,7 +57,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.fs.write",
     summary:
-      "Write or append to a file (may require approval). The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.",
+      "Write or append to a file (may require approval). It always makes a file, never a folder — create an empty folder with the shell (`mkdir`), not an empty write. The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.",
     argsSchema: `{ path: string, content: string, mode?: "replace" | "append", overwrite?: boolean /* only when the user asked for that named file to be replaced */ }`,
   },
   {
