@@ -970,6 +970,8 @@ export class AgentClient extends EventEmitter {
   runTask = (id: string) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/run`, undefined, 180_000);
   health = () => this.json<unknown>("/health");
+  /** ATO-134: /health without its llama probe (agent `?llama=0`; an older one ignores it and probes) — for busyTurns before a switch. */
+  turnsHealth = () => this.json<unknown>("/health?llama=0");
   /**
    * `PATCH /api/config` — on 0.6.6+ a deep merge into the user file that
    * the running agent re-reads at once (no restart). Older agents answer

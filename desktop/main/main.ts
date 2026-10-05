@@ -979,6 +979,9 @@ async function shutdownForUpdate(): Promise<boolean> {
   return gone;
 }
 
+/** ATO-134: how long a switch waits for /health's busyTurns (asked without the llama probe, so milliseconds) before it counts the agent busy. */
+const SWITCH_BUSY_CHECK_MS = 5_000;
+
 function wireIpc(client: AgentClient): void {
   // Analytics: chat_turn_ui, one per turn (analytics/chat-turns.ts).
   const chatTurns = new A.ChatTurnTracker((summary) => { A.turnEnded(); A.track("chat_turn_ui", { ...summary }); });
@@ -1900,6 +1903,36 @@ function wireIpc(client: AgentClient): void {
     return clean ? wrap(() => client.runTask(clean)).then((res) => (A.taskAction("run", res), res)) : { ok: false, error: "task id required" };
   });
   ipcMain.handle("agent:health", () => wrap(() => client.health()));
+  /* ATO-134: whether restarting `atag serve` now would cut short a turn this
+     window does not stream — a scheduled task, a Telegram reply, a bot. Every
+     switch restarts it; the window refuses for its own chats
+     (restartStopsTurn) and asks this for the rest, as the updater does
+     (updater.ts agentBusy, fail closed). `turns` is what /health said, null
+     when it said nothing in time or the agent is not up; an answer without
+     `busyTurns` is an agent before 0.6.6, which cannot say, and the window
+     then switches as it did before. */
+  ipcMain.handle("agent:busyAnywhere", async () => {
+    let turns: number | null = null;
+    let answered = false;
+    /* An agent still starting runs no turn yet, and a switch now is what
+       restarts it anyway: unlike an install (agentBusy's fail-closed
+       `starting`), there is nothing for a switch to wait for. */
+    if (client.status.state === "starting") return { busy: false, turns, answered, state: "starting" };
+    const busy = await agentBusy({
+      liveTurns: 0,      // the window's own: it refuses for those itself
+      download: false,   // a download is an atag child of its own, which no restart of serve touches
+      agentState: client.status.state,
+      agentAlive: client.pid !== null,
+      health: async () => {
+        const h = (await client.turnsHealth()) as { busyTurns?: unknown } | null;
+        answered = true;
+        if (typeof h?.busyTurns === "number" && Number.isFinite(h.busyTurns)) turns = h.busyTurns;
+        return h;
+      },
+      timeoutMs: SWITCH_BUSY_CHECK_MS,
+    });
+    return { busy, turns, answered, state: client.status.state };
+  });
   // 0.6.6 live routes: MCP restart / enable / disable and the deep-merge config patch.
   wireAgentLiveIpc(client);
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.

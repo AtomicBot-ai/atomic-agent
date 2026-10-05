@@ -913,7 +913,17 @@ const SWX = { pending:0, since:0, label:'', want:null, err:null, timer:null, pai
      one already given up on touches nothing of the next; `slow` is a local
      model start past SWX_MAX_MS, still waited for (swxWatchdog); `tick`
      counts its seconds on the composer's line. */
-  seq:0, slow:false, tick:null };
+  seq:0, slow:false, tick:null,
+  /* ATO-134: the switch holding its lock while the agent finishes a turn this
+     window does not stream (a scheduled task, a Telegram reply), or null.
+     See swxHoldIfBusy. */
+  hold:null };
+/* ATO-134: how often a held switch asks the agent again, and how long it
+   waits in all before it gives up and switches nothing. An agent that does
+   not answer at all is waited for only `unansweredMs`: it is stuck, and the
+   restart a switch makes is the way out of that, so the switch then goes.
+   An object, so the smoke (t112) can shorten them. */
+const SWX_HOLD = { pollMs: 2000, maxMs: 10 * 60 * 1000, unansweredMs: 30000 };
 /* Below this, a switch is over before the eye can see a spinner start. */
 const SWX_SPINNER_DELAY_MS = 150;
 /* The agent client's own health deadline is 30 s and always resolves
@@ -3216,6 +3226,17 @@ function composer() {
     /* ATO-194: a local model start says what it is waiting on, and for how
        long, where the send button is locked. The only progress there is to
        know is the time: `models start` prints nothing until the model is up. */
+    /* ATO-134: a switch waiting for a turn the window does not stream. It
+       says what it waits for, and offers to go now (that reply then ends)
+       or not at all. */
+    : SWX.hold
+    ? '<div class="statusstrip gated swxhold">'
+      + '<span class="ss-ic warn">' + ic('clock') + '</span>'
+      + '<span class="ss-text">' + esc(swxHoldLine()) + '</span>'
+      + '<span class="ss-grow"></span>'
+      + '<span class="readout">' + esc(swxHoldElapsed()) + '</span>'
+      + '<button class="btn btn-g xs" data-act="swx:holdnow" title="Switching restarts the agent: what it is answering now ends">Switch now anyway</button>'
+      + '<button class="btn btn-g xs" data-act="swx:holdcancel">Cancel</button></div>'
     : swxStartingShown()
     ? '<div class="statusstrip gated swxstart">'
       + '<span class="ss-ic"><span class="ss-dot"></span></span>'
@@ -5774,6 +5795,9 @@ function act(a) {
   if (a === 'settings:open') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsOpenPane(); render(); settingsPaneEntered(opened); return; }
   // Diagnostics' own verbs (Д56/Д58): copy a value, the details or the log; open the model server's log here.
   if (k === 'diag') { close(); diagAct(v || ''); return; }
+  // ATO-134: the held switch's two ways out (swxHoldIfBusy).
+  if (a === 'swx:holdnow') { if (SWX.hold) SWX.hold.end('now'); return; }
+  if (a === 'swx:holdcancel') { if (SWX.hold) SWX.hold.end('cancel'); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -12982,12 +13006,13 @@ async function obActivateLocal(id) {
  */
 function obFlushDeferredActivate() {
   const id = DL.deferred;
-  if (!id || restartStopsTurn()) return;
+  // ATO-134: nor beside a switch on its way — one held for a scheduled task or a Telegram reply can take minutes.
+  if (!id || restartStopsTurn() || SWX.pending > 0) return;
   DL.deferred = null;
   obActivateLocal(id);
 }
 function obFlushDeferredSoon() {
-  if (!DL.deferred || DL.deferTimer || restartStopsTurn()) return;
+  if (!DL.deferred || DL.deferTimer || restartStopsTurn() || SWX.pending > 0) return;
   DL.deferTimer = setTimeout(() => { DL.deferTimer = 0; obFlushDeferredActivate(); }, 0);
 }
 
@@ -14471,6 +14496,7 @@ async function mpSetModel(model) {
   const res = await swxRun('switching…', {providerId: id, model},
     () => SWXBR.selectCloudModel(id, model));
   MP.busy = false;
+  if (swxSaid(res)) { render(); return; }
   if (!res || !res.ok) {
     MP.err = res && res.needsKey && res.keyInvalid ? savedKeyLine(id)
       : res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not set the model');
@@ -14734,7 +14760,7 @@ function swxSlowLine(label, want) {
 function swxStartsModel(want) { return !!(want && want.backend === 'local'); }
 /** ATO-194: the composer's line while a local model start is on its way, once it has run long enough to be seen. */
 function swxStartingShown() {
-  return SWX.pending > 0 && swxStartsModel(SWX.want) && Date.now() - SWX.since >= SWX_START_LINE_MS;
+  return SWX.pending > 0 && !SWX.hold && swxStartsModel(SWX.want) && Date.now() - SWX.since >= SWX_START_LINE_MS;
 }
 /** How long the start has run, in whole seconds as a clock counts them. */
 function swxStartElapsed() {
@@ -14797,6 +14823,106 @@ function swxWatchdog(label, seq) {
 }
 /** A switch that did what it was for — a local model that did not start (or stop) is a failure, though the write landed. */
 function swxLanded(res) { return !!res && res.ok !== false && res.daemon !== 'start-failed' && res.daemon !== 'stop-failed'; }
+/** A switch that ran nothing and has already said why: refused for a running turn, cancelled, or given up on while it waited (ATO-134). */
+function swxSaid(res) { return !!res && res.ok === false && (res.cancelled === true || res.error === 'a turn is running'); }
+/**
+ * ATO-134 — the turns a switch cannot see from here.
+ *
+ * Backlog 28 made every restarting switch wait for a turn in any chat of this
+ * window (restartStopsTurn). A scheduled task, a Telegram reply or a bot runs
+ * turns the window never streams, and the restart ended them just the same,
+ * silently. Only the agent counts them: /health's busyTurns (0.6.6), asked
+ * through main as the updater asks it (updater.ts agentBusy, fail closed).
+ * Null: nothing is running, or the agent cannot say (one before 0.6.6, which
+ * switches as before). Otherwise `turns` is the count, null when /health did
+ * not answer in time or the agent is not up yet.
+ */
+async function swxAgentBusy() {
+  if (!BR || !BR.agentBusyAnywhere) return null;
+  const r = await BR.agentBusyAnywhere().catch(() => null);
+  if (!r || r.busy !== true) return null;
+  if (r.answered && typeof r.turns !== 'number') return null;
+  return {turns: typeof r.turns === 'number' ? r.turns : null};
+}
+/**
+ * The switch's wait, with its lock and its paint kept, the way the update's
+ * Restart waits for an answer: the send button stays locked (a message sent
+ * now would land on the route being left, and end with it), the composer says
+ * what it waits for, and it goes on its own once the agent is idle. "Switch
+ * now anyway" goes at once and ends that reply; Cancel switches nothing. Past
+ * SWX_HOLD.maxMs it gives up and switches nothing, as a refusal does; an
+ * agent that never answered goes after SWX_HOLD.unansweredMs instead. The
+ * watchdog and the start's ticker are off for the wait and start afresh after
+ * it, so its minutes are not read as a switch gone missing.
+ *
+ * Answers 'go' (nothing ran), 'idle' (it waited, and the agent is idle now),
+ * 'now', 'cancel' or 'timeout'.
+ */
+async function swxHoldIfBusy(label, want, seq) {
+  const busy = await swxAgentBusy();
+  if (!busy || seq !== SWX.seq || SWX.pending === 0) return 'go';
+  return new Promise((resolve) => {
+    if (SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
+    swxTickStop();
+    const hold = {label, want, seq, since: Date.now(), turns: busy.turns, counted: typeof busy.turns === 'number', timer: null, end: null};
+    hold.end = (how) => {
+      if (SWX.hold !== hold) return;
+      if (hold.timer) { clearTimeout(hold.timer); hold.timer = null; }
+      SWX.hold = null;
+      if (how === 'idle' || how === 'now') {
+        SWX.since = Date.now();
+        if (SWX.timer) clearTimeout(SWX.timer);
+        SWX.timer = setTimeout(() => swxWatchdog(label, seq), SWX_MAX_MS);
+        if (swxStartsModel(want)) swxTickStart();
+      }
+      render();
+      resolve(how);
+    };
+    const look = async () => {
+      hold.timer = null;
+      if (SWX.hold !== hold) return;
+      if (Date.now() - hold.since >= SWX_HOLD.maxMs) { hold.end('timeout'); return; }
+      const still = await swxAgentBusy();
+      if (SWX.hold !== hold) return;
+      if (!still) { hold.end('idle'); return; }
+      // Never an answer since the wait began: an agent that is stuck, which the switch's restart is for.
+      if (still.turns === null && !hold.counted && Date.now() - hold.since >= SWX_HOLD.unansweredMs) { hold.end('now'); return; }
+      if (typeof still.turns === 'number') hold.counted = true;
+      hold.turns = still.turns;
+      // In place: a render under the composer would move the caret of a draft being typed.
+      const strip = document.querySelector('.statusstrip.swxhold');
+      if (strip) {
+        const text = strip.querySelector('.ss-text'), clock = strip.querySelector('.readout');
+        if (text) text.textContent = swxHoldLine();
+        if (clock) clock.textContent = swxHoldElapsed();
+      }
+      hold.timer = setTimeout(look, SWX_HOLD.pollMs);
+    };
+    SWX.hold = hold;
+    hold.timer = setTimeout(look, SWX_HOLD.pollMs);
+    // Settings and setup cover the composer, where the line and its buttons are.
+    if (S.settings || OB.open) toast('Waiting to switch', swxHoldLine() + '. The way out is under the message box.');
+    render();
+  });
+}
+/** What a held switch waits for, in words. */
+function swxHoldLine() {
+  const h = SWX.hold;
+  if (!h) return '';
+  return (typeof h.turns === 'number' && h.turns > 0
+    ? 'Waiting for a scheduled task / Telegram reply to finish'
+    : 'Waiting for the agent to answer') + ', then switching';
+}
+function swxHoldElapsed() {
+  const s = SWX.hold ? Math.max(0, Math.round((Date.now() - SWX.hold.since) / 1000)) : 0;
+  return s < 60 ? s + ' s' : dur(s * 1000);
+}
+/** The composer's line for a held switch given up on. */
+function swxHoldGaveUpLine(label) {
+  const mins = Math.round(SWX_HOLD.maxMs / 60000);
+  return String(label || 'the switch').replace(/[…\.\s]+$/, '') + ' — not switched: a scheduled task or Telegram reply was still running after '
+    + (mins >= 1 ? mins + ' min' : Math.round(SWX_HOLD.maxMs / 1000) + ' s') + '. Switch again once it ends.';
+}
 /**
  * Backlog 28 — would restarting `atag serve` now stop a turn, and whose?
  *
@@ -14832,6 +14958,8 @@ function restartStopsTurn() {
 /** What a refusal says about a turn in another chat ('' for the chat on screen). */
 function restartStopsLine(held) {
   if (!held || held.here) return '';
+  // ATO-134: a turn the agent runs for itself, which only its /health counts.
+  if (held.elsewhere) return 'A scheduled task or Telegram reply is still running. Wait for it to finish, then switch.';
   return (held.title ? '“' + clipWords(held.title, 48) + '” is' : 'Another chat is')
     + ' still answering. Wait for it to finish or stop it, then switch.';
 }
@@ -14868,10 +14996,11 @@ async function swxRun(label, want, run, refuse) {
      would name the wrong reason. */
   if (SWX.pending > 0) {
     toast('One switch at a time',
-      String(SWX.label || 'the switch').replace(/[…\.\s]+$/, '') + ' has not finished yet', 'bad');
+      String(SWX.label || 'the switch').replace(/[…\.\s]+$/, '')
+        + (SWX.hold ? ' is waiting for the agent to finish. Cancel it, or switch now anyway' : ' has not finished yet'), 'bad');
     return {ok:false, error:'a switch is already running'};
   }
-  const t0 = Date.now();
+  let t0 = Date.now();
   /* r5 review (blocker): the agent generation the switch STARTED on. A
      restart advances AGENT_GEN, and swxSettle holds the lock until a mode
      reply from a generation past this one lands. Captured before `run()`
@@ -14893,6 +15022,30 @@ async function swxRun(label, want, run, refuse) {
   render();
   let res = null;
   try {
+    /* ATO-134: a turn the window does not stream — a scheduled task, a
+       Telegram reply — ends with the restart as well. The switch keeps its
+       lock and its paint and waits for it (swxHoldIfBusy), as the update's
+       Restart does. The coding mode restarts nothing. */
+    const how = want && want.route === false ? 'go' : await swxHoldIfBusy(label, want, seq);
+    if (how === 'cancel' || how === 'timeout') {
+      if (how === 'timeout') {
+        const elsewhere = {here:false, title:'', elsewhere:1};
+        if (refuse) refuse(elsewhere); else restartRefusedToast(elsewhere);
+        if (seq === SWX.seq) SWX.err = swxHoldGaveUpLine(label);
+      } else toast('Switch cancelled', 'Nothing was changed');
+      res = {ok:false, error:'a turn is running', cancelled: how === 'cancel'};
+      return res;
+    }
+    if (how === 'idle' || how === 'now') {
+      t0 = SWX.since;   // its time is the switch's own, not the wait's
+      // A chat's turn that began while the switch waited is refused as before (Backlog 28).
+      const late = restartStopsTurn();
+      if (late) {
+        if (refuse) refuse(late); else restartRefusedToast(late);
+        res = {ok:false, error:'a turn is running'};
+        return res;
+      }
+    }
     res = await run();
     // The IPC has resolved. That is one of three things, not the end.
     await swxSettle(res, gen0);
@@ -15308,6 +15461,7 @@ async function selActivate(row) {
     const res = await swxRun(BSW.line, {providerId: row.id, model: row.defaultChatModel || row.model || ''},
       () => SWXBR.activateProvider(row.id));
     SEL.busy = false; BSW.line = '';
+    if (swxSaid(res)) { render(); return; }
     if (!res || !res.ok) {
       if (res && res.needsKey) { bswOpenKey(row.id, res.keyInvalid); return; }
       // U29: no model yet; its model list is the next step, as on success.
@@ -15353,6 +15507,7 @@ async function selActivate(row) {
     const res = await swxRun(BSW.line, {backend:'local', model: row.id},
       () => SWXBR.selectLocalModel(row.id));
     SEL.busy = false; BSW.line = '';
+    if (swxSaid(res)) { render(); return; }
     if (!res || !res.ok) {
       if (res && res.needsDownload) { selPull(row.id); return; }
       SEL.err = (res && res.error) || 'could not select the model'; render(); return;
@@ -16497,6 +16652,7 @@ async function selChooseBackend(id) {
   const want = predicted ? {backend:id, model:predicted} : {backend:id};
   const res = await swxRun(BSW.line, want, () => SWXBR.switchBackend(id));
   SEL.busy = false; BSW.line = '';
+  if (swxSaid(res)) { render(); return res; }
   if (!res || !res.ok) {
     /* ATO-161: no provider yet opens the wizard's list, which checks the key before it saves anything. */
     if (res && res.needsProvider) { if (!SEL.open) openSelector('provider'); SEL.kind = 'provider'; act('sel:add'); return res; }
@@ -16696,6 +16852,7 @@ function fzQueuedWhen() {
   if (why === 'turn') return 'the running turn ends';
   if (why === 'queue') return 'the queued messages are sent';
   if (why === 'setup') return 'setup is closed';
+  if (SWX.hold) return 'the switch ahead of it has gone through';
   const m = /^starting (.+?)…?$/.exec(String(SWX.label || ''));
   return m ? m[1] + ' is up' : 'the switch in progress finishes';
 }
@@ -17471,6 +17628,7 @@ async function applySessionModelStamp() {
     () => (cloud && stamp.chatModel && BR.selectCloudModel
       ? SWXBR.selectCloudModel(stamp.providerId, stamp.chatModel)
       : SWXBR.activateProvider(stamp.providerId)));
+  if (swxSaid(res)) return;
   if (!res || res.ok === false) { toast('Could not switch', (res && res.error) || ''); return; }
   bswReport(res);
   CTX055.stamp = null;
@@ -17966,6 +18124,8 @@ async function wizNextStep() {
   const sel = await swxRun('switching…', {providerId: id, model},
     () => SWXBR.selectCloudModel(id, model),
     () => { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); });
+  if (sel && sel.cancelled) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, not activated: the switch was cancelled'; render(); refreshLiveConfig(); return; }
+  if (swxSaid(sel)) { refreshLiveConfig(); return; }
   if (!sel || !sel.ok) {
     WIZ.phase = 'configure';
     WIZ.error = sel && sel.needsKey && sel.keyInvalid ? savedKeyLine(id)
@@ -22865,6 +23025,7 @@ async function llmSwitchProvider(id) {
     () => SWXBR.activateProvider(id),
     (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
   LLMP.busy = false;
+  if (swxSaid(res)) { llmRepaint(); return false; }
   // U29: no model yet; the provider's setup ends on its model step.
   if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
   if (!res || !res.ok) {
@@ -22892,6 +23053,7 @@ async function llmSelectChatModel(pid, modelId) {
     () => SWXBR.selectCloudModel(pid, modelId),
     (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
   LLMP.busy = false;
+  if (swxSaid(res)) { llmRepaint(); return; }
   if (!res || !res.ok) {
     llmReport(res && res.needsKey && res.keyInvalid ? savedKeyLine(pid)
       : res && res.needsKey ? 'no API key for ' + pid + ' — add one with n (the wizard) or export its variable' : llmFail('select model failed', res), 'cloud');

@@ -98,7 +98,9 @@ const scenario = (body: string) => `(async () => {
     const run = () => new Promise((res) => { landIt = res; });
     const label = 'starting qwen-3.5-4b…';
     const p = viaRow ? (async () => fzAfter(await swxRun(label, want, run), 'fusion'))() : swxRun(label, want, run);
-    const land = (r) => { if (landIt) landIt(r); };
+    /* ATO-134: the switch asks the agent whether anything is running before
+       its \`run\`, so the load is landed once it has begun. */
+    const land = async (r) => { for (let i = 0; i < 300 && !landIt; i++) await tick(10); if (landIt) landIt(r); };
     lands.push(land);
     return {p, land};
   };
@@ -388,6 +390,7 @@ export async function checks11(js: Js, check: Check): Promise<void> {
       LIVE_CONFIG = ${JSON.stringify(landedFile)}; render();
       const reRead = seats();
       const pending = SWX.pending;
+      for (let i = 0; i < 300 && !release; i++) await tick(10);   // ATO-134: the swap's run begins after its busy check
       release({ok: true});
       await tick(300);
       return {pressed, inFlight, reRead, done: seats(), calls: calls.length, pending};

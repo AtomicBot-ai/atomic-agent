@@ -36,6 +36,11 @@ export function isLoopback(remoteAddress: string | undefined): boolean {
  * one response answers identity, abandonment and idleness, which is
  * what keeps the sweep from ever signalling on a recycled pid.
  *
+ * `?llama=0` leaves the llama probe out: the caller asks only after the
+ * agent itself — the desktop asks `busyTurns` before every switch, and a
+ * closed model-server port costs about two seconds to refuse on Windows.
+ * `status` is then the sidecar's own (`ok`), and `llama.reachable` is null.
+ *
  * They are answered **only to loopback**. `workingDir` is static
  * configuration, but `busyTurns` is live behaviour — on `--host 0.0.0.0`
  * it would be an activity oracle for the whole network, which is a new
@@ -44,11 +49,13 @@ export function isLoopback(remoteAddress: string | undefined): boolean {
  */
 export function createHealthHandler(): HttpHandler {
   return async (req, res, ctx) => {
-    const llama = await checkLlamaServer({ retries: 0 });
-    const strict =
-      new URL(req.url ?? "/", "http://localhost").searchParams.get("strict") ===
-      "1";
-    const degraded = !llama.reachable;
+    const params = new URL(req.url ?? "/", "http://localhost").searchParams;
+    const llama =
+      params.get("llama") === "0"
+        ? { reachable: null, latencyMs: null, error: null }
+        : await checkLlamaServer({ retries: 0 });
+    const strict = params.get("strict") === "1";
+    const degraded = llama.reachable === false;
     sendJson(res, degraded && strict ? 503 : 200, {
       status: degraded ? "degraded" : "ok",
       runtime: "atomic-agent",

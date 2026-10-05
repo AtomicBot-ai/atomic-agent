@@ -204,6 +204,8 @@ async function localStart(js: Js, check: Check): Promise<void> {
   const r = await safe<R>(js, `(async () => {
     if (S.busy || S.pending || RUNNING.size > 0 || SWX.pending || OPENING) return {skipped: true};
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+    // ATO-134: a switch asks the agent whether anything is running before its \`run\`; this waits for the run to have begun.
+    const begun = async (get) => { for (let i = 0; i < 300 && !get(); i++) await tick(10); return get(); };
     const keep = {err: SWX.err, times: Object.assign({}, SWX.times), lastMs: SWX.lastMs, cfg: LIVE_CONFIG, owed: DRAIN_OWED};
     DRAIN_OWED = false;
     try {
@@ -223,7 +225,7 @@ async function localStart(js: Js, check: Check): Promise<void> {
       const gaveUp = {pending: SWX.pending, err: SWX.err, wantKept: !!SWX.want, tick: !!SWX.tick};
       await tick(150);   // the config read (a stand-in: could not read) lets go of the paint
       const afterRead = {want: SWX.want};
-      land({ok: true});
+      (await begun(() => land))({ok: true});
       await p;
       const landed = {err: SWX.err, pending: SWX.pending, want: SWX.want};
 
@@ -234,10 +236,10 @@ async function localStart(js: Js, check: Check): Promise<void> {
       clearTimeout(SWX.timer); swxWatchdog('smoke t108 A…', SWX.seq);
       const pB = swxRun('smoke t108 B…', {providerId: '${PREFIX}b'}, () => new Promise((res) => { landB = res; }));
       await tick(20);
-      landA({ok: false, error: 'smoke t108: A failed late'});
+      (await begun(() => landA))({ok: false, error: 'smoke t108: A failed late'});
       await pA;
       const mid = {pending: SWX.pending, timer: !!SWX.timer, want: SWX.want ? SWX.want.providerId || null : null, err: SWX.err};
-      landB({ok: true});
+      (await begun(() => landB))({ok: true});
       await pB;
       const end = {pending: SWX.pending, timer: !!SWX.timer, err: SWX.err};
       return {started, slow, gaveUp, afterRead, landed, mid, end};
