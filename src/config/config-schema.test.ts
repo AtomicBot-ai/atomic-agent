@@ -533,6 +533,58 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/web.search.fallback/);
   });
 
+  it("accepts anysearch as a web search provider with defaults", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: { search: { provider: "anysearch" } },
+    });
+    expect(parsed.web.search.provider).toBe("anysearch");
+    expect(parsed.web.search.anysearch).toEqual({
+      endpoint: "https://api.anysearch.com/v1/search",
+      apiKeyEnv: "ANYSEARCH_API_KEY",
+      zone: null,
+      language: null,
+    });
+  });
+
+  it("accepts anysearch zone/language overrides", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: {
+        search: {
+          provider: "anysearch",
+          anysearch: { zone: "cn", language: "zh-CN" },
+        },
+      },
+    });
+    expect(parsed.web.search.anysearch.zone).toBe("cn");
+    expect(parsed.web.search.anysearch.language).toBe("zh-CN");
+  });
+
+  it("rejects an invalid anysearch zone", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        web: {
+          search: {
+            provider: "anysearch",
+            anysearch: { zone: "us" },
+          },
+        },
+      }),
+    ).toThrow(/web.search.anysearch.zone/);
+  });
+
+  it("accepts anysearch in the fallback chain", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: {
+        search: { provider: "exa", fallback: ["anysearch", "duckduckgo"] },
+      },
+    });
+    expect(parsed.web.search.fallback).toEqual(["anysearch", "duckduckgo"]);
+  });
+
   it("accepts user-supplied vision overrides", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

@@ -7,7 +7,12 @@ import {
   parseNonEmptyString,
 } from "./config-primitives.js";
 
-export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
+export type WebSearchProviderName =
+  | "duckduckgo"
+  | "searxng"
+  | "exa"
+  | "brave"
+  | "anysearch";
 
 /**
  * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
@@ -108,6 +113,14 @@ export interface WebSearchConfig {
   brave: {
     apiKeyEnv: string;
   };
+  anysearch: {
+    endpoint: string;
+    apiKeyEnv: string;
+    /** Optional default region for AnySearch (`cn` | `intl`). */
+    zone: string | null;
+    /** Optional default language hint for AnySearch. */
+    language: string | null;
+  };
 }
 
 /**
@@ -150,6 +163,12 @@ export function createWebSearchDefaults(): WebSearchConfig {
     brave: {
       apiKeyEnv: "BRAVE_SEARCH_API_KEY",
     },
+    anysearch: {
+      endpoint: "https://api.anysearch.com/v1/search",
+      apiKeyEnv: "ANYSEARCH_API_KEY",
+      zone: null,
+      language: null,
+    },
   };
 }
 
@@ -171,13 +190,22 @@ export function parseWebSearchProviderName(
     raw === "duckduckgo" ||
     raw === "searxng" ||
     raw === "exa" ||
-    raw === "brave"
+    raw === "brave" ||
+    raw === "anysearch"
   ) {
     return raw;
   }
   throw new ConfigValidationError(
     field,
-    `expected one of duckduckgo|searxng|exa|brave, got ${JSON.stringify(raw)}`,
+    `expected one of duckduckgo|searxng|exa|brave|anysearch, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseAnySearchZone(raw: unknown, field: string): string {
+  if (raw === "cn" || raw === "intl") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected "cn" or "intl", got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -215,6 +243,7 @@ export interface PreparedWebSearchInputs {
   searxng: Record<string, unknown>;
   exa: Record<string, unknown>;
   brave: Record<string, unknown>;
+  anysearch: Record<string, unknown>;
 }
 
 export function prepareWebSearchInputs(
@@ -231,14 +260,16 @@ export function prepareWebSearchInputs(
     (raw.exa as Record<string, unknown> | undefined) ?? {};
   const brave =
     (raw.brave as Record<string, unknown> | undefined) ?? {};
-  return { raw, provider, searxng, exa, brave };
+  const anysearch =
+    (raw.anysearch as Record<string, unknown> | undefined) ?? {};
+  return { raw, provider, searxng, exa, brave, anysearch };
 }
 
 export function parseWebSearchConfig(
   prepared: PreparedWebSearchInputs,
   readDefaults: () => WebSearchConfig,
 ): WebSearchConfig {
-  const { raw, provider, searxng, exa, brave } = prepared;
+  const { raw, provider, searxng, exa, brave, anysearch } = prepared;
   return {
     enabled: parseBool(
       raw.enabled ?? readDefaults().enabled,
@@ -299,6 +330,31 @@ export function parseWebSearchConfig(
         brave.apiKeyEnv ?? readDefaults().brave.apiKeyEnv,
         "web.search.brave.apiKeyEnv",
       ),
+    },
+    anysearch: {
+      endpoint: parseNonEmptyString(
+        anysearch.endpoint ?? readDefaults().anysearch.endpoint,
+        "web.search.anysearch.endpoint",
+      ),
+      apiKeyEnv: parseNonEmptyString(
+        anysearch.apiKeyEnv ?? readDefaults().anysearch.apiKeyEnv,
+        "web.search.anysearch.apiKeyEnv",
+      ),
+      zone:
+        anysearch.zone === null ||
+        anysearch.zone === undefined ||
+        anysearch.zone === ""
+          ? null
+          : parseAnySearchZone(anysearch.zone, "web.search.anysearch.zone"),
+      language:
+        anysearch.language === null ||
+        anysearch.language === undefined ||
+        anysearch.language === ""
+          ? null
+          : parseNonEmptyString(
+              anysearch.language,
+              "web.search.anysearch.language",
+            ),
     },
   };
 }

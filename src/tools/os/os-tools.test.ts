@@ -285,7 +285,7 @@ describe("os.shell.run", () => {
       { cmd: "echo", args: '["hello","world"]' },
       makeCtx(dir),
     );
-    // The string is shaped like a JSON array â€” coerced back to
+    // The string is shaped like a JSON array â€?coerced back to
     // ["hello","world"] so the call proceeds normally instead of
     // silently dropping args.
     expect(result.details.rawArgs).toEqual(["hello", "world"]);
@@ -447,7 +447,7 @@ describe("os.shell.run", () => {
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     // Use a real executable (not a cmd.exe builtin) so the direct-exec
-    // argv path is exercised on Windows too â€” `echo` is a builtin there
+    // argv path is exercised on Windows too â€?`echo` is a builtin there
     // and is deliberately routed through the subshell.
     const result = await tool.run(
       { cmd: "node", args: ["-e", "process.stdout.write('hi')"] },
@@ -569,6 +569,12 @@ describe("registerOsTools", () => {
               apiKeyEnv: "EXA_API_KEY",
             },
             brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+            anysearch: {
+              endpoint: "https://api.anysearch.com/v1/search",
+              apiKeyEnv: "ANYSEARCH_API_KEY",
+              zone: null,
+              language: null,
+            },
           },
         },
         projects: { roots: [] },
