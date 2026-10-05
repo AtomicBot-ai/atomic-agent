@@ -169,7 +169,7 @@ export default async function afterPack(context) {
   const target = targetOf(context);
   const dest = copyAgent(context, target);
   console.log(`agent (${target.slug}) → ${dest}`);
-  // package.json keeps `mac.identity: null`, so a local `npm run dist` is
+  // electron-builder.cjs keeps `mac.identity: null`, so a local `npm run dist` is
   // ad-hoc signed here. CI overrides the identity with the Developer ID
   // certificate (.github/workflows/desktop.yml); electron-builder then signs
   // the app itself after this hook, and an ad-hoc pass first would be wasted.

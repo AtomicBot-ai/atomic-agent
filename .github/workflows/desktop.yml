@@ -16,6 +16,13 @@
 # - Windows, with the DigiCert KeyLocker secrets: the agent binaries are
 #   signed before they are bundled and electron-builder signs the app exe, the
 #   installer and the uninstaller through desktop/scripts/win-sign.cjs.
+#
+# App updates (ATO-229): the repository variable ATAG_UPDATE_FEED_URL, when
+# set, goes into the build (desktop/electron-builder.cjs) and electron-builder
+# also writes the update files (stable-mac.yml + the mac zip, stable.yml,
+# blockmaps); they are uploaded with the installers. Uploading them to the
+# feed is a separate release step, not done here (desktop/README.md
+# "App updates").
 
 name: Desktop packages
 
@@ -54,8 +61,8 @@ jobs:
           # "SecKeychainUnlock: The user name or passphrase you entered is not
           # correct", run 37017546119). macos-15 carries Xcode 26.x too, which
           # the Select Xcode 26 step picks.
-          - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg" }
-          - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe" }
+          - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
           - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
     runs-on: ${{ matrix.os }}
@@ -270,6 +277,9 @@ jobs:
           CSC_KEY_PASSWORD: ${{ matrix.slug == 'darwin-arm64' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
           APPLE_API_KEY_ID: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_KEY_ID || '' }}
           APPLE_API_ISSUER: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_ISSUER || '' }}
+          # ATO-229: empty unless the repository variable is set; then the app checks this feed for updates.
+          ATAG_UPDATE_FEED_URL: ${{ vars.ATAG_UPDATE_FEED_URL }}
+          ATAG_UPDATE_CHANNEL: ${{ vars.ATAG_UPDATE_CHANNEL || 'stable' }}
         run: |
           mac_signing=()
           if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" == "true" ]]; then
