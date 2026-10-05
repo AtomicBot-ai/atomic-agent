@@ -33,6 +33,12 @@ function makeConfig(
           apiKeyEnv: "EXA_API_KEY",
         },
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+        anysearch: {
+          endpoint: "https://api.anysearch.com/v1/search",
+          apiKeyEnv: "ANYSEARCH_API_KEY",
+          zone: null,
+          language: null,
+        },
         ...overrides,
       },
     },
@@ -689,5 +695,51 @@ describe("os.web.search with an Exa primary", () => {
     // A key is set: a key card would not fix anything.
     expect(result.details.keyRequired).toBeUndefined();
     expect(result.summary).toContain("Example Doc");
+  });
+});
+
+describe("AnySearch opt-in surface", () => {
+  it("keeps the default tool description when AnySearch is not selected", () => {
+    const tool = buildOsWebSearchTool({
+      config: makeConfig(),
+      runCommand: makeRunCommand("<html></html>"),
+      lookup: publicLookup,
+    });
+    expect(tool.description).not.toContain("api.anysearch.com");
+    expect(tool.description).toContain("Default provider is Exa");
+  });
+
+  it("mentions the third-party API only when AnySearch is selected", () => {
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "anysearch", fallback: ["duckduckgo"] }),
+      runCommand: makeRunCommand("<html></html>"),
+      lookup: publicLookup,
+    });
+    expect(tool.description).toContain("api.anysearch.com");
+  });
+
+  it("searches via AnySearch when configured as primary", async () => {
+    const body = JSON.stringify({
+      code: 0,
+      data: {
+        results: [
+          {
+            title: "AnySearch Hit",
+            url: "https://example.com/a",
+            snippet: "from anysearch",
+          },
+        ],
+      },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "anysearch", fallback: [] }),
+      runCommand: makeRunCommand(body),
+      lookup: publicLookup,
+    });
+    const result = await tool.run({ query: "hello anysearch" }, makeCtx());
+    expect(result.status).toBe("ok");
+    expect(result.details.provider).toBe("anysearch");
+    expect(result.summary).toContain("AnySearch Hit");
+    expect(result.summary).not.toContain("request_id");
   });
 });

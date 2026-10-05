@@ -33,7 +33,7 @@ export interface MissingSearchKeyWarning {
  * Returns a warning when the configured primary provider needs an API key
  * from the environment and that variable resolves to nothing. Returns `null`
  * for a keyed primary, a primary that runs without a key (`duckduckgo`,
- * `searxng`, and `exa` on its free tier), or when search is
+ * `searxng`, `anysearch`, and `exa` on its free tier), or when search is
  * disabled outright.
  */
 export function checkMissingSearchKey(input: {

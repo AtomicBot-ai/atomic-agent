@@ -283,7 +283,7 @@ function buildProviderChain(
 
 /**
  * `searxng` needs an `instanceUrl`; `brave` needs its API key in the env.
- * `duckduckgo` and `exa` are always attempted.
+ * `duckduckgo`, `exa`, and opt-in `anysearch` are always attempted.
  *
  * Exa without a key goes through its public MCP endpoint. ATO-120 (#609)
  * skipped it, because that tier answers 429 under load; but that left
@@ -307,6 +307,7 @@ function isProviderUsable(
       return typeof key === "string" && key.length > 0;
     }
     case "exa":
+    case "anysearch":
     case "duckduckgo":
       return true;
   }
