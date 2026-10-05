@@ -117,6 +117,10 @@ import { abortableSubcall } from "./abortable-subcall.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
+import {
+  sessionGroundingSource,
+  verifyProfileNameFacts,
+} from "../memory/name-grounding.js";
 import { LessonStore } from "../memory/lessons/lesson-store.js";
 import { ProcedureStore } from "../memory/procedures/procedure-store.js";
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
@@ -1721,6 +1725,26 @@ export async function createAgentRuntime(
   registerGithubTools(toolRegistry, dangerous);
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
+  // ATO-199. Every stored user message, newest session first — the only
+  // source a stored name is checked against. Then check, once, every
+  // name-like profile fact no check has looked at yet (an older build
+  // stored names the user never wrote), and re-check the ones found
+  // ungrounded against the sessions written since. Not awaited: until a
+  // name is vouched for it simply stays out of `### profile`. A store
+  // closed under the walk (shutdown) ends it with a warning, nothing
+  // more; nothing is ever deleted.
+  const nameGroundingSource = sessionGroundingSource(sessionStore);
+  if (config.memory.profile.enabled) {
+    void verifyProfileNameFacts({
+      store: profileStore,
+      source: nameGroundingSource,
+      logger,
+    }).catch((err: unknown) => {
+      logger.warn("profile name check failed; unchecked names stay out of the prompt", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
   registerMemoryTools(toolRegistry, {
     profileStore,
     profileEnabled: config.memory.profile.enabled,
@@ -2723,7 +2747,7 @@ export async function createAgentRuntime(
     // lazy restore for a switch back to a local provider (issue #112).
     localBackend,
     ...(config.memory.profile.enabled
-      ? { profileFactsProvider: () => profileStore.list() }
+      ? { profileFactsProvider: () => profileStore.listForPrompt() }
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
     // v2.5 (Phase B). Sliding-window reflection
@@ -3260,7 +3284,7 @@ export async function createAgentRuntime(
       suppressReasoningPrefill: transport === "native_tools",
       contextWindow: resolveCatalogContextWindow(),
       ...(config.memory.profile.enabled
-        ? { profileFacts: profileStore.list() }
+        ? { profileFacts: profileStore.listForPrompt() }
         : {}),
       ...(input.userMessage !== undefined
         ? { userMessage: input.userMessage }

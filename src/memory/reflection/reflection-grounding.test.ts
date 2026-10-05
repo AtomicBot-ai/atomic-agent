@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   filterUngroundedReflection,
-  isNameProfileKey,
   isTrivialReflectionWindow,
+  nameGroundingIn,
 } from "./reflection-grounding.js";
 import type { ReflectionFact, ReflectionNote } from "./reflection-parser.js";
 
@@ -467,13 +467,26 @@ describe("filterUngroundedReflection — re-review regressions", () => {
   });
 });
 
-describe("isNameProfileKey", () => {
-  it("recognises name-like keys and nothing else", () => {
-    for (const key of ["name", "full_name", "first_name", "user_name", "nickname", "username"]) {
-      expect(isNameProfileKey(key)).toBe(true);
-    }
-    for (const key of ["timezone", "project_name_style", "language", "deploy_command"]) {
-      expect(isNameProfileKey(key)).toBe(false);
-    }
+describe("nameGroundingIn", () => {
+  it("grounds a name the user wrote, in any of the forms the filter accepts", () => {
+    expect(nameGroundingIn("Nadya", ["Меня зовут Надя"])).toBe("grounded");
+    expect(nameGroundingIn("Надя", ["зови меня надей"])).toBe("grounded");
+    expect(nameGroundingIn("Nadia Rodionova", ["I'm Nadia Rodionova"])).toBe("grounded");
+  });
+
+  // ATO-199 field case: `name = Анна`, in none of the user's messages.
+  it("calls a name no user message carries ungrounded", () => {
+    expect(nameGroundingIn("Анна", ["Отвечай на русском", "сделай макет"])).toBe(
+      "ungrounded",
+    );
+    expect(nameGroundingIn("Nadia Smith", ["My name is Nadia"])).toBe("ungrounded");
+    expect(nameGroundingIn("Anna", [])).toBe("ungrounded");
+  });
+
+  it("fails open on a script it cannot compare", () => {
+    expect(nameGroundingIn("Xiaoming", ["我叫小明，请记住"])).toBe("unverifiable");
+    expect(nameGroundingIn("小明", ["hello"])).toBe("unverifiable");
+    // Nothing to compare at all: no verdict either way.
+    expect(nameGroundingIn("J", ["hello"])).toBe("unverifiable");
   });
 });

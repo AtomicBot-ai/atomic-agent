@@ -54,6 +54,37 @@ CREATE INDEX IF NOT EXISTS idx_sessions_updated_id ON sessions(updated_at DESC, 
 
 const COUNT_UNREADABLE_SQL = `SELECT COUNT(*) AS n FROM sessions WHERE NOT json_valid(payload)`;
 
+/**
+ * The user messages and closing replies of one session, in transcript
+ * order, lifted out of the JSON in SQL with the summary page's guards
+ * (see `session-summary-page.ts`). The `CASE` hands `json_each` an empty
+ * document for a payload it cannot walk — a guard in `WHERE` would not
+ * do, since `json_each` sits in the join, not in a subquery the `WHERE`
+ * can short-circuit — and `t.type = 'object'` keeps `json_extract` off
+ * elements that are not objects. Tool calls, tool results and progress
+ * notes are left out; a JSON `true` reads back as `1`.
+ */
+const CHAT_LINES_SQL = `
+SELECT json_extract(t.value, '$.kind') AS kind,
+       json_extract(t.value, '$.text') AS text
+  FROM sessions AS s,
+       json_each(CASE WHEN json_valid(s.payload)
+                       AND json_type(s.payload, '$.turns') = 'array'
+                      THEN s.payload ELSE '{}' END,
+                 '$.turns') AS t
+ WHERE s.id = ?
+   AND t.type = 'object'
+   AND json_extract(t.value, '$.kind') IN ('user', 'assistant_reply')
+   AND json_type(t.value, '$.text') = 'text'
+   AND json_extract(t.value, '$.progressNote') IS NOT 1
+ ORDER BY t.key ASC`;
+
+/** One line of `listChatLines`. */
+export interface SessionChatLine {
+  kind: "user" | "assistant_reply";
+  text: string;
+}
+
 const LIVE_STATUS_SQL_LIST = LIVE_SESSION_STATUSES.map(
   (status) => `'${status}'`,
 ).join(", ");
@@ -194,6 +225,7 @@ export class SessionStore {
   private readonly summaryFirstPageStmt: Database.Statement;
   private readonly summaryNextPageStmt: Database.Statement;
   private readonly countUnreadableStmt: Database.Statement;
+  private readonly chatLinesStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
   private readonly finishTurnStmt: Database.Statement;
   /**
@@ -282,6 +314,7 @@ export class SessionStore {
     this.summaryFirstPageStmt = this.db.prepare(SUMMARY_FIRST_PAGE_SQL);
     this.summaryNextPageStmt = this.db.prepare(SUMMARY_NEXT_PAGE_SQL);
     this.countUnreadableStmt = this.db.prepare(COUNT_UNREADABLE_SQL);
+    this.chatLinesStmt = this.db.prepare(CHAT_LINES_SQL);
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
     this.finishTurnStmt = withMarks
       ? this.db.prepare(
@@ -646,6 +679,16 @@ export class SessionStore {
       : this.summaryFirstPageStmt;
     const rows = stmt.all(summaryPageParams(options)) as SummaryRow[];
     return rows.map(toSummary);
+  }
+
+  /**
+   * The user messages and closing replies of one stored session, in
+   * order — what the profile's name check reads (ATO-199). Projected in
+   * SQL, so a long transcript's tool output is never parsed; empty for
+   * an unknown id or a payload that will not parse.
+   */
+  listChatLines(id: string): SessionChatLine[] {
+    return this.chatLinesStmt.all(id) as SessionChatLine[];
   }
 
   /** Rows whose payload is not valid JSON — the ones every reader skips. */

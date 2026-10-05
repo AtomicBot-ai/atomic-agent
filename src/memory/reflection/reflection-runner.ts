@@ -5,6 +5,10 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { NeighborEvolver } from "../evolution/neighbor-evolver.js";
 import { MemoryStore, MemoryValidationError } from "../memory-store.js";
 import { ProfileStore, ProfileValidationError } from "../profile-store.js";
+import {
+  isNameProfileKey,
+  type NameGroundingStatus,
+} from "../profile-name-keys.js";
 
 import { REFLECTION_GRAMMAR } from "./reflection-grammar.js";
 import { parseReflectionOutput } from "./reflection-parser.js";
@@ -16,6 +20,7 @@ import { buildReflectionPrompt } from "./reflection-prompt.js";
 import {
   filterUngroundedReflection,
   isTrivialReflectionWindow,
+  nameGroundingIn,
 } from "./reflection-grounding.js";
 
 export interface ReflectionInput {
@@ -422,6 +427,7 @@ export function createReflectionRunner(
         deps.maxFactsPerCall,
         input.sessionId,
         deps.logger,
+        userTexts,
       );
       const notesWritten = writeNotes(
         grounded.notes,
@@ -537,6 +543,7 @@ function writeFacts(
   maxPerCall: number,
   sessionId: string,
   logger: StructuredLogger | undefined,
+  userTexts: readonly string[],
 ): number {
   const clamped = facts.slice(0, maxPerCall);
   let written = 0;
@@ -546,6 +553,13 @@ function writeFacts(
         pinned: fact.pinned,
         keywords: [...fact.keywords],
       };
+      // ATO-199. A name that got past the filter is stamped with the
+      // same verdict, so it reaches `### profile` without waiting for
+      // the startup check; a fail-open one says so.
+      if (isNameProfileKey(fact.key)) {
+        (opts as { nameGrounding?: NameGroundingStatus }).nameGrounding =
+          nameGroundingIn(fact.value, userTexts);
+      }
       if (typeof fact.supersedes === "string" && fact.supersedes.length > 0) {
         (opts as { supersedesKey?: string }).supersedesKey = fact.supersedes;
       }

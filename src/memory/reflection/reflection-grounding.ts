@@ -65,6 +65,8 @@
  * payload or one-off tool restriction passes through untouched.
  */
 
+import { isNameProfileKey } from "../profile-name-keys.js";
+import type { NameGroundingStatus } from "../profile-name-keys.js";
 import type { ReflectionFact, ReflectionNote } from "./reflection-parser.js";
 
 /** Why a parsed reflection item was rejected. */
@@ -419,9 +421,6 @@ export function isTrivialReflectionWindow(userTexts: readonly string[]): boolean
 // ---------------------------------------------------------------------------
 // Post-parse grounding filter
 // ---------------------------------------------------------------------------
-
-const NAME_KEY =
-  /^(?:user_|my_)?(?:full_|first_|last_|given_|family_|preferred_|display_|real_|nick_?)?name$|^(?:nickname|username|user_name|alias|handle|user_handle|user_identity|identity)$/;
 
 /**
  * Explicit naming phrases. Every capitalised word after one of these is
@@ -939,7 +938,7 @@ export function filterUngroundedReflection(
   const facts: ReflectionFact[] = [];
   for (const fact of parsed.facts) {
     const text = `${fact.key.replace(/_/g, " ")} ${fact.value}`;
-    const nameWords = NAME_KEY.test(lower(fact.key)) ? nameValueWords(fact.value) : [];
+    const nameWords = isNameProfileKey(fact.key) ? nameValueWords(fact.value) : [];
     const reason = judge(text, nameWords, vocab, oneOff, userTextLower);
     if (reason) {
       dropped.push({ kind: "fact", reason, text: `${fact.key}=${fact.value}` });
@@ -959,7 +958,31 @@ export function filterUngroundedReflection(
   return { facts, notes, dropped };
 }
 
-/** `true` when a profile key names the user (`name`, `full_name`, …). */
-export function isNameProfileKey(key: string): boolean {
-  return NAME_KEY.test(lower(key));
+/**
+ * ATO-199. How the name in a profile value (`name`, `full_name`, …)
+ * compares with `texts` — the user's own messages, never stored profile
+ * values or notes. `grounded` when every word of it is vouched for,
+ * `ungrounded` when one is not, `unverifiable` when a word cannot be
+ * compared (it, or the user's writing, is in a script other than Latin /
+ * Cyrillic) and nothing contradicts it, or when it has no word to
+ * compare at all. Same matching as the reflection
+ * filter, so a value reflection keeps is a value this calls grounded.
+ */
+export function nameGroundingIn(
+  value: string,
+  texts: readonly string[],
+): NameGroundingStatus {
+  const vocab = buildVocabulary({ userTexts: texts });
+  const words = nameValueWords(value);
+  // Nothing to compare ("J", digits): no verdict either way.
+  if (words.length === 0) return "unverifiable";
+  let unverifiable = false;
+  for (const word of words) {
+    if (OTHER_SCRIPT.test(word) || vocab.unverifiable) {
+      unverifiable = true;
+      continue;
+    }
+    if (!isGrounded(word, vocab)) return "ungrounded";
+  }
+  return unverifiable ? "unverifiable" : "grounded";
 }

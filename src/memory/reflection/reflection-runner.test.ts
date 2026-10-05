@@ -879,6 +879,9 @@ describe("createReflectionRunner", () => {
     expect(h.store.list().map((f) => `${f.key}=${f.value}`)).toEqual([
       "name=Nadia",
     ]);
+    // ATO-199: stamped as checked, so it reaches `### profile` at once.
+    expect(h.store.get("name")?.nameGrounding).toBe("grounded");
+    expect(h.store.listForPrompt().map((f) => f.key)).toEqual(["name"]);
     expect(h.notesStore.list().map((n) => n.content)).toEqual([
       "The user prefers TypeScript for new projects",
     ]);
