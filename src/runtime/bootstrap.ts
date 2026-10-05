@@ -3309,6 +3309,7 @@ export async function createAgentRuntime(
         // bare prompt with an empty `content`, so the title has to be
         // asked for the way every other sub-call asks.
         toolTransport: resolveActiveLlmSlice().transport,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
         onError: (err: unknown) =>
           logger.debug("session naming failed", {
             sessionId: state.id,

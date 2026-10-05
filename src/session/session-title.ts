@@ -20,14 +20,88 @@ export const SESSION_TITLE_METADATA_KEY = "title";
  */
 export const SESSION_TITLE_MAX_CHARS = 48;
 
-/** The stored title, or `null` when nothing has named this session. */
+/**
+ * The stored title, or `null` when nothing has named this session.
+ *
+ * A title stored before the namer learned to drop a reasoning model's
+ * thinking (`<think> Thinking Process: 1. **Analyze the Requ…`) is
+ * cleaned on the way out rather than migrated: every reader goes
+ * through here, so existing chats read right without a rewrite. One
+ * that cleans down to nothing reads as unnamed — the session shows its
+ * first prompt again and `shouldNameSession` names it afresh after the
+ * next answered turn.
+ */
 export function readSessionTitle(
   metadata: Record<string, unknown> | undefined,
 ): string | null {
   const raw = metadata?.[SESSION_TITLE_METADATA_KEY];
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (trimmed.length === 0) return null;
+  return carriesReasoning(trimmed) ? sanitizeSessionTitle(trimmed) : trimmed;
+}
+
+/**
+ * Reasoning blocks in the tags local families wrap them in: Qwen and
+ * DeepSeek `<think>`, and the `<thinking>` / `<reasoning>` spellings
+ * other templates use.
+ */
+const REASONING_BLOCK = /<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi;
+const REASONING_OPEN = /<(?:think|thinking|reasoning)>/i;
+const REASONING_CLOSE = /<\/(?:think|thinking|reasoning)>/gi;
+/** Gemma 4's thought channel: `<|channel>thought … <channel|>`. */
+const CHANNEL_BLOCK = /<\|channel>[\s\S]*?<channel\|>/g;
+const CHANNEL_OPEN = "<|channel>";
+const CHANNEL_CLOSE = "<channel|>";
+/** Any other `<|name|>` control token that leaked into the text. */
+const CONTROL_TOKEN = /<\|[a-z_]+\|>/gi;
+/**
+ * Reasoning written out as prose, with no tags around it — what a
+ * thinking model on a raw prompt starts with. There is no answer to
+ * separate from it, so a text that opens this way is all reasoning.
+ */
+const REASONING_PREAMBLE =
+  /^(?:here(?:'s| is) (?:a|my) )?(?:thinking|thought|reasoning) process\s*:/i;
+
+function carriesReasoning(text: string): boolean {
+  return (
+    REASONING_OPEN.test(text) ||
+    /<\/(?:think|thinking|reasoning)>/i.test(text) ||
+    text.includes(CHANNEL_OPEN) ||
+    text.includes(CHANNEL_CLOSE) ||
+    REASONING_PREAMBLE.test(text.replace(/^[\s*#_`]+/, ""))
+  );
+}
+
+/**
+ * The answer with the model's reasoning taken out, or `""` when the
+ * text was nothing but reasoning.
+ *
+ * Seen live on a local Qwen 3.5 4B: titles stored as
+ * `<think> </think> Lighthouse Keeper's Secret Dia…` and
+ * `<think> Thinking Process: 1. **Analyze the Requ…`. Closed blocks go
+ * wherever they sit. A close with no open is a template that prefilled
+ * the open tag, so everything up to it is reasoning. An open that never
+ * closes is reasoning cut off by the token bound: what came before it
+ * is kept, the rest is not an answer.
+ */
+export function stripTitleReasoning(raw: string): string {
+  let text = raw.replace(REASONING_BLOCK, " ").replace(CHANNEL_BLOCK, " ");
+  let lastClose = -1;
+  for (const match of text.matchAll(REASONING_CLOSE)) {
+    lastClose = (match.index ?? 0) + match[0].length;
+  }
+  if (lastClose !== -1) text = text.slice(lastClose);
+  const channelClose = text.lastIndexOf(CHANNEL_CLOSE);
+  if (channelClose !== -1) {
+    text = text.slice(channelClose + CHANNEL_CLOSE.length);
+  }
+  const open = text.search(REASONING_OPEN);
+  if (open !== -1) text = text.slice(0, open);
+  const channelOpen = text.indexOf(CHANNEL_OPEN);
+  if (channelOpen !== -1) text = text.slice(0, channelOpen);
+  text = text.replace(CONTROL_TOKEN, " ").trim();
+  return REASONING_PREAMBLE.test(text.replace(/^[\s*#_`]+/, "")) ? "" : text;
 }
 
 /**
@@ -39,9 +113,16 @@ export function readSessionTitle(
  * because the prompt cannot be enforced and this can.
  */
 export function sanitizeSessionTitle(raw: string): string | null {
-  let text = raw.replace(/\s+/g, " ").trim();
-  text = text.replace(/^(?:title|название|заголовок)\s*[:—-]\s*/i, "");
+  // Reasoning first, while its line breaks and tags are still intact.
+  let text = stripTitleReasoning(raw).replace(/\s+/g, " ").trim();
   text = text.replace(/^#+\s*/, "");
+  text = text.replace(
+    /^[*_]*(?:title|название|заголовок)\s*[:—-]\s*[*_]*\s*/i,
+    "",
+  );
+  // Emphasis around the whole title (`**Fix the chord**`), matching
+  // pairs only, like the quotes below.
+  text = text.replace(/^(\*\*|__|\*|_|`)(.+)\1$/u, "$2").trim();
   // Matching pairs only: a title that legitimately contains one quote
   // keeps it.
   text = text.replace(/^["'«“](.*)["'»”]$/u, "$1");
@@ -82,6 +163,16 @@ export function firstPromptOf(state: SessionState): string | null {
  * point of this call is that it is cheap.
  */
 export const SESSION_TITLE_PROMPT_BUDGET = 1200;
+
+/** System message of the templated naming request. */
+export const SESSION_TITLE_SYSTEM =
+  "You name work sessions. Answer with the title alone.";
+
+/**
+ * Cache key of the rendered naming prefix. `SESSION_TITLE_SYSTEM` is a
+ * constant, so a constant key is as good as its hash.
+ */
+const SESSION_TITLE_PREFIX_KEY = "session-title";
 
 export function buildSessionTitlePrompt(firstPrompt: string): string {
   const clipped =
@@ -188,6 +279,13 @@ export interface SessionTitleDeps {
    * is what most operators run.
    */
   toolTransport?: ToolCallTransport;
+  /**
+   * Whether a grammar link may render the request through the model's
+   * own chat template (default `true`). `false` when the operator set
+   * `localModels.useServerTemplate: "off"` — the switch for a template
+   * that misbehaves — and the raw prompt is sent as before.
+   */
+  serverTemplate?: boolean;
   timeoutMs?: number;
   onError?: (err: unknown) => void;
 }
@@ -230,6 +328,22 @@ export async function generateSessionTitle(
           sessionId,
           grammar: "",
           slotId: deps.slotId(),
+          // Through the model's own chat template with thinking off. On
+          // the raw text a thinking model (Qwen 3.5 seen live) opened a
+          // `<think>` block and the reasoning became the title. Only a
+          // llama-server link reads `chat`; a template without the
+          // switch ignores it, and a server that cannot render falls
+          // back to `prompt` (`ServerTemplateRenderer`).
+          ...(deps.serverTemplate === false
+            ? {}
+            : {
+                chat: {
+                  system: SESSION_TITLE_SYSTEM,
+                  user: text,
+                  prefixHash: SESSION_TITLE_PREFIX_KEY,
+                  enableThinking: false,
+                },
+              }),
         };
   try {
     const result = await deps.complete(request);
