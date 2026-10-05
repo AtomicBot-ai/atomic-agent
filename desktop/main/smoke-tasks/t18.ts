@@ -459,11 +459,11 @@ async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<
     );
     const steady = (s: Record<string, number | null>[], keys = ["main", "scroller", "composer", "greeting", "first"]) => s.length === 5
       && keys.every((k) => s.every((m) => m[k] === s[0]![k]));
-    /* Chat review Д19: the transcript sits on the composer now, so a
-       conversation the card would cover lifts clear of it when the card comes
-       and settles back when it goes (marks 1–3 with the card, 0 and 4
-       without); folding and opening the card move nothing, and the empty chat
-       does not move at all. */
+    /* Chat review Д19: a conversation the card would cover lifts clear of it
+       when the card comes and settles back when it goes (marks 1–3 with the
+       card, 0 and 4 without); folding and opening the card move nothing, and
+       the empty chat does not move at all. Since 06.10 the conversation
+       starts at the top, so a short one does not move either (<=). */
     const chat = g.stillChat;
     const first = (i: number) => chat[i]?.["first"] ?? null;
     const lifted = chat.length === 5 && first(0) !== null && first(1) === first(2) && first(2) === first(3)

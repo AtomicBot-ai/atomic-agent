@@ -11,16 +11,15 @@
    of the explicit drift correction and is lost anyway whenever #scroller is
    rebuilt.
 
-   Chat review (Д19): the column is BOTTOM-anchored, as a chat app keeps its
-   conversation: a short transcript sits on the composer and grows upward, and
-   the first message no longer hangs alone under the toolbar. The scroller is a
-   flex column and the column takes `margin-top:auto`, which is all the free
-   space above a short transcript and nothing once it scrolls, so a long one
-   lays out and scrolls exactly as before (justify-content:flex-end would push
-   an overflowing column's top out of reach). The price is the one the
-   top-anchored column was avoiding: folding a card in a chat too short to
-   scroll moves what is above it, since the column's bottom stays put. Once
-   the transcript scrolls, repaintEntry keeps a card's head still as it did.
+   Nadya, 06.10 (it undoes chat review Д19): the column is TOP-anchored, as
+   ChatGPT and Claude lay a conversation out: the first message stands at the
+   top and the turn grows down from it. Д19 had it sit on the composer
+   (`margin-top:auto`), and with the download card open its lift
+   (--dlcard-chat, below) raised a one-message chat to the middle of the
+   window, the bubble alone in mid-air with "Working…" under it. The empty
+   chat is not this column: its greeting still stands in the middle
+   (.emptychat). A long transcript lays out and scrolls as before, and
+   folding a card in a short one moves nothing above it.
 
    The top fade is a mask on the scroller's own box, so it never moves content
    or changes a measurement; the column's top padding is taller than the fade,
@@ -29,15 +28,15 @@
 #scroller{display:flex;flex-direction:column;
   -webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
   mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px)}
-#scroller > .col720{flex:none;width:100%;max-width:720px;margin:auto auto 0;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
+#scroller > .col720{flex:none;width:100%;max-width:720px;margin:0 auto;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
 /* Backlog 18 review: the download card floats over the bottom-right of the
    transcript. --dlcard-chat (renderer dlCardOverChat) is how far up it reaches
    over this column, so the column's end — the newest reply, an approval's
    buttons — scrolls clear of it. 0 while the card is away or beside the
-   column. A chat too short to scroll takes it too: it sits on the composer
-   (chat review Д19), so it lifts clear of the card, and the folded badge
-   keeps the open card's room. The empty chat has no column: its greeting
-   stays as it is. */
+   column. A chat too short to scroll takes it too; it starts at the top
+   (06.10), so the room only counts once the chat reaches down to the card,
+   and the folded badge keeps the open card's room. The empty chat has no
+   column: its greeting stays as it is. */
 #scroller > .col720{padding-bottom:max(16px, var(--dlcard-chat, 0px))}
 #scroller > .col720 > *{min-width:0}
 
