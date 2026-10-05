@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Readable } from "node:stream";
-import { LineSplitter, structuredLevel } from "./agent-output.js";
+import { LineSplitter, lineLevel } from "./agent-output.js";
 // r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
@@ -512,7 +512,9 @@ export class AgentClient extends EventEmitter {
 
   /** A line of the desktop's own about the agent: the Diagnostics pane and agent.log, and the terminal the app was started from. */
   private say(line: string): void {
-    this.emit("log", { stream: "stderr", line });
+    // ATO-121: tagged by what it says (agent-output lineLevel), not ERR for being on stderr.
+    const level = lineLevel(line);
+    this.emit("log", { stream: "stderr", line, ...(level ? { level } : {}) });
     console.error(line);
   }
 
@@ -621,13 +623,15 @@ export class AgentClient extends EventEmitter {
     this.child = child;
 
     /* Whole lines, however the pipe cut them, each with its level when it is
-       one of the agent's structured log lines (agent-output.ts). What is left
-       when a stream closes is let out too: an agent that died mid-line. */
+       one of the agent's structured log lines, or a line whose shape says it
+       (serve's own `[atomic-agent] …` lifecycle lines, ATO-121; agent-output.ts).
+       What is left when a stream closes is let out too: an agent that died
+       mid-line. */
     const relay = (stream: "stdout" | "stderr", from: Readable | null) => {
       if (!from) return;
       const lines = new LineSplitter((line) => {
         if (!line.trim()) return;
-        const level = structuredLevel(line);
+        const level = lineLevel(line);
         this.emit("log", { stream, line, ...(level ? { level } : {}) });
       });
       from.on("data", (chunk: Buffer) => lines.push(chunk));

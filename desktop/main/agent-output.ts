@@ -8,9 +8,9 @@ import { StringDecoder } from "node:string_decoder";
  * a provider answered. agent.log tagged every stderr line ERR (ATO-121), the
  * console drawer showed every one as a warning, and the 40-line ring a failed
  * smoke check quotes filled with INFO lines that pushed out the one that
- * explained the failure. A structured line now carries its own level; any
- * other stderr line — a crash's stack, Node's warnings, `serve failed: …` —
- * stays ERR.
+ * explained the failure. A structured line now carries its own level, and so
+ * do serve's lifecycle lines and the desktop's own (lineLevel below); any
+ * other stderr line — a crash's stack, `serve failed: …` — stays ERR.
  */
 
 export type AgentLogLevel = "debug" | "info" | "warn" | "error";
@@ -71,6 +71,35 @@ const STRUCTURED_LINE = /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\] (DE
 export function structuredLevel(line: string): AgentLogLevel | null {
   const match = STRUCTURED_LINE.exec(line);
   return match ? (match[1]!.toLowerCase() as AgentLogLevel) : null;
+}
+
+/* ATO-121 (its second half): the lines that are not structured. Serve's own
+   lifecycle lines (`[atomic-agent] serve listening on …`, `SIGTERM received,
+   closing`, `created default config at …`) and the desktop's lines about the
+   agent and the model server (`[desktop] local-llm: the app is stopping the
+   model server…`) were tagged ERR in agent.log as well, and the web search's
+   one-line notice about a missing key along with them; a support report read
+   as a page of errors with none in it. Each is read by its shape now: a
+   lifecycle or desktop line is INFO unless its words say something failed,
+   a notice is WARN, and what is left — a stack, `serve failed: …`, a crash's
+   last words — stays ERR. */
+const FAILED_WORDS = /\b(?:fail(?:ed|s|ure)?|error|errored|could not|cannot|can't|unable to|crash(?:ed)?|refused|not found|timed out|did not|outlived|still (?:not|there)|port closed|times within|starting it again)\b/i;
+const NOTICE_LINE = /^(?:web\.search: |\(node:\d+\) (?:\[[A-Z0-9_]+\] )?\w*Warning: )/;
+
+/**
+ * The level of any one line of the agent's output, or of the desktop's own
+ * about it: a structured line's own, else read off the line's shape (above).
+ * Null for a line nothing says is routine, which agent.log keeps as ERR.
+ */
+export function lineLevel(line: string): AgentLogLevel | null {
+  const structured = structuredLevel(line);
+  if (structured) return structured;
+  // Read without the paths in it: a working folder or a config path named "errors" is not a failure.
+  const words = line.replace(/\S*[\\/]\S*/g, "");
+  if (line.startsWith("[atomic-agent] ")) return FAILED_WORDS.test(words) ? "warn" : "info";
+  if (line.startsWith("[desktop] ")) return FAILED_WORDS.test(words) ? "error" : "info";
+  if (NOTICE_LINE.test(line)) return "warn";
+  return null;
 }
 
 /**

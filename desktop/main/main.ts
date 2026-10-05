@@ -24,7 +24,7 @@ import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
-import { agentLogTag, worthQuoting, type AgentLogLevel } from "./agent-output.js";
+import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
   configGet,
   configSet,
@@ -2153,7 +2153,8 @@ function wireIpc(client: AgentClient): void {
       ? `[desktop] could not start the local model daemon (${r.modelId}): ${r.error ?? "unknown error"}`
       : `[desktop] started the local model daemon (${r.modelId})`;
     console.error(line);
-    send("agent:log", { stream: "stderr", line });
+    const level = lineLevel(line);   // ATO-121
+    send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
     if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
@@ -2306,8 +2307,10 @@ function wireIpc(client: AgentClient): void {
     notify: (notice) => send("app:daemonWatch", notice),
     say: (line) => {
       console.error(line);
-      send("agent:log", { stream: "stderr", line });
-      appendAgentLog(`${new Date().toISOString()} ERR ${line}`);
+      // ATO-121: "the app is stopping the model server…" is INFO, a failed restart ERROR (agent-output lineLevel).
+      const level = lineLevel(line);
+      send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+      appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
     },
     // The llama.cpp update stops the server and replaces its binary: never a moment to bring it back.
     busy: () => settingsUpdate !== null || pullUpdate?.kind === "runtime",
@@ -2335,7 +2338,7 @@ function wireIpc(client: AgentClient): void {
     const line = String(event.line ?? "");
     /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
        INFO lines filled this ring. A structured line is tagged with its own
-       level (agent-output.ts); INFO and DEBUG stay in agent.log and the
+       level, a lifecycle line by its shape (agent-output.ts); INFO and DEBUG stay in agent.log and the
        console drawer but out of the ring, which is for what went wrong. */
     if (worthQuoting(event.level)) {
       AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${line.slice(0, 300)}`);
