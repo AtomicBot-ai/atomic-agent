@@ -2756,7 +2756,32 @@ function toolTense(line, state) {
   const rest = line.slice(mt[1].length);
   if (state === 'run') return forms[mt[1]][0] + rest;
   if (state === 'wait') return 'Waiting for your OK to ' + forms[mt[1]][1] + rest;
-  return (state === 'unk' ? 'Tried to ' : 'Couldn\u2019t ') + forms[mt[1]][1] + rest;
+  return (state === 'unk' ? 'Tried to ' : state === 'held' ? 'Didn\u2019t ' : 'Couldn\u2019t ') + forms[mt[1]][1] + rest;
+}
+/* ATO-181: os.fs.write refusing to replace a file the request names (the
+   agent's overwrite guard, fs-input-guard.ts) is not a failure. The file is
+   left as it is, and the agent edits it in place or asks before replacing
+   it; the card said "Couldn't write test.txt" in red over the guard's own
+   note to the model. Such a call is `held` (toolState): calm words, a muted
+   glyph, no red. 'request' when the person's request names the file,
+   'fanout' for a Fusion worker's declared input, null for anything else — a
+   write that really failed keeps its red. */
+function toolGuardHeld(m) {
+  if (!m || m.name !== 'os.fs.write' || m.ok !== false) return null;
+  const mt = /(?:^|\n)\s*refused: .+? is an input (the request names|this fan-out declared) \(/.exec(String(m.out || ''));
+  return mt ? (mt[1] === 'the request names' ? 'request' : 'fanout') : null;
+}
+/* The held call's line, in words: "test.txt already exists — the agent will
+   ask before replacing it". The file by its name; the guard's own text is
+   inside the expanded part. */
+function toolHeldLine(m) {
+  const a = toolArgsObj(m.args || m.arg);
+  const said = /refused: (.+?) is an input /.exec(String(m.out || ''));
+  const p = a.path != null ? String(a.path) : said ? said[1] : '';
+  const name = p ? '<span class="tl-m">' + esc(wsName(p)) + '</span>' : 'The file';
+  return toolGuardHeld(m) === 'fanout'
+    ? name + ' is an input of this task \u2014 the worker left it as it is'
+    : name + ' already exists \u2014 the agent will ask before replacing it';
 }
 /* The failure, in one line, for a card that failed: the first line of the
    result that says something \u2014 the shell's own `$ cmd` / `exit: N` header and
@@ -2789,15 +2814,18 @@ function toolStatus(state) {
   return state === 'run' ? '<span class="tl-st run" title="Running"><span class="tk-spin"></span></span>'
     : state === 'err' ? '<span class="tl-st err" title="Failed">' + ic('alert') + '</span>'
     : state === 'unk' ? '<span class="tl-st unk" title="The outcome was not recorded">' + ic('minus') + '</span>'
+    : state === 'held' ? '<span class="tl-st held" title="Not replaced: the file was left as it is">' + ic('info') + '</span>'
     : '<span class="tl-st ok" title="Done">' + ic('check') + '</span>';
 }
 /* The ONE place a call's state is decided; the headline's tense, the red
    styling, the error line and the status glyph all read it. `ok === null`
    is still running (or waiting on an approval), `false` failed or was
    denied, and a card reconcileToolCards had to settle itself (`forced`: the
-   store never described it) is `unk` — never drawn as a success. */
+   store never described it) is `unk` — never drawn as a success. A write the
+   overwrite guard held back is `held` (ATO-181, toolGuardHeld): not done, not
+   failed either. */
 function toolState(m) {
-  return m.ok === null ? 'run' : m.ok === false ? 'err' : m.forced ? 'unk' : 'ok';
+  return m.ok === null ? 'run' : m.ok === false ? (toolGuardHeld(m) ? 'held' : 'err') : m.forced ? 'unk' : 'ok';
 }
 /* Calm (S7): a call that is waiting on the approval card under it has not
    started; "Running touch x" above "Allow Atomic Agent to run…?" read as if
@@ -2836,7 +2864,7 @@ function toolCard(m) {
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
       + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
-      + '<span class="nm">' + toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st) + '</span>'
+      + '<span class="nm">' + (st === 'held' ? toolHeldLine(m) : toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st)) + '</span>'
       // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
       // until the store lands, the wall time this window observed. The TUI prints a fabricated
       // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
@@ -17574,10 +17602,10 @@ function groupCard(run) {
        "Couldn't list files · 3 times" when every member failed (and then no
        separate "3 failed"), "Listing files" while one still runs. */
     + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad === run.length ? 'err'
-        : states.every((x) => x === 'unk') ? 'unk' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
+        : states.every((x) => x === 'unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
     + (bad && bad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
-    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('unk') ? 'unk' : 'ok')
+    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }

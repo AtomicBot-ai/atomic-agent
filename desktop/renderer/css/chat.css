@@ -204,6 +204,7 @@
 .tl-st.ok{color:var(--ink-3)}
 .tl-st.err{color:var(--critical)}
 .tl-st.unk{color:var(--ink-3)}
+.tl-st.held{color:var(--ink-3)}
 .tl-st .tk-spin{width:12px;height:12px;border-width:1.5px}
 .cardhead .chev{flex:none;display:flex;color:var(--ink-3)}
 .cardhead .chev svg{width:14px;height:14px}
