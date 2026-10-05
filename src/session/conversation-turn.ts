@@ -42,6 +42,14 @@ export type ConversationTurn =
        * the call that raised it instead of dropping it.
        */
       approvals?: readonly ToolApprovalRecord[];
+      /**
+       * For an `os.fs.read` that returned lines: which file version and
+       * which lines they were. Lets the prompt show a repeat of a read that
+       * is still in view as a pointer to it instead of the same text twice
+       * (`findReadRepeats`). Absent on every other result, and on rows
+       * written before it existed — those always render in full.
+       */
+      read?: ReadTurnIdentity;
       at: number;
     }
   | {
@@ -59,6 +67,24 @@ export type ConversationTurn =
       progressNote?: true;
       at: number;
     };
+
+/**
+ * What an `os.fs.read` result row remembers about the read, taken from the
+ * tool's own coverage detail (`tools/os/fs-read-coverage.ts`): the
+ * symlink-resolved file, a digest of the bytes the read looked at, the
+ * 1-based inclusive range that came back, and whether the lines carried
+ * `LINE_NUMBER|` prefixes. Two rows with the same identity read the same
+ * lines of the same content the same way — the digest, not mtime or size,
+ * is what says "unchanged", so a same-size in-place edit is still a new
+ * version and a touched-but-identical file is not.
+ */
+export interface ReadTurnIdentity {
+  path: string;
+  contentHash: string;
+  startLine: number;
+  endLine: number;
+  numbered: boolean;
+}
 
 /**
  * Whether a turn is a reply that closed its macro-turn. A progress note
@@ -107,6 +133,7 @@ export function toolResultTurn(params: {
   summary: string;
   truncated?: boolean;
   approvals?: readonly ToolApprovalRecord[];
+  read?: ReadTurnIdentity;
   at?: number;
 }): ConversationTurn {
   let turn: ConversationTurn = {
@@ -120,6 +147,7 @@ export function toolResultTurn(params: {
   if (params.approvals !== undefined && params.approvals.length > 0) {
     turn = { ...turn, approvals: [...params.approvals] };
   }
+  if (params.read !== undefined) turn = { ...turn, read: { ...params.read } };
   return turn;
 }
 
@@ -230,6 +258,23 @@ export interface RenderTurnOptions {
    * or the call is out of view), and the hint then carries no number.
    */
   readStartLine?: number;
+  /**
+   * Set when this `os.fs.read` result repeats one that is in the same
+   * prompt — see `findReadRepeats`, the only thing that should set it. The
+   * body then renders as a short pointer to that result instead of the
+   * same text again. Never set it for a row whose earlier read is not in
+   * view: the pointer would name text the model cannot see.
+   */
+  readRepeat?: ReadRepeatRef;
+}
+
+/** Where the full text of a repeated read is, counted in the prompt. */
+export interface ReadRepeatRef {
+  /**
+   * Tool results from the full read up to this one: `1` when it is the
+   * result just before, counting the full read itself.
+   */
+  resultsBack: number;
 }
 
 /**
@@ -250,6 +295,8 @@ export function renderTurnForPrompt(
     }
     case "tool_result": {
       const prefix = `tool_result[${turn.tool} ${turn.status}]`;
+      const stub = readRepeatStub(turn, options);
+      if (stub !== null) return `${prefix}: ${stub}`;
       const body = renderToolResultBody(turn, options);
       return `${prefix}: ${body}${turn.truncated ? " (truncated)" : ""}`;
     }
@@ -271,6 +318,8 @@ export function renderToolResultBody(
   turn: Extract<ConversationTurn, { kind: "tool_result" }>,
   options: RenderTurnOptions,
 ): string {
+  const stub = readRepeatStub(turn, options);
+  if (stub !== null) return stub;
   if (isGogShellResult(turn)) {
     if (options.inCurrentMacroTurn === true)
       return capSummary(turn.summary, GOG_TOOL_RESULT_RENDER_CAP_CHARS);
@@ -312,6 +361,124 @@ export function renderToolResultBody(
     );
   }
   return capSummary(turn.summary, TOOL_RESULT_RENDER_CAP_CHARS);
+}
+
+/**
+ * The body a repeated `os.fs.read` renders as, or `null` when it renders
+ * in full.
+ *
+ * Small local models pay for every token of a re-read file twice — in the
+ * window and in prompt evaluation — and the second copy tells them
+ * nothing: the row carries the same identity (same file version, same
+ * lines, same rendering) and the same stored text as a read still in the
+ * prompt. The pointer says which result holds that text and that it is
+ * still current. A pointer longer than the text it replaces is not used,
+ * and neither is one for a row with no identity (an empty read, an
+ * error, a row from before identities were kept).
+ */
+export function readRepeatStub(
+  turn: Extract<ConversationTurn, { kind: "tool_result" }>,
+  options: RenderTurnOptions,
+): string | null {
+  const ref = options.readRepeat;
+  const read = turn.read;
+  if (ref === undefined || read === undefined || turn.tool !== "os.fs.read") {
+    return null;
+  }
+  const lines = read.endLine - read.startLine + 1;
+  const where =
+    ref.resultsBack <= 1
+      ? "the os.fs.read result just above"
+      : `the os.fs.read result ${ref.resultsBack} tool results above`;
+  const stub =
+    `[unchanged since your earlier read: same ${lines} lines ` +
+    `(${read.startLine}-${read.endLine}), identical text — see ${where}; ` +
+    `not repeated here]`;
+  return stub.length < turn.summary.length ? stub : null;
+}
+
+/**
+ * For each turn, the read it repeats: the index of the latest earlier
+ * `os.fs.read` result with the same identity and the same stored text, or
+ * `-1`.
+ *
+ * Both conditions are needed. The identity says the file version, range
+ * and rendering are the same; the text guards the case the identity does
+ * not see — a batch whose results shared one char budget stores a
+ * different cut of the same read (`agent/batch-summary-cap.ts`), and a
+ * pointer to a shorter cut would hide lines this row has.
+ *
+ * The answer is about the list it is given, so it is only as safe as
+ * that list: called on the turns a prompt actually shows, a repeat
+ * always points at a read the model can see. A cut that drops the
+ * earlier read leaves this row with no earlier match, and it renders in
+ * full again.
+ */
+export function findReadRepeats(
+  turns: readonly ConversationTurn[],
+): number[] {
+  const previous: number[] = new Array<number>(turns.length).fill(-1);
+  const latest = new Map<string, number>();
+  for (let i = 0; i < turns.length; i += 1) {
+    const turn = turns[i];
+    if (
+      turn?.kind !== "tool_result" ||
+      turn.tool !== "os.fs.read" ||
+      turn.status !== "ok" ||
+      turn.read === undefined ||
+      turn.read.startLine < 1
+    ) {
+      continue;
+    }
+    const key = readIdentityKey(turn.read);
+    const before = latest.get(key);
+    if (before !== undefined) {
+      const earlier = turns[before];
+      if (earlier?.kind === "tool_result" && earlier.summary === turn.summary) {
+        previous[i] = before;
+      }
+    }
+    latest.set(key, i);
+  }
+  return previous;
+}
+
+/**
+ * The render reference for every repeat `findReadRepeats` found: how far
+ * back the FIRST read of the chain is, since that is the one rendered in
+ * full — a third identical read points past the second (itself a
+ * pointer) to the text.
+ */
+export function readRepeatRefs(
+  turns: readonly ConversationTurn[],
+  previous: readonly number[] = findReadRepeats(turns),
+): (ReadRepeatRef | undefined)[] {
+  const refs: (ReadRepeatRef | undefined)[] = new Array(turns.length);
+  const origin: number[] = new Array<number>(turns.length);
+  // Tool results before each index, so a distance is one subtraction.
+  const resultsBefore: number[] = new Array<number>(turns.length);
+  let results = 0;
+  for (let i = 0; i < turns.length; i += 1) {
+    resultsBefore[i] = results;
+    if (turns[i]?.kind === "tool_result") results += 1;
+    const prev = previous[i] ?? -1;
+    origin[i] = prev === -1 ? i : (origin[prev] ?? prev);
+    if (prev !== -1) {
+      refs[i] = {
+        resultsBack: resultsBefore[i]! - resultsBefore[origin[i]!]!,
+      };
+    }
+  }
+  return refs;
+}
+
+function readIdentityKey(read: ReadTurnIdentity): string {
+  return [
+    read.path,
+    read.contentHash,
+    `${read.startLine}-${read.endLine}`,
+    read.numbered ? "n" : "p",
+  ].join("\n");
 }
 
 function isGogShellResult(
@@ -543,6 +710,7 @@ export function pairTokenCosts(
   const boundaries = macroTurnBoundaries(turns, recorded);
   if (boundaries.length === 0) return [];
   const currentStart = findCurrentMacroTurnStart(turns);
+  const repeats = readRepeatCosts(turns, currentStart);
   const costs: number[] = [];
   for (let k = 0; k < boundaries.length; k += 1) {
     const from = boundaries[k] ?? 0;
@@ -550,7 +718,16 @@ export function pairTokenCosts(
     let sum = 0;
     for (let i = from; i < to; i += 1) {
       const turn = turns[i];
-      if (turn) sum += tokenCostForTurn(turn, i >= currentStart);
+      if (!turn) continue;
+      // A repeated read is priced as its pointer only when the read it
+      // points at is in the same task, i.e. in view whenever this task is.
+      // One in an earlier task may be cut away first, so it is priced in
+      // full — the projection may run high, never low.
+      const previous = repeats.previous[i] ?? -1;
+      sum +=
+        previous >= from
+          ? (repeats.costs[i] ?? 0)
+          : tokenCostForTurn(turn, i >= currentStart);
     }
     costs.push(sum);
   }
@@ -616,20 +793,54 @@ function heldPackStart(
 /**
  * First index whose suffix costs at most `budget` tokens, walking from
  * the newest turn back. `turns.length` when not even the last turn fits.
+ *
+ * A repeated read costs its full text until the read it repeats joins
+ * the suffix, and its pointer from then on — so taking turn `i` costs
+ * `i` itself minus what every later repeat of `i` stops costing. Those
+ * repeats are always already in the suffix (they come after `i`).
  */
 function startIndexForTokens(
   tokenCosts: readonly number[],
   budget: number,
+  repeats: ReadRepeatCosts,
 ): number {
+  const savings = new Array<number>(tokenCosts.length).fill(0);
+  for (let i = 0; i < tokenCosts.length; i += 1) {
+    const previous = repeats.previous[i] ?? -1;
+    if (previous === -1) continue;
+    savings[previous] =
+      (savings[previous] ?? 0) +
+      (tokenCosts[i] ?? 0) -
+      (repeats.costs[i] ?? 0);
+  }
   let acc = 0;
   let startIndex = tokenCosts.length;
   for (let i = tokenCosts.length - 1; i >= 0; i -= 1) {
-    const cost = tokenCosts[i] ?? 0;
+    const cost = (tokenCosts[i] ?? 0) - (savings[i] ?? 0);
     if (acc + cost > budget) break;
     acc += cost;
     startIndex = i;
   }
   return startIndex;
+}
+
+/**
+ * Token cost of the turns from `from` to the end, as the renderer will
+ * show them: a repeated read whose earlier read is at or after `from`
+ * costs its pointer, any other turn its full rendering.
+ */
+function suffixTokens(
+  tokenCosts: readonly number[],
+  repeats: ReadRepeatCosts,
+  from: number,
+): number {
+  let sum = 0;
+  for (let i = from; i < tokenCosts.length; i += 1) {
+    const previous = repeats.previous[i] ?? -1;
+    sum +=
+      previous >= from ? (repeats.costs[i] ?? 0) : (tokenCosts[i] ?? 0);
+  }
+  return sum;
 }
 
 /**
@@ -684,6 +895,10 @@ export function packConversation(
   const tokenCosts = turns.map((turn, i) =>
     tokenCostForTurn(turn, i >= currentStart),
   );
+  // A repeated read renders as a pointer while the read it repeats is in
+  // view (`findReadRepeats`), so its cost depends on where the cut falls.
+  // Every sum below asks "from this start", never adds up fixed costs.
+  const repeats = readRepeatCosts(turns, currentStart);
   // Once anything is dropped the summary line takes its reserve, so a
   // held cut is measured against the same budget the cut was made to.
   const budget = Math.max(1, maxTokens - SUMMARY_TOKEN_RESERVE);
@@ -691,10 +906,7 @@ export function packConversation(
 
   const held = heldPackStart(options.packStart, turns);
   const floor = held?.index ?? 0;
-  let tokensFromFloor = 0;
-  for (let i = floor; i < tokenCosts.length; i += 1) {
-    tokensFromFloor += tokenCosts[i] ?? 0;
-  }
+  const tokensFromFloor = suffixTokens(tokenCosts, repeats, floor);
   const pairsFromFloor =
     boundaries.length - countDroppedPairs(boundaries, floor, turns.length);
   const tokensOverflow =
@@ -721,6 +933,7 @@ export function packConversation(
           startIndexForTokens(
             tokenCosts,
             Math.max(1, Math.floor(budget * lowWater)),
+            repeats,
           ),
         )
       : floor;
@@ -806,7 +1019,7 @@ export function packConversation(
  */
 const TURN_TOKEN_COST_CACHE = new WeakMap<
   object,
-  { fresh?: number; aged?: number }
+  { fresh?: number; aged?: number; repeat?: number }
 >();
 
 function tokenCostForTurn(
@@ -824,6 +1037,53 @@ function tokenCostForTurn(
   else nextSlot.aged = cost;
   TURN_TOKEN_COST_CACHE.set(key, nextSlot);
   return cost;
+}
+
+/**
+ * Which turns repeat an earlier read, and what each costs while that read
+ * is in view. `costs[i]` is meaningful only where `previous[i] !== -1`.
+ */
+interface ReadRepeatCosts {
+  previous: number[];
+  costs: number[];
+}
+
+/**
+ * Pointer costs for `packConversation` and `pairTokenCosts`.
+ *
+ * Priced with the distance to the first read of the chain in the whole
+ * transcript; once a cut drops that read the pointer names a nearer one,
+ * a difference of a digit or two in a figure that is an estimate anyway.
+ * Memoised beside the full cost, since a turn's pointer does not change
+ * either.
+ */
+function readRepeatCosts(
+  turns: readonly ConversationTurn[],
+  currentStart: number,
+): ReadRepeatCosts {
+  const previous = findReadRepeats(turns);
+  const costs = new Array<number>(turns.length).fill(0);
+  if (!previous.some((p) => p !== -1)) return { previous, costs };
+  const refs = readRepeatRefs(turns, previous);
+  for (let i = 0; i < turns.length; i += 1) {
+    const turn = turns[i];
+    const ref = refs[i];
+    if (!turn || ref === undefined) continue;
+    const key = turn as unknown as object;
+    const slot = TURN_TOKEN_COST_CACHE.get(key) ?? {};
+    if (slot.repeat === undefined) {
+      slot.repeat =
+        estimateTokens(
+          renderTurnForPrompt(turn, {
+            inCurrentMacroTurn: i >= currentStart,
+            readRepeat: ref,
+          }),
+        ) + 1;
+      TURN_TOKEN_COST_CACHE.set(key, slot);
+    }
+    costs[i] = slot.repeat;
+  }
+  return { previous, costs };
 }
 
 /**

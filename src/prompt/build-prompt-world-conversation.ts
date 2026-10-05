@@ -2,6 +2,8 @@ import type { PromptTurn } from "../llm/provider/completion-types.js";
 import type { SessionState } from "../session/session-state.js";
 import {
   findCurrentMacroTurnStart,
+  readRepeatRefs,
+  readRepeatStub,
   readStartLineOf,
   renderToolResultBody,
   renderTurnForPrompt,
@@ -66,7 +68,10 @@ export function packedConversationTurns(packed: PackedTurns): PromptTurn[] {
           tool: turn.tool,
           status: turn.status,
           body: renderToolResultBody(turn, options),
-          truncated: turn.truncated === true,
+          // A pointer is whole as it stands; the read it points at carries
+          // the mark, as on the flat line.
+          truncated:
+            turn.truncated === true && readRepeatStub(turn, options) === null,
         });
         break;
       case "assistant_reply":
@@ -103,9 +108,15 @@ function* packedTurnRenderOptions(
   // call order (a batch may list several calls before their results), so a
   // read cut at render time can name the `offset` of the rest.
   let pendingReadStarts: (number | undefined)[] = [];
+  // A read that repeats one still in this prompt renders as a pointer to
+  // it. Found on the visible turns only, so a pointer can never name a
+  // read the packer cut away — that row renders in full instead.
+  const readRepeats = readRepeatRefs(packed.visibleTurns);
   for (let i = 0; i < packed.visibleTurns.length; i += 1) {
     const turn = packed.visibleTurns[i]!;
     const options: RenderTurnOptions = { inCurrentMacroTurn: i >= currentStart };
+    const readRepeat = readRepeats[i];
+    if (readRepeat !== undefined) options.readRepeat = readRepeat;
     if (turn.kind === "user" || turn.kind === "assistant_reply") {
       pendingReadStarts = [];
     } else if (turn.kind === "assistant_tool_call" && turn.tool === "os.fs.read") {
