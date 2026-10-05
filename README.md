@@ -215,7 +215,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | Area | Capabilities |
 |---|---|
 | **Browser** | Navigate, click, type, search, manage tabs, scroll, and read compact ARIA state via `playwright-core` (Chrome / Edge / Brave / Chromium). |
-| **Web & HTTP** | Web search with configurable providers (Exa, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
+| **Web & HTTP** | Web search with configurable providers (Exa, AnySearch, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
 | **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
@@ -225,7 +225,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Verify** | `verify.syntax` checks files by type and never reports an unchecked file as passing; `verify.run` runs a command, a service or a page against a throwaway copy of the working directory (off macOS, build and dependency folders are linked rather than copied, and a tree over 2 GB runs in place), with checks like `exit 0` or `status 200`. |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
-| **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
+| **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, AnySearch, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
 | **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. |
@@ -696,10 +696,13 @@ NOTION_API_KEY=ntn_xxxxxxxx
 GITHUB_TOKEN=ghp_xxxxxxxx
 TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 EXA_API_KEY=exa_xxxxxxxx
+ANYSEARCH_API_KEY=as_sk_xxxxxxxx
 OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 ```
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
+
+For web search, set `web.search.provider` to `"anysearch"` (or add it to `web.search.fallback`) to use [AnySearch](https://anysearch.com) — anonymous works without a key; see [docs/anysearch.md](docs/anysearch.md).
 
 The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine (`git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike), so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder. The dedicated tools (`os.git.remote`, `fetch`, `pull`, `push`, `clone`) honour the same switch and hand the token to git only for `github.com`, only through the child process's environment (never in a URL, in argv, or in `.git/config`) and scrub it from every line of output.
 

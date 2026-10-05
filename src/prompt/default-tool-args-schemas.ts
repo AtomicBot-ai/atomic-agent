@@ -525,6 +525,12 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       {
         query: stringSchema,
         maxResults: numberSchema,
+        tag: stringSchema,
+        zone: { type: "string", enum: ["cn", "intl"] },
+        language: stringSchema,
+        // JSON-encoded object string — keeps the schema strict-convertible
+        // (open maps are refused by toStrictJsonSchema; see os.http.request).
+        params: stringSchema,
       },
       ["query"],
     ),

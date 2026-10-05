@@ -33,6 +33,12 @@ function makeConfig(
           apiKeyEnv: "EXA_API_KEY",
         },
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+        anysearch: {
+          endpoint: "https://api.anysearch.com/v1/search",
+          apiKeyEnv: "ANYSEARCH_API_KEY",
+          zone: null,
+          language: null,
+        },
         ...overrides,
       },
     },
@@ -317,5 +323,271 @@ describe("buildOsWebSearchTool keyless-provider warning", () => {
     });
 
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("os.web.search AnySearch vertical args", () => {
+  it("forwards tag/params/zone/language to the AnySearch provider body", async () => {
+    const calls: Array<{ input?: string }> = [];
+    const runCommand = (async (
+      _cmd: string,
+      _args: string[],
+      opts: { input?: string },
+    ) => {
+      calls.push({ input: opts.input });
+      return {
+        command: "curl",
+        args: _args,
+        exitCode: 0,
+        signal: null,
+        stdout: curlStdout(
+          JSON.stringify({
+            code: 0,
+            data: {
+              results: [
+                {
+                  title: "Go docs",
+                  url: "https://go.dev/doc",
+                  snippet: "context",
+                },
+              ],
+            },
+          }),
+          200,
+        ),
+        stderr: "",
+        durationMs: 1,
+        timedOut: false,
+        truncated: false,
+      };
+    }) as unknown as typeof RunCommandType;
+
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({
+        provider: "anysearch",
+        fallback: [],
+        anysearch: {
+          endpoint: "https://api.anysearch.com/v1/search",
+          apiKeyEnv: "ANYSEARCH_API_KEY",
+          zone: "intl",
+          language: null,
+        },
+      }),
+      runCommand,
+      lookup: publicLookup,
+      env: {},
+      warn: () => undefined,
+    });
+
+    const result = await tool.run(
+      {
+        query: "Go context cancellation",
+        tag: "code.doc",
+        params: { library: "golang" },
+        language: "en",
+        maxResults: 3,
+      },
+      makeCtx(),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(result.details.provider).toBe("anysearch");
+    expect(result.details.tag).toBe("code.doc");
+    expect(result.details.requestId).toBeUndefined();
+    expect(calls[0]?.input).toContain('"tag":"code.doc"');
+    expect(calls[0]?.input).toContain('"library":"golang"');
+    expect(calls[0]?.input).toContain('"zone":"intl"');
+    expect(calls[0]?.input).toContain('"language":"en"');
+    expect(calls[0]?.input).toContain('"max_results":3');
+  });
+
+  it("exposes AnySearch request_id in the tool summary and details", async () => {
+    const runCommand = (async () => ({
+      command: "curl",
+      args: [],
+      exitCode: 0,
+      signal: null,
+      stdout: curlStdout(
+        JSON.stringify({
+          code: 0,
+          request_id: "rid-tool",
+          data: {
+            results: [
+              {
+                title: "Go docs",
+                url: "https://go.dev/doc",
+                snippet: "context",
+              },
+            ],
+          },
+        }),
+        200,
+      ),
+      stderr: "",
+      durationMs: 1,
+      timedOut: false,
+      truncated: false,
+    })) as unknown as typeof RunCommandType;
+
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({
+        provider: "anysearch",
+        fallback: [],
+      }),
+      runCommand,
+      lookup: publicLookup,
+      env: {},
+      warn: () => undefined,
+    });
+
+    const result = await tool.run(
+      { query: "Go context", maxResults: 3 },
+      makeCtx(),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(result.details.requestId).toBe("rid-tool");
+    expect(result.summary).toContain("request_id: rid-tool");
+  });
+
+  it("accepts params as a JSON object string (strict tool schema form)", async () => {
+    const calls: Array<{ input?: string }> = [];
+    const runCommand = (async (
+      _cmd: string,
+      _args: string[],
+      opts: { input?: string },
+    ) => {
+      calls.push({ input: opts.input });
+      return {
+        command: "curl",
+        args: _args,
+        exitCode: 0,
+        signal: null,
+        stdout: curlStdout(
+          JSON.stringify({
+            code: 0,
+            data: {
+              results: [
+                {
+                  title: "Go docs",
+                  url: "https://go.dev/doc",
+                  snippet: "context",
+                },
+              ],
+            },
+          }),
+          200,
+        ),
+        stderr: "",
+        durationMs: 1,
+        timedOut: false,
+        truncated: false,
+      };
+    }) as unknown as typeof RunCommandType;
+
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({
+        provider: "anysearch",
+        fallback: [],
+        anysearch: {
+          endpoint: "https://api.anysearch.com/v1/search",
+          apiKeyEnv: "ANYSEARCH_API_KEY",
+          zone: null,
+          language: null,
+        },
+      }),
+      runCommand,
+      lookup: publicLookup,
+      env: {},
+      warn: () => undefined,
+    });
+
+    const result = await tool.run(
+      {
+        query: "Go context cancellation",
+        tag: "code.doc",
+        params: '{"library":"golang"}',
+        maxResults: 3,
+      },
+      makeCtx(),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(calls[0]?.input).toContain('"tag":"code.doc"');
+    expect(calls[0]?.input).toContain('"library":"golang"');
+  });
+
+  it("rejects an invalid zone before hitting the network", async () => {
+    const run = vi.fn(makeRunCommand(""));
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "anysearch", fallback: [] }),
+      runCommand: run,
+      lookup: publicLookup,
+      env: {},
+      warn: () => undefined,
+    });
+
+    await expect(
+      tool.run({ query: "q", zone: "us" }, makeCtx()),
+    ).rejects.toThrow(/zone/);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("keeps tagged and plain queries in separate cache entries", async () => {
+    const run = vi.fn(
+      (async (
+        _cmd: string,
+        _args: string[],
+        opts: { input?: string },
+      ) => {
+        const tagged = opts.input?.includes('"tag"');
+        return {
+          command: "curl",
+          args: _args,
+          exitCode: 0,
+          signal: null,
+          stdout: curlStdout(
+            JSON.stringify({
+              code: 0,
+              data: {
+                results: [
+                  {
+                    title: tagged ? "Tagged" : "Plain",
+                    url: "https://example.com",
+                    snippet: "s",
+                  },
+                ],
+              },
+            }),
+            200,
+          ),
+          stderr: "",
+          durationMs: 1,
+          timedOut: false,
+          truncated: false,
+        };
+      }) as unknown as typeof RunCommandType,
+    );
+
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "anysearch", fallback: [] }),
+      runCommand: run,
+      lookup: publicLookup,
+      env: {},
+      warn: () => undefined,
+    });
+
+    const plain = await tool.run({ query: "AAPL" }, makeCtx());
+    const tagged = await tool.run(
+      { query: "AAPL", tag: "finance.quote" },
+      makeCtx(),
+    );
+    expect(plain.summary).toContain("Plain");
+    expect(tagged.summary).toContain("Tagged");
+    expect(run.mock.calls.length).toBe(2);
+
+    const plainAgain = await tool.run({ query: "AAPL" }, makeCtx());
+    expect(plainAgain.details.fromCache).toBe(true);
+    expect(run.mock.calls.length).toBe(2);
   });
 });
