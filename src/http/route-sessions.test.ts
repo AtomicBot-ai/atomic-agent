@@ -29,6 +29,21 @@ describe("/api/sessions", () => {
     expect(ids).toContain(b.id);
   });
 
+  it("carries the stored session title on each list row", async () => {
+    const named = harness.runtime.createSession({
+      metadata: { title: "  Fix the login bug  " },
+    });
+    const unnamed = harness.runtime.createSession();
+    const response = await fetch(`${harness.baseUrl}/api/sessions`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      sessions: Array<{ id: string; title: string | null }>;
+    };
+    const byId = new Map(body.sessions.map((s) => [s.id, s]));
+    expect(byId.get(named.id)?.title).toBe("Fix the login bug");
+    expect(byId.get(unnamed.id)?.title).toBeNull();
+  });
+
   it("returns the full session state for a known id", async () => {
     const session = harness.runtime.createSession();
     const response = await fetch(
