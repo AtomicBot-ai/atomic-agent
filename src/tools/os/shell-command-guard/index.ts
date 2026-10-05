@@ -10,6 +10,7 @@ export {
   readGitSubcommand,
 } from "./rules-policy.js";
 export { basenameCommand } from "./normalise.js";
+export { shellWriteTargets } from "./write-targets.js";
 export type {
   GuardAction,
   GuardInput,

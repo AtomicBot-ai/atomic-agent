@@ -1,6 +1,7 @@
 import { FanoutScopeRegistry } from "./fanout-scope.js";
 import { ReadScopeGrants } from "./read-scope-grants.js";
 import { randomUUID } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 import {
   currentApprovalLedger,
   type ToolApprovalRecord,
@@ -44,6 +45,16 @@ export interface ApprovalRequest {
    * and a host that ignores the field behaves exactly as before.
    */
   redirectablePath?: string;
+  /**
+   * Absolute paths of the files this call would create, change, move or
+   * remove, when the tool can name them: an fs mutation's targets, the
+   * files a shell command line writes, redirects into, moves, copies
+   * onto or removes (`shellWriteTargets`). Read only by the gate's
+   * same-turn rule (`declinedInTurn`): once the user has pressed Deny on
+   * a file tool's call, another call this turn that would change one of
+   * its targets is the same action by another route.
+   */
+  targetPaths?: string[];
 }
 
 /**
@@ -74,6 +85,14 @@ export interface ApprovalDecision {
    * declined only when this is unset (see `describeApprovalDenial`).
    */
   automatic?: boolean;
+  /**
+   * Set with `automatic` when the gate refused the call because the user
+   * already declined it, or a call changing the same file, earlier in
+   * this turn (`declinedInTurn`). Nobody decided on this call, but a
+   * user's no stands behind it: a caller that swaps the system's reason
+   * for its own refusal text keeps this one.
+   */
+  declinedEarlier?: boolean;
   /** Session grant to record alongside an approval. Ignored when denied. */
   grant?: ApprovalGrantScope;
   /**
@@ -118,6 +137,25 @@ export class ApprovalGateError extends Error {
     this.name = "ApprovalGateError";
   }
 }
+
+/**
+ * What the user said no to in a session's current turn. `calls` holds
+ * the `callKey` of every call they denied; `targets` maps each target
+ * path of a file tool's call they denied with a bare Deny to its tool.
+ */
+interface DeclinedInTurn {
+  calls: Set<string>;
+  targets: Map<string, string>;
+}
+
+/**
+ * What the model reads after `describeApprovalDenial`'s "refused
+ * without a decision from the user" when the gate turns down a repeat
+ * of something the user already declined this turn.
+ */
+const DECLINED_AGAIN_ADVICE =
+  "Do not try it again or another way to do the same thing; " +
+  "tell the user it was not done and ask what they would like instead.";
 
 interface PendingEntry {
   resolve: (decision: ApprovalDecision) => void;
@@ -176,6 +214,15 @@ export class ApprovalGate {
   >();
   /** Per-session prompt policies, keyed like the grants. See `SessionApprovalPolicy`. */
   private readonly policiesBySession = new Map<string, SessionApprovalPolicy>();
+  /**
+   * What the user declined in each session's current turn, keyed like
+   * the grants and emptied when the next turn starts — see
+   * `forgetDeclined`. A model told "the user declined" still asked for
+   * the same write three more times and then tried it through the shell
+   * (ATO-225); the human was asked every time. A repeat is now refused
+   * here, without a prompt.
+   */
+  private readonly declinedBySession = new Map<string, DeclinedInTurn>();
 
   /**
    * Directories a session may write in without asking — see
@@ -278,6 +325,19 @@ export class ApprovalGate {
   ): Promise<ApprovalDecision> {
     const approvalId = params.approvalId ?? randomUUID();
     const request: ApprovalRequest = { ...params, approvalId };
+    // Before auto-approval: a level or a grant that would run a write
+    // silently must not become the way round the user's own Deny of it
+    // a few steps earlier.
+    const declined = this.declinedInTurn(request);
+    if (declined !== null) {
+      return Promise.resolve({
+        approvalId,
+        approved: false,
+        reason: declined,
+        automatic: true,
+        declinedEarlier: true,
+      });
+    }
     const auto = this.autoApproval(request);
     if (auto)
       return Promise.resolve({ approvalId, approved: true, reason: auto });
@@ -353,6 +413,66 @@ export class ApprovalGate {
     return null;
   }
 
+  /**
+   * Whether `request` repeats something the user declined earlier in
+   * this turn, and if so the reason the model is given. Two matches:
+   *
+   *  - the same call: same tool, category, reason, preview and
+   *    resources (`callKey`), after any denial by the user — a typed reply too,
+   *    whose text already says "do not run the same call again";
+   *  - the same target: a call that would change a file a file tool's
+   *    call, denied with a bare Deny, would have changed — the
+   *    `printf … > test10.txt` after a denied `os.fs.write test10.txt`.
+   *    A typed reply is left out here: "put it in ~/Documents instead"
+   *    or "back it up first" can make a later write of the same file
+   *    the very thing the user asked for. So is a denied shell command:
+   *    its redirects are a side of what it was for, and a no to
+   *    `npm test > out.log` is not a no to every later write of out.log.
+   *
+   * Nothing else matches. A call the gate cannot tie to a declined one
+   * (a target it cannot name, a different command) still asks the user.
+   */
+  private declinedInTurn(request: ApprovalRequest): string | null {
+    const declined = this.declinedBySession.get(request.sessionId);
+    if (declined === undefined) return null;
+    if (declined.calls.has(callKey(request))) {
+      return `the user already declined this same call earlier in this turn. ${DECLINED_AGAIN_ADVICE}`;
+    }
+    for (const target of normaliseTargets(request.targetPaths)) {
+      const tool = declined.targets.get(target);
+      if (tool !== undefined) {
+        return (
+          `the user already declined ${tool} on ${target} earlier in this ` +
+          `turn, and this call would change that file too. ${DECLINED_AGAIN_ADVICE}`
+        );
+      }
+    }
+    return null;
+  }
+
+  /** Remember a denial the user made, for `declinedInTurn`. */
+  private recordDeclined(request: ApprovalRequest, reason?: string): void {
+    let declined = this.declinedBySession.get(request.sessionId);
+    if (declined === undefined) {
+      declined = { calls: new Set(), targets: new Map() };
+      this.declinedBySession.set(request.sessionId, declined);
+    }
+    declined.calls.add(callKey(request));
+    if ((reason?.trim() ?? "") !== "" || request.category === "shell") return;
+    for (const target of normaliseTargets(request.targetPaths)) {
+      declined.targets.set(target, request.tool);
+    }
+  }
+
+  /**
+   * Forget what the user declined on `sessionId`. Called when a turn
+   * starts and when the user steers a running one: what they say next is
+   * a new answer, and the same call may be exactly what they now want.
+   */
+  forgetDeclined(sessionId: string): void {
+    this.declinedBySession.delete(sessionId);
+  }
+
   resolve(decision: ApprovalDecision): boolean {
     const entry = this.pending.get(decision.approvalId);
     if (!entry) return false;
@@ -365,6 +485,11 @@ export class ApprovalGate {
     });
     if (decision.approved && decision.grant) {
       this.recordGrant(entry.request, decision.grant);
+    }
+    // Only a person's no: a timeout or a dropped prompt is nobody's
+    // decision, and must not stop the model asking again.
+    if (!decision.approved && decision.automatic !== true) {
+      this.recordDeclined(entry.request, decision.reason);
     }
     entry.resolve(decision);
     return true;
@@ -489,4 +614,27 @@ export function canGrantCategory(request: ApprovalRequest): boolean {
  */
 export function canGrantShape(request: ApprovalRequest): boolean {
   return request.category === "shell" && Boolean(request.commandShape);
+}
+
+/**
+ * A call's identity for the same-turn denial rule: what the prompt
+ * showed the user, not its id. Whitespace in the preview is collapsed so a command
+ * re-emitted with different spacing is still the same command; target
+ * paths are normalised, so `./notes.txt` and `notes.txt` are one file.
+ */
+function callKey(request: ApprovalRequest): string {
+  return JSON.stringify([
+    request.tool,
+    request.category,
+    request.reason,
+    (request.preview ?? "").replace(/\s+/g, " ").trim(),
+    [...(request.affectedResources ?? [])].sort(),
+    normaliseTargets(request.targetPaths).sort(),
+  ]);
+}
+
+/** `targetPaths` resolved and de-duplicated (`..`, `.`, trailing `/`). */
+function normaliseTargets(paths: readonly string[] | undefined): string[] {
+  if (paths === undefined) return [];
+  return [...new Set(paths.map((p) => resolvePath(p)))];
 }

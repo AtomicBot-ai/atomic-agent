@@ -79,6 +79,9 @@ export async function requireGitMutationApproval(
       affectedResources: [request.repoRoot],
       workingDir: request.workingDir,
       trustConfigPaths: trustPaths,
+      // The repository is not one file: after a denied commit, a stash
+      // in the same repository is another question for the user.
+      targetPaths: [],
     },
     signal,
   );

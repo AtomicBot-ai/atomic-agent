@@ -19,6 +19,7 @@ import {
   basenameCommand,
   checkShellCommandGuard,
   isGogCommand,
+  shellWriteTargets,
   type ShellGuardPolicy,
 } from "./shell-command-guard/index.js";
 import {
@@ -202,6 +203,10 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         const commandShape = isOpaqueInterpreterShape(shape)
           ? undefined
           : shape;
+        // The files the line would write, move or remove: after the user
+        // declined a write of one of them this turn, this is the same
+        // write by another route, and the gate refuses it unasked.
+        const targetPaths = shellWriteTargets(commandLine, cwd);
         await requireApproval(
           options,
           {
@@ -212,6 +217,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
             preview: commandLine,
             affectedResources: [cwd],
             ...(commandShape !== undefined ? { commandShape } : {}),
+            targetPaths,
           },
           ctx.signal,
         );

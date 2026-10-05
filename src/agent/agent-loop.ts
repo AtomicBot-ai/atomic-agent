@@ -162,6 +162,12 @@ export interface AgentLoopDependencies {
    * See `approval/fanout-scope.ts`: the answer is scoped to one job.
    */
   clearFanoutTurnGrant?: (sessionId: string) => void;
+  /**
+   * Forget the calls the user declined on this session (see
+   * `ApprovalGate.forgetDeclined`): the gate refuses a repeat of one
+   * for the rest of the turn, and a new turn or a steer is a new answer.
+   */
+  forgetDeclinedApprovals?: (sessionId: string) => void;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -1171,6 +1177,9 @@ export class AgentLoop {
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
     this.deps.steeringInbox?.open(session.id);
+    // Like the fan-out grant: forgotten when a turn starts rather than
+    // when it ends, so an aborted turn cannot carry a no into the next.
+    this.deps.forgetDeclinedApprovals?.(session.id);
     try {
       return await this.runTurnInner(session, options);
     } finally {
@@ -1615,6 +1624,9 @@ export class AgentLoop {
         this.deps.onEvent?.({ type: "steer_applied", text, stepIndex: i });
       }
       if (steered.length > 0) {
+        // The user spoke again: a call they declined earlier in the turn
+        // may be what they are now asking for, so it asks again.
+        this.deps.forgetDeclinedApprovals?.(state.id);
         pendingNotice = composeSteerNotice(pendingNotice, steered);
         this.deps.logger?.info("mid-turn steering applied", {
           sessionId: state.id,

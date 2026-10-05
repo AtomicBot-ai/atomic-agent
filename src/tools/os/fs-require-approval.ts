@@ -97,6 +97,15 @@ export interface FsApprovalRequest {
    * those would be nonsense rather than a feature.
    */
   redirectablePath?: string;
+  /**
+   * Files the call would change, for the gate's same-turn denial rule
+   * (`ApprovalRequest.targetPaths`). Defaults to `paths` for `write` and
+   * `trash`. `extract` names a destination directory and a git verb its
+   * repository: neither is a file a later call should be refused over
+   * (a second git verb in the same repository is a different action),
+   * so `extract` passes none by default and the git funnel passes `[]`.
+   */
+  targetPaths?: readonly string[];
 }
 
 /**
@@ -152,6 +161,8 @@ export async function requireFsApproval(
   ) {
     return { category };
   }
+  const targetPaths =
+    request.targetPaths ?? (request.kind === "extract" ? [] : request.paths);
   const outcome = await requireApproval(
     options,
     {
@@ -166,6 +177,7 @@ export async function requireFsApproval(
       ...(request.redirectablePath !== undefined
         ? { redirectablePath: request.redirectablePath }
         : {}),
+      targetPaths,
     },
     signal,
   );

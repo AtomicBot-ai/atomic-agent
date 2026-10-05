@@ -27,6 +27,11 @@ export interface ApprovalPrompt {
    * `ApprovalRequest.redirectablePath` — set only by `os.fs.write`.
    */
   redirectablePath?: string;
+  /**
+   * Files the call would change, for the gate's same-turn denial rule.
+   * See `ApprovalRequest.targetPaths`.
+   */
+  targetPaths?: readonly string[];
 }
 
 /**
@@ -51,21 +56,25 @@ export interface ApprovalOutcome {
  *
  * `byUser` is false when no person made the call: a session refuse
  * policy, a prompt that timed out or could not be delivered, one dropped
- * because its surface went away. Those carry the system's `reason`;
+ * because its surface went away, a repeat the gate refused because the
+ * user already declined it this turn. Those carry the system's `reason`;
  * a person's denial carries their own words, if they typed any.
  */
 export class ApprovalDeniedError extends Error {
   public readonly byUser: boolean;
+  /** See `ApprovalDecision.declinedEarlier`. */
+  public readonly declinedEarlier: boolean;
 
   constructor(
     public readonly tool: string,
     public readonly reason?: string,
-    options: { byUser?: boolean } = {},
+    options: { byUser?: boolean; declinedEarlier?: boolean } = {},
   ) {
     const byUser = options.byUser ?? false;
     super(describeApprovalDenial(tool, reason, byUser));
     this.name = "ApprovalDeniedError";
     this.byUser = byUser;
+    this.declinedEarlier = options.declinedEarlier ?? false;
   }
 }
 
@@ -135,12 +144,16 @@ export async function requireApproval(
       ...(prompt.redirectablePath !== undefined
         ? { redirectablePath: prompt.redirectablePath }
         : {}),
+      ...(prompt.targetPaths !== undefined && prompt.targetPaths.length > 0
+        ? { targetPaths: [...prompt.targetPaths] }
+        : {}),
     },
     { signal },
   );
   if (!decision.approved) {
     throw new ApprovalDeniedError(prompt.tool, decision.reason, {
       byUser: decision.automatic !== true,
+      declinedEarlier: decision.declinedEarlier === true,
     });
   }
   // A retarget is only meaningful for a request that offered one. A host
