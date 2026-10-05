@@ -1793,6 +1793,13 @@ const PENDING_APPROVALS = new Map();     // sessionId → approvalId, from /api/
    chat can draw it again when it is opened again (openSession). Good only
    while PENDING_APPROVALS still holds that card's approvalId. */
 const APPROVAL_CARDS = new Map();
+/* B01: approvalIds this window knows are no longer open: their turn ended
+   here (done, error, stopped), or a newer request of the same chat for the
+   same call replaced them. The events stream replays what the agent still
+   lists on every reconnect, and the agent's list kept requests whose turn
+   had ended (src/http/approval-bus.ts, fixed with this); a copy of one of
+   these draws nothing (onApprovalEvent). */
+const CLOSED_APPROVALS = new Set();
 const ATTN = new Set();                  // sessions whose last desktop-run turn ended in error
 /* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
    See the top of onChatEvent. */
@@ -5904,8 +5911,14 @@ function droppedPreview(text) {
 }
 function answer(key) {
   const req = S.pending;
-  if (!req) return;
+  if (!approvalOpen(req)) return;
   answerLive(req, key);
+}
+
+/* B01/B06: a request y, n, Esc and the card's buttons may still answer: no
+   verdict and no end of its turn on it (closeApprovalCard). */
+function approvalOpen(req) {
+  return !!req && !req.state && !(req.approvalId && CLOSED_APPROVALS.has(req.approvalId));
 }
 
 /* Backlog 25: the turn chat `sid` is running in this window, or null.
@@ -6105,10 +6118,18 @@ document.addEventListener('click', (e) => {
        request is no longer open answers nothing. */
     const box = ap.closest('[data-appr-id]');
     const req = box ? S.log.find((m) => m.k === 'approval' && !m.state && m.approvalId && m.approvalId === box.dataset.apprId) : null;
+    /* B01 review: any open card, not only the chat's newest request. Two
+       calls of one step can wait at once (a browser call and a read outside
+       the folder run concurrently), and PENDING_APPROVALS names only the
+       newest, so the older card's buttons answered nothing and its call
+       waited for good. A card whose request is over has a state now (its
+       turn's end, a newer request for the same call, approvalOver). */
     if (req && req !== S.pending) {
-      if (req.sessionId && PENDING_APPROVALS.get(req.sessionId) === req.approvalId) answerLive(req, ap.dataset.appr);
+      if (approvalOpen(req)) answerLive(req, ap.dataset.appr);
       return;
     }
+    // B01: a card that names its request answers that request or nothing, never the newest one (S.pending).
+    if (!req && box && box.dataset.apprId) { render(); return; }
     answer(ap.dataset.appr); return;
   }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
@@ -6958,7 +6979,20 @@ document.addEventListener('keydown', (e) => {
   }
 
   // approval scope — only while a card is pending and focus is not in a text field
-  if (S.pending && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel)) { // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
+  /* B06: and only the bare key. ⌘N with a card up denied it (`n`) instead of
+     opening a new chat, and the menu never saw the chord: a chord is a
+     command (the map below), never an answer. Only an open request answers
+     (approvalOpen): a card whose turn is over takes no key. Two chords stay
+     the card's: Ctrl+Y allows, as in the TUI (APPROVAL_CHORDS.approve in
+     src/tui/app-key-bindings.ts; not its Ctrl+N or Ctrl+D, which are a new
+     chat on Windows and a delete here), and Esc with a modifier does
+     nothing rather than fall through to the settings menu over the card. */
+  const apprKeys = approvalOpen(S.pending) && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel); // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
+  if (apprKeys && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && k.toLowerCase() === 'y') {
+    e.preventDefault(); ANX.via('key'); answer('y'); return;
+  }
+  if (apprKeys && k === 'Escape' && (e.metaKey || e.ctrlKey || e.altKey)) { e.preventDefault(); return; }
+  if (apprKeys && !e.metaKey && !e.ctrlKey && !e.altKey) {
     const kk = k.toLowerCase();
     // Item 1 (approval parity): `s` and `a` are gone. They fired answer() for
     // the two session-grant buttons, which a LIVE request never draws (the
@@ -8019,12 +8053,16 @@ function onChatEvent(ev) {
       FIRST_TURNS.delete(ev.turnId);   // item 27: a turn that ended before its stream named a session
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (ev.kind === 'error' && sid) ATTN.add(sid);
+      const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
       liveTurnEnded(ev, sid);          // item 38: a failed or stopped turn is kept for its chat
       // Review fix: the turn is over, so nothing of it is waiting for an
       // approval any more. Without this the row kept saying "waiting for your
       // approval" for the rest of the window's life when the turn ended (an
       // abort, an error, the backend-switch restart) with a request open.
-      if (sid) PENDING_APPROVALS.delete(sid);
+      // B01: its cards too. Left with their buttons (and S.pending on one of
+      // them), "terminated" was followed by live cards nothing waited for and
+      // a composer still saying "Waiting for your approval".
+      if (sid) closeChatApprovals(sid, ev.kind === 'aborted' ? 'stopped' : 'expired', endedSince);
       // Review fix: the composer's busy flag belongs to the chat on screen.
       // When this turn's frames are no longer the ones S.turnId points at, the
       // branch below never runs and the composer would stay busy for good.
@@ -8638,8 +8676,89 @@ function approvalOver(sid, status, askedAt) {
   return true;
 }
 
+/* B01: every approval card of chat `sid` this window holds: on screen, in a
+   turn kept for its chat (item 38, LIVE_TURNS), and the one kept to be drawn
+   when the chat is opened (APPROVAL_CARDS). Receipts from the store are not
+   cards of a request. */
+function chatApprovalCards(sid) {
+  const out = new Set();
+  const take = (m) => { if (m && m.k === 'approval' && !m.stored && m.sessionId === sid) out.add(m); };
+  S.log.forEach(take);
+  for (const rec of LIVE_TURNS.values()) if (Array.isArray(rec.log) && rec.log !== S.log) rec.log.forEach(take);
+  take(APPROVAL_CARDS.get(sid));
+  return [...out];
+}
+
+/* B01: a card whose request is over says so (`state`), answers nothing, and
+   is not the request the composer, y/n or Esc act on. `forGood` (a newer
+   request for the same call replaced it) closes its approvalId for good: a
+   replay of it draws nothing. A card closed because its turn ended here is
+   not: the agent replays only requests its gate still holds, so a replay of
+   one (a request another surface raised in the chat, still waiting) opens
+   the card again (onApprovalEvent). */
+function closeApprovalCard(req, state, at, forGood) {
+  if (forGood && req.approvalId) CLOSED_APPROVALS.add(req.approvalId);
+  if (!req.state) { req.state = state; req.at = at; }
+  if (S.pending === req) S.pending = null;
+}
+
+/* B01 review: `req` is answered. Its chat stops waiting on it: the row's
+   dot, the card kept for the chat, and the composer (S.pending) go to
+   another of the chat's calls still waiting, if one is (two calls of a step
+   can wait at once), or stop waiting. A chat whose newest request is
+   another one keeps waiting on that. */
+function approvalAnswered(req) {
+  const sid = req && req.sessionId;
+  if (!sid) { if (S.pending === req) S.pending = null; return; }
+  const mapped = PENDING_APPROVALS.get(sid);
+  if (mapped !== undefined && mapped !== req.approvalId) { if (S.pending === req) S.pending = null; return; }
+  const still = chatApprovalCards(sid).filter((c) => c !== req && approvalOpen(c)).pop() || null;
+  if (!still) {
+    PENDING_APPROVALS.delete(sid);
+    if (S.pending === req) S.pending = null;
+    return;
+  }
+  PENDING_APPROVALS.set(sid, still.approvalId);
+  APPROVAL_CARDS.set(sid, still);
+  if (S.pending === req) S.pending = S.log.includes(still) ? still : null;
+}
+
+/* B01: the same call asked for again: same chat, tool, category, preview and target. */
+function sameApprovalCall(a, b) {
+  return !!a && !!b && a.sessionId === b.sessionId && a.tool === b.tool && a.cat === b.cat
+    && a.preview === b.preview && a.affectsDir === b.affectsDir && a.affectsBase === b.affectsBase;
+}
+
+/* B01: chat `sid`'s turn ended here (done, error, stopped). Nothing it asked
+   is open any more: its cards are closed (`state` names how) and the chat
+   stops waiting for an approval. Only cards that came while it ran
+   (`since`, when it started; unknown: any earlier one), so a request another
+   surface raised in the chat before it (a scheduled task's turn) is left to
+   approvalOver. A turn of the same chat sent after the one that ended (a
+   message right after Stop) may have asked already; a card that came after
+   that turn started stays. A running entry this window keeps no record of
+   (a stale one whose end never came) protects nothing. */
+function closeChatApprovals(sid, state, since) {
+  if (!sid) return;
+  let from = Infinity;
+  for (const [t, s] of RUNNING) {
+    const rec = s === sid ? LIVE_TURNS.get(t) : null;
+    if (rec && !rec.ended && rec.startedAt) from = Math.min(from, rec.startedAt);
+  }
+  const at = new Date().toTimeString().slice(0, 8);
+  const closed = chatApprovalCards(sid).filter((req) => !(req.seenAt >= from) && !(since && req.seenAt < since));
+  closed.forEach((req) => closeApprovalCard(req, state, at));
+  const kept = APPROVAL_CARDS.get(sid);
+  if (!kept || closed.includes(kept)) {
+    PENDING_APPROVALS.delete(sid);
+    APPROVAL_CARDS.delete(sid);
+  }
+}
+
 function onApprovalEvent(payload) {
   if (!payload || !payload.approvalId) return;
+  // B01: a request that a newer one for the same call replaced is not open again.
+  if (CLOSED_APPROVALS.has(payload.approvalId)) return;
   const sid = payload.sessionId || null;
   /* Q60: one request is one card. The same approvalId again (the events
      stream reconnecting replays every request still pending) finds the card
@@ -8649,8 +8768,8 @@ function onApprovalEvent(payload) {
      stopped or no longer waited for) is wrong: the agent says the request
      is still open, so the card opens again. */
   const drawn = S.log.find((m) => m.k === 'approval' && m.approvalId === payload.approvalId) || null;
-  const kept = sid ? APPROVAL_CARDS.get(sid) : null;
-  const again = drawn || (kept && kept.approvalId === payload.approvalId ? kept : null);
+  // B01 review: kept for its chat, or among the rows a turn kept for it (item 38), as well.
+  const again = drawn || (sid ? chatApprovalCards(sid).find((m) => m.approvalId === payload.approvalId) : null) || null;
   if (again && again.state && (again.landed === true || again.answering)) return;
   if (again && again.state) { delete again.state; delete again.at; delete again.landed; }
   const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
@@ -8678,7 +8797,21 @@ function onApprovalEvent(payload) {
     // not start (a scheduled task's, say).
     sessionId: sid,
   };
-  req.seenAt = Date.now();   // Q60 review: a status read before this proves nothing about it (approvalOver)
+  /* B01: one open card per call. A new request of this chat for the same
+     call (same tool, category, preview and target) means the older one of
+     it is over: the call was asked again after the wait that held the first
+     one ended. Its card closes instead of staying up with live buttons beside
+     this one. Requests for other calls are left alone: calls of different
+     kinds in one step can wait at the same time (a browser call and a read
+     outside the folder, say). */
+  if (sid && !again) {
+    const at = new Date().toTimeString().slice(0, 8);
+    chatApprovalCards(sid).filter((old) => old.approvalId !== req.approvalId && sameApprovalCall(old, req))
+      .forEach((old) => closeApprovalCard(old, 'expired', at, true));
+  }
+  // Q60 review: a status read before this proves nothing about it (approvalOver).
+  // B01 review: a replay is the same request, still as old as when it first came (closeChatApprovals).
+  if (!again || !req.seenAt) req.seenAt = Date.now();
   if (sid) { PENDING_APPROVALS.set(sid, req.approvalId); APPROVAL_CARDS.set(sid, req); }
   // Q60: another chat's request: its dot, not a card in this chat, and not this chat's y/n.
   // Q60 review: unless it has no chat to be found in (approvalReachable).
@@ -8764,8 +8897,7 @@ function answerLive(req, key) {
   ANX.apprAnswered(req, key);
   // Backlog 25: an older card answered by its own button (see the click
   // delegator) leaves the newest request, and its card, open.
-  if (S.pending === req) S.pending = null;
-  if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // item 6: the row stops asking
+  approvalAnswered(req);   // item 6: the row stops asking (B01 review: unless another call of the chat still waits)
   req.state = approve ? 'approved' : 'denied';
   req.at = new Date().toTimeString().slice(0, 8);
   if (key === 's' || key === 'a') {
@@ -8831,7 +8963,7 @@ async function denyByProse(req, text, post) {
   const typedIn = {sid:S.agentSession, key:queueKey()};   // Backlog 26: read at Enter, as steerOrQueue does
   ANX.apprAnswered(req, 'prose');
   S.pending = null;
-  if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // the row stops asking
+  approvalAnswered(req);   // the row stops asking (B01 review: unless another call of the chat still waits)
   req.at = new Date().toTimeString().slice(0, 8);
   req.state = 'denying';   // in flight — not yet a fact, and the card says so
   req.answering = true; delete req.landed;   // Q60 review: see answerLive

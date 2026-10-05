@@ -437,6 +437,17 @@ export class ApprovalGate {
     return null;
   }
 
+  /**
+   * Whether `approvalId` still waits for a decision here. False once it
+   * is resolved, or dropped because the turn that asked was aborted. A
+   * session can hold more than one request at a time (calls of different
+   * resource classes in one batch run concurrently), so a host mirroring
+   * requests checks by id, not by `pendingRequestForSession`.
+   */
+  isPending(approvalId: string): boolean {
+    return this.pending.has(approvalId);
+  }
+
   pendingCount(): number {
     return this.pending.size;
   }

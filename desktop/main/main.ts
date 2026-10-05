@@ -669,6 +669,14 @@ function createWindow(): BrowserWindow {
   window.webContents.on("render-process-gone", (_e, details) =>
     process.stderr.write(`RENDERER GONE ${JSON.stringify(details)}\n`),
   );
+  /* B01 review: every load of this window (the first, a reload, a renderer
+     brought back after a crash, a window opened again from the dock) asks
+     the agent to replay the approvals still pending, so a turn waiting on
+     one gets its card in the new page. No-op before the agent is up: its
+     stream opens, and replays, once it is healthy. */
+  window.webContents.on("did-finish-load", () => {
+    agent?.reopenApprovalStream();
+  });
 
   window.once("ready-to-show", () => {
     // The probe shows its window without taking the keyboard: it runs beside

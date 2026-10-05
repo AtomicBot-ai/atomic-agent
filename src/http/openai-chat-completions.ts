@@ -24,6 +24,7 @@ import {
   sendError,
   sendJson,
   getHeader,
+  SSE_HEARTBEAT_MS,
   type HandlerContext,
   type HttpHandler,
   type SseWriter,
@@ -202,10 +203,16 @@ async function handleStream(
   ctx: HandlerContext,
   env: TurnEnv,
 ): Promise<void> {
-  const sse = beginSse(res, {
-    [SESSION_ID_HEADER]: env.session.id,
-    [COMPLETION_ID_HEADER]: env.completionId,
-  });
+  // A turn can be silent for minutes (parked on an approval): the
+  // heartbeat keeps the client from dropping it (SSE_HEARTBEAT_MS).
+  const sse = beginSse(
+    res,
+    {
+      [SESSION_ID_HEADER]: env.session.id,
+      [COMPLETION_ID_HEADER]: env.completionId,
+    },
+    { heartbeatMs: SSE_HEARTBEAT_MS },
+  );
   const controller = new AbortController();
   ctx.completionRegistry.register({
     completionId: env.completionId,

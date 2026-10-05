@@ -34,6 +34,20 @@ export class ApprovalBus {
     this.pending.delete(approvalId);
   }
 
+  /**
+   * Drop every mirrored request `isOpen` says the gate no longer holds.
+   * The gate forgets a request by itself when the turn that asked is
+   * aborted (client gone, cancel, Stop) and nothing tells the bus, so the
+   * mirror kept those requests forever and every `/api/events` reconnect
+   * replayed them as live prompts: one more card per dead request, for
+   * the same command, in the window that reconnected.
+   */
+  prune(isOpen: (request: ApprovalRequest) => boolean): void {
+    for (const [approvalId, request] of this.pending) {
+      if (!isOpen(request)) this.pending.delete(approvalId);
+    }
+  }
+
   subscribe(listener: ApprovalListener): () => void {
     this.listeners.add(listener);
     return () => {
