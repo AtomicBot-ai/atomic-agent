@@ -36,7 +36,10 @@ and each scenario imports the driver it was proved against.
 | `drive-download-lib.mjs` | `download-hover.drive.mjs` and `wizard-resume.drive.mjs` — adds a fresh-run helper, the first-run walk as far as a REAL `atag models pull` (Download, which hands over the agent), the cloud setup in the composer's popover, a `scrollTo` that waits for Chromium's animated wheel to come to rest before anybody presses (a stale coordinate is how a driven click kept landing on the row below the one it measured), and `nodeIdAt`, which reads the identity of the node under the pointer with `DOM.getNodeForLocation` — from outside the page, writing nothing into it |
 
 `launch` (in `drive.mjs`) also takes `args` — extra Electron argv for the
-app's own TEST-ONLY switches. There is one: `--fake-ram=<gb>` makes
+app's own TEST-ONLY switches. There are two. `--fake-update=<version>`
+(ATO-229) makes every update check find that version without the network,
+fakes the download's progress and makes Restart record the install instead
+of quitting (desktop/README.md "App updates"). `--fake-ram=<gb>` makes
 `app:hostRam` answer that figure instead of `os.totalmem()`, because the
 local-model recommendation is computed from the host's RAM and this machine
 has 68 GB — every curated model fits it comfortably, so the tight fit, the

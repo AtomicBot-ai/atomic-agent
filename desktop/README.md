@@ -1247,6 +1247,83 @@ release candidate gets checked before it goes anywhere:
 "/Applications/Atomic Agent.app/Contents/MacOS/Atomic Agent" --smoke
 ```
 
+## App updates
+
+`main/updater.ts` (ATO-229) uses `electron-updater` with `autoDownload` and
+`autoInstallOnAppQuit` off: the app never downloads or installs anything
+without a click.
+
+- About 10 s after the window is up, then every 6 hours, it reads the feed
+  (while Settings › General › "Check for updates automatically" is on, the
+  default). A newer version is a toast at the top right: **Update** /
+  **Not now**, and "Skip this version". Not now asks again on the next start;
+  Skip never asks about that version again.
+- Update downloads with progress in the toast (Cancel stops it), then
+  **Restart** / **Later**. Later installs nothing on quit; only a Restart click
+  (the toast or Settings › General) installs. Restart waits while an agent turn
+  runs (this window's, or one the agent runs for Telegram, a task or a bot) and
+  says so: "Restart when the answer finishes".
+- On Windows the app stops the agent and the managed model server before the
+  installer starts (`shutdownForUpdate` in main.ts): the installer replaces
+  their files at once. On macOS Squirrel replaces the app only after it has
+  quit, and the normal quit stops both.
+- A failed automatic check (offline, no feed) shows nothing. Settings ›
+  General › Check now shows the result in plain words.
+- The person's choices are in Electron userData `updates.json` (auto-check,
+  skipped version, last Not now, and the install in flight, which the new
+  version reads once to send `update_installed`). Never in the agent's
+  config.json.
+
+### What a build and a release need
+
+The feed is set when the app is built, in `electron-builder.cjs` (this is
+the electron-builder config; it used to be the `build` key of package.json):
+
+| Variable | Meaning |
+|---|---|
+| `ATAG_UPDATE_FEED_URL` | Base URL the update files are served from (an R2 bucket, a releases-only repo, ...). The one place to change when hosting is decided. Unset: no `publish` entry, no `app-update.yml` in the app, and Settings says "Updates are not set up for this build". |
+| `ATAG_UPDATE_CHANNEL` | `stable` by default (`canary` later). It names the files below. |
+
+With the variable set, `electron-builder ... --publish never` still writes
+the update files into `desktop/release/`. Everything a release uploads to
+`<ATAG_UPDATE_FEED_URL>/`:
+
+| Platform | Files |
+|---|---|
+| macOS | `stable-mac.yml`, `Atomic Agent-<version>-arm64-mac.zip` (+ `.blockmap`), the `.dmg` (+ `.blockmap`) |
+| Windows | `stable.yml`, `Atomic-Agent-Setup-<version>-x64.exe` (+ `.blockmap`) |
+| Linux (AppImage only) | `stable-linux.yml` / `stable-linux-arm64.yml`, the `.AppImage` |
+
+The `.yml` files name the installers by file name and carry their sha512, so
+the installers go up first and the `.yml` last (a client must never read a
+`.yml` whose files are not there yet). With `channel: stable`
+electron-builder names them `stable*.yml`, not `latest*.yml`. A `canary`
+build writes and reads `canary*.yml` from the same URL.
+
+macOS installs from the **zip**, not the DMG (Squirrel.Mac); the mac target
+list builds both. The update must be signed with the same Developer ID as
+the running app, or Squirrel refuses it: an ad-hoc signed local `npm run dist`
+cannot update itself. Windows uses the NSIS installer silently and starts the
+app again after it.
+
+Release notes: a `release-notes.md` in `build/` (or `releaseInfo.releaseNotes`)
+goes into the `.yml`; the toast shows its first line.
+
+### Trying it without a feed
+
+```bash
+cd desktop
+npm run build && npx electron . --fake-update=0.0.9
+```
+
+`--fake-update=<version>` is test only (like `--fake-ram`): every check
+finds that version when it is newer than the app, the download is a fake
+progress, and Restart says what it would do instead of quitting. The toast
+shows about 10 s after the window. Settings › General shows the version and
+Check now. The smoke task `--smoke --smoke-task=65` drives the same fake
+(toast top right, Not now, Skip, progress, Restart waiting for a turn,
+the switch off, Check now). It writes `updates.json` and puts it back.
+
 ## Layout
 
 ```
@@ -1257,6 +1334,8 @@ desktop/
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
+  main/updater.ts        app updates (electron-updater), only ever on a click
+  electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
   native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js

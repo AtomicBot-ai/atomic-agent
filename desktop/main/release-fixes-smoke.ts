@@ -51,6 +51,7 @@ import { checks61 } from "./smoke-tasks/t61.js";
 import { checks62 } from "./smoke-tasks/t62.js";
 import { checks63 } from "./smoke-tasks/t63.js";
 import { checks64 } from "./smoke-tasks/t64.js";
+import { checks65 } from "./smoke-tasks/t65.js";
 import { checks102 } from "./smoke-tasks/t102.js";
 
 /**
@@ -88,7 +89,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "102"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -709,6 +710,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("63")) await guarded("63", check, () => checks63(js, check));
   // 64 (02.10 build, B01/B06) — a terminated turn left several live approval cards for one call, and ⌘N denied one.
   if (want.has("64")) await guarded("64", check, () => checks64(js, check));
+  // 65 (ATO-229) — app updates: the toast, Not now, Skip, the download, Restart waiting for a turn, the switch, Check now.
+  if (want.has("65")) await guarded("65", check, () => checks65(js, check));
   // 102 (QA B02 + ATO-185) — a "no local model is selected" refusal, and a wait's "No answer from …" lines, stayed above the reply that came after.
   if (want.has("102")) await guarded("102", check, () => checks102(js, check));
 
