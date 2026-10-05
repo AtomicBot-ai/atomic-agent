@@ -34,12 +34,29 @@ on:
         required: false
         default: ""
         type: string
+      # ATO-229: test builds for an A -> B update, without touching repo vars or package.json in git.
+      feed_url:
+        description: "Update feed URL for this build only (empty = vars.ATAG_UPDATE_FEED_URL; http:// is fine for a local test feed)"
+        required: false
+        default: ""
+        type: string
+      channel:
+        description: "Update channel for this build only (empty = vars.ATAG_UPDATE_CHANNEL, else stable)"
+        required: false
+        default: ""
+        type: string
+      version_override:
+        description: "App version for this build only, e.g. 0.0.90 (set in the runner's package.json, never committed)"
+        required: false
+        default: ""
+        type: string
   push:
     branches:
       - desktop/cross-platform
 
 concurrency:
-  group: desktop-${{ github.ref }}-${{ inputs.ref || 'push' }}
+  # Two test builds of one ref (A and B, ATO-229) differ only by version_override: they must not cancel each other.
+  group: desktop-${{ github.ref }}-${{ inputs.ref || 'push' }}-${{ inputs.version_override || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -266,6 +283,23 @@ jobs:
           chmod 600 "$KEY_PATH"
           echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
 
+      # ATO-229: a test build's version, in this runner's package.json only (the
+      # checkout is thrown away with the runner; nothing is committed or pushed).
+      - name: Set the app version for this build (version_override)
+        if: inputs.version_override != ''
+        working-directory: desktop
+        shell: bash
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION_OVERRIDE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version_override must look like 0.0.90 (got: $VERSION_OVERRIDE)"
+            exit 1
+          fi
+          npm pkg set version="$VERSION_OVERRIDE"
+          node -p "'app version for this build: ' + require('./package.json').version"
+
       - name: Package desktop app
         working-directory: desktop
         env:
@@ -278,8 +312,9 @@ jobs:
           APPLE_API_KEY_ID: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_KEY_ID || '' }}
           APPLE_API_ISSUER: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_ISSUER || '' }}
           # ATO-229: empty unless the repository variable is set; then the app checks this feed for updates.
-          ATAG_UPDATE_FEED_URL: ${{ vars.ATAG_UPDATE_FEED_URL }}
-          ATAG_UPDATE_CHANNEL: ${{ vars.ATAG_UPDATE_CHANNEL || 'stable' }}
+          # The dispatch inputs (test builds) win over the repository variables.
+          ATAG_UPDATE_FEED_URL: ${{ inputs.feed_url || vars.ATAG_UPDATE_FEED_URL }}
+          ATAG_UPDATE_CHANNEL: ${{ inputs.channel || vars.ATAG_UPDATE_CHANNEL || 'stable' }}
         run: |
           mac_signing=()
           if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" == "true" ]]; then
@@ -350,6 +385,17 @@ jobs:
 
       - name: List packages
         run: ls -la desktop/release
+
+      # ATO-229: with a feed set, the update files must be there to upload.
+      - name: Check the update files (macOS, with a feed)
+        if: matrix.slug == 'darwin-arm64' && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls desktop/release/*-mac.yml desktop/release/*-mac.zip
+          # The blockmap only enables a differential download; a full one works without it.
+          ls desktop/release/*-mac.zip.blockmap || echo "::warning::no mac zip blockmap: updates download the whole zip"
+          cat desktop/release/*-mac.yml
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
