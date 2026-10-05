@@ -406,6 +406,7 @@ describe("replace guard (F36)", () => {
                 apiKeyEnv: "EXA_API_KEY",
               },
               brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+              tavily: { endpoint: "https://api.tavily.com/search", apiKeyEnv: "TAVILY_API_KEY" },
             },
           },
           projects: { roots: [] },

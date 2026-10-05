@@ -56,7 +56,7 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
-export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
+export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave" | "tavily";
 
 /**
  * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
@@ -132,9 +132,10 @@ export interface WebSearchConfig {
    * Ordered fallback providers tried (after the primary) when a search is
    * blocked / empty / throws. Default `["duckduckgo"]` — the keyless Exa
    * primary degrades to DuckDuckGo's keyless HTML endpoint. Both are
-   * config-free; `searxng` (needs `instanceUrl`) and `brave` (needs an API
-   * key) are skipped by the orchestrator until configured. Set to `[]` to
-   * disable fallback entirely. The primary is always deduped out of this list.
+   * config-free; `searxng` (needs `instanceUrl`) and `brave` / `tavily`
+   * (need an API key) are skipped by the orchestrator until configured.
+   * Set to `[]` to disable fallback entirely. The primary is always deduped
+   * out of this list.
    */
   fallback: WebSearchProviderName[];
   searxng: {
@@ -146,6 +147,14 @@ export interface WebSearchConfig {
     apiKeyEnv: string;
   };
   brave: {
+    apiKeyEnv: string;
+  };
+  /**
+   * Full search endpoint URL, so a self-hosted Tavily-compatible service
+   * can replace the public API.
+   */
+  tavily: {
+    endpoint: string;
     apiKeyEnv: string;
   };
 }
@@ -2905,6 +2914,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       brave: {
         apiKeyEnv: "BRAVE_SEARCH_API_KEY",
       },
+      tavily: {
+        endpoint: "https://api.tavily.com/search",
+        apiKeyEnv: "TAVILY_API_KEY",
+      },
     },
     fetch: {
       timeoutMs: 30_000,
@@ -3370,13 +3383,14 @@ export function parseWebSearchProviderName(
     raw === "duckduckgo" ||
     raw === "searxng" ||
     raw === "exa" ||
-    raw === "brave"
+    raw === "brave" ||
+    raw === "tavily"
   ) {
     return raw;
   }
   throw new ConfigValidationError(
     field,
-    `expected one of duckduckgo|searxng|exa|brave, got ${JSON.stringify(raw)}`,
+    `expected one of duckduckgo|searxng|exa|brave|tavily, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -4678,6 +4692,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (webSearch.exa as Record<string, unknown> | undefined) ?? {};
   const webSearchBrave =
     (webSearch.brave as Record<string, unknown> | undefined) ?? {};
+  const webSearchTavily =
+    (webSearch.tavily as Record<string, unknown> | undefined) ?? {};
   const sessions = (obj.sessions as Record<string, unknown> | undefined) ?? {};
   const sessionsRetention =
     (sessions.retention as Record<string, unknown> | undefined) ?? {};
@@ -5077,6 +5093,18 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             webSearchBrave.apiKeyEnv ??
               USER_CONFIG_DEFAULTS.web.search.brave.apiKeyEnv,
             "web.search.brave.apiKeyEnv",
+          ),
+        },
+        tavily: {
+          endpoint: parseNonEmptyString(
+            webSearchTavily.endpoint ??
+              USER_CONFIG_DEFAULTS.web.search.tavily.endpoint,
+            "web.search.tavily.endpoint",
+          ),
+          apiKeyEnv: parseNonEmptyString(
+            webSearchTavily.apiKeyEnv ??
+              USER_CONFIG_DEFAULTS.web.search.tavily.apiKeyEnv,
+            "web.search.tavily.apiKeyEnv",
           ),
         },
       },
