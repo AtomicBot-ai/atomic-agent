@@ -73,6 +73,10 @@ const N = `${PREFIX}chat-n`;           // a new chat whose first turn runs, star
 const TURN_N = `${PREFIX}turn-n`;
 const ASK_N = `${PREFIX}approval-n`;
 const ASKED_N = "smoke t64: Создай файл test5.txt с текстом привет";
+const N2 = `${PREFIX}chat-n2`;         // a second new chat, its first turn waiting too (ATO-208)
+const TURN_N2 = `${PREFIX}turn-n2`;
+const ASK_N2 = `${PREFIX}approval-n2`;
+const ASKED_N2 = "smoke t64: Создай файл test67.txt с текстом привет";
 const QUIET = "smoke t64: not answered while the check runs";
 const q = (v: unknown) => JSON.stringify(v);
 const show = (x: unknown) => JSON.stringify(x);
@@ -87,7 +91,7 @@ class StandIn {
   private readonly session: Handler = (_e, id) => {
     const sid = typeof id === "string" ? id : "";
     if (sid === PROBE) return { ok: true, data: { id: sid, turns: [], smokeT64: true } };
-    if (sid === N) return { ok: true, data: { id: sid, status: "running", turns: [] } };
+    if (sid === N || sid === N2) return { ok: true, data: { id: sid, status: "running", turns: [] } };
     if (sid === B) return { ok: true, data: { id: sid, status: "running", turns: [{ kind: "user", text: ASKED_B }] } };
     return { ok: false, error: QUIET };
   };
@@ -391,26 +395,39 @@ export async function checks64(js: Js, check: Check): Promise<void> {
     // (f) ATO-198: the page before this one started a new chat's first turn, which waits on an approval.
     // This page takes the turn over, then the request is replayed: kept for that chat, whose row stands in
     // on the list; a frame of the turn is kept; opening the chat shows the message, the card and the frame.
-    const taken = await js<{ took: number; early: View; row: boolean; opened: View; asked: boolean; reply: string; turn: boolean }>(`(async () => { ${H}
+    const taken = await js<{ took: number; early: View; row: boolean; row2: boolean; opened: View; asked: boolean; reply: string; turn: boolean;
+      opened2: View; asked2: boolean; other: boolean }>(`(async () => { ${H}
       for (const [t, s] of [...RUNNING]) if (mine(t) || mine(s)) RUNNING.delete(t);
       OPENING = null; S.sessionId = ''; S.agentSession = null; S.pending = null; S.turnId = null; S.streamId = null;
       S.busy = false; S.log = [];
       SESSIONS_READ = true;
-      const took = adoptLiveTurns([{turnId: ${q(TURN_N)}, sessionId: ${q(N)}, text: ${q(ASKED_N)}, startedAt: Date.now() - 60000, firstTurn: true}]);
+      const took = adoptLiveTurns([
+        {turnId: ${q(TURN_N)}, sessionId: ${q(N)}, text: ${q(ASKED_N)}, startedAt: Date.now() - 60000, firstTurn: true},
+        {turnId: ${q(TURN_N2)}, sessionId: ${q(N2)}, text: ${q(ASKED_N2)}, startedAt: Date.now() - 30000, firstTurn: true}]);
       onApprovalEvent({approvalId: ${q(ASK_N)}, tool: 'os.fs.write', category: 'fs_write_workspace', reason: 'smoke t64',
         preview: 'test5.txt', affectedResources: ['/tmp/smoke-t64/test5.txt'], sessionId: ${q(N)}});
+      onApprovalEvent({approvalId: ${q(ASK_N2)}, tool: 'os.fs.write', category: 'fs_write_workspace', reason: 'smoke t64',
+        preview: 'test67.txt', affectedResources: ['/tmp/smoke-t64/test67.txt'], sessionId: ${q(N2)}});
       onChatEvent({turnId: ${q(TURN_N)}, kind: 'delta', text: 'smoke t64 reply'});
       const early = view();
       const row = !!chatById(${q(N)});
+      const row2 = !!chatById(${q(N2)});
       await openSession(${q(N)});
       const item = S.log.find((m) => m.k === 'assistant' && m.turn === ${q(TURN_N)});
-      return {took, early, row, opened: view(), asked: S.log.some((m) => m.k === 'user' && m.text === ${q(ASKED_N)}),
-        reply: item ? String(item.text || '') : '', turn: S.turnId === ${q(TURN_N)}};
+      const opened = view();
+      const asked = S.log.some((m) => m.k === 'user' && m.text === ${q(ASKED_N)});
+      const reply = item ? String(item.text || '') : '';
+      const turn = S.turnId === ${q(TURN_N)};
+      await openSession(${q(N2)});
+      return {took, early, row, row2, opened, asked, reply, turn, opened2: view(),
+        asked2: S.log.some((m) => m.k === 'user' && m.text === ${q(ASKED_N2)}),
+        other: S.log.some((m) => m.k === 'user' && m.text === ${q(ASKED_N)})};
     })()`);
     check(
-      "T64 (ATO-198): a page that loads while a new chat's first turn runs takes the turn over; its replayed approval is kept for that chat, whose row stands in on the list, not drawn over the empty view",
-      taken.took === 1 && taken.row && taken.early.pending === null && taken.early.cards.length === 0 && taken.early.rows.length === 0
-        && taken.early.waiting.includes(`${N}>${ASK_N}`) && !taken.early.gated,
+      "T64 (ATO-198/208): a page that loads while two new chats' first turns wait on approvals takes both turns over; each request is kept for its own chat, whose row stands in on the list, and none is drawn over the empty view",
+      taken.took === 2 && taken.row && taken.row2 && taken.early.pending === null && taken.early.cards.length === 0
+        && taken.early.rows.length === 0 && taken.early.waiting.includes(`${N}>${ASK_N}`)
+        && taken.early.waiting.includes(`${N2}>${ASK_N2}`) && !taken.early.gated,
       show(taken),
     );
     check(
@@ -418,6 +435,12 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       taken.opened.sessionId === N && taken.asked && taken.opened.pending === ASK_N && show(taken.opened.cards) === show([ASK_N])
         && taken.reply.includes("smoke t64 reply") && taken.turn && taken.opened.gated,
       show(taken),
+    );
+    check(
+      "T64 (ATO-208): the second chat shows only its own message and its own card",
+      taken.opened2.sessionId === N2 && taken.asked2 && !taken.other && taken.opened2.pending === ASK_N2
+        && show(taken.opened2.cards) === show([ASK_N2]),
+      show(taken.opened2),
     );
 
     // What the turn's end set off (the session list re-read) is answered before the stand-ins go.
