@@ -321,19 +321,24 @@ export async function ask(app, text) {
   await app.waitFor(
     `!!document.querySelector('.statusstrip')`
     + ` || (document.querySelector('#entry')||{}).value === ''`
-    + ` || document.querySelectorAll('#content .turn').length > ${before}`,
+    + ` || document.querySelectorAll('#content .turn').length > ${before}`
+    + ` || /The agent is (still starting|not running)/.test((document.querySelector('#toasts')||{}).textContent||'')`,
     'the question sent', { timeout: 20000 });
   /* Sent is not run. With no agent up yet (just launched, or restarting
-     after setup) the app keeps the message in the chat and answers it with a
-     line of its own instead of starting a turn ("the agent is still starting
-     — send this again in a moment", renderer.js submit()). No turn ever
-     starts, so waiting for one ran out the 90 s start grace and read an
+     after setup) the app does not start a turn: it answers the message with
+     a line of its own ("the agent is still starting — send this again in a
+     moment", renderer.js submit()), or — once the box keeps the message
+     (fix/desktop-reopen-after-force-quit) — with a refusal toast. No turn
+     ever starts, so waiting for one ran out the 90 s start grace and read an
      empty reply. Say what the window said, at once. */
   await sleep(300);
   const refused = await app.eval(`(() => {
+    const flat = (n) => ((n && n.textContent) || '').replace(/\\s+/g, ' ').trim();
     const rows = [...document.querySelectorAll('#scroller .sysrow')];
-    const t = rows.length ? rows[rows.length - 1].textContent.replace(/\s+/g, ' ').trim() : '';
-    return /still starting|no agent is attached|agent stopped/.test(t) ? t : '';
+    const line = rows.length ? flat(rows[rows.length - 1]) : '';
+    if (/still starting|no agent is attached|agent stopped/.test(line)) return line;
+    const toast = flat(document.querySelector('#toasts'));
+    return /The agent is (still starting|not running)/.test(toast) ? toast : '';
   })()`);
   if (refused) {
     throw new Failure('the app did not run the message: the agent was not up yet', `the chat says: ${JSON.stringify(refused)}`);
