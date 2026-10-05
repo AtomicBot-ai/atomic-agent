@@ -605,6 +605,18 @@ Pinned by [http-request-retry.test.ts](src/tools/os/http-request-retry.test.ts)
 passthrough, timeout handling, and the four non-idempotent-method safety cases)
 and [retry-after-header.test.ts](src/tools/os/retry-after-header.test.ts).
 
+**Windows certificate revocation.** Every curl spawn of the HTTP/web tools
+(`os.web.fetch`, `os.http.request`, the `os.web.search` transport) goes
+through `runCurl` in [run-curl.ts](src/tools/os/run-curl.ts). On `win32` it
+adds `--ssl-revoke-best-effort`, so Schannel still checks CRL/OCSP but an
+unreachable revocation server (`CRYPT_E_REVOCATION_OFFLINE`, curl exit 35 —
+proxies, VPNs, filtered networks) no longer fails the handshake. A curl older
+than 7.70 rejects the option before any I/O; that one case is re-run with
+`--ssl-no-revoke` and the choice is cached for the process. Other platforms get
+the argv byte-identical, and certificate validation is never disabled. If the
+revocation failure still surfaces, `explainCurlStderr` words it plainly and
+keeps the raw curl line. Pinned by [run-curl.test.ts](src/tools/os/run-curl.test.ts).
+
 ## Build & test
 
 ```bash
