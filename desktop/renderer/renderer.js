@@ -377,7 +377,9 @@ const OB = {
      stamped as OFFERED that the operator never saw, so `/import` and the
      menu's `onboarding` still have those steps to give later.
      Backlog 18 adds a third: Download itself hands over the same way
-     (obDownloadAndHandOver), and the download card carries the pull.
+     (obDownloadAndHandOver), and the download card carries the pull —
+     the Download that sets up the first backend only. ATO-239: one taken
+     as the second backend, after a cloud model, goes on to the import step.
      Nothing else sets it: `esc`, the propose screen's skip and the import
      screen's own skip row all end the flow without being asked for the
      agent by name, and they keep the closing screens they always had. */
@@ -12221,6 +12223,16 @@ function obLocalPickKey(input, key) {
  * model to show the moment setup closes; obActivateLocal still starts the
  * model when its weights land (obPullFinished).
  *
+ * ATO-239: not when local is the SECOND backend — the "Set up local models
+ * too" the propose step offers once a cloud model is in. That Download was
+ * handed over like a first one, so setup closed the moment it started and
+ * the import step was never shown (Valera on macOS and Nadya on Windows,
+ * 05.10). Nobody asked for the agent there: they said yes to one more
+ * setup screen. So the flow goes on as the propose step's skip does —
+ * finished on the outcome it already has, past the offer it just made, on
+ * to the import step and its own way out — and the download runs behind
+ * it, in the card once setup closes (obSettle remembers it for a quit).
+ *
  * Main runs one pull at a time. A second Download while one runs would only
  * be refused there, so it is refused here, on the screen that asked.
  */
@@ -12231,7 +12243,16 @@ function obDownloadAndHandOver(id) {
   }
   obDispatch({type:'onboarding_local_model_picked', modelId: id});
   obStartLocalPull(id, false);
+  if (obLocalIsSecondBackend()) {
+    obDispatch({type:'onboarding_finished', outcome: OB.outcome || 'cloud', skipSecondOffer:true});
+    return;
+  }
   obHandOver();
+}
+
+/** ATO-239: the local setup under way is the one the propose step offered after a cloud model. */
+function obLocalIsSecondBackend() {
+  return OB.offer === 'local';
 }
 
 /**
@@ -12811,6 +12832,8 @@ function obSetupPullLanded(id) {
   const m = obSetupPullGet();
   if (!m || m.id !== id) return;
   obSetupPullForget();
+  // ATO-239: a second backend's download — setup was stamped complete when it closed.
+  if (m.stamped === true) return;
   const at = new Date().toISOString();
   OB_STAMP_LOG.push({leaf: 'completedAt', at, step: 'landed', written: !OB.testClose});
   if (!OB.testClose && BR) BR.configSet('tui.onboarding.completedAt', at);
@@ -13377,15 +13400,28 @@ async function obSettle() {
      no wizard, no download and no model. The stamp is owed instead, the
      download remembered (obSetupPullRemember), and both are settled when its
      weights land (obSetupPullLanded) — or the next launch resumes it. */
-  const owedFor = closing === 'completedAt' && OB.handOver ? obSetupPullId() : null;
+  const setupPull = closing === 'completedAt' ? obSetupPullId() : null;
+  const owedFor = OB.handOver ? setupPull : null;
   OB_STAMP_LOG.push(owedFor
     ? {leaf: closing, at: stamp, step: 'finished', written: false, owed: true}
     : {leaf: closing, at: stamp, step: 'finished', written: !OB.testClose});
   if (owedFor) obSetupPullRemember(owedFor);
+  /* ATO-239: a local model taken as the second backend comes down behind the
+     import step and past this close (obDownloadAndHandOver). Setup is complete
+     on the cloud model already, so the stamp is written now and none is owed;
+     the download is remembered all the same, as a hand-over's is, so a quit
+     before its weights land resumes it rather than dropping it — a machine
+     with a cloud model never opens setup again to ask. Only the model picked
+     in this flow: a download resumed from an earlier launch, with the offer
+     here declined, keeps its own reminder as it stands (S3 below). */
+  else if (setupPull !== null && setupPull === OB.localModelId && obLocalIsSecondBackend()) {
+    obSetupPullRemember(setupPull);
+    obSetupPullNote({stamped: true});
+  }
   /* S3: setup finished on another route with no setup download left to come —
      an earlier one's reminder would only restart, on every launch, a download
      the person has moved past. One still running here keeps its own. */
-  else if (closing === 'completedAt' && obSetupPullId() === null) obSetupPullForget();
+  else if (closing === 'completedAt' && setupPull === null) obSetupPullForget();
   if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
   const res = owedFor ? {ok: true} : await BR.configSet('tui.onboarding.' + closing, stamp);
   if (stale()) return;
