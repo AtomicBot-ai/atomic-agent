@@ -1800,6 +1800,9 @@ const APPROVAL_CARDS = new Map();
    had ended (src/http/approval-bus.ts, fixed with this); a copy of one of
    these draws nothing (onApprovalEvent). */
 const CLOSED_APPROVALS = new Set();
+/* B01 QA: whether this page has read the chat list yet (sessionsRead). Until
+   it has, whether a request's chat has a row is not known (approvalReachable). */
+let SESSIONS_READ = false;
 const ATTN = new Set();                  // sessions whose last desktop-run turn ended in error
 /* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
    See the top of onChatEvent. */
@@ -7272,6 +7275,7 @@ async function loadResources() {
       : 'could not load tasks: ' + ((tasks.error || 'unknown error'));
   }
   applySessions(sessions, askedAt);
+  sessionsRead();   // B01 QA: a list that failed to load is the page's first look too
   render();
   nameVisibleSessions();
   bswRefreshFacts();
@@ -7334,6 +7338,7 @@ function applySessions(res, askedAt) {
     const row = SESSIONS.find((x) => x.id === sid);
     if (row) approvalOver(sid, row.status, askedAt);
   }
+  sessionsRead();   // B01 QA: requests kept while the list was not known yet
   return true;
 }
 
@@ -8633,13 +8638,43 @@ function approvalOnScreen(sid) {
    be the one that asked, and is named in a moment. A request with none of
    these (a one-shot scheduled task whose session is on no list yet) is
    drawn in the chat on screen, as every request was before: shown there,
-   it can be answered; kept, it could not be found. */
+   it can be answered; kept, it could not be found.
+   B01 QA: before this page has read the chat list, nobody can say there is
+   no row: a window that loads (reopened from the Dock, reloaded) gets the
+   agent's replay of what is pending before its list, and drew another
+   chat's card over its empty start view, with no transcript, as if that
+   chat were open (its composer then said "steer this turn", with Stop). The
+   request is kept for its chat until the list is in; sessionsRead draws it
+   where the person is only if its chat turns out to have no row. */
 function approvalReachable(sid) {
   if (!sid) return false;
+  if (!SESSIONS_READ) return true;
   if (OPENING && OPENING.id === sid) return true;   // the chat being opened: openSession draws it when it lands
   if (SESSIONS.some((x) => x.id === sid) || PENDING_CHATS.has(sid)) return true;
   for (const s of RUNNING.values()) if (!s || s === sid) return true;
   return false;
+}
+
+/* B01 QA: the page's first look at the chat list (read, or failed to read).
+   A request kept while the list was unknown whose chat has no row after all
+   is drawn where the person is, as onApprovalEvent would have drawn it
+   (approvalReachable); one whose chat has a row stays kept for it, its dot
+   says it waits, and opening the chat (openSession) draws it there with the
+   chat's own transcript. A failed read counts: the list will not say more,
+   and kept, such a request could be found nowhere. */
+function sessionsRead() {
+  if (SESSIONS_READ) return false;
+  SESSIONS_READ = true;
+  let drew = false;
+  for (const [sid, req] of APPROVAL_CARDS) {
+    if (!approvalOpen(req) || PENDING_APPROVALS.get(sid) !== req.approvalId) continue;
+    if (approvalOnScreen(sid) || approvalReachable(sid) || OPENING) continue;
+    if (!S.log.includes(req)) placeInLiveTurn(req, {afterTool: req.tool});
+    if (!req.drawn) { req.drawn = true; ANX.apprShown(req); }
+    S.pending = req; S.apprFocused = false; S.busy = false;
+    drew = true;
+  }
+  return drew;
 }
 
 /* Q60 review: a request kept for chat `sid` is drawn there now (the chat

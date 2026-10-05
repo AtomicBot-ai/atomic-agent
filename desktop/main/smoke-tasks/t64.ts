@@ -26,9 +26,14 @@ import { BrowserWindow } from "electron";
  * open nothing over it, and ⌘N opens a new chat. Ctrl+Y (the TUI's chord)
  * and the bare y still allow the open request.
  *
- * Not covered here: a window that loads again (reload, reopened from the
- * dock) asks the agent to replay what is pending (main.ts did-finish-load →
- * AgentClient.reopenApprovalStream); that needs a real agent and a reload.
+ * A window that loads again (reopened from the Dock, reloaded) gets the
+ * agent's replay of what is pending before it has read the chat list. A
+ * request then stays kept for its chat (its dot) instead of being drawn over
+ * the empty start view; the chat shows it, with its transcript, when it is
+ * opened. Only a request whose chat has no row once the list is in is drawn
+ * where the person is. Simulated here by marking the list unread; the
+ * replay itself (main.ts did-finish-load → AgentClient.reopenApprovalStream)
+ * needs a real agent and a reload, and is not covered.
  *
  * Nothing reaches the agent and the config is not touched. The requests go
  * through the real onApprovalEvent, the turn's end through the real
@@ -52,6 +57,11 @@ const ASK_2 = `${PREFIX}approval-2`;   // the same call asked again
 const ASK_3 = `${PREFIX}approval-3`;   // the next turn's request, for the keys
 const ASK_4 = `${PREFIX}approval-4`;   // the same call asked again, for the bare y
 const ASK_R = `${PREFIX}approval-r`;   // another call of the same step, waiting at the same time
+const B = `${PREFIX}chat-b`;           // a chat with a row whose request is replayed into a page that just loaded
+const C = `${PREFIX}chat-c`;           // a session with no row anywhere (a one-shot task's)
+const ASK_B = `${PREFIX}approval-b`;
+const ASK_C = `${PREFIX}approval-c`;
+const ASKED_B = "smoke t64: Создай файл test2.txt с текстом привет";
 const QUIET = "smoke t64: not answered while the check runs";
 const q = (v: unknown) => JSON.stringify(v);
 const show = (x: unknown) => JSON.stringify(x);
@@ -66,6 +76,7 @@ class StandIn {
   private readonly session: Handler = (_e, id) => {
     const sid = typeof id === "string" ? id : "";
     if (sid === PROBE) return { ok: true, data: { id: sid, turns: [], smokeT64: true } };
+    if (sid === B) return { ok: true, data: { id: sid, status: "running", turns: [{ kind: "user", text: ASKED_B }] } };
     return { ok: false, error: QUIET };
   };
   private readonly approve: Handler = (_e, payload) => {
@@ -132,7 +143,7 @@ const KEEP = `(() => {
   window.__t64keep = {log: S.log, sessionId: S.sessionId, agentSession: S.agentSession, busy: S.busy, pending: S.pending,
     focused: S.apprFocused, history: S.history, room: S.room, streamId: S.streamId, turnId: S.turnId, stick: S.stick,
     queued: S.queued.slice(), ahead: STEER.ahead, opening: OPENING, owed: typeof DRAIN_OWED !== 'undefined' ? DRAIN_OWED : null,
-    stamp: CTX055.stamp, plan: {on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId, startedMode: PLAN.startedMode}};
+    sessionsRead: SESSIONS_READ, stamp: CTX055.stamp, plan: {on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId, startedMode: PLAN.startedMode}};
   return true;
 })()`;
 
@@ -157,7 +168,7 @@ const RESTORE = `(() => { ${H}
     S.apprFocused = k.focused; S.history = k.history; S.room = k.room; S.streamId = k.streamId; S.turnId = k.turnId;
     S.stick = k.stick; S.queued.length = 0; S.queued.push(...k.queued); STEER.ahead = k.ahead; OPENING = k.opening;
     if (typeof DRAIN_OWED !== 'undefined') DRAIN_OWED = k.owed;
-    CTX055.stamp = k.stamp; Object.assign(PLAN, k.plan);
+    CTX055.stamp = k.stamp; Object.assign(PLAN, k.plan); SESSIONS_READ = k.sessionsRead;
   }
   render();
   return true;
@@ -320,6 +331,48 @@ export async function checks64(js: Js, check: Check): Promise<void> {
         && yes.bare.pending === null && !yes.bare.waiting.some((w) => w.startsWith(`${A}>`)),
       `yes=${show(yes)} sent=${show(sent)}`,
     );
+    // (e) A page that just loaded, its chat list not read yet, gets the replay of chat B's request (B has a
+    // row) and of one with no chat anywhere. Neither is drawn over the empty view; once the list is in, the
+    // one with no chat is drawn where the person is, B's stays kept, and opening B shows it with B's transcript.
+    const loaded = await js<{ early: View; read: View; opened: View; asked: boolean }>(`(async () => { ${H}
+      for (const [t, s] of [...RUNNING]) if (mine(t) || mine(s)) RUNNING.delete(t);
+      OPENING = null; S.sessionId = ''; S.agentSession = null; S.pending = null; S.turnId = null; S.streamId = null;
+      S.busy = false; S.log = [];
+      SESSIONS_READ = false;
+      onApprovalEvent({approvalId: ${q(ASK_B)}, tool: 'os.fs.write', category: 'fs_write_workspace', reason: 'smoke t64',
+        preview: 'test2.txt', affectedResources: ['/tmp/smoke-t64/test2.txt'], sessionId: ${q(B)}});
+      onApprovalEvent({approvalId: ${q(ASK_C)}, tool: 'os.shell.run', category: 'shell', reason: 'smoke t64',
+        preview: 'echo smoke t64', sessionId: ${q(C)}});
+      const early = view();
+      for (let i = SESSIONS.length - 1; i >= 0; i--) if (SESSIONS[i].id === ${q(B)}) SESSIONS.splice(i, 1);
+      SESSIONS.unshift({id: ${q(B)}, t: 'smoke t64 chat b', named: true, titled: true, updatedAt: Date.now(), status: 'running', turnCount: 1});
+      sessionsRead();
+      const read = view();
+      const no = document.querySelector('#scroller .appr[data-appr-id=' + JSON.stringify(${q(ASK_C)}) + '] [data-appr="n"]');
+      if (no) no.click();
+      await tick(150);
+      await openSession(${q(B)});
+      return {early, read, opened: view(), asked: S.log.some((m) => m.k === 'user' && m.text === ${q(ASKED_B)})};
+    })()`);
+    check(
+      "T64 (B01 QA): an approval replayed before the page has read the chat list is not drawn over the empty view; it is kept for its chat",
+      loaded.early.pending === null && loaded.early.cards.length === 0 && loaded.early.rows.length === 0 && !loaded.early.gated
+        && loaded.early.waiting.includes(`${B}>${ASK_B}`) && loaded.early.kept.includes(`${B}>${ASK_B}`),
+      show(loaded.early),
+    );
+    check(
+      "T64 (B01 QA): once the list is in, a request whose chat has a row stays kept for it; one with no chat anywhere is drawn where the person is",
+      loaded.read.sessionId === "" && loaded.read.pending === ASK_C && show(loaded.read.cards) === show([ASK_C])
+        && loaded.read.waiting.includes(`${B}>${ASK_B}`) && loaded.read.kept.includes(`${B}>${ASK_B}`),
+      show(loaded.read),
+    );
+    check(
+      "T64 (B01 QA): opening that chat shows its transcript and its card, once",
+      loaded.opened.sessionId === B && loaded.asked && loaded.opened.pending === ASK_B
+        && show(loaded.opened.cards) === show([ASK_B]) && loaded.opened.gated,
+      `opened=${show(loaded.opened)} asked=${loaded.asked}`,
+    );
+
     // What the turn's end set off (the session list re-read) is answered before the stand-ins go.
     await wait(300);
   } finally {
