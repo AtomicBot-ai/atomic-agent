@@ -114,6 +114,8 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       groq: { ok: false, error: 'could not list models from "groq": http 401: Invalid API Key', status: 401 },
       ollama: { ok: false, error: 'could not list models from "ollama": fetch failed', unreachable: true },
     } as Record<string, unknown>,
+    /* B04: the answer for any other id (a custom URL's derived id), when set. */
+    listOther: null as unknown,
   };
   const stand: Record<string, (_e: unknown, payload: unknown) => unknown> = {
     "cli:providerKeyPresent": (_e, p) => {
@@ -126,6 +128,7 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       // Groq ships no catalog: its list is a live call with the key, and a bad key is refused there.
       const listId = String((p as { id?: unknown } | null)?.id ?? "");
       if (answer.list[listId]) return answer.list[listId];
+      if (answer.listOther) return answer.listOther;
       return { ok: true, models: [{ provider: "openrouter", id: "openrouter/auto", kind: "chat" }] };
     },
     "cli:verifyProviderKey": () => { seen.push({ ch: "verify" }); return answer.verify; },
@@ -265,9 +268,9 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       act('wiz:next'); await window.__t51Settle(); return window.__t51View();
     })()`);
     check(
-      "T51: a key Groq refuses on its model list (http 401) reads \"Groq didn't accept this key\", in red — not \"Could not check this key\"",
+      "T51: a key Groq refuses on its model list (http 401) reads \"Groq didn't accept this key\", in red, the key field lit — not \"Could not check this key\"",
       listRefused["phase"] === "configure" && /^Groq didn\u2019t accept this key/.test(String(listRefused["error"] ?? ""))
-        && listRefused["soft"] === false && !!listRefused["redLine"],
+        && listRefused["soft"] === false && !!listRefused["redLine"] && !!listRefused["redField"],
       show(listRefused),
     );
 
@@ -281,10 +284,10 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       return Object.assign(window.__t51View(), {detail: WIZ.errorDetail && WIZ.errorDetail.text});
     })()`);
     check(
-      "B04: Ollama not running reads \"Ollama isn't answering at http://localhost:11434. Start Ollama, then try again.\" in red, no word of a key, the agent's words as the Details",
+      "B04: Ollama not running reads \"Ollama isn't answering at http://localhost:11434. Start Ollama, then try again.\" in red, no word of a key, the key field unlit, the agent's words as the Details",
       ollamaDown["phase"] === "configure"
         && ollamaDown["error"] === "Ollama isn’t answering at http://localhost:11434. Start Ollama, then try again."
-        && !/\bkey\b/i.test(String(ollamaDown["error"] ?? "")) && ollamaDown["soft"] === false && !!ollamaDown["redLine"]
+        && !/\bkey\b/i.test(String(ollamaDown["error"] ?? "")) && ollamaDown["soft"] === false && !!ollamaDown["redLine"] && !ollamaDown["redField"]
         && /fetch failed/.test(String(ollamaDown["detail"] ?? "")),
       show(ollamaDown),
     );
@@ -304,10 +307,28 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       act('wiz:next'); await window.__t51Settle(); return window.__t51View();
     })()`);
     check(
-      "B04: Groq out of reach reads \"Couldn't reach Groq. Check your internet connection, then try again.\" — not \"didn't accept this key\" or \"Could not check this key\"",
+      "B04: Groq out of reach reads \"Couldn't reach Groq. Check your internet connection, then try again.\", the key field unlit — not \"didn't accept this key\" or \"Could not check this key\"",
       groqDown["phase"] === "configure"
-        && groqDown["error"] === "Couldn’t reach Groq. Check your internet connection, then try again.",
+        && groqDown["error"] === "Couldn’t reach Groq. Check your internet connection, then try again."
+        && !!groqDown["redLine"] && !groqDown["redField"],
       show(groqDown),
+    );
+
+    // 6e (B04). A custom URL off this machine that does not answer: the address and the server, not the internet.
+    answer.listOther = { ok: false, error: 'could not list models from "custom": getaddrinfo ENOTFOUND llm.example.invalid', unreachable: true };
+    const customDown = await js<Record<string, unknown>>(`(async () => {
+      WIZ.phase = null; window.__t51Stage([]);
+      Object.assign(WIZ, {row: KIND_ROWS.find((k) => k.custom), phase: 'configure', apiKey: 'smoke-t51-some-key-0123', baseUrl: 'http://llm.example.invalid:8000/v1',
+        error: null, softError: null, forId: null, unfinishedId: null, modelChosen: false}); render();
+      act('wiz:next'); await window.__t51Settle(); return window.__t51View();
+    })()`);
+    answer.listOther = null;
+    check(
+      "B04: a custom URL that does not answer reads \"Nothing is answering at <url>. Check the address and that the server is running…\", the key field unlit",
+      customDown["phase"] === "configure"
+        && customDown["error"] === "Nothing is answering at http://llm.example.invalid:8000/v1. Check the address and that the server is running, then try again."
+        && !customDown["redField"],
+      show(customDown),
     );
 
     // 7. A failure is still red: a key the provider turned down.

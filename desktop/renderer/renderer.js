@@ -158,6 +158,11 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
      with the field unlit: nothing has failed yet. Any other line written to
      WIZ.error stops matching it and is drawn as the error it is. */
   softError:null,
+  /* B04: what kind of failure WIZ.error is, {for, kind}, like errorDetail: it
+     holds only while WIZ.error is still that line. 'unreachable' (nothing
+     answered at the provider's address) leaves the key field unlit: the key
+     is not what failed. */
+  errorKind:null,
   /* Backlog 18: opened on its own — by the download card's "Set up a cloud
      model meanwhile" — rather than from the composer's own panes, so its
      Cancel closes the popover instead of falling back to the backend list. */
@@ -305,6 +310,8 @@ function savedKeyLine(id) { return 'The key saved for ' + providerWord(id) + ' h
 function wizService(row) { return String((row && row.label) || '').split(' (')[0] || 'this provider'; }
 function keyAskLine(row) { const svc = wizService(row); return 'Paste your ' + svc + (/\bAPI$/.test(svc) ? ' key' : ' API key') + ' to continue.'; }
 function wizErrSoft() { return !!WIZ.error && WIZ.error === WIZ.softError; }
+/* B04: the line is about the provider's address, not the key — the key field stays unlit. */
+function wizErrUnreachable() { const e = WIZ.errorKind; return !!(e && WIZ.error && e.for === WIZ.error && e.kind === 'unreachable'); }
 /* After a request for a key, the caret goes to the key field (both mounts render it as #wiz-key). */
 function wizFocusKey() { const el = document.getElementById('wiz-key'); if (el) el.focus(); }
 function wizAskKey(row) { WIZ.phase = 'configure'; WIZ.error = WIZ.softError = keyAskLine(row); WIZ.errorDetail = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false; }
@@ -5297,7 +5304,7 @@ function act(a) {
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
-  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.softError = null; WIZ.forId = null; SEL.err = null; SEL.addOpen = false; render(); return; }
+  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.softError = null; WIZ.errorKind = null; WIZ.forId = null; SEL.err = null; SEL.addOpen = false; render(); return; }
   /* Chat review (Д21): Where it runs › Add provider. Settings › Models on its
      cloud providers, with the provider setup started — what that pane's own
      Add provider button does (llm:add). */
@@ -6259,7 +6266,7 @@ document.addEventListener('input', (e) => {
        to. A key typed after an error left the old error under it, so the
        screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
-    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; render(); }
+    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.softError = null; WIZ.errorKind = null; WIZ.uncheckedFor = null; render(); }
     return;
   }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
@@ -11622,7 +11629,7 @@ function obWizardHTML() {
   const unchecked = WIZ.uncheckedFor;
   /* ATO-161: a request for a key is a hint in ink, the field unlit; a failure is red. */
   const soft = wizErrSoft();
-  const tone = WIZ.error && !soft ? (unchecked ? ' is-warn' : ' is-error') : '';
+  const tone = WIZ.error && !soft && !wizErrUnreachable() ? (unchecked ? ' is-warn' : ' is-error') : '';
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">API key</div>'
     + '<div class="ob-h">' + providerMark(k.custom ? '' : k.id) + esc(service) + '</div>'
@@ -13723,7 +13730,7 @@ document.addEventListener('input', (e) => {
        to. A key typed after an error left the old error under it, so the
        screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
-    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; render(); }
+    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.softError = null; WIZ.errorKind = null; WIZ.uncheckedFor = null; render(); }
     return;
   }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
@@ -16718,7 +16725,7 @@ function wizardHTML() {
   const urlBad = !!(k.custom && WIZ.error && !/^https?:\/\/\S+$/.test(WIZ.baseUrl));
   /* ATO-161: a request for a key leaves the field unlit \u2014 only a failure lights it. */
   const soft = wizErrSoft();
-  const tone = WIZ.error && !soft ? (unchecked ? ' is-warn' : ' is-error') : '';
+  const tone = WIZ.error && !soft && !wizErrUnreachable() ? (unchecked ? ' is-warn' : ' is-error') : '';
   /* ATO-161: the variable the empty field falls back to is a quiet line under
      the field, for the people who use one, not part of the field's name. It
      gives way to whatever the step has to say. */
@@ -16988,6 +16995,8 @@ async function wizNextStep() {
     WIZ.error = unreachable && local
       ? (k.custom ? 'Nothing is answering at ' + where + '. Start your local server, then try again.'
         : name + ' isn\u2019t answering at ' + where + '. Start ' + name + ', then try again.')
+      : unreachable && k.custom
+      ? 'Nothing is answering at ' + where + '. Check the address and that the server is running, then try again.'
       : unreachable
       ? 'Couldn\u2019t reach ' + name + '. Check your internet connection, then try again.'
       : refused && local && !WIZ.apiKey
@@ -17002,6 +17011,7 @@ async function wizNextStep() {
       ? 'Could not check this key with ' + wizService(k) + '.'
       : wizService(k) + ' returned no models for this key.';
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
+    WIZ.errorKind = unreachable ? {for: WIZ.error, kind: 'unreachable'} : null;
     render();
     return;
   }
