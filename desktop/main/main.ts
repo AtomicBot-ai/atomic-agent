@@ -1228,9 +1228,9 @@ function wireIpc(client: AgentClient): void {
     let slot: DownloadSlot | null = null;
     // ATO-123: as Settings' update (cli:modelsUpdate) — the update's own stop is on purpose, and the server comes back after it.
     const held: { hold: UpdateHold | null } = { hold: null };
-    const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean }>(
+    const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>(
       own.signal,
-      (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false }),
+      (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
       () => {
         held.hold = updateBegins();
         const started = modelsUpdateStream((line) =>
@@ -1243,7 +1243,9 @@ function wireIpc(client: AgentClient): void {
     pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
     void done.then(async (ended) => {
       pullUpdate = null;
-      const res = held.hold ? await afterUpdate(ended, held.hold) : ended;
+      /* ATO-128: one stopped by its own time limit left a llama.cpp in place
+         as it was, so a server it stopped comes back on that one (keptBackend). */
+      const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
       A.runtimeUpdated("setup", updateStartedAt, res, own.signal.aborted);
       send("cli:pull", {
         id,
@@ -1256,6 +1258,9 @@ function wireIpc(client: AgentClient): void {
         // never drove — it draws the phase as passed instead.
         sawProgress: res.sawProgress,
         upToDate: res.upToDate,
+        // ATO-128: stopped by its own time limit — with a llama.cpp in place, the model held for it starts on that one (renderer obPullFinished).
+        timedOut: res.timedOut,
+        keptBackend: res.keptBackend,
       });
     });
     return { ok: true, started: true };

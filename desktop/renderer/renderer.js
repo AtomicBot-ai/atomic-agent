@@ -12630,10 +12630,16 @@ function obPullFinished(job, ev) {
        it (dlRetry). Settled before the queue moves on, so a vision projector
        parked behind it comes down knowing whether its model may start. */
     const landed = ok && !job.cancelled;
-    if (landed) DL.startGone = [];
+    /* ATO-128: an update main stopped for making no progress, with a
+       llama.cpp already in place (keptBackend), left that one as it was — the
+       model held for it starts on it, and the update comes again later; it is
+       not a runtime that never came. With none in place it is (the setup's
+       usual case): the failed row offers Retry. Its row (dlOnPull) says which. */
+    const goOn = landed || (!ok && !job.cancelled && ev.timedOut === true && ev.keptBackend === true);
+    if (goOn) DL.startGone = [];
     else dlRuntimeMissed();
     dlNext();
-    if (landed) obActivateHeld();
+    if (goOn) obActivateHeld();
     return;
   }
   /* r5 review fix (item 7) — drain the queue on THIS leg too. dlNext() used to
