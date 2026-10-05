@@ -101,8 +101,9 @@ export function installHint(platform: Platform): string {
  * on the one pid, which leaves anything the agent started (MCP servers,
  * shell tools) running without a parent. `taskkill /T /F` ends the whole
  * tree. There is no gentler request a windowless console child can be
- * sent from another console, so the forced tree kill IS the stop; sqlite
- * in WAL mode is built to survive exactly that.
+ * sent from another console; sqlite in WAL mode survives the forced tree
+ * kill, but the agent's own shutdown does not run under it, so it comes
+ * after the agent was given its chance to close (ATO-177, below).
  */
 export type StopPlan =
   | { kind: "signals"; first: "SIGTERM"; then: "SIGKILL" }
@@ -113,6 +114,33 @@ export function stopPlan(platform: Platform, pid: number, systemRoot?: string): 
     return { kind: "taskkill", command: taskkillPath(systemRoot), args: ["/PID", String(pid), "/T", "/F"] };
   }
   return { kind: "signals", first: "SIGTERM", then: "SIGKILL" };
+}
+
+/* ATO-177: the forced tree kill above WAS the whole stop on Windows, so the
+   agent's shutdown never ran: the turn's last writes and the session row it
+   closes on the way out were lost, and the next start closed that row as
+   interrupted with the transcript from before the turn — a new chat's first
+   message gone, and a chat with no turn left off the list. `atag serve` has
+   no shutdown route and Node there has no signal another process can send, but
+   it does close by itself, the way SIGTERM closes it, once the process it
+   watches is gone and no turn runs (src/cli/serve-orphan-guard.ts, looked at
+   every 2 s; `--parent-pid` names that process). So on Windows the agent
+   watches a stand-in for the app: a tiny Node process that holds nothing and
+   ends when the app ends (its stdin, a pipe from the app, closes then) or when
+   the app ends it. A stop ends the stand-in first and gives the agent
+   WINDOWS_GRACEFUL_MS to close; only then comes the tree kill. */
+
+/** The stand-in the agent watches on Windows: alive until its stdin closes or it is ended. */
+export const WATCH_SENTINEL_SOURCE =
+  "process.stdin.on('end',()=>process.exit(0));process.stdin.on('error',()=>process.exit(0));process.stdin.resume();";
+
+/** How long a Windows stop waits for the agent to close by itself before the tree kill. */
+export const WINDOWS_GRACEFUL_MS = 5_000;
+
+/** The arguments that point `atag serve` at the stand-in it watches: on Windows only, and only with one running. */
+export function serveWatchArgs(platform: Platform, sentinelPid: number | undefined): string[] {
+  if (platform !== "win32" || !sentinelPid || sentinelPid <= 1) return [];
+  return ["--parent-pid", String(sentinelPid)];
 }
 
 /** taskkill by absolute path, so a stray `taskkill` earlier on PATH is never run. */

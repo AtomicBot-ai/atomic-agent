@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Readable } from "node:stream";
-import { LineSplitter, structuredLevel } from "./agent-output.js";
+import { LineSplitter, lineLevel } from "./agent-output.js";
 // r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
@@ -18,7 +18,10 @@ import {
   installHint,
   looksLikeServeCommand,
   procCmdline,
+  serveWatchArgs,
   stopPlan,
+  WATCH_SENTINEL_SOURCE,
+  WINDOWS_GRACEFUL_MS,
 } from "./platform.js";
 
 /**
@@ -256,6 +259,29 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * Windows (ATO-177): the stand-in for the app that `atag serve` watches, so
+ * ending it asks the agent to close by itself (platform.ts serveWatchArgs).
+ * This app's own executable run as Node: no other binary to ship or find. Its
+ * stdin is a pipe from the app, so it ends with the app however the app ends.
+ * Null when it could not be started; the agent then watches the app itself, as
+ * before, and a stop is the tree kill alone.
+ */
+function spawnWatchSentinel(): ChildProcess | null {
+  try {
+    const sentinel = spawn(process.execPath, ["-e", WATCH_SENTINEL_SOURCE], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: ["pipe", "ignore", "ignore"],
+      windowsHide: true,
+    });
+    sentinel.on("error", () => {});
+    sentinel.stdin?.on("error", () => {});
+    return sentinel.pid ? sentinel : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Windows: end `pid` and everything it started (see platform.ts stopPlan). */
 function taskkillTree(pid: number): Promise<void> {
   const plan = stopPlan("win32", pid, process.env.SystemRoot);
@@ -391,6 +417,8 @@ export interface AgentClientOptions {
   stopGraceMs?: number;
   /** SIGKILL → let go of an agent still there (default KILL_WAIT_MS). */
   killWaitMs?: number;
+  /** Windows: the stand-in ended → the tree kill, for an agent that has not closed (default WINDOWS_GRACEFUL_MS). */
+  windowsGraceMs?: number;
   /** How long a start waits for an agent a stop let go of (default LINGER_WAIT_MS). */
   lingerWaitMs?: number;
   /**
@@ -460,6 +488,8 @@ export class AgentClient extends EventEmitter {
    * one is still there.
    */
   private readonly lingering = new Set<ChildProcess>();
+  /** Windows (ATO-177): each agent's stand-in for the app, the process it watches (spawnWatchSentinel). */
+  private readonly sentinels = new Map<ChildProcess, ChildProcess>();
   private readonly opts: AgentClientOptions;
   private readonly recordPath: string;
 
@@ -512,7 +542,9 @@ export class AgentClient extends EventEmitter {
 
   /** A line of the desktop's own about the agent: the Diagnostics pane and agent.log, and the terminal the app was started from. */
   private say(line: string): void {
-    this.emit("log", { stream: "stderr", line });
+    // ATO-121: tagged by what it says (agent-output lineLevel), not ERR for being on stderr.
+    const level = lineLevel(line);
+    this.emit("log", { stream: "stderr", line, ...(level ? { level } : {}) });
     console.error(line);
   }
 
@@ -598,36 +630,49 @@ export class AgentClient extends EventEmitter {
        is spawned behind its back. */
     if (superseded()) return gaveWay();
 
-    const child = spawn(
-      binary,
-      [
-        "serve",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-        "--api-key",
-        token,
-      ],
-      {
-        cwd: this.status.workingDir,
-        // r5 item 9: `atag serve` runs on the desktop's own state directory.
-        env: agentEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        // Windows: a console child of a GUI app otherwise opens a console window.
-        windowsHide: true,
-      },
-    );
+    // ATO-177: on Windows the agent watches a stand-in for the app, whose end asks it to close.
+    const sentinel = process.platform === "win32" ? spawnWatchSentinel() : null;
+    let child: ChildProcess;
+    try {
+      child = spawn(
+        binary,
+        [
+          "serve",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          String(port),
+          "--api-key",
+          token,
+          ...serveWatchArgs(process.platform, sentinel?.pid),
+        ],
+        {
+          cwd: this.status.workingDir,
+          // r5 item 9: `atag serve` runs on the desktop's own state directory.
+          env: agentEnv(),
+          stdio: ["ignore", "pipe", "pipe"],
+          // Windows: a console child of a GUI app otherwise opens a console window.
+          windowsHide: true,
+        },
+      );
+    } catch (err) {
+      // Nothing was started for the stand-in to stand in for.
+      sentinel?.kill();
+      throw err;
+    }
     this.child = child;
+    if (sentinel) this.sentinels.set(child, sentinel);
 
     /* Whole lines, however the pipe cut them, each with its level when it is
-       one of the agent's structured log lines (agent-output.ts). What is left
-       when a stream closes is let out too: an agent that died mid-line. */
+       one of the agent's structured log lines, or a line whose shape says it
+       (serve's own `[atomic-agent] …` lifecycle lines, ATO-121; agent-output.ts).
+       What is left when a stream closes is let out too: an agent that died
+       mid-line. */
     const relay = (stream: "stdout" | "stderr", from: Readable | null) => {
       if (!from) return;
       const lines = new LineSplitter((line) => {
         if (!line.trim()) return;
-        const level = structuredLevel(line);
+        const level = lineLevel(line);
         this.emit("log", { stream, line, ...(level ? { level } : {}) });
       });
       from.on("data", (chunk: Buffer) => lines.push(chunk));
@@ -643,6 +688,7 @@ export class AgentClient extends EventEmitter {
     child.on("exit", (code, signal) => {
       // A child a stop let go of is gone at last: nothing waits for it any more, and its record goes.
       if (this.lingering.delete(child) && child.pid !== undefined) forgetServeRecord(this.recordPath, child.pid);
+      this.endSentinel(child);
       this.childExited(child, code, signal);
     });
     /* A child that could not be spawned at all (not executable, say) emits
@@ -650,7 +696,10 @@ export class AgentClient extends EventEmitter {
        main. A failed kill emits `error` too, on a child that has a pid: that
        one says nothing about how the agent is doing, and its exit still comes. */
     child.on("error", (err) => {
-      if (child.pid === undefined) this.childFailedToSpawn(child, err);
+      if (child.pid === undefined) {
+        this.endSentinel(child);
+        this.childFailedToSpawn(child, err);
+      }
     });
 
     const budget = this.opts.healthBudgetMs ?? this.healthBudgetMs();
@@ -1294,6 +1343,20 @@ export class AgentClient extends EventEmitter {
     return settlesWithin(exits, this.opts.lingerWaitMs ?? LINGER_WAIT_MS);
   }
 
+  /** Windows (ATO-177): ends the stand-in `child` watches, which asks it to close; once is enough. */
+  private endSentinel(child: ChildProcess): boolean {
+    const sentinel = this.sentinels.get(child);
+    if (!sentinel) return false;
+    this.sentinels.delete(child);
+    try {
+      sentinel.stdin?.end();
+      sentinel.kill();
+    } catch {
+      // Gone already: the agent sees it gone just the same.
+    }
+    return true;
+  }
+
   /** A signal to the agent, through the stand-in a check gave (AgentClientOptions.signal). */
   private sendSignal(child: ChildProcess, sig: NodeJS.Signals): void {
     if (this.opts.signal) this.opts.signal(child, sig);
@@ -1312,7 +1375,15 @@ export class AgentClient extends EventEmitter {
     this.stopped.add(child);
     const exited = exitOf(child);
     if (process.platform === "win32" && child.pid) {
-      // No SIGTERM on Windows: end the agent and the processes it started.
+      /* ATO-177: no SIGTERM on Windows. The agent is asked first — its
+         stand-in for the app ends, and it closes by itself the way SIGTERM
+         closes it, its shutdown run — and only one still there after the
+         grace is ended with the processes it started. */
+      if (this.endSentinel(child)) {
+        const asked = this.opts.windowsGraceMs ?? WINDOWS_GRACEFUL_MS;
+        if (await settlesWithin(exited, asked)) return true;
+        this.say(`[desktop] the agent (pid ${child.pid}) did not close within ${seconds(asked)} of being asked — ending it and the processes it started`);
+      }
       void taskkillTree(child.pid);
     } else {
       this.sendSignal(child, "SIGTERM");

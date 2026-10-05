@@ -1862,6 +1862,22 @@ let DRAIN_OWED = false;
    each `{queued, ahead, owed}`: S.queued, STEER.ahead and DRAIN_OWED as they
    were when the person left the chat. See stashQueue. */
 const QUEUES = new Map();
+/* ATO-135: the queues a window closed with the app still running left in
+   main (app:queuesKeep) come back here. The turn each waited for may have
+   ended meanwhile, so each is owed: it runs once its chat is open and idle
+   (restoreQueue, drainOwed). */
+(function queuesRestore() {
+  let kept = null;
+  try { kept = BR && BR.queuesTake ? BR.queuesTake() : null; } catch (e) { kept = null; }
+  if (!kept || typeof kept !== 'object') return;
+  for (const [sid, texts] of Object.entries(kept)) {
+    if (!sid || sid.startsWith('turn:') || !Array.isArray(texts)) continue;
+    const list = texts.filter((t) => typeof t === 'string' && t);
+    if (list.length) QUEUES.set(sid, {queued: list, ahead: 0, owed: true});
+  }
+})();
+/** ATO-135: the last snapshot sent to main, so an unchanged one is not sent again. */
+let QUEUES_KEPT = null;
 /* 0.6.7 item 27: a new chat appears on the list as soon as its first message
    is sent. The agent's list only counts a chat once it has a stored turn, and
    a turn is stored when it ends, so the chat used to appear only when its
@@ -2077,6 +2093,7 @@ function renderSidebar() {
     const lists = $('#sidebar').querySelector('.sb-lists');
     if (lists) lists.scrollTop = keepScroll;
   }
+  queuesKeep();   // ATO-135
 }
 
 /** The workspace chip's label: the folder's own name, not the whole path
@@ -2197,8 +2214,11 @@ function taskRow(t) {
 function chatRow(s) {
   const [state, tip, tone] = chatDot(s);
   const pinned = PREFS.pinned.includes(s.id);
+  // ATO-135: a chat with messages waiting for its turn to end says so on its row, as a task row says its schedule.
+  const queued = chatQueuedCount(s.id);
   return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
-    + ' title="' + esc(s.t + ' · ' + tip + (pinned ? ' · pinned' : '')) + '">'
+    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
+    + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
     /* r5 item 3: "a button to mark a session as unread." A span with
@@ -2210,6 +2230,31 @@ function chatRow(s) {
        : '')
     + '<span class="pinbtn iconbtn" data-pin="' + esc(s.id) + '" title="' + (pinned ? 'Unpin' : 'Pin') + '" role="button">' + ic('pin') + '</span>'
     + '</button>';
+}
+
+/** ATO-135: how many messages chat `sid` has queued, on screen or not. */
+function chatQueuedCount(sid) {
+  if (!sid) return 0;
+  if (sid === queueKey()) return S.queued.length;
+  const q = QUEUES.get(sid);
+  return q ? q.queued.length : 0;
+}
+/** ATO-135: every chat's queued messages, by session id, for main to keep across a closed window. */
+function queuesSnapshot() {
+  const out = {};
+  for (const [key, q] of QUEUES) if (key && !key.startsWith('turn:') && q.queued.length) out[key] = q.queued.slice();
+  const here = queueKey();
+  if (here && !here.startsWith('turn:') && S.queued.length) out[here] = (out[here] || []).concat(S.queued);
+  return out;
+}
+/** ATO-135: tells main what is queued, when it changed (every paint of the sidebar asks). */
+function queuesKeep() {
+  if (!BR || !BR.queuesKeep) return;
+  const snap = queuesSnapshot();
+  const sig = JSON.stringify(snap);
+  if (sig === QUEUES_KEPT) return;
+  QUEUES_KEPT = sig;
+  try { BR.queuesKeep(snap); } catch (e) { QUEUES_KEPT = null; }
 }
 
 /** The row's one-word state, where the removed "N turns" line used to sit. */
@@ -5939,6 +5984,20 @@ async function steerOrQueueRun(text, post, typedIn) {
     render(); return;
   }
   parkIn(key, [text]);
+  /* ATO-183: refused because the chat's turn ended while the steer was on
+     its way. That turn's end found nothing queued, so nothing was left to run
+     it: it sat in the tray saying it runs as the next turn, the chat idle
+     under it, until something else happened. A chat on screen with no turn
+     of its own runs it now, unless something holds the composer (a request
+     waiting, the chat still loading, a switch landing, the agent down) — then
+     it is owed, and runs as soon as that goes (drainOwed). */
+  const own = queueKey();
+  if (here && own && queueOwner(key) === own && !queueChatRunning(own) && !S.busy) {
+    STEER.ahead = 0;
+    DRAIN_OWED = true;
+    drainOwed();
+    if (!DRAIN_OWED) return;   // sent as the chat's next turn
+  }
   // The queue tray, like the sentence explaining it, is the chat's it was
   // typed in (Backlog 26): another chat on screen shows neither.
   if (here) placeInLiveTurn({id:nid(), k:'system', text: asked
@@ -9514,6 +9573,8 @@ if (BR) {
   /* ATO-123: main brings the local model server back when it stops under a
      route that needs it. A window opened during an incident asks for it. */
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
+  // ATO-130: Settings' llama.cpp update, waiting for its turn or running.
+  if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
   if (BR.daemonWatch) BR.daemonWatch().then((st) => { if (st && st.incident) dwatchApply(st.incident); }).catch(() => {});
@@ -12949,10 +13010,16 @@ function obPullFinished(job, ev) {
        it (dlRetry). Settled before the queue moves on, so a vision projector
        parked behind it comes down knowing whether its model may start. */
     const landed = ok && !job.cancelled;
-    if (landed) DL.startGone = [];
+    /* ATO-128: an update main stopped for making no progress, with a
+       llama.cpp already in place (keptBackend), left that one as it was — the
+       model held for it starts on it, and the update comes again later; it is
+       not a runtime that never came. With none in place it is (the setup's
+       usual case): the failed row offers Retry. Its row (dlOnPull) says which. */
+    const goOn = landed || (!ok && !job.cancelled && ev.timedOut === true && ev.keptBackend === true);
+    if (goOn) DL.startGone = [];
     else dlRuntimeMissed();
     dlNext();
-    if (landed) obActivateHeld();
+    if (goOn) obActivateHeld();
     return;
   }
   /* r5 review fix (item 7) — drain the queue on THIS leg too. dlNext() used to
@@ -22967,10 +23034,22 @@ async function llmEmbToggle() {
   await refreshLiveConfig();
   llmRefresh();
 }
+/* ATO-130: the update waits its turn behind a model start (or a switch) on its
+   way; "updating…" said otherwise all that time. Main tells which it is
+   (cli:updatePhase), and the line follows while this update is on. */
+const LLM_UPDATING = 'local-llm: updating the llama.cpp backend…';
+const LLM_UPDATE_WAITING = 'local-llm: llama.cpp update waiting for the model to start…';
+function llmUpdatePhase(p) {
+  if (!p || !LLMP.updating || !LLMP.msg) return;
+  if (LLMP.msg.text !== LLM_UPDATING && LLMP.msg.text !== LLM_UPDATE_WAITING) return;
+  LLMP.msg = {text: p.phase === 'waiting' ? LLM_UPDATE_WAITING : LLM_UPDATING};
+  llmRepaint();
+}
 async function llmBackendUpdate() {
   if (!BR || LLMP.busy) return;
-  LLMP.busy = true; LLMP.msg = {text:'local-llm: updating the llama.cpp backend…'}; llmRepaint();
-  const res = await BR.modelsUpdate();
+  LLMP.busy = true; LLMP.updating = true; LLMP.msg = {text: LLM_UPDATING}; llmRepaint();
+  let res;
+  try { res = await BR.modelsUpdate(); } finally { LLMP.updating = false; }
   LLMP.busy = false;
   /* Deferred F8: main runs one download at a time, and refuses this one while
      another runs, naming it. A failure is said in LLMP.msg, which stays (the

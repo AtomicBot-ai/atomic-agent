@@ -24,7 +24,7 @@ import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
-import { agentLogTag, worthQuoting, type AgentLogLevel } from "./agent-output.js";
+import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
   configGet,
   configSet,
@@ -89,6 +89,7 @@ import {
   closeDaemonTurns,
   enterFusion,
   inDaemonTurn,
+  daemonTurnsOnTheirWay,
   lastTurnEnded,
   onBackgroundBringUp,
   restartAfterSwitch,
@@ -166,6 +167,9 @@ import {
   // r5 item 7 (setup wizard): the streamed runtime phase, the custom-endpoint
   // whole-file write, and the four import sources the flow's last step offers.
   modelsUpdateStream,
+  managedDataDirNow,
+  STAGING_STALE_MS,
+  sweepBackendStaging,
   setExternalLlamaUrls,
   detectImportAgents,
   importAgentDir,
@@ -297,6 +301,31 @@ const voice = new VoiceSession();
 ipcMain.on("app:voiceSupported", (event) => {
   event.returnValue = voiceSupported(process.platform);
 });
+
+/* ATO-135: the messages queued in each chat (renderer QUEUES and the queue on
+   screen), by session id, as the window last told it. A window closed with
+   the app still running (macOS) lost them; the next window takes them back
+   at load (app:queuesTake, sendSync, so they are there before its first
+   paint). They live in this process only: a full quit drops them, and says so
+   first (before-quit). */
+let keptQueues: Record<string, string[]> = {};
+ipcMain.on("app:queuesKeep", (_event, snapshot: unknown) => {
+  const next: Record<string, string[]> = {};
+  if (snapshot && typeof snapshot === "object") {
+    for (const [sid, texts] of Object.entries(snapshot as Record<string, unknown>)) {
+      if (!sid || !Array.isArray(texts)) continue;
+      const list = texts.filter((t): t is string => typeof t === "string" && t.length > 0).slice(0, 50);
+      if (list.length) next[sid] = list;
+    }
+  }
+  keptQueues = next;
+});
+ipcMain.on("app:queuesTake", (event) => {
+  event.returnValue = keptQueues;
+});
+function queuedMessageCount(): number {
+  return Object.values(keptQueues).reduce((n, list) => n + list.length, 0);
+}
 
 /* Item 2 (voice input): the chosen dictation languages. This is a viewer
    preference, not agent state — the agent has no voice surface at all — so
@@ -443,6 +472,16 @@ function stopForQuit(): () => void {
    while it waits for its turn the wait ends at once and the turn does
    nothing; once it runs, `run` stops its child on the same signal. */
 const UPDATE_STOPPED = "the llama.cpp update was stopped before it began";
+/* ATO-129: an update that ended without its new backend — stopped by Quit, a
+   Cancel or its own time limit — leaves its half-downloaded staging folder
+   behind; it goes here, still in the update's daemon turn, where no other
+   update writes there (agent-cli sweepBackendStaging). */
+async function updateSwept<T extends { ok: boolean }>(res: T): Promise<T> {
+  if (res.ok) return res;
+  const gone = await sweepBackendStaging(managedDataDirNow());
+  if (gone.length) console.error(`[desktop] local-llm: removed what the stopped llama.cpp update left behind (${gone.join(", ")})`);
+  return res;
+}
 function updateInTurn<T>(stop: AbortSignal, ended: (error: string) => T, run: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve) => {
     let begun = false;
@@ -1229,22 +1268,24 @@ function wireIpc(client: AgentClient): void {
     let slot: DownloadSlot | null = null;
     // ATO-123: as Settings' update (cli:modelsUpdate) — the update's own stop is on purpose, and the server comes back after it.
     const held: { hold: UpdateHold | null } = { hold: null };
-    const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean }>(
+    const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>(
       own.signal,
-      (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false }),
+      (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
       () => {
         held.hold = updateBegins();
         const started = modelsUpdateStream((line) =>
           pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
         );
         own.signal.addEventListener("abort", () => started.cancel(), { once: true });
-        return started.done;
+        return started.done.then(updateSwept);
       },
     );
     pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
     void done.then(async (ended) => {
       pullUpdate = null;
-      const res = held.hold ? await afterUpdate(ended, held.hold) : ended;
+      /* ATO-128: one stopped by its own time limit left a llama.cpp in place
+         as it was, so a server it stopped comes back on that one (keptBackend). */
+      const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
       A.runtimeUpdated("setup", updateStartedAt, res, own.signal.aborted);
       send("cli:pull", {
         id,
@@ -1257,6 +1298,9 @@ function wireIpc(client: AgentClient): void {
         // never drove — it draws the phase as passed instead.
         sawProgress: res.sawProgress,
         upToDate: res.upToDate,
+        // ATO-128: stopped by its own time limit — with a llama.cpp in place, the model held for it starts on that one (renderer obPullFinished).
+        timedOut: res.timedOut,
+        keptBackend: res.keptBackend,
       });
     });
     return { ok: true, started: true };
@@ -2026,14 +2070,19 @@ function wireIpc(client: AgentClient): void {
        back after a successful one, or says it is still stopped. */
     const held: { hold: UpdateHold | null } = { hold: null };
     const updateStartedAt = Date.now();
+    /* ATO-130: it waits its turn behind a model start (or a switch) on its
+       way, and Settings said "updating…" all that time. The window is told
+       which it is: waiting now, running once its turn comes. */
+    send("cli:updatePhase", { phase: daemonTurnsOnTheirWay() > 0 ? "waiting" : "running" });
     let res: CliResult;
     try {
       res = await updateInTurn<CliResult>(
         own.signal,
         (error) => ({ ok: false, stdout: "", stderr: "", error }),
         () => {
+          send("cli:updatePhase", { phase: "running" });
           held.hold = updateBegins();
-          return modelsUpdate({ signal: own.signal });
+          return modelsUpdate({ signal: own.signal }).then(updateSwept);
         },
       );
       A.runtimeUpdated("settings", updateStartedAt, res, own.signal.aborted);
@@ -2154,7 +2203,8 @@ function wireIpc(client: AgentClient): void {
       ? `[desktop] could not start the local model daemon (${r.modelId}): ${r.error ?? "unknown error"}`
       : `[desktop] started the local model daemon (${r.modelId})`;
     console.error(line);
-    send("agent:log", { stream: "stderr", line });
+    const level = lineLevel(line);   // ATO-121
+    send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
     if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
@@ -2309,8 +2359,10 @@ function wireIpc(client: AgentClient): void {
     notify: (notice) => send("app:daemonWatch", notice),
     say: (line) => {
       console.error(line);
-      send("agent:log", { stream: "stderr", line });
-      appendAgentLog(`${new Date().toISOString()} ERR ${line}`);
+      // ATO-121: "the app is stopping the model server…" is INFO, a failed restart ERROR (agent-output lineLevel).
+      const level = lineLevel(line);
+      send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+      appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
     },
     // The llama.cpp update stops the server and replaces its binary: never a moment to bring it back.
     busy: () => settingsUpdate !== null || pullUpdate?.kind === "runtime",
@@ -2338,7 +2390,7 @@ function wireIpc(client: AgentClient): void {
     const line = String(event.line ?? "");
     /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
        INFO lines filled this ring. A structured line is tagged with its own
-       level (agent-output.ts); INFO and DEBUG stay in agent.log and the
+       level, a lifecycle line by its shape (agent-output.ts); INFO and DEBUG stay in agent.log and the
        console drawer but out of the ring, which is for what went wrong. */
     if (worthQuoting(event.level)) {
       AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${line.slice(0, 300)}`);
@@ -9052,7 +9104,13 @@ void app.whenReady().then(async () => {
        schema defaults to 19091/19092, which is what the operator's terminal
        agent also holds; two daemons cannot share a port. On every later
        launch this is skipped entirely, so it costs nothing. */
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(() => {
+    /* ATO-129: what an update killed in an earlier run left behind (Quit
+       mid-download, a crash), once nothing has written it for a while; before
+       the agent or a model start, so no update of theirs is writing there. */
+    const sweepAtLaunch = () => sweepBackendStaging(managedDataDirNow(), { minAgeMs: STAGING_STALE_MS })
+      .then((swept) => { if (swept.length) console.error(`[desktop] local-llm: tidied what an earlier llama.cpp update left behind (${swept.join(", ")})`); })
+      .catch(() => undefined);
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(() => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
@@ -9085,8 +9143,34 @@ app.on("window-all-closed", () => {
    and only its own app.quit() at the end goes through. */
 let quitShutdown: { done: boolean } | null = null;
 
+/* ATO-135: a quit with messages still queued in a chat asks first — they are
+   kept across a closed window, not across a quit. Once per quit. */
+let queuedQuitAsked = false;
+
 // Never leave the agent running after the app is gone.
 app.on("before-quit", (event) => {
+  /* Off macOS the last window closing is the quit: asked then, a Cancel would
+     leave the app running with no window, so it is not asked. Nor is the quit
+     an update's install makes (ATO-229): the person asked for it, the agent is
+     stopped for it already, and a Cancel would leave the install half done. */
+  const windowUp = !!win && !win.isDestroyed();
+  const installing = appUpdater()?.state().phase === "installing";
+  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin")) {
+    const n = queuedMessageCount();
+    if (n > 0) {
+      const opts = {
+        type: "warning" as const,
+        buttons: ["Quit", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        message: n === 1 ? "A queued message has not been sent" : `${n} queued messages have not been sent`,
+        detail: "They wait for their chat's turn to end. Quitting now drops them.",
+      };
+      const pick = win && windowUp ? dialog.showMessageBoxSync(win, opts) : dialog.showMessageBoxSync(opts);
+      if (pick !== 0) { event.preventDefault(); return; }
+      queuedQuitAsked = true;
+    }
+  }
   // Item 2 (voice input): BEFORE the guard below. `if (!agent) return` skips
   // everything after it whenever the agent is not running, which is exactly
   // the degraded state in which someone is most likely to be poking at the

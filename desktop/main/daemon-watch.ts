@@ -215,9 +215,16 @@ export function updateBegins(): UpdateHold {
  * update left running is the app's again. One it stopped is started again,
  * quietly, after a successful update when the route needs it; after a failed
  * one it is left as the update left it, and the update's answer says so — the
- * line Settings › Models shows for it.
+ * line Settings › Models shows for it. ATO-128: an update stopped by its own
+ * time limit (`keptBackend`) left the llama.cpp in place untouched — the agent
+ * swaps a staged copy in only at the very end — so the server it stopped is
+ * started again on that one, as after a successful update.
  */
-export async function afterUpdate<T extends { ok: boolean; error?: string; stdout?: string }>(res: T, hold: UpdateHold): Promise<T> {
+export async function afterUpdate<T extends { ok: boolean; error?: string; stdout?: string }>(
+  res: T,
+  hold: UpdateHold,
+  opts: { keptBackend?: boolean } = {},
+): Promise<T> {
   // A stop, a switch or a model change while the update ran (Settings' Stop stays live through it): theirs is the last word.
   const movedOn = () => stopsMark() !== hold.mark;
   if (!hold.wasOwned || movedOn()) return res;
@@ -227,7 +234,7 @@ export async function afterUpdate<T extends { ok: boolean; error?: string; stdou
     daemonWatch.noteStarted();
     return res;
   }
-  if (!res.ok) {
+  if (!res.ok && !opts.keptBackend) {
     return {
       ...res,
       error: `${res.error ?? "the update failed"} — the local model server it stopped is still stopped; start it in Settings › Models`,
@@ -240,6 +247,7 @@ export async function afterUpdate<T extends { ok: boolean; error?: string; stdou
      how it went as it hears a ⇄'s (via "update"). The update's own last line
      tells the terminal to start it by hand; here the app does. */
   void bringUpAtLaunch(modelId, "update").catch(() => undefined);
+  if (!res.ok) return res;
   return typeof res.stdout === "string"
     ? { ...res, stdout: `${res.stdout.trimEnd()}\nthe local model server is starting again on the new backend` }
     : res;

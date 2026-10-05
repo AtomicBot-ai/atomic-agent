@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { LineSplitter, agentLogTag, structuredLevel, worthQuoting } = require("../out/main/agent-output.js");
+const { LineSplitter, agentLogTag, lineLevel, structuredLevel, worthQuoting } = require("../out/main/agent-output.js");
 
 /** A splitter and the lines it let out. */
 function splitter(maxLineChars) {
@@ -93,4 +93,24 @@ test("the smoke's ring of last words keeps what went wrong, not routine INFO", (
   assert.equal(worthQuoting("error"), true);
   assert.equal(worthQuoting(undefined), true);
   assert.equal(worthQuoting(null), true);
+});
+
+test("ATO-121: serve's lifecycle lines and the desktop's own are INFO, a notice WARN, a failure and a stack still not INFO", () => {
+  assert.equal(lineLevel("[2026-10-02T07:15:29.123Z] WARN provider unreachable"), "warn");
+  assert.equal(lineLevel("[atomic-agent] serve listening on http://127.0.0.1:1234 (auth=bearer, cwd=/x)"), "info");
+  assert.equal(lineLevel("[atomic-agent] SIGTERM received, closing"), "info");
+  assert.equal(lineLevel("[atomic-agent] serve listening on http://127.0.0.1:1234 (auth=bearer, cwd=/Users/x/error-logs)"), "info");
+  assert.equal(lineLevel("[desktop] local-llm: the local model server stopped — starting it again (auto-restart)"), "error");
+  assert.equal(lineLevel("[atomic-agent] created default config at /x/config.json"), "info");
+  assert.equal(lineLevel("[desktop] local-llm: the app is stopping the model server (route cloud)"), "info");
+  assert.equal(lineLevel("[desktop] started the local model daemon (qwen)"), "info");
+  assert.equal(lineLevel("[desktop] could not start the local model daemon (qwen): boom"), "error");
+  assert.equal(lineLevel("[desktop] local-llm: the automatic restart failed: boom"), "error");
+  assert.equal(lineLevel("[desktop] the agent (pid 7) did not close within 4 s of being stopped — ending it with SIGKILL"), "error");
+  assert.equal(lineLevel('web.search: provider "exa" is configured but EXA_API_KEY is not set; running on the keyless tier'), "warn");
+  assert.equal(lineLevel("(node:123) ExperimentalWarning: something"), "warn");
+  assert.equal(lineLevel("serve failed: Error: boom"), null);
+  assert.equal(lineLevel("    at Object.<anonymous> (/x/y.js:1:1)"), null);
+  assert.equal(agentLogTag("stderr", lineLevel("[atomic-agent] SIGTERM received, closing")), "INFO");
+  assert.equal(agentLogTag("stderr", lineLevel("serve failed: Error: boom")), "ERR");
 });

@@ -3683,14 +3683,116 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
  * A machine whose binary is missing but whose version file matches gets
  * no bytes, so the caller must not draw a runtime bar it is not driving;
  * `sawProgress` on the result says whether any were.
+ *
+ * ATO-128: it had no time limit of its own, and a model start waits for it
+ * in the daemon's turn — on a slow or hung network that was minutes of a
+ * setup screen saying the model loads. It is stopped (`timedOut`) when it
+ * has shown no progress within UPDATE_FIRST_PROGRESS_MS of starting (the
+ * release lookup and the first bytes), or no line at all for UPDATE_STALL_MS
+ * once the bytes move (the CLI prints a line per 5% and none while it
+ * unpacks, so a slow download is quiet for minutes: hence the long wait).
+ * A backend in place is untouched until the very end of an update (the
+ * agent swaps a staged copy in, src/local-llm/backend-installer.ts), so the
+ * start behind it runs on that one (`keptBackend`), and the update comes
+ * again later — at the next model start (managed.autoUpdate) or from
+ * Settings › Models. The setup runs it only when there is none yet: then
+ * nothing can start, and the setup's failed row offers Retry.
  */
+export const UPDATE_FIRST_PROGRESS_MS = 90_000;
+export const UPDATE_STALL_MS = 300_000;
+export function updateTimedOutError(ms: number, keptBackend: boolean): string {
+  const stopped = `the llama.cpp update made no progress for ${Math.round(ms / 1000)} s and was stopped`;
+  return keptBackend
+    ? `${stopped} — the model starts on the llama.cpp already installed; the update is tried again at the next start or from Settings › Models`
+    : `${stopped} — there is no llama.cpp installed yet to start the model on; try again once the connection is back`;
+}
+/** Whether the managed data dir the desktop's config names holds a llama.cpp backend (`<data dir>/backend`). */
+export function backendInstalled(): boolean {
+  let override: unknown = null;
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    override = cfg.localModels?.managed?.dataDirOverride;
+  } catch {
+    // no config yet: the default data dir
+  }
+  return existsSync(join(managedDataDir(typeof override === "string" ? override : null), "backend"));
+}
+/**
+ * ATO-129: the llama.cpp update downloads and unpacks into `<data dir>/backend.next`
+ * and moves the old backend aside as `backend.old` for the moment of the swap
+ * (src/local-llm/backend-installer.ts). It clears both when it fails, but not
+ * when it is killed — Quit, a Cancel, its own time limit — and the next
+ * update is the only thing that clears them: hundreds of megabytes left on
+ * disk. They are removed when an update is stopped (in the daemon's turn, where
+ * no other update can be writing them) and, at launch, when nothing has
+ * written them for STAGING_STALE_MS. `backend.old` with no live `backend/`
+ * beside it is an update killed between the swap's two renames: it is the only
+ * backend there is, and it is moved back, as the installer's own rollback
+ * would. Off the main thread (fs/promises), as hundreds of megabytes go.
+ * Returns what it did: the names removed, and `backend.old → backend`.
+ */
+export const STAGING_STALE_MS = 10 * 60_000;
+export async function sweepBackendStaging(dataDir: string, opts: { minAgeMs?: number; now?: number } = {}): Promise<string[]> {
+  const minAgeMs = opts.minAgeMs ?? 0;
+  const now = opts.now ?? Date.now();
+  const done: string[] = [];
+  if (!dataDir || !isAbsolute(dataDir)) return done;
+  const live = join(dataDir, "backend");
+  const stale = (dir: string) => minAgeMs <= 0 || now - newestMtime(dir) >= minAgeMs;
+  try {
+    const old = join(dataDir, "backend.old");
+    if (!existsSync(live) && lstatSync(old).isDirectory() && stale(old)) {
+      renameSync(old, live);
+      done.push("backend.old → backend");
+    }
+  } catch {
+    // no backend.old, or it could not be moved back: left as it is
+  }
+  for (const name of ["backend.next", "backend.old"]) {
+    const dir = join(dataDir, name);
+    try {
+      if (!lstatSync(dir).isDirectory()) continue;
+      if (name === "backend.old" && !existsSync(live)) continue;
+      if (!stale(dir)) continue;
+      await rm(dir, { recursive: true, force: true });
+      done.push(name);
+    } catch {
+      // Not there, or not ours to remove now.
+    }
+  }
+  return done;
+}
+/** The newest mtime of a folder and what is directly in it: a download writes its archive there. */
+function newestMtime(dir: string): number {
+  let newest = lstatSync(dir).mtimeMs;
+  for (const name of readdirSync(dir)) {
+    try {
+      newest = Math.max(newest, lstatSync(join(dir, name)).mtimeMs);
+    } catch {
+      // gone meanwhile
+    }
+  }
+  return newest;
+}
+/** The managed data dir the desktop's config names (its `dataDirOverride`, or the default). */
+export function managedDataDirNow(): string {
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    const override = cfg.localModels?.managed?.dataDirOverride;
+    return managedDataDir(typeof override === "string" ? override : null);
+  } catch {
+    return managedDataDir(null);
+  }
+}
+
 export function modelsUpdateStream(
   onLine: (line: string) => void,
-): { done: Promise<CliResult & { sawProgress: boolean; upToDate: boolean }>; cancel: () => void } {
+  limits: { firstProgressMs?: number; stallMs?: number } = {},
+): { done: Promise<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>; cancel: () => void } {
   const binary = resolveBinary();
   if (!binary) {
     return {
-      done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found", sawProgress: false, upToDate: false }),
+      done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found", sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
       cancel: () => {},
     };
   }
@@ -3703,6 +3805,21 @@ export function modelsUpdateStream(
   let stdout = "";
   let stderr = "";
   let sawProgress = false;
+  // ATO-128: the update's own time limit (above). `lastLineAt` moves with every line once the bytes move.
+  const startedAt = Date.now();
+  let lastLineAt = startedAt;
+  let timedOut: number | null = null;
+  const firstProgressMs = limits.firstProgressMs ?? UPDATE_FIRST_PROGRESS_MS;
+  const stallMs = limits.stallMs ?? UPDATE_STALL_MS;
+  const watch = setInterval(() => {
+    const now = Date.now();
+    const limit = sawProgress ? stallMs : firstProgressMs;
+    if (now - (sawProgress ? lastLineAt : startedAt) < limit) return;
+    timedOut = limit;
+    clearInterval(watch);
+    child.kill("SIGTERM");
+  }, Math.min(1_000, Math.max(50, Math.floor(Math.min(firstProgressMs, stallMs) / 4))));
+  watch.unref?.();
   const relay = (chunk: Buffer, sink: "out" | "err") => {
     const text = chunk.toString("utf8");
     if (sink === "out") stdout += text;
@@ -3711,25 +3828,31 @@ export function modelsUpdateStream(
       const trimmed = line.trim();
       if (!trimmed) continue;
       if (/^\[[= ]{20}\]\s+\d{1,3}%/.test(trimmed)) sawProgress = true;
+      lastLineAt = Date.now();
       onLine(trimmed);
     }
   };
   child.stdout.on("data", (c: Buffer) => relay(c, "out"));
   child.stderr.on("data", (c: Buffer) => relay(c, "err"));
-  const done = new Promise<CliResult & { sawProgress: boolean; upToDate: boolean }>((resolve) => {
-    const finish = (base: CliResult) =>
+  const done = new Promise<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>((resolve) => {
+    // Read once the update is over: a timed-out one either left the backend in place or there was none.
+    const kept = () => timedOut !== null && backendInstalled();
+    const finish = (base: CliResult, keptBackend = false) => {
+      clearInterval(watch);
       resolve({
         ...base,
         sawProgress,
         upToDate: /backend up to date|backend unchanged/.test(stdout),
+        timedOut: timedOut !== null,
+        keptBackend,
       });
-    child.on("exit", (code) =>
-      finish(
-        code === 0
-          ? { ok: true, stdout, stderr }
-          : { ok: false, stdout, stderr, error: `models update exited with code ${code ?? "null"}` },
-      ),
-    );
+    };
+    child.on("exit", (code) => {
+      if (code === 0) return finish({ ok: true, stdout, stderr });
+      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: `models update exited with code ${code ?? "null"}` });
+      const keptBackend = kept();
+      finish({ ok: false, stdout, stderr, error: updateTimedOutError(timedOut, keptBackend) }, keptBackend);
+    });
     child.on("error", (err) => finish({ ok: false, stdout, stderr, error: err.message }));
   });
   return { done, cancel: () => child.kill("SIGTERM") };
