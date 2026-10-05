@@ -42,7 +42,7 @@ export function createSearxngProvider(
         lookup: deps.lookup,
       });
       assertProviderStatus(response, "searxng", "SearXNG");
-      return parseSearxngJson(response.body, options.maxResults);
+      return { results: parseSearxngJson(response.body, options.maxResults) };
     },
   };
 }

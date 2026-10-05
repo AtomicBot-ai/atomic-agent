@@ -266,7 +266,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | Area | Capabilities |
 |---|---|
 | **Browser** | Navigate, click, type, search, manage tabs, scroll, and read compact ARIA state via `playwright-core` (Chrome / Edge / Brave / Chromium). |
-| **Web & HTTP** | Web search with configurable providers (Exa, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
+| **Web & HTTP** | Web search with configurable providers (Exa, AnySearch, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
 | **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
@@ -276,7 +276,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Verify** | `verify.syntax` checks files by type and never reports an unchecked file as passing; `verify.run` runs a command, a service or a page against a throwaway copy of the working directory (off macOS, build and dependency folders are linked rather than copied, and a tree over 2 GB runs in place), with checks like `exit 0` or `status 200`. |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
-| **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
+| **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, AnySearch, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
 | **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. |
@@ -759,6 +759,7 @@ NOTION_API_KEY=ntn_xxxxxxxx
 GITHUB_TOKEN=ghp_xxxxxxxx
 TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 EXA_API_KEY=exa_xxxxxxxx
+ANYSEARCH_API_KEY=as_sk_xxxxxxxx
 OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 ```
 
@@ -767,6 +768,8 @@ Shell-exported variables win over `.env`. The built-in parser intentionally supp
 Commands the agent runs (`os.shell.run`, `os.git.*`, skill scripts) do not inherit these secrets: every variable named like a key, token, secret or password, and every known provider key, is removed from the command's environment, so a command slipped in through a web page or a file cannot read `OPENAI_API_KEY` or `TELEGRAM_BOT_TOKEN`. The agent itself still uses them. The names in `tools.shell.envPassthrough` in `config.json` are passed to shell commands anyway; the default is `["GITHUB_TOKEN", "NOTION_API_KEY"]`, which the bundled `github` and `notion` skills read through the shell. Add a name there when a command of yours needs one, or set `[]` to keep those two out as well. Reading the files themselves asks too: an agent tool reading `.env`, `config.json` or the local server key in the state folder, or a shell command that names one (`cat ~/.atomic-agent/.env`, `sed -i … config.json`), asks for approval at every level below 5, even where shell commands otherwise run unasked, and "allow for this session" is never offered for it. The shell check reads the command line for those paths; a command that builds the path at run time is not caught, so it is a guard, not a sandbox.
 
 `EXA_API_KEY` is optional. Without it, web search uses Exa's free keyless tier, which runs out quickly, and then DuckDuckGo. When the free limit is reached, or no search provider answers, the search result says so and asks for a free key from <https://dashboard.exa.ai/api-keys>. Apps get the same request as `details.keyRequired` on the `os.web.search` result (`{ provider: "exa", reason: "rate_limited" | "unreachable" | "missing", getKeyUrl, envVar }`); the HTTP stream forwards it as `key_required` on the `tool_result` event. In the TUI, the **Web search (Exa)** entry of the Integrations tab saves the key (as `EXA_API_KEY`), and the next search uses it without a restart; the search error there points at `/integrations` instead of the `.env` file. The entry always writes `EXA_API_KEY`: when `web.search.exa.apiKeyEnv` names another variable, or Exa is neither `web.search.provider` nor in `web.search.fallback`, it says the key will not be used, and the search advice falls back to the `.env` file. A search site that cannot be reached from your network (DNS, refused, no answer to the connection within 5 s) is skipped by the searches that start after the failure, for two minutes, instead of each of them waiting for it again. That skip lives only in the running agent, and when every search site was unreachable the first site is tried again at most every 30 s.
+
+For web search, set `web.search.provider` to `"anysearch"` (or add it to `web.search.fallback`) to use [AnySearch](https://anysearch.com) — anonymous works without a key; see [docs/anysearch.md](docs/anysearch.md).
 
 The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine (`git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike), so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder. The dedicated tools (`os.git.remote`, `fetch`, `pull`, `push`, `clone`) honour the same switch and hand the token to git only for `github.com`, only through the child process's environment (never in a URL, in argv, or in `.git/config`) and scrub it from every line of output.
 

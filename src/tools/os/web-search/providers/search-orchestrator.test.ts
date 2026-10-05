@@ -12,6 +12,7 @@ import {
 import type {
   WebSearchProviderName,
   WebSearchProviderOptions,
+  WebSearchProviderOutcome,
   WebSearchResult,
 } from "../web-search-provider.js";
 
@@ -40,6 +41,12 @@ function makeConfig(
           apiKeyEnv: "EXA_API_KEY",
         },
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+        anysearch: {
+          endpoint: "https://api.anysearch.com/v1/search",
+          apiKeyEnv: "ANYSEARCH_API_KEY",
+          zone: null,
+          language: null,
+        },
         ...overrides,
       },
     },
@@ -76,9 +83,15 @@ import { resolveProviderByName } from "./provider-registry.js";
 
 function stubProvider(
   name: WebSearchProviderName,
-  impl: () => Promise<WebSearchResult[]>,
+  impl: () => Promise<WebSearchResult[] | WebSearchProviderOutcome>,
 ) {
-  return { name, search: vi.fn(impl) };
+  return {
+    name,
+    search: vi.fn(async () => {
+      const out = await impl();
+      return Array.isArray(out) ? { results: out } : out;
+    }),
+  };
 }
 
 describe("runWebSearchWithFallback", () => {
@@ -233,7 +246,7 @@ describe("runWebSearchWithFallback", () => {
  * burst: 1341 429s spread evenly across 24 hours, 8-20 an hour, not
  * tracking concurrency. Against a standing quota, every search paid for
  * three doomed requests and ~1.5s of backoff before reaching the
- * provider that was always going to answer it â€” and the answer, coming
+ * provider that was always going to answer it ?and the answer, coming
  * from the weaker fallback, looked exactly like a normal one.
  */
 describe("a provider under a standing rate limit", () => {
@@ -313,7 +326,7 @@ describe("a provider under a standing rate limit", () => {
 
   it("says out loud that the answer came from the fallback", async () => {
     // The other half of #179: the chain worked, so nothing failed, so
-    // nothing was reported â€” and a whole campaign was quietly served by
+    // nothing was reported ?and a whole campaign was quietly served by
     // the weaker provider.
     const {} = limitedThenFallback();
     const cooldown = createProviderCooldown();
@@ -459,7 +472,7 @@ describe("an Exa primary without a key", () => {
 
   it("answers from keyless Exa when its free tier works", async () => {
     const { exa, ddg } = exaAndDdg();
-    exa.search.mockImplementation(async () => [RESULT]);
+    exa.search.mockImplementation(async () => ({ results: [RESULT] }));
 
     const out = await runWebSearchWithFallback({
       config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
@@ -729,7 +742,7 @@ describe("an Exa primary without a key", () => {
     });
     expect(cooldown.tagOf("exa")).toBe("keyless");
 
-    exa.search.mockImplementation(async () => [RESULT]);
+    exa.search.mockImplementation(async () => ({ results: [RESULT] }));
     const keyed = await runWebSearchWithFallback({
       config,
       deps: {},
@@ -1060,7 +1073,7 @@ describe("a provider that cannot be reached (ATO-315)", () => {
     expect(cooldown.reasonOf("duckduckgo", T0)).toBe("unreachable");
 
     // The network is back by the next probe, 30 s later.
-    ddg.search.mockImplementation(async () => [RESULT]);
+    ddg.search.mockImplementation(async () => ({ results: [RESULT] }));
     const out = await runWebSearchWithFallback({
       config,
       deps: {},
@@ -1124,7 +1137,7 @@ describe("a provider that cannot be reached (ATO-315)", () => {
       cooldown,
       now: () => T0,
     }).catch(() => undefined);
-    ddg.search.mockImplementation(async () => [RESULT]);
+    ddg.search.mockImplementation(async () => ({ results: [RESULT] }));
     const out = await runWebSearchWithFallback({
       config,
       deps: {},
