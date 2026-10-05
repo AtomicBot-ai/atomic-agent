@@ -128,7 +128,10 @@ const systemSays = (app) => app.eval(`[...document.querySelectorAll('#scroller .
     user asked for that), and the settings window it raises then covers the composer. */
 async function closeSel(app) {
   if (await app.eval(`!!document.querySelector('.selpop')`)) {
-    await app.eval(`(() => { const s = document.querySelector('#overlays .scrim[data-close]'); if (s) s.click(); })()`);
+    /* A trusted press on the scrim beside the popover (drive.mjs clickAway),
+       not a `.click()` from Runtime.evaluate: the page must not be able to
+       tell this from a hand. */
+    await app.clickAway();
     await app.waitFor(`!document.querySelector('.selpop')`, 'the popover closed', { quiet: true });
   }
 }

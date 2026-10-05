@@ -18,7 +18,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { cpus, homedir, loadavg, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { launch, sleep } from './drive.mjs';
+import { launch, sleep, MOD_KEY } from './drive.mjs';
 
 /* ------------------------------------------------------------------ env --
    Where the scenarios put their throwaway state, and where they get a
@@ -114,8 +114,10 @@ export function activeModel(stateDir) {
 export const obStep = (id) => `(window.__ob && window.__ob().open && window.__ob().step === '${id}')`;
 /** The model step that follows a verified key (ATO-161): its rows. */
 const MODEL_STEP = `!!document.querySelector('#onboarding [data-wizmodel]')`;
-/** The reason under the key box, when there is one. */
-const KEY_ERR = `((document.querySelector('#onboarding .ob-err')||{textContent:''}).textContent||'').trim()`;
+/** The reason under the key box, when there is one: a failure (`.ob-err`) or,
+    since ATO-161, the calm request for a key ("Paste your … API key to
+    continue.", `.wiz-ask`). */
+const KEY_ERR = `((document.querySelector('#onboarding .ob-err, #onboarding .wiz-ask')||{textContent:''}).textContent||'').trim()`;
 
 /**
  * Get through the first-run wizard by clicking, exactly as a person does:
@@ -324,6 +326,24 @@ export async function ask(app, text) {
 }
 
 /**
+ * Pick a stance from the composer's Mode chip, by clicking: the chip, then
+ * the row ("Ask first", "Plan", "Auto", "Bypass"). A row applies as it is
+ * picked and closes the popover (ATO-167: there is no Done). `id` is the
+ * agent's own mode id: default | plan | auto | bypass.
+ */
+export async function chooseMode(app, id) {
+  await app.waitFor(`!!document.querySelector('.cmodechip[data-id]:not([data-id=""])')`,
+    'the Mode chip, once the agent has reported its stance', { timeout: 60000 });
+  if (await app.eval(`(document.querySelector('.cmodechip')||{dataset:{}}).dataset.id === ${JSON.stringify(id)}`)) return;
+  await app.clickSel('.cmodechip');
+  await app.waitFor(`!!document.querySelector('.modepop [data-mode="${id}"]')`, 'the Mode popover');
+  await app.clickSel(`.modepop [data-mode="${id}"]`, { scroll: false });
+  await app.waitFor(`(document.querySelector('.cmodechip')||{dataset:{}}).dataset.id === ${JSON.stringify(id)}`
+    + ` && !document.querySelector('.modepop')`, `the Mode chip reading ${id}`, { timeout: 20000 });
+  if (await app.eval(`!!document.querySelector('.modepop')`)) await app.clickAway();
+}
+
+/**
  * Wait for the turn to finish, approving what it asks for with a real click
  * on the real Allow once button. Returns the agent's reply text.
  *
@@ -339,9 +359,15 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
   let sawBusy = false;
   for (;;) {
     if (Date.now() > until) throw new Failure(`the turn was still running after ${Math.round(timeout / 1000)}s`);
+    /* `steer`: with words in the box the running turn's button is the steer
+       arrow, not Stop — a person drafting their next message while the agent
+       works is still watching a busy window. `lit`: the composer's
+       travelling light, drawn for the whole turn (Calm S2). */
     const st = await app.eval(`(() => ({
       strip: !!document.querySelector('.statusstrip'),
       stop: !!document.querySelector('.sendbtn.stop'),
+      steer: !!document.querySelector('.sendbtn.steer'),
+      lit: !!document.querySelector('#composer.cl-on'),
       locked: !!document.querySelector('.sendbtn[disabled]'),
       pending: !!document.querySelector('#apprcard'),
     }))()`);
@@ -359,7 +385,7 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
       continue;
     }
     if (st.pending && approve === 'none') return { pending: true, approvals, reply: await app.lastReply() };
-    const busy = st.strip || st.stop || st.locked;
+    const busy = st.strip || st.stop || st.steer || st.lit || st.locked;
     if (busy) { sawBusy = true; idleSince = 0; await sleep(700); continue; }
     /* The gap between the send click and the app looking busy. `ask` returns
        as soon as the composer empties, which happens instantly; the strip only
@@ -394,9 +420,15 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
  *
  * Every scenario is independently runnable: `node desktop/test/scenarios/<f>.mjs`.
  */
-export async function scenario(name, body, { firstRunFirst = true, setup } = {}) {
+export async function scenario(name, body, { firstRunFirst = true, setup, skip = null } = {}) {
   const t0 = Date.now();
   console.log(`\n▶ ${name}`);
+  /* A scenario that cannot be driven honestly on this machine says why and
+     stops before anything is launched. Counted apart from passes. */
+  if (skip) {
+    console.log(`– ${name} — SKIPPED: ${skip}`);
+    return { name, ok: true, skipped: skip, secs: '0' };
+  }
   const dirs = freshDirs(name);
   console.log(`   state ${dirs.stateDir}`);
   console.log(`   workspace ${dirs.workspace}`);
@@ -459,7 +491,7 @@ function write(path, content) {
   return path;
 }
 function readIf(path) { return existsSync(path) ? readFileSync(path, 'utf8') : null; }
-export { write, readIf as read, sleep };
+export { write, readIf as read, sleep, MOD_KEY };
 
 /** `node scenarios/foo.mjs` → run it and set the exit code. */
 export async function main(result) {

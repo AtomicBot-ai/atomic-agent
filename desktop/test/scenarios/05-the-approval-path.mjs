@@ -60,7 +60,18 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
      answered the page also carries a "Denied" receipt. */
   await app.clickText('Deny', { scope: '#apprcard' });
   await sleep(1200);
-  const afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
+  let afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
+  /* A model told no may try the same thing another way, which puts a new
+     card up in the same turn. A person keeps saying no until the turn ends;
+     asking the next question under an open card would answer the card with
+     those words instead (Enter denies and sends them). */
+  for (let again = 0; afterDeny.pending && again < 3; again++) {
+    app.log('it asked again in the same turn — Deny again');
+    await app.clickText('Deny', { scope: '#apprcard' });
+    await sleep(1200);
+    afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
+  }
+  if (afterDeny.pending) modelDidNot('take no for an answer — it kept asking after four Denies');
   check(!existsSync(target),
     'clicking Deny left the file uncreated — the button is wired to a real refusal',
     `${target} exists after a Deny`);

@@ -39,14 +39,15 @@ for (const f of files) {
 
 console.log('\n──────────────────────────────────────────────');
 for (const r of results) {
-  const mark = r.ok ? '✔ PASS' : r.modelFault ? '~ MODEL' : '✘ FAIL';
-  console.log(`${mark}  ${r.name}  (${r.secs}s)${r.ok ? '' : ` — ${String(r.error).split('\n')[0]}`}`);
+  const mark = r.skipped ? '– SKIP' : r.ok ? '✔ PASS' : r.modelFault ? '~ MODEL' : '✘ FAIL';
+  console.log(`${mark}  ${r.name}  (${r.secs}s)${r.skipped ? ` — ${r.skipped}` : r.ok ? '' : ` — ${String(r.error).split('\n')[0]}`}`);
 }
 const failed = results.filter((r) => !r.ok && !r.modelFault);
 const shortfalls = results.filter((r) => r.modelFault);
+const skipped = results.filter((r) => r.skipped);
 console.log(`──────────────────────────────────────────────`);
-console.log(`${results.length - failed.length - shortfalls.length} passed, ${failed.length} app failures, `
-  + `${shortfalls.length} model shortfalls`);
+console.log(`${results.length - failed.length - shortfalls.length - skipped.length} passed, ${failed.length} app failures, `
+  + `${shortfalls.length} model shortfalls, ${skipped.length} skipped`);
 if (shortfalls.length && !failed.length) {
   console.log('The app did its part everywhere; the model did not produce what was asked for above.');
 }
