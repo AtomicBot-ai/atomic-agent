@@ -192,7 +192,7 @@ import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
-import { appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
+import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -885,17 +885,26 @@ function wireUpdater(): void {
     send: (state) => send("updates:state", state),
     turnRunningHere: () => liveTurnCount() > 0,
     /* Telegram, a scheduled task or a bot run turns this window never sees;
-       only the agent's own /health counts them (busyTurns, agent 0.6.6). */
-    turnRunningAnywhere: async () => {
+       only the agent's own /health counts them (busyTurns, agent 0.6.6). A
+       model download or a llama.cpp update (its own atag child) counts too.
+       Fails closed (updater.ts agentBusy): no answer in time is "busy". */
+    turnRunningAnywhere: () => {
       const client = agent;
-      if (!client) return false;
-      const health = (await Promise.race([
-        client.health().catch(() => null),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
-      ])) as { busyTurns?: unknown } | null;
-      return typeof health?.busyTurns === "number" && health.busyTurns > 0;
+      return agentBusy({
+        liveTurns: liveTurnCount(),
+        download: downloadRunning() !== null,
+        agentState: client ? client.status.state : null,
+        health: () => (client ? client.health() : Promise.resolve(undefined)),
+      });
     },
     prepareQuit: shutdownForUpdate,
+    /* Windows: the install failed after the agent was stopped for it. A new
+       start of the app brings the agent back (and offers the update again);
+       before-quit has nothing left to stop. */
+    recover: () => {
+      app.relaunch();
+      app.exit(0);
+    },
   });
   ipcMain.handle("updates:get", () => updater.state());
   ipcMain.handle("updates:check", () => updater.checkNow());
@@ -915,14 +924,15 @@ function wireUpdater(): void {
  * neither may still be running. before-quit then finds no agent and only
  * flushes analytics.
  */
-async function shutdownForUpdate(): Promise<void> {
+async function shutdownForUpdate(): Promise<boolean> {
   voice.kill();
   stopForQuit();
   const client = agent;
   agent = null;
-  if (!client) return;
-  await client.close().catch(() => undefined);
+  // close() answers whether the agent and every child it let go of are gone.
+  const gone = client ? await client.close().catch(() => false) : true;
   await stopLocalDaemonOnQuit();
+  return gone;
 }
 
 function wireIpc(client: AgentClient): void {

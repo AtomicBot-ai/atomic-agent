@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
-import { appUpdater, readUpdatePrefs, updatePrefsPath } from "../updater.js";
+import { agentBusy, appUpdater, readUpdatePrefs, updatePrefsPath } from "../updater.js";
 
 /**
  * ATO-229 — app updates, in the smoke (see main/release-fixes-smoke.ts).
@@ -23,10 +23,14 @@ import { appUpdater, readUpdatePrefs, updatePrefsPath } from "../updater.js";
  *      ask about that version;
  *  (d) Update shows progress in the same toast, then Restart / Later;
  *  (e) Restart while a turn runs says "Restart when the answer finishes",
- *      waits, and installs once the turn is over;
+ *      waits, and installs once the turn is over; a slow "is anything
+ *      running" answer and a double Restart still install exactly once; a
+ *      check that fails or does not answer counts as busy (fails closed);
  *  (f) Settings › General's switch off: an automatic check finds nothing to
  *      show (it does not even look);
- *  (g) Check now says "Version X is available", "You’re up to date — <v>".
+ *  (g) Check now says "Version X is available", "You’re up to date — <v>";
+ *  (h) macOS: an app outside /Applications, or signed ad hoc, is offered no
+ *      update and Settings says why (the probe's answer stood in).
  *
  * updates.json (Electron userData) is captured byte for byte first and put
  * back in `finally`; the updater and the window go back as they were.
@@ -151,6 +155,44 @@ export async function checks65(js: Js, check: Check): Promise<void> {
     const s2 = await until(async () => u.state(), (s) => s.phase === "installing", 5_000);
     check("T65 (e): once the turn is over it installs", s2.phase === "installing" && u.fakeInstalls === 1, `phase=${s2.phase} installs=${u.fakeInstalls}`);
 
+    /* (e) slow answers and a double Restart: exactly one install */
+    const toReady = async () => {
+      await fresh(FAKE);
+      await u.autoCheck();
+      await u.download();
+      return until(async () => u.state(), (st) => st.phase === "ready", 8_000);
+    };
+    check("T65 (e): a second download reaches Restart", (await toReady()).phase === "ready", show(u.state()));
+    u.testBusyProbe(async () => { await wait(2_500); return false; });
+    await Promise.all([u.install(), u.install()]);
+    await wait(500);
+    check("T65 (e): two Restarts while the busy check is slow install once", u.fakeInstalls === 1, `installs=${u.fakeInstalls}`);
+    await toReady();
+    let probes = 0;
+    u.testBusyProbe(async () => { probes += 1; await wait(2_500); return probes < 3; });
+    await u.install();
+    const s3 = await until(async () => u.state(), (st) => st.phase === "installing", 15_000);
+    await wait(3_000);
+    check(
+      "T65 (e): waiting on a slow busy check, the retries never overlap and it installs once",
+      s3.phase === "installing" && u.fakeInstalls === 1 && probes === 3,
+      `phase=${s3.phase} installs=${u.fakeInstalls} probes=${probes}`,
+    );
+    await toReady();
+    u.testBusyProbe(async () => { throw new Error("smoke t65: the busy check failed"); });
+    await u.install();
+    check("T65 (e): a busy check that fails counts as busy: it waits", u.state().phase === "waiting" && u.fakeInstalls === 0, show(u.state().phase));
+    u.testBusyProbe(null);
+    const hung = await agentBusy({ liveTurns: 0, download: false, agentState: "connected", health: () => new Promise(() => undefined), timeoutMs: 300 });
+    const older = await agentBusy({ liveTurns: 0, download: false, agentState: "connected", health: async () => ({ status: "ok" }) });
+    const idle = await agentBusy({ liveTurns: 0, download: false, agentState: "connected", health: async () => ({ busyTurns: 0 }) });
+    const pulling = await agentBusy({ liveTurns: 0, download: true, agentState: "connected", health: async () => ({ busyTurns: 0 }) });
+    check(
+      "T65 (e): /health that does not answer, or answers without busyTurns, is busy; a download is busy; busyTurns 0 is idle",
+      hung && older && pulling && !idle,
+      show({ hung, older, pulling, idle }),
+    );
+
     /* (f) the switch off: no automatic check, no toast */
     await fresh(FAKE);
     check("T65 (f): Settings › General draws the update rows", await openGeneral());
@@ -180,8 +222,25 @@ export async function checks65(js: Js, check: Check): Promise<void> {
     const off = u.state();
     if (!off.enabled) {
       const g5 = await settings();
-      check("T65 (g): a build with no feed says updates are not set up", !!g5 && /not set up for this build|package manager/.test(g5.result), show(g5));
+      check("T65 (g): a build with no feed says updates are not set up", !!g5 && /not set up for this build/.test(g5.result), show(g5));
     }
+
+    /* (h) macOS reasons, through the eligibility seam */
+    await fresh(FAKE);
+    u.testEligibility({ inApplications: false, teamId: "ABCDE12345" });
+    await openGeneral();
+    const h1 = await until(settings, (g) => !!g && g.result.includes("Applications folder"));
+    check("T65 (h): run from outside /Applications, Settings says to move it", !!h1 && h1.result.includes("Move Atomic Agent to the Applications folder"), show(h1));
+    await closeSettings();
+    await u.autoCheck();
+    await wait(400);
+    check("T65 (h): and no update is offered", !(await toast()) && u.state().phase === "idle" && !u.state().enabled, show(u.state()));
+    await fresh(FAKE);
+    u.testEligibility({ inApplications: true, teamId: null });
+    await openGeneral();
+    const h2 = await until(settings, (g) => !!g && g.result.includes("signed"));
+    check("T65 (h): an ad-hoc signed app says it cannot update itself", !!h2 && /isn’t signed, so it can’t update itself/.test(h2.result), show(h2));
+    await closeSettings();
   } finally {
     u.testRestore();
     if (before) writeFileSync(path, before);

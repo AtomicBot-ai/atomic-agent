@@ -36,7 +36,7 @@ on:
         type: string
       # ATO-229: test builds for an A -> B update, without touching repo vars or package.json in git.
       feed_url:
-        description: "Update feed URL for this build only (empty = vars.ATAG_UPDATE_FEED_URL; http:// is fine for a local test feed)"
+        description: "Update feed URL for this build only (empty = vars.ATAG_UPDATE_FEED_URL). https:// only, except http://127.0.0.1 or http://localhost for a local test feed. Needs the signing secrets."
         required: false
         default: ""
         type: string
@@ -98,6 +98,19 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
     steps:
+      # ATO-229: an app built with a feed updates itself, and an update is only
+      # accepted when it is signed like the running app (Squirrel.Mac: the same
+      # Developer ID; Windows: the publisherName in electron-builder.cjs). An
+      # unsigned build with a feed would offer updates it can never install.
+      - name: A build with an update feed must be signed
+        if: (matrix.slug == 'darwin-arm64' || matrix.slug == 'win32-x64') && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        run: |
+          if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" != "true" ]] \
+            || [[ "${{ matrix.slug }}" == "win32-x64" && "$HAS_WIN_SIGNING" != "true" ]]; then
+            echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -381,6 +394,24 @@ jobs:
             Write-Host "Verifying: $($f.FullName)"
             signtool verify /pa "$($f.FullName)"
             if ($LASTEXITCODE -ne 0) { Write-Error "not signed: $($f.FullName)"; exit 1 }
+          }
+
+      # ATO-229: the app checks an update's installer against
+      # win.signtoolOptions.publisherName (electron-builder.cjs, written into
+      # app-update.yml). A name that is not the certificate's CN would make
+      # every update fail, so the build fails here instead.
+      - name: Check the installer's signer against publisherName (Windows)
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $expected = @(node -e "const n=require('./desktop/electron-builder.cjs').win.signtoolOptions.publisherName; console.log([].concat(n).join('\n'))")
+          foreach ($f in Get-ChildItem "desktop\release\*.exe") {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            $subject = $sig.SignerCertificate.Subject
+            Write-Host "$($f.Name): status=$($sig.Status) subject=$subject"
+            if ($sig.Status -ne 'Valid') { Write-Error "signature not valid: $($f.Name)"; exit 1 }
+            $cn = ([regex]::Match($subject, '(?:^|,\s*)CN=("[^"]*"|[^,]*)')).Groups[1].Value.Trim('"')
+            if ($expected -notcontains $cn) { Write-Error "signer CN '$cn' is not in publisherName ($($expected -join ' | '))"; exit 1 }
           }
 
       - name: List packages

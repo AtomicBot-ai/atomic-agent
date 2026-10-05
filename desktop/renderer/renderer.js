@@ -5267,18 +5267,23 @@ function renderToasts() {
 function toastsClearCard() {
   const box = $('#toasts');
   if (!box) return;
-  // ATO-229: the update toast waits for an answer, so it never steps aside.
-  const live = [...box.children].filter((n) => !n.classList.contains('out') && !n.dataset.upd);
-  live.forEach((n) => { if (n.hidden) n.hidden = false; });
+  const all = [...box.children].filter((n) => !n.classList.contains('out'));
+  all.forEach((n) => { if (n.hidden) n.hidden = false; });
   /* Д27: over Settings the column stands up from the body card's bottom
      corner, and the card is under the backdrop. The oldest toasts step aside
-     before the column reaches the header, where Done is. */
+     before the column reaches the header, where Done is. ATO-229: the update
+     toast too (it is first in the column, so it goes first): Settings ›
+     General carries the same update, and Done must stay reachable. */
   const head = S.settings && document.querySelector('#settings .settb');
   if (head) {
     const top = head.getBoundingClientRect().bottom + 8;
-    for (let i = 0; i < live.length - 1 && live[i].getBoundingClientRect().top < top; i++) live[i].hidden = true;
+    for (let i = 0; i < all.length - 1 && all[i].getBoundingClientRect().top < top; i++) all[i].hidden = true;
+    // A lone update toast taller than the room under the header steps aside as well.
+    if (all.length === 1 && all[0].dataset.upd && all[0].getBoundingClientRect().top < top) all[0].hidden = true;
     return;
   }
+  // ATO-229: over the chat the update toast waits for an answer, so the download card never pushes it aside.
+  const live = all.filter((n) => !n.dataset.upd);
   const card = document.getElementById('dlcard');
   if (!card || card.hidden || live.length < 2) return;
   const limit = card.getBoundingClientRect().top - DLC_GAP;

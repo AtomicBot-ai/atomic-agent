@@ -33,8 +33,9 @@
  * at the bottom of this file.
  */
 
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { app } from "electron";
 
@@ -53,6 +54,10 @@ export const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 const TURN_POLL_MS = 2_000;
 /** quitAndInstall that has not ended the app by then failed. */
 const INSTALL_TIMEOUT_MS = 120_000;
+/** The agent's /health answers busyTurns after one llama-server probe (up to a few s); no answer by then is "busy". */
+export const BUSY_CHECK_TIMEOUT_MS = 10_000;
+/** Windows: the agent and the model server get this long to stop before the installer; past it nothing is installed. */
+const SHUTDOWN_TIMEOUT_MS = 15_000;
 
 export type UpdatePhase =
   /** Nothing found (or not looked yet). */
@@ -95,6 +100,8 @@ export interface UpdateState {
   turnRunning: boolean;
   /** A download that failed, in plain words (shown in the toast and Settings). */
   downloadError: string | null;
+  /** After Restart, when the install did not go as planned: what to do now, in plain words. */
+  installNote: string | null;
   /** The last Check now, for Settings. Automatic checks never fill this. */
   manualCheck: { at: number; result: CheckResult } | null;
   /** True while Check now runs. */
@@ -176,7 +183,23 @@ export function compareVersions(a: string, b: string): number {
   if (x.pre === y.pre) return 0;
   if (!x.pre) return 1;
   if (!y.pre) return -1;
-  return x.pre > y.pre ? 1 : -1;
+  // semver: dot-separated identifiers, numbers compared as numbers and before words.
+  const xs = x.pre.split(".");
+  const ys = y.pre.split(".");
+  for (let i = 0; i < Math.max(xs.length, ys.length); i++) {
+    const p = xs[i];
+    const q = ys[i];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    if (p === q) continue;
+    const pn = /^\d+$/.test(p);
+    const qn = /^\d+$/.test(q);
+    if (pn && qn) return Number(p) > Number(q) ? 1 : -1;
+    if (pn) return -1;
+    if (qn) return 1;
+    return p > q ? 1 : -1;
+  }
+  return 0;
 }
 
 /** One plain line of release notes: the first non-empty line, tags and markdown marks stripped. */
@@ -222,6 +245,67 @@ function feedChannel(file: string): string {
   }
 }
 
+/** What decides whether an install may start now (main.ts gathers it). */
+export interface BusyProbe {
+  /** Turns of this window main is streaming. */
+  liveTurns: number;
+  /** A model download or a llama.cpp update main runs (main.ts downloadRunning). */
+  download: boolean;
+  /** The agent process: AgentClient's state, or null when there is none. */
+  agentState: string | null;
+  /** GET /health: `busyTurns` counts every turn the agent runs (Telegram, tasks, bots). */
+  health: () => Promise<unknown>;
+  timeoutMs?: number;
+}
+
+/**
+ * True unless it is known that nothing runs. Fails closed: an agent that is
+ * starting, a /health that does not answer in time, or an answer without
+ * `busyTurns` all count as busy, and the install waits.
+ */
+export async function agentBusy(p: BusyProbe): Promise<boolean> {
+  if (p.liveTurns > 0 || p.download) return true;
+  // No agent process: no turn can be running.
+  if (p.agentState === null || p.agentState === "stopped" || p.agentState === "missing-binary" || p.agentState === "error") return false;
+  if (p.agentState !== "connected") return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const answer = await Promise.race([
+    p.health().catch(() => undefined),
+    new Promise<undefined>((r) => { timer = setTimeout(() => r(undefined), p.timeoutMs ?? BUSY_CHECK_TIMEOUT_MS); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  const n = (answer as { busyTurns?: unknown } | undefined)?.busyTurns;
+  return typeof n === "number" && Number.isFinite(n) ? n > 0 : true;
+}
+
+/** What macOS says about this app: where it runs from, and who signed it. */
+export interface MacAppProbe {
+  /** app.isInApplicationsFolder(): false for a DMG, a Downloads copy, a translocated app. */
+  inApplications: boolean;
+  /** The code signature's TeamIdentifier, or null (ad-hoc, unsigned). */
+  teamId: string | null;
+}
+
+/** Why a Mac app cannot update itself, in plain words, or null when it can. */
+export function macUpdateBlocker(p: MacAppProbe): string | null {
+  if (!p.inApplications) return "Move Atomic Agent to the Applications folder to get updates.";
+  if (!p.teamId) return "This build isn’t signed, so it can’t update itself. Download new versions from atomicagent.io.";
+  return null;
+}
+
+/** The running app's bundle, read with codesign (stderr carries the answer). */
+function probeMacApp(): Promise<MacAppProbe> {
+  const inApplications = app.isInApplicationsFolder();
+  const bundle = resolve(process.execPath, "..", "..", "..");
+  return new Promise((done) => {
+    execFile("codesign", ["-dv", "--verbose=2", bundle], { timeout: 10_000 }, (_err, _out, err) => {
+      const m = /^TeamIdentifier=(.+)$/m.exec(String(err ?? ""));
+      const team = m?.[1]?.trim() ?? "";
+      done({ inApplications, teamId: team && team !== "not set" ? team : null });
+    });
+  });
+}
+
 export interface UpdaterDeps {
   /** `--fake-update=<version>`, or null. */
   fakeVersion: string | null;
@@ -231,10 +315,12 @@ export interface UpdaterDeps {
   send: (state: UpdateState) => void;
   /** A turn of this window's chats runs now (cheap, synchronous: the Restart label). */
   turnRunningHere: () => boolean;
-  /** Any turn the agent runs: this window's, Telegram's, a task's (asked before installing). */
+  /** Anything an install would cut short: any turn the agent runs, a download (agentBusy). */
   turnRunningAnywhere: () => Promise<boolean>;
-  /** Stop the agent and the model server before the installer starts (Windows, Linux). */
-  prepareQuit: () => Promise<void>;
+  /** Stop the agent and the model server before the installer starts (Windows). True when both are gone. */
+  prepareQuit: () => Promise<boolean>;
+  /** Windows: the install failed after prepareQuit stopped the agent; start the app again so it has one. */
+  recover: () => void;
 }
 
 type Disabled = { text: string } | null;
@@ -262,17 +348,26 @@ export class AppUpdateController {
   private manualCheck: { at: number; result: CheckResult } | null = null;
   private manualChecking = false;
   private checking: Promise<CheckResult> | null = null;
+  /** The running download's token: a promise that settles for another token is old news. */
   private token: CancellationToken | null = null;
-  private cancelRequested = false;
+  /** The last downloadUpdate promise, until it settles (electron-updater hands a new call the old one meanwhile). */
+  private pendingDownload: Promise<unknown> | null = null;
   private fakeTimer: ReturnType<typeof setInterval> | null = null;
-  private waitTimer: ReturnType<typeof setInterval> | null = null;
+  /** Restart waiting for a turn: one look at a time, the next scheduled after the last answered. */
+  private waitTimer: ReturnType<typeof setTimeout> | null = null;
   private firstTimer: ReturnType<typeof setTimeout> | null = null;
   private everyTimer: ReturnType<typeof setInterval> | null = null;
   private installAsking = false;
   private installTimer: ReturnType<typeof setTimeout> | null = null;
+  /** quitAndInstall is called at most once per app session (Squirrel.Mac adds a listener per call). */
+  private installStarted = false;
+  private installNote: string | null = null;
+  /** macOS: where the app runs from and its signature, read once before the first check. */
+  private eligibility: Promise<void> | null = null;
 
   /* Test hooks (the smoke). */
   private fakeTurnBusy: boolean | null = null;
+  private fakeBusyProbe: (() => Promise<boolean>) | null = null;
   fakeInstalls = 0;
 
   constructor(deps: UpdaterDeps) {
@@ -321,6 +416,7 @@ export class AppUpdateController {
       toast: this.toast,
       turnRunning: this.turnRunningHere(),
       downloadError: this.downloadError,
+      installNote: this.installNote,
       manualCheck: this.manualCheck,
       manualChecking: this.manualChecking,
       fake: this.fake,
@@ -344,12 +440,20 @@ export class AppUpdateController {
     }
   }
 
+  /** Fails closed: a probe that throws counts as busy. */
   private async turnRunningAnywhere(): Promise<boolean> {
+    if (this.fakeBusyProbe) {
+      try {
+        return await this.fakeBusyProbe();
+      } catch {
+        return true;
+      }
+    }
     if (this.fakeTurnBusy !== null) return this.fakeTurnBusy;
     try {
       return this.turnRunningHere() || (await this.deps.turnRunningAnywhere());
     } catch {
-      return this.turnRunningHere();
+      return true;
     }
   }
 
@@ -369,10 +473,29 @@ export class AppUpdateController {
     this.everyTimer = setInterval(() => void this.autoCheck(), CHECK_EVERY_MS);
   }
 
+  /* macOS: an app run from the DMG or Downloads (translocated), or signed
+     ad hoc, cannot take an update (Squirrel.Mac refuses it), so it is not
+     offered one; Settings says why. Read once, before the first check. */
+  private ensureEligible(): Promise<void> {
+    if (this.disabled || this.fake || process.platform !== "darwin") return Promise.resolve();
+    this.eligibility ??= probeMacApp().then(
+      (probe) => this.applyEligibility(probe),
+      () => this.applyEligibility({ inApplications: true, teamId: null }),
+    );
+    return this.eligibility;
+  }
+
+  private applyEligibility(probe: MacAppProbe): void {
+    const blocker = macUpdateBlocker(probe);
+    if (!blocker) return;
+    this.disabled = { text: blocker };
+    this.emit();
+  }
+
   stop(): void {
     if (this.firstTimer) clearTimeout(this.firstTimer);
     if (this.everyTimer) clearInterval(this.everyTimer);
-    if (this.waitTimer) clearInterval(this.waitTimer);
+    if (this.waitTimer) clearTimeout(this.waitTimer);
     if (this.fakeTimer) clearInterval(this.fakeTimer);
     if (this.installTimer) clearTimeout(this.installTimer);
     this.firstTimer = this.everyTimer = this.waitTimer = this.fakeTimer = this.installTimer = null;
@@ -381,11 +504,15 @@ export class AppUpdateController {
   /** The timer's check: nothing when the switch is off; quiet on failure. */
   async autoCheck(): Promise<void> {
     if (this.disabled || !this.prefs.autoCheck) return;
+    await this.ensureEligible();
+    if (this.disabled) return;
     await this.check("auto");
   }
 
   /** Settings' Check now. */
   async checkNow(): Promise<UpdateState> {
+    if (this.disabled) return this.state();
+    await this.ensureEligible();
     if (this.disabled) return this.state();
     this.manualChecking = true;
     this.emit();
@@ -482,7 +609,7 @@ export class AppUpdateController {
        download, or refusing it at quitAndInstall. */
     u.on("error", (err: Error) => {
       if (this.phase === "downloading") this.downloadFailed(err);
-      else if (this.phase === "installing") this.installFailed(err);
+      else if (this.phase === "installing" && this.installStarted) this.installFailed(err, process.platform !== "darwin");
     });
     u.on("download-progress", (p: { percent?: number }) => {
       if (this.phase !== "downloading") return;
@@ -543,22 +670,33 @@ export class AppUpdateController {
     this.percent = 0;
     this.toast = true;
     this.downloadError = null;
-    this.cancelRequested = false;
     this.emit();
     if (this.fakeVersion) {
       this.fakeDownload();
       return this.state();
     }
+    const mod = this.mod ?? (require("electron-updater") as UpdaterModule);
+    const token = new mod.CancellationToken();
+    this.token = token;
     try {
+      /* Cancel, then Update at once: electron-updater hands a new call the
+         old download's promise until it settles, which would end this one as
+         "cancelled". Let it settle first. */
+      if (this.pendingDownload) await this.pendingDownload.catch(() => undefined);
+      if (this.token !== token || token.cancelled) return this.state();
       const updater = this.ensureUpdater();
-      this.token = new (this.mod as UpdaterModule).CancellationToken();
-      await updater.downloadUpdate(this.token);
-      if (this.phase === "downloading") this.downloaded();
+      const run = updater.downloadUpdate(token);
+      this.pendingDownload = run;
+      await run;
+      if (this.token === token && this.phase === "downloading") this.downloaded();
     } catch (err) {
-      if (this.cancelRequested) return this.state();
-      if (this.phase === "downloading") this.downloadFailed(err);
+      // A cancelled download, or one a newer Update has replaced, is not a failure.
+      if (this.token === token && !token.cancelled && this.phase === "downloading") this.downloadFailed(err);
     } finally {
-      this.token = null;
+      if (this.token === token) {
+        this.token = null;
+        this.pendingDownload = null;
+      }
     }
     return this.state();
   }
@@ -602,7 +740,6 @@ export class AppUpdateController {
   /** Cancel during the download: back to "available", the toast away for this session. */
   cancel(): UpdateState {
     if (this.phase !== "downloading") return this.state();
-    this.cancelRequested = true;
     try {
       this.token?.cancel();
     } catch {
@@ -626,7 +763,7 @@ export class AppUpdateController {
   /** Later: the toast goes; nothing installs until Restart is clicked (toast or Settings). */
   later(): UpdateState {
     if (this.phase === "waiting") this.stopWaiting();
-    if (this.version) {
+    if (this.version && this.phase !== "installing") {
       this.dismissedThisSession = this.version;
       A.track("update_dismissed", { version: this.version, via: "later" });
     }
@@ -635,9 +772,9 @@ export class AppUpdateController {
     return this.state();
   }
 
-  /** Restart: now when no turn runs, else as soon as the running one ends. */
+  /** Restart: now when nothing runs, else as soon as what runs has ended. */
   async install(): Promise<UpdateState> {
-    if ((this.phase !== "ready" && this.phase !== "waiting") || this.installAsking) return this.state();
+    if ((this.phase !== "ready" && this.phase !== "waiting") || this.installAsking || this.installStarted) return this.state();
     // The agent's /health can take a moment: a second click meanwhile is the same click.
     this.installAsking = true;
     let busy: boolean;
@@ -653,31 +790,45 @@ export class AppUpdateController {
         this.phase = "waiting";
         this.toast = true;
         this.emit();
-        this.waitTimer = setInterval(() => void this.retryInstall(), TURN_POLL_MS);
+        this.scheduleRetry();
       }
       return this.state();
     }
+    this.stopWaiting();
     await this.installNow();
     return this.state();
   }
 
+  /* One look at a time: the next is scheduled only after the last has
+     answered, so a slow /health can never start two installs. */
+  private scheduleRetry(): void {
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = setTimeout(() => void this.retryInstall(), TURN_POLL_MS);
+  }
+
   private async retryInstall(): Promise<void> {
-    if (this.phase !== "waiting") return this.stopWaiting();
-    if (await this.turnRunningAnywhere()) return;
+    this.waitTimer = null;
+    if (this.phase !== "waiting") return;
+    const busy = await this.turnRunningAnywhere();
+    // Later (or a reset) while the agent answered.
+    if (this.phase !== "waiting") return;
+    if (busy) return this.scheduleRetry();
     this.stopWaiting();
     await this.installNow();
   }
 
   private stopWaiting(): void {
-    if (this.waitTimer) clearInterval(this.waitTimer);
+    if (this.waitTimer) clearTimeout(this.waitTimer);
     this.waitTimer = null;
     if (this.phase === "waiting") this.phase = "ready";
   }
 
   private async installNow(): Promise<void> {
-    if (!this.version) return;
+    if (!this.version || this.installStarted) return;
+    this.installStarted = true;
     this.phase = "installing";
     this.toast = true;
+    this.installNote = null;
     this.emit();
     if (this.fakeVersion) {
       // The fake installs nothing and quits nothing: the smoke reads this count.
@@ -686,36 +837,63 @@ export class AppUpdateController {
     }
     this.prefs.pendingInstall = { from: this.currentVersion, to: this.version, at: Date.now() };
     writeUpdatePrefs(this.prefs);
+    /* Windows: the installer starts at once and replaces the agent's and the
+       model server's files, so both stop first, within SHUTDOWN_TIMEOUT_MS;
+       if they do not, nothing is installed. macOS: Squirrel replaces the app
+       only after it has quit, and quitting stops both as usual (before-quit);
+       stopping them here would leave the app without its agent if Squirrel
+       then refused the update. */
+    const stopsFirst = process.platform !== "darwin";
+    if (stopsFirst) {
+      let stopped = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        stopped = await Promise.race([
+          this.deps.prepareQuit(),
+          new Promise<boolean>((r) => { timer = setTimeout(() => r(false), SHUTDOWN_TIMEOUT_MS); }),
+        ]);
+      } catch {
+        stopped = false;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      if (!stopped) return this.installFailed(new Error("the agent did not stop in time"), true);
+    }
     try {
-      /* Windows: the installer starts at once and replaces the agent's and the
-         model server's files, so both stop first. macOS: Squirrel replaces
-         the app only after it has quit, and quitting stops both as usual
-         (before-quit); stopping them here would leave the app without its
-         agent if Squirrel then refused the update. */
-      if (process.platform !== "darwin") await this.deps.prepareQuit();
       // Silent installer on Windows (the person already said yes), and the app starts again after it.
       this.ensureUpdater().quitAndInstall(true, true);
-      /* Squirrel.Mac fetches the zip from electron-updater only now; an app
-         still here after two minutes was not taken over, and says so. */
-      this.installTimer = setTimeout(() => {
-        if (this.phase === "installing") this.installFailed(new Error("the installer did not take over within 2 min"));
-      }, INSTALL_TIMEOUT_MS);
     } catch (err) {
-      this.installFailed(err);
+      return this.installFailed(err, stopsFirst);
     }
+    /* Still here after two minutes: the installer did not take over. On
+       macOS Squirrel may yet finish and quit (its listener stays), so the
+       toast keeps saying it is installing and offers no second Restart. */
+    this.installTimer = setTimeout(() => {
+      this.installTimer = null;
+      if (this.phase !== "installing") return;
+      if (stopsFirst) return this.installFailed(new Error("the installer did not take over within 2 min"), true);
+      this.installNote = "Still installing. If nothing happens, quit Atomic Agent and open it again.";
+      this.emit();
+    }, INSTALL_TIMEOUT_MS);
   }
 
-  /* On Windows the agent may already be stopped by now (prepareQuit), so the
-     honest way on is a fresh start of the app, which offers the update again. */
-  private installFailed(err: unknown): void {
+  /* An install that did not happen. With the agent already stopped
+     (Windows) the app starts again, which brings the agent back and offers
+     the update again. Otherwise it stays as it is and says what to do: a
+     second quitAndInstall in this session is never made. */
+  private installFailed(err: unknown, agentStopped: boolean): void {
     console.error(`[updater] install failed: ${err instanceof Error ? err.message : String(err)}`);
     if (this.installTimer) clearTimeout(this.installTimer);
     this.installTimer = null;
     this.prefs.pendingInstall = null;
     writeUpdatePrefs(this.prefs);
-    this.phase = "ready";
+    if (agentStopped) {
+      this.deps.recover();
+      return;
+    }
+    this.phase = "installing";
     this.toast = true;
-    this.downloadError = "The update could not be installed. Quit and open Atomic Agent again to retry.";
+    this.installNote = "The update could not be installed. Quit Atomic Agent and open it again to retry.";
     this.emit();
   }
 
@@ -736,10 +914,25 @@ export class AppUpdateController {
     this.manualCheck = null;
     this.manualChecking = false;
     this.checking = null;
+    this.installStarted = false;
+    this.installNote = null;
+    this.eligibility = null;
     this.fakeTurnBusy = null;
+    this.fakeBusyProbe = null;
     this.fakeInstalls = 0;
     this.prefs = readUpdatePrefs();
     this.emit();
+  }
+
+  /** The smoke: what "is anything running" answers, slow or not (null: back to the real one). */
+  testBusyProbe(probe: (() => Promise<boolean>) | null): void {
+    this.fakeBusyProbe = probe;
+  }
+
+  /** The smoke: what macOS would say about this app (inApplications, teamId), applied as the real probe's answer is. */
+  testEligibility(probe: MacAppProbe): void {
+    this.eligibility = Promise.resolve();
+    this.applyEligibility(probe);
   }
 
   /** The smoke's last step: the launch's own fake (or none) again, and a clean state. */

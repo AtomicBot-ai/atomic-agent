@@ -21,6 +21,8 @@ function appUpdApply(st) {
   if (!st || typeof st !== 'object') return;
   UPD.state = st;
   updToastSync();
+  // Over Settings the column must stay clear of Done (renderer.js toastsClearCard).
+  toastsClearCard();
   updSettingsPatch();
 }
 
@@ -62,10 +64,12 @@ function updToastHTML(st) {
   }
   if (st.phase === 'waiting') {
     return ico('clock') + body('Restarting when the answer finishes',
-      'Atomic Agent ' + v + ' installs as soon as the running turn ends.',
+      'Atomic Agent ' + v + ' installs as soon as the running turn (or download) ends.',
       btn('btn-s', 'later', 'Later'));
   }
   if (st.phase === 'installing') {
+    // An install that did not go as planned says what to do, and can be put away.
+    if (st.installNote) return ico('alert') + body('Atomic Agent ' + v + ' is not installed yet', esc(st.installNote), btn('btn-s', 'later', 'Close'));
     // The fake installs nothing, so its toast has a way out; a real one ends with the app.
     return ico('refresh') + body(st.fake ? 'Test mode: the app would restart now' : 'Restarting to update…',
       st.fake ? 'Atomic Agent ' + v + ' would be installed. Nothing was changed.' : 'Atomic Agent ' + v + ' is being installed.',
@@ -99,7 +103,9 @@ function updToastSync(boxIn) {
     }
     return;
   }
-  const key = [st.phase, st.version, st.notes, st.downloadError, st.turnRunning, st.fake].join('|');
+  /* Not turnRunning: a turn starting or ending only renames Restart, in
+     place below, so the button under the pointer is never rebuilt. */
+  const key = [st.phase, st.version, st.notes, st.downloadError, st.installNote, st.fake].join('|');
   if (!n) {
     n = document.createElement('div');
     n.className = 'toast toast-upd';
@@ -118,6 +124,10 @@ function updToastSync(boxIn) {
     n.innerHTML = updToastHTML(st);
     n._updKey = key;
     return;
+  }
+  if (st.phase === 'ready') {
+    const restart = n.querySelector('[data-act="appupd:install"]');
+    if (restart && restart.textContent !== updRestartLabel(st)) restart.textContent = updRestartLabel(st);
   }
   if (st.phase === 'downloading') {
     const pct = Math.max(0, Math.min(100, st.percent || 0));
@@ -139,6 +149,7 @@ function updResultLine(st) {
   if (st.phase === 'downloading') return {text: 'Downloading version ' + st.version + '… ' + (st.percent || 0) + '%', tone: ''};
   if (st.phase === 'ready') return {text: 'Version ' + st.version + ' is downloaded. Restart to update.', tone: 'ok'};
   if (st.phase === 'waiting') return {text: 'Restarting when the answer finishes.', tone: ''};
+  if (st.phase === 'installing' && st.installNote) return {text: st.installNote, tone: 'warn'};
   if (st.phase === 'installing') return {text: st.fake ? 'Test mode: the app would restart and install ' + st.version + ' now.' : 'Restarting to update…', tone: ''};
   const r = st.manualCheck && st.manualCheck.result;
   if (r && r.kind === 'error') return {text: r.message, tone: 'warn'};

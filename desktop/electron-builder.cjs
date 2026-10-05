@@ -26,6 +26,22 @@
 const feedUrl = (process.env.ATAG_UPDATE_FEED_URL || "").trim().replace(/\/+$/, "");
 const channel = (process.env.ATAG_UPDATE_CHANNEL || "stable").trim() || "stable";
 
+/* The feed decides what the app installs, so it is https. The one exception
+   is a test feed on the test machine itself (scripts/serve-test-feed.sh). */
+if (feedUrl) {
+  let url;
+  try {
+    url = new URL(feedUrl);
+  } catch {
+    throw new Error(`ATAG_UPDATE_FEED_URL is not a URL: ${feedUrl}`);
+  }
+  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) {
+    throw new Error(`ATAG_UPDATE_FEED_URL must be https:// (http:// only for 127.0.0.1 or localhost): ${feedUrl}`);
+  }
+}
+if (!/^[a-z0-9-]+$/.test(channel)) throw new Error(`ATAG_UPDATE_CHANNEL must be a plain name like stable or canary: ${channel}`);
+
 const config = {
   "appId": "io.atomicagent.desktop",
   "productName": "Atomic Agent",
@@ -123,6 +139,15 @@ const config = {
       "sign": "./scripts/win-sign.cjs",
       "signingHashAlgorithms": [
         "sha256"
+      ],
+      /* ATO-229: not a signing setting. electron-builder writes it into
+         app-update.yml, and the installed app accepts an update's installer
+         only when its signer's CN is this name (electron-updater
+         verifySignature; with none set it checks nothing). The DigiCert
+         certificate's CN; the desktop workflow fails the build when the
+         signed installer's CN is not in this list. */
+      "publisherName": [
+        "AtomicMail Systems OU"
       ]
     }
   },

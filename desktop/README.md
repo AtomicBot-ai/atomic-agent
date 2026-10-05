@@ -1261,12 +1261,20 @@ without a click.
 - Update downloads with progress in the toast (Cancel stops it), then
   **Restart** / **Later**. Later installs nothing on quit; only a Restart click
   (the toast or Settings › General) installs. Restart waits while an agent turn
-  runs (this window's, or one the agent runs for Telegram, a task or a bot) and
-  says so: "Restart when the answer finishes".
+  runs (this window's, or one the agent runs for Telegram, a task or a bot) or
+  a model download / llama.cpp update runs, and says so: "Restart when the
+  answer finishes". The check fails closed (`agentBusy`): an agent that is
+  starting, or a `/health` that does not answer within 10 s, counts as busy.
 - On Windows the app stops the agent and the managed model server before the
-  installer starts (`shutdownForUpdate` in main.ts): the installer replaces
-  their files at once. On macOS Squirrel replaces the app only after it has
-  quit, and the normal quit stops both.
+  installer starts (`shutdownForUpdate` in main.ts, at most 15 s): the
+  installer replaces their files at once. If they do not stop, or the
+  installer does not take over, nothing is installed and the app starts again
+  (so it has its agent back). On macOS Squirrel replaces the app only after it
+  has quit, and the normal quit stops both. Restart calls `quitAndInstall` at
+  most once per app session.
+- macOS offers no update where it cannot succeed: an app run from the DMG or
+  Downloads (not in /Applications), or one signed ad hoc (no TeamIdentifier),
+  says why in Settings instead.
 - A failed automatic check (offline, no feed) shows nothing. Settings ›
   General › Check now shows the result in plain words.
 - The person's choices are in Electron userData `updates.json` (auto-check,
@@ -1281,7 +1289,7 @@ the electron-builder config; it used to be the `build` key of package.json):
 
 | Variable | Meaning |
 |---|---|
-| `ATAG_UPDATE_FEED_URL` | Base URL the update files are served from (an R2 bucket, a releases-only repo, ...). The one place to change when hosting is decided. Unset: no `publish` entry, no `app-update.yml` in the app, and Settings says "Updates are not set up for this build". |
+| `ATAG_UPDATE_FEED_URL` | Base URL the update files are served from (an R2 bucket, a releases-only repo, ...). The one place to change when hosting is decided. `https://` only; `http://` is accepted for `127.0.0.1` / `localhost` (a local test feed, `scripts/serve-test-feed.sh`), anything else stops the build. Unset: `publish: null`, no `app-update.yml` in the app, and Settings says "Updates are not set up for this build". |
 | `ATAG_UPDATE_CHANNEL` | `stable` by default (`canary` later). It names the files below. |
 
 With the variable set, `electron-builder ... --publish never` still writes
@@ -1290,8 +1298,8 @@ the update files into `desktop/release/`. Everything a release uploads to
 
 | Platform | Files |
 |---|---|
-| macOS | `stable-mac.yml`, `Atomic Agent-<version>-arm64-mac.zip` (+ `.blockmap`), the `.dmg` (+ `.blockmap`) |
-| Windows | `stable.yml`, `Atomic-Agent-Setup-<version>-x64.exe` (+ `.blockmap`) |
+| macOS | `stable-mac.yml`, `Atomic Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. |
+| Windows | `stable.yml`, `Atomic-Agent-Setup-<version>-x64.exe`; its `.blockmap` is optional. |
 
 Linux is not updated from inside the app yet (the updater is off there and
 Settings says so); AppImage and deb users take new versions from the
@@ -1306,8 +1314,14 @@ build writes and reads `canary*.yml` from the same URL.
 macOS installs from the **zip**, not the DMG (Squirrel.Mac); the mac target
 list builds both. The update must be signed with the same Developer ID as
 the running app, or Squirrel refuses it: an ad-hoc signed local `npm run dist`
-cannot update itself. Windows uses the NSIS installer silently and starts the
-app again after it.
+cannot update itself. The desktop workflow refuses to build with a feed
+without the signing secrets.
+
+Windows uses the NSIS installer silently and starts the app again after it.
+The app accepts an installer only when its signer's CN is in
+`win.signtoolOptions.publisherName` (electron-builder.cjs, written into
+app-update.yml; "AtomicMail Systems OU", the DigiCert certificate). The
+workflow fails a signed build whose installer's CN is not in that list.
 
 Release notes: a `release-notes.md` in `build/` (or `releaseInfo.releaseNotes`)
 goes into the `.yml`; the toast shows its first line.
@@ -1324,8 +1338,18 @@ finds that version when it is newer than the app, the download is a fake
 progress, and Restart says what it would do instead of quitting. The toast
 shows about 10 s after the window. Settings › General shows the version and
 Check now. The smoke task `--smoke --smoke-task=65` drives the same fake
-(toast top right, Not now, Skip, progress, Restart waiting for a turn,
-the switch off, Check now). It writes `updates.json` and puts it back.
+(toast top right, Not now, Skip, progress, Restart waiting for a turn and
+installing once, the switch off, Check now, the macOS reasons). It writes
+`updates.json` and puts it back.
+
+### A real A -> B test
+
+Run the desktop workflow by hand twice from the same ref, both with
+`feed_url = http://127.0.0.1:8765/desktop/`: A with `version_override` e.g.
+`0.0.90`, B with `0.0.91` (the version is set in the runner only). Put B's
+`stable-mac.yml` and `*-mac.zip` in `<dir>/desktop/`, run
+`desktop/scripts/serve-test-feed.sh <dir>`, install A into /Applications and
+open it.
 
 ## Layout
 

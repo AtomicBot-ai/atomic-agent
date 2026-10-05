@@ -17,6 +17,35 @@ test("versions compare numerically, a prerelease before its release", () => {
   assert.equal(U.compareVersions("1.0.0-beta.1", "1.0.0"), -1);
   assert.equal(U.compareVersions("1.0.0", "1.0.0-beta.1"), 1);
   assert.equal(U.compareVersions("0.0.1", "0.0.2"), -1);
+  // semver prerelease order: numbers as numbers, before words; fewer fields first.
+  assert.equal(U.compareVersions("1.0.0-beta.10", "1.0.0-beta.9"), 1);
+  assert.equal(U.compareVersions("1.0.0-alpha", "1.0.0-alpha.1"), -1);
+  assert.equal(U.compareVersions("1.0.0-1", "1.0.0-alpha"), -1);
+  assert.equal(U.compareVersions("1.0.0-rc-2", "1.0.0-rc-1"), 1);
+});
+
+test("the install waits unless it is known that nothing runs (fails closed)", async () => {
+  const idleHealth = async () => ({ busyTurns: 0 });
+  const base = { liveTurns: 0, download: false, agentState: "connected", health: idleHealth };
+  assert.equal(await U.agentBusy(base), false);
+  assert.equal(await U.agentBusy({ ...base, liveTurns: 1 }), true);
+  assert.equal(await U.agentBusy({ ...base, download: true }), true);
+  assert.equal(await U.agentBusy({ ...base, health: async () => ({ busyTurns: 2 }) }), true);
+  // No answer in time, an error, or an answer without busyTurns: busy.
+  assert.equal(await U.agentBusy({ ...base, health: () => new Promise(() => {}), timeoutMs: 50 }), true);
+  assert.equal(await U.agentBusy({ ...base, health: async () => { throw new Error("down"); } }), true);
+  assert.equal(await U.agentBusy({ ...base, health: async () => ({ status: "ok" }) }), true);
+  // An agent on its way up may resume turns; one that is not running has none.
+  assert.equal(await U.agentBusy({ ...base, agentState: "starting" }), true);
+  for (const state of [null, "stopped", "missing-binary", "error"]) {
+    assert.equal(await U.agentBusy({ ...base, agentState: state, health: () => new Promise(() => {}) }), false, String(state));
+  }
+});
+
+test("macOS: no update outside /Applications or for an ad-hoc signed app", () => {
+  assert.equal(U.macUpdateBlocker({ inApplications: true, teamId: "MU9G7XKJUL" }), null);
+  assert.match(U.macUpdateBlocker({ inApplications: false, teamId: "MU9G7XKJUL" }), /Applications folder/);
+  assert.match(U.macUpdateBlocker({ inApplications: true, teamId: null }), /isn’t signed/);
 });
 
 test("release notes: one plain line, from markdown, HTML or the per-version list", () => {
