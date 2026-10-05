@@ -57,6 +57,7 @@ import { checks103 } from "./smoke-tasks/t103.js";
 import { checks104 } from "./smoke-tasks/t104.js";
 import { checks105 } from "./smoke-tasks/t105.js";
 import { checks106 } from "./smoke-tasks/t106.js";
+import { checks109 } from "./smoke-tasks/t109.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -93,7 +94,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "109"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -728,6 +729,9 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   // 106 (ATO-226) — on a Russian layout ⌘. ("ю") did not deny the card on screen or stop a turn, and ⌘K and the rest did nothing;
   // (ATO-227) Enter with a message under a waiting card denied it with those words instead of sending them to the agent.
   if (want.has("106")) await guarded("106", check, () => checks106(js, check));
+  // 109 (ATO-197) — a tool row spun until the turn was over, even when its call had finished, failed or been denied,
+  // and after Stop for good; now each row settles on its tool_result frame, and a turn's end leaves none running.
+  if (want.has("109")) await guarded("109", check, () => checks109(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));
