@@ -16623,6 +16623,9 @@ function sessionTurnsToLog(turns) {
     if (!t || typeof t !== 'object') return;
     // B4: a stored steer (agent ≥ 0.6.3 `steered: true`) keeps its caption.
     if (t.kind === 'user') { log.push(t.steered ? {id:nid(), k:'user', text:t.text || '', steered:true} : {id:nid(), k:'user', text:t.text || ''}); return; }
+    // ATO-233: the agent's stop marker (`stopped: true`) is a note for the model, not a reply: the
+    // reopened chat draws the same "(stopped)" placeholder the live turn showed.
+    if (t.kind === 'assistant_reply' && t.stopped) { log.push({id:nid(), k:'assistant', text:'(stopped)', placeholder:true}); return; }
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
     if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
     if (t.kind === 'assistant_tool_call') {
