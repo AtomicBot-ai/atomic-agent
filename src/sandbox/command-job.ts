@@ -23,6 +23,12 @@ export interface CommandJobOptions {
   env?: NodeJS.ProcessEnv;
   /** Cap per stream; the head and the tail survive, the middle is dropped. */
   maxOutputBytes?: number;
+  /**
+   * Windows only, ignored elsewhere: hand argv to the child verbatim
+   * instead of letting Node quote it — for a `cmd.exe` command line
+   * built by `buildSubshellInvocation` / `buildDirectInvocation`.
+   */
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface CommandJobExit {
@@ -143,6 +149,9 @@ export function startCommandJob(
     // A group of its own on POSIX; on Windows `detached` would open a
     // console, and the tree-kill needs no group.
     ...(IS_WINDOWS ? { windowsHide: true } : { detached: true }),
+    ...(options.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: true }
+      : {}),
   });
   const stdout = new CappedOutput(cap);
   const stderr = new CappedOutput(cap);

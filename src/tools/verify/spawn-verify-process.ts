@@ -15,7 +15,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { killProcessTree } from "../../sandbox/kill-process-tree.js";
-import { buildSubshellInvocation } from "../../sandbox/shell-invocation.js";
+import {
+  buildDirectInvocation,
+  buildSubshellInvocation,
+} from "../../sandbox/shell-invocation.js";
 import { needsShellInterpretation } from "../os/shell.js";
 
 export const OUTPUT_TAIL_CHARS = 8_000;
@@ -93,13 +96,17 @@ export interface VerifyProcess {
 export function resolveInvocation(
   cmd: string,
   args: readonly string[],
-): { command: string; args: string[]; commandLine: string } {
+): {
+  command: string;
+  args: string[];
+  commandLine: string;
+  windowsVerbatimArguments: boolean;
+} {
   const commandLine = [cmd, ...args].join(" ");
-  if (needsShellInterpretation(cmd, args)) {
-    const shell = buildSubshellInvocation(commandLine);
-    return { command: shell.command, args: shell.args, commandLine };
-  }
-  return { command: cmd, args: [...args], commandLine };
+  const invocation = needsShellInterpretation(cmd, args)
+    ? buildSubshellInvocation(commandLine)
+    : buildDirectInvocation(cmd, args);
+  return { ...invocation, commandLine };
 }
 
 export function spawnVerifyProcess(
@@ -119,6 +126,9 @@ export function spawnVerifyProcess(
     detached,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: true }
+      : {}),
   });
   const stdout = new TailBuffer();
   const stderr = new TailBuffer();

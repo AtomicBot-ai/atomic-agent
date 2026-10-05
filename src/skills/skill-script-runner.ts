@@ -75,6 +75,7 @@ export async function runSkillScript(
   const ext = extname(scriptPath).toLowerCase();
   let cmd: string;
   let args: string[];
+  let windowsVerbatimArguments = false;
   const userArgs = params.args ?? [];
   if (ext === ".ts") {
     cmd = process.execPath;
@@ -101,6 +102,7 @@ export async function runSkillScript(
     const inv = buildSubshellInvocation(line);
     cmd = inv.command;
     args = inv.args;
+    windowsVerbatimArguments = inv.windowsVerbatimArguments;
   } else {
     cmd = scriptPath;
     args = userArgs;
@@ -112,6 +114,7 @@ export async function runSkillScript(
       cwd: skill.rootDir,
       timeoutMs: params.timeoutMs ?? 30_000,
       ...(params.signal ? { signal: params.signal } : {}),
+      ...(windowsVerbatimArguments ? { windowsVerbatimArguments } : {}),
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
