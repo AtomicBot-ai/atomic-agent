@@ -18675,6 +18675,12 @@ function tasksTab() {
   return tkListHTML();
 }
 
+/* ATO-236: a cancelled, completed or failed task fires no more, whatever
+   time its record still holds; its Next run is a dash in the list and is
+   not on its page. */
+function tkHasNextRun(row) {
+  return !!row && row.status !== 'cancelled' && row.status !== 'completed' && row.status !== 'failed';
+}
 function tkStatusClass(status) {
   return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
 }
@@ -18766,7 +18772,7 @@ function tkListHTML() {
         return '<tr class="click' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
           + '<td><button class="set-rowbtn" data-act="tasks:detail:' + esc(row.id) + '" title="Open task ' + esc(row.id) + '">' + tkStatusChip(row.status) + '</button></td>'
           + '<td class="mono set-sched" title="' + esc(row.scheduleLabel) + '">' + esc(row.scheduleLabel) + '</td>'
-          + '<td class="mono">' + esc(formatRelativeMs(row.scheduledFor, now)) + '</td>'
+          + '<td class="mono set-next">' + esc(tkHasNextRun(row) ? formatRelativeMs(row.scheduledFor, now) : '—') + '</td>'
           + '<td class="mono" title="' + esc(row.sessionId || '') + '">' + esc(row.sessionId ? tkShortId(row.sessionId) : '—') + '</td>'
           + '<td class="set-msg" title="' + esc(row.userMessage) + '">' + esc(row.userMessage) + '</td></tr>';
       }).join('')
@@ -18791,7 +18797,7 @@ function tkDetailHTML() {
   const plate = [
     ['Task', id + '  ·  ' + row.origin],
     ['Schedule', row.scheduleLabel + (row.recurring ? ' (recurring)' : '')],
-    ['Next run', formatRelativeMs(row.scheduledFor, now) + ' (' + (row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')'],
+    tkHasNextRun(row) ? ['Next run', formatRelativeMs(row.scheduledFor, now) + ' (' + (row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')'] : null,
     ['Attempts', row.attempts + '/' + row.maxAttempts],
     ['Session', row.sessionId ?? '—'],
     ['Created', formatUnixMs(row.createdAt) + ' · updated ' + formatUnixMs(row.updatedAt) + (row.completedAt !== null ? ' · completed ' + formatUnixMs(row.completedAt) : '')],
@@ -18805,7 +18811,7 @@ function tkDetailHTML() {
       + '<h3 class="set-dtitle">' + esc(row.userMessage || id) + '</h3>'
       + '<div class="set-chips">' + tkStatusChip(row.status) + (row.recurring ? '<span class="tk-chip tk-chip--sm">recurring</span>' : '')
         + '<span class="mono set-meta">attempts ' + row.attempts + '/' + row.maxAttempts + '</span></div>'
-      + '<dl class="tk-plate set-plate">' + plate.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
+      + '<dl class="tk-plate set-plate">' + plate.filter(Boolean).map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
     + '</div>'
     + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>last error:</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
     + '<div class="set-section"><div class="tk-sh">Recent firings</div>'
