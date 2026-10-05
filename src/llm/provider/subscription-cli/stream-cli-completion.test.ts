@@ -73,6 +73,19 @@ describe("streamCliCommand", () => {
     ).rejects.toBeInstanceOf(SubscriptionCliNotInstalledError);
   });
 
+  it("names the missing tool when the caller says which one it is", async () => {
+    await expect(
+      collect(
+        options("", {
+          binary: "definitely-not-a-real-binary-xyz",
+          productName: "Claude Code",
+        }),
+      ),
+    ).rejects.toThrow(
+      /^Claude Code isn't installed \(the `definitely-not-a-real-binary-xyz` command was not found\)/,
+    );
+  });
+
   it("surfaces stderr when the child exits non-zero", async () => {
     const script = `
       process.stderr.write("weekly limit reached");

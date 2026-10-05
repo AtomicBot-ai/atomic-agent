@@ -66,6 +66,7 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
       throw new SubscriptionCliNotInstalledError(
         options.binary,
         options.installHint,
+        options.productName,
       );
     }
     throw err;
@@ -133,6 +134,7 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
           ? new SubscriptionCliNotInstalledError(
               options.binary,
               options.installHint,
+              options.productName,
             )
           : err,
       );

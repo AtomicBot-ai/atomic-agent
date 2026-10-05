@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import { LlamaServerError } from "../llama-server-client.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
-import { SubscriptionCliAuthError } from "../provider/subscription-cli/subscription-cli-errors.js";
-import { ModelError } from "../reliability/llm-failures.js";
+import {
+  SubscriptionCliAuthError,
+  SubscriptionCliNotInstalledError,
+} from "../provider/subscription-cli/subscription-cli-errors.js";
+import { ModelError, TransportError } from "../reliability/llm-failures.js";
 import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import {
   isBillingRefusal,
+  isCliSetupRefusal,
   isCredentialRejection,
   isOutageFailure,
 } from "./link-failure-kind.js";
@@ -206,5 +210,27 @@ describe("isOutageFailure", () => {
     expect(
       isOutageFailure(new ModelError("empty", "model returned empty content")),
     ).toBe(false);
+  });
+});
+
+describe("isCliSetupRefusal", () => {
+  it("is a CLI that is not installed or signed out, wrapped or not", () => {
+    const missing = new SubscriptionCliNotInstalledError("claude", "x");
+    expect(isCliSetupRefusal(missing)).toBe(true);
+    expect(isCliSetupRefusal(new SubscriptionCliAuthError("claude", "x"))).toBe(
+      true,
+    );
+    const wrapped = new TransportError(missing.message, null, "", {
+      cause: missing,
+    });
+    expect(isCliSetupRefusal(wrapped)).toBe(true);
+    // A status-less TransportError otherwise reads as "no answer at
+    // all"; this one is the link saying no (ATO-117).
+    expect(isOutageFailure(wrapped)).toBe(false);
+  });
+
+  it("is not an outage or a cloud refusal", () => {
+    expect(isCliSetupRefusal(new TypeError("fetch failed"))).toBe(false);
+    expect(isCliSetupRefusal(http(401))).toBe(false);
   });
 });

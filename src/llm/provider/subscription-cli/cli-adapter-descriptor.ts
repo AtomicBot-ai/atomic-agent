@@ -36,6 +36,8 @@ export type CliStreamEvent =
 export interface CliAdapterDescriptor {
   readonly cli: SubscriptionCliName;
   readonly displayName: string;
+  /** The tool's own name, for messages about it ("Claude Code"). */
+  readonly productName: string;
   readonly defaultBinary: string;
   readonly defaultChatModel: string;
   /** Replaces the CLI's own system prompt for the duration of a turn. */

@@ -9,7 +9,11 @@ import {
 } from "../registry/provider-types.js";
 import { registerBuiltInProviderKinds } from "../registry/register-built-in-providers.js";
 import { claudeCliAdapter } from "./claude-cli-adapter.js";
-import type { CliRunOptions, CliRunOutcome } from "./run-cli-completion.js";
+import {
+  runCliCommand,
+  type CliRunOptions,
+  type CliRunOutcome,
+} from "./run-cli-completion.js";
 import { SubscriptionCliProvider } from "./subscription-cli-provider.js";
 import { SubscriptionCliNotInstalledError } from "./subscription-cli-errors.js";
 
@@ -119,6 +123,8 @@ describe("SubscriptionCliProvider.complete", () => {
     await provider.complete({ prompt: "x" });
     expect(calls[0]?.stripEnv).toEqual(claudeCliAdapter.billingEnvKeys);
     expect(calls[0]?.stripEnv).toContain("ANTHROPIC_API_KEY");
+    // And names the tool, for the not-installed message (ATO-117).
+    expect(calls[0]?.productName).toBe("Claude Code");
   });
 
   it("passes responseFormat through as --json-schema", async () => {
@@ -260,6 +266,20 @@ describe("SubscriptionCliProvider.health", () => {
     const health = await provider.health();
     expect(health.reachable).toBe(false);
     expect(health.error).toMatch(/not found on PATH/);
+  });
+
+  it("says Claude Code is not installed when the command is missing", async () => {
+    // ATO-117. The real runner, so the spawn's own ENOENT is what gets
+    // worded; nothing that exists is ever started.
+    const provider = makeProvider({
+      binPath: "definitely-not-a-real-binary-xyz",
+      runCliImpl: runCliCommand,
+    });
+    const health = await provider.health();
+    expect(health.reachable).toBe(false);
+    expect(health.error).toMatch(
+      /^Claude Code isn't installed \(the `definitely-not-a-real-binary-xyz` command was not found\)\. Install Claude Code and sign in, or choose another provider\./,
+    );
   });
 });
 

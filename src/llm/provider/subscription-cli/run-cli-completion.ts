@@ -20,6 +20,8 @@ export interface CliRunOptions {
   signal?: AbortSignal;
   installHint: string;
   authHint: string;
+  /** What the not-installed message calls the CLI ("Claude Code"). */
+  productName?: string;
   /**
    * Variables to leave out of the child's environment
    * (`CliAdapterDescriptor.billingEnvKeys`); absent inherits it whole.
@@ -83,6 +85,7 @@ export const runCliCommand: CliRunner = async (options) => {
       throw new SubscriptionCliNotInstalledError(
         options.binary,
         options.installHint,
+        options.productName,
       );
     }
     throw err;

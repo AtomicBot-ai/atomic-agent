@@ -164,6 +164,7 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
 export const codexCliAdapter: CliAdapterDescriptor = {
   cli: "codex",
   displayName: "OpenAI Codex subscription",
+  productName: "Codex",
   defaultBinary: "codex",
   // Empty on purpose: Codex picks the model the account supports.
   defaultChatModel: "",

@@ -4,6 +4,7 @@ import {
   OpenAiHttpError,
 } from "../provider/openai/openai-http.js";
 import { CREDENTIAL_WORDING } from "../provider/openai/parse-provider-error-body.js";
+import { isSubscriptionCliSetupError } from "../provider/subscription-cli/subscription-cli-errors.js";
 import { TransportError } from "../reliability/llm-failures.js";
 import { isNetworkError } from "../reliability/network-error.js";
 import { readProviderErrorVerdict } from "../reliability/provider-error-verdict.js";
@@ -57,6 +58,21 @@ export function isBillingRefusal(err: unknown): boolean {
 }
 
 /**
+ * Is the link a vendor CLI that cannot run until the user acts — the
+ * binary is not installed, or the CLI is signed out?
+ *
+ * The link's own "no", like a refused key: the fix is the user's, and
+ * it outranks the outage a later link reports when the chain runs out
+ * (`runWithFallback`). Seen on Windows (ATO-117): `claude` was not
+ * installed, the chain fell over to a local model nobody had pulled,
+ * and the turn parked on that link's refused connection as "no
+ * connection" instead of saying Claude Code was missing.
+ */
+export function isCliSetupRefusal(err: unknown): boolean {
+  return isSubscriptionCliSetupError(err);
+}
+
+/**
  * Is the link not answering right now, as opposed to answering "no"?
  *
  * No response at all (DNS, refused connection, TLS, a socket reset, a
@@ -70,6 +86,8 @@ export function isBillingRefusal(err: unknown): boolean {
 export function isOutageFailure(err: unknown): boolean {
   // An empty account is a "no", even on a 429.
   if (isBillingRefusal(err)) return false;
+  // So is a CLI that is not installed or signed out, whatever wraps it.
+  if (isCliSetupRefusal(err)) return false;
   const status = statusOf(err);
   if (status === null) return true;
   if (status !== undefined) {

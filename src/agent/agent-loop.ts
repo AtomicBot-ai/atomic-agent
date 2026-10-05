@@ -43,6 +43,7 @@ import {
 import { readFailingLink } from "../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import { readErrnoCode } from "../llm/errno-code.js";
+import { isSubscriptionCliSetupError } from "../llm/provider/subscription-cli/subscription-cli-errors.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
   classifyProviderWaitCause,
@@ -507,6 +508,12 @@ export interface SteeringChannel {
  * expiring — see {@link isOwnLlamaDeadlineExpiry}.
  */
 function isWaitableOutage(err: unknown): boolean {
+  // A vendor CLI that is not installed or is signed out. The step
+  // executor wraps it as a status-less `TransportError`, which reads as
+  // "no answer at all" below, so it has to be named before that split:
+  // a Windows user without `claude` read "no connection" for the whole
+  // five-minute wait instead of being told to install it (ATO-117).
+  if (isSubscriptionCliSetupError(err)) return false;
   // Our own clock ran out. Never evidence about the provider, so it is
   // decided before the status split rather than inside it: the shape
   // arrives as `status === null`, which is otherwise the strongest

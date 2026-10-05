@@ -235,6 +235,7 @@ function parseStreamEvent(line: string): CliStreamEvent {
 export const claudeCliAdapter: CliAdapterDescriptor = {
   cli: "claude",
   displayName: "Claude Code subscription",
+  productName: "Claude Code",
   defaultBinary: "claude",
   defaultChatModel: CLAUDE_CLI_DEFAULT_CHAT_MODEL,
   systemPrompt: CLAUDE_CLI_SYSTEM_PROMPT,
@@ -242,8 +243,10 @@ export const claudeCliAdapter: CliAdapterDescriptor = {
   contextWindow: CLAUDE_CLI_CONTEXT_WINDOW,
   schemaDelivery: "inline",
   streamMode: "ndjson",
+  // Read by someone who picked "Claude Code subscription" in a menu:
+  // what to do comes first, the config escape hatch last.
   installHint:
-    "Install Claude Code (https://claude.com/claude-code) and run `claude` once to sign in, or set llm.providers[].subscriptionCli.binPath to the binary's absolute path.",
+    "Install Claude Code and sign in, or choose another provider. If it is installed somewhere else, set llm.providers[].subscriptionCli.binPath to the binary's absolute path.",
   authHint: "Run `claude` in a terminal and complete /login, then retry.",
   // Each of these takes precedence over the /login subscription: an API
   // key or bearer token bills per token, a base URL sends the turn to
