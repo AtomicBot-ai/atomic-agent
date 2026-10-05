@@ -60,7 +60,20 @@ export type ApprovalGrantScope = "category" | "shape";
 export interface ApprovalDecision {
   approvalId: string;
   approved: boolean;
+  /**
+   * On a denial by a person, their own words if they typed any (a
+   * surface with only a Deny button leaves it unset — a tag such as
+   * "tui-denied" would reach the model as something the user said). On
+   * an `automatic` denial, the system's explanation.
+   */
   reason?: string;
+  /**
+   * True when no person made this decision: a session refuse policy, a
+   * prompt that timed out or could not be delivered, one dropped because
+   * its surface stopped watching the session. The model is told the user
+   * declined only when this is unset (see `describeApprovalDenial`).
+   */
+  automatic?: boolean;
   /** Session grant to record alongside an approval. Ignored when denied. */
   grant?: ApprovalGrantScope;
   /**
@@ -279,6 +292,7 @@ export class ApprovalGate {
         approvalId,
         approved: false,
         reason: policy.reason,
+        automatic: true,
       });
     }
     return new Promise<ApprovalDecision>((resolve, reject) => {
@@ -392,6 +406,7 @@ export class ApprovalGate {
     return entry;
   }
 
+  /** A person's denial; `reason` is what they said (see `ApprovalDecision`). */
   reject(approvalId: string, reason: string): boolean {
     return this.resolve({ approvalId, approved: false, reason });
   }
@@ -416,7 +431,10 @@ export class ApprovalGate {
     for (const [approvalId, entry] of this.pending) {
       if (entry.request.sessionId === sessionId) ids.push(approvalId);
     }
-    for (const approvalId of ids) this.reject(approvalId, reason);
+    // Nobody answered these, so they are not the user's decision.
+    for (const approvalId of ids) {
+      this.resolve({ approvalId, approved: false, reason, automatic: true });
+    }
     return ids.length;
   }
 

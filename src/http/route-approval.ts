@@ -11,6 +11,7 @@ import {
 interface ResolveBody {
   approvalId?: string;
   decision?: string;
+  /** On a deny, the user's own words; the model reads it as what they said. */
   reason?: string;
 }
 

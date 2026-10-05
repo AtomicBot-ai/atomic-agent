@@ -118,14 +118,19 @@ describe("a read outside the scope asks through the ladder", () => {
     expect(prompts).toHaveLength(3);
   });
 
-  it("a no is the refusal, with the existing sentence, and widens nothing", async () => {
+  it("a no tells the model the user declined, and widens nothing", async () => {
     answer = { approved: false };
     const refused = await read(solution);
     expect(refused.status).toBe("error");
     expect(refused.details.reason).toBe(READ_REFUSAL_REASON);
+    expect(refused.details.deniedByUser).toBe(true);
+    // Not the scope sentence: "ask the user to name the path" after the
+    // user just said no reads as a policy block to work around.
     expect(refused.summary).toBe(
-      `os.fs.read refused: reads are confined to the working directory (${work}) and the paths the user named; ` +
-        `ask the user to name ${solution} or to set agent.readScope: unrestricted`,
+      "The user declined this os.fs.read call (they pressed Deny). " +
+        "This was their decision, not an error or a policy block. " +
+        "Do not retry it or try another way to do the same thing; " +
+        "tell the user it was not done and ask what they would like instead.",
     );
     expect(innerReads).toBe(0);
     expect(gate.readScopeGrants.rootsFor("s-plain")).toEqual([]);
@@ -133,6 +138,19 @@ describe("a read outside the scope asks through the ladder", () => {
     answer = { approved: true };
     expect((await read(solution)).status).toBe("ok");
     expect(prompts).toHaveLength(2);
+  });
+
+  it("a denial nobody decided keeps the scope sentence and never says the user declined", async () => {
+    gate.setSessionPolicy("s-plain", { onPrompt: "refuse", reason: "nobody is there" });
+    const refused = await read(solution);
+    expect(refused.status).toBe("error");
+    expect(refused.summary).toBe(
+      `os.fs.read refused: reads are confined to the working directory (${work}) and the paths the user named; ` +
+        `ask the user to name ${solution} or to set agent.readScope: unrestricted`,
+    );
+    expect(refused.summary).not.toContain("declined");
+    expect(prompts).toHaveLength(0);
+    expect(innerReads).toBe(0);
   });
 
   it("an [s] grant is 'read anywhere this session': later reads elsewhere do not ask", async () => {
@@ -191,11 +209,11 @@ describe("a read outside the scope asks through the ladder", () => {
     // The yes covers a read tool under the same directory too.
     expect((await read(solution)).status).toBe("ok");
     expect(prompts).toHaveLength(1);
-    // Denied: the same refusal the read gets.
+    // Denied: the same answer the read gets.
     answer = { approved: false };
     const refused = await shell({ cmd: `cat ${join(home, "notes.txt")}` });
     expect(refused.status).toBe("error");
-    expect(refused.summary).toContain("reads are confined to the working directory");
+    expect(refused.summary).toContain("The user declined this os.shell.run call");
     expect(innerShells).toBe(1);
   });
 

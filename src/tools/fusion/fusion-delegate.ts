@@ -1,5 +1,8 @@
 import type { ApprovalGate } from "../../approval/approval-gate.js";
-import { requireApproval } from "../../approval/dangerous-tool.js";
+import {
+  ApprovalDeniedError,
+  requireApproval,
+} from "../../approval/dangerous-tool.js";
 import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -311,6 +314,13 @@ export function buildFusionDelegateTool(
           );
         deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
       } catch (err) {
+        // The user's own no already says what happened and what to do.
+        if (err instanceof ApprovalDeniedError && err.byUser) {
+          return error(err.message, {
+            reason: "fan-out-denied",
+            deniedByUser: true,
+          });
+        }
         return error(
           `the fan-out was not approved: ${err instanceof Error ? err.message : String(err)}`,
           { reason: "fan-out-denied" },

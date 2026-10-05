@@ -847,6 +847,62 @@ describe("fusion.delegate", () => {
     expect(asked).toHaveLength(1);
   });
 
+  function deciding(decision: Record<string, unknown>): {
+    deps: FusionDelegateDeps;
+    turns: () => number;
+  } {
+    let turns = 0;
+    return {
+      deps: deps({
+        approvalRequired: true,
+        runTurn: async () => {
+          turns += 1;
+          return turnResult();
+        },
+        approvals: {
+          setSessionPolicy: () => {},
+          clearSessionPolicy: () => {},
+          fanoutScopes: new FanoutScopeRegistry(),
+          request: async () => decision,
+        } as unknown as FusionDelegateDeps["approvals"],
+      }),
+      turns: () => turns,
+    };
+  }
+  const writeTask = [
+    { id: "t1", title: "One", instructions: "Write /repo/src/a.js" },
+  ];
+
+  it("a fan-out the user declined tells the model it was their decision, and runs no worker", async () => {
+    const { deps: d, turns } = deciding({ approved: false });
+    const result = await buildFusionDelegateTool(d).run({ tasks: writeTask }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain(
+      "The user declined this fusion.delegate call (they pressed Deny)",
+    );
+    expect(result.summary).not.toContain("was not approved");
+    expect(result.details).toMatchObject({
+      reason: "fan-out-denied",
+      deniedByUser: true,
+    });
+    expect(turns()).toBe(0);
+  });
+
+  it("a fan-out refused with nobody's decision never says the user declined", async () => {
+    const { deps: d, turns } = deciding({
+      approved: false,
+      automatic: true,
+      reason: "nobody is there",
+    });
+    const result = await buildFusionDelegateTool(d).run({ tasks: writeTask }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("the fan-out was not approved");
+    expect(result.summary).toContain("refused without a decision from the user");
+    expect(result.summary).toContain("nobody is there");
+    expect(result.summary).not.toContain("declined");
+    expect(turns()).toBe(0);
+  });
+
   describe("with a contract", () => {
     const CONTRACT = {
       owners: { "js/ship.js": "t1", "index.html": "t2" },
