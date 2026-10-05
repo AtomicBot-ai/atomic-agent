@@ -44,6 +44,13 @@ small-model caution and the models that do not run at all are unreachable on
 this hardware. Production never passes it, and `model-picks.drive.mjs` proves
 the real 68 GB pass without it.
 
+**Build the agent first.** `npm run scenarios` builds the desktop only. Run
+`npm run build` at the repo ROOT before it, or the window runs whatever `atag`
+is installed on the machine — and an installed agent older than this desktop
+fails every first run with "The agent this app runs is too old to save
+settings safely". `run-all.mjs` prints a NOTE when `dist/cli/index.js` is
+missing.
+
 `launch` also decides WHICH agent the window talks to. `resolveBinary`
 prefers `~/atag-agent/bin/atag` and then the released install, so a driven
 run would otherwise exercise whatever agent happens to be on the machine —

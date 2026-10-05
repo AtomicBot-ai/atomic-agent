@@ -323,6 +323,21 @@ export async function ask(app, text) {
     + ` || (document.querySelector('#entry')||{}).value === ''`
     + ` || document.querySelectorAll('#content .turn').length > ${before}`,
     'the question sent', { timeout: 20000 });
+  /* Sent is not run. With no agent up yet (just launched, or restarting
+     after setup) the app keeps the message in the chat and answers it with a
+     line of its own instead of starting a turn ("the agent is still starting
+     — send this again in a moment", renderer.js submit()). No turn ever
+     starts, so waiting for one ran out the 90 s start grace and read an
+     empty reply. Say what the window said, at once. */
+  await sleep(300);
+  const refused = await app.eval(`(() => {
+    const rows = [...document.querySelectorAll('#scroller .sysrow')];
+    const t = rows.length ? rows[rows.length - 1].textContent.replace(/\s+/g, ' ').trim() : '';
+    return /still starting|no agent is attached|agent stopped/.test(t) ? t : '';
+  })()`);
+  if (refused) {
+    throw new Failure('the app did not run the message: the agent was not up yet', `the chat says: ${JSON.stringify(refused)}`);
+  }
 }
 
 /**

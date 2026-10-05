@@ -10,10 +10,11 @@
  * desktop/README.md.
  */
 
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROVIDER } from '../harness.mjs';
+import { REPO_DIR } from '../drive.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +31,14 @@ if (!files.length) {
 
 console.log(`atag desktop — ${files.length} human scenario(s), provider ${PROVIDER}`);
 console.log('These drive the real app with real clicks against a real model. Expect minutes, and real tokens.');
+/* Without the agent built from this checkout the window runs whatever `atag`
+   is installed on the machine (drive.mjs agentBinEnv), and an old one fails
+   every first run with "The agent this app runs is too old to save settings
+   safely". */
+if (!process.env.ATOMIC_AGENT_BIN && !existsSync(join(REPO_DIR, 'dist', 'cli', 'index.js'))) {
+  console.log(`NOTE: no ${join(REPO_DIR, 'dist', 'cli', 'index.js')} — the app will run the INSTALLED agent, not this checkout's. `
+    + 'Run `npm run build` at the repo root first (an old installed agent fails first run: "too old to save settings safely").');
+}
 
 const results = [];
 for (const f of files) {

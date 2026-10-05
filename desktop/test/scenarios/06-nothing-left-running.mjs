@@ -116,7 +116,17 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   const again = await launch({ port: CDP_PORT, stateDir, workspace });
   try {
     await again.waitFor(`!!document.querySelector('#entry')`, 'the window, reopened', { timeout: 90000 });
-    await again.waitFor(`!document.querySelector('.sendbtn[disabled]')`, 'the agent up again', { timeout: 90000 });
+    await again.waitFor(`!document.querySelector('.sendbtn[disabled]')`, 'the send button unlocked', { timeout: 90000 });
+    /* The send button is not locked while the agent STARTS — only while a
+       chat loads or a switch lands — so it says nothing about whether the
+       new agent is up. A message sent in that gap is answered by the window
+       itself ("the agent is still starting — send this again in a
+       moment") and never reaches an agent; that is how this scenario read an
+       empty reply on a relaunch faster than `atag serve`. What a person sees
+       change when the agent answers is the Mode chip: blank ("mode —")
+       until the agent has reported its stance, then the stance. */
+    await again.waitFor(`!!document.querySelector('.cmodechip[data-id]:not([data-id=""])')`,
+      'the agent up again — the Mode chip reads a stance', { timeout: 120000 });
 
     // ---- and this is what they would have found in Activity Monitor -------
     if (stranded) {
