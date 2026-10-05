@@ -179,13 +179,28 @@ export interface SseWriter {
 }
 
 /**
+ * How often a long-lived SSE stream writes a comment line (`: keepalive`)
+ * when asked to. A stream can be silent for minutes on end: a turn parked
+ * on an approval nobody has answered yet, the approval events stream
+ * between requests. Node's fetch (undici, the desktop's client) drops a
+ * response body after 300 s without a byte and reports "terminated", which
+ * ended the turn under a card the person had not answered yet. A comment
+ * is no event: SSE parsers, the OpenAI SDKs' included, skip it.
+ */
+export const SSE_HEARTBEAT_MS = 15_000;
+
+/**
  * Start an SSE response and return a writer. Headers follow the OpenAI
  * streaming convention; we also disable proxy buffering so tokens are
  * flushed as they arrive (nginx reads `X-Accel-Buffering: no`).
+ * `heartbeatMs` writes a comment line at that interval until the stream
+ * closes (see `SSE_HEARTBEAT_MS`); without it nothing is written but
+ * what the caller writes.
  */
 export function beginSse(
   res: ServerResponse,
   extraHeaders: Record<string, string> = {},
+  options: { heartbeatMs?: number } = {},
 ): SseWriter {
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -195,8 +210,20 @@ export function beginSse(
     ...extraHeaders,
   });
   let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  if (options.heartbeatMs && options.heartbeatMs > 0) {
+    heartbeat = setInterval(() => {
+      if (!closed && !res.writableEnded) res.write(": keepalive\n\n");
+    }, options.heartbeatMs);
+    heartbeat.unref?.();
+  }
+  const stopHeartbeat = (): void => {
+    if (heartbeat) clearInterval(heartbeat);
+    heartbeat = null;
+  };
   res.on("close", () => {
     closed = true;
+    stopHeartbeat();
   });
   return {
     writeEvent(event, payload) {
@@ -211,6 +238,7 @@ export function beginSse(
     close() {
       if (closed) return;
       closed = true;
+      stopHeartbeat();
       res.end();
     },
     get closed() {
