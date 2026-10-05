@@ -5499,7 +5499,9 @@ function act(a) {
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
-  if (a === 'clear') { close(); S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
+  if (a === 'clear') { close();
+                        if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
+                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -16766,6 +16768,13 @@ function sessionTurnsToLog(turns) {
 /* Backlog 22: bumped by every openSession that starts a load, so an answer
    that a newer load overtook can tell (see the check after the await). */
 let OPEN_SEQ = 0;
+/* ATO-131: the load (its OPEN_SEQ) that Clear Transcript was pressed under,
+   or 0. Clear set S.log while the chat was still loading, and the answer
+   then wrote the whole transcript back over it. Unlike New chat (item 22),
+   the answer may not simply be dropped: Clear keeps the person on this
+   chat, and its session, its running turn and its open request are only
+   bound when the answer lands. It lands with the history left out. */
+let OPEN_CLEARED = 0;
 async function openSession(id) {
   if (!BR || !id) return;
   // item 6: is a turn of this session streaming into this window right now?
@@ -16860,6 +16869,8 @@ async function openSession(id) {
     // did not survive this reload, so no frame may position a card against it.
     S.streamId = null;
   }
+  // ATO-131: cleared while this loaded: as Clear leaves a chat that is open (its running turn's own rows stay).
+  if (OPEN_CLEARED === seq) { OPEN_CLEARED = 0; S.log = rebuilt ? liveClearedLog() : []; }
   // item 6: a turn of this session is still running, but its stream is not in
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
