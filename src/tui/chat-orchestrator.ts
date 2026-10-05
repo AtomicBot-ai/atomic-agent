@@ -251,10 +251,10 @@ export class ChatOrchestrator {
    */
   private replayingTurnEvents = false;
   /**
-   * The visible turn was re-attached by a switch-back mid-run. While
-   * the operator was away its events were dropped (the reducer filters
-   * by visible session), so when it finishes the transcript is
-   * re-emitted from the saved session instead of trusting the stream.
+   * The visible turn was re-attached by a switch-back mid-run and the
+   * replay could not repaint all of it (the ring cap took its head), so
+   * when it finishes the transcript is re-emitted from the saved session
+   * instead of trusting the stream.
    */
   private reattachedMidTurn = false;
   /**
@@ -890,10 +890,7 @@ export class ChatOrchestrator {
     // re-attaches the abort handle: Esc aborts, Enter steers, exactly
     // as if the operator had never left.
     const resumed = this.detachedTurns.take(sessionId);
-    if (resumed) {
-      this.currentController = resumed;
-      this.reattachedMidTurn = true;
-    }
+    if (resumed) this.currentController = resumed;
     // `isBusy` additionally catches turns from other origins (a
     // scheduled task, Telegram, HTTP) so the composer offers steer
     // instead of pretending the thread is idle.
@@ -914,7 +911,10 @@ export class ChatOrchestrator {
     // turn has said (a turn saves only when it finishes — for a thread
     // mid-first-turn the snapshot is EMPTY, prompt included). Repaint
     // from the event log before anything else lands in the transcript.
-    if (resumed) this.replayTurnEvents(loaded.id);
+    // A replay that covered the whole turn leaves the screen exactly as
+    // if the operator had never left, so only a lossy one asks for the
+    // end-of-turn repaint from the saved session.
+    if (resumed) this.reattachedMidTurn = !this.replayTurnEvents(loaded.id);
     this.refreshRecentSessions();
     this.bus.emit({
       type: "runtime_info",
@@ -990,11 +990,11 @@ export class ChatOrchestrator {
    * events continue from where the buffer ends. When the ring cap ate
    * the head of the turn the gap is announced rather than papered over
    * — and the end-of-turn re-emit from the saved session restores the
-   * authoritative transcript either way.
+   * authoritative transcript then. Returns whether the replay was whole.
    */
-  private replayTurnEvents(sessionId: string): void {
+  private replayTurnEvents(sessionId: string): boolean {
     const buffered = this.turnEvents.snapshot(sessionId);
-    if (!buffered) return;
+    if (!buffered) return false;
     this.replayingTurnEvents = true;
     try {
       if (buffered.dropped > 0) {
@@ -1010,6 +1010,7 @@ export class ChatOrchestrator {
     } finally {
       this.replayingTurnEvents = false;
     }
+    return buffered.dropped === 0;
   }
 
   /**
@@ -1066,6 +1067,11 @@ export class ChatOrchestrator {
       this.runtime.approvals.clearSessionGrants(previous.id);
       return notices;
     }
+    // Esc+1 and then a switch before the cancel lands: the turn is
+    // stopping, not "continuing in the background". It is still parked
+    // — its end-of-turn cleanup keys on that, and a switch-back while it
+    // unwinds re-attaches it — but nothing claims it is still working.
+    const stopping = this.currentController.signal.aborted;
     const dropped = [...this.queue];
     if (dropped.length > 0) {
       this.queue.length = 0;
@@ -1077,6 +1083,7 @@ export class ChatOrchestrator {
     this.detachedTurns.park(previous, this.currentController);
     this.currentController = null;
     this.reattachedMidTurn = false;
+    if (stopping) return notices;
     // The one notice that names a thread still working for the
     // operator: it carries the id so the transcript can offer the way
     // back, not just the sentence.
@@ -1416,6 +1423,10 @@ export class ChatOrchestrator {
     // A new turn is in flight: whatever is still queued was aimed at an
     // earlier one and is ordinary backlog now.
     this.steeredAhead = 0;
+    // Stopped rather than finished: no reply to point a background
+    // notice at. Read from how the turn ended, not from the signal — a
+    // reply that beat the abort to the finish is still a reply.
+    let stopped = false;
     try {
       const result = await this.runtime.runTurn(this.session, text, {
         // Only an operator-given ceiling. Absent, the runtime takes the
@@ -1437,6 +1448,7 @@ export class ChatOrchestrator {
       // "Esc launches the next parked message" trap the abort path
       // exists to close. Announce the drop instead, like the queue drop.
       if (result.reason === "cancelled") {
+        stopped = true;
         const dropped = result.undelivered ?? [];
         if (dropped.length > 0) {
           this.notify(
@@ -1464,6 +1476,7 @@ export class ChatOrchestrator {
       if (isFailedSessionStatus(result.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      stopped = controller.signal.aborted;
       if (this.session?.id === turnSessionId) {
         this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
         this.bus.emit({
@@ -1471,9 +1484,10 @@ export class ChatOrchestrator {
           text: formatAgentErrorForChat("runtime", msg),
           variant: "warn",
         });
-      } else {
+      } else if (!stopped) {
         // The failure belongs to a thread that is off screen; a bare
-        // "turn error" would read as the visible thread's. Name it.
+        // "turn error" would read as the visible thread's. Name it. A
+        // turn the operator stopped before leaving is not a failure.
         this.notify({
           text: formatBackgroundTurnFailed(turnSessionId, msg),
           switchToSessionId: turnSessionId,
@@ -1498,7 +1512,9 @@ export class ChatOrchestrator {
     if (this.session?.id !== turnSessionId) {
       // Finished in the background: the reply is saved in its own
       // session (the rail just refreshed). The visible thread's queue
-      // is not this turn's to drain.
+      // is not this turn's to drain. A turn stopped before the switch
+      // (or by quit) has no reply to go and read.
+      if (stopped) return;
       this.notify({
         text: formatBackgroundTurnFinished(turnSessionId),
         switchToSessionId: turnSessionId,
@@ -1506,10 +1522,12 @@ export class ChatOrchestrator {
       return;
     }
     if (this.reattachedMidTurn) {
-      // Events emitted while the operator was away were dropped by the
-      // reducer's session filter, so the on-screen transcript has a
-      // hole where this turn's tail should be. The turn just saved
-      // authoritative state — re-emit it the way a switch does.
+      // The switch-back replay lost the head of this turn to the ring
+      // cap, so the on-screen transcript has a hole where its start
+      // should be. The turn just saved authoritative state — re-emit it
+      // the way a switch does. (A whole replay skips this: the re-emit
+      // also resets the feed, the run status and the rail cursor, which
+      // read as the screen jumping under the operator for nothing.)
       this.reattachedMidTurn = false;
       this.bus.emit({
         type: "session_switched",

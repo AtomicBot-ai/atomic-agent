@@ -17,6 +17,7 @@ import { LlmModeRows } from "./llm-mode-rows.js";
 import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
 import { LocalModelDetail } from "./local-models-panel.js";
 import { hasLlmModal, LlmPanelModals } from "./llm-panel-modals.js";
+import { llmPanelDrawsPullBanner } from "./pull-bar-owner.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
 /**
@@ -103,7 +104,7 @@ export function LlmPanel({
           feedback — keep them visible regardless of the compact/full
           header decision. */}
       {starting ? <StartingBanner /> : null}
-      {state.llmPanel.mode === "local" ? (
+      {llmPanelDrawsPullBanner(state) ? (
         <DownloadBanners panel={state.localModelsPanel} />
       ) : null}
       {useFull ? (
