@@ -905,7 +905,12 @@ const SWX = { pending:0, since:0, label:'', want:null, err:null, timer:null, pai
   /* r5 review (minor): `route` is the funnel method the switch in flight is
      using, and `times` keeps the last measured wall time PER route, so the
      suite reports every switch rather than only the most recent one. */
-  route:null, times:{} };
+  route:null, times:{},
+  /* ATO-194: `seq` names the switch in flight, so a late answer or timer of
+     one already given up on touches nothing of the next; `slow` is a local
+     model start past SWX_MAX_MS, still waited for (swxWatchdog); `tick`
+     counts its seconds on the composer's line. */
+  seq:0, slow:false, tick:null };
 /* Below this, a switch is over before the eye can see a spinner start. */
 const SWX_SPINNER_DELAY_MS = 150;
 /* The agent client's own health deadline is 30 s and always resolves
@@ -913,6 +918,14 @@ const SWX_SPINNER_DELAY_MS = 150;
    ~11 s at worst — so this watchdog is a belt for an IPC that vanishes
    entirely, not for a slow switch. It never claims the switch failed. */
 const SWX_MAX_MS = 45000;
+/* ATO-194: a switch that starts a local model waits on `models start`, whose
+   own budget is 90 s (agent-cli.ts modelsStart) and which a first load of a
+   big model can use up. Past SWX_MAX_MS such a switch is still on its way, not
+   lost: it keeps its lock and its paint until this, and says it is loading. */
+const SWX_START_MAX_MS = 180000;
+/* How long a local model start runs before the composer says so (a server
+   already up answers in a second or two, and should not flash a line). */
+const SWX_START_LINE_MS = 2000;
 /* How long the lock waits for the coding mode to come back after a restart
    (see modeSettled). Past this the chip's own blank-until-confirmed state
    is the honest answer, so the composer is released. */
@@ -3055,6 +3068,16 @@ function composer() {
        agent is sitting out, or a failure. The one Stop stays the composer's
        send button, and drivers that waited on `.statusstrip` also accept
        `.sendbtn.stop`, which is drawn for the whole turn. */
+    /* ATO-194: a local model start says what it is waiting on, and for how
+       long, where the send button is locked. The only progress there is to
+       know is the time: `models start` prints nothing until the model is up. */
+    : swxStartingShown()
+    ? '<div class="statusstrip gated swxstart">'
+      + '<span class="ss-ic"><span class="ss-dot"></span></span>'
+      + '<span class="ss-text">' + esc(swxStartLine()) + '</span>'
+      + '<span class="ss-grow"></span>'
+      + '<span class="readout">' + esc(swxStartElapsed()) + '</span>'
+      + '</div>'
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
     // the operator needs this next to the button that was disabled. The
     // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
@@ -14336,21 +14359,76 @@ function swxFailLine(label, res) {
  * replacing three different existing refusals with one toast would be a
  * copy change nobody asked for.
  */
-/** What the 45 s watchdog says about a switch that is still out. */
-function swxSlowLine(label) { return label + ' has not finished — the agent may still be restarting'; }
+/** What the watchdog says about a switch that is still out. ATO-194: since
+ *  ATO-157 a switch restarts the agent in seconds, so "the agent may still be
+ *  restarting" named the wrong wait: what runs long is a local model loading. */
+function swxSlowLine(label, want) {
+  return label + ' has not finished — ' + (swxStartsModel(want)
+    ? 'the model may still be loading; Settings › Models says when it is ready'
+    : 'it may still land; the chips show what the config says now');
+}
+/** ATO-194: a switch that starts (or restarts) the managed local model — the Local route, or a local model picked. */
+function swxStartsModel(want) { return !!(want && want.backend === 'local'); }
+/** ATO-194: the composer's line while a local model start is on its way, once it has run long enough to be seen. */
+function swxStartingShown() {
+  return SWX.pending > 0 && swxStartsModel(SWX.want) && Date.now() - SWX.since >= SWX_START_LINE_MS;
+}
+/** How long the start has run, in whole seconds as a clock counts them. */
+function swxStartElapsed() {
+  const s = Math.max(0, Math.round((Date.now() - SWX.since) / 1000));
+  return s < 60 ? s + ' s' : dur(s * 1000);
+}
+function swxStartLine() {
+  const id = SWX.want && SWX.want.model;
+  return 'Starting ' + (id ? modelWord(id) : 'the local model') + ' — '
+    + (SWX.slow ? 'still loading it into memory; a first start can take a few minutes' : 'loading it into memory');
+}
+/** The line's seconds, once a second while a local start runs; drawn by render() the first time it is due. */
+function swxTickStart() {
+  if (SWX.tick) return;
+  SWX.tick = setInterval(() => {
+    if (!(SWX.pending > 0 && swxStartsModel(SWX.want))) { swxTickStop(); return; }
+    const el = document.querySelector('.statusstrip.swxstart .readout');
+    if (el) el.textContent = swxStartElapsed();
+    else if (swxStartingShown() && !S.pending && !WAIT) render();
+  }, 1000);
+}
+function swxTickStop() { if (SWX.tick) { clearInterval(SWX.tick); SWX.tick = null; } }
 /** The 45 s watchdog. The IPC is still outstanding, so this never asserts a
  *  failure: it force-clears the visual lock and says what is actually known. */
-function swxWatchdog(label) {
+function swxWatchdog(label, seq) {
   SWX.timer = null;
+  // ATO-194: the timer of a switch that has ended or was given up on says nothing about the one in flight.
+  if (seq != null && seq !== SWX.seq) return;
+  /* ATO-194: a local model start past 45 s is a model loading, not a switch
+     gone missing. Letting go here rolled the chips back to the cloud and
+     printed "has not finished" while the model was still coming up, and the
+     model then answered under a cloud label. It keeps the lock (a message
+     sent now would run on the route being left) and its paint, says it is
+     loading, and is given up on only at SWX_START_MAX_MS. */
+  if (swxStartsModel(SWX.want) && !SWX.slow && SWX.pending > 0) {
+    SWX.slow = true;
+    SWX.timer = setTimeout(() => swxWatchdog(label, seq), SWX_START_MAX_MS - SWX_MAX_MS);
+    render();
+    return;
+  }
+  const want = SWX.want;
   if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
   SWX.pending = 0;
-  SWX.want = null;
+  SWX.slow = false;
+  swxTickStop();
+  /* ATO-194: a local route is written before its model starts, so the chips
+     are let go only once the config is read again: they then name the route
+     the file has, rather than snapping back to the one being left. */
+  if (swxStartsModel(want)) {
+    refreshLiveConfig().catch(() => {}).then(() => { if (SWX.pending === 0 && SWX.want === want) { SWX.want = null; render(); } });
+  } else SWX.want = null;
   /* Item 11: a ⇄ queued behind the switch goes with the lock. Its seats were
      painted on top of a switch that has not landed, so the chips would show
      a swap the config does not have — and running it later would start a
      switch beside an IPC that may still be out. */
   FZ.swapQueued = false;
-  SWX.err = swxSlowLine(label);
+  SWX.err = swxSlowLine(label, want);
   render();
 }
 /** A switch that did what it was for — a local model that did not start (or stop) is a failure, though the write landed. */
@@ -14435,14 +14513,17 @@ async function swxRun(label, want, run, refuse) {
      reply from a generation past this one lands. Captured before `run()`
      so a confirm that happened before the click cannot satisfy it. */
   const gen0 = AGENT_GEN;
+  const seq = ++SWX.seq;
   SWX.route = null;
   SWX.pending++;
   SWX.since = t0;
   SWX.label = label;
   SWX.want = want || null;
   SWX.err = null;
+  SWX.slow = false;
   if (SWX.timer) clearTimeout(SWX.timer);
-  SWX.timer = setTimeout(() => swxWatchdog(label), SWX_MAX_MS);
+  SWX.timer = setTimeout(() => swxWatchdog(label, seq), SWX_MAX_MS);
+  if (swxStartsModel(want)) swxTickStart();
   if (SWX.paint) clearTimeout(SWX.paint);
   SWX.paint = setTimeout(() => { SWX.paint = null; refreshSend(); }, SWX_SPINNER_DELAY_MS);
   render();
@@ -14451,14 +14532,16 @@ async function swxRun(label, want, run, refuse) {
     res = await run();
     // The IPC has resolved. That is one of three things, not the end.
     await swxSettle(res, gen0);
+    // ATO-194: a switch begun since this one was given up on owns the line.
+    if (seq !== SWX.seq) return res;
     if (res && res.ok === false) SWX.err = swxFailLine(label, res);
     /* The watchdog's line is a wait, not a verdict. A first local model
        load runs past 45 s, and the line stayed up for minutes after the
        switch had landed and Models said Ready. Landing clears it. */
-    else if (SWX.err === swxSlowLine(label)) SWX.err = null;
+    else if (SWX.err === swxSlowLine(label, want) || SWX.err === swxSlowLine(label)) SWX.err = null;
     return res;
   } catch (err) {
-    SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
+    if (seq === SWX.seq) SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
     throw err;
   } finally {
     SWX.lastMs = Date.now() - t0;
@@ -14468,10 +14551,15 @@ async function swxRun(label, want, run, refuse) {
        The funnel below stamps SWX.route, so every route keeps its own
        measurement and one report check can print them all. */
     if (SWX.route) SWX.times[SWX.route] = SWX.lastMs;
-    if (SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
-    if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
+    /* ATO-194: only this switch's own lock. One given up on (the watchdog let
+       go, and another switch began since) ends here without taking the
+       newer one's timer, spinner or count with it. */
+    const mine = seq === SWX.seq;
+    if (mine && SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
+    if (mine && SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
+    if (mine) { SWX.slow = false; swxTickStop(); }
     // The watchdog may already have zeroed this; never decrement past 0.
-    if (SWX.pending > 0) SWX.pending--;
+    if (mine && SWX.pending > 0) SWX.pending--;
     // Clearing `want` makes every chip read LIVE_CONFIG again — which, on a
     // failure, still names the old route, so the rollback is one frame and
     // costs nothing. That is only true because no call site mutates
