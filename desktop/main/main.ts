@@ -898,6 +898,7 @@ function wireUpdater(): void {
         liveTurns: liveTurnCount(),
         download: downloadRunning() !== null,
         agentState: client ? client.status.state : null,
+        agentAlive: client ? client.pid !== null : false,
         health: () => (client ? client.health() : Promise.resolve(undefined)),
       });
     },
@@ -4299,10 +4300,27 @@ async function sidebarTest(
     check("chats list carries the agent's sessions", sb.chats.length > 0, `${sb.chats.length} rows, ${sb.total} sessions with a turn`);
     if (sb.chats.length === 0) return;
 
+    /* ATO-232: the dot checks below drive one chat through every state, so
+       that chat must be one no real turn is running in. They used to take the
+       top row, which is the chat the last live turn ran in — and when that
+       turn was still held (blocked on an approval, or a runaway step the bench
+       left in the same state dir), its RUNNING entry outranked every state
+       planted here and six checks read dot=running. A chat with a turn of its
+       own is passed over; the list is re-read for a while before falling back
+       to the top row, and the DIAG line says why. */
+    const idleChat = (c: Sb["chats"][number]) => c.dot !== "running";
+    for (let i = 0; i < 30 && !sb.chats.some(idleChat); i++) {
+      await wait(2000);
+      sb = await js<Sb>("window.__sidebar()");
+    }
+    const subject = sb.chats.find(idleChat) ?? sb.chats[0];
+    if (!idleChat(subject)) {
+      process.stdout.write(`DIAG sidebar: every chat on the list is running a turn after 60 s; the dot checks use ${subject.id}\n`);
+    }
     // Unread: forget the stamp and the dot fills; opening it empties the dot
     // and writes the stamp to disk.
-    const id = sb.chats[0].id;
-    const updatedAt = sb.chats[0].updatedAt;
+    const id = subject.id;
+    const updatedAt = subject.updatedAt;
     const unreadDot = await js<string>(`window.__forgetSeen(${JSON.stringify(id)})`);
     check("an unread chat draws a filled dot", unreadDot === "filled", `dot=${unreadDot} for ${id}`);
 
@@ -4449,7 +4467,10 @@ async function sidebarTest(
     // transcript that is on screen now, and when it ends its own row must fill
     // because nobody read it. The prompt is the tool-using one, so the turn
     // really does emit tool_progress frames after the switch.
-    const other = sb.chats.find((c) => c.id !== id)?.id ?? "";
+    // ATO-232: the chat watched for spliced frames must not stream a turn of
+    // its own either, or its transcript grows by itself.
+    sb = await js<Sb>("window.__sidebar()");
+    const other = sb.chats.find((c) => c.id !== id && idleChat(c))?.id ?? "";
     if (other) {
       // Settle on what that chat's transcript looks like with nothing running,
       // so anything extra afterwards can only have come from the other turn.
@@ -4496,7 +4517,7 @@ async function sidebarTest(
       await js<void>(`window.__openSession(${JSON.stringify(id)})`);
       await wait(1500);
     } else {
-      check("a turn left behind stays out of the open chat and fills its own row", true, "skipped — only one chat in this workspace");
+      check("a turn left behind stays out of the open chat and fills its own row", true, "skipped — no second idle chat in this workspace");
     }
 
     // The Tasks list is every task, not the TUI rail's running/queued
@@ -5401,22 +5422,12 @@ async function settingsTestPartB(
     await promisify(execFile)("/usr/bin/sqlite3", [join(stateDir, "memory.sqlite"), sql], { timeout: 10_000 });
   };
   const memory = () => js<MemState>("window.__memory()");
-  let mem = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
+  const memOpened = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
   const memCfg = await configGetKey("memory");
   const mc = (memCfg.ok && memCfg.value && typeof memCfg.value === "object" ? memCfg.value : {}) as Record<string, { enabled?: boolean }>;
   const expectedChannels = ["profile", "notes", ...(mc.lessons?.enabled ? ["lessons"] : []), ...(mc.procedures?.enabled ? ["procedures"] : []), ...(mc.links?.enabled ? ["links"] : []), ...(mc.voting?.enabled ? ["votes"] : [])];
   const memChannelsOk = await until(memory, (m) => same(m.channels, expectedChannels), 10_000);
   check("memory tab: channels follow memory.*.enabled as resolveAvailableChannels does", same(memChannelsOk.channels, expectedChannels), `${JSON.stringify(memChannelsOk.channels)} vs ${JSON.stringify(expectedChannels)}`);
-  /* ATO-232: the agent writes profile facts in the background, so the tab's
-     first read and the SQL below could straddle a write. The tab reads again
-     right before the SQL, and once more with it when the two still differ. */
-  type ProfileSql = { ok: boolean; rows?: unknown[]; via?: string; error?: string };
-  let profileSql: ProfileSql = { ok: false, error: "not read" };
-  for (let i = 0; i < 2; i++) {
-    mem = await js<MemState>("window.__memoryRefresh()");
-    profileSql = await js<ProfileSql>("window.__memQuery('profile.list', [])");
-    if (!profileSql.ok || mem.rows === (profileSql.rows ?? []).length) break;
-  }
   // What the tab draws: the one pressed channel button, the painted rows (a
   // 14-row window, memory-panel.tsx maxRows), the profile table's headers, the empty state's title.
   type MemView = { pressed: string[]; painted: number; heads: string[]; empty: string };
@@ -5427,7 +5438,26 @@ async function settingsTestPartB(
     + " painted: box.querySelectorAll('[data-mem-row]').length, heads: [...box.querySelectorAll('.sd-memtbl thead th')].map((th) => th.textContent.trim()), empty: empty ? empty.textContent.trim() : ''}; })()",
   );
   const MEM_WINDOW = 14;
-  const profileView = await memView();
+  /* ATO-232: the tab reads its rows when it opens and does not refresh on its
+     own, while memory reflection from the earlier smoke turns goes on writing
+     profile rows in the background — seen: the tab read 0 and the SQL a moment
+     later 1 (another run, 3). So the tab, the SQL and the painted rows are
+     read as one snapshot: refresh the tab, run the SQL, read the tab again,
+     and keep the snapshot only when nothing landed in between. A write between
+     the reads is retried, never counted as a mismatch. */
+  type MemSql = { ok: boolean; rows?: unknown[]; via?: string; error?: string };
+  let mem: MemState = memOpened;
+  let profileSql: MemSql = { ok: false, error: "not read" };
+  let profileView: MemView = { pressed: [], painted: 0, heads: [], empty: "" };
+  for (let i = 0; i < 4; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 1000));
+    const fresh = await js<MemState>("window.__memoryRefresh()");
+    profileSql = await js<MemSql>("window.__memQuery('profile.list', [])");
+    profileView = await memView();
+    mem = await memory();
+    if (!profileSql.ok || mem.error) break;
+    if (fresh.rows === mem.rows && mem.rows === (profileSql.rows ?? []).length) break;
+  }
   // Calm (S5): the channels carry human names ("About you" is the profile) and a calm empty state.
   const profileDrawn = same(profileView.pressed, ["About you"])
     && (mem.rows === 0 ? profileView.painted === 0 && profileView.empty === "Nothing about you yet" : profileView.painted === Math.min(mem.rows, MEM_WINDOW) && same(profileView.heads, ["Key", "Value", "Kind", "Votes"]));
@@ -6153,8 +6183,23 @@ async function hfAndDeltaTest(
     JSON.stringify(steered),
   );
   // Let the turn finish before anything else drives the composer.
+  /* ATO-232: S.busy alone is not "the turn is over". An approval clears it
+     while the agent sits on the gate, so a model that reached for the shell
+     here (os.shell.run `ls`, not the file-listing tool) used to end this wait
+     at once and leave the turn blocked for the rest of the suite: its RUNNING
+     entry drew the chat's dot "running" through every sidebar dot check, its
+     card held S.pending (the gated strip, which hides the parked-turn strip),
+     and the agent still holding the turn took the steers below that must be
+     refused. So the turn's own end frame is what is waited for, and a card it
+     raises is denied — the route's answer above is all this asserts. */
+  // The synthetic turns other probes plant are named smoke-*; only a real one counts.
+  const liveTurn = "S.busy || !!S.pending || (!!S.agentSession"
+    + " && [...RUNNING].some(([t, sid]) => sid === S.agentSession && !String(t).startsWith('smoke')))";
   const endDeadline = Date.now() + 150_000;
-  while (Date.now() < endDeadline && (await js<boolean>("window.__busy()"))) await wait(1000);
+  while (Date.now() < endDeadline && (await js<boolean>(liveTurn))) {
+    await js<void>("if (S.pending && approvalOpen(S.pending)) answer('n')");
+    await wait(1000);
+  }
   /* A small local model can run away inside one step (7,400 tokens over six
      minutes in one run) and outlive the wait above. The checks below steer
      S.agentSession and expect a refusal, so a real turn still running there
@@ -6163,7 +6208,7 @@ async function hfAndDeltaTest(
      does and wait for its end frame, so the dot checks read this window's
      state. Stop only drops the stream: the agent may still hold the turn for
      a while and accept the next steer, so the DIAG line names the cause. */
-  if (await js<boolean>("window.__busy()")) {
+  if (await js<boolean>(liveTurn)) {
     process.stdout.write("DIAG steer: the live turn outlived its 150 s wait (a runaway step?) — stopped here;"
       + " if the agent still holds it, the refused-steer checks below read it as running\n");
     await js<void>("abort()");
@@ -6173,9 +6218,22 @@ async function hfAndDeltaTest(
   }
 
   // A refusal parks the text ahead of ordinary backlog, in the TUI's words.
+  /* ATO-232: the two refusals below are the agent's real answer, but asked of
+     a session id of their own that no turn can be running in. Asked of
+     S.agentSession they depended on that chat being idle at the agent — a turn
+     still held there (the wait above gave up, or a turn the bench left in the
+     same state dir) took the steer, and the run read "0 parked" and "20 queued,
+     draft empty". The id stands in for S.agentSession only for the call; the
+     queue and the transcript are still the chat on screen's. */
+  const steerSid = `smoke-steer-${Date.now().toString(16)}`;
+  type Parked = { queued: string[]; ahead: number; draft: string };
+  const steerRefusedHere = (text: string) => js<Parked>(
+    `(async () => { const keep = S.agentSession; S.agentSession = ${JSON.stringify(steerSid)};`
+    + ` try { return await window.__steerOrQueue(${JSON.stringify(text)}); } finally { S.agentSession = keep; } })()`,
+  );
   await js<number>("window.__clearQueue()");
   const turnA = await js<string>("window.__fakeTurn()");
-  const refused = await js<{ queued: string[]; ahead: number; draft: string }>("window.__steerOrQueue('later, please')");
+  const refused = await steerRefusedHere("later, please");
   const refusedLines = await js<string[]>("window.__systemLines()");
   check(
     "steer: a refused steer is parked as the next turn, never dropped and never the agent's 409 text",
@@ -6186,7 +6244,7 @@ async function hfAndDeltaTest(
   );
   // A full queue hands the text back to the editor rather than eating it.
   await js<number>("window.__seedQueue(20)");
-  const full = await js<{ queued: string[]; ahead: number; draft: string }>("window.__steerOrQueue('overflow')");
+  const full = await steerRefusedHere("overflow");
   const fullLines = await js<string[]>("window.__systemLines()");
   check(
     "steer: a full queue returns the text to the editor and says so",
@@ -6288,9 +6346,18 @@ async function hfAndDeltaTest(
      failed" with no explanation of the ninety seconds in between, which
      looked like a dead app. */
   type WaitStrip = { shown: boolean; ann: string | null; readout: string | null; reason: string | null; stop: boolean };
-  const waitStrip = await js<WaitStrip>(
-    "window.__waitFrame({attempt:5, waited_ms:65000, max_wait_ms:300000, next_retry_ms:30000, reason:'fetch failed'})",
+  /* ATO-232: the frames go to this suite's own synthetic turn, and a request
+     card left open by a real turn is held aside for the probe: S.pending draws
+     the gated strip, which takes the place of the waiting one, so a turn
+     blocked on an approval elsewhere read "shown: false" here. Both are put
+     back, in the same call, before anything else reads them. */
+  const waitProbe = await js<{ strip: WaitStrip; back: { shown: boolean; said: string } }>(
+    `(() => { const keep = {pending:S.pending, turnId:S.turnId}; S.pending = null; S.turnId = ${JSON.stringify(turnA)};`
+    + " try { const strip = window.__waitFrame({attempt:5, waited_ms:65000, max_wait_ms:300000, next_retry_ms:30000, reason:'fetch failed'});"
+    + " return {strip, back: window.__waitRecover()}; }"
+    + " finally { S.pending = keep.pending; S.turnId = keep.turnId; render(); } })()",
   );
+  const waitStrip = waitProbe.strip;
   check(
     "a parked turn shows which attempt it is on and when it tries again",
     waitStrip.shown && /waiting/i.test(waitStrip.ann ?? "")
@@ -6306,7 +6373,7 @@ async function hfAndDeltaTest(
     /no connection/.test(waitStrip.reason ?? "") && !/fetch failed/.test(waitStrip.reason ?? ""),
     JSON.stringify(waitStrip.reason),
   );
-  const backAgain = await js<{ shown: boolean; said: string }>("window.__waitRecover()");
+  const backAgain = waitProbe.back;
   check(
     "the readout goes when the provider answers again, and says so",
     !backAgain.shown && /answered again/i.test(backAgain.said),

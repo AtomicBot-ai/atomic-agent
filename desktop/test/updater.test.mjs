@@ -37,15 +37,45 @@ test("the install waits unless it is known that nothing runs (fails closed)", as
   assert.equal(await U.agentBusy({ ...base, health: async () => ({ status: "ok" }) }), true);
   // An agent on its way up may resume turns; one that is not running has none.
   assert.equal(await U.agentBusy({ ...base, agentState: "starting" }), true);
-  for (const state of [null, "stopped", "missing-binary", "error"]) {
+  for (const state of [null, "stopped", "missing-binary"]) {
     assert.equal(await U.agentBusy({ ...base, agentState: state, health: () => new Promise(() => {}) }), false, String(state));
   }
+  // ATO-231: `error` after a health_timeout keeps its process, which may run a Telegram turn:
+  // only /health saying busyTurns 0 makes it idle. An agent whose process is gone has none.
+  const hung = () => new Promise(() => {});
+  assert.equal(await U.agentBusy({ ...base, agentState: "error", health: hung, timeoutMs: 50 }), true);
+  assert.equal(await U.agentBusy({ ...base, agentState: "error", agentAlive: true, health: hung, timeoutMs: 50 }), true);
+  assert.equal(await U.agentBusy({ ...base, agentState: "error", agentAlive: true, health: async () => ({ busyTurns: 1 }) }), true);
+  assert.equal(await U.agentBusy({ ...base, agentState: "error", agentAlive: true }), false);
+  assert.equal(await U.agentBusy({ ...base, agentState: "error", agentAlive: false, health: hung }), false);
 });
 
-test("macOS: no update outside /Applications or for an ad-hoc signed app", () => {
+test("macOS: no update outside /Applications, for an ad-hoc signed app, or where the user cannot write", () => {
   assert.equal(U.macUpdateBlocker({ inApplications: true, teamId: "MU9G7XKJUL" }), null);
+  assert.equal(U.macUpdateBlocker({ inApplications: true, teamId: "MU9G7XKJUL", writable: true }), null);
   assert.match(U.macUpdateBlocker({ inApplications: false, teamId: "MU9G7XKJUL" }), /Applications folder/);
   assert.match(U.macUpdateBlocker({ inApplications: true, teamId: null }), /isn’t signed/);
+  // ATO-231: an admin-owned copy run by a standard user says so, not "close and reopen".
+  assert.match(U.macUpdateBlocker({ inApplications: true, teamId: "MU9G7XKJUL", writable: false }), /can’t write to.*admin.*~\/Applications/);
+});
+
+test("macOS: a codesign that timed out or did not run is no answer, not \"unsigned\"", () => {
+  assert.equal(U.codesignTeam(null, "Identifier=io.atomicagent.desktop\nTeamIdentifier=MU9G7XKJUL\n"), "MU9G7XKJUL");
+  assert.equal(U.codesignTeam(null, "Signature=adhoc\nTeamIdentifier=not set\n"), null);
+  assert.equal(U.codesignTeam({ code: 1 }, "/Applications/Atomic Agent.app: code object is not signed at all\n"), null);
+  assert.equal(U.codesignTeam({ killed: true, code: null }, ""), undefined);
+  assert.equal(U.codesignTeam({ code: "ENOENT" }, ""), undefined);
+  // A killed run that had already printed the answer still has it.
+  assert.equal(U.codesignTeam({ killed: true, code: null }, "TeamIdentifier=MU9G7XKJUL\n"), "MU9G7XKJUL");
+});
+
+test("Windows: the installer's process is found in tasklist's CSV", () => {
+  const out = '"Atomic-Agent-Setup-0.7.0.exe","4312","Console","1","52,108 K"\r\n';
+  assert.equal(U.tasklistHasImage(out, "Atomic-Agent-Setup-0.7.0.exe"), true);
+  assert.equal(U.tasklistHasImage(out, "atomic-agent-setup-0.7.0.EXE"), true);
+  assert.equal(U.tasklistHasImage(out, "Atomic-Agent-Setup-0.6.9.exe"), false);
+  assert.equal(U.tasklistHasImage("INFO: No tasks are running which match the specified criteria.\r\n", "Atomic-Agent-Setup-0.7.0.exe"), false);
+  assert.equal(U.tasklistHasImage("", "x.exe"), false);
 });
 
 test("release notes: one plain line, from markdown, HTML or the per-version list", () => {

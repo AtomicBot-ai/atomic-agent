@@ -34,8 +34,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { accessSync, constants, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { app } from "electron";
 
@@ -58,6 +58,8 @@ const INSTALL_TIMEOUT_MS = 120_000;
 export const BUSY_CHECK_TIMEOUT_MS = 10_000;
 /** Windows: the agent and the model server get this long to stop before the installer; past it nothing is installed. */
 const SHUTDOWN_TIMEOUT_MS = 15_000;
+/** Windows, past INSTALL_TIMEOUT_MS: how often to look whether the installer still runs. */
+const INSTALLER_POLL_MS = 5_000;
 
 export type UpdatePhase =
   /** Nothing found (or not looked yet). */
@@ -253,6 +255,8 @@ export interface BusyProbe {
   download: boolean;
   /** The agent process: AgentClient's state, or null when there is none. */
   agentState: string | null;
+  /** Whether the agent's process is still alive (AgentClient.pid). Omitted: it may be. */
+  agentAlive?: boolean;
   /** GET /health: `busyTurns` counts every turn the agent runs (Telegram, tasks, bots). */
   health: () => Promise<unknown>;
   timeoutMs?: number;
@@ -266,8 +270,14 @@ export interface BusyProbe {
 export async function agentBusy(p: BusyProbe): Promise<boolean> {
   if (p.liveTurns > 0 || p.download) return true;
   // No agent process: no turn can be running.
-  if (p.agentState === null || p.agentState === "stopped" || p.agentState === "missing-binary" || p.agentState === "error") return false;
-  if (p.agentState !== "connected") return true;
+  if (p.agentState === null || p.agentState === "stopped" || p.agentState === "missing-binary") return false;
+  /* ATO-231: `error` is not always a dead agent. A start that ran out of its
+     health budget (health_timeout) keeps its process, which may be up by now
+     and running a Telegram turn. So `error` asks /health like `connected`
+     does, and is idle without asking only when the process is gone (it
+     exited, or never spawned). */
+  if (p.agentState === "error" && p.agentAlive === false) return false;
+  if (p.agentState !== "connected" && p.agentState !== "error") return true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const answer = await Promise.race([
     p.health().catch(() => undefined),
@@ -284,24 +294,72 @@ export interface MacAppProbe {
   inApplications: boolean;
   /** The code signature's TeamIdentifier, or null (ad-hoc, unsigned). */
   teamId: string | null;
+  /** Whether this user can replace the app where it is (the bundle and its folder). Omitted: yes. */
+  writable?: boolean;
 }
 
 /** Why a Mac app cannot update itself, in plain words, or null when it can. */
 export function macUpdateBlocker(p: MacAppProbe): string | null {
   if (!p.inApplications) return "Move Atomic Agent to the Applications folder to get updates.";
   if (!p.teamId) return "This build isn’t signed, so it can’t update itself. Download new versions from atomicagent.io.";
+  /* ATO-231: a standard user running a copy an admin put in /Applications.
+     Squirrel refuses to replace it, and the person used to be told to quit
+     and open the app again, which changes nothing. */
+  if (p.writable === false) return "Atomic Agent is in a folder you can’t write to. Ask an admin to update it, or move it to ~/Applications.";
   return null;
 }
 
-/** The running app's bundle, read with codesign (stderr carries the answer). */
-function probeMacApp(): Promise<MacAppProbe> {
+/**
+ * The TeamIdentifier codesign printed (stderr carries the answer), null for
+ * an ad-hoc or unsigned app, or undefined when codesign could not say: it
+ * timed out or did not run. ATO-231: that last one used to read as "not
+ * signed" and turned updates off for the session on a signed build.
+ */
+export function codesignTeam(err: { killed?: boolean; code?: unknown } | null | undefined, stderr: string): string | null | undefined {
+  const m = /^TeamIdentifier=(.+)$/m.exec(stderr);
+  if (!m && err && (err.killed === true || typeof err.code !== "number")) return undefined;
+  const team = m?.[1]?.trim() ?? "";
+  return team && team !== "not set" ? team : null;
+}
+
+/** Whether this user may write `path` (fs.access W_OK). */
+function canWrite(path: string): boolean {
+  try {
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `tasklist /FO CSV /NH` output lists a process whose image name is `image`. */
+export function tasklistHasImage(stdout: string, image: string): boolean {
+  const want = image.toLowerCase();
+  return stdout.split(/\r?\n/).some((line) => {
+    const m = /^"([^"]*)"/.exec(line.trim());
+    return !!m && m[1]!.toLowerCase() === want;
+  });
+}
+
+/** Windows: whether a process runs from an image named `image`; null when tasklist could not say. */
+function windowsImageRunning(image: string): Promise<boolean | null> {
+  return new Promise((done) => {
+    execFile("tasklist", ["/FI", `IMAGENAME eq ${image}`, "/FO", "CSV", "/NH"], { timeout: 10_000, windowsHide: true }, (err, out) => {
+      done(err ? null : tasklistHasImage(String(out ?? ""), image));
+    });
+  });
+}
+
+/** The running app's bundle, read with codesign; null when codesign could not say (see codesignTeam). */
+function probeMacApp(): Promise<MacAppProbe | null> {
   const inApplications = app.isInApplicationsFolder();
   const bundle = resolve(process.execPath, "..", "..", "..");
+  // Squirrel swaps the bundle in place: it needs the bundle and the folder it is in.
+  const writable = canWrite(bundle) && canWrite(dirname(bundle));
   return new Promise((done) => {
-    execFile("codesign", ["-dv", "--verbose=2", bundle], { timeout: 10_000 }, (_err, _out, err) => {
-      const m = /^TeamIdentifier=(.+)$/m.exec(String(err ?? ""));
-      const team = m?.[1]?.trim() ?? "";
-      done({ inApplications, teamId: team && team !== "not set" ? team : null });
+    execFile("codesign", ["-dv", "--verbose=2", bundle], { timeout: 10_000 }, (err, _out, stderr) => {
+      const teamId = codesignTeam(err as { killed?: boolean; code?: unknown } | null, String(stderr ?? ""));
+      done(teamId === undefined ? null : { inApplications, teamId, writable });
     });
   });
 }
@@ -362,6 +420,13 @@ export class AppUpdateController {
   /** quitAndInstall is called at most once per app session (Squirrel.Mac adds a listener per call). */
   private installStarted = false;
   private installNote: string | null = null;
+  /** The downloaded installer (Windows: the process that does the install). */
+  private installerFile: string | null = null;
+  /** macOS: Squirrel had not quit the app when INSTALL_TIMEOUT_MS ran out. */
+  private installLate = false;
+  /** macOS: Electron's autoUpdater.quitAndInstall goes through lateQuit (once per process). */
+  private quitGated = false;
+  private lateQuitting = false;
   /** macOS: where the app runs from and its signature, read once before the first check. */
   private eligibility: Promise<void> | null = null;
 
@@ -478,10 +543,18 @@ export class AppUpdateController {
      offered one; Settings says why. Read once, before the first check. */
   private ensureEligible(): Promise<void> {
     if (this.disabled || this.fake || process.platform !== "darwin") return Promise.resolve();
-    this.eligibility ??= probeMacApp().then(
-      (probe) => this.applyEligibility(probe),
-      () => this.applyEligibility({ inApplications: true, teamId: null }),
-    );
+    /* ATO-231: a codesign that could not say (a 10 s timeout on a busy disk)
+       is asked once more; still no answer, and this check goes ahead without
+       one and the next check asks again. It used to be cached as "not
+       signed", which turned updates off on a signed build until a restart. */
+    if (!this.eligibility) {
+      const run: Promise<void> = (async () => {
+        const probe = (await probeMacApp().catch(() => null)) ?? (await probeMacApp().catch(() => null));
+        if (probe) this.applyEligibility(probe);
+        else if (this.eligibility === run) this.eligibility = null;
+      })();
+      this.eligibility = run;
+    }
     return this.eligibility;
   }
 
@@ -616,7 +689,8 @@ export class AppUpdateController {
       this.percent = Math.max(0, Math.min(100, Math.floor(typeof p?.percent === "number" ? p.percent : 0)));
       this.emit();
     });
-    u.on("update-downloaded", () => {
+    u.on("update-downloaded", (info: { downloadedFile?: unknown }) => {
+      if (typeof info?.downloadedFile === "string" && info.downloadedFile) this.installerFile = info.downloadedFile;
       if (this.phase === "downloading") this.downloaded();
     });
     this.updater = u;
@@ -687,8 +761,11 @@ export class AppUpdateController {
       const updater = this.ensureUpdater();
       const run = updater.downloadUpdate(token);
       this.pendingDownload = run;
-      await run;
-      if (this.token === token && this.phase === "downloading") this.downloaded();
+      const files = await run;
+      if (this.token === token && this.phase === "downloading") {
+        this.installerFile = (Array.isArray(files) ? files.find((f) => /\.exe$/i.test(f)) : undefined) ?? this.installerFile;
+        this.downloaded();
+      }
     } catch (err) {
       // A cancelled download, or one a newer Update has replaced, is not a failure.
       if (this.token === token && !token.cancelled && this.phase === "downloading") this.downloadFailed(err);
@@ -860,6 +937,7 @@ export class AppUpdateController {
       if (!stopped) return this.installFailed(new Error("the agent did not stop in time"), true);
     }
     try {
+      if (!stopsFirst) this.gateLateQuit();
       // Silent installer on Windows (the person already said yes), and the app starts again after it.
       this.ensureUpdater().quitAndInstall(true, true);
     } catch (err) {
@@ -871,10 +949,74 @@ export class AppUpdateController {
     this.installTimer = setTimeout(() => {
       this.installTimer = null;
       if (this.phase !== "installing") return;
-      if (stopsFirst) return this.installFailed(new Error("the installer did not take over within 2 min"), true);
+      if (stopsFirst) return void this.installerOverdue();
+      this.installLate = true;
       this.installNote = "Still installing. If nothing happens, quit Atomic Agent and open it again.";
       this.emit();
     }, INSTALL_TIMEOUT_MS);
+  }
+
+  /* ATO-231 (macOS): Squirrel can finish after the two minutes above, and
+     its listener (electron-updater MacUpdater) then calls Electron's
+     autoUpdater.quitAndInstall, which closes the window and quits at once.
+     The turn check was made when Restart was clicked, minutes ago; by now a
+     Telegram turn or a new chat may be running. So a late finish goes
+     through lateQuit, which asks again first. On time it quits as before. */
+  private gateLateQuit(): void {
+    if (this.quitGated) return;
+    this.quitGated = true;
+    try {
+      const native = (require("electron") as typeof import("electron")).autoUpdater as unknown as { quitAndInstall: () => void };
+      const quit = native.quitAndInstall.bind(native);
+      native.quitAndInstall = () => {
+        if (!this.installLate) return quit();
+        void this.lateQuit(quit);
+      };
+    } catch (err) {
+      // Without the gate a late finish quits as it always did; the install itself is unaffected.
+      console.error(`[updater] could not gate a late install: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** The late finish: quit and install once nothing runs; until then the toast says it is waiting. */
+  private async lateQuit(quit: () => void): Promise<void> {
+    if (this.lateQuitting) return;
+    this.lateQuitting = true;
+    try {
+      while (this.phase === "installing") {
+        if (!(await this.turnRunningAnywhere())) return quit();
+        const note = "The update is ready. Atomic Agent restarts when the running answer finishes.";
+        if (this.installNote !== note) {
+          this.installNote = note;
+          this.emit();
+        }
+        await new Promise((r) => setTimeout(r, TURN_POLL_MS));
+      }
+    } finally {
+      this.lateQuitting = false;
+    }
+  }
+
+  /* ATO-231 (Windows): two minutes on, the installer may still be at work
+     (a slow disk, an antivirus scan). Relaunching then started the old app
+     over the files being replaced. So while the installer's process runs the
+     app waits and says so, and it recovers only once that process is gone
+     with this app still here, or when nobody can tell (no installer path, or
+     tasklist did not answer), as before. */
+  private async installerOverdue(): Promise<void> {
+    if (this.phase !== "installing") return;
+    const running = this.installerFile ? await windowsImageRunning(basename(this.installerFile)) : null;
+    if (this.phase !== "installing") return;
+    if (running !== true) return this.installFailed(new Error("the installer did not take over within 2 min"), true);
+    const note = "Still installing. Atomic Agent opens again when the installer is done.";
+    if (this.installNote !== note) {
+      this.installNote = note;
+      this.emit();
+    }
+    this.installTimer = setTimeout(() => {
+      this.installTimer = null;
+      void this.installerOverdue();
+    }, INSTALLER_POLL_MS);
   }
 
   /* An install that did not happen. With the agent already stopped
@@ -916,6 +1058,8 @@ export class AppUpdateController {
     this.checking = null;
     this.installStarted = false;
     this.installNote = null;
+    this.installerFile = null;
+    this.installLate = false;
     this.eligibility = null;
     this.fakeTurnBusy = null;
     this.fakeBusyProbe = null;

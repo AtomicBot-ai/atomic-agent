@@ -29,8 +29,9 @@ import { agentBusy, appUpdater, readUpdatePrefs, updatePrefsPath } from "../upda
  *  (f) Settings › General's switch off: an automatic check finds nothing to
  *      show (it does not even look);
  *  (g) Check now says "Version X is available", "You’re up to date — <v>";
- *  (h) macOS: an app outside /Applications, or signed ad hoc, is offered no
- *      update and Settings says why (the probe's answer stood in).
+ *  (h) macOS: an app outside /Applications, signed ad hoc, or in a folder the
+ *      user cannot write to, is offered no update and Settings says why (the
+ *      probe's answer stood in).
  *
  * updates.json (Electron userData) is captured byte for byte first and put
  * back in `finally`; the updater and the window go back as they were.
@@ -192,6 +193,15 @@ export async function checks65(js: Js, check: Check): Promise<void> {
       hung && older && pulling && !idle,
       show({ hung, older, pulling, idle }),
     );
+    // ATO-231: an agent in `error` after a health_timeout may still be running (a Telegram turn).
+    const errSilent = await agentBusy({ liveTurns: 0, download: false, agentState: "error", agentAlive: true, health: () => new Promise(() => undefined), timeoutMs: 300 });
+    const errIdle = await agentBusy({ liveTurns: 0, download: false, agentState: "error", agentAlive: true, health: async () => ({ busyTurns: 0 }) });
+    const errGone = await agentBusy({ liveTurns: 0, download: false, agentState: "error", agentAlive: false, health: () => new Promise(() => undefined) });
+    check(
+      "T65 (e): an agent in error whose process lives is busy until /health says busyTurns 0; one whose process is gone is idle",
+      errSilent && !errIdle && !errGone,
+      show({ errSilent, errIdle, errGone }),
+    );
 
     /* (f) the switch off: no automatic check, no toast */
     await fresh(FAKE);
@@ -241,6 +251,20 @@ export async function checks65(js: Js, check: Check): Promise<void> {
     const h2 = await until(settings, (g) => !!g && g.result.includes("signed"));
     check("T65 (h): an ad-hoc signed app says it cannot update itself", !!h2 && /isn’t signed, so it can’t update itself/.test(h2.result), show(h2));
     await closeSettings();
+    // ATO-231: a standard user running a copy an admin put in /Applications.
+    await fresh(FAKE);
+    u.testEligibility({ inApplications: true, teamId: "ABCDE12345", writable: false });
+    await openGeneral();
+    const h3 = await until(settings, (g) => !!g && g.result.includes("write to"));
+    check(
+      "T65 (h): an app in a folder the user cannot write to says to ask an admin or move it",
+      !!h3 && /can’t write to/.test(h3.result) && /ask an admin/i.test(h3.result) && h3.result.includes("~/Applications"),
+      show(h3),
+    );
+    await closeSettings();
+    await u.autoCheck();
+    await wait(400);
+    check("T65 (h): and that app is offered no update either", !(await toast()) && u.state().phase === "idle" && !u.state().enabled, show(u.state()));
   } finally {
     u.testRestore();
     if (before) writeFileSync(path, before);
