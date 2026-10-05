@@ -21,10 +21,9 @@ import { BrowserWindow } from "electron";
  * another surface raised in the chat) opens its card again.
  *
  * B06 — after that, ⌘N denied a stale card (`n`) instead of opening a new
- * chat. Now y / n / Esc answer only as bare keys, and only an open request:
- * Alt+N, Alt+Y and ⌘Y with a card up answer nothing, Ctrl+Esc and Alt+Esc
- * open nothing over it, and ⌘N opens a new chat. Ctrl+Y (the TUI's chord)
- * and the bare y still allow the open request.
+ * chat. 05.10: the desktop answers the card on screen with ⌘↩ (Allow once)
+ * and ⌘. (Deny) only, Ctrl off macOS, wherever the focus is; bare y / n / Esc
+ * and Ctrl+Y answer nothing, and ⌘N opens a new chat.
  *
  * A window that loads again (reopened from the Dock, reloaded) gets the
  * agent's replay of what is pending before it has read the chat list. A
@@ -44,9 +43,10 @@ import { BrowserWindow } from "electron";
  *
  * ATO-209: every open card's Deny had id="denybtn" and a card that came
  * focused the first one in the page, taking the focus from the box: Enter
- * there denied a call with no reason. Now a card that comes focuses itself
- * (never a button), and never takes the focus from a text field; only the
- * card y/n/Esc answer has id="apprcard".
+ * there denied a call with no reason. Now no card takes the focus; only the
+ * card the keys answer has id="apprcard". In the box with a draft, ⌘↩ allows
+ * and ⌘. denies and the draft stays; y is a letter; Enter with nothing typed
+ * does nothing, and with a draft denies with those words, never bare.
  *
  * Nothing reaches the agent and the config is not touched. The requests go
  * through the real onApprovalEvent, the turn's end through the real
@@ -68,7 +68,7 @@ const TURN = `${PREFIX}turn-a`;
 const ASK_1 = `${PREFIX}approval-1`;   // the turn's first request
 const ASK_2 = `${PREFIX}approval-2`;   // the same call asked again
 const ASK_3 = `${PREFIX}approval-3`;   // the next turn's request, for the keys
-const ASK_4 = `${PREFIX}approval-4`;   // the same call asked again, for the bare y
+const ASK_4 = `${PREFIX}approval-4`;   // the same call asked again, for ⌘.
 const ASK_R = `${PREFIX}approval-r`;   // another call of the same step, waiting at the same time
 const B = `${PREFIX}chat-b`;           // a chat with a row whose request is replayed into a page that just loaded
 const C = `${PREFIX}chat-c`;           // a session with no row anywhere (a one-shot task's)
@@ -104,17 +104,20 @@ class StandIn {
     return { ok: false, error: QUIET };
   };
   private readonly approve: Handler = (_e, payload) => {
-    const p = (payload ?? {}) as { approvalId?: unknown; decision?: unknown };
-    this.approved.push(`${String(p.approvalId)} ${String(p.decision)}`);
+    const p = (payload ?? {}) as { approvalId?: unknown; decision?: unknown; reason?: unknown };
+    // A verdict with words (denyByProse) says them; a bare one ends on its decision.
+    this.approved.push(`${String(p.approvalId)} ${String(p.decision)}` + (typeof p.reason === "string" && p.reason ? ` reason=${p.reason}` : ""));
     return { ok: true, data: { resolved: true } };
   };
   private readonly cancel: Handler = (_e, turnId) => { this.cancelled.push(String(turnId)); return true; };
+  // (g): the words of a refusal go on into the running turn; taken, so nothing is queued or started.
+  private readonly steer: Handler = () => ({ ok: true, steered: true });
 
   private channels(): Array<[string, Handler]> {
     return [
       ["agent:session", this.session], ["agent:approve", this.approve], ["agent:cancel", this.cancel],
       ["agent:contextPreview", this.quiet], ["agent:undeliveredSteers", this.noParked], ["cli:traceTools", this.quiet],
-      ["app:statPaths", this.quiet], ["cli:chatModelsList", this.quiet],
+      ["app:statPaths", this.quiet], ["cli:chatModelsList", this.quiet], ["agent:steer", this.steer],
     ];
   }
 
@@ -194,6 +197,7 @@ const RESTORE = `(() => { ${H}
     S.log = k.log; S.sessionId = k.sessionId; S.agentSession = k.agentSession; S.busy = k.busy; S.pending = k.pending;
     S.apprFocused = k.focused; S.history = k.history; S.room = k.room; S.streamId = k.streamId; S.turnId = k.turnId;
     S.stick = k.stick; S.queued.length = 0; S.queued.push(...k.queued); STEER.ahead = k.ahead; OPENING = k.opening;
+    for (let i = STEER.mine.length - 1; i >= 0; i--) if (String(STEER.mine[i]).indexOf('smoke t64') === 0) STEER.mine.splice(i, 1);
     if (typeof DRAIN_OWED !== 'undefined') DRAIN_OWED = k.owed;
     CTX055.stamp = k.stamp; Object.assign(PLAN, k.plan); SESSIONS_READ = k.sessionsRead;
   }
@@ -306,15 +310,15 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       `denied=${show(replay.denied)} sent=${show(sentR)}`,
     );
 
-    // (c) The next turn of the chat asks. Chords with n and y (bar Ctrl+Y) answer nothing, Esc with a
-    // modifier opens nothing over the card, and ⌘N opens a new chat.
+    // (c) The next turn of the chat asks. Keys that used to answer a card (bare y / n, Ctrl+Y) and other
+    // chords with n and y answer nothing now, and ⌘N opens a new chat.
     const mark = agent.approved.length;
     const keys = await js<{ asked: View; chords: View; fresh: View }>(`(async () => { ${H}
       RUNNING.set(${q(`${TURN}-2`)}, ${q(A)});
       ask(${q(ASK_3)});
       const asked = view();
+      press('y'); press('n'); press('y', {ctrlKey: true});
       press('n', {altKey: true}); press('y', {altKey: true}); press('y', {metaKey: true});
-      press('Escape', {ctrlKey: true}); press('Escape', {altKey: true});
       await tick(50);
       const chords = view();
       press('n', {metaKey: true});
@@ -323,7 +327,7 @@ export async function checks64(js: Js, check: Check): Promise<void> {
     })()`);
     const chordAnswers = agent.approved.slice(mark);
     check(
-      "T64 (B06): with an approval card up, chords with n and y and Esc with a modifier answer nothing, open nothing, and the card stays open",
+      "T64 (B06, 05.10): with an approval card up, y, n, Ctrl+Y and chords with n and y answer nothing, and the card stays open",
       keys.asked.pending === ASK_3 && show(keys.asked.cards) === show([ASK_3])
         && keys.chords.pending === ASK_3 && show(keys.chords.cards) === show([ASK_3]) && !keys.chords.settings
         && chordAnswers.length === 0,
@@ -336,28 +340,56 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       `fresh=${show(keys.fresh)} sent=${show(chordAnswers)}`,
     );
 
-    // (d) Back in the chat, Ctrl+Y (the TUI's chord) allows its open request; then the bare y allows the next one.
+    // (d) 05.10: back in the chat, the caret in the box with a draft, keys pressed where the focus is (no blur):
+    // y is a letter, ⌘↩ allows the card on screen and the draft stays; Enter with nothing typed does nothing;
+    // ⌘. denies the next one and the draft stays.
     const mark2 = agent.approved.length;
-    const yes = await js<{ ctrl: View; bare: View }>(`(async () => { ${H}
+    const DRAFT_D = "smoke t64: a draft kept through the answers";
+    const yes = await js<{ afterY: string | null; allowed: View; draftAfterAllow: string; empty: View; denied: View; draftAfterDeny: string; focus: string }>(`(async () => { ${H}
       S.sessionId = ${q(A)}; S.agentSession = ${q(A)};
       const req = APPROVAL_CARDS.get(${q(A)});
       S.log = [{id: nid(), k: 'user', text: 'smoke t64: check free disk space'}, req];
-      S.pending = req; S.apprFocused = true;
-      press('y', {ctrlKey: true});
+      S.pending = req;
+      const inBox = (k, mods) => {
+        const e = document.getElementById('entry');
+        if (!e) return;
+        if (document.activeElement !== e) e.focus();
+        e.dispatchEvent(new KeyboardEvent('keydown', Object.assign({key: k, bubbles: true, cancelable: true}, mods || {})));
+      };
+      const CHORD = {metaKey: IS_MAC, ctrlKey: !IS_MAC};
+      S.draft = ${q(DRAFT_D)}; render();
+      inBox('y');
+      await tick(100);
+      const afterY = S.pending ? String(S.pending.approvalId) : null;
+      inBox('Enter', CHORD);
       await tick(150);
-      const ctrl = view();
+      const allowed = view();
+      const draftAfterAllow = (document.getElementById('entry') || {}).value || '';
       ask(${q(ASK_4)});
-      press('y');
+      S.draft = ''; render();
+      inBox('Enter');
       await tick(150);
-      return {ctrl, bare: view()};
+      const empty = view();
+      S.draft = ${q(DRAFT_D)}; render();
+      inBox('.', CHORD);
+      await tick(150);
+      const a = document.activeElement;
+      return {afterY, allowed, draftAfterAllow, empty, denied: view(),
+        draftAfterDeny: (document.getElementById('entry') || {}).value || '', focus: a ? (a.id || a.tagName) : ''};
     })()`);
     const sent = agent.approved.slice(mark2);
     check(
-      "T64 (B06): Ctrl+Y and the bare y still allow the chat's open request, once each",
-      show(sent) === show([`${ASK_3} allow-once`, `${ASK_4} allow-once`]) && yes.ctrl.pending === null
-        && yes.bare.pending === null && !yes.bare.waiting.some((w) => w.startsWith(`${A}>`)),
+      "T64 (05.10): in the box with a draft, y answers nothing and ⌘↩ allows the card on screen, the draft kept",
+      yes.afterY === ASK_3 && sent[0] === `${ASK_3} allow-once` && yes.allowed.pending === null && yes.draftAfterAllow === DRAFT_D,
       `yes=${show(yes)} sent=${show(sent)}`,
     );
+    check(
+      "T64 (05.10): Enter in the empty box answers nothing; ⌘. denies the card on screen, the draft kept and the box still focused",
+      yes.empty.pending === ASK_4 && show(sent) === show([`${ASK_3} allow-once`, `${ASK_4} deny`])
+        && yes.denied.pending === null && yes.draftAfterDeny === DRAFT_D && yes.focus === "entry",
+      `yes=${show(yes)} sent=${show(sent)}`,
+    );
+
     // (e) A page that just loaded, its chat list not read yet, gets the replay of chat B's request (B has a
     // row) and of one with no chat anywhere. Neither is drawn over the empty view; once the list is in, the
     // one with no chat is drawn where the person is, B's stays kept, and opening B shows it with B's transcript.
@@ -451,60 +483,93 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       show(taken.opened2),
     );
 
-    // (g) ATO-209: two calls of the chat on screen wait (two open cards). The first card took the focus
-    // itself, not a button. Then the person is typing in the box when a third request comes: the focus
-    // stays in the box, Enter there answers no card, and no id is on the page twice.
+    // (g) ATO-209, 05.10: calls of the chat on screen wait at once. No card takes the focus, neither when the
+    // focus is nowhere nor from the box with a draft in it. No id is in the transcript twice. In the box, keys
+    // pressed where the focus is: ⌘↩ allows and ⌘. denies the card on screen, the draft kept; Enter with the
+    // draft denies the next one with those words (denyByProse), never bare; Enter with nothing typed does nothing.
     const markG = agent.approved.length;
-    const focus = await js<{ first: string; typing: string; enter: string; open: string[]; dupes: string[]; current: number; denyIds: number; deny: number }>(`(async () => { ${H}
+    const DRAFT = "smoke t64: half a sentence";
+    const focus = await js<{ first: string; typing: string; open: string[]; dupes: string[]; current: number; denyIds: number;
+      deny: number; afterKeys: string; draftAfterKeys: string; afterEmpty: string | null }>(`(async () => { ${H}
       for (const [t, s] of [...RUNNING]) if (mine(t) || mine(s)) RUNNING.delete(t);
       OPENING = null; S.sessionId = ${q(G)}; S.agentSession = ${q(G)}; S.pending = null; S.turnId = null;
-      S.busy = true; S.room = 'chat';
+      S.busy = true; S.room = 'chat'; S.draft = '';
       const item = {id: nid(), k: 'assistant', text: '', turn: ${q(TURN_G)}};
       S.log = [{id: nid(), k: 'user', text: 'smoke t64: two files and a read'}, item];
       S.streamId = item.id;
       RUNNING.set(${q(TURN_G)}, ${q(G)});
       const a = document.activeElement;
       if (a && a !== document.body && a.blur) a.blur();
+      render();
       const asks = (id, tool, cat, preview) => onApprovalEvent({approvalId: id, tool, category: cat, reason: 'smoke t64',
         preview, affectedResources: ['/tmp/smoke-t64/' + preview], sessionId: ${q(G)}});
+      const where = () => { const x = document.activeElement; return x ? (x.id || '') + '|' + x.tagName : ''; };
+      const CHORD = {metaKey: IS_MAC, ctrlKey: !IS_MAC};
+      const inBox = (k, mods) => {
+        const e = document.getElementById('entry');
+        if (!e) return;
+        if (document.activeElement !== e) e.focus();
+        e.dispatchEvent(new KeyboardEvent('keydown', Object.assign({key: k, bubbles: true, cancelable: true}, mods || {})));
+      };
       asks(${q(`${PREFIX}approval-g1`)}, 'os.shell.run', 'shell', 'g1.txt');
       await tick(50);
-      const where = () => { const x = document.activeElement; return x ? (x.id || '') + '|' + x.tagName + '|' + (x.getAttribute('data-appr-id') || x.getAttribute('data-appr') || '') : ''; };
       const first = where();
       asks(${q(`${PREFIX}approval-g2`)}, 'os.fs.read', 'fs_read_outside', 'g2.txt');
+      S.draft = ${q(DRAFT)}; render();
       const e = document.getElementById('entry');
-      if (e) e.focus();
+      if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
       asks(${q(`${PREFIX}approval-g3`)}, 'os.fs.write', 'fs_write_workspace', 'g3.txt');
       await tick(50);
       const typing = where();
-      const box = document.getElementById('entry');
-      if (box) box.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
-      await tick(150);
-      // The transcript's ids; the two the cards used to repeat are counted page-wide below.
       const ids = [...document.querySelectorAll('#scroller [id]')].map((n) => n.id);
-      return {first, typing, enter: where(),
+      const shot = {
         open: [...document.querySelectorAll('#scroller .appr[data-appr-id]')].map((n) => n.getAttribute('data-appr-id') || ''),
         dupes: ids.filter((id, i) => ids.indexOf(id) !== i),
         current: document.querySelectorAll('[id="apprcard"]').length,
         denyIds: document.querySelectorAll('[id="denybtn"]').length,
         deny: document.querySelectorAll('#scroller .appr .apprdeny').length};
+      inBox('y');
+      inBox('Enter', CHORD);
+      await tick(150);
+      inBox('.', CHORD);
+      await tick(150);
+      const afterKeys = where();
+      const draftAfterKeys = (document.getElementById('entry') || {}).value || '';
+      inBox('Enter');
+      await tick(300);
+      inBox('Enter');
+      await tick(100);
+      return Object.assign({first, typing, afterKeys, draftAfterKeys,
+        afterEmpty: S.pending ? String(S.pending.approvalId) : null}, shot);
     })()`);
     const sentG = agent.approved.slice(markG);
     check(
-      "T64 (ATO-209): a card that comes takes the focus itself, never a Deny button",
-      focus.first === `apprcard|DIV|${PREFIX}approval-g1`,
+      "T64 (ATO-209): a card that comes takes no focus",
+      focus.first === "|BODY",
       show(focus),
     );
     check(
-      "T64 (ATO-209): with two cards open and the person typing in the box, a third card does not take the focus, and Enter there answers no card",
-      focus.typing.startsWith("entry|TEXTAREA") && focus.enter.startsWith("entry|TEXTAREA") && sentG.length === 0
+      "T64 (ATO-209): with two cards open and a draft in the box, a third card leaves the focus in the box",
+      focus.typing === "entry|TEXTAREA"
         && show(focus.open) === show([`${PREFIX}approval-g1`, `${PREFIX}approval-g2`, `${PREFIX}approval-g3`]),
-      `focus=${show(focus)} sent=${show(sentG)}`,
+      show(focus),
     );
     check(
       "T64 (ATO-209): no id is in the transcript twice; one card is #apprcard, and every open card has its own Deny",
       focus.dupes.length === 0 && focus.current === 1 && focus.denyIds === 0 && focus.deny === 3,
       show(focus),
+    );
+    check(
+      "T64 (05.10): in the box, y answers nothing, ⌘↩ allows and ⌘. denies the card on screen, and the draft and the focus stay",
+      sentG[0] === `${PREFIX}approval-g3 allow-once` && sentG[1] === `${PREFIX}approval-g2 deny`
+        && focus.draftAfterKeys === DRAFT && focus.afterKeys === "entry|TEXTAREA",
+      `focus=${show(focus)} sent=${show(sentG)}`,
+    );
+    check(
+      "T64 (ATO-209): Enter with the draft denies the next request with the typed words, never bare; Enter with nothing typed answers nothing",
+      show(sentG) === show([`${PREFIX}approval-g3 allow-once`, `${PREFIX}approval-g2 deny`, `${PREFIX}approval-g1 deny reason=${DRAFT}`])
+        && focus.afterEmpty === null,
+      `focus=${show(focus)} sent=${show(sentG)}`,
     );
 
     // What the turn's end set off (the session list re-read) is answered before the stand-ins go.

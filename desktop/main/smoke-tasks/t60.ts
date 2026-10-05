@@ -13,14 +13,14 @@ import { BrowserWindow } from "electron";
  *
  * Now a request for a chat that is not on screen is kept for that chat (its
  * sidebar dot says it waits) and drawn when that chat is opened; the chat on
- * screen keeps its own card and its own y/n; one approvalId is one card, also
+ * screen keeps its own card and its own keys (05.10: ⌘↩ / ⌘.); one approvalId is one card, also
  * when the request comes twice; and answering answers the card on screen.
  *
  * Also covered: a request kept for a chat whose turn this window does not run
  * is forgotten once that chat's turn is over (it has no end frame here); a
  * request with no chat of its own to be found in is still drawn where the
- * person is, and its card's own buttons answer it; y and Esc on a chat's own
- * card; a request that arrives while its chat is loading, or before a new
+ * person is, and its card's own buttons answer it; ⌘↩ and Abort run on a
+ * chat's own card; a request that arrives while its chat is loading, or before a new
  * chat's first turn has said its session, waits and is drawn in that chat.
  *
  * Nothing reaches the agent and the config is not touched. The requests go
@@ -116,6 +116,12 @@ const H = String.raw`
     const sc = document.getElementById('scroller');
     if (sc) sc.scrollTop = sc.scrollHeight;
     document.body.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true}));
+  };
+  // 05.10: the desktop's Allow once key for the card on screen, ⌘↩ (Ctrl+↩ off macOS).
+  const allow = () => {
+    const a = document.activeElement;
+    if (a && a !== document.body && a.blur) a.blur();
+    document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', metaKey: IS_MAC, ctrlKey: !IS_MAC, bubbles: true, cancelable: true}));
   };
   const row = (id) => {
     for (let i = SESSIONS.length - 1; i >= 0; i--) if (SESSIONS[i].id === id) SESSIONS.splice(i, 1);
@@ -226,13 +232,13 @@ export async function checks60(js: Js, check: Check): Promise<void> {
       show(onB),
     );
 
-    // (d) Back in chat A: its own card again, once, and y answers A's request only.
+    // (d) Back in chat A: its own card again, once, and ⌘↩ answers A's request only.
     const mark = agent.approved.length;
     const backA = await js<View>(`(async () => { ${H} await openSession(${q(A)}); return view(); })()`);
-    const answered = await js<View>(`(async () => { ${H} press('y'); await tick(150); return view(); })()`);
+    const answered = await js<View>(`(async () => { ${H} allow(); await tick(150); return view(); })()`);
     const sent = agent.approved.slice(mark);
     check(
-      "T60: back in the first chat only its own card is there, once, and y answers that request, leaving the other chat's open",
+      "T60: back in the first chat only its own card is there, once, and ⌘↩ answers that request, leaving the other chat's open",
       backA.sessionId === A && backA.pending === ASK_A && show(backA.rows) === show([ASK_A]) && show(backA.cards) === show([ASK_A])
         && show(sent) === show([`${ASK_A} allow-once`]) && answered.pending === null
         && !answered.waiting.some((w) => w.startsWith(`${A}>`)) && answered.waiting.includes(`${B}>${ASK_B}`),
@@ -240,8 +246,8 @@ export async function checks60(js: Js, check: Check): Promise<void> {
     );
 
     // (e) A request whose session has no row anywhere is drawn here, as before; the chat's own next one
-    // comes after it. The older card's own Allow once answers that card; Esc answers the chat's own
-    // request (deny) and stops the turn that asked, A's.
+    // comes after it. The older card's own Allow once answers that card; the chat's own card's Abort run
+    // denies its request and stops the turn that asked, A's (05.10: Esc no longer answers a card).
     const mark2 = agent.approved.length;
     const markC = agent.cancelled.length;
     const two = await js<View>(`(() => { ${H} ask(${q(ASK_X)}, ${q(X)}); ask(${q(ASK_A2)}, ${q(A)}); return view(); })()`);
@@ -251,7 +257,12 @@ export async function checks60(js: Js, check: Check): Promise<void> {
       await tick(150);
       return view();
     })()`);
-    const escaped = await js<View>(`(async () => { ${H} press('Escape'); await tick(150); return view(); })()`);
+    const escaped = await js<View>(`(async () => { ${H}
+      const abort = document.querySelector('#scroller .appr[data-appr-id=' + JSON.stringify(${q(ASK_A2)}) + '] [data-appr="esc"]');
+      if (abort) abort.click();
+      await tick(150);
+      return view();
+    })()`);
     const sent2 = agent.approved.slice(mark2);
     const stops = agent.cancelled.slice(markC);
     check(
@@ -261,7 +272,7 @@ export async function checks60(js: Js, check: Check): Promise<void> {
       `two=${show(two)} clicked=${show(clicked)} sent=${show(sent2)}`,
     );
     check(
-      "T60: Esc on the chat's own card denies that request and stops the turn that asked, the chat's own",
+      "T60: Abort run on the chat's own card denies that request and stops the turn that asked, the chat's own",
       show(sent2) === show([`${ASK_X} allow-once`, `${ASK_A2} deny`]) && show(stops) === show([TURN_A])
         && escaped.pending === null && !escaped.waiting.some((w) => w.startsWith(`${A}>`)) && escaped.waiting.includes(`${B}>${ASK_B}`),
       `sent=${show(sent2)} stops=${show(stops)} escaped=${show(escaped)}`,

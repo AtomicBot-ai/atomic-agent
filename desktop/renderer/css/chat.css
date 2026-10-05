@@ -252,13 +252,12 @@
 .appr.danger .appr-yes{background:var(--critical);color:var(--on-fill)}
 .appr.danger .appr-yes:hover{background:color-mix(in srgb, var(--critical) 88%, var(--black));color:var(--on-fill)}
 .appr .apprabort{margin-left:auto;color:var(--ink-2)}
-/* ATO-209: the card itself takes the focus on arrival (afterChat), never its
-   Deny button (Enter or Space there denied the call), and never from a text
-   field. The ring is drawn for any focus, because that programmatic focus is
-   the cue that y/n/Esc are live and a mouse-driven :focus-visible heuristic
-   would hide it. A button the person tabs to keeps its own ring. */
-.appr:focus{outline:2px solid var(--blue);outline-offset:2px}
+/* ATO-209, 05.10: no card takes the focus on its own (afterChat); a person
+   who tabs to the card or a button sees where it is. */
+.appr:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .appr .apprdeny:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+/* 05.10: the keys that answer the card on screen, named on its buttons (⌘↩, ⌘.). */
+.appr .apprkbd{margin-left:6px;font:500 11px/1 var(--font-mono);opacity:.72}
 .apprfoot{padding-left:42px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
 /* Details: the engineer's view, closed until asked */
 .apprdet{margin-left:42px;min-width:0}

@@ -1803,6 +1803,10 @@ const CLOSED_APPROVALS = new Set();
 /* B01 QA: whether this page has read the chat list yet (sessionsRead). Until
    it has, whether a request's chat has a row is not known (approvalReachable). */
 let SESSIONS_READ = false;
+/* 05.10: when a card last took ⌘↩ / ⌘. (the keydown handler). The menu's
+   Send and Stop carry the same accelerators; where both fire (Windows), the
+   menu's copy that follows is dropped (onMenu). */
+let APPR_CHORD_AT = 0;
 const ATTN = new Set();                  // sessions whose last desktop-run turn ended in error
 /* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
    See the top of onChatEvent. */
@@ -2860,9 +2864,9 @@ function apprCard(m) {
      allowing it does, the file or folder it touches, and two answers.
      Everything an engineer wants — the tool id, the category and the level
      that would have let it through, the agent's own reason, the preview —
-     sits under Details. The chords stay (y / n / Esc, the keydown handler)
-     and are named only in the buttons' tooltips. Allow once / Deny keep
-     their verbs exactly: `y` is allow-once, `n` is deny. */
+     sits under Details. Allow once / Deny keep their verbs exactly.
+     05.10: their keys, ⌘↩ and ⌘. (Ctrl off macOS), are named on the
+     buttons of the card they answer (S.pending); Abort run is a button only. */
   const why = apprWhy(m);
   const res = apprResource(m);
   const typed = !!(m.approvalId && m.sessionId && m.sessionId === S.agentSession);
@@ -2871,10 +2875,12 @@ function apprCard(m) {
      Deny id="denybtn", and afterChat focused `#denybtn`: the FIRST Deny in
      the page, whichever card that was, taking the focus from the box the
      person was typing in, so their Enter (or Space) denied a call with no
-     reason. Now only the card of the request y/n/Esc answer (S.pending) has
+     reason. Now only the card of the request the keys answer (S.pending) has
      the id, which scenario 05, drive.mjs and harness.mjs read; Deny is
-     `.apprdeny`. The card takes the focus itself (tabindex), never a button. */
+     `.apprdeny`. No card takes the focus (afterChat); tabindex is there for
+     a person who tabs to it. */
   const current = m === S.pending;
+  const keyOn = (w) => current ? ' <span class="apprkbd">' + apprKeyLabel(w) + '</span>' : '';
   return '<div class="appr' + (isTrust ? ' danger' : '') + '"' + (current ? ' id="apprcard"' : '')
     + ' tabindex="-1" data-appr-id="' + esc(m.approvalId || '') + '">'
     + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'shield') + '</span>'
@@ -2883,9 +2889,9 @@ function apprCard(m) {
       + (res ? '<div class="apprres">' + res + '</div>' : '')
     + '</div></div>'
     + '<div class="apprbtns">'
-      + '<button class="btn sm appr-yes" data-appr="y" title="Allow this one call (Y)">Allow once</button>'
-      + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny (N)">Deny</button>'
-      + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run (Esc)">Abort run</button>'
+      + '<button class="btn sm appr-yes" data-appr="y" title="Allow this one call' + (current ? ' (' + apprKeyLabel('y') + ')' : '') + '">Allow once' + keyOn('y') + '</button>'
+      + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny' + (current ? ' (' + apprKeyLabel('n') + ')' : '') + '">Deny' + keyOn('n') + '</button>'
+      + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run">Abort run</button>'
     + '</div>'
     /* Item 1 (approval parity): typing prose under an open request denies
        the call with those words and sends them on (denyByProse). Said only
@@ -3522,8 +3528,7 @@ function afterChat(keep, hadFocus, caret) {
      here, after the render that rebuilt this textarea. The carry leg below is
      what makes it survive every render that follows: by then #entry is already
      the active element, so the focus is re-established rather than dropped.
-     Both legs stay ABOVE the approval branch, which reads where the focus
-     ended up (ATO-209: a card never takes it from the box the person types in).
+     (ATO-209, 05.10: an approval card no longer takes the focus at all.)
 
      r5 item 6 review fix: the carry leg is gated on there being no modal up.
      render() runs renderContent() BEFORE renderSettings()/renderOverlays(), so
@@ -3563,18 +3568,10 @@ function afterChat(keep, hadFocus, caret) {
     // / tui-app.tsx:1327 <-> the Escape branch of the keydown handler).
     else if (keep != null) sc.scrollTop = keep;
   }
-  /* ATO-209: a card that comes takes the focus to itself, not to a Deny
-     button (Enter or Space there denied the call), and never from a text
-     field the person is in: y / n / Esc are read at the document, and in the
-     box they are letters, as they should be. A focused card answers no key
-     of its own; a button gets the focus only when the person tabs to it. */
-  if (S.pending && !S.apprFocused) {
-    const at = document.activeElement;
-    const typing = !!at && (at.tagName === 'TEXTAREA' || at.tagName === 'INPUT' || at.isContentEditable);
-    const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(S.pending.approvalId || '') + '"]');
-    if (!typing && card) card.focus({preventScroll:true});
-    if (typing || card) S.apprFocused = true;
-  }
+  /* ATO-209, 05.10: a card that comes takes no focus, neither its own nor a
+     button's. Focusing the first Deny on the page let an Enter or a Space
+     meant for the box deny a call. The card's keys (⌘↩, ⌘.) work wherever
+     the focus is; a person who tabs to the card or a button gets it there. */
 }
 function autosize(e) { e.style.height = 'auto'; e.style.height = Math.min(e.scrollHeight, 180) + 'px'; }
 
@@ -4482,14 +4479,15 @@ function sessionSheet() {
 function shortcutsSheet() {
   /* The third column is the web prototype's Ctrl chord. The sheet no longer
      draws it ("proto Ctrl K" described a different app). The approval row lost
-     "grant" and its S key: approvals are allow-once or deny, S does nothing. */
+     "grant" and its S key: approvals are allow-once or deny, S does nothing.
+     05.10: and its Y N Esc: the desktop answers a card with ⌘↩ and ⌘. now. */
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
     ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
-    ['Send','↩',''],['Newline','⇧ ↩',''],['Stop','⌘ .','Ctrl .'],
+    ['Send','↩',''],['Newline','⇧ ↩',''],['Stop (no approval on screen)','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
-    ['Approve / deny / abort','Y N ⎋',''],
+    ['Allow the approval on screen once','⌘ ↩','Ctrl ↩'],['Deny the approval on screen','⌘ .','Ctrl .'],
     ['Settings','⌘ ,','Ctrl ,'],['Shortcuts','⌘ /',''],
   ];
   return sheet('Keyboard shortcuts',
@@ -5938,10 +5936,31 @@ function answer(key) {
   answerLive(req, key);
 }
 
-/* B01/B06: a request y, n, Esc and the card's buttons may still answer: no
+/* B01/B06: a request the keys and the card's buttons may still answer: no
    verdict and no end of its turn on it (closeApprovalCard). */
 function approvalOpen(req) {
   return !!req && !req.state && !(req.approvalId && CLOSED_APPROVALS.has(req.approvalId));
+}
+
+/* 05.10: the approval chord a keydown is, if any: 'y' for ⌘↩ (Ctrl+↩ off
+   macOS), 'n' for ⌘. (Ctrl+.). On macOS Ctrl+. stays Stop. */
+function apprChordOf(e, k) {
+  const mod = IS_MAC ? (e.metaKey && !e.ctrlKey) : (e.ctrlKey && !e.metaKey);
+  if (!mod || e.altKey || e.shiftKey) return null;
+  return k === 'Enter' ? 'y' : k === '.' ? 'n' : null;
+}
+/* 05.10: the request those chords answer: the open one whose card is drawn in
+   the chat on screen (its own, or a request with no chat of its own drawn
+   here), and not while Settings or an overlay is over it. */
+function apprOnScreen() {
+  const req = S.pending;
+  if (!approvalOpen(req) || S.settings || S.overlay) return null;
+  const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
+  return card ? req : null;
+}
+/** 05.10: the keys named on the card's buttons and in the shortcuts sheet. */
+function apprKeyLabel(which) {
+  return (IS_MAC ? '⌘' : 'Ctrl+') + (which === 'y' ? '↩' : '.');
 }
 
 /* Backlog 25: the turn chat `sid` is running in this window, or null.
@@ -7001,31 +7020,19 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault(); voiceCancel(); return;
   }
 
-  // approval scope — only while a card is pending and focus is not in a text field
-  /* B06: and only the bare key. ⌘N with a card up denied it (`n`) instead of
-     opening a new chat, and the menu never saw the chord: a chord is a
-     command (the map below), never an answer. Only an open request answers
-     (approvalOpen): a card whose turn is over takes no key. Two chords stay
-     the card's: Ctrl+Y allows, as in the TUI (APPROVAL_CHORDS.approve in
-     src/tui/app-key-bindings.ts; not its Ctrl+N or Ctrl+D, which are a new
-     chat on Windows and a delete here), and Esc with a modifier does
-     nothing rather than fall through to the settings menu over the card. */
-  const apprKeys = approvalOpen(S.pending) && !inText && !S.settings && !(S.room === 'tasks' && TK.cancel); // Item 7: the settings window (and the Tasks room's cancel modal) own their keys
-  if (apprKeys && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && k.toLowerCase() === 'y') {
-    e.preventDefault(); ANX.via('key'); answer('y'); return;
-  }
-  if (apprKeys && k === 'Escape' && (e.metaKey || e.ctrlKey || e.altKey)) { e.preventDefault(); return; }
-  if (apprKeys && !e.metaKey && !e.ctrlKey && !e.altKey) {
-    const kk = k.toLowerCase();
-    // Item 1 (approval parity): `s` and `a` are gone. They fired answer() for
-    // the two session-grant buttons, which a LIVE request never draws (the
-    // agent's HTTP API carries no grant scope — src/http/route-approval.ts's
-    // ResolveBody is {approvalId, decision, reason} and parseDecision maps it
-    // to a bare boolean), and answerLive then printed a line apologising for a
-    // grant the operator never asked for. A key that cannot do what it says
-    // must not be offered.
-    if (['y','n'].includes(kk)) { e.preventDefault(); ANX.via('key'); answer(kk); return; }
-    if (k === 'Escape') { e.preventDefault(); ANX.via('key'); answer('esc'); return; }
+  /* 05.10 (Nadya): the desktop's approval keys. ⌘↩ allows once and ⌘. denies
+     (Ctrl+↩ / Ctrl+. off macOS) the open request whose card is on screen
+     (apprOnScreen), wherever the focus is, the box included: a draft there
+     stays as it is, nothing is typed or sent. Bare y / n / Esc, Shift+Esc and
+     Ctrl+Y no longer answer a card here (the TUI keeps them): a key a person
+     types in a sentence, or Esc meant for a menu, decided calls (B06, the
+     field's self-denials, ATO-209), and Esc has its desktop meaning back.
+     Abort run is the card's button. The Tasks form and the Add MCP server box
+     keep their own ⌘↩ (below). On Windows the menu's Send and Stop share these
+     chords and may fire too; onMenu drops them right after a card took one. */
+  const apprKey = apprChordOf(e, k);
+  if (apprKey && !(e.target.dataset && e.target.dataset.tkField) && e.target.id !== 'mcp-json' && apprOnScreen()) {
+    e.preventDefault(); ANX.via('key'); APPR_CHORD_AT = Date.now(); answer(apprKey); return;
   }
 
   /* Item 1 (plan hand-off): the TUI's PLAN_CHORDS — auto `y`, bypass `b`,
@@ -9138,7 +9145,12 @@ if (BR) {
     BR.liveTurns().then(adoptLiveTurns, () => 0)
       .then(() => (BR.replayApprovals ? BR.replayApprovals() : null)).catch(() => {});
   }
-  BR.onMenu((command) => { if (typeof command === 'string') { ANX.via('menu'); act(command); } });
+  BR.onMenu((command) => {
+    if (typeof command !== 'string') return;
+    // 05.10: the menu's copy of a chord a card just took (Send ⌘↩, Stop ⌘.) is not a second command.
+    if ((command === 'send' || command === 'stop') && Date.now() - APPR_CHORD_AT < 600) return;
+    ANX.via('menu'); act(command);
+  });
   BR.onLog((entry) => {
     if (!entry || !entry.line) return;
     /* ATO-121: one of the agent's structured lines comes with its own level

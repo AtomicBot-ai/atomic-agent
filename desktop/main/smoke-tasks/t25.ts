@@ -297,6 +297,10 @@ async function start(js: Js, agent: StandIn, text: string): Promise<string | nul
   }
 }
 
+/* 05.10: the desktop's Allow once key for the card on screen, ⌘↩ (Ctrl+↩ off
+   macOS). Bare y / n / Esc no longer answer a card here. */
+const ALLOW: Record<string, boolean> = process.platform === "darwin" ? { metaKey: true } : { ctrlKey: true };
+
 /** A key, pressed as press() does, then the window let to settle. */
 async function key(js: Js, k: string, mods: Record<string, boolean> = {}): Promise<void> {
   await js<boolean>(`(() => { ${H} press(${q(k)}, ${q(mods)}); return true; })()`);
@@ -479,12 +483,11 @@ async function keysAfterOpeningARunningChat(js: Js, check: Check, agent: StandIn
   const asked = await js<View>(VIEW);
   const onB = (await land(js, b, "smoke t25: a chat whose turn runs on")) ? await js<View>(VIEW) : null;
   const mark = agent.sent.length;
-  await key(js, "y");
-  await key(js, "n");
+  await key(js, "Enter", ALLOW);
   const keys = await js<View>(VIEW);
   const out = agent.since(mark);
   check(
-    "T25: y and n pressed right after opening a chat whose turn runs here do not answer another chat's approval, whose card is not on screen",
+    "T25: ⌘↩ pressed right after opening a chat whose turn runs here does not answer another chat's approval, whose card is not on screen",
     !!turnB && !!turnA && asked.pending === approval && asked.card && !!onB && onB.busy
       && out.length === 0 && keys.pending === null && !keys.card && !keys.waitingStrip && keys.waiting.includes(a),
     `turns=${turnA},${turnB} asked=${show(asked)} onB=${show(onB)} sent=${show(out)} keys=${show(keys)}`,
@@ -515,11 +518,11 @@ async function backToAWaitingChat(js: Js, check: Check, agent: StandIn, w: Brows
   const away = (await land(js, c, "smoke t25: another chat")) ? await js<View>(VIEW) : null;
   const back = (await land(js, a, "smoke t25: a chat whose turn asks for approval")) ? await js<View>(VIEW) : null;
   const mark = agent.sent.length;
-  await key(js, "y");
+  await key(js, "Enter", ALLOW);
   const after = await js<View>(VIEW);
   const out = agent.since(mark);
   check(
-    "T25: back in a chat that waits on its own approval, the card is on screen again and y allows that call",
+    "T25: back in a chat that waits on its own approval, the card is on screen again and ⌘↩ allows that call",
     !!turnA && !!away && away.pending === null && !away.card && !away.waitingStrip
       && !!back && back.card && back.pending === approval && back.waitingStrip
       && show(answered(out)) === show([`${approval} allow-once`]) && cancels(out).length === 0
@@ -649,11 +652,11 @@ async function deleteWhileWorking(js: Js, check: Check, agent: StandIn, w: Brows
     return !!b;
   })()`);
   await settle(js);
-  await key(js, "y");
+  await key(js, "Enter", ALLOW);
   const after = await js<View>(VIEW);
   const out2 = agent.since(mark2);
   check(
-    "T25: once its turn is stopped, its card says so, Delete… asks and deletes the chat, and y in the empty view answers nothing",
+    "T25: once its turn is stopped, its card says so, Delete… asks and deletes the chat, and ⌘↩ in the empty view answers nothing",
     stopped && card.startsWith("Not answered — the run was stopped") && deleted && show(cancels(out2)) === show([turnA])
       && out2.some((s) => s.channel === "delete" && s.sessionId === a)
       && answered(out2).length === 0 && after.sessionId === "" && after.pending === null && !after.waitingStrip && !after.busy,
