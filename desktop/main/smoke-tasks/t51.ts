@@ -83,11 +83,13 @@ async function listFailureInMain(check: Check): Promise<void> {
     ['could not list models from "groq": http 401: Invalid API Key', { status: 401 }],
     ['could not list models from "x": http 403', { status: 403 }],
     ['could not list models from "x": server listed no models', {}],
-    ["the agent did not answer `atag models search` within 90s — it may be busy or starting up. Try again. (fetch failed)", {}],
+    // ATO-202: our own deadline says it timed out; the stderr tail in brackets is not read for a cause or a status.
+    ["the agent did not answer `atag models search` within 90s — it may be busy or starting up. Try again. (fetch failed)", { timedOut: true }],
+    ["the agent did not answer `atag models search` within 90s — it may be busy or starting up. Try again. (http 401)", { timedOut: true }],
   ];
   const wrong = cases.filter(([text, want]) => JSON.stringify(modelListFailure(text)) !== JSON.stringify(want));
   check(
-    "B04: main reads a failed model list as unreachable (fetch failed, ECONNREFUSED, ENOTFOUND, timeout) or as the provider's HTTP status (401/403) — and our own deadline as neither",
+    "B04: main reads a failed model list as unreachable (fetch failed, ECONNREFUSED, ENOTFOUND, timeout) or as the provider's HTTP status (401/403) — and our own deadline as timed out (ATO-202)",
     wrong.length === 0,
     show(wrong.map(([text, want]) => ({ text, want, got: modelListFailure(text) }))),
   );

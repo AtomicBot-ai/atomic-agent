@@ -14756,12 +14756,27 @@ async function selLoadLocal() {
   render();
 }
 
+/* ATO-202: a failed model list in words, from main's fields, for the lists
+   that otherwise show the agent's own text ("fetch failed" for a server with
+   a self-signed certificate). '' when the fields say nothing more. */
+function modelListFailLine(res, name) {
+  if (!res) return '';
+  const who = name || 'The provider';
+  if (res.certificate) return who + ' answered with a certificate this app does not trust (' + res.certificate + ').';
+  if (res.timedOut) return 'The model list from ' + who + ' did not come back within 90 s. Try again.';
+  if (res.status === 401) return who + ' did not accept the saved key (401).';
+  if (res.status === 403) return who + ' refused access (403): check the account\u2019s region, organisation and credit.';
+  if (res.status === 429) return who + ' is limiting requests right now (429). Try again in a moment.';
+  if (res.status >= 500) return who + ' had a problem answering (HTTP ' + res.status + '). Try again in a moment.';
+  if (res.unreachable) return 'Nothing answered at ' + who + '\u2019s address. Check that it is running and reachable.';
+  return '';
+}
 async function selLoadModels(providerId) {
   const entry = selProviders().find((p) => p.id === providerId);
   SEL.modelsFor = providerId; SEL.models = []; SEL.modelsBusy = true; SEL.modelsErr = null; render();
   const res = await BR.providerModels(providerId, (entry && entry.kind) || '');
   SEL.modelsBusy = false;
-  if (!res || !res.ok) { SEL.modelsErr = (res && res.error) || 'could not list models'; render(); return; }
+  if (!res || !res.ok) { SEL.modelsErr = modelListFailLine(res, providerWord(providerId)) || (res && res.error) || 'could not list models'; render(); return; }
   SEL.models = res.models || [];
   render();
 }
@@ -17435,7 +17450,9 @@ async function wizNextStep() {
     ? {ok: true, models: WIZ.models}
     : await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
-    ANX.providerFailed('catalog_empty', OB.open);
+    // ATO-202: a server that did not answer (or answered with a certificate not trusted) is not an empty catalogue.
+    ANX.providerFailed(listed && listed.certificate ? 'certificate' : listed && listed.timedOut ? 'timed_out'
+      : listed && listed.unreachable ? 'server_unreachable' : 'catalog_empty', OB.open);
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
@@ -17454,10 +17471,14 @@ async function wizNextStep() {
        is nobody answering at its address. The text test stays as the
        fallback for an answer without them. */
     const said = String((listed && listed.error) || '');
-    const httpSaid = /\bhttp (\d{3})\b/.exec(said);
-    const status = listed && typeof listed.status === 'number' ? listed.status : httpSaid ? Number(httpSaid[1]) : 0;
+    /* ATO-202: the status is main's field only. Read back out of the words, a
+       `http 401` in the stderr tail our own 90 s deadline quotes said "didn't
+       accept this key" about a list that had simply timed out; main reads the
+       provider's own line (modelListFailure), or nothing. */
+    const status = listed && typeof listed.status === 'number' ? listed.status : 0;
     const refused = status === 401 || status === 403;
     const unreachable = !!(listed && listed.unreachable);
+    const cert = listed && listed.certificate ? String(listed.certificate) : '';
     /* B04: a server on this machine (Ollama, LM Studio, Atomic Chat, a custom
        loopback URL) has no key, so nothing here may blame one: an empty
        field there was never a key to check. Ollama not running read "Could
@@ -17469,7 +17490,12 @@ async function wizNextStep() {
     const name = k.custom ? (local ? 'your local server' : host || wizService(k)) : wizService(k);
     const Name = name.charAt(0).toUpperCase() + name.slice(1);
     const where = entry.baseUrl || host;
-    WIZ.error = unreachable && local
+    WIZ.error = cert
+      ? (local || k.custom ? Name : wizService(k)) + ' at ' + where + ' answered with a certificate this app does not trust (' + cert + '). '
+        + 'Give the server a trusted certificate' + (local ? ', or use http:// for a server on this machine' : '') + ', then try again.'
+      : listed && listed.timedOut
+      ? 'The model list from ' + name + ' did not come back within 90 s. Try again; if it keeps happening, check the address.'
+      : unreachable && local
       ? (k.custom ? 'Nothing is answering at ' + where + '. Start your local server, then try again.'
         : name + ' isn\u2019t answering at ' + where + '. Start ' + name + ', then try again.')
       : unreachable && k.custom
@@ -17478,8 +17504,18 @@ async function wizNextStep() {
       ? 'Couldn\u2019t reach ' + name + '. Check your internet connection, then try again.'
       : refused && local && !WIZ.apiKey
       ? Name + ' at ' + where + ' turned the request down. Check its server settings, then try again.'
+      /* ATO-202: a 403 on the model list is the account or the place, as
+         often as the key (a region block, an organisation's limit, no credit):
+         a key that may well be good is not called wrong. 401 is the key. */
+      : status === 403
+      ? wizService(k) + ' refused access (403). The key may be fine: check the account\u2019s region, organisation and credit, then try again.'
       : refused
       ? wizService(k) + ' didn\u2019t accept this key. Check that you copied all of it.'
+      // ATO-202: the provider answered, with its own trouble: nothing to say about the key.
+      : status === 429
+      ? wizService(k) + ' is limiting requests right now (429). Wait a moment, then try again.'
+      : status >= 500
+      ? wizService(k) + ' had a problem answering (HTTP ' + status + '). Try again in a moment.'
       : local && (!said || /\bno models\b/.test(said))
       ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
       : local
@@ -17488,7 +17524,9 @@ async function wizNextStep() {
       ? 'Could not check this key with ' + wizService(k) + '.'
       : wizService(k) + ' returned no models for this key.';
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
-    WIZ.errorKind = unreachable ? {for: WIZ.error, kind: 'unreachable'} : null;
+    // ATO-202: and for every line that is not about the key, the key field stays unlit (wizErrUnreachable).
+    const notTheKey = unreachable || cert || (listed && listed.timedOut) || status === 403 || status === 429 || status >= 500;
+    WIZ.errorKind = notTheKey && !(refused && local && !WIZ.apiKey) ? {for: WIZ.error, kind: 'unreachable'} : null;
     render();
     return;
   }
@@ -21280,7 +21318,7 @@ async function llmEnsureModels() {
   const res = await BR.providerModels(p.id, p.kind || '');
   if (LLMP.modelsFor !== p.id) return;
   LLMP.modelsBusy = false;
-  if (!res || !res.ok) LLMP.modelsErr = (res && res.error) || 'could not list models';
+  if (!res || !res.ok) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
   else LLMP.models = res.models || [];
   llmClampCursors();
   llmRepaint();

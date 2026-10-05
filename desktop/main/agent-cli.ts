@@ -970,18 +970,74 @@ function managedPortFromFile(): number | null {
  * …") is neither: it says nothing about the provider.
  */
 export interface ModelListFailure {
-  /** The provider answered with this HTTP status (401/403: it refused the key). */
+  /** The provider answered with this HTTP status (401: it refused the key; 403: it refused access). */
   status?: number;
   /** Nothing answered at the provider's address: not running, no network, no such host, timed out. */
   unreachable?: boolean;
+  /**
+   * ATO-202: something answered over HTTPS, with a certificate Node does not
+   * trust (self-signed, an unknown issuer, another host's name): the TLS
+   * error code. Not "nothing is answering", and not the key.
+   */
+  certificate?: string;
+  /** ATO-202: our own deadline on `models search` ran out. Nothing is known about the provider. */
+  timedOut?: boolean;
 }
 const LIST_UNREACHABLE =
   /\b(?:fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EHOSTDOWN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|socket hang up|aborted due to timeout|operation was aborted|connect timeout)\b/i;
-export function modelListFailure(error: string): ModelListFailure {
-  if (/^the agent did not answer\b/.test(error)) return {};
-  const http = /\bhttp ([1-5]\d\d)\b/.exec(error);
+/* ATO-202: Node's (and undici's `cause.code`) words for a certificate it will not trust. */
+const CERT_CODE =
+  /\b(SELF_SIGNED_CERT_IN_CHAIN|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT(?:_LOCALLY)?|UNABLE_TO_GET_CRL|CERT_[A-Z_]+|ERR_TLS_CERT_ALTNAME_INVALID)\b/;
+/** ATO-202: the TLS error code of a failed fetch (the error, or a `cause` under it), or null. */
+export function certificateCode(err: unknown): string | null {
+  let e: unknown = err;
+  for (let depth = 0; e && typeof e === "object" && depth < 5; depth++) {
+    const o = e as { code?: unknown; message?: unknown; cause?: unknown };
+    for (const said of [o.code, o.message]) {
+      const m = typeof said === "string" ? CERT_CODE.exec(said) : null;
+      if (m) return m[1]!;
+    }
+    e = o.cause;
+  }
+  return null;
+}
+/**
+ * ATO-202: the line `models search` writes for this provider's list
+ * (`could not list models from "<id>": <reason>`). The rest of stderr can
+ * hold other lines (a warning, a log line naming another request's `http
+ * 401`), and a status read from those is not this list's.
+ */
+function ownListLine(error: string, providerId: string): string | null {
+  const head = `could not list models from ${JSON.stringify(providerId)}: `;
+  const line = error.split("\n").find((l) => l.includes(head));
+  return line ? line.slice(line.indexOf(head) + head.length) : null;
+}
+export function modelListFailure(error: string, providerId?: string): ModelListFailure {
+  // ATO-202: our deadline is said as one, and its stderr tail (" (…)") is never read for a status.
+  if (/^the agent did not answer\b/.test(error)) return { timedOut: true };
+  const text = (providerId ? ownListLine(error, providerId) : null) ?? error;
+  const cert = CERT_CODE.exec(text);
+  if (cert) return { certificate: cert[1]! };
+  const http = /\bhttp ([1-5]\d\d)\b/.exec(text);
   if (http) return { status: Number(http[1]) };
-  return LIST_UNREACHABLE.test(error) ? { unreachable: true } : {};
+  return LIST_UNREACHABLE.test(text) ? { unreachable: true } : {};
+}
+
+/**
+ * ATO-202: `models search` reports undici's bare "fetch failed" and keeps the
+ * cause in the agent, so a server on https with a self-signed certificate
+ * read as nothing answering ("Start your local server"). When the list came
+ * back unreachable from an https address, this asks that address once, with
+ * no key and no body, for the cause. Only the TLS code is kept.
+ */
+async function certificateAt(baseUrl: string | undefined, timeoutMs = 5_000): Promise<string | null> {
+  if (!baseUrl || !/^https:\/\//i.test(baseUrl)) return null;
+  try {
+    await fetch(baseUrl, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    return null;
+  } catch (err) {
+    return certificateCode(err);
+  }
 }
 
 /**
@@ -1003,7 +1059,16 @@ export async function providerModels(
   const args = ["models", "search", " ", "--provider", providerId, "--limit", "200", "--json"];
   if (!bundled) args.push("--refresh");
   const res = await cli(args, 90_000);
-  if (!res.ok) return { ok: false, error: res.error, ...modelListFailure(res.error ?? "") };
+  if (!res.ok) {
+    const why = modelListFailure(res.error ?? "", providerId);
+    if (why.unreachable && !cliStandIns.getStore()) {
+      const read = await readWholeConfig().catch(() => null);
+      const entry = read?.config?.llm?.providers?.find((p) => p.id === providerId);
+      const cert = await certificateAt(entry?.baseUrl);
+      if (cert) return { ok: false, error: res.error, certificate: cert };
+    }
+    return { ok: false, error: res.error, ...why };
+  }
   try {
     const parsed = JSON.parse(res.stdout) as SearchedModel[];
     return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
@@ -1118,6 +1183,9 @@ export interface ProviderVerification {
    */
   noFunds?: boolean;
   detail?: string;
+  /** ATO-202: the request was not made: a certificate not trusted (its TLS code), or our deadline. */
+  certificate?: string;
+  timedOut?: boolean;
 }
 
 /* Backlog 40 — "the key works, but the account cannot pay".
@@ -1239,7 +1307,19 @@ export async function verifyProviderKey(
     /* "fetch failed" is undici's words, not a sentence for a person.
        What the user needs is which host did not answer and what that means
        for their key; the underlying message adds nothing they can act on. */
-    return { ok: false, checked: false, error: `Could not reach ${new URL(url).host} — the key was not checked.` };
+    const host = new URL(url).host;
+    /* ATO-202: two of those are not "could not reach": a server that answered
+       with a certificate this app does not trust, and our own deadline. */
+    const cert = certificateCode(err);
+    if (cert) {
+      return { ok: false, checked: false, certificate: cert,
+        error: `${host} answered with a certificate this app does not trust (${cert}) — the key was not checked.` };
+    }
+    if (err && typeof err === "object" && (err as { name?: unknown }).name === "TimeoutError") {
+      return { ok: false, checked: false, timedOut: true,
+        error: `${host} did not answer within ${Math.round(timeoutMs / 1000)} s — the key was not checked.` };
+    }
+    return { ok: false, checked: false, error: `Could not reach ${host} — the key was not checked.` };
   }
   if (res.ok) return { ok: true, checked: true, status: res.status };
   // The provider's own sentence is the useful one — "User not found",

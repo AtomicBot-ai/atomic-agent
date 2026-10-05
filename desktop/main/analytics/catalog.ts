@@ -134,7 +134,13 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   provider_setup_failed: {
     owner: "ui",
-    props: { step: en(["onboarding", "settings"]), reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "other"]) },
+    /* ATO-202: a model list that did not come back because nothing answered,
+       the certificate was not trusted, or our deadline ran out is not an
+       empty catalogue. */
+    props: {
+      step: en(["onboarding", "settings"]),
+      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "other"]),
+    },
   },
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
   model_configured: {
