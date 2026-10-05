@@ -7,6 +7,7 @@ import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { DownloadChip } from "./download-chip.js";
+import { pullBarOnScreen } from "./pull-bar-owner.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
@@ -130,7 +131,9 @@ export function StatusBar({
       {section === "run" && state.uiMode !== "debug" ? null : (
         <Breadcrumb state={state} section={section} />
       )}
-      {state.localModelsPanel.pull ? (
+      {/* The panel on screen may already draw this pull's bar; a
+          second one up here read as a second download. */}
+      {state.localModelsPanel.pull && !pullBarOnScreen(state) ? (
         <DownloadChip
           pull={state.localModelsPanel.pull}
           budget={
