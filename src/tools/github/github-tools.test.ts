@@ -210,12 +210,12 @@ describe("github.* tools", () => {
     const tools = toolsWith(api, { gate });
     await expect(
       tools.get("github.issue.create")!.run({ title: "t" }, makeCtx(repo)),
-    ).rejects.toThrow(/approval denied/);
+    ).rejects.toThrow(/The user declined/);
     await expect(
       tools
         .get("github.issue.comment")!
         .run({ number: 3, body: "b" }, makeCtx(repo)),
-    ).rejects.toThrow(/approval denied/);
+    ).rejects.toThrow(/The user declined/);
     expect(api.calls.filter((c) => !c.startsWith("getRepo"))).toEqual([]);
   });
 
@@ -227,7 +227,7 @@ describe("github.* tools", () => {
     const tools = toolsWith(api, { gate });
     await expect(
       tools.get("github.pr.create")!.run({ title: "t" }, makeCtx(repo)),
-    ).rejects.toThrow(/approval denied/);
+    ).rejects.toThrow(/The user declined/);
     expect(api.calls).toEqual(["getRepo"]);
   });
 

@@ -82,7 +82,7 @@ describe("os.fs.archive.extract", () => {
         { path: join(FIXTURES, "sample.zip"), destDir: dir },
         makeCtx(FIXTURES),
       ),
-    ).rejects.toThrow(/approval denied/);
+    ).rejects.toThrow(/The user declined/);
   });
 
   it("respects include filter", async () => {

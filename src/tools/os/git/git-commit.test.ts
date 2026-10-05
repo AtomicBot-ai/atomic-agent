@@ -113,7 +113,7 @@ describe("os.git.commit", () => {
     });
     await expect(
       tool.run({ message: "x", all: true }, makeCtx(repo)),
-    ).rejects.toThrow(/approval denied/);
+    ).rejects.toThrow(/The user declined/);
     const status = await runGitRaw(repo, ["status", "--porcelain"]);
     expect(status.stdout).toContain("?? b.txt");
     expect(await log(repo)).toEqual(["init"]);

@@ -139,10 +139,11 @@ export function createMcpToolDefinition(
           MCP_COMPRESSOR_OPTIONS,
         );
       } catch (err) {
-        // A denial is an operator decision, not a server failure —
-        // stamp it so downstream consumers (loop detector, traces)
-        // never conflate the two, and keep the message unscrubbed:
-        // it is generated locally, never server data.
+        // A denial is a local decision, not a server failure — stamp
+        // it so downstream consumers (loop detector, traces) never
+        // conflate the two, and keep the message unscrubbed: it is
+        // generated locally (`describeApprovalDenial`), never server
+        // data, and it is what tells the model whether the user said no.
         if (err instanceof ApprovalDeniedError) {
           return compressToolResult(
             {
@@ -153,6 +154,7 @@ export function createMcpToolDefinition(
                 server: meta.server,
                 rawName: meta.rawName,
                 approvalDenied: true,
+                deniedByUser: err.byUser,
               },
             },
             MCP_COMPRESSOR_OPTIONS,

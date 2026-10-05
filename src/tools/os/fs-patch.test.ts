@@ -96,7 +96,7 @@ describe("os.fs.patch", () => {
     });
     await expect(
       tool.run({ patch, apply: true }, makeCtx(dir)),
-    ).rejects.toThrow(/approval denied/);
+    ).rejects.toThrow(/The user declined/);
     expect(await readFile(file, "utf8")).toBe(original);
   });
 

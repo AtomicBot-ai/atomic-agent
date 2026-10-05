@@ -167,6 +167,7 @@ export class ApprovalBridge {
           approvalId: request.approvalId,
           approved: false,
           reason: "telegram delivery failed",
+          automatic: true,
         });
         return;
       }
@@ -180,6 +181,7 @@ export class ApprovalBridge {
         approvalId: request.approvalId,
         approved: false,
         reason: "telegram delivery failed",
+        automatic: true,
       });
       return;
     }
@@ -228,7 +230,8 @@ export class ApprovalBridge {
     const resolved = this.deps.approvals.resolve({
       approvalId,
       approved,
-      reason: "telegram",
+      // A button carries no words of the user's, so a deny has no reason.
+      ...(approved ? { reason: "telegram" } : {}),
     });
 
     await this.acknowledge(update.id, approved ? "Approved" : "Denied");
@@ -270,7 +273,8 @@ export class ApprovalBridge {
       const resolved = this.deps.approvals.resolve({
         approvalId,
         approved: false,
-        reason: "timeout",
+        reason: "the approval prompt timed out with no answer",
+        automatic: true,
       });
       if (resolved) {
         void this.editFinal(chatId, messageId, "⏱ timed out — auto-denied");

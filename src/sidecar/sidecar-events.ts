@@ -113,6 +113,10 @@ export interface CancelPayload {
 export interface ApprovalResponsePayload {
   approvalId: string;
   approved: boolean;
+  /**
+   * On a deny, the user's own words, if they typed any. The model reads
+   * it as what the user said, so a host never sends a label here.
+   */
   reason?: string;
 }
 

@@ -31,6 +31,8 @@ describe("ApprovalGate", () => {
     const decision = await mine;
     expect(decision.approved).toBe(false);
     expect(decision.reason).toBe("operator switched away");
+    // Nobody answered it: never reported to the model as the user's no.
+    expect(decision.automatic).toBe(true);
     // The other session's request is untouched and still answerable.
     expect(gate.pendingCount()).toBe(1);
     const stayingId = emittedIds[1] ?? "";

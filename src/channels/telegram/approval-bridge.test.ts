@@ -140,6 +140,7 @@ describe("ApprovalBridge.dispatch", () => {
         approvalId: "abc",
         approved: false,
         reason: "telegram delivery failed",
+        automatic: true,
       },
     ]);
     expect(h.bridge.pendingCount()).toBe(0);
@@ -157,6 +158,7 @@ describe("ApprovalBridge.dispatch", () => {
         approvalId: "abc",
         approved: false,
         reason: "telegram delivery failed",
+        automatic: true,
       },
     ]);
     expect(h.bridge.pendingCount()).toBe(0);
@@ -197,7 +199,9 @@ describe("ApprovalBridge.handleCallback", () => {
     await h.bridge.handleCallback(callback("abc", "n"));
 
     expect(h.approvals.decisions).toEqual([
-      { approvalId: "abc", approved: false, reason: "telegram" },
+      // A person pressed the button, and a button carries no words: no
+      // reason, or the model would read "telegram" as what they said.
+      { approvalId: "abc", approved: false },
     ]);
     expect(h.api.editMessageText.mock.calls[0]![2]).toBe("❌ denied");
   });
@@ -284,7 +288,12 @@ describe("ApprovalBridge timeout", () => {
     h.fireFirst();
 
     expect(h.approvals.decisions).toEqual([
-      { approvalId: "abc", approved: false, reason: "timeout" },
+      {
+        approvalId: "abc",
+        approved: false,
+        reason: "the approval prompt timed out with no answer",
+        automatic: true,
+      },
     ]);
     expect(h.api.editMessageText).toHaveBeenCalledTimes(1);
     expect(h.api.editMessageText.mock.calls[0]![2]).toBe(

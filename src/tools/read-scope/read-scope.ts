@@ -142,8 +142,37 @@ export function workerReadRefusal(
 }
 
 /**
- * The refusal for a session read outside its roots — the operator said
- * no at the `fs_read_outside` prompt, or there was no ladder to ask.
+ * The result for a session read outside its roots that the user said no
+ * to at the `fs_read_outside` prompt. `declined` is the denial's own
+ * text (`describeApprovalDenial`): the scope sentence below, with its
+ * "ask the user to name the path", reads as a policy block and invites
+ * asking the same question again.
+ */
+export function sessionReadDeclined(
+  tool: string,
+  path: string,
+  roots: readonly string[],
+  declined: string,
+): CompressedToolResult {
+  return compressToolResult(
+    {
+      tool,
+      status: "error",
+      output: declined,
+      details: {
+        reason: READ_REFUSAL_REASON,
+        path,
+        allowedRoots: [...roots],
+        deniedByUser: true,
+      },
+    },
+    uncut(declined),
+  );
+}
+
+/**
+ * The refusal for a session read outside its roots — the prompt ended
+ * without the user's decision, or there was no ladder to ask.
  */
 export function sessionReadRefusal(
   tool: string,

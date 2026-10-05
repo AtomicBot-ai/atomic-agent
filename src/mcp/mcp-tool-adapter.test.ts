@@ -396,11 +396,18 @@ describe("approval gating", () => {
     );
     const result = await def.run({ key: "HKLM\\..." }, ctx);
     expect(result.status).toBe("error");
-    expect(result.summary).toContain("approval denied");
+    // The model is told the user said no, with their words, and not
+    // to retry: a bare "approval denied" read like a policy block.
+    expect(result.summary).toContain(
+      "The user declined this mcp.windows.registry_write call",
+    );
+    expect(result.summary).toContain("not an error or a policy block");
+    expect(result.summary).toContain("The user said: operator said no");
     expect(result.details).toMatchObject({
       server: "windows",
       rawName: "registry_write",
       approvalDenied: true,
+      deniedByUser: true,
     });
     expect(callTool).not.toHaveBeenCalled();
   });
