@@ -3634,6 +3634,74 @@ export function backendInstalled(): boolean {
   }
   return existsSync(join(managedDataDir(typeof override === "string" ? override : null), "backend"));
 }
+/**
+ * ATO-129: the llama.cpp update downloads and unpacks into `<data dir>/backend.next`
+ * and moves the old backend aside as `backend.old` for the moment of the swap
+ * (src/local-llm/backend-installer.ts). It clears both when it fails, but not
+ * when it is killed — Quit, a Cancel, its own time limit — and the next
+ * update is the only thing that clears them: hundreds of megabytes left on
+ * disk. They are removed when an update is stopped (in the daemon's turn, where
+ * no other update can be writing them) and, at launch, when nothing has
+ * written them for STAGING_STALE_MS. `backend.old` with no live `backend/`
+ * beside it is an update killed between the swap's two renames: it is the only
+ * backend there is, and it is moved back, as the installer's own rollback
+ * would. Off the main thread (fs/promises), as hundreds of megabytes go.
+ * Returns what it did: the names removed, and `backend.old → backend`.
+ */
+export const STAGING_STALE_MS = 10 * 60_000;
+export async function sweepBackendStaging(dataDir: string, opts: { minAgeMs?: number; now?: number } = {}): Promise<string[]> {
+  const minAgeMs = opts.minAgeMs ?? 0;
+  const now = opts.now ?? Date.now();
+  const done: string[] = [];
+  if (!dataDir || !isAbsolute(dataDir)) return done;
+  const live = join(dataDir, "backend");
+  const stale = (dir: string) => minAgeMs <= 0 || now - newestMtime(dir) >= minAgeMs;
+  try {
+    const old = join(dataDir, "backend.old");
+    if (!existsSync(live) && lstatSync(old).isDirectory() && stale(old)) {
+      renameSync(old, live);
+      done.push("backend.old → backend");
+    }
+  } catch {
+    // no backend.old, or it could not be moved back: left as it is
+  }
+  for (const name of ["backend.next", "backend.old"]) {
+    const dir = join(dataDir, name);
+    try {
+      if (!lstatSync(dir).isDirectory()) continue;
+      if (name === "backend.old" && !existsSync(live)) continue;
+      if (!stale(dir)) continue;
+      await rm(dir, { recursive: true, force: true });
+      done.push(name);
+    } catch {
+      // Not there, or not ours to remove now.
+    }
+  }
+  return done;
+}
+/** The newest mtime of a folder and what is directly in it: a download writes its archive there. */
+function newestMtime(dir: string): number {
+  let newest = lstatSync(dir).mtimeMs;
+  for (const name of readdirSync(dir)) {
+    try {
+      newest = Math.max(newest, lstatSync(join(dir, name)).mtimeMs);
+    } catch {
+      // gone meanwhile
+    }
+  }
+  return newest;
+}
+/** The managed data dir the desktop's config names (its `dataDirOverride`, or the default). */
+export function managedDataDirNow(): string {
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    const override = cfg.localModels?.managed?.dataDirOverride;
+    return managedDataDir(typeof override === "string" ? override : null);
+  } catch {
+    return managedDataDir(null);
+  }
+}
+
 export function modelsUpdateStream(
   onLine: (line: string) => void,
   limits: { firstProgressMs?: number; stallMs?: number } = {},

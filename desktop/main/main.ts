@@ -166,6 +166,9 @@ import {
   // r5 item 7 (setup wizard): the streamed runtime phase, the custom-endpoint
   // whole-file write, and the four import sources the flow's last step offers.
   modelsUpdateStream,
+  managedDataDirNow,
+  STAGING_STALE_MS,
+  sweepBackendStaging,
   setExternalLlamaUrls,
   detectImportAgents,
   importAgentDir,
@@ -443,6 +446,16 @@ function stopForQuit(): () => void {
    while it waits for its turn the wait ends at once and the turn does
    nothing; once it runs, `run` stops its child on the same signal. */
 const UPDATE_STOPPED = "the llama.cpp update was stopped before it began";
+/* ATO-129: an update that ended without its new backend — stopped by Quit, a
+   Cancel or its own time limit — leaves its half-downloaded staging folder
+   behind; it goes here, still in the update's daemon turn, where no other
+   update writes there (agent-cli sweepBackendStaging). */
+async function updateSwept<T extends { ok: boolean }>(res: T): Promise<T> {
+  if (res.ok) return res;
+  const gone = await sweepBackendStaging(managedDataDirNow());
+  if (gone.length) console.error(`[desktop] local-llm: removed what the stopped llama.cpp update left behind (${gone.join(", ")})`);
+  return res;
+}
 function updateInTurn<T>(stop: AbortSignal, ended: (error: string) => T, run: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve) => {
     let begun = false;
@@ -1237,7 +1250,7 @@ function wireIpc(client: AgentClient): void {
           pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
         );
         own.signal.addEventListener("abort", () => started.cancel(), { once: true });
-        return started.done;
+        return started.done.then(updateSwept);
       },
     );
     pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
@@ -2037,7 +2050,7 @@ function wireIpc(client: AgentClient): void {
         (error) => ({ ok: false, stdout: "", stderr: "", error }),
         () => {
           held.hold = updateBegins();
-          return modelsUpdate({ signal: own.signal });
+          return modelsUpdate({ signal: own.signal }).then(updateSwept);
         },
       );
       A.runtimeUpdated("settings", updateStartedAt, res, own.signal.aborted);
@@ -8982,7 +8995,13 @@ void app.whenReady().then(async () => {
        schema defaults to 19091/19092, which is what the operator's terminal
        agent also holds; two daemons cannot share a port. On every later
        launch this is skipped entirely, so it costs nothing. */
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(() => {
+    /* ATO-129: what an update killed in an earlier run left behind (Quit
+       mid-download, a crash), once nothing has written it for a while; before
+       the agent or a model start, so no update of theirs is writing there. */
+    const sweepAtLaunch = () => sweepBackendStaging(managedDataDirNow(), { minAgeMs: STAGING_STALE_MS })
+      .then((swept) => { if (swept.length) console.error(`[desktop] local-llm: tidied what an earlier llama.cpp update left behind (${swept.join(", ")})`); })
+      .catch(() => undefined);
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(() => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
