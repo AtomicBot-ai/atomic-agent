@@ -447,7 +447,30 @@ export async function executeBatch(
     input: BatchCallInput,
   ): Promise<CompressedToolResult> => {
     try {
-      return await registry.invoke(input.call.tool, input.call.args, {
+      // Preserve the model reply and append the authoritative verification verdict.
+      // This same call object feeds the persisted terminal transcript.
+      const fusionState =
+        ctx.isFusionOrchestrator?.() === true ? ctx.fusionState?.() : undefined;
+      const blocked = fusionState?.blockedChecklist;
+      const verdict = fusionState?.checklistVerdict;
+      if (input.resourceClass === "terminal" && blocked !== undefined) {
+        const key = input.call.tool === "reply" ? "text" : "summary";
+        const current = typeof input.call.args[key] === "string" ? input.call.args[key] as string : "";
+        const footer = `Behavior checklist blocked — work is incomplete.\n${blocked}`;
+        const text = current.endsWith(footer)
+          ? current
+          : `${current}${current.length > 0 ? "\n\n" : ""}${footer}`;
+        input.call.args = { ...input.call.args, [key]: text };
+      } else if (input.resourceClass === "terminal" && verdict !== undefined) {
+        const key = input.call.tool === "reply" ? "text" : "summary";
+        const current =
+          typeof input.call.args[key] === "string" ? input.call.args[key] as string : "";
+        const text = current.includes(verdict)
+          ? current
+          : `${current}${current.length > 0 ? "\n" : ""}${verdict}`;
+        input.call.args = { ...input.call.args, [key]: text };
+      }
+      const result = await registry.invoke(input.call.tool, input.call.args, {
         workingDir: ctx.workingDir,
         sessionId: ctx.sessionId,
         stepIndex: ctx.stepIndex,
@@ -456,6 +479,28 @@ export async function executeBatch(
         ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
       });
+      if (input.resourceClass === "terminal" && blocked !== undefined) {
+        return {
+          ...result,
+          status: "error",
+          summary: input.call.args[input.call.tool === "reply" ? "text" : "summary"] as string,
+          truncated: false,
+          details: { ...result.details, checklistPassed: false, checklistVerdict: blocked },
+        };
+      }
+      if (
+        input.resourceClass === "terminal" &&
+        verdict !== undefined &&
+        !result.summary.includes(verdict)
+      ) {
+        return {
+          ...result,
+          summary: `${result.summary}${result.summary.length > 0 ? "\n" : ""}${verdict}`,
+          truncated: false,
+          details: { ...result.details, checklistVerdict: verdict },
+        };
+      }
+      return result;
     } catch (err) {
       if (ctx.signal.aborted) {
         // Cooperative cancellation: the tool honoured the signal and

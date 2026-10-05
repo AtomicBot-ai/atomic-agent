@@ -4,7 +4,6 @@ import { resolveUserPath } from "../os/expand-home.js";
 import {
   describeProvide,
   provideSearchPaths,
-  type ContractCheck,
   type ContractProvide,
   type DelegateContract,
 } from "./contract.js";
@@ -55,8 +54,12 @@ export type ContractCheckRunner = (
 export interface ContractCheckOutcome {
   /** The task the check was attributed to; absent for a call-level check. */
   task?: string;
+  /** Stable checklist label. `runContractChecks` always supplies one. */
+  item?: string;
+  /** False means the item was never actually evaluated. */
+  checked?: boolean;
   ok: boolean;
-  /** The runner's summary or error, head only. */
+  /** The runner's summary or the reason the item failed / stayed unchecked. */
   detail: string;
 }
 
@@ -89,10 +92,6 @@ export interface ContractReport {
 
 /** Files above this are not searched; a provide is not that big. */
 const MAX_SEARCHED_FILE_BYTES = 8 * 1024 * 1024;
-/** How much of a check's verdict a row carries. */
-const CHECK_DETAIL_CHARS = 400;
-/** Bound on the `contract:` line of the status table. */
-const CONTRACT_LINE_CHARS = 1200;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -280,130 +279,4 @@ export function applyContractFindings(
   });
 }
 
-function head(text: string, cap: number): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > cap ? `${flat.slice(0, cap)}…` : flat;
-}
-
-/**
- * Run the contract's checks through the wired runner. Never throws and
- * never invents a pass: no runner, an aborted turn or a runner that
- * threw all come back as `checksSkipped` with the reason.
- */
-export async function runContractChecks(
-  checks: readonly ContractCheck[],
-  runner: ContractCheckRunner | undefined,
-  ctx: { workingDir: string; signal: AbortSignal },
-): Promise<{ outcomes: ContractCheckOutcome[]; checksSkipped?: string }> {
-  if (checks.length === 0) return { outcomes: [] };
-  const plural = `${checks.length} check${checks.length === 1 ? "" : "s"}`;
-  if (runner === undefined) {
-    return {
-      outcomes: [],
-      checksSkipped: `${plural} not run — no check runner is wired`,
-    };
-  }
-  if (ctx.signal.aborted) {
-    return { outcomes: [], checksSkipped: `${plural} not run — the turn was cancelled` };
-  }
-  const specs = checks.map(({ task: _task, ...spec }) => spec);
-  let results: readonly ContractCheckResult[];
-  try {
-    results = (await runner(specs, ctx)).results;
-  } catch (error) {
-    return {
-      outcomes: [],
-      checksSkipped: `${plural} not run — the check runner failed: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  const outcomes = checks.map((check, i): ContractCheckOutcome => {
-    const result = results[i];
-    const task = check.task === undefined ? {} : { task: check.task };
-    if (result === undefined) {
-      return { ...task, ok: false, detail: "the runner returned no result" };
-    }
-    const detail = head(
-      result.error ?? result.summary ?? (result.ok ? "passed" : "failed"),
-      CHECK_DETAIL_CHARS,
-    );
-    return { ...task, ok: result.ok, detail };
-  });
-  return { outcomes };
-}
-
-/**
- * Fold the checks into the rows. A task whose declared check failed
- * becomes `failed` with `checks: …` as its error — unless it was
- * cancelled, which says the operator ended it and outranks a check that
- * could not have passed. Call-level checks (no task) stay on the
- * contract line.
- */
-export function applyCheckOutcomes(
-  results: readonly WorkerTaskResult[],
-  outcomes: readonly ContractCheckOutcome[],
-): WorkerTaskResult[] {
-  return results.map((result) => {
-    const own = outcomes.filter((o) => o.task === result.id);
-    if (own.length === 0) return result;
-    const failed = own.filter((o) => !o.ok);
-    const detail =
-      failed.length > 0 ? failed.map((o) => o.detail).join("; ") : undefined;
-    const checks = {
-      total: own.length,
-      failed: failed.length,
-      ...(detail === undefined ? {} : { detail }),
-    };
-    if (failed.length === 0 || result.status === "cancelled") {
-      return { ...result, checks };
-    }
-    const error = `checks: ${detail}`;
-    return {
-      ...result,
-      status: "failed",
-      checks,
-      error: result.error === undefined ? error : `${error}; ${result.error}`,
-    };
-  });
-}
-
-/**
- * The `contract:` line of the status table — presence first, then why
- * some provides could not be judged at all, then the checks that belong
- * to no task, then why the checks did not run, then
- * the warnings the call was run with (an unprovided require, so the
- * orchestrator fixes the contract on its next call instead of wondering
- * why a worker never found it). Nothing when the contract declared
- * nothing checkable and raised no warning.
- */
-export function renderContractLine(report: ContractReport): string | undefined {
-  const parts: string[] = [];
-  if (report.findings.length > 0) {
-    const missing = report.findings.filter((f) => !f.present);
-    parts.push(
-      missing.length === 0
-        ? `all ${report.findings.length} provide${report.findings.length === 1 ? "" : "s"} present`
-        : `${missing.length} missing — ${missing.map(describeMissing).join("; ")}`,
-    );
-  }
-  if (report.providesSkipped !== undefined) parts.push(report.providesSkipped);
-  const callLevel = report.checks.filter((o) => o.task === undefined);
-  if (callLevel.length > 0) {
-    const failed = callLevel.filter((o) => !o.ok);
-    parts.push(
-      failed.length === 0
-        ? `call-level checks: ${callLevel.length} of ${callLevel.length} passed`
-        : `call-level checks: ${failed.length} of ${callLevel.length} failed — ${failed.map((o) => o.detail).join("; ")}`,
-    );
-  } else if (report.checks.length > 0) {
-    const failed = report.checks.filter((o) => !o.ok).length;
-    parts.push(
-      failed === 0
-        ? `checks: ${report.checks.length} of ${report.checks.length} passed`
-        : `checks: ${failed} of ${report.checks.length} failed (see the task rows)`,
-    );
-  }
-  if (report.checksSkipped !== undefined) parts.push(report.checksSkipped);
-  parts.push(...(report.warnings ?? []));
-  if (parts.length === 0) return undefined;
-  return `contract: ${head(parts.join("; "), CONTRACT_LINE_CHARS)}`;
-}
+export { runContractChecks, applyCheckOutcomes, contractChecklistPasses, renderContractLine } from "./contract-checklist.js";

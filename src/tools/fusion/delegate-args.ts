@@ -54,6 +54,7 @@ import {
   CONTRACT_PROVIDE_KINDS,
   MAX_PROVIDE_SHAPE_CHARS,
   MAX_CONTRACT_CHECKS,
+  MAX_CONTRACT_CHECK_ITEM_CHARS,
   MAX_CONTRACT_PROVIDES,
   MAX_CONTRACT_RENDERED_CHARS,
   contractWarnings,
@@ -278,7 +279,7 @@ function readMaxWorkers(value: unknown, problems: string[]): number | null {
  * string costs one `JSON.parse`; anything that does not parse falls
  * through unchanged and gets the same error it got before.
  */
-function readJsonArg(value: unknown): unknown {
+export function readJsonArg(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
     return JSON.parse(value);
@@ -469,13 +470,28 @@ function readContract(
           problems.push(`${label} must be an object`);
           continue;
         }
-        const { task, ...spec } = entry;
+        const { task, item, ...spec } = entry;
+        let checklistItem: string | undefined;
+        if (item !== undefined && item !== null) {
+          if (typeof item !== "string" || item.trim().length === 0) {
+            problems.push(`${label}.item must be a non-empty string`);
+            continue;
+          }
+          if (item.trim().length > MAX_CONTRACT_CHECK_ITEM_CHARS) {
+            problems.push(
+              `${label}.item has ${item.trim().length} characters; at most ${MAX_CONTRACT_CHECK_ITEM_CHARS}`,
+            );
+            continue;
+          }
+          checklistItem = item.trim();
+        }
         if (Object.keys(spec).length === 0) {
           problems.push(`${label} carries no verify.run arguments`);
           continue;
         }
+        const named = checklistItem === undefined ? spec : { item: checklistItem, ...spec };
         if (task === undefined || task === null) {
-          checks.push(spec);
+          checks.push(named);
           continue;
         }
         const bad = known(task, `${label}.task`);
@@ -483,7 +499,7 @@ function readContract(
           problems.push(bad);
           continue;
         }
-        checks.push({ task: (task as string).trim(), ...spec });
+        checks.push({ task: (task as string).trim(), ...named });
       }
       if (checks.length > 0) contract.checks = checks;
     }

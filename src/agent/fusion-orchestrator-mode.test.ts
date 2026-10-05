@@ -327,3 +327,66 @@ describe("wouldRefuse (the shared predicate)", () => {
     expect(wouldRefuse("mcp.notion.search", ctx)).toBe(true);
   });
 });
+
+
+describe("obsolete missing-check policy refusal", () => {
+  const result = (details: Record<string, unknown>, status: "ok" | "error" = "error") => ({
+    tool: "fusion.delegate", status, summary: "fan-out result", details, truncated: false,
+  });
+  const missing = () => recordDelegation(emptyFusionOrchestratorState(), false, result({
+    checklistPassed: false, checklistVerdict: "behavior acceptance=UNCHECKED", checklistPolicyRefusal: true,
+  }));
+  const optional = (status: "ok" | "error" = "ok") => result({ checklistNotRequired: true }, status);
+
+  it("clears a policy-only block without manufacturing a checklist PASS", () => {
+    const after = recordDelegation(missing(), true, optional());
+    expect(after.blockedChecklist).toBeUndefined();
+    expect(after.checklistVerdict).toBeUndefined();
+    expect(after.checklistPolicyRefusal).toBeUndefined();
+  });
+
+  it("does not clear that block when the optional fan-out itself fails", () => {
+    expect(recordDelegation(missing(), false, optional("error")).blockedChecklist)
+      .toBe("behavior acceptance=UNCHECKED");
+  });
+
+  it("never clears a failed declared checklist just because the policy became optional", () => {
+    const failed = recordDelegation(emptyFusionOrchestratorState(), true, result({
+      checklistPassed: false, checklistVerdict: "wall=FAIL",
+    }));
+    expect(recordDelegation(failed, true, optional()).blockedChecklist).toBe("wall=FAIL");
+  });
+
+  it("does not carry policy-only provenance into a later real checklist failure", () => {
+    const failed = recordDelegation(missing(), true, result({
+      checklistPassed: false, checklistVerdict: "boxes=UNCHECKED",
+    }));
+    expect(failed.checklistPolicyRefusal).toBeUndefined();
+    expect(recordDelegation(failed, true, optional()).blockedChecklist).toBe("boxes=UNCHECKED");
+  });
+});
+
+
+it("preserves declared evidence across all four-event policy/evidence sequences", () => {
+  const events = ["policy", "argument", "declared", "optional", "optional-failed", "verified"] as const;
+  for (const a of events) for (const b of events) for (const c of events) for (const d of events) {
+    let state = emptyFusionOrchestratorState();
+    let kind: "none" | "policy" | "declared" = "none";
+    for (const event of [a, b, c, d]) {
+      const details: Record<string, unknown> = event === "policy"
+        ? { checklistPassed: false, checklistPolicyRefusal: true, checklistVerdict: "missing=UNCHECKED" }
+        : event === "declared" ? { checklistPassed: false, checklistVerdict: "wall=FAIL" }
+        : event === "verified" ? { checklistPassed: true, checklistVerdict: "wall=PASS" }
+        : event.startsWith("optional") ? { checklistNotRequired: true } : {};
+      const ok = event === "optional" || event === "verified";
+      state = recordDelegation(state, ok, { tool: "fusion.delegate", status: ok ? "ok" : "error", summary: event, details, truncated: false });
+      if (event === "verified") kind = "none";
+      else if (event === "declared") kind = "declared";
+      else if (event === "policy" && kind !== "declared") kind = "policy";
+      else if (event === "optional" && kind === "policy") kind = "none";
+      const actual = state.blockedChecklist === undefined ? "none" : state.checklistPolicyRefusal === true ? "policy" : "declared";
+      expect(actual, JSON.stringify([a, b, c, d, event])).toBe(kind);
+      if (kind === "declared") expect(state.blockedChecklist).toBe("wall=FAIL");
+    }
+  }
+});

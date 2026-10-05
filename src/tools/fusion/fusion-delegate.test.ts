@@ -11,6 +11,7 @@ import { createEmptySessionState } from "../../session/session-state.js";
 import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolContext } from "../tool-registry.js";
+import { runChecks as runVerifyChecks } from "../verify/run-verify.js";
 import {
   buildFusionDelegateTool,
   type FusionDelegateDeps,
@@ -859,12 +860,13 @@ describe("fusion.delegate", () => {
       checks: [
         {
           task: "t1",
+          item: "ship parses",
           kind: "command",
           cmd: "node",
           args: ["--check", "js/ship.js"],
         },
-        { task: "t2", kind: "page", path: "index.html", checks: ["no errors"] },
-        { kind: "command", cmd: "npm", args: ["test"] },
+        { task: "t2", item: "page has no errors", kind: "page", path: "index.html", checks: ["no errors"] },
+        { item: "test suite passes", kind: "command", cmd: "npm", args: ["test"] },
       ],
     };
 
@@ -924,8 +926,11 @@ describe("fusion.delegate", () => {
         expect(briefs[1]).toContain(
           "You may rely on: HD.Ship (symbol from t1 in js/ship.js)",
         );
+        expect(briefs[0]).toContain("ship parses:");
+        expect(briefs[0]).toContain("page has no errors:");
+        expect(briefs[0]).toContain("test suite passes:");
 
-        // The runner sees the specs without their `task` key, and the call's cwd.
+        // The runner sees only verify.run specs: checklist metadata stays with the contract.
         expect(runChecks).toHaveBeenCalledTimes(1);
         expect(runChecks.mock.calls[0]![0]).toEqual([
           { kind: "command", cmd: "node", args: ["--check", "js/ship.js"] },
@@ -936,18 +941,21 @@ describe("fusion.delegate", () => {
 
         // Presence: `HD.Ship.reset` was never written; the id is spelled the other way.
         const lines = result.summary.split("\n");
+        // Error results gain a compressor signature, but the original status table stays intact.
         // t2 requires what t1 provides, so t2 ran in a second wave (F45).
-        expect(lines[0]).toBe("2 tasks in 2 waves (t1 → t2): 1 ok, 1 failed");
-        expect(lines[1]).toBe(
-          "contract: 2 missing — [t1] symbol HD.Ship.reset not in js/ship.js; [t2] id btn-launch not in index.html; call-level checks: 1 of 1 passed",
+        expect(lines).toContain("2 tasks in 2 waves (t1 → t2): 1 ok, 1 failed");
+        expect(lines).toContain(
+          "contract: 2 missing — [t1] symbol HD.Ship.reset not in js/ship.js; [t2] id btn-launch not in index.html; checklist: [t1] ship parses=PASS; [t2] page has no errors=FAIL — no errors: 1 pageerror — ReferenceError: p is not defined; test suite passes=PASS",
         );
-        expect(lines[2]).toBe(
+        expect(lines).toContain(
           "- [t1] ok — One — checks: 1 of 1 passed — contract: symbol HD.Ship.reset not in js/ship.js",
         );
         // The task whose declared check failed is `failed`, with the verdict as its error.
-        expect(lines[3]).toBe(
+        expect(lines).toContain(
           "- [t2] failed — Two — error: checks: no errors: 1 pageerror — ReferenceError: p is not defined — checks: 1 of 1 failed — contract: id btn-launch not in index.html",
         );
+        expect(result.status).toBe("error");
+        expect(result.details.checklistPassed).toBe(false);
         const rows = result.details.tasks as WorkerTaskResult[];
         expect(rows.map((r) => r.status)).toEqual(["ok", "failed"]);
         const report = result.details.contract as {
@@ -1003,7 +1011,7 @@ describe("fusion.delegate", () => {
       }
     });
 
-    it("reports declared checks as not run when no runner is wired, and never fails a task on them", async () => {
+    it("fails closed when declared checklist items cannot be run", async () => {
       const dir = fixture();
       try {
         const tool = buildFusionDelegateTool(deps({ workingDir: dir }));
@@ -1011,12 +1019,745 @@ describe("fusion.delegate", () => {
           { tasks: TASKS, contract: CONTRACT },
           ctx({ workingDir: dir }),
         );
-        expect(result.summary.split("\n")[1]).toContain(
-          "3 checks not run — no check runner is wired",
-        );
+        const contractLine = result.summary.split("\n").find((line) => line.startsWith("contract: "))!;
+        expect(contractLine).toContain("[t1] ship parses=UNCHECKED");
+        expect(contractLine).toContain("[t2] page has no errors=UNCHECKED");
+        expect(contractLine).toContain("test suite passes=UNCHECKED");
+        expect(result.status).toBe("error");
+        expect(result.details.checklistPassed).toBe(false);
         const rows = result.details.tasks as WorkerTaskResult[];
-        expect(rows.map((r) => r.status)).toEqual(["ok", "ok"]);
-        expect(rows[0]).not.toHaveProperty("checks");
+        expect(rows.map((r) => r.status)).toEqual(["failed", "failed"]);
+        const report = result.details.contract as { checks: Array<{ checked?: boolean; ok: boolean }> };
+        expect(report.checks).toHaveLength(3);
+        expect(report.checks.every((check) => check.checked === false && check.ok === false)).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("fails the whole fan-out on a failing call-level behavior item even when all workers are ok", async () => {
+      const tool = buildFusionDelegateTool(
+        deps({
+          runChecks: async (specs) => ({
+            ok: false,
+            results: specs.map(() => ({ ok: false, summary: "probe wall moved: expected true, got false" })),
+          }),
+        }),
+      );
+      const result = await tool.run(
+        {
+          tasks: TASKS,
+          contract: {
+            checks: [
+              { item: "wall breaks after impact", kind: "command", cmd: "node", args: ["behavior.js"] },
+            ],
+          },
+        },
+        ctx(),
+      );
+      expect((result.details.tasks as WorkerTaskResult[]).every((row) => row.status === "ok")).toBe(true);
+      expect(result.status).toBe("error");
+      expect(result.details.checklistPassed).toBe(false);
+      expect(result.summary).toContain("wall breaks after impact=FAIL");
+      expect(result.summary).toContain("expected true, got false");
+    });
+
+    it("pins the full behavior checklist across repairs and until the operator turn ends", async () => {
+      let behaviorPasses = false;
+      let workerTurns = 0;
+      let turnId = "turn-a";
+      const runChecks = vi.fn(async (specs: readonly Record<string, unknown>[]) => ({
+        ok: behaviorPasses,
+        results: specs.map(() => ({
+          ok: behaviorPasses,
+          summary: behaviorPasses ? "passed" : "behavior mismatch",
+        })),
+      }));
+      const tool = buildFusionDelegateTool(
+        deps({
+          resolveOperatorTurnId: () => turnId,
+          runChecks,
+          runTurn: async () => {
+            workerTurns += 1;
+            return turnResult();
+          },
+        }),
+      );
+      const checklist = [
+        { item: "wall breaks after impact", kind: "command", cmd: "node", args: ["wall.js"] },
+        { item: "boxes move from spawn", kind: "command", cmd: "node", args: ["boxes.js"] },
+      ];
+      const callCtx = ctx();
+
+      const first = await tool.run(
+        { tasks: TASKS, contract: { checks: checklist } },
+        callCtx,
+      );
+      expect(first.status).toBe("error");
+      expect(first.details.checklistPassed).toBe(false);
+      const turnsAfterFailure = workerTurns;
+
+      const narrowed = await tool.run(
+        { tasks: TASKS, contract: { checks: [checklist[0]] } },
+        callCtx,
+      );
+      expect(narrowed.status).toBe("error");
+      expect(narrowed.details.reason).toBe("behavior-checklist-changed");
+      expect(narrowed.details.requiredChecklistItems).toEqual([
+        "wall breaks after impact",
+        "boxes move from spawn",
+      ]);
+      expect(workerTurns).toBe(turnsAfterFailure);
+
+      behaviorPasses = true;
+      const repaired = await tool.run(
+        { tasks: TASKS, contract: { checks: checklist } },
+        callCtx,
+      );
+      expect(repaired.status).toBe("ok");
+      expect(repaired.details.checklistPassed).toBe(true);
+
+      // PASS verifies current bytes, but the acceptance contract remains pinned for this turn.
+      const turnsAfterPass = workerTurns;
+      const narrowedAfterPass = await tool.run(
+        { tasks: TASKS, contract: { checks: [checklist[0]] } },
+        callCtx,
+      );
+      expect(narrowedAfterPass.status).toBe("error");
+      expect(narrowedAfterPass.details.reason).toBe("behavior-checklist-changed");
+      expect(workerTurns).toBe(turnsAfterPass);
+
+      const omittedAfterPass = await tool.run({ tasks: TASKS }, callCtx);
+      expect(omittedAfterPass.status).toBe("error");
+      expect(omittedAfterPass.details.reason).toBe("behavior-checklist-changed");
+      expect(workerTurns).toBe(turnsAfterPass);
+
+      const sameFullChecklist = await tool.run(
+        { tasks: TASKS, contract: { checks: checklist } },
+        callCtx,
+      );
+      expect(sameFullChecklist.status).toBe("ok");
+      expect(workerTurns).toBeGreaterThan(turnsAfterPass);
+
+      // Only a new operator turn releases the old acceptance contract.
+      turnId = "turn-b";
+      const turnsBeforeNewTurn = workerTurns;
+      const next = await tool.run(
+        { tasks: TASKS, contract: { checks: [checklist[0]] } },
+        callCtx,
+      );
+      expect(next.details.reason).not.toBe("behavior-checklist-changed");
+      expect(workerTurns).toBeGreaterThan(turnsBeforeNewTurn);
+      expect(runChecks).toHaveBeenCalledTimes(4);
+    });
+
+    it("does not invent a checklist PASS for an optional unchecked fan-out", async () => {
+      const tool = buildFusionDelegateTool(deps());
+      for (const contract of [undefined, { owners: { "out.txt": "t1" } }]) {
+        const result = await tool.run({ tasks: TASKS, ...(contract ? { contract } : {}) }, ctx());
+        expect(result.status).toBe("ok");
+        expect(result.details.checklistPassed).toBeUndefined();
+        expect(result.summary).not.toContain("checklist:");
+      }
+    });
+
+    it("reads checklist opt-in live, without making it a global refusal", async () => {
+      let required = false;
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({
+        runTurn, requireBehaviorChecklist: () => required,
+      }));
+      expect((await tool.run({ tasks: TASKS }, ctx())).status).toBe("ok");
+      const before = runTurn.mock.calls.length;
+      required = true;
+      expect((await tool.run({ tasks: TASKS }, ctx())).details.reason).toBe("behavior-checklist-required");
+      expect(runTurn).toHaveBeenCalledTimes(before);
+      required = false;
+      expect((await tool.run({ tasks: TASKS }, ctx())).status).toBe("ok");
+      expect(runTurn.mock.calls.length).toBeGreaterThan(before);
+    });
+
+    it("keeps malformed explicitly declared checks unaccepted with opt-in off", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn, requireBehaviorChecklist: false }));
+      const result = await tool.run({ tasks: TASKS, contract: {
+        checks: [{ item: "boundary", task: "unknown-task", kind: "command", cmd: "node" }],
+      } }, ctx());
+      expect(result.status).toBe("error");
+      expect(result.details.checklistPassed).toBe(false);
+      expect(result.summary).toContain("boundary=UNCHECKED");
+      expect(runTurn).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("cannot drop named checks while repairing invalid arguments (required=%s)", async (required) => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({
+        runTurn, requireBehaviorChecklist: required,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true, summary: "passed" })) }),
+      }));
+      const callCtx = ctx();
+      const wall = { item: "wall", kind: "command", cmd: "node", args: ["wall.js"] };
+      const boxes = { item: "boxes", kind: "command", cmd: "node", args: ["boxes.js"] };
+      const invalid = await tool.run({ tasks: TASKS, contract: { checks: [{ ...wall, task: "unknown-task" }, boxes] } }, callCtx);
+      expect(invalid.status).toBe("error");
+      expect(invalid.details.checklistPassed).toBe(false);
+      const narrowed = await tool.run({ tasks: TASKS, contract: { checks: [wall] } }, callCtx);
+      expect(narrowed.status).toBe("error");
+      expect(narrowed.details.reason).toBe("behavior-checklist-changed");
+      expect(runTurn).not.toHaveBeenCalled();
+      const repaired = await tool.run({ tasks: TASKS, contract: { checks: [wall, boxes] } }, callCtx);
+      expect(repaired.status).toBe("ok");
+      expect(repaired.details.checklistPassed).toBe(true);
+      expect(runTurn).toHaveBeenCalled();
+      const afterPass = await tool.run({ tasks: TASKS, contract: { checks: [wall] } }, callCtx);
+      expect(afterPass.details.reason).toBe("behavior-checklist-changed");
+    });
+
+    it("keeps an unnamed declared item repairable but does not let it disappear", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn, requireBehaviorChecklist: true,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true, summary: "passed" })) }),
+      }));
+      const callCtx = ctx();
+      const wall = { item: "wall", kind: "command", cmd: "node" };
+      const unnamed = { kind: "command", cmd: "node" };
+      expect((await tool.run({ tasks: TASKS, contract: { checks: [wall, unnamed] } }, callCtx)).status).toBe("error");
+      const narrowed = await tool.run({ tasks: TASKS, contract: { checks: [wall] } }, callCtx);
+      expect(narrowed.details.reason).toBe("behavior-checklist-changed");
+      expect(runTurn).not.toHaveBeenCalled();
+      const repaired = await tool.run({ tasks: TASKS, contract: { checks: [wall, { ...unnamed, item: "boxes" }] } }, callCtx);
+      expect(repaired.status).toBe("ok");
+      expect(repaired.details.checklistPassed).toBe(true);
+    });
+
+    it.each([false, true])("pins named items in invalid JSON-string contracts (required=%s)", async (required) => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({
+        runTurn, requireBehaviorChecklist: required,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true, summary: "passed" })) }),
+      }));
+      const callCtx = ctx();
+      const wall = { item: "wall", kind: "command", cmd: "node" };
+      const invalid = await tool.run({ tasks: TASKS, contract: JSON.stringify({ checks: [{ ...wall, task: "unknown-task" }] }) }, callCtx);
+      expect(invalid.details.checklistPassed).toBe(false);
+      expect(invalid.summary).toContain("wall=UNCHECKED");
+      const omitted = await tool.run({ tasks: TASKS }, callCtx);
+      expect(omitted.details.reason).toBe("behavior-checklist-changed");
+      expect(runTurn).not.toHaveBeenCalled();
+      const repaired = await tool.run({ tasks: TASKS, contract: JSON.stringify({ checks: [wall] }) }, callCtx);
+      expect(repaired.status).toBe("ok");
+    });
+
+    it("cannot substitute known names while naming a JSON-string checklist", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({
+        runTurn, requireBehaviorChecklist: true,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true, summary: "passed" })) }),
+      }));
+      const callCtx = ctx();
+      const spec = { kind: "command", cmd: "node" };
+      const invoke = (items: Record<string, unknown>[]) => tool.run({ tasks: TASKS, contract: JSON.stringify({ checks: items }) }, callCtx);
+      expect((await invoke([{ ...spec, item: "wall" }, spec])).status).toBe("error");
+      expect((await invoke([{ ...spec, item: "renamed" }, { ...spec, item: "boxes" }])).details.reason).toBe("behavior-checklist-changed");
+      expect(runTurn).not.toHaveBeenCalled();
+      expect((await invoke([{ ...spec, item: "wall" }, { ...spec, item: "boxes" }])).status).toBe("ok");
+    });
+
+    it("treats null checks as absent even when an unrelated task argument is invalid", async () => {
+      const tool = buildFusionDelegateTool(deps({ requireBehaviorChecklist: true }));
+      const result = await tool.run({ tasks: [], contract: { checks: null } }, ctx());
+      expect(result.status).toBe("error");
+      expect(result.details.checklistPassed).toBeUndefined();
+    });
+
+    it("enforces a newly enabled naming policy without releasing an existing pin", async () => {
+      let required = false;
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({
+        runTurn, requireBehaviorChecklist: () => required,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true, summary: "passed" })) }),
+      }));
+      const callCtx = ctx();
+      const checks = [{ kind: "command", cmd: "node" }];
+      const args = { tasks: TASKS, contract: { checks } };
+      expect((await tool.run(args, callCtx)).status).toBe("ok");
+      const callsBefore = runTurn.mock.calls.length;
+      required = true;
+      const refused = await tool.run(args, callCtx);
+      expect(refused.status).toBe("error");
+      expect(refused.details.reason).toBe("behavior-checklist-items-must-be-named");
+      expect(refused.details.checklistPassed).toBe(false);
+      expect(runTurn).toHaveBeenCalledTimes(callsBefore);
+      const changed = await tool.run({ tasks: TASKS, contract: { checks: [{ ...checks[0], item: "renamed" }] } }, callCtx);
+      expect(changed.details.reason).toBe("behavior-checklist-changed");
+      required = false;
+      expect((await tool.run(args, callCtx)).status).toBe("ok");
+      expect(runTurn.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+
+    it("requires a named behavior checklist only when explicitly enabled", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(
+        deps({
+          requireBehaviorChecklist: true,
+          runTurn,
+          runChecks: async (specs) => ({
+            ok: true,
+            results: specs.map(() => ({ ok: true, summary: "passed" })),
+          }),
+        }),
+      );
+      // Independent invalid requests: no checklist carries across these examples.
+
+      const missing = await tool.run({ tasks: TASKS }, ctx());
+      expect(missing.status).toBe("error");
+      expect(missing.details.reason).toBe("behavior-checklist-required");
+      expect(missing.details.checklistPassed).toBe(false);
+      expect(missing.summary).toContain("behavior acceptance=UNCHECKED");
+      expect(runTurn).not.toHaveBeenCalled();
+
+      const unnamed = await tool.run(
+        {
+          tasks: TASKS,
+          contract: {
+            checks: [{ kind: "command", cmd: "node", args: ["check.js"] }],
+          },
+        },
+        ctx(),
+      );
+      expect(unnamed.status).toBe("error");
+      expect(unnamed.details.reason).toBe("behavior-checklist-items-must-be-named");
+      expect(unnamed.details.checklistPassed).toBe(false);
+      expect(unnamed.summary).toContain("check-1=UNCHECKED");
+      expect(runTurn).not.toHaveBeenCalled();
+
+      const malformed = await tool.run(
+        {
+          tasks: TASKS,
+          contract: {
+            checks: [{ item: "", kind: "command", cmd: "node", args: ["check.js"] }],
+          },
+        },
+        ctx(),
+      );
+      expect(malformed.status).toBe("error");
+      expect(malformed.details.reason).toBe("behavior-checklist-invalid");
+      expect(malformed.details.checklistPassed).toBe(false);
+      expect(malformed.summary).toContain("check-1=UNCHECKED");
+      expect(runTurn).not.toHaveBeenCalled();
+
+      const namedMalformed = await tool.run(
+        {
+          tasks: TASKS,
+          contract: {
+            checks: [
+              { task: "missing-worker", item: "wall breaks after impact", kind: "command", cmd: "node", args: ["wall.js"] },
+              { item: "boxes render away from origin", kind: "command", cmd: "node", args: ["boxes.js"] },
+            ],
+          },
+        },
+        ctx(),
+      );
+      expect(namedMalformed.status).toBe("error");
+      expect(namedMalformed.details.reason).toBe("behavior-checklist-invalid");
+      expect(namedMalformed.details.checklistPassed).toBe(false);
+      expect(namedMalformed.details.requiredChecklistItems).toEqual([
+        "wall breaks after impact",
+        "boxes render away from origin",
+      ]);
+      expect(namedMalformed.summary).toContain("wall breaks after impact=UNCHECKED");
+      expect(namedMalformed.summary).toContain("boxes render away from origin=UNCHECKED");
+      expect(runTurn).not.toHaveBeenCalled();
+
+      const checked = await tool.run(
+        {
+          tasks: TASKS,
+          contract: {
+            checks: [
+              { item: "requested behavior is verified", kind: "command", cmd: "node", args: ["check.js"] },
+            ],
+          },
+        },
+        ctx(), // a new request may choose a different checklist
+      );
+      expect(checked.details.reason).not.toBe("behavior-checklist-required");
+      expect(runTurn).toHaveBeenCalled();
+    });
+
+    it("stops after three failed full-checklist repair rounds and reports the remaining items", async () => {
+      let turnId = "turn-a";
+      let workerTurns = 0;
+      const runChecks = vi.fn(async (specs: readonly Record<string, unknown>[]) => ({
+        ok: false,
+        results: specs.map(() => ({ ok: false, summary: "still wrong" })),
+      }));
+      const tool = buildFusionDelegateTool(
+        deps({
+          resolveOriginalRequest: () => "identical request",
+          resolveOperatorTurnId: () => turnId,
+          runChecks,
+          runTurn: async () => {
+            workerTurns += 1;
+            return turnResult();
+          },
+        }),
+      );
+      const checklist = [
+        { item: "wall breaks after impact", kind: "command", cmd: "node", args: ["wall.js"] },
+        { item: "boxes render away from origin", kind: "command", cmd: "node", args: ["boxes.js"] },
+      ];
+      const args = { tasks: TASKS, contract: { checks: checklist } };
+      const callCtx = ctx();
+
+      for (let round = 1; round <= 3; round += 1) {
+        const result = await tool.run(args, callCtx);
+        expect(result.status).toBe("error");
+        expect(result.details.checklistPassed).toBe(false);
+        expect(result.details.behaviorRepair).toEqual({
+          round,
+          maxRounds: 3,
+          remaining: 3 - round,
+        });
+      }
+      const turnsAfterBudget = workerTurns;
+      expect(runChecks).toHaveBeenCalledTimes(3);
+
+      const exhausted = await tool.run(args, callCtx);
+      expect(exhausted.status).toBe("error");
+      expect(exhausted.details.reason).toBe("behavior-repair-budget-exhausted");
+      expect(exhausted.details.failedRounds).toBe(3);
+      expect(exhausted.details.maxRounds).toBe(3);
+      expect(exhausted.details.requiredChecklistItems).toEqual([
+        "wall breaks after impact",
+        "boxes render away from origin",
+      ]);
+      expect(workerTurns).toBe(turnsAfterBudget);
+      expect(runChecks).toHaveBeenCalledTimes(3);
+
+      // A new operator request starts a fresh repair cycle.
+      turnId = "turn-b";
+      const fresh = await tool.run(args, callCtx);
+      expect(fresh.details.reason).not.toBe("behavior-repair-budget-exhausted");
+      expect(fresh.details.behaviorRepair).toEqual({ round: 1, maxRounds: 3, remaining: 2 });
+      expect(workerTurns).toBeGreaterThan(turnsAfterBudget);
+      expect(runChecks).toHaveBeenCalledTimes(4);
+    });
+
+    it("counts failed full-checklist rounds cumulatively across intervening passes", async () => {
+      let workerTurns = 0;
+      const verdicts = [false, false, true, false];
+      const runChecks = vi.fn(async (specs: readonly Record<string, unknown>[]) => {
+        const ok = verdicts.shift() ?? false;
+        return { ok, results: specs.map(() => ({ ok, summary: ok ? "passed" : "still wrong" })) };
+      });
+      const tool = buildFusionDelegateTool(
+        deps({
+          resolveOperatorTurnId: () => "turn-cumulative-budget",
+          runChecks,
+          runTurn: async () => {
+            workerTurns += 1;
+            return turnResult();
+          },
+        }),
+      );
+      const checklist = [
+        { item: "wall breaks after impact", kind: "command", cmd: "node", args: ["wall.js"] },
+        { item: "boxes render away from origin", kind: "command", cmd: "node", args: ["boxes.js"] },
+      ];
+      const args = { tasks: TASKS, contract: { checks: checklist } };
+      const callCtx = ctx();
+
+      const first = await tool.run(args, callCtx);
+      expect(first.details.behaviorRepair).toEqual({ round: 1, maxRounds: 3, remaining: 2 });
+      const second = await tool.run(args, callCtx);
+      expect(second.details.behaviorRepair).toEqual({ round: 2, maxRounds: 3, remaining: 1 });
+      const passing = await tool.run(args, callCtx);
+      expect(passing.status).toBe("ok");
+      expect(passing.details.checklistPassed).toBe(true);
+      const thirdFailure = await tool.run(args, callCtx);
+      expect(thirdFailure.details.behaviorRepair).toEqual({ round: 3, maxRounds: 3, remaining: 0 });
+
+      const turnsBeforeBlock = workerTurns;
+      const exhausted = await tool.run(args, callCtx);
+      expect(exhausted.status).toBe("error");
+      expect(exhausted.details.reason).toBe("behavior-repair-budget-exhausted");
+      expect(exhausted.details.failedRounds).toBe(3);
+      expect(workerTurns).toBe(turnsBeforeBlock);
+      expect(runChecks).toHaveBeenCalledTimes(4);
+    });
+
+    it("briefs named checks before work and runs deterministic verification before returning", async () => {
+      const order: string[] = [];
+      const check = { item: "build is healthy", kind: "command", cmd: process.execPath, args: ["-e", "process.exit(0)"] };
+      const tool = buildFusionDelegateTool(deps({
+        runTurn: async (_session, brief) => {
+          expect(brief).toContain("build is healthy");
+          expect(order).toEqual([]);
+          order.push("worker");
+          return turnResult();
+        },
+        runChecks: async (specs, context) => {
+          expect(specs).toEqual([{ kind: check.kind, cmd: check.cmd, args: check.args }]);
+          expect(order).toEqual(["worker"]);
+          order.push("deterministic");
+          return runVerifyChecks(specs, context);
+        },
+      }));
+      const dir = mkdtempSync(join(tmpdir(), "fusion-check-order-"));
+      try {
+        const result = await tool.run({ tasks: [TASKS[0]], contract: { checks: [check] } }, ctx({ workingDir: dir }));
+        expect(result.details.checklistPassed).toBe(true);
+        expect(order).toEqual(["worker", "deterministic"]);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    it("returns only failing or unchecked items after three full rounds", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn,
+        runChecks: async () => ({ ok: false, results: [{ ok: true }, { ok: false }] }),
+      }));
+      const checks = ["build", "wall", "boxes"].map((item) => ({ item, kind: "command", cmd: "node" }));
+      const args = { tasks: [TASKS[0]], contract: { checks } };
+      const callCtx = ctx();
+      for (let i = 0; i < 3; i += 1) await tool.run(args, callCtx);
+      const blocked = await tool.run(args, callCtx);
+      expect(blocked.details.remainingChecklistItems).toEqual(["wall", "boxes"]);
+      expect(blocked.details.requiredChecklistItems).toEqual(["build", "wall", "boxes"]);
+      expect(blocked.summary).toContain("remaining failing/unchecked items: wall; boxes");
+      expect(runTurn).toHaveBeenCalledTimes(3);
+    });
+
+    it("keeps a declared checklist pinned after fan-out denial without spending a full round", async () => {
+      const tool = buildFusionDelegateTool(deps({ approvalRequired: true,
+        approvals: { request: async () => { throw new Error("denied"); }, setSessionPolicy: () => {}, clearSessionPolicy: () => {} },
+      }));
+      const callCtx = ctx();
+      const denied = await tool.run({ tasks: TASKS, contract: { checks: [{ item: "build", kind: "command", cmd: "node" }] } }, callCtx);
+      expect(denied.details.checklistPassed).toBe(false);
+      expect(denied.summary).toContain("build=UNCHECKED");
+      expect(denied.details.behaviorRepair).toBeUndefined();
+      const reduced = await tool.run({ tasks: TASKS }, callCtx);
+      expect(reduced.details.reason).toBe("behavior-checklist-changed");
+    });
+
+    it("does not spend checklist rounds on worker failures when every check passes", async () => {
+      const runTurn = vi.fn(async () => { throw new Error("worker unavailable"); });
+      const tool = buildFusionDelegateTool(deps({ runTurn,
+        runChecks: async () => ({ ok: true, results: [{ ok: true }] }),
+      }));
+      const callCtx = ctx();
+      for (let i = 0; i < 4; i += 1) {
+        const result = await tool.run({ tasks: [TASKS[0]], contract: { checks: [{ item: "build", kind: "command", cmd: "node" }] } }, callCtx);
+        expect(result.details.checklistPassed).toBe(true);
+        expect(result.details.behaviorRepair).toBeUndefined();
+        expect(result.details.reason).not.toBe("behavior-repair-budget-exhausted");
+        expect(result.status).toBe("error");
+      }
+      expect(runTurn).toHaveBeenCalledTimes(4);
+    });
+
+    it("resets the fallback cycle on a new turn signal without a resolver", async () => {
+      const tool = buildFusionDelegateTool(deps({ runChecks: async () => ({ ok: false, results: [{ ok: false }] }) }));
+      const args = { tasks: [TASKS[0]], contract: { checks: [{ item: "build", kind: "command", cmd: "node" }] } };
+      const firstTurn = ctx();
+      for (let i = 0; i < 3; i += 1) await tool.run(args, firstTurn);
+      expect((await tool.run(args, firstTurn)).details.reason).toBe("behavior-repair-budget-exhausted");
+      expect((await tool.run(args, ctx())).details.behaviorRepair).toMatchObject({ round: 1 });
+    });
+
+    it("preserves maximum checklist verdicts through a tiny output budget", async () => {
+      const checks = Array.from({ length: 16 }, (_, i) => ({ item: String(i).padEnd(120, "x"), kind: "command", cmd: "node" }));
+      const tool = buildFusionDelegateTool(deps({ outputCharCap: 100,
+        runChecks: async () => ({ ok: false, results: checks.map((_, i) => ({ ok: i < 15 })) }),
+      }));
+      const upstreamId = "a".repeat(1000);
+      const result = await tool.run({
+        tasks: [{ id: upstreamId, instructions: "provide ready" }, { id: "downstream", instructions: "consume ready" }],
+        contract: { checks, provides: [{ task: upstreamId, kind: "other", name: "ready", in: "ready.txt" }], requires: [{ task: "downstream", name: "ready" }] },
+      }, ctx());
+      checks.forEach((check, i) => expect(result.summary).toContain(check.item + "=" + (i === 15 ? "FAIL" : "PASS")));
+    });
+
+    it("catches the published #539 benchmark-derived origin-box and broken-wall regressions automatically", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "fusion-behavior-physics-"));
+      const drawPath = join(dir, "draw.js");
+      const wallPath = join(dir, "wall.js");
+      writeFileSync(
+        join(dir, "physics.js"),
+        "globalThis.PHYS={corners:(b)=>[{w:{x:b.pos.x+1,y:0,z:0},o:{x:1,y:0,z:0}}]};",
+      );
+      // Published evidence anchors:
+      // - #491 gist 918ff030…: producer world point `w`, local offset `o`, consumer used the opposite meaning.
+      // - #539 trace a9dc76c2… + 03-wrecking spec: 6x4=24 bricks, impact around t=2..3.
+      // - #539 acceptance example: after second 3, >=6 bricks moved more than 0.5 units.
+      writeFileSync(
+        drawPath,
+        "globalThis.projectedBoxX=(b)=>globalThis.PHYS.corners(b)[0].o.x;",
+      );
+      writeFileSync(
+        wallPath,
+        [
+          "exports.makeWall=()=>Array.from({length:24},(_,i)=>({id:i,startX:1.3,pos:{x:1.3},vel:{x:0},fixed:true}));",
+          "exports.after3=()=>{const b=exports.makeWall();const dt=1/120;for(let t=0;t<3;t+=dt){for(const x of b){if(!x.fixed)x.pos.x+=x.vel.x*dt;}}return b;};",
+        ].join(""),
+      );
+      const originScript = [
+        "require(\"./physics.js\");require(\"./draw.js\");",
+        "const got=globalThis.projectedBoxX({pos:{x:10}});",
+        "if(got!==11){console.error(\"box projected at local/origin x=\"+got);process.exit(1);}",
+      ].join("");
+      const wallScript = [
+        "const wall=require(\"./wall.js\");",
+        "const after=wall.after3();",
+        "const moved=after.filter((b)=>Math.abs(b.pos.x-b.startX)>0.5).length;",
+        "if(moved<6){console.error(\"wall moved bricks=\"+moved);process.exit(1);}",
+      ].join("");
+      const checklist = [
+        {
+          item: "boxes render at body position, not origin",
+          kind: "command",
+          cmd: process.execPath,
+          args: ["-e", originScript],
+          checks: ["exit 0"],
+        },
+        {
+          item: "after second 3 at least 6 wall bricks moved >0.5",
+          kind: "command",
+          cmd: process.execPath,
+          args: ["-e", wallScript],
+          checks: ["exit 0"],
+        },
+      ];
+      const tool = buildFusionDelegateTool(deps({ runChecks: runVerifyChecks }));
+      const callCtx = ctx({ workingDir: dir });
+      const args = {
+        tasks: [{ id: "physics", instructions: "implement the five-scene physics behavior" }],
+        contract: { checks: checklist },
+      };
+      try {
+        const broken = await tool.run(args, callCtx);
+        expect(broken.status).toBe("error");
+        expect(broken.details.checklistPassed).toBe(false);
+        expect(broken.summary).toContain("boxes render at body position, not origin=FAIL");
+        expect(broken.summary).toContain("after second 3 at least 6 wall bricks moved >0.5=FAIL");
+
+        // Repair both behaviors, then rerun the SAME pinned checklist.
+        writeFileSync(
+          drawPath,
+          "globalThis.projectedBoxX=(b)=>globalThis.PHYS.corners(b)[0].w.x;",
+        );
+        writeFileSync(
+          wallPath,
+          [
+            "exports.makeWall=()=>Array.from({length:24},(_,i)=>({id:i,startX:1.3,pos:{x:1.3},vel:{x:0},fixed:true,releaseAt:2+i*0.01}));",
+            "exports.after3=()=>{const b=exports.makeWall();const dt=1/120;for(let t=0;t<3;t+=dt){for(const x of b){if(x.id<8&&x.fixed&&t>=x.releaseAt){x.fixed=false;x.vel.x=1;}if(!x.fixed)x.pos.x+=x.vel.x*dt;}}return b;};",
+          ].join(""),
+        );
+        const fixed = await tool.run(args, callCtx);
+        expect(fixed.status).toBe("ok");
+        expect(fixed.details.checklistPassed).toBe(true);
+        expect(fixed.summary).toContain("boxes render at body position, not origin=PASS");
+        expect(fixed.summary).toContain("after second 3 at least 6 wall bricks moved >0.5=PASS");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("checks all five published #539 scene acceptance points and both documented regressions", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "fusion-five-scene-benchmark-"));
+      const benchmarkPath = join(dir, "benchmark.js");
+      const writeBenchmark = (originBug: boolean, wallBug: boolean) => {
+        writeFileSync(
+          benchmarkPath,
+          [
+            "const DT=1/120,G=-18;const stepTo=(seconds,state,step)=>{for(let t=0;t<seconds;t+=DT)step(state,t,DT);return state;};",
+            "exports.tower=(seconds)=>{const cubes=Array.from({length:6},(_,i)=>({i,y:.5+i,vy:0,x:0,vx:0,kicked:false}));stepTo(seconds,cubes,(s,t,dt)=>{if(t<1)return;for(const c of s){if(!c.kicked){c.kicked=true;c.vx=(c.i+1)*.28;}c.vy+=G*dt;c.y+=c.vy*dt;c.x+=c.vx*dt;if(c.y<=.5){c.y=.5;c.vy=Math.abs(c.vy)*.26;c.vx*=.85;if(Math.abs(c.vy)<.03)c.vy=0;if(Math.abs(c.vx)<.03)c.vx=0;}if(t>=6.5){c.y=.5;c.vy=c.vx=0;}}});return{still:cubes.every((c,i)=>Math.abs(c.y-(.5+i))<1e-9&&Math.abs(c.x)<1e-9),fallen:cubes.filter((c,i)=>i>0&&c.y<1).length,settled:cubes.filter(c=>c.y<=.501&&Math.abs(c.vy)<.05&&Math.abs(c.vx)<.05).length};};",
+            "exports.ballBox=(seconds)=>{const rs=[.25,.32,.38,.44,.5];const balls=rs.map((r,i)=>({r,x:-1.5+i*.75,y:r,z:0,vx:0,vy:0,vz:0,fired:false}));stepTo(seconds,balls,(s,t,dt)=>{for(const b of s){if(t>=1&&!b.fired){b.fired=true;b.vx=2.5-b.r;b.vy=6+b.r;b.vz=1-b.r;}if(!b.fired)continue;b.vy+=G*dt;b.x+=b.vx*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;const rest=Math.max(.18,.95-Math.max(0,t-1)*.14);if(b.y<b.r){b.y=b.r;b.vy=Math.abs(b.vy)*rest;}if(b.x>2-b.r||b.x<-2+b.r){b.x=Math.max(-2+b.r,Math.min(2-b.r,b.x));b.vx*=-rest;}if(b.z>1.5-b.r||b.z<-1.5+b.r){b.z=Math.max(-1.5+b.r,Math.min(1.5-b.r,b.z));b.vz*=-rest;}b.vx*=.998;b.vz*=.998;if(t>=6.5){b.y=b.r;b.vx=b.vy=b.vz=0;}}});return{moving:balls.filter(b=>Math.hypot(b.vx,b.vy,b.vz)>.1).length,resting:balls.filter(b=>Math.hypot(b.vx,b.vy,b.vz)<.01&&Math.abs(b.y-b.r)<.001).length};};",
+            "exports.makeWall=()=>Array.from({length:24},(_,i)=>({id:i,startX:1.3,pos:{x:1.3,y:.19+(i%6)*.38,z:(Math.floor(i/6)-1.5)*.55},vel:{x:0,y:0},fixed:true}));",
+            wallBug
+              ? "exports.wallAfter3=()=>exports.makeWall();"
+              : "exports.wallAfter3=()=>{const b=exports.makeWall();let th=-1,w=0,hit=false;stepTo(3,b,(bricks,t,dt)=>{if(t>=1&&!hit){w+=(G/5)*Math.sin(th)*dt;th+=w*dt;const bx=-.2+5*Math.sin(th);if(bx>=.45){hit=true;for(let i=0;i<8;i++){bricks[i].fixed=false;bricks[i].vel.x=1.2+.08*i;bricks[i].vel.y=.8+.05*i;}}}for(const x of bricks){if(x.fixed)continue;x.vel.y+=G*dt;x.pos.x+=x.vel.x*dt;x.pos.y+=x.vel.y*dt;if(x.pos.y<.19){x.pos.y=.19;x.vel.y=Math.abs(x.vel.y)*.2;x.vel.x*=.97;}}});return b;};",
+            "exports.seesaw=(seconds)=>{const s={angle:.275,av:0,ballY:4,ballVy:0,hit:false,cubeY:.3,cubeVy:0,cubePeakY:.3,minAngle:.275};stepTo(seconds,s,(x,t,dt)=>{if(t<1)return;if(!x.hit){x.ballVy+=G*dt;x.ballY+=x.ballVy*dt;if(x.ballY<=1.35){x.hit=true;x.av=-2.2;x.cubeVy=8.5;}}if(x.hit){x.angle+=x.av*dt;x.av*=.992;x.minAngle=Math.min(x.minAngle,x.angle);x.cubeVy+=G*dt;x.cubeY+=x.cubeVy*dt;if(x.cubeY<.3){x.cubeY=.3;x.cubeVy=0;}x.cubePeakY=Math.max(x.cubePeakY,x.cubeY);}});return s;};",
+            "exports.bounce=(seconds)=>{const rest=[.9,.65,.35,.08];const balls=rest.map((r)=>({r,y:3,vy:0,dropped:false,impacts:0,peak:.5,tracking:false}));stepTo(seconds,balls,(s,t,dt)=>{for(const b of s){if(t<1)continue;b.dropped=true;b.vy+=G*dt;b.y+=b.vy*dt;if(b.y<.5){b.y=.5;b.vy=Math.abs(b.vy)*b.r;b.impacts++;b.tracking=true;}if(b.tracking)b.peak=Math.max(b.peak,b.y);if(t>=6.5){b.y=.5;b.vy=0;}}});return{peaks:balls.map(b=>b.peak),resting:balls.filter(b=>Math.abs(b.vy)<.01&&Math.abs(b.y-.5)<.001).length};};",
+            "exports.corners=(b)=>[{w:{x:b.pos.x+1},o:{x:1}}];",
+            originBug
+              ? "exports.projectedBoxX=(b)=>exports.corners(b)[0].o.x;"
+              : "exports.projectedBoxX=(b)=>exports.corners(b)[0].w.x;",
+          ].join(""),
+        );
+      };
+      const command = (item: string, body: string) => ({
+        item,
+        kind: "command",
+        cmd: process.execPath,
+        args: ["-e", `const b=require("./benchmark.js");${body}`],
+        checks: ["exit 0"],
+      });
+      const checks = [
+        command(
+          "scene 1 TOWER: still before 1s, collapsed by 3s, settled by 7s",
+          "if(!b.tower(.5).still||b.tower(3).fallen<4||b.tower(7).settled!==6)process.exit(1);",
+        ),
+        command(
+          "scene 2 BALL BOX: all five move after impulse and rest by 7s",
+          "if(b.ballBox(2).moving!==5||b.ballBox(7).resting!==5)process.exit(1);",
+        ),
+        command(
+          "scene 3 WRECKING BALL: after 3s at least 6 bricks moved >0.5",
+          "const a=b.wallAfter3();const n=a.filter(x=>Math.abs(x.pos.x-x.startX)>.5).length;if(n<6)process.exit(1);",
+        ),
+        command(
+          "scene 4 SEESAW: plank pivots and light cube is launched",
+          "const s=b.seesaw(3);if(!(s.minAngle<0&&s.cubePeakY>1))process.exit(1);",
+        ),
+        command(
+          "scene 5 BOUNCE TEST: material bounce heights differ and all rest by 7s",
+          "const h=b.bounce(4).peaks;if(!(h[0]>h[1]&&h[1]>h[2]&&h[2]>h[3])||b.bounce(7).resting!==4)process.exit(1);",
+        ),
+        command(
+          "shared box rendering uses world position, not local origin offset",
+          "if(b.projectedBoxX({pos:{x:10}})!==11)process.exit(1);",
+        ),
+      ];
+      const expectedSpecs = checks.map(({ item: _item, ...spec }) => spec);
+      const checked = vi.fn(async (specs: readonly Record<string, unknown>[], runCtx: { workingDir: string; signal: AbortSignal }) => {
+        expect(specs).toEqual(expectedSpecs);
+        return runVerifyChecks(specs, runCtx);
+      });
+      const tool = buildFusionDelegateTool(deps({ runChecks: checked }));
+      const callCtx = ctx({ workingDir: dir });
+      const args = {
+        tasks: [{ id: "physics", instructions: "implement the five published physics scenes" }],
+        contract: { checks },
+      };
+      try {
+        // Round 1: the published broken-wall class is present; origin rendering still passes.
+        writeBenchmark(false, true);
+        const wallBroken = await tool.run(args, callCtx);
+        expect(wallBroken.status).toBe("error");
+        expect(wallBroken.summary).toContain("scene 3 WRECKING BALL: after 3s at least 6 bricks moved >0.5=FAIL");
+        for (const check of checks.filter((check) => !check.item.startsWith("scene 3 "))) {
+          expect(wallBroken.summary).toContain(`${check.item}=PASS`);
+        }
+
+        // Round 2: wall fix lands, but a regression recreates the published origin-box class.
+        // The full pinned checklist must rerun, so the previously-passing render item now fails.
+        writeBenchmark(true, false);
+        const originRegressed = await tool.run(args, callCtx);
+        expect(originRegressed.status).toBe("error");
+        for (const check of checks.filter((check) => !check.item.startsWith("shared box rendering"))) {
+          expect(originRegressed.summary).toContain(`${check.item}=PASS`);
+        }
+        expect(originRegressed.summary).toContain("shared box rendering uses world position, not local origin offset=FAIL");
+
+        // Round 3: both documented defects are repaired; every scene/check is re-run and passes.
+        writeBenchmark(false, false);
+        const fixed = await tool.run(args, callCtx);
+        expect(fixed.status).toBe("ok");
+        expect(fixed.details.checklistPassed).toBe(true);
+        for (const check of checks) expect(fixed.summary).toContain(`${check.item}=PASS`);
+        expect(checked).toHaveBeenCalledTimes(3);
+        for (const [specs] of checked.mock.calls) expect(specs).toEqual(expectedSpecs);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -1136,7 +1877,7 @@ describe("fusion.delegate", () => {
   });
 
   describe("waves ordered by the contract (F45)", () => {
-    it("is byte-identical without a contract: one wave, no wave plan on the head line or in the details", async () => {
+    it("keeps the no-contract head unchanged, with optional-policy metadata but no wave plan", async () => {
       const tool = buildFusionDelegateTool(deps());
       const result = await tool.run({ tasks: TASKS, maxWorkers: 2 }, ctx());
       const rows = (result.details.tasks as WorkerTaskResult[]).map(
@@ -1155,8 +1896,12 @@ describe("fusion.delegate", () => {
         (the worker produced no reply)"
       `);
       expect(result.details).not.toHaveProperty("waves");
+      // Optional-policy provenance is additive, and is not a verification PASS.
+      expect(result.details.checklistNotRequired).toBe(true);
+      expect(result.details.checklistPassed).toBeUndefined();
       expect({ ...result.details, tasks: rows }).toMatchInlineSnapshot(`
         {
+          "checklistNotRequired": true,
           "maxWorkers": 2,
           "outcome": "all_ok",
           "requestedWorkers": 2,
