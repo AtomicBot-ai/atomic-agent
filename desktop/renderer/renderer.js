@@ -7861,11 +7861,23 @@ function liveSegment(rec) {
   while (from > 0 && log[from - 1].k !== 'user' && log[from - 1].k !== 'assistant') from--;
   return [rec.asked].concat(log.slice(from, end + 1));
 }
-/** The turn's reasoning row: onChatEvent grows one per turn (S.reasonId). */
+/** The turn's reasoning row still growing (S.reasonId): its last one, unless a
+    tool call came after it — ATO-207: onChatEvent grows one row per step. */
 function liveReasonId(rec) {
   const from = S.log.indexOf(rec.asked), to = S.log.indexOf(rec.item);
-  for (let i = to - 1; i > from; i--) if (S.log[i].k === 'reason') return S.log[i].id;
+  for (let i = to - 1; i > from; i--) {
+    if (S.log[i].k === 'tool') return null;
+    if (S.log[i].k === 'reason') return S.log[i].id;
+  }
   return null;
+}
+/** ATO-207: which step of its turn a reasoning row put at `at` is (the
+    inspector's "Step N"): one more than the turn's rows above it, back to the
+    message that started the turn (a steer does not start one). */
+function reasonStepAt(log, at) {
+  let n = 1;
+  for (let i = Math.min(at, log.length) - 1; i >= 0 && !(log[i].k === 'user' && !log[i].steered); i--) if (log[i].k === 'reason') n++;
+  return n;
 }
 
 /** openSession: chat `own` runs a turn here. The stored transcript, the
@@ -8368,7 +8380,8 @@ function onChatEvent(ev) {
     if (!text || !item) return;   // review fix: no streaming item on screen, nothing to splice against
     let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
     if (!block) {
-      block = {id:nid(), k:'reason', steps:1, open:false, text:''};
+      // ATO-207: one row per step — a tool call ends the step (tool_progress clears S.reasonId).
+      block = {id:nid(), k:'reason', steps:reasonStepAt(S.log, S.log.indexOf(item)), open:false, text:''};
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
       streamPaint('chat');   // a new row in the transcript
@@ -8386,6 +8399,11 @@ function onChatEvent(ev) {
     const arg = pick(ev.payload, 'label') || '';
     const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId};
     S.log.splice(S.log.indexOf(item), 0, card);
+    /* ATO-207: the call ends the step its reasoning was for. The next
+       reasoning is a row of its own under this card, as a reopened chat
+       draws it (one per stored call); it used to grow the turn's first row
+       above every card, one "Reasoning" that read as endless thinking. */
+    S.reasonId = null;
     render();
     return;
   }
@@ -16669,7 +16687,7 @@ function sessionTurnsToLog(turns) {
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
     if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
     if (t.kind === 'assistant_tool_call') {
-      if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
+      if (t.reasoning) log.push({id:nid(), k:'reason', steps:reasonStepAt(log, log.length), open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
         arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
         argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
