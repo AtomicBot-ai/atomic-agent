@@ -1745,6 +1745,7 @@ async function executeStepInner(
         result,
         batchIndex,
         batchSize,
+        durationMs,
       });
       deps.metrics?.recordTool({
         sessionId: ctx.session.id,

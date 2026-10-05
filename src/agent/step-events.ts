@@ -108,6 +108,12 @@ export type StepEvent =
       /** Mirrors the corresponding `tool_call_parsed.batchIndex`. */
       batchIndex: number;
       batchSize: number;
+      /**
+       * Wall-clock time of the registry invocation (ms), an approval wait
+       * included — what the batch executor measured. Absent for results
+       * nothing ran for (a suppressed terminal, a progress note).
+       */
+      durationMs?: number;
     }
   /**
    * Rare-tool execution failed; the runtime injected the full schema into
