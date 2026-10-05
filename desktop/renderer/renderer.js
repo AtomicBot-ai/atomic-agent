@@ -14629,17 +14629,17 @@ async function swxRun(label, want, run, refuse) {
     if (seq === SWX.seq) SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
     throw err;
   } finally {
-    SWX.lastMs = Date.now() - t0;
+    /* ATO-194: only this switch's own lock. One given up on (the watchdog let
+       go, and another switch began since) ends here without taking the
+       newer one's timer, spinner, count or timing with it. */
+    const mine = seq === SWX.seq;
+    if (mine) SWX.lastMs = Date.now() - t0;
     /* r5 review (minor): "measure and report the real wall time of EACH
        switch". SWX.lastMs only ever named the last one, so the suite could
        print the backend switch and the coding-mode route and nothing else.
        The funnel below stamps SWX.route, so every route keeps its own
        measurement and one report check can print them all. */
-    if (SWX.route) SWX.times[SWX.route] = SWX.lastMs;
-    /* ATO-194: only this switch's own lock. One given up on (the watchdog let
-       go, and another switch began since) ends here without taking the
-       newer one's timer, spinner or count with it. */
-    const mine = seq === SWX.seq;
+    if (mine && SWX.route) SWX.times[SWX.route] = SWX.lastMs;
     if (mine && SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
     if (mine && SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
     if (mine) { SWX.slow = false; swxTickStop(); }
