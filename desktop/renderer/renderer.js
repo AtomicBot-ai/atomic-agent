@@ -5346,6 +5346,21 @@ function toast(t, s, kind) {
   renderToasts();
   setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
 }
+/* ATO-186: a toast about the chat on screen ("New session · The next turn
+   starts fresh", "Transcript cleared") is that chat's: it goes when another
+   chat is opened (openSession) or a newer one of its kind replaces it, where
+   it stayed for its six seconds over a chat it was not about. */
+function chatToast(t, s) {
+  dropChatToasts();
+  toast(t, s);
+  const mine = S.toasts.find((x) => x.id === S.toastId);
+  if (mine) mine.chat = true;
+}
+function dropChatToasts() {
+  const n = S.toasts.length;
+  S.toasts = S.toasts.filter((x) => !x.chat);
+  if (S.toasts.length !== n) renderToasts();
+}
 
 /* r5 item 4: the one honest clipboard seam. There is no clipboard IPC — the
    renderer writes navigator.clipboard directly and the main process allows both
@@ -5479,11 +5494,11 @@ function act(a) {
                                 same reason; a new chat is a chat. */
                              S.settings = null;
                              FOCUS.entry = true;   // r5 item 6: afterChat focuses #entry after this render
-                             render(); toast('New session', 'The next turn starts fresh');
+                             render(); chatToast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
-  if (a === 'clear') { close(); S.log = liveClearedLog(); S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
+  if (a === 'clear') { close(); S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -14707,6 +14722,22 @@ function selRowName(r) {
   return String(r.label || '');
 }
 
+/* ATO-186: the address of the person's own llama.cpp server, for the Custom
+   server row, or '' when there is none to name. On a managed route
+   localModels.url is the built-in model's own server (the agent points it at
+   127.0.0.1 and its managed port), so the row read "your llama.cpp server at
+   127.0.0.1:29470" on a Mac with no server of its own. An external route's
+   url is the person's; on a managed one only an address off this machine
+   can still be one they set up (a loopback one may be the built-in model's,
+   and the schema default is one nobody chose). */
+function customServerUrl() {
+  const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
+  const url = typeof lm.url === 'string' ? lm.url.trim() : '';
+  if (!url || lm.mode === 'external') return url;
+  let u = null;
+  try { u = new URL(url); } catch (e) { return ''; }
+  return ['127.0.0.1', 'localhost', '[::1]', '::1', '0.0.0.0'].includes(u.hostname) ? '' : url;
+}
 /** Rows for the current pane, as objects the delegate can act on by index. */
 function selRows() {
   if (SEL.kind === 'backend') {
@@ -14718,7 +14749,7 @@ function selRows() {
     // TUI's "Download more models…" row deep-links into its Local pane.
     const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
     const here = selBackend();
-    const customUrl = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
+    const customUrl = customServerUrl();
     /* Calm (S7): the rows speak the chip's words ("Cloud", "Local models",
        "Custom server", "Fusion" — backendWord, drawn in selectorHTML) and
        each detail is one plain line. `id` stays the route, `label` the id.
@@ -16763,6 +16794,7 @@ async function openSession(id) {
      chat's own comes back; a reload of the chat on screen keeps its own. */
   if (queueKey() !== id) { stashQueue(); restoreQueue(id); }
   liveLeave();   // Item 38: a turn whose rows are on screen keeps its view for when its chat is back
+  if (S.sessionId !== id) dropChatToasts();   // ATO-186: "New session" and the like were about the chat being left
   S.sessionId = id;
   // Backlog 24: and until the answer lands, the composer holds what is sent here.
   const opening = {id, failed:false};
