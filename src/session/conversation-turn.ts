@@ -57,6 +57,14 @@ export type ConversationTurn =
        * macro-turn the way a sole `reply` does (`agent/progress-note-reply.ts`).
        */
       progressNote?: true;
+      /**
+       * Not a reply at all: the stand-in a turn the user stopped leaves
+       * behind ({@link stoppedTurnMarker}). It closes the macro-turn like
+       * a reply, so the stopped request reads as finished business, but
+       * nothing that wants the agent's words — the reply a client is
+       * handed, a reflection pair, a session's title — may take it for one.
+       */
+      stopped?: true;
       at: number;
     };
 
@@ -64,11 +72,48 @@ export type ConversationTurn =
  * Whether a turn is a reply that closed its macro-turn. A progress note
  * is an `assistant_reply` row too, but the turn continued past it, so a
  * scan for "the reply that answered the user" must skip it.
+ *
+ * A stop marker does close its macro-turn and is counted here: the
+ * boundaries, the packer's freshness and the request picker all need to
+ * see the stopped task as over. A scan for the agent's actual words
+ * also checks {@link isStoppedTurnMarker}.
  */
 export function isFinalReplyTurn(
   turn: ConversationTurn | undefined,
 ): turn is Extract<ConversationTurn, { kind: "assistant_reply" }> {
   return turn?.kind === "assistant_reply" && turn.progressNote !== true;
+}
+
+/**
+ * What the model reads where a stopped turn would have answered.
+ *
+ * Before it, a turn the user stopped left only its `user` row: the
+ * cancel path records no reply, so the next message landed straight
+ * after the stopped one and the model read the two as one request —
+ * "write a 1000-word story", stop, "how are you?" was answered with the
+ * story. The "(stopped)" a client draws is the client's own and never
+ * reaches the prompt; this line is the model's copy of it. It says the
+ * work done before the stop stands, because tool calls that already ran
+ * did take effect, and that only the rest is dropped.
+ */
+export const STOPPED_TURN_MARKER_TEXT =
+  "(stopped by the user before this turn finished: the request above was not completed. Do not continue it or come back to it unless the user asks for it again. Anything already done before the stop stays done.)";
+
+/** The `assistant_reply` row a turn the user stopped ends on. */
+export function stoppedTurnMarker(at = Date.now()): ConversationTurn {
+  return {
+    kind: "assistant_reply",
+    text: STOPPED_TURN_MARKER_TEXT,
+    stopped: true,
+    at,
+  };
+}
+
+/** Whether a row is a stop marker rather than something the agent said. */
+export function isStoppedTurnMarker(
+  turn: ConversationTurn | undefined,
+): boolean {
+  return turn?.kind === "assistant_reply" && turn.stopped === true;
 }
 
 export function userTurn(text: string, at = Date.now()): ConversationTurn {
@@ -474,9 +519,10 @@ export interface PackConversationOptions {
   maxPairs?: number;
   /**
    * Boundaries recorded by the session (`SessionState.macroTurnStarts`).
-   * Preferred over deriving them, because a task ended with `finish` or
-   * cancelled writes no `assistant_reply` and a derived scan would fuse
-   * it into the next task.
+   * Preferred over deriving them, because a task ended with `finish`
+   * writes no `assistant_reply` and a derived scan would fuse it into
+   * the next task. (A cancelled one did not either, before it left a
+   * stop marker; sessions stored then still have such tasks.)
    */
   macroTurnStarts?: readonly number[];
   /**

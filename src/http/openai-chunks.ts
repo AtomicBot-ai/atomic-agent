@@ -1,5 +1,8 @@
 import type { RunTurnResult } from "../agent/agent-loop.js";
-import { isFinalReplyTurn } from "../session/conversation-turn.js";
+import {
+  isFinalReplyTurn,
+  isStoppedTurnMarker,
+} from "../session/conversation-turn.js";
 
 /**
  * Builders for OpenAI-compatible `chat.completion` / `chat.completion.chunk`
@@ -96,12 +99,18 @@ export interface FinalMessagePayload {
  * return whatever text the model (or fallback) produced, labelled with
  * the matching finish_reason. A progress note — a reply the model batched
  * with work while the turn went on — is not the answer and is skipped.
+ * Nor is the marker a stopped turn ends on: it is the model's note that
+ * the request was stopped, not a message for the client, and the reply
+ * before it answered an earlier request — a stopped turn has no content.
  */
 export function buildFinalAssistantPayload(
   result: RunTurnResult,
 ): FinalMessagePayload {
   const lastReply = [...result.session.turns].reverse().find(isFinalReplyTurn);
-  const content = lastReply?.text ?? "";
+  const content =
+    lastReply === undefined || isStoppedTurnMarker(lastReply)
+      ? ""
+      : lastReply.text;
   let finishReason: FinalMessagePayload["finish_reason"] = "stop";
   if (result.reason === "cancelled") finishReason = "cancelled";
   else if (result.reason === "max_steps") finishReason = "length";
