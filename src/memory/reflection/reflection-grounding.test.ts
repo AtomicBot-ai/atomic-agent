@@ -31,12 +31,27 @@ describe("isTrivialReflectionWindow", () => {
     expect(isTrivialReflectionWindow([B09_PROMPT])).toBe(true);
   });
 
-  it("treats pings, greetings and acknowledgements as trivial", () => {
+  it("treats pings and greetings as trivial", () => {
     expect(isTrivialReflectionWindow(["hi"])).toBe(true);
     expect(isTrivialReflectionWindow(["Привет!"])).toBe(true);
-    expect(isTrivialReflectionWindow(["ok thanks"])).toBe(true);
+    expect(isTrivialReflectionWindow(["thanks"])).toBe(true);
     expect(isTrivialReflectionWindow(["ping"])).toBe(true);
     expect(isTrivialReflectionWindow([""])).toBe(true);
+  });
+
+  // F7: a bare confirmation may answer "Shall I remember that you're
+  // vegetarian?" — that turn must still be reflected.
+  it("does not treat a bare confirmation as trivial", () => {
+    for (const text of ["да", "нет", "ок", "хорошо", "yes", "no", "ok", "ok thanks"]) {
+      expect(isTrivialReflectionWindow([text])).toBe(false);
+    }
+  });
+
+  // F6: a style word after "only" is a lasting rule, not a literal echo.
+  it("does not treat a non-literal 'reply only X' style rule as a probe", () => {
+    expect(isTrivialReflectionWindow(["Отвечай только по-русски"])).toBe(false);
+    expect(isTrivialReflectionWindow(["Answer only briefly"])).toBe(false);
+    expect(isTrivialReflectionWindow(["Reply only English please"])).toBe(false);
   });
 
   it("treats other echo / one-off probe phrasings as trivial", () => {
@@ -93,7 +108,12 @@ describe("filterUngroundedReflection", () => {
     const out = filterUngroundedReflection(
       {
         facts: [fact("name", "Alex"), fact("full_name", "Alex Smith")],
-        notes: [note("The user is Alex."), note("I am Alex.")],
+        notes: [
+          note("The user's name is Alex."),
+          note("I am Alex."),
+          note("I am Alex and I like Rust."),
+          note("Call me Alex."),
+        ],
       },
       { userTexts: ["Can you summarise this article about Rust?"] },
     );
@@ -194,6 +214,152 @@ describe("filterUngroundedReflection", () => {
     );
     expect(out.facts).toEqual(facts);
     expect(out.notes).toEqual(notes);
+  });
+});
+
+// Regression cases from the adversarial review of the first B09 fix:
+// every one of these is a real user fact the guard must keep (or, for
+// F4 / F8, an invented one it must still drop).
+describe("filterUngroundedReflection — review regressions", () => {
+  const keepsName = (userText: string, name: string): void => {
+    const out = filterUngroundedReflection(
+      { facts: [fact("name", name)], notes: [] },
+      { userTexts: [userText] },
+    );
+    expect(out.facts.map((f) => f.value)).toEqual([name]);
+    expect(out.dropped).toEqual([]);
+  };
+
+  it("F1: keeps a name the user gave in a Russian case form", () => {
+    keepsName("Зови меня Надей", "Nadya");
+    keepsName("Называй меня Сашей", "Sasha");
+    keepsName("Зови меня Алексом", "Alex");
+    keepsName("звать меня Димой", "Dima");
+  });
+
+  it("F1: treats leading Е/Ye and Ю/Yu romanisations as the same name", () => {
+    keepsName("Меня зовут Елена", "Yelena");
+    keepsName("Я Евгений, запомни", "Yevgeny");
+    keepsName("Меня зовут Юля", "Julia");
+  });
+
+  it("F2: keeps nationality / language attributes that are not names", () => {
+    const out = filterUngroundedReflection(
+      {
+        facts: [],
+        notes: [
+          note("The user is Brazilian."),
+          note("The user is Russian."),
+          note("The user is Russian-speaking."),
+        ],
+      },
+      { userTexts: ["I'm from Brazil, remember that", "Я из России"] },
+    );
+    expect(out.notes).toHaveLength(3);
+  });
+
+  it("F2: keeps 'I am <Attribute>' grounded by the root or the verbatim word", () => {
+    const brazil = filterUngroundedReflection(
+      { facts: [], notes: [note("I am Brazilian.")] },
+      { userTexts: ["I'm from Brazil, remember that"] },
+    );
+    expect(brazil.notes).toHaveLength(1);
+    const speaking = filterUngroundedReflection(
+      { facts: [], notes: [note("I am Russian-speaking."), note("The user is Russian-speaking.")] },
+      { userTexts: ["I am Russian-speaking"] },
+    );
+    expect(speaking.notes).toHaveLength(2);
+  });
+
+  it("F3: keeps facts the user asked to remember and plain preferences", () => {
+    const deploy = filterUngroundedReflection(
+      { facts: [fact("deploy_command", "make ship-prod")], notes: [] },
+      { userTexts: ["Find the deploy command in the Makefile and remember it"] },
+    );
+    expect(deploy.facts).toHaveLength(1);
+    const ts = filterUngroundedReflection(
+      { facts: [fact("language_preference", "TypeScript")], notes: [] },
+      { userTexts: ["I prefer TypeScript"] },
+    );
+    expect(ts.facts).toHaveLength(1);
+    const meat = filterUngroundedReflection(
+      { facts: [], notes: [note("The user does not eat meat.")] },
+      { userTexts: ["я не ем мясо"] },
+    );
+    expect(meat.notes).toHaveLength(1);
+  });
+
+  it("F4: a pronoun does not make a one-off tool restriction last", () => {
+    const userTexts = [
+      "Reply exactly LOCAL_OK. Do not use tools, I'm testing the local model.",
+    ];
+    expect(isTrivialReflectionWindow(userTexts)).toBe(false);
+    const out = filterUngroundedReflection(
+      { facts: [], notes: [note("The user prefers not to use tools.")] },
+      { userTexts },
+    );
+    expect(out.notes).toEqual([]);
+    expect(out.dropped[0]?.reason).toBe("one_off_tool_restriction");
+  });
+
+  it("F5: keeps an output-format preference the user said should last", () => {
+    for (const userText of ["Запомни, отвечай только JSON", "From now on, reply only JSON"]) {
+      const out = filterUngroundedReflection(
+        { facts: [fact("reply_format", "JSON")], notes: [note("The user wants replies in JSON.")] },
+        { userTexts: [userText] },
+      );
+      expect(out.facts).toHaveLength(1);
+      expect(out.notes).toHaveLength(1);
+    }
+  });
+
+  it("F8: a common lower-case word does not vouch for a short invented name", () => {
+    const cases: Array<[string, string]> = [
+      ["Sam", "it is the same as before"],
+      ["Max", "make it so"],
+      ["Anna", "and then rerun it"],
+      ["Tom", "use the tool"],
+      ["Ben", "it has been fixed"],
+    ];
+    for (const [name, userText] of cases) {
+      const out = filterUngroundedReflection(
+        { facts: [fact("name", name)], notes: [] },
+        { userTexts: [userText] },
+      );
+      expect(out.facts).toEqual([]);
+    }
+  });
+
+  it("F8: still keeps a short name the user typed, even in lower case", () => {
+    keepsName("call me sam", "Sam");
+  });
+
+  it("N1: keeps 'works as an AI engineer'", () => {
+    const out = filterUngroundedReflection(
+      { facts: [], notes: [note("The user works as an AI engineer.")] },
+      { userTexts: ["I'm an ML engineer on the AI team, remember that"] },
+    );
+    expect(out.notes).toHaveLength(1);
+  });
+
+  it("N2: drops contracted assistant-persona phrasings", () => {
+    const out = filterUngroundedReflection(
+      {
+        facts: [],
+        notes: [note("You're my personal assistant."), note("I'm your AI assistant.")],
+      },
+      { userTexts: ["Summarise the release notes"] },
+    );
+    expect(out.notes).toEqual([]);
+    expect(out.dropped.every((d) => d.reason === "assistant_persona")).toBe(true);
+  });
+
+  it("N3: a stray foreign symbol does not switch the identity check off", () => {
+    const out = filterUngroundedReflection(
+      { facts: [fact("name", "Alex")], notes: [] },
+      { userTexts: ["My name is Nadia, the dose is 5 µg"] },
+    );
+    expect(out.facts).toEqual([]);
   });
 });
 

@@ -75,8 +75,8 @@ Forbidden in every NOTE:
 
 Rules:
 - Only durable content explicitly stated by the user or that the user asked to remember.
-- Use only what the USER wrote. Never invent or guess a name, nickname, role, age, location or any other identity detail; record a name only if the USER literally typed it.
-- Instructions for the current reply only ("reply exactly X", "answer in one word", "do not use tools", test or ping messages) are NOT preferences. Record a preference only when the user says it should last ("from now on", "always", "remember").
+- Never invent identity details (name, nickname, role, age, location); record a name only if the USER typed it.
+- A one-off instruction for the current reply ("reply exactly X", "don't use tools for this", test or ping messages) is not a preference.
 - Never copy wording or example values from these instructions into the output.
 - Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
 - When unsure, output NONE.
@@ -171,8 +171,8 @@ Bi-temporal versioning:
 
 Rules:
 - Only durable content explicitly stated by the user or that the user asked to remember.
-- Use only what the USER wrote. Never invent or guess a name, nickname, role, age, location or any other identity detail; record a name only if the USER literally typed it.
-- Instructions for the current reply only ("reply exactly X", "answer in one word", "do not use tools", test or ping messages) are NOT preferences. Record a preference only when the user says it should last ("from now on", "always", "remember").
+- Never invent identity details (name, nickname, role, age, location); record a name only if the USER typed it.
+- A one-off instruction for the current reply ("reply exactly X", "don't use tools for this", test or ping messages) is not a preference.
 - Never copy wording or example values from these instructions into the output.
 - Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
 - When unsure, output NONE.

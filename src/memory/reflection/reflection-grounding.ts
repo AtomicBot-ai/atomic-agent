@@ -12,21 +12,23 @@
  * Two independent, deliberately narrow checks:
  *
  *  1. `isTrivialReflectionWindow` — runs BEFORE the LLM call. A window
- *     whose user side is nothing but probe / echo / ping / one-off
- *     format instructions has nothing durable to extract, so the call
- *     is skipped entirely. Any sign of lasting intent ("remember",
- *     "always", "from now on", first-person statements, …) disables
- *     the skip.
+ *     whose user side is nothing but pings / greetings / literal echo
+ *     probes / one-off tool or format restrictions has nothing durable
+ *     to extract, so the call is skipped entirely. Any sign of lasting
+ *     intent ("remember", "always", "from now on", …) or of the user
+ *     talking about themselves ("I", "my", "я", "мой", …) disables the
+ *     skip, and so does a bare confirmation ("yes", "да", "ok") — it may
+ *     be the answer to "shall I remember that?".
  *
  *  2. `filterUngroundedReflection` — runs AFTER parsing, before any
  *     write. Drops a SET / NOTE when:
- *       - it asserts the user's identity (name, "I am X", "call me X",
- *         a `name`-like SET key) and the claimed name never appears in
- *         the user's own messages (or in a name already stored in the
- *         profile);
+ *       - it claims a name for the user (a `name`-like SET key, "my name
+ *         is X", "call me X", "the user's name is X", or a clause-final
+ *         "I am X" / "I am X and …") and the name never appears in the
+ *         user's own messages (nor among names already in the profile);
  *       - it describes the assistant itself ("you are my personal
- *         assistant", "I am an AI");
- *       - it repeats the payload of a one-off echo instruction
+ *         assistant", "I'm your AI assistant");
+ *       - it repeats the literal payload of a one-off echo instruction
  *         ("LOCAL_OK") from the same window;
  *       - it turns a one-off "do not use tools" into a tool preference
  *         when the user never said it should last.
@@ -36,11 +38,16 @@
  *  - A name the user only *confirmed* ("Is your name Alex?" — "yes")
  *    never appears in the user's own words, so an identity claim built
  *    on it is dropped.
- *  - A name written in a script other than Latin or Cyrillic cannot be
- *    compared, so the identity check fails open (keeps the item) when
- *    the user wrote in such a script.
- *  - Transliteration is fuzzy (edit distance), not exact; unusual
- *    romanisations of a Cyrillic name may miss.
+ *  - Name matching is fuzzy (romanisation, Russian case endings, edit
+ *    distance) but not exhaustive; an unusual romanisation of a
+ *    Cyrillic name may miss.
+ *  - Short Latin names (≤ 4 letters after normalisation) must match a
+ *    user word exactly, so "Sam" is not vouched for by "same" — and a
+ *    user who wrote "Samm" will not get "Sam" either.
+ * The opposite risk (an invented name slipping through) exists where
+ * matching is loose on purpose: Russian stems ("над" vouches for
+ * "Nadia"), and names written in a script other than Latin / Cyrillic,
+ * which fail open.
  * Everything that is not an identity claim, assistant persona, echo
  * payload or one-off tool restriction passes through untouched.
  */
@@ -78,21 +85,52 @@ export interface GroundedReflection {
 }
 
 // ---------------------------------------------------------------------------
-// Trivial-window detection
+// Markers
 // ---------------------------------------------------------------------------
 
 /**
- * Single words / short phrases that signal the user wants something to
- * last, or is talking about themselves. Any hit disables the trivial
- * skip. Matched against lower-cased word tokens (Unicode-aware, so the
- * Cyrillic entries work).
+ * Explicit persistence markers: the user says something should last.
+ * These — and only these — lift the one-off gates (tool restriction,
+ * echo payload). Pronouns do not: "Do not use tools, I'm testing" is
+ * still a one-off.
  */
-const DURABLE_WORDS: ReadonlySet<string> = new Set([
-  // English
+const PERSISTENCE_WORDS: ReadonlySet<string> = new Set([
   "remember",
   "always",
   "never",
   "default",
+  "prefer",
+  "prefers",
+  "henceforth",
+  "запомни",
+  "запомните",
+  "помни",
+  "всегда",
+  "никогда",
+  "отныне",
+  "впредь",
+  "умолчанию",
+  "предпочитаю",
+]);
+
+const PERSISTENCE_PHRASES: readonly RegExp[] = [
+  /\bfrom now on\b/,
+  /\bgoing forward\b/,
+  /\bnext time\b/,
+  /\bevery time\b/,
+  /\beach time\b/,
+  /\bin (?:the )?future\b/,
+  /\bby default\b/,
+  /с этого момента/,
+  /в следующий раз/,
+  /каждый раз/,
+];
+
+/**
+ * The user talking about themselves. Only used to keep a window from
+ * being skipped as trivial — never to lift a one-off gate.
+ */
+const PERSONAL_WORDS: ReadonlySet<string> = new Set([
   "my",
   "mine",
   "me",
@@ -105,20 +143,6 @@ const DURABLE_WORDS: ReadonlySet<string> = new Set([
   "we",
   "our",
   "us",
-  "prefer",
-  "preference",
-  "future",
-  "forward",
-  "henceforth",
-  // Russian
-  "запомни",
-  "запомните",
-  "помни",
-  "всегда",
-  "никогда",
-  "отныне",
-  "впредь",
-  "умолчанию",
   "я",
   "меня",
   "мне",
@@ -131,21 +155,34 @@ const DURABLE_WORDS: ReadonlySet<string> = new Set([
   "наш",
   "наша",
   "наши",
-  "предпочитаю",
 ]);
 
-const DURABLE_PHRASES: readonly RegExp[] = [
-  /\bfrom now on\b/,
-  /\bgoing forward\b/,
-  /\bnext time\b/,
-  /\bevery time\b/,
-  /\beach time\b/,
-  /\bin (?:the )?future\b/,
-  /\bby default\b/,
-  /с этого момента/,
-  /в следующий раз/,
-  /каждый раз/,
-];
+function lower(s: string): string {
+  return s.toLowerCase();
+}
+
+function wordTokens(text: string): string[] {
+  return lower(text).match(/[\p{L}\p{N}_'’]+/gu)?.map((t) => t.replace(/’/g, "'")) ?? [];
+}
+
+function hasPersistenceMarker(text: string): boolean {
+  const lowered = lower(text);
+  for (const token of wordTokens(lowered)) {
+    if (PERSISTENCE_WORDS.has(token)) return true;
+  }
+  return PERSISTENCE_PHRASES.some((re) => re.test(lowered));
+}
+
+function hasPersonalMarker(text: string): boolean {
+  for (const token of wordTokens(text)) {
+    if (PERSONAL_WORDS.has(token)) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Probe fragments
+// ---------------------------------------------------------------------------
 
 /** Prepositions that turn "reply only X" into a style rule, not an echo. */
 const STYLE_PREPOSITIONS: ReadonlySet<string> = new Set([
@@ -182,6 +219,32 @@ const ECHO_BARE = /^(?:say|echo|repeat|скажи|повтори)\s*:?\s+(.+)$/;
 const ECHO_PAYLOAD_TRAILER =
   /\s+(?:and nothing else|nothing else|only|exactly|verbatim|и больше ничего|только)$/;
 
+/** Words that make an echo payload a ping-style literal ("say pong"). */
+const LITERAL_PAYLOAD_WORDS: ReadonlySet<string> = new Set([
+  "ok",
+  "okay",
+  "yes",
+  "no",
+  "or",
+  "pong",
+  "ping",
+  "ready",
+  "done",
+  "hi",
+  "hello",
+  "test",
+  "true",
+  "false",
+  "ок",
+  "да",
+  "нет",
+  "или",
+  "готово",
+  "привет",
+  "понг",
+  "пинг",
+]);
+
 const TOOL_RESTRICTION =
   /^(?:(?:please\s+)?(?:do not|don't|dont|no need to|you don't need to|without)\s+(?:use|using|call|calling|run|running|invoke|invoking)?\s*(?:any\s+)?|no\s+)(?:tools?|tool calls?|functions?|function calls?|commands?)(?:\s+(?:for this|here|now|this time|in this reply|in your reply|for this reply|please))?$/;
 
@@ -191,6 +254,12 @@ const TOOL_RESTRICTION_RU =
 const FORMAT_ONLY =
   /^(?:(?:no|without)\s+(?:explanations?|extra text|other text|additional text|markdown|formatting|punctuation|quotes|commentary|comments)|nothing else|and nothing else|only that|that's it|that is all|one word|in one word|без пояснений|без объяснений|ничего больше|больше ничего)$/;
 
+/**
+ * Whole-fragment pings and greetings. Confirmations ("yes", "ok", "да",
+ * "хорошо") are deliberately NOT here: they may answer the assistant's
+ * "shall I remember that you're vegetarian?", and that turn must still
+ * be reflected.
+ */
 const PING_FRAGMENTS: ReadonlySet<string> = new Set([
   "hi",
   "hello",
@@ -205,18 +274,9 @@ const PING_FRAGMENTS: ReadonlySet<string> = new Set([
   "is this working",
   "are you there",
   "are you alive",
-  "ok",
-  "okay",
-  "k",
   "thanks",
   "thank you",
   "thx",
-  "cool",
-  "nice",
-  "great",
-  "sure",
-  "yes",
-  "no",
   "привет",
   "здравствуй",
   "здравствуйте",
@@ -224,37 +284,18 @@ const PING_FRAGMENTS: ReadonlySet<string> = new Set([
   "проверка",
   "пинг",
   "спасибо",
-  "ок",
-  "окей",
-  "хорошо",
-  "да",
-  "нет",
 ]);
 
-const LEADING_FILLER = /^(?:please|pls|plz|now|just|ok|okay|пожалуйста|просто|теперь)[,\s]+/;
+const LEADING_FILLER = /^(?:please|pls|plz|now|just|пожалуйста|просто|теперь)[,\s]+/;
+
+const QUOTE_OPEN = /^["'`«“‘]/;
 
 type ProbeKind = "echo" | "tool_restriction" | "format" | "ping";
 
 interface ProbeFragment {
   kind: ProbeKind;
-  /** Raw payload for echo fragments (original casing). */
+  /** Raw payload for echo fragments (original casing, quotes stripped). */
   payload?: string;
-}
-
-function lower(s: string): string {
-  return s.toLowerCase();
-}
-
-function wordTokens(text: string): string[] {
-  return lower(text).match(/[\p{L}\p{N}_'’]+/gu)?.map((t) => t.replace(/’/g, "'")) ?? [];
-}
-
-function hasDurableMarker(text: string): boolean {
-  const lowered = lower(text);
-  for (const token of wordTokens(lowered)) {
-    if (DURABLE_WORDS.has(token)) return true;
-  }
-  return DURABLE_PHRASES.some((re) => re.test(lowered));
 }
 
 /** Split a user message into clause-sized fragments. */
@@ -269,9 +310,29 @@ function stripQuotes(s: string): string {
   return s.replace(/^["'`«“‘]+|["'`»”’]+$/g, "").trim();
 }
 
+/**
+ * An echo payload counts as a probe only when it looks literal: quoted,
+ * containing `_` or a digit, carrying an ALL-CAPS token, or made of
+ * ping words ("pong", "yes or no"). "Answer only briefly", "Отвечай
+ * только по-русски" and "Reply only English please" are style rules.
+ */
+function isLiteralPayload(quoted: boolean, payload: string): boolean {
+  if (quoted) return true;
+  if (/[_\d]/.test(payload)) return true;
+  const tokens = payload.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  if (
+    tokens.some(
+      (t) => t.length >= 2 && t === t.toUpperCase() && /\p{Lu}/u.test(t),
+    )
+  ) {
+    return true;
+  }
+  return tokens.length > 0 && tokens.every((t) => LITERAL_PAYLOAD_WORDS.has(lower(t)));
+}
+
 function classifyFragment(original: string): ProbeFragment | null {
   let f = lower(original).replace(/’/g, "'").replace(/\s+/g, " ").trim();
-  // Strip leading filler words, possibly several ("ok please just …").
+  // Strip leading filler words, possibly several ("please just …").
   for (let i = 0; i < 3; i += 1) {
     const next = f.replace(LEADING_FILLER, "");
     if (next === f) break;
@@ -284,43 +345,44 @@ function classifyFragment(original: string): ProbeFragment | null {
   }
   if (FORMAT_ONLY.test(f)) return { kind: "format" };
   const echo = ECHO_WITH_QUALIFIER.exec(f) ?? ECHO_BARE.exec(f);
-  if (echo) {
-    const payloadLower = stripQuotes(echo[1]!.replace(ECHO_PAYLOAD_TRAILER, ""));
-    const payloadWords = payloadLower.split(/\s+/).filter((w) => w.length > 0);
-    // A short literal payload ("LOCAL_OK", "pong", "yes or no") is an
-    // echo probe. Any preposition ("only in Russian", "only tests for
-    // new code") makes it a style or scope rule that may be meant to
-    // last, so the fragment is not treated as a probe.
-    if (
-      payloadWords.length >= 1 &&
-      payloadWords.length <= 3 &&
-      !payloadWords.some((w) => STYLE_PREPOSITIONS.has(w))
-    ) {
-      // Recover the payload's original casing from the source fragment.
-      const idx = lower(original).lastIndexOf(payloadLower);
-      const payload =
-        idx >= 0 ? original.slice(idx, idx + payloadLower.length) : payloadLower;
-      return { kind: "echo", payload };
-    }
+  if (!echo) return null;
+  const rawPayload = echo[1]!.replace(ECHO_PAYLOAD_TRAILER, "").trim();
+  const quoted = QUOTE_OPEN.test(rawPayload);
+  const payloadLower = stripQuotes(rawPayload);
+  const payloadWords = payloadLower.split(/\s+/).filter((w) => w.length > 0);
+  // A short payload with no preposition ("only in Russian", "only tests
+  // for new code" are scope rules) …
+  if (
+    payloadWords.length < 1 ||
+    payloadWords.length > 3 ||
+    payloadWords.some((w) => STYLE_PREPOSITIONS.has(w))
+  ) {
+    return null;
   }
-  return null;
+  // … recovered in its original casing …
+  const idx = lower(original).lastIndexOf(payloadLower);
+  const payload =
+    idx >= 0 ? original.slice(idx, idx + payloadLower.length) : payloadLower;
+  // … that looks like a literal, not a style word.
+  if (!isLiteralPayload(quoted, payload)) return null;
+  return { kind: "echo", payload };
 }
 
 /**
  * `true` when every user message in the window is made only of probe
- * fragments — echo commands ("reply exactly X"), one-off tool or
- * format restrictions ("do not use tools", "no explanation"), or
- * pings / greetings / acknowledgements — and nothing hints at a
- * lasting preference or a statement about the user. An empty window
+ * fragments — literal echo commands ("reply exactly LOCAL_OK"), one-off
+ * tool or format restrictions ("do not use tools", "no explanation"),
+ * or pings / greetings ("hi", "ping", "thanks") — and nothing hints at
+ * a lasting preference or a statement about the user. An empty window
  * is trivial too.
  *
  * Narrow by design: a single unrecognised clause ("what's the capital
- * of France?") makes the window non-trivial and reflection runs as
- * before.
+ * of France?", "да") makes the window non-trivial and reflection runs
+ * as before.
  */
 export function isTrivialReflectionWindow(userTexts: readonly string[]): boolean {
   for (const text of userTexts) {
-    if (hasDurableMarker(text)) return false;
+    if (hasPersistenceMarker(text) || hasPersonalMarker(text)) return false;
     for (const fragment of splitFragments(text)) {
       if (classifyFragment(fragment) === null) return false;
     }
@@ -336,16 +398,27 @@ const NAME_KEY =
   /^(?:user_|my_)?(?:full_|first_|last_|given_|family_|preferred_|display_|real_|nick_?)?name$|^(?:nickname|username|user_name|alias|handle|user_handle|user_identity|identity)$/;
 
 /**
- * Lead phrases after which a capitalised word is a claimed name for the
- * USER. Deliberately limited to first-person and "the user is …"
- * phrasings — generic "named X" / "name is X" (a file, a project) are
- * not identity claims and are left alone. Longer alternatives come
- * first so "user is named Sam" claims "Sam", not "named".
+ * Explicit naming phrases. Every capitalised word after one of these is
+ * a claimed name for the USER. Longer alternatives come first. A bare
+ * "the user is X" is deliberately absent: "The user is Brazilian" /
+ * "Russian-speaking" are attributes, not names.
  */
-const IDENTITY_LEAD =
-  /(?:^|[^\p{L}])(i am|i'm|im|my name is|my name's|call me|remember me as|refer to me as|address me as|user is named|user is called|user is known as|user's name is|users name is|user name is|user is|меня зовут)\s+([^\s,.;:!?]+)(?:\s+([^\s,.;:!?]+))?/giu;
+const NAMED_LEAD =
+  /(?:^|[^\p{L}])(my name is|my name's|call me|remember me as|refer to me as|address me as|user is named|user is called|user is known as|user's name is|users name is|user name is|меня зовут|зови меня|называй меня)\s+([^\s,.;:!?]+)(?:\s+([^\s,.;:!?]+))?/giu;
 
-/** Capitalised words that follow "I am" without being a name. */
+/**
+ * First-person "I am X" counts only when X (plus an optional
+ * capitalised surname) ends the clause or is followed by "and" — so
+ * "I am Alex and you are my assistant" is a claim, "I am Brazilian and
+ * live in Rio" is checked too (and grounded by "Brazil"), but "I am
+ * Working on …" is not. No `i` flag: `\p{Lu}` would match lowercase
+ * under case folding. "and" must follow whitespace, so a backtracked
+ * partial word ("Br" + "and new") can never satisfy the lookahead.
+ */
+const FIRST_PERSON_LEAD =
+  /(?:^|[^\p{L}])(?:I am|I'm|Im|i am|i'm)\s+([^\s,.;:!?]+)(?:\s+(\p{Lu}[^\s,.;:!?]*))?(?=\s*(?:$|[,.;:!?)])|\s+and\b)/gu;
+
+/** Capitalised words that follow a lead without being a name. */
 const NON_NAME_CAPITALISED: ReadonlySet<string> = new Set([
   "a",
   "an",
@@ -372,6 +445,10 @@ const NON_NAME_CAPITALISED: ReadonlySet<string> = new Set([
   "it",
   "this",
   "that",
+  "fine",
+  "ready",
+  "done",
+  "sorry",
 ]);
 
 /**
@@ -383,17 +460,18 @@ const NON_NAME_CAPITALISED: ReadonlySet<string> = new Set([
 const PERSONA_END = String.raw`(?=\s*(?:$|[,.;:!?)]|and\b|but\b|who\b|that\b))`;
 const ASSISTANT_PERSONA: readonly RegExp[] = [
   new RegExp(
-    String.raw`\byou are (?:my|a|an|the|our)\s+(?:personal\s+|ai\s+|helpful\s+|virtual\s+|local\s+)*(?:assistant|ai|agent|chatbot|bot)\b` +
+    String.raw`\byou(?: are|'re) (?:my|a|an|the|our)\s+(?:personal\s+|ai\s+|helpful\s+|virtual\s+|local\s+)*(?:assistant|ai|agent|chatbot|bot)\b` +
       PERSONA_END,
     "i",
   ),
   new RegExp(
-    String.raw`\bi am (?:an?\s+|the\s+|your\s+)?(?:personal\s+|ai\s+|helpful\s+|virtual\s+)*(?:ai|assistant|language model|llm|chatbot|memory extractor)\b` +
+    String.raw`\bi(?: am|'m) (?:an?\s+|the\s+|your\s+)?(?:personal\s+|ai\s+|helpful\s+|virtual\s+)*(?:ai|assistant|language model|llm|chatbot|memory extractor)\b` +
       PERSONA_END,
     "i",
   ),
   /\bmemory extractor\b/i,
-  /\bas an ai\b/i,
+  // "As an AI, I …" at the start of a clause — not "works as an AI engineer".
+  /(?:^|[.!?]\s+)as an ai(?: language model| assistant)?\s*,/i,
 ];
 
 const TOOL_MENTION = /\btool(?:s|ing)?\b|\btool[-_ ]?(?:use|usage|calls?)\b|инструмент/i;
@@ -446,7 +524,10 @@ function transliterate(s: string): string {
   return out;
 }
 
-/** Loose phonetic key so "Nadia" / "Nadya" / "Надя" compare equal-ish. */
+/**
+ * Loose phonetic key so "Nadia" / "Nadya" / "Надя", "Yelena" / "Елена",
+ * "Julia" / "Юля" compare equal-ish.
+ */
 function looseKey(word: string): string {
   return transliterate(lower(word))
     .replace(/[^a-z0-9]/g, "")
@@ -455,7 +536,40 @@ function looseKey(word: string): string {
     .replace(/w/g, "v")
     .replace(/ph/g, "f")
     .replace(/ia/g, "ya")
+    .replace(/^ye/, "e")
+    .replace(/^yu/, "u")
     .replace(/(.)\1+/g, "$1");
+}
+
+/** Russian case endings, longest first ("Надей", "Сашей", "Алексом", "Димой"). */
+const RU_CASE_ENDINGS: readonly string[] = [
+  "ой",
+  "ей",
+  "ом",
+  "ем",
+  "ам",
+  "ям",
+  "ою",
+  "ею",
+  "у",
+  "ю",
+  "е",
+  "ы",
+  "и",
+  "а",
+  "я",
+  "ь",
+];
+
+function cyrillicStems(token: string): string[] {
+  const lowered = lower(token);
+  const out: string[] = [];
+  for (const ending of RU_CASE_ENDINGS) {
+    if (lowered.endsWith(ending) && lowered.length - ending.length >= 3) {
+      out.push(lowered.slice(0, lowered.length - ending.length));
+    }
+  }
+  return out;
 }
 
 function editDistance(a: string, b: string): number {
@@ -478,42 +592,106 @@ function editDistance(a: string, b: string): number {
   return prev[b.length]!;
 }
 
+function commonPrefixLength(a: string, b: string): number {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  return i;
+}
+
 /** Letters outside Latin / Cyrillic — names there cannot be compared. */
 const OTHER_SCRIPT = /(?![\p{Script=Latin}\p{Script=Cyrillic}])\p{L}/u;
+const OTHER_SCRIPT_GLOBAL = /(?![\p{Script=Latin}\p{Script=Cyrillic}])\p{L}/gu;
+
+/**
+ * Below this many foreign-script letters in the user's messages, the
+ * window still counts as comparable — a stray "µ" or "é"-like symbol
+ * must not switch the identity check off.
+ */
+const OTHER_SCRIPT_MIN_LETTERS = 3;
+
+interface VocabEntry {
+  /** Lower-cased token as typed. */
+  raw: string;
+  /** `looseKey` of the token. */
+  key: string;
+  /**
+   * Fuzzy matching (edit distance) is allowed only from tokens that can
+   * plausibly be names: capitalised, Cyrillic, or a stored profile name.
+   * A lower-case Latin word ("same", "make", "been") never vouches for a
+   * name it merely resembles.
+   */
+  fuzzy: boolean;
+  /** Cyrillic source — eligible for the case-ending prefix rule. */
+  cyrillic: boolean;
+}
 
 interface Vocabulary {
-  keys: string[];
+  entries: VocabEntry[];
   /** When true, the identity check cannot verify and fails open. */
   unverifiable: boolean;
 }
 
 function buildVocabulary(ctx: GroundingContext): Vocabulary {
-  const keys = new Set<string>();
-  let unverifiable = false;
-  const sources = [...ctx.userTexts, ...(ctx.knownNames ?? [])];
-  for (const text of sources) {
-    if (OTHER_SCRIPT.test(text)) unverifiable = true;
+  const entries: VocabEntry[] = [];
+  const seen = new Set<string>();
+  const add = (entry: VocabEntry): void => {
+    if (entry.key.length === 0) return;
+    const id = `${entry.raw}|${entry.key}|${entry.fuzzy}|${entry.cyrillic}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    entries.push(entry);
+  };
+  let otherScriptLetters = 0;
+  const addText = (text: string, alwaysFuzzy: boolean): void => {
+    otherScriptLetters += text.match(OTHER_SCRIPT_GLOBAL)?.length ?? 0;
     for (const token of text.match(/[\p{L}\p{N}]+/gu) ?? []) {
-      const key = looseKey(token);
-      if (key.length > 0) keys.add(key);
+      const cyrillic = /\p{Script=Cyrillic}/u.test(token);
+      const fuzzy = alwaysFuzzy || cyrillic || /^\p{Lu}/u.test(token);
+      add({ raw: lower(token), key: looseKey(token), fuzzy, cyrillic });
+      if (cyrillic) {
+        for (const stem of cyrillicStems(token)) {
+          add({ raw: stem, key: looseKey(stem), fuzzy: true, cyrillic: true });
+        }
+      }
     }
-  }
-  return { keys: [...keys], unverifiable };
+  };
+  for (const text of ctx.userTexts) addText(text, false);
+  for (const name of ctx.knownNames ?? []) addText(name, true);
+  return { entries, unverifiable: otherScriptLetters >= OTHER_SCRIPT_MIN_LETTERS };
 }
 
 function isGrounded(word: string, vocab: Vocabulary): boolean {
+  const raw = lower(word).replace(/[^\p{L}\p{N}]/gu, "");
   const key = looseKey(word);
-  if (key.length === 0) return true;
+  if (key.length === 0 || raw.length === 0) return true;
   // One edit for short names, two for longer ones: enough for
-  // romanisation drift (Nadia/Nadya, Aleksei/Alexey) without letting an
+  // romanisation drift (Nadia/Nadya, Yevgeny/Евгений) without letting an
   // unrelated user word ("alerts") vouch for an invented "Alex".
   const tolerance = key.length <= 5 ? 1 : 2;
-  for (const candidate of vocab.keys) {
-    if (candidate === key) return true;
-    if (candidate.length < 3 || key.length < 3) continue;
-    if (candidate[0] !== key[0]) continue;
-    if (Math.abs(candidate.length - key.length) > tolerance) continue;
-    if (editDistance(candidate, key) <= tolerance) return true;
+  for (const entry of vocab.entries) {
+    if (entry.raw === raw) return true;
+    // Normalised spelling: always from a name-like token, and from any
+    // token once the name is long enough not to collide with a common
+    // word ("Sam"/"same", "Ben"/"been" stay apart).
+    if (entry.key === key && (entry.fuzzy || key.length >= 5)) return true;
+    // The user wrote the root, the model the derived form: "Brazil" →
+    // "Brazilian", "Russia" → "Russian".
+    if (entry.key.length >= 5 && key.startsWith(entry.key)) return true;
+    if (!entry.fuzzy) continue;
+    // Russian case forms / stems: "Надей" → "над" vs "Nadya", "Сашей" →
+    // "саш" vs "Sasha", "Димой" → "дим" vs "Dima".
+    if (
+      entry.cyrillic &&
+      entry.key.length >= 3 &&
+      commonPrefixLength(entry.key, key) >= Math.max(3, key.length - 2)
+    ) {
+      return true;
+    }
+    if (key.length < 5) continue;
+    if (entry.key.length < 3) continue;
+    if (entry.key[0] !== key[0]) continue;
+    if (Math.abs(entry.key.length - key.length) > tolerance) continue;
+    if (editDistance(entry.key, key) <= tolerance) return true;
   }
   return false;
 }
@@ -526,26 +704,44 @@ function cleanWord(word: string): string {
   return word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 }
 
-/** Names this text claims for the user ("I am Alex", "call me Sam"). */
+/**
+ * Capitalised name parts of one claimed word, split on hyphens so
+ * "Russian-speaking" checks only "Russian" and "Anne-Marie" checks both.
+ */
+function namePartsOf(raw: string): string[] {
+  const out: string[] = [];
+  for (const part of raw.split(/[-‐–]/)) {
+    const word = cleanWord(part);
+    if (word.length < 2) continue;
+    if (!startsUppercase(word)) continue;
+    if (NON_NAME_CAPITALISED.has(lower(word))) continue;
+    out.push(word);
+  }
+  return out;
+}
+
+/** Names this text claims for the user ("call me Sam", "I am Alex."). */
 function claimedNames(text: string): string[] {
   const out: string[] = [];
-  IDENTITY_LEAD.lastIndex = 0;
-  for (const match of text.matchAll(IDENTITY_LEAD)) {
-    for (const raw of [match[2], match[3]]) {
-      if (!raw) continue;
-      const word = cleanWord(raw);
-      if (word.length < 2) continue;
-      if (!startsUppercase(word)) break;
-      if (NON_NAME_CAPITALISED.has(lower(word))) break;
-      out.push(word);
-    }
+  for (const match of text.matchAll(NAMED_LEAD)) {
+    const first = match[2];
+    if (!first || !startsUppercase(cleanWord(first))) continue;
+    out.push(...namePartsOf(first));
+    const second = match[3];
+    if (second && startsUppercase(cleanWord(second))) out.push(...namePartsOf(second));
+  }
+  for (const match of text.matchAll(FIRST_PERSON_LEAD)) {
+    const first = match[1];
+    if (!first || !startsUppercase(cleanWord(first))) continue;
+    out.push(...namePartsOf(first));
+    if (match[2]) out.push(...namePartsOf(match[2]));
   }
   return out;
 }
 
 function nameValueWords(value: string): string[] {
   return value
-    .split(/[\s_]+/)
+    .split(/[\s_-]+/)
     .map(cleanWord)
     .filter((w) => w.length >= 2 && /\p{L}/u.test(w));
 }
@@ -556,25 +752,26 @@ interface OneOffSignals {
 }
 
 /**
- * Collect the one-off instructions seen in the window:
+ * Collect the one-off instructions seen in messages that carry no
+ * explicit persistence marker ("remember", "always", "from now on",
+ * "запомни", …):
  *  - echo payload tokens worth matching ("LOCAL_OK"). Only distinctive
  *    tokens qualify — containing `_` / a digit, or all-caps and at
  *    least 4 letters — and only when the user never used the token
- *    outside the echo command itself. "Reply with only JSON. Our API
- *    uses JSON:API" keeps every note about JSON.
- *  - whether a one-off tool restriction ("do not use tools") appeared
- *    in a message that carries no durable marker ("remember",
- *    "always", …).
+ *    outside the echo command itself;
+ *  - whether a one-off tool restriction ("do not use tools") appeared.
+ * "From now on, reply only JSON" and "Remember: do not use tools" lift
+ * both gates; "Do not use tools, I'm testing" does not.
  */
 function collectOneOffSignals(userTexts: readonly string[]): OneOffSignals {
   const payloadCounts = new Map<string, number>();
   let toolRestriction = false;
   for (const text of userTexts) {
-    const durable = hasDurableMarker(text);
+    if (hasPersistenceMarker(text)) continue;
     for (const fragment of splitFragments(text)) {
       const probe = classifyFragment(fragment);
       if (!probe) continue;
-      if (probe.kind === "tool_restriction" && !durable) toolRestriction = true;
+      if (probe.kind === "tool_restriction") toolRestriction = true;
       if (probe.kind === "echo" && probe.payload) {
         for (const token of probe.payload.match(/[\p{L}\p{N}_]+/gu) ?? []) {
           const distinctive =
@@ -614,14 +811,15 @@ function judge(
 ): UngroundedReason | null {
   const text = rawText.replace(/’/g, "'");
   // Assistant persona ("you are my personal assistant") — unless the
-  // user literally wrote that phrase, which also keeps "I am an
-  // assistant professor" safe when the user said so.
+  // user literally wrote that phrase.
   for (const re of ASSISTANT_PERSONA) {
     const hit = re.exec(text);
-    if (hit && !userTextLower.includes(lower(hit[0]))) return "assistant_persona";
+    if (hit && !userTextLower.includes(lower(hit[0]).trim())) return "assistant_persona";
   }
   if (!vocab.unverifiable) {
     for (const word of [...nameWords, ...claimedNames(text)]) {
+      // A name written in a script we cannot compare fails open.
+      if (OTHER_SCRIPT.test(word)) continue;
       if (!isGrounded(word, vocab)) return "ungrounded_identity";
     }
   }

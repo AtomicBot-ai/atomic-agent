@@ -76,8 +76,8 @@ describe("buildReflectionPrompt", () => {
 
       Rules:
       - Only durable content explicitly stated by the user or that the user asked to remember.
-      - Use only what the USER wrote. Never invent or guess a name, nickname, role, age, location or any other identity detail; record a name only if the USER literally typed it.
-      - Instructions for the current reply only ("reply exactly X", "answer in one word", "do not use tools", test or ping messages) are NOT preferences. Record a preference only when the user says it should last ("from now on", "always", "remember").
+      - Never invent identity details (name, nickname, role, age, location); record a name only if the USER typed it.
+      - A one-off instruction for the current reply ("reply exactly X", "don't use tools for this", test or ping messages) is not a preference.
       - Never copy wording or example values from these instructions into the output.
       - Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
       - When unsure, output NONE.
@@ -144,10 +144,16 @@ describe("buildReflectionPrompt", () => {
   it("user-centric prefixes carry no example person name and state the grounding rules", () => {
     for (const prefix of [REFLECTION_STABLE_PREFIX, REFLECTION_STABLE_PREFIX_TYPED]) {
       expect(prefix).not.toMatch(/\bAlex\b/);
-      expect(prefix).toContain("Never invent or guess a name");
-      expect(prefix).toContain("Instructions for the current reply only");
+      expect(prefix).toContain("Never invent identity details");
+      expect(prefix).toContain("A one-off instruction for the current reply");
       expect(prefix).toContain("Never copy wording or example values");
       expect(prefix).toContain("When unsure, output NONE.");
+      // The identity rule must not narrow general extraction: facts the
+      // user asked to remember (an assistant-found deploy command) and
+      // plain statements ("I prefer TypeScript") stay extractable.
+      expect(prefix).toContain("or that the user asked to remember");
+      expect(prefix).not.toContain("Use only what the USER wrote");
+      expect(prefix).not.toContain("Record a preference only when");
     }
   });
 
