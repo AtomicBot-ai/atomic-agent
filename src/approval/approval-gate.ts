@@ -1,4 +1,4 @@
-import { FanoutScopeRegistry } from "./fanout-scope.js";
+import { FanoutScopeRegistry, isInside } from "./fanout-scope.js";
 import { ReadScopeGrants } from "./read-scope-grants.js";
 import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
@@ -46,13 +46,16 @@ export interface ApprovalRequest {
    */
   redirectablePath?: string;
   /**
-   * Absolute paths of the files this call would create, change, move or
-   * remove, when the tool can name them: an fs mutation's targets, the
-   * files a shell command line writes, redirects into, moves, copies
-   * onto or removes (`shellWriteTargets`). Read only by the gate's
-   * same-turn rule (`declinedInTurn`): once the user has pressed Deny on
-   * a file tool's call, another call this turn that would change one of
-   * its targets is the same action by another route.
+   * Absolute paths of the files this call would replace, move or remove
+   * as a whole, when the tool can name them. A file tool sets them only
+   * for a whole-file action: `os.fs.write` replacing a file, `os.fs.trash`,
+   * `os.fs.restore` — an edit or a patch changes part of a file and names
+   * none. A shell command names the files its line writes, redirects
+   * into, moves, copies onto or removes (`shellWriteTargets`). Read only
+   * by the gate's same-turn rule (`declinedInTurn`): once the user has
+   * pressed Deny on a whole-file call, a shell command or another call of
+   * the same tool that would change one of its files this turn is the
+   * same action by another route.
    */
   targetPaths?: string[];
 }
@@ -75,7 +78,8 @@ export interface ApprovalDecision {
    * On a denial by a person, their own words if they typed any (a
    * surface with only a Deny button leaves it unset — a tag such as
    * "tui-denied" would reach the model as something the user said). On
-   * an `automatic` denial, the system's explanation.
+   * an `automatic` denial, the system's explanation; with
+   * `declinedEarlier`, what the user declined ("this same call").
    */
   reason?: string;
   /**
@@ -89,8 +93,8 @@ export interface ApprovalDecision {
    * Set with `automatic` when the gate refused the call because the user
    * already declined it, or a call changing the same file, earlier in
    * this turn (`declinedInTurn`). Nobody decided on this call, but a
-   * user's no stands behind it: a caller that swaps the system's reason
-   * for its own refusal text keeps this one.
+   * user's no stands behind it: callers report it as the user's
+   * decision, not a system refusal (`describeApprovalDenial`).
    */
   declinedEarlier?: boolean;
   /** Session grant to record alongside an approval. Ignored when denied. */
@@ -139,23 +143,21 @@ export class ApprovalGateError extends Error {
 }
 
 /**
- * What the user said no to in a session's current turn. `calls` holds
- * the `callKey` of every call they denied; `targets` maps each target
- * path of a file tool's call they denied with a bare Deny to its tool.
+ * What the user pressed Deny on in a session's current turn. `calls`
+ * holds the `callKey` of every such call; `targets` maps each file a
+ * whole-file call among them would have changed (`targetPaths`) to its
+ * tool.
  */
 interface DeclinedInTurn {
   calls: Set<string>;
   targets: Map<string, string>;
 }
 
-/**
- * What the model reads after `describeApprovalDenial`'s "refused
- * without a decision from the user" when the gate turns down a repeat
- * of something the user already declined this turn.
- */
-const DECLINED_AGAIN_ADVICE =
-  "Do not try it again or another way to do the same thing; " +
-  "tell the user it was not done and ask what they would like instead.";
+/** The parts of a request the same-turn target rule reads. */
+type TargetQuery = Pick<
+  ApprovalRequest,
+  "sessionId" | "tool" | "category" | "targetPaths"
+>;
 
 interface PendingEntry {
   resolve: (decision: ApprovalDecision) => void;
@@ -223,6 +225,13 @@ export class ApprovalGate {
    * here, without a prompt.
    */
   private readonly declinedBySession = new Map<string, DeclinedInTurn>();
+  /**
+   * Fusion worker session → the orchestrator session it works for (see
+   * `followDeclined`): a worker's calls are refused over what the user
+   * declined on the parent's turn too, so re-delegating a declined write
+   * is not the way round it.
+   */
+  private readonly declinedParentBySession = new Map<string, string>();
 
   /**
    * Directories a session may write in without asking — see
@@ -286,14 +295,20 @@ export class ApprovalGate {
    * no-arg form on a session switch / new session as a belt-and-braces
    * reset — the per-session keying already isolates other sessions). The
    * standing level is untouched: it is a durable posture, grants are not.
+   * What the session's user declined this turn (`declinedInTurn`), and a
+   * worker's link to its parent's (`followDeclined`), go with them.
    */
   clearSessionGrants(sessionId?: string): void {
     this.readScopeGrants.clear(sessionId);
     if (sessionId === undefined) {
       this.grantsBySession.clear();
+      this.declinedBySession.clear();
+      this.declinedParentBySession.clear();
       return;
     }
     this.grantsBySession.delete(sessionId);
+    this.declinedBySession.delete(sessionId);
+    this.declinedParentBySession.delete(sessionId);
   }
 
   /**
@@ -339,8 +354,6 @@ export class ApprovalGate {
       });
     }
     const auto = this.autoApproval(request);
-    if (auto)
-      return Promise.resolve({ approvalId, approved: true, reason: auto });
     if (auto)
       return Promise.resolve({ approvalId, approved: true, reason: auto });
     // Would prompt from here on. A session under a refuse policy gets its
@@ -415,53 +428,144 @@ export class ApprovalGate {
 
   /**
    * Whether `request` repeats something the user declined earlier in
-   * this turn, and if so the reason the model is given. Two matches:
+   * this turn, and if so what they declined (the refusal's `reason`).
+   * Only a bare Deny counts (`recordDeclined`), and two matches:
    *
    *  - the same call: same tool, category, reason, preview and
-   *    resources (`callKey`), after any denial by the user — a typed reply too,
-   *    whose text already says "do not run the same call again";
-   *  - the same target: a call that would change a file a file tool's
-   *    call, denied with a bare Deny, would have changed — the
-   *    `printf … > test10.txt` after a denied `os.fs.write test10.txt`.
-   *    A typed reply is left out here: "put it in ~/Documents instead"
-   *    or "back it up first" can make a later write of the same file
-   *    the very thing the user asked for. So is a denied shell command:
-   *    its redirects are a side of what it was for, and a no to
+   *    resources (`callKey`);
+   *  - the same file by another route: a shell command, or another call
+   *    of the same tool, that would change a file a whole-file call the
+   *    user declined would have changed — the `printf … > test10.txt`
+   *    after a denied `os.fs.write test10.txt`, or that write again with
+   *    other content. An edit or a patch names no target, so a different
+   *    edit of the file asks again: a no to one hunk is not a no to the
+   *    file. Nor is a denied shell command a no to its targets: its
+   *    redirects are a side of what it was for, and a no to
    *    `npm test > out.log` is not a no to every later write of out.log.
    *
    * Nothing else matches. A call the gate cannot tie to a declined one
-   * (a target it cannot name, a different command) still asks the user.
+   * (a target it cannot name, a different command) still asks the user:
+   * a false refusal costs more than one more question.
    */
   private declinedInTurn(request: ApprovalRequest): string | null {
-    const declined = this.declinedBySession.get(request.sessionId);
-    if (declined === undefined) return null;
-    if (declined.calls.has(callKey(request))) {
-      return `the user already declined this same call earlier in this turn. ${DECLINED_AGAIN_ADVICE}`;
+    const key = callKey(request);
+    for (const declined of this.declinedRecords(request.sessionId)) {
+      if (declined.calls.has(key)) return "this same call";
     }
-    for (const target of normaliseTargets(request.targetPaths)) {
-      const tool = declined.targets.get(target);
-      if (tool !== undefined) {
-        return (
-          `the user already declined ${tool} on ${target} earlier in this ` +
-          `turn, and this call would change that file too. ${DECLINED_AGAIN_ADVICE}`
-        );
+    return this.declinedTarget(request);
+  }
+
+  /**
+   * The target rule of `declinedInTurn` on its own: what the user
+   * declined that `query` would change by another route, or `null`.
+   */
+  private declinedTarget(query: TargetQuery): string | null {
+    const targets = normaliseTargets(query.targetPaths);
+    if (targets.length === 0) return null;
+    for (const declined of this.declinedRecords(query.sessionId)) {
+      for (const target of targets) {
+        const tool = declined.targets.get(target);
+        if (
+          tool !== undefined &&
+          (query.category === "shell" || tool === query.tool)
+        ) {
+          return `${tool} on ${target} (this call would change that file too)`;
+        }
       }
     }
     return null;
   }
 
-  /** Remember a denial the user made, for `declinedInTurn`. */
+  /** The session's own record, then the one of the session it works for. */
+  private declinedRecords(sessionId: string): DeclinedInTurn[] {
+    const records: DeclinedInTurn[] = [];
+    const own = this.declinedBySession.get(sessionId);
+    if (own !== undefined) records.push(own);
+    const parent = this.declinedParentBySession.get(sessionId);
+    const inherited =
+      parent === undefined ? undefined : this.declinedBySession.get(parent);
+    if (inherited !== undefined) records.push(inherited);
+    return records;
+  }
+
+  /**
+   * Remember a bare Deny, for `declinedInTurn`. A typed reply is left
+   * out: its words reach the model as a steer the loop only drains at
+   * the next step, and "yes, go ahead" or "put it in ~/Documents" can
+   * make the very next call the thing the user asked for.
+   */
   private recordDeclined(request: ApprovalRequest, reason?: string): void {
+    if ((reason?.trim() ?? "") !== "") return;
     let declined = this.declinedBySession.get(request.sessionId);
     if (declined === undefined) {
       declined = { calls: new Set(), targets: new Map() };
       this.declinedBySession.set(request.sessionId, declined);
     }
     declined.calls.add(callKey(request));
-    if ((reason?.trim() ?? "") !== "" || request.category === "shell") return;
+    if (request.category === "shell") return;
     for (const target of normaliseTargets(request.targetPaths)) {
       declined.targets.set(target, request.tool);
     }
+  }
+
+  /**
+   * Whether the gate would refuse `query` because the user declined a
+   * file it would change earlier in this turn (`declinedInTurn`'s target
+   * rule). For callers that would otherwise run it without asking — a
+   * fusion worker inside its fan-out's directory — so that the call
+   * reaches the gate, which refuses it.
+   */
+  hasDeclinedTarget(query: TargetQuery): boolean {
+    return this.declinedTarget(query) !== null;
+  }
+
+  /**
+   * Whether the user declined a whole-file call this turn on a file
+   * under one of `dirs`. A fan-out into those directories would let its
+   * workers write the file unasked, so `fusion.delegate` asks again
+   * rather than ride the turn's standing yes.
+   */
+  hasDeclinedUnder(sessionId: string, dirs: readonly string[]): boolean {
+    const declined = this.declinedBySession.get(sessionId);
+    if (declined === undefined) return false;
+    return [...declined.targets.keys()].some((target) =>
+      dirs.some((dir) => isInside(resolvePath(dir), target)),
+    );
+  }
+
+  /**
+   * Forget the files under `dirs` the user declined on `sessionId`:
+   * they have since answered yes to a fan-out writing there, asked
+   * knowing what they had declined, and that is the newer answer.
+   */
+  forgetDeclinedUnder(sessionId: string, dirs: readonly string[]): void {
+    const declined = this.declinedBySession.get(sessionId);
+    if (declined === undefined) return;
+    for (const target of [...declined.targets.keys()]) {
+      if (dirs.some((dir) => isInside(resolvePath(dir), target))) {
+        declined.targets.delete(target);
+      }
+    }
+  }
+
+  /**
+   * Hold `sessionId` (a fusion worker) to what the user declined on
+   * `parentSessionId` (its orchestrator) in the current turn, until
+   * `clearSessionGrants(sessionId)`.
+   */
+  followDeclined(sessionId: string, parentSessionId: string): void {
+    this.declinedParentBySession.set(sessionId, parentSessionId);
+  }
+
+  /**
+   * Whether a request of `category` from `sessionId` would be put to a
+   * person now: neither the level nor a grant settles it, and no refuse
+   * policy answers for the session.
+   */
+  wouldPrompt(sessionId: string, category: ApprovalCategory): boolean {
+    const probe = { approvalId: "", sessionId, tool: "", category, reason: "" };
+    if (this.autoApproval(probe) !== null) return false;
+    return this.policiesBySession.get(sessionId)?.onPrompt !== "refuse";
   }
 
   /**

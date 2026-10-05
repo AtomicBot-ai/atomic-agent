@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildOsFsEditTool } from "../tools/os/fs-edit.js";
+import { buildOsFsTrashTool } from "../tools/os/fs-trash.js";
 import { buildOsFsWriteTool } from "../tools/os/fs-write.js";
 import { buildOsShellTool } from "../tools/os/shell.js";
 import type { ToolContext } from "../tools/tool-registry.js";
@@ -18,7 +20,8 @@ import {
  * `printf … >`, `echo … >` and `sh -c "echo … > …/test10.txt"`. The
  * gate asked the user every time. Now a repeat in the same turn, or a
  * shell write into the declined file, is refused without a prompt and
- * reads to the model as a refusal standing on the user's no.
+ * reads to the model as the user's no. A false refusal is the worse
+ * mistake, so everything the gate cannot tie to a bare Deny still asks.
  */
 describe("a call the user declined is not asked again in the same turn", () => {
   let dir: string;
@@ -63,8 +66,18 @@ describe("a call the user declined is not asked again in the same turn", () => {
       args,
       ctx(),
     );
+  const edit = (path: string, oldString: string, newString: string) =>
+    buildOsFsEditTool({ approvals: gate, approvalRequired: true }).run(
+      { path, oldString, newString },
+      ctx(),
+    );
+  const trash = (path: string) =>
+    buildOsFsTrashTool({ approvals: gate, approvalRequired: true }).run(
+      { paths: [path] },
+      ctx(),
+    );
 
-  it("refuses the same call again without asking, as a refusal standing on the user's no", async () => {
+  it("refuses the same call again without asking, in words that say the user declined it", async () => {
     await expect(write("test10.txt", "привет")).rejects.toMatchObject({
       name: "ApprovalDeniedError",
       byUser: true,
@@ -75,12 +88,15 @@ describe("a call the user declined is not asked again in the same turn", () => {
       byUser: false,
       declinedEarlier: true,
     });
+    // Not "refused without a decision": that reads as a system block to
+    // work around (ATO-245).
     await expect(again).rejects.toThrow(
-      "os.fs.write was not run: refused without a decision from the user. " +
-        "Reason: the user already declined this same call earlier in this turn. " +
-        "Do not try it again or another way to do the same thing; " +
+      "os.fs.write was not run: the user already declined this same call " +
+        "earlier in this turn, so it was not asked again. " +
+        "Do not try it again or another way; " +
         "tell the user it was not done and ask what they would like instead.",
     );
+    await expect(again).rejects.not.toThrow("without a decision");
     expect(prompts).toHaveLength(1);
     expect(existsSync(join(dir, "test10.txt"))).toBe(false);
   });
@@ -104,7 +120,7 @@ describe("a call the user declined is not asked again in the same turn", () => {
     const target = join(dir, "test10.txt");
     for (const args of [
       { cmd: "printf %s привет > test10.txt" },
-      { cmd: "echo", args: ["привет", ">", "test10.txt"] },
+      { cmd: 'echo "привет" > test10.txt' },
       { cmd: "sh", args: ["-c", `echo привет > ${target}`] },
       { cmd: `cd .. && touch ${basename(dir)}/test10.txt` },
     ]) {
@@ -115,7 +131,8 @@ describe("a call the user declined is not asked again in the same turn", () => {
         declinedEarlier: true,
       });
       await expect(refused).rejects.toThrow(
-        `the user already declined os.fs.write on ${target} earlier in this turn`,
+        `os.shell.run was not run: the user already declined os.fs.write on ${target} ` +
+          "(this call would change that file too) earlier in this turn",
       );
     }
     expect(prompts).toHaveLength(1);
@@ -124,17 +141,84 @@ describe("a call the user declined is not asked again in the same turn", () => {
 
   it("still asks for a call that does not change the declined file", async () => {
     await expect(write("test10.txt", "привет")).rejects.toThrow();
-    // Reading the declined file into another one, and another file.
-    await expect(shell({ cmd: "cat test10.txt > copy.txt" })).rejects.toMatchObject({
-      byUser: true,
-    });
+    // Reading the declined file into another one; commands that only
+    // mention it; a direct exec whose `>` is an argument, not a redirect.
+    for (const args of [
+      { cmd: "cat test10.txt > copy.txt" },
+      { cmd: 'grep -n "<title>" test10.txt' },
+      { cmd: 'grep -E "error|rm" test10.txt' },
+      { cmd: "cat > notes.md <<'EOF'\ncp other.txt test10.txt\nEOF" },
+      { cmd: "echo", args: ["привет", ">", "test10.txt"] },
+    ]) {
+      await expect(shell(args)).rejects.toMatchObject({ byUser: true });
+    }
     answers.push({ approved: true });
     await write("other.txt", "fine");
     expect(prompts.map((p) => p.tool)).toEqual([
       "os.fs.write",
       "os.shell.run",
+      "os.shell.run",
+      "os.shell.run",
+      "os.shell.run",
+      "os.shell.run",
       "os.fs.write",
     ]);
+    expect(await readFile(join(dir, "other.txt"), "utf8")).toBe("fine");
+    expect(existsSync(join(dir, "test10.txt"))).toBe(false);
+  });
+
+  it("a no to one edit of a file is not a no to a different edit of it", async () => {
+    await writeFile(join(dir, "page.html"), "<h1>old</h1>\n<p>body</p>\n");
+    await expect(edit("page.html", "old", "new")).rejects.toMatchObject({
+      byUser: true,
+    });
+    // The same hunk again is the same call…
+    await expect(edit("page.html", "old", "new")).rejects.toMatchObject({
+      declinedEarlier: true,
+    });
+    // …a different one is a new question, at any level.
+    gate.setLevel(5);
+    await edit("page.html", "body", "text");
+    gate.setLevel(1);
+    answers.push({ approved: true });
+    await write("page.html", "<h1>rewritten</h1>\n");
+    expect(prompts).toHaveLength(2);
+    expect(await readFile(join(dir, "page.html"), "utf8")).toBe(
+      "<h1>rewritten</h1>\n",
+    );
+  });
+
+  it("a declined trash blocks a shell remove of the file, not an edit of it", async () => {
+    await writeFile(join(dir, "keep.txt"), "one\n");
+    await expect(trash("keep.txt")).rejects.toMatchObject({ byUser: true });
+    await expect(shell({ cmd: "rm -f keep.txt" })).rejects.toMatchObject({
+      declinedEarlier: true,
+    });
+    answers.push({ approved: true });
+    await edit("keep.txt", "one", "two");
+    expect(prompts.map((p) => p.tool)).toEqual(["os.fs.trash", "os.fs.edit"]);
+    expect(await readFile(join(dir, "keep.txt"), "utf8")).toBe("two\n");
+  });
+
+  it("holds a fusion worker to what the user declined on its orchestrator's turn, inside its fan-out scope too", async () => {
+    await expect(write("test10.txt", "привет")).rejects.toThrow();
+    // What `worker-runner.ts` sets up for a worker of session s-1.
+    const worker = "s-w-1";
+    gate.setSessionPolicy(worker, { onPrompt: "refuse", reason: "no operator" });
+    gate.fanoutScopes.grant(worker, [dir]);
+    gate.followDeclined(worker, "s-1");
+    const workerShell = buildOsShellTool({
+      approvals: gate,
+      approvalRequired: true,
+    }).run({ cmd: "printf %s привет > test10.txt" }, ctx(worker));
+    await expect(workerShell).rejects.toMatchObject({ declinedEarlier: true });
+    await expect(write("test10.txt", "hello", worker)).rejects.toMatchObject({
+      declinedEarlier: true,
+    });
+    // Any other file in the scope is still the fan-out's to write.
+    await write("other.txt", "fine", worker);
+    expect(prompts).toHaveLength(1);
+    expect(existsSync(join(dir, "test10.txt"))).toBe(false);
     expect(await readFile(join(dir, "other.txt"), "utf8")).toBe("fine");
   });
 
@@ -148,19 +232,17 @@ describe("a call the user declined is not asked again in the same turn", () => {
     expect(await readFile(join(dir, "test10.txt"), "utf8")).toBe("привет");
   });
 
-  it("after a typed reply refuses only the identical call", async () => {
-    answers.push({ approved: false, reason: "back it up first" });
+  it("after a typed reply refuses nothing, not even the identical call", async () => {
+    // A host may deliver the words as a steer the loop drains only at
+    // the next step: "yes, go ahead" must not meet an automatic refusal.
+    answers.push({ approved: false, reason: "да, давай" });
     await expect(write("test10.txt", "привет")).rejects.toMatchObject({
       byUser: true,
     });
-    await expect(write("test10.txt", "привет")).rejects.toMatchObject({
-      declinedEarlier: true,
-    });
-    // What they said may make a later write of the same file the very
-    // thing they asked for, so that one is theirs to answer.
     answers.push({ approved: true });
-    await write("test10.txt", "привет, again");
+    await write("test10.txt", "привет");
     expect(prompts).toHaveLength(2);
+    expect(await readFile(join(dir, "test10.txt"), "utf8")).toBe("привет");
   });
 
   it("is stopped by nothing nobody decided, and by nothing in another session", async () => {

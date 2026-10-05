@@ -1,3 +1,8 @@
+import {
+  ApprovalGate,
+  type ApprovalDecision,
+  type ApprovalRequest,
+} from "../../approval/approval-gate.js";
 import { FanoutScopeRegistry } from "../../approval/fanout-scope.js";
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -901,6 +906,84 @@ describe("fusion.delegate", () => {
     expect(result.summary).toContain("nobody is there");
     expect(result.summary).not.toContain("declined");
     expect(turns()).toBe(0);
+  });
+
+  /**
+   * ATO-225 by delegation: after the user pressed Deny on the
+   * orchestrator's own write of a file, the turn's standing yes to a
+   * fan-out into its directory would let the workers write it unasked.
+   */
+  function gateAnswering(): {
+    gate: ApprovalGate;
+    prompts: ApprovalRequest[];
+    answer: (next: Omit<ApprovalDecision, "approvalId">) => void;
+  } {
+    const prompts: ApprovalRequest[] = [];
+    let current: Omit<ApprovalDecision, "approvalId"> = { approved: true };
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 1,
+      emit: (req) => {
+        prompts.push(req);
+        const decision = current;
+        queueMicrotask(() =>
+          gate.resolve({ approvalId: req.approvalId, ...decision }),
+        );
+      },
+    });
+    return { gate, prompts, answer: (next) => (current = next) };
+  }
+  const denyOrchestratorWrite = async (gate: ApprovalGate) =>
+    gate.request({
+      sessionId: "s-parent",
+      tool: "os.fs.write",
+      category: "fs_write_workspace",
+      reason: "write /repo/src/a.js",
+      targetPaths: ["/repo/src/a.js"],
+    });
+
+  it("asks again before re-delegating into a directory where the user declined a file, and a no stays theirs", async () => {
+    const { gate, prompts, answer } = gateAnswering();
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    expect((await tool.run({ tasks: writeTask }, ctx())).status).not.toBe("error");
+    answer({ approved: false });
+    await denyOrchestratorWrite(gate);
+    expect(prompts).toHaveLength(2);
+
+    const redelegated = await tool.run({ tasks: writeTask }, ctx());
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]?.tool).toBe("fusion.delegate");
+    expect(redelegated.status).toBe("error");
+    expect(redelegated.details).toMatchObject({ deniedByUser: true });
+
+    // The same fan-out again is refused unasked, and still reads as the
+    // user's decision rather than "the fan-out was not approved".
+    const again = await tool.run({ tasks: writeTask }, ctx());
+    expect(prompts).toHaveLength(3);
+    expect(again.status).toBe("error");
+    expect(again.summary).toContain(
+      "fusion.delegate was not run: the user already declined this same call earlier in this turn, so it was not asked again.",
+    );
+    expect(again.summary).not.toContain("was not approved");
+    expect(again.details).toMatchObject({ deniedByUser: true });
+  });
+
+  it("a yes to the re-delegation, asked knowing, is the newer answer for the turn", async () => {
+    const { gate, prompts, answer } = gateAnswering();
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: writeTask }, ctx());
+    answer({ approved: false });
+    await denyOrchestratorWrite(gate);
+    answer({ approved: true });
+    expect((await tool.run({ tasks: writeTask }, ctx())).status).not.toBe("error");
+    expect(prompts).toHaveLength(3);
+    expect(gate.hasDeclinedUnder("s-parent", ["/repo/src"])).toBe(false);
+    // The review pass rides the standing yes again.
+    expect((await tool.run({ tasks: writeTask }, ctx())).status).not.toBe("error");
+    expect(prompts).toHaveLength(3);
   });
 
   describe("with a contract", () => {

@@ -290,13 +290,29 @@ export function buildFusionDelegateTool(
       // answer stands for the rest of the turn as long as later fan-outs
       // stay inside the directories it named; one reaching somewhere new
       // asks again.
+      //
+      // Except after the user declined a file in those directories this
+      // turn: the workers would write it unasked under the standing yes,
+      // so re-delegating a declined write is asked about again.
+      const declinedInScope =
+        deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
       const alreadyApproved =
-        deps.approvals.fanoutScopes?.turnGrantCovers(
+        !declinedInScope &&
+        (deps.approvals.fanoutScopes?.turnGrantCovers(
           ctx.sessionId,
           writeScope,
-        ) ?? false;
+        ) ??
+          false);
       try {
-        if (!alreadyApproved)
+        if (!alreadyApproved) {
+          // A yes from a person who was shown this fan-out is their newer
+          // answer for the files they declined in its directories; one
+          // the level gave is not, and those files stay declined.
+          const asksPerson =
+            declinedInScope &&
+            deps.approvalRequired &&
+            (deps.approvals.wouldPrompt?.(ctx.sessionId, "fusion_fanout") ??
+              false);
           await requireApproval(
             {
               approvals: deps.approvals as ApprovalGate,
@@ -312,10 +328,18 @@ export function buildFusionDelegateTool(
             },
             ctx.signal,
           );
+          if (asksPerson) {
+            deps.approvals.forgetDeclinedUnder?.(ctx.sessionId, writeScope);
+          }
+        }
         deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
       } catch (err) {
-        // The user's own no already says what happened and what to do.
-        if (err instanceof ApprovalDeniedError && err.byUser) {
+        // The user's own no already says what happened and what to do,
+        // and so does a repeat of one they declined earlier in the turn.
+        if (
+          err instanceof ApprovalDeniedError &&
+          (err.byUser || err.declinedEarlier)
+        ) {
           return error(err.message, {
             reason: "fan-out-denied",
             deniedByUser: true,

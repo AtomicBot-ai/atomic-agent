@@ -112,6 +112,21 @@ describe("a denied approval, as the model reads it", () => {
     );
   });
 
+  it("a repeat of what the user declined earlier in the turn says so, not that the system refused it", () => {
+    const err = new ApprovalDeniedError("os.shell.run", "this same call", {
+      declinedEarlier: true,
+    });
+    expect(err.byUser).toBe(false);
+    expect(err.declinedEarlier).toBe(true);
+    expect(err.message).toBe(
+      "os.shell.run was not run: the user already declined this same call " +
+        "earlier in this turn, so it was not asked again. " +
+        "Do not try it again or another way; " +
+        "tell the user it was not done and ask what they would like instead.",
+    );
+    expect(err.message).not.toContain("without a decision");
+  });
+
   it("an error built without saying who decided never claims the user did", () => {
     const err = new ApprovalDeniedError("os.fs.write", "no surface");
     expect(err.byUser).toBe(false);
