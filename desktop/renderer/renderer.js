@@ -14451,7 +14451,8 @@ function swxTickStart() {
     if (!(SWX.pending > 0 && swxStartsModel(SWX.want))) { swxTickStop(); return; }
     const el = document.querySelector('.statusstrip.swxstart .readout');
     if (el) el.textContent = swxStartElapsed();
-    else if (swxStartingShown() && !S.pending && !WAIT) render();
+    // Drawn by a render the first time it is due, and only where the composer is (not over a pane being typed in).
+    else if (swxStartingShown() && !S.pending && !WAIT && document.getElementById('composer')) render();
   }, 1000);
 }
 function swxTickStop() { if (SWX.tick) { clearInterval(SWX.tick); SWX.tick = null; } }
