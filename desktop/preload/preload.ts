@@ -312,6 +312,20 @@ contextBridge.exposeInMainWorld("atomic", {
   ackSteers: (sessionId: string, through: number, discarded: number) =>
     ipcRenderer.invoke("agent:ackSteers", { sessionId, through, discarded }),
 
+  /** ATO-229 — app updates (main/updater.ts). Nothing downloads or installs
+   *  except through updateDownload / updateInstall, each a click. Every call
+   *  answers the updater's state; `onUpdateState` gets every change. */
+  updateState: () => ipcRenderer.invoke("updates:get"),
+  updateCheck: () => ipcRenderer.invoke("updates:check"),
+  updateDownload: () => ipcRenderer.invoke("updates:download"),
+  updateCancel: () => ipcRenderer.invoke("updates:cancel"),
+  updateInstall: () => ipcRenderer.invoke("updates:install"),
+  updateLater: () => ipcRenderer.invoke("updates:later"),
+  updateDismiss: () => ipcRenderer.invoke("updates:dismiss"),
+  updateSkip: () => ipcRenderer.invoke("updates:skip"),
+  updateSetAuto: (on: boolean) => ipcRenderer.invoke("updates:setAuto", on === true),
+  onUpdateState: (cb: (payload: unknown) => void) => on("updates:state", cb),
+
   /** Analytics (desktop/ANALYTICS.md): fire and forget. Main re-validates
    *  every event against its allowlist and drops anything it does not know;
    *  nothing is sent while analytics is off. */

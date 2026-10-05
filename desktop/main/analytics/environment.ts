@@ -58,7 +58,7 @@ export function isTestRun(
   if (env.ATOMIC_DESKTOP_ANALYTICS === "off") return true;
   const flagged = argv.some((a) =>
     a === "--smoke" || a === "--first-run-probe" || a === "--models" || a === "--dev"
-    || a.startsWith("--smoke-") || a.startsWith("--remote-debugging-port") || a.startsWith("--fake-ram="),
+    || a.startsWith("--smoke-") || a.startsWith("--remote-debugging-port") || a.startsWith("--fake-ram=") || a.startsWith("--fake-update="),
   );
   if (flagged) return true;
   return !packaged && env.ATOMIC_DESKTOP_ANALYTICS !== "on";

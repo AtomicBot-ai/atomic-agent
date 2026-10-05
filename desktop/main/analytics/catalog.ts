@@ -23,7 +23,7 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
   NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SWITCH_REFUSALS, uiActionOk, UI_VIA,
@@ -61,6 +61,8 @@ const int = (opts: { min?: number; max?: number; nullable?: boolean } = {}): Pro
 const num = (opts: { decimals?: number; nullable?: boolean } = {}): PropSpec => ({ kind: "num", min: 0, ...opts });
 const bool: PropSpec = { kind: "bool" };
 const ms = int();
+/** An app version string (`0.6.7`); anything else is dropped. */
+const appVersion: PropSpec = { kind: "str", clean: cleanAppVersion };
 
 /** Curated catalogue ids, plus the two stand-ins for anything user-added. */
 const modelIds = (): readonly string[] => [...curatedMetaIds(), "custom", "hf_custom"];
@@ -280,4 +282,12 @@ export const EVENTS: Record<string, EventSpec> = {
     },
   },
   workspace_chosen: { owner: "main", props: {} },
+
+  /* ---- app updates (ATO-229, main/updater.ts) ---- */
+  update_available: { owner: "main", props: { version: appVersion, trigger: en(["auto", "manual"]) } },
+  update_accepted: { owner: "main", props: { version: appVersion } },
+  update_dismissed: { owner: "main", props: { version: appVersion, via: en(["not_now", "cancel", "later"]) } },
+  update_skipped: { owner: "main", props: { version: appVersion } },
+  /* Sent on the first start of the new version, from what the old one wrote before it quit to install. */
+  update_installed: { owner: "main", props: { version: appVersion, from_version: appVersion } },
 };

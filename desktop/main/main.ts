@@ -191,6 +191,8 @@ import { openTarget, replyPathVerdict } from "./reply-paths.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
+// ATO-229: app updates, only ever on a click (main/updater.ts).
+import { appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -253,6 +255,15 @@ const FAKE_RAM_GB = (() => {
   const n = hit ? Number(hit.slice("--fake-ram=".length)) : NaN;
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 })();
+
+/**
+ * TEST ONLY — `--fake-update=<version>` (ATO-229, main/updater.ts): every
+ * update check finds that version without the network, the download is a
+ * fake progress, and Restart records the install instead of quitting. Like
+ * `--fake-ram`, a flag a shipped launch never passes; it also marks the run
+ * as a test run for analytics.
+ */
+const FAKE_UPDATE = fakeUpdateArg();
 
 let win: BrowserWindow | null = null;
 /** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
@@ -860,6 +871,60 @@ async function leaveManagedRoute<T extends { ok: boolean }>(res: T): Promise<T> 
   return res;
 }
 
+/** ATO-229: how many of this window's turns main is streaming (wireIpc's liveTurns). */
+let liveTurnCount: () => number = () => 0;
+
+/**
+ * ATO-229 — the updater's side of main: the IPC the toast and Settings call,
+ * what counts as "a turn is running", and the shutdown before an install.
+ */
+function wireUpdater(): void {
+  const updater = initAppUpdater({
+    fakeVersion: FAKE_UPDATE,
+    smoke: SMOKE,
+    send: (state) => send("updates:state", state),
+    turnRunningHere: () => liveTurnCount() > 0,
+    /* Telegram, a scheduled task or a bot run turns this window never sees;
+       only the agent's own /health counts them (busyTurns, agent 0.6.6). */
+    turnRunningAnywhere: async () => {
+      const client = agent;
+      if (!client) return false;
+      const health = (await Promise.race([
+        client.health().catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
+      ])) as { busyTurns?: unknown } | null;
+      return typeof health?.busyTurns === "number" && health.busyTurns > 0;
+    },
+    prepareQuit: shutdownForUpdate,
+  });
+  ipcMain.handle("updates:get", () => updater.state());
+  ipcMain.handle("updates:check", () => updater.checkNow());
+  ipcMain.handle("updates:download", () => updater.download());
+  ipcMain.handle("updates:cancel", () => updater.cancel());
+  ipcMain.handle("updates:install", () => updater.install());
+  ipcMain.handle("updates:later", () => updater.later());
+  ipcMain.handle("updates:dismiss", () => updater.dismiss());
+  ipcMain.handle("updates:skip", () => updater.skip());
+  ipcMain.handle("updates:setAuto", (_event, on: unknown) => updater.setAutoCheck(on === true));
+}
+
+/**
+ * ATO-229: what before-quit does to the agent, done before quitAndInstall
+ * starts the installer (Windows; on macOS the normal quit does it): the
+ * installer replaces the agent's and the model server's files at once, so
+ * neither may still be running. before-quit then finds no agent and only
+ * flushes analytics.
+ */
+async function shutdownForUpdate(): Promise<void> {
+  voice.kill();
+  stopForQuit();
+  const client = agent;
+  agent = null;
+  if (!client) return;
+  await client.close().catch(() => undefined);
+  await stopLocalDaemonOnQuit();
+}
+
 function wireIpc(client: AgentClient): void {
   // Analytics: chat_turn_ui, one per turn (analytics/chat-turns.ts).
   const chatTurns = new A.ChatTurnTracker((summary) => { A.turnEnded(); A.track("chat_turn_ui", { ...summary }); });
@@ -885,8 +950,12 @@ function wireIpc(client: AgentClient): void {
       if (sid) rec.sessionId = sid;
     }
     // A named error frame (with a payload) is not the end: `done` follows it (agent-client.ts chat()).
-    if (ev.kind === "done" || ev.kind === "aborted" || (ev.kind === "error" && !p)) liveTurns.delete(rec.turnId);
+    if (ev.kind === "done" || ev.kind === "aborted" || (ev.kind === "error" && !p)) {
+      liveTurns.delete(rec.turnId);
+      appUpdater()?.turnsChanged();   // ATO-229: a Restart that waits for this turn
+    }
   });
+  liveTurnCount = () => liveTurns.size;
   ipcMain.handle("agent:liveTurns", () => [...liveTurns.values()].map((t) => ({ ...t })));
   ipcMain.handle("agent:replayApprovals", () => client.reopenApprovalStream());
   ipcMain.on("analytics:track", (_event, payload: unknown) => A.trackFromRenderer(payload));
@@ -1040,6 +1109,7 @@ function wireIpc(client: AgentClient): void {
     liveTurns.set(turnId, {
       turnId, sessionId: known, text: clean[clean.length - 1]!.content, startedAt: Date.now(), firstTurn: !known,
     });
+    appUpdater()?.turnsChanged();
     void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
     return { ok: true, turnId };
   });
@@ -8866,6 +8936,9 @@ void app.whenReady().then(async () => {
   win.on("closed", () => voice.kill());
   buildMenu((command) => send("app:menu", command));
   wireIpc(agent);
+  wireUpdater();
+  // ATO-229: the first update check waits for the window (then ~10 s more, updater.ts).
+  if (!FIRST_RUN_PROBE) win.once("ready-to-show", () => appUpdater()?.start());
   /* ATO-123: armed for every real run. A smoke run leaves it off: its checks
      kill model servers by hand on purpose and assert what happens next (T30,
      T31); T43 arms it for itself. */

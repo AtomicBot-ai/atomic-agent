@@ -63,6 +63,8 @@ const ANX_ACTS = (() => {
       wiz:{back:L, next:L, cancel:L, model:L, useDefault:L, saveUnchecked:L},
       // Settings › Privacy and General
       privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L},
+      // ATO-229: the update toast and General's update rows
+      appupd:{update:L, notnow:L, skip:L, cancel:L, install:L, later:L, check:L, auto:L},
       // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / importAct)
       mcp:{add:L, addSubmit:L, addCancel:L, auto:L, back:L, detail:L, refresh:L, remove:L,
         removeCancel:L, removeConfirm:L, restart:L, toggle:L, enable:L, disable:L,

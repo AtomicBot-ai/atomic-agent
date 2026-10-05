@@ -4870,6 +4870,8 @@ function generalPane() {
           label: 'Anonymous usage analytics', title: 'Turn analytics ' + (on ? 'off' : 'on')})
       + '</div>'
       + nameChatsRowHTML()
+      // ATO-229: automatic update checks, the version, Check now (app-update.js).
+      + appUpdRowsHTML()
     + '</div>'
     // Under the rows, as in Privacy (Д47): above them, the notice pushed the switch just flipped down the page.
     + privacyNoticesHTML()
@@ -5223,6 +5225,8 @@ function renderToasts() {
   const animate = typeof Element !== 'undefined' && !!Element.prototype.animate;
   const have = new Map();
   [...box.children].forEach((n) => {
+    // ATO-229: the update toast is main's (app-update.js updToastSync), not one of S.toasts.
+    if (n.dataset.upd) return;
     const id = n.dataset.toast;
     if (n.classList.contains('out')) return;
     if (!want.has(id)) {
@@ -5252,6 +5256,7 @@ function renderToasts() {
       : [{opacity: 0, transform: 'translateX(24px)'}, {opacity: 1, transform: 'translateX(0)'}],
       {duration: TOAST_IN_MS, easing: OVM.EASE_OUT});
   });
+  updToastSync(box);
   toastsClearCard();
 }
 /* Backlog 18: the toasts stack down from under the toolbar and the download
@@ -5262,7 +5267,8 @@ function renderToasts() {
 function toastsClearCard() {
   const box = $('#toasts');
   if (!box) return;
-  const live = [...box.children].filter((n) => !n.classList.contains('out'));
+  // ATO-229: the update toast waits for an answer, so it never steps aside.
+  const live = [...box.children].filter((n) => !n.classList.contains('out') && !n.dataset.upd);
   live.forEach((n) => { if (n.hidden) n.hidden = false; });
   /* Д27: over Settings the column stands up from the body card's bottom
      corner, and the card is under the backdrop. The oldest toasts step aside
@@ -5325,6 +5331,8 @@ function act(a) {
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
   if (a === 'close') { close(); render(); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
+  // ATO-229: the update toast and Settings › General's update rows (app-update.js).
+  if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
@@ -9177,6 +9185,8 @@ if (BR) {
   /* ATO-123: main brings the local model server back when it stops under a
      route that needs it. A window opened during an incident asks for it. */
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
+  // ATO-229: main's update state, now and on every change (app-update.js).
+  appUpdBoot();
   if (BR.daemonWatch) BR.daemonWatch().then((st) => { if (st && st.incident) dwatchApply(st.incident); }).catch(() => {});
   BR.status().then(applyStatus);
 

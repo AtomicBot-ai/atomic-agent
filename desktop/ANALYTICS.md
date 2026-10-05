@@ -19,7 +19,7 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 - With analytics off, the analytics code reads no config files.
 - Test and dev runs send nothing and write nothing to the real home: VITEST,
   `NODE_ENV=test|development`, `--dev`, `--smoke*`, `--first-run-probe`,
-  `--models`, `--remote-debugging-port*`, `--fake-ram=*`,
+  `--models`, `--remote-debugging-port*`, `--fake-ram=*`, `--fake-update=*`,
   `ATOMIC_DESKTOP_ANALYTICS=off`, and any unpackaged build (unless
   `ATOMIC_DESKTOP_ANALYTICS=on`). `ATOMIC_DESKTOP_ANALYTICS_LOG=1` echoes
   each event to stderr.
@@ -73,6 +73,7 @@ send `ui` events.
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `backend_switched`, `fusion_configured` | |
 | Chat | `chat_turn_ui` | `message_action`, `approval_answered`, `coding_mode_changed`, `plan_handoff` |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
+| App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
 
 Notes on specific properties:
 
@@ -85,6 +86,10 @@ Notes on specific properties:
 - `model_picked.host_ram_gb`: `"8"` (12 GB or less), `"16"` (24 or less),
   `"32"` (48 or less), `"64"`, or null. `model_id` is a curated catalogue id,
   else `custom`.
+- `update_*.version` / `from_version`: an app version (`0.6.7`,
+  `1.0.0-beta.2`), else dropped. `update_installed` is sent on the first
+  start of the new version, from what the old one wrote to
+  `userData/updates.json` just before it quit to install.
 - `quant`: an upper-cased GGUF tag (`Q4_K_M`, `IQ3_XXS`, `F16`, `BF16`,
   `MXFP4`), else `unknown`. `locale`: `en` or `en-US` shaped, else dropped.
 - `backend_switched`: only for an explicit switch (`cli:switchBackend`,

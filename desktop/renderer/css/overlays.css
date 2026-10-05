@@ -145,6 +145,15 @@
 /* r2: the dismiss cross, top right, sitting in the card's padding. */
 .toast .toast-x{flex:none;margin:-4px -10px 0 0;color:var(--ink-2)}
 .toast .toast-x:hover{color:var(--ink)}
+/* ATO-229: the update toast (app-update.js). It waits for an answer, so it
+   has buttons instead of a ×: Update / Not now, then a progress bar, then
+   Restart / Later. "Skip this version" is a small link under them. */
+.toast-upd .toast-s{-webkit-line-clamp:2}
+.toast-upd .upd-prog{display:block;margin:8px 0 2px;flex:none}
+.toast-upd .upd-pct{font-variant-numeric:tabular-nums}
+.toast-upd .upd-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.toast-upd .upd-skip{align-self:flex-start;margin-top:8px;font-size:12px;line-height:16px;color:var(--ink-2)}
+.toast-upd .upd-skip:hover{color:var(--ink)}
 
 /* ---- Short windows ---- */
 @media (max-height:700px){

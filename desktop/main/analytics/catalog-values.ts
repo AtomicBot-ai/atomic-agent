@@ -96,6 +96,12 @@ export function cleanQuant(q: string): string {
   return QUANT_RE.test(q) ? (q.toLowerCase() === "unknown" ? "unknown" : q.toUpperCase()) : "unknown";
 }
 
+/** An app version (`0.6.7`, `1.0.0-beta.2`); anything else is dropped. ATO-229's update_* events. */
+export const APP_VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(-[0-9A-Za-z.-]{1,32})?$/;
+export function cleanAppVersion(v: string): string | undefined {
+  return APP_VERSION_RE.test(v) ? v : undefined;
+}
+
 /** A speech locale (`en`, `en-US`, `yue-HK`); anything else is dropped. */
 export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
 export function cleanLocale(l: string): string | undefined {
