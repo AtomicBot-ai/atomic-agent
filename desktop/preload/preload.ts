@@ -212,6 +212,8 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsPullEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsPullEmbedding", id),
   modelsUseEmbedding: (idOrDisable: string) => ipcRenderer.invoke("cli:modelsUseEmbedding", idOrDisable),
   modelsUpdate: () => ipcRenderer.invoke("cli:modelsUpdate"),
+  /** ATO-130: Settings' llama.cpp update waiting for its turn behind a model start, or running. */
+  onUpdatePhase: (cb: (payload: unknown) => void) => on("cli:updatePhase", cb),
   modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
   modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),
   configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),

@@ -89,6 +89,7 @@ import {
   closeDaemonTurns,
   enterFusion,
   inDaemonTurn,
+  daemonTurnsOnTheirWay,
   lastTurnEnded,
   onBackgroundBringUp,
   restartAfterSwitch,
@@ -2043,12 +2044,17 @@ function wireIpc(client: AgentClient): void {
        back after a successful one, or says it is still stopped. */
     const held: { hold: UpdateHold | null } = { hold: null };
     const updateStartedAt = Date.now();
+    /* ATO-130: it waits its turn behind a model start (or a switch) on its
+       way, and Settings said "updating…" all that time. The window is told
+       which it is: waiting now, running once its turn comes. */
+    send("cli:updatePhase", { phase: daemonTurnsOnTheirWay() > 0 ? "waiting" : "running" });
     let res: CliResult;
     try {
       res = await updateInTurn<CliResult>(
         own.signal,
         (error) => ({ ok: false, stdout: "", stderr: "", error }),
         () => {
+          send("cli:updatePhase", { phase: "running" });
           held.hold = updateBegins();
           return modelsUpdate({ signal: own.signal }).then(updateSwept);
         },

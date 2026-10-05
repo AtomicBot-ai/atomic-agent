@@ -9195,6 +9195,8 @@ if (BR) {
   /* ATO-123: main brings the local model server back when it stops under a
      route that needs it. A window opened during an incident asks for it. */
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
+  // ATO-130: Settings' llama.cpp update, waiting for its turn or running.
+  if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
   if (BR.daemonWatch) BR.daemonWatch().then((st) => { if (st && st.incident) dwatchApply(st.incident); }).catch(() => {});
@@ -22497,10 +22499,22 @@ async function llmEmbToggle() {
   await refreshLiveConfig();
   llmRefresh();
 }
+/* ATO-130: the update waits its turn behind a model start (or a switch) on its
+   way; "updating…" said otherwise all that time. Main tells which it is
+   (cli:updatePhase), and the line follows while this update is on. */
+const LLM_UPDATING = 'local-llm: updating the llama.cpp backend…';
+const LLM_UPDATE_WAITING = 'local-llm: llama.cpp update waiting for the model to start…';
+function llmUpdatePhase(p) {
+  if (!p || !LLMP.updating || !LLMP.msg) return;
+  if (LLMP.msg.text !== LLM_UPDATING && LLMP.msg.text !== LLM_UPDATE_WAITING) return;
+  LLMP.msg = {text: p.phase === 'waiting' ? LLM_UPDATE_WAITING : LLM_UPDATING};
+  llmRepaint();
+}
 async function llmBackendUpdate() {
   if (!BR || LLMP.busy) return;
-  LLMP.busy = true; LLMP.msg = {text:'local-llm: updating the llama.cpp backend…'}; llmRepaint();
-  const res = await BR.modelsUpdate();
+  LLMP.busy = true; LLMP.updating = true; LLMP.msg = {text: LLM_UPDATING}; llmRepaint();
+  let res;
+  try { res = await BR.modelsUpdate(); } finally { LLMP.updating = false; }
   LLMP.busy = false;
   /* Deferred F8: main runs one download at a time, and refuses this one while
      another runs, naming it. A failure is said in LLMP.msg, which stays (the
