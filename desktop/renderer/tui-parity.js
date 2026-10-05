@@ -126,7 +126,8 @@ function tpLocalServerLine(st, said) {
 
 /** First provider_waiting frame of a wait. */
 function tpOnProviderWaiting(wait) {
-  placeInLiveTurn({id:nid(), k:'system', sev:'pause', note:true, text: esc(tpWaitNotice(wait))});
+  // ATO-185: `waitFor` names the reply row the wait held up, so its lines go once that turn moves on (tpDropWaitNotes).
+  placeInLiveTurn({id:nid(), k:'system', sev:'pause', note:true, waitFor:S.streamId, text: esc(tpWaitNotice(wait))});
   // Item 29: the local server is asked about when the wait is on it, whichever provider was picked.
   const onLocal = wait && wait.providerId ? waitIsLocalServer(wait.providerId) : tpActiveIsLocal();
   if (!BR || !BR.modelsStatus || !onLocal) return;
@@ -138,14 +139,38 @@ function tpOnProviderWaiting(wait) {
     const line = tpLocalServerLine(res && res.ok ? res.status : null, said);
     // Only while the same turn is still the one on screen (switching chats keeps S.turnId but swaps S.log).
     if (!line || S.turnId !== turnId || S.streamId !== streamId || !S.log.some((m) => m.id === streamId)) return;
-    placeInLiveTurn({id:nid(), k:'system', sev:'warn', note:true, text: esc(line)});
+    // ATO-185: nor once the wait is over: the model answered before the status did, and the line is no longer true.
+    if (!WAIT) return;
+    placeInLiveTurn({id:nid(), k:'system', sev:'warn', note:true, waitFor:streamId, text: esc(line)});
     render();
   }).catch(() => {});
 }
 
 function tpOnProviderRecovered(waitedMs) {
-  placeInLiveTurn({id:nid(), k:'system', note:true,
+  // ATO-185: what the wait said ("No answer from …", "Start it in Settings › Models.") is not true any more.
+  tpDropWaitNotes(S.streamId);
+  placeInLiveTurn({id:nid(), k:'system', note:true, waitFor:S.streamId,
     text: esc('The model is answering again after ' + tpSeconds(waitedMs) + '. The turn continues.')});
+}
+
+/* ATO-185: the wait's lines are about a turn that is held up. Once it moves
+   on they are service lines about the past: after the app starts, the first
+   reply came under "No answer from Local models (the local model server
+   isn't running) … Start it in Settings › Models.", and the lines stayed
+   until the chat was opened again (the stored transcript never had them).
+   They go when the model answers again (tpOnProviderRecovered), and the
+   "answering again" line with them when the turn completes (onChatEvent's
+   `done`). A turn that gives up or is stopped keeps its lines: there they
+   are the reason it ended. In place, so the turn's own record (rec.log)
+   still names the transcript on screen. */
+function tpDropWaitNotes(streamId) {
+  if (!streamId) return false;
+  let gone = false;
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const m = S.log[i];
+    if (m && m.k === 'system' && m.waitFor === streamId) { S.log.splice(i, 1); gone = true; }
+  }
+  return gone;
 }
 
 /** Put before the failure a turn ends with while it was parked. */
