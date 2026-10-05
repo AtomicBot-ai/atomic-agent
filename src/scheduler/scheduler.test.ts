@@ -69,12 +69,20 @@ describe("Scheduler", () => {
 
     await scheduler.tickOnce();
     expect(runDue).toHaveBeenCalledTimes(1);
-    expect(runDue).toHaveBeenCalledWith(nowMs.value, 10);
+    expect(runDue).toHaveBeenCalledWith(
+      nowMs.value,
+      10,
+      expect.any(AbortSignal),
+    );
 
     nowMs.value += 5_000;
     await scheduler.tickOnce();
     expect(runDue).toHaveBeenCalledTimes(2);
-    expect(runDue).toHaveBeenLastCalledWith(nowMs.value, 10);
+    expect(runDue).toHaveBeenLastCalledWith(
+      nowMs.value,
+      10,
+      expect.any(AbortSignal),
+    );
 
     await scheduler.stop();
   });
@@ -197,6 +205,70 @@ describe("Scheduler", () => {
     expect(stopped).toBe(true);
   });
 
+  it("stop aborts the in-flight tick's signal, so its task turn is stopped rather than waited out", async () => {
+    const { clock, timers } = createFakeClock();
+    const runDue = vi
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
+      .mockImplementation(
+        (_now, _limit, signal) =>
+          new Promise<DrainOutcome>((resolve) => {
+            // A drain whose task turn ends only when it is stopped.
+            signal?.addEventListener(
+              "abort",
+              () => resolve({ ...emptyOutcome(), drained: 1, cancelled: 1 }),
+              { once: true },
+            );
+          }),
+      );
+    const scheduler = new Scheduler({
+      taskRunner: { runDue },
+      tickMs: 1_000,
+      batch: 5,
+      clock,
+    });
+
+    scheduler.start();
+    timers[0].handler();
+    const signal = runDue.mock.calls[0]?.[2];
+    expect(signal?.aborted).toBe(false);
+
+    await scheduler.stop();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("stop(graceMs) stops waiting for a tick whose turn ignores its signal", async () => {
+    const { clock, timers } = createFakeClock();
+    let resolveTick!: (value: DrainOutcome) => void;
+    const runDue = vi
+      .fn<
+        Parameters<SchedulerTaskRunner["runDue"]>,
+        ReturnType<SchedulerTaskRunner["runDue"]>
+      >()
+      .mockImplementation(
+        () =>
+          new Promise<DrainOutcome>((resolve) => {
+            resolveTick = resolve;
+          }),
+      );
+    const scheduler = new Scheduler({
+      taskRunner: { runDue },
+      tickMs: 1_000,
+      batch: 5,
+      clock,
+    });
+
+    scheduler.start();
+    timers[0].handler();
+    await scheduler.stop(10);
+    expect(timers[0].cleared).toBe(true);
+
+    // Let the abandoned tick finish, so the test leaves nothing running.
+    resolveTick(emptyOutcome());
+  });
+
   it("start is a no-op after stop", async () => {
     const { clock, timers } = createFakeClock();
     const runDue = vi
@@ -236,6 +308,10 @@ describe("Scheduler", () => {
 
     await scheduler.tickOnce();
     expect(runDue).toHaveBeenCalledTimes(1);
-    expect(runDue).toHaveBeenCalledWith(expect.any(Number), 7);
+    expect(runDue).toHaveBeenCalledWith(
+      expect.any(Number),
+      7,
+      expect.any(AbortSignal),
+    );
   });
 });

@@ -2340,11 +2340,28 @@ export async function createAgentRuntime(
   const webhookSessionStore = new WebhookSessionStore(
     resolve(config.paths.stateDir, WEBHOOK_SESSIONS_FILENAME),
   );
-  const recoveredStale = taskStore.recoverStale(config.tasks.staleAfterMs);
-  if (recoveredStale > 0) {
-    logger.info("recovered stale running tasks on bootstrap", {
-      count: recoveredStale,
-      thresholdMs: config.tasks.staleAfterMs,
+  if (taskStore.runOwnersUnavailable !== null) {
+    logger.warn("task runs will not record their process; boot recovery falls back to age", {
+      reason: taskStore.runOwnersUnavailable,
+    });
+  }
+  // Tasks left `running` by an agent that is gone go back to `pending`,
+  // judged by the process that claimed them — the way session turn marks
+  // are — before the scheduler can look at the table. Ones a live agent
+  // on the same state dir is running are left alone. Never blocks boot.
+  try {
+    const recoveredTasks = taskStore.recoverInterrupted({
+      staleAfterMs: config.tasks.staleAfterMs,
+    });
+    if (recoveredTasks.length > 0) {
+      logger.info("tasks left running by a stopped agent put back to pending", {
+        count: recoveredTasks.length,
+        taskIds: recoveredTasks.join(","),
+      });
+    }
+  } catch (err) {
+    logger.warn("could not recover tasks left running; continuing", {
+      error: err instanceof Error ? err.message : String(err),
     });
   }
 
@@ -2886,14 +2903,29 @@ export async function createAgentRuntime(
     // through `releaseTurn`, replaces it with what really happened.
     releaseTurnsInterrupted({ keepMarks: true });
     // No scheduled turn may start on a runtime that is closing: the
-    // ticker stops here. The tick already running — and the task turn in
-    // it, which nothing stops — is waited for further down, where it
-    // always was.
-    const schedulerStopped = scheduler?.stop().catch((err: unknown) => {
-      logger.warn("scheduler stop failed", {
-        error: err instanceof Error ? err.message : String(err),
+    // ticker stops here, and the task turns in flight — the tick's, and
+    // any a create's drain or `POST /api/tasks/:id/run` started — are
+    // stopped now, so they write their ends while both stores are open.
+    // Each task goes back for a later run: a recurring one to its next
+    // firing, a one-shot one to the next start. Nothing stopped them
+    // before, and shutdown waited on them — on a model server that was
+    // not answering, until the desktop killed the agent. Both are waited
+    // for further down, at most `SHUTDOWN_TURN_GRACE_MS` from here.
+    const taskRunsStopped = taskRunner
+      .stop(SHUTDOWN_TURN_GRACE_MS)
+      .catch((err: unknown) => {
+        logger.warn("stopping task runs failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return 0;
       });
-    });
+    const schedulerStopped = scheduler
+      ?.stop(SHUTDOWN_TURN_GRACE_MS)
+      .catch((err: unknown) => {
+        logger.warn("scheduler stop failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     // Nothing will drain the inbox after this point; drop pending
     // steers so a message cannot resurface in a later process.
     steeringInbox.clearAll();
@@ -3009,8 +3041,16 @@ export async function createAgentRuntime(
     } catch {
       // already closed
     }
-    // Stopped at the top; this waits out the tick that was running then.
+    // Stopped at the top; this waits out the tick and the task runs that
+    // were in progress then. A run still going is left `running` under
+    // this process, for the next boot to take back.
     await schedulerStopped;
+    const tasksStillRunning = await taskRunsStopped;
+    if (tasksStillRunning > 0) {
+      logger.warn("task runs still going at shutdown; left for the next boot", {
+        count: tasksStillRunning,
+      });
+    }
     if (consolidatorJob) {
       try {
         await consolidatorJob.stop();

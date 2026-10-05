@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
-import { mkdirSync, realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { getConfig } from "../config/index.js";
 import {
   stripEphemeral,
@@ -25,6 +25,7 @@ import {
 } from "./session-title.js";
 import {
   currentTurnOwnerProbe,
+  databaseIdentity,
   isTurnOwnerGone,
   serializeTurnOwner,
   turnOwnerFor,
@@ -762,19 +763,5 @@ function ensureTurnOwnerColumn(db: Database.Database): string | null {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return /duplicate column/i.test(message) ? null : message;
-  }
-}
-
-/**
- * The real path of the database file, which every mark written into it
- * carries: a mark found in another file came with a copy. `undefined`
- * for an in-memory database, which nothing else can open.
- */
-function databaseIdentity(file: string): string | undefined {
-  if (file === ":memory:" || file.length === 0) return undefined;
-  try {
-    return realpathSync.native(file);
-  } catch {
-    return resolve(file);
   }
 }

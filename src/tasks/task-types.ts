@@ -2,13 +2,17 @@ import type { LlmFailureCategory } from "../llm/reliability/index.js";
 
 /**
  * Lifecycle of a durable task. The transitions are linear with one
- * exception (a `running` task can revert to `pending` either via
- * `recoverStale` after a process crash, or via the runner when a
- * retryable failure remains under `maxAttempts`):
+ * exception (a `running` task can revert to `pending` via
+ * `recoverInterrupted` at boot when the process running it is gone, via
+ * `markInterrupted` when its run is stopped before it ends, or via the
+ * runner when a retryable failure remains under `maxAttempts`):
  *
  *   pending  -> running -> { completed | failed | blocked | cancelled }
- *   running  -> pending  (retry-eligible failure, or stale-orphan recovery)
+ *   running  -> pending  (retry-eligible failure, an interrupted run, or
+ *                         recovery of a run whose process is gone)
  *   pending  -> cancelled (operator cancellation before pickup)
+ *   running  -> cancelled (operator cancellation mid-run; the runner
+ *                          aborts the turn)
  *
  * Recurring tasks add one more legal arrow:
  *

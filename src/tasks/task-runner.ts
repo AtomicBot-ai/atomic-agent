@@ -125,10 +125,17 @@ export interface DrainOptions {
   limit?: number;
   /**
    * Optional cancellation. When fired the drain stops at the next
-   * task boundary; the in-flight task continues until `runTurn`
-   * itself observes the signal.
+   * task boundary, and the in-flight task's turn is aborted; that task
+   * goes back to `pending` for a later run (`handleCancelled`).
    */
   signal?: AbortSignal;
+}
+
+/** A run `runOne` has in progress, for `cancel` and `stop` to abort. */
+interface InFlightRun {
+  readonly controller: AbortController;
+  readonly settled: Promise<void>;
+  ended: boolean;
 }
 
 export interface DrainOutcome {
@@ -166,6 +173,13 @@ export interface DrainOutcome {
  */
 export class TaskRunner {
   private readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * The runs in progress, by task id. A task is claimed by one run at a
+   * time (`markRunning` only claims a `pending` row), so the id is enough.
+   */
+  private readonly runs = new Map<string, InFlightRun>();
+  /** Set by `stop`: nothing is claimed after it. */
+  private stopping = false;
 
   constructor(private readonly options: TaskRunnerOptions) {
     this.sleep = options.sleep ?? defaultSleep;
@@ -274,6 +288,7 @@ export class TaskRunner {
     taskId: string,
     runtimeSignal?: AbortSignal,
   ): Promise<TaskRecord | null> {
+    if (this.stopping) return null;
     const task = this.options.store.get(taskId);
     if (!task) return null;
     if (task.status !== "pending") return task;
@@ -348,17 +363,46 @@ export class TaskRunner {
         : undefined;
 
     const maxSteps = claimed.maxSteps ?? this.options.defaultMaxSteps;
+    // Every run gets a stop of its own: an operator cancelling the task
+    // (`cancel`), the runner stopping for shutdown (`stop`), and the
+    // drain's signal — the scheduler aborts its own when the agent quits
+    // — all end the turn through it.
+    const run = this.beginRun(claimed.id, runtimeSignal);
     try {
-      const result = await this.options.runtime.runTurn(
-        session,
-        claimed.userMessage,
-        {
-          maxSteps,
-          origin: "scheduler",
-          ...(runtimeSignal ? { signal: runtimeSignal } : {}),
-          ...(reportHook ? { eventHook: reportHook } : {}),
-        },
-      );
+      let result: RunTurnResult;
+      try {
+        result = await this.options.runtime.runTurn(
+          session,
+          claimed.userMessage,
+          {
+            maxSteps,
+            origin: "scheduler",
+            signal: run.signal,
+            ...(reportHook ? { eventHook: reportHook } : {}),
+          },
+        );
+      } catch (err) {
+        if (this.endedElsewhere(claimed)) {
+          return this.options.store.get(claimed.id);
+        }
+        const category = classifyFailure(err);
+        // An abort can surface as any error on its way out of the turn;
+        // once this run was stopped, that is what ended it.
+        if (category === "cancelled" || run.signal.aborted) {
+          return this.handleCancelled(
+            claimed,
+            err,
+            this.interrupted(runtimeSignal),
+          );
+        }
+        return this.handleFailure(claimed, category, err);
+      }
+      // An operator cancelled the task while its turn ran — here, or from
+      // another process, which cannot reach this turn — and that stands:
+      // the outcome is not written over it.
+      if (this.endedElsewhere(claimed)) {
+        return this.options.store.get(claimed.id);
+      }
       // `runTurn` rejects on hard failures, but `loop_failed` results
       // surface as a `reason: "failed"` outcome instead — treat that
       // as the same retryable transport-class failure so the operator
@@ -376,15 +420,22 @@ export class TaskRunner {
           },
         );
       }
+      if (
+        result.reason === "cancelled" ||
+        (result.reason === "failed" && run.signal.aborted)
+      ) {
+        return this.handleCancelled(
+          claimed,
+          new Error("turn cancelled"),
+          this.interrupted(runtimeSignal),
+        );
+      }
       if (result.reason === "failed") {
         return this.handleFailure(
           claimed,
           "transport",
           new Error("loop reported failed"),
         );
-      }
-      if (result.reason === "cancelled") {
-        return this.handleCancelled(claimed, new Error("turn cancelled"));
       }
       const completed = this.options.store.markCompleted(claimed.id);
       this.recordTerminal(completed);
@@ -393,13 +444,122 @@ export class TaskRunner {
       // terminal-status guard inside `maybeReport`.
       this.maybeReport(completed, capturedReply);
       return this.maybeRequeueRecurring(completed);
-    } catch (err) {
-      const category = classifyFailure(err);
-      if (category === "cancelled") {
-        return this.handleCancelled(claimed, err);
-      }
-      return this.handleFailure(claimed, category, err);
+    } finally {
+      run.end();
     }
+  }
+
+  /**
+   * Cancel a task for an operator: `DELETE /api/tasks/:id`, the TUI's
+   * tasks tab. Same answer as `TaskStore.cancel`, and on a task whose
+   * run is in progress here it also stops that run's turn — before this
+   * the row said `cancelled` while the turn went on to its end.
+   *
+   * The row is cancelled first and the turn aborted after, so the run
+   * unwinding finds the row already ended (`endedElsewhere`) and leaves
+   * it: a cancelled task is never retried, and a recurring one is never
+   * rearmed. A run in another process (the CLI's `task cancel` writes
+   * the row from outside) is not reached; it ends on its own and finds
+   * the row cancelled the same way.
+   */
+  cancel(id: string, now: number = Date.now()): TaskRecord | null {
+    const record = this.options.store.cancel(id, now);
+    if (record?.status === "cancelled") {
+      this.runs.get(id)?.controller.abort();
+    }
+    return record;
+  }
+
+  /**
+   * Stop for shutdown: claim nothing more, abort the turn of every run
+   * in progress, and wait at most `graceMs` for each to put its task
+   * back (`handleCancelled` — a recurring task is rearmed for its next
+   * firing, a one-shot one left due for the next start). A stopped turn
+   * comes back in milliseconds; the bound is for one stuck in work that
+   * ignores its signal. Before this nothing stopped a task's turn at
+   * shutdown, which waited for it — on a model server that was not
+   * answering, until the host gave up and killed the agent.
+   *
+   * Resolves to how many runs were still going when the wait gave up.
+   * Their rows stay `running` under this process, and the next boot's
+   * sweep takes them back once it is gone (`recoverInterrupted`). The
+   * timer is not `unref`'d, for the reason `TurnsInFlight` gives.
+   */
+  async stop(graceMs: number): Promise<number> {
+    this.stopping = true;
+    const runs = [...this.runs.values()];
+    if (runs.length === 0) return 0;
+    for (const run of runs) run.controller.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const graceOver = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, graceMs);
+    });
+    try {
+      await Promise.race([
+        Promise.all(runs.map((run) => run.settled)),
+        graceOver,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    return runs.filter((run) => !run.ended).length;
+  }
+
+  /**
+   * Register the run `runOne` is starting on `taskId`; `end()` once its
+   * outcome is written. Its signal aborts with `outer` (the drain's).
+   */
+  private beginRun(
+    taskId: string,
+    outer: AbortSignal | undefined,
+  ): { signal: AbortSignal; end(): void } {
+    const controller = new AbortController();
+    const onOuterAbort = (): void => controller.abort(outer?.reason);
+    if (this.stopping || outer?.aborted === true) {
+      controller.abort(outer?.reason);
+    } else {
+      outer?.addEventListener("abort", onOuterAbort, { once: true });
+    }
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const run: InFlightRun = { controller, settled, ended: false };
+    this.runs.set(taskId, run);
+    return {
+      signal: controller.signal,
+      end: () => {
+        if (run.ended) return;
+        run.ended = true;
+        outer?.removeEventListener("abort", onOuterAbort);
+        if (this.runs.get(taskId) === run) this.runs.delete(taskId);
+        resolveSettled();
+      },
+    };
+  }
+
+  /**
+   * Whether the row a run claimed is no longer that run's: ended by
+   * something else since — an operator's cancel — gone, or claimed
+   * afresh (`started_at` moved; the boot sweep of a runtime started
+   * after this one gave up on it). The run then writes nothing.
+   */
+  private endedElsewhere(claimed: TaskRecord): boolean {
+    const row = this.options.store.get(claimed.id);
+    return (
+      row === null ||
+      row.status !== "running" ||
+      row.startedAt !== claimed.startedAt
+    );
+  }
+
+  /**
+   * Whether a run that ended cancelled was stopped from outside the task
+   * — the agent shutting down (`stop`), or the drain it ran in being
+   * aborted — rather than by its own turn being stopped.
+   */
+  private interrupted(runtimeSignal: AbortSignal | undefined): boolean {
+    return this.stopping || runtimeSignal?.aborted === true;
   }
 
   /**
@@ -458,10 +618,10 @@ export class TaskRunner {
     outcome: DrainOutcome,
   ): Promise<void> {
     for (const task of initialGroup) {
-      if (signal?.aborted) return;
+      if (signal?.aborted || this.stopping) return;
       let current: TaskRecord | null = task;
       while (current && current.status === "pending") {
-        if (signal?.aborted) return;
+        if (signal?.aborted || this.stopping) return;
         const before = current;
         current = await this.runOne(current.id, signal);
         outcome.drained += 1;
@@ -471,6 +631,13 @@ export class TaskRunner {
         else if (current.status === "blocked") outcome.blocked += 1;
         else if (current.status === "cancelled") outcome.cancelled += 1;
         else if (current.status === "pending") {
+          // Put back by an interrupted run (`handleCancelled`): it runs
+          // again at its next firing or the next start, never straight
+          // away in this drain.
+          if (current.lastErrorCategory === "cancelled") {
+            outcome.cancelled += 1;
+            break;
+          }
           // Distinguish recurring-requeue from within-attempt retry:
           // requeued recurring tasks have `attempts == 0` and a
           // fresh `scheduled_for`; they are not consumed in this
@@ -533,8 +700,57 @@ export class TaskRunner {
     return retried;
   }
 
-  private handleCancelled(task: TaskRecord, err: unknown): TaskRecord {
+  /**
+   * A run whose turn ended cancelled, the row still `running` (an
+   * operator's cancel is caught before this, in `runOne`).
+   *
+   *  - A recurring task is rearmed for its next firing: one firing was
+   *    stopped — the agent quitting, the turn stopped from its chat —
+   *    and the schedule goes on. It used to be cancelled for good.
+   *  - A one-shot task stopped from outside (`interrupted`: shutdown, an
+   *    aborted drain) is left due, so the next start runs it — what the
+   *    boot sweep did for it when shutdown still let the process be
+   *    killed under the turn.
+   *  - A one-shot task whose own turn was stopped is cancelled.
+   */
+  private handleCancelled(
+    task: TaskRecord,
+    err: unknown,
+    interrupted: boolean,
+  ): TaskRecord | null {
     const message = err instanceof Error ? err.message : String(err);
+    if (task.recurring && task.schedule) {
+      const next = resolveScheduledFor(task.schedule, Date.now());
+      const requeued = this.options.store.markInterrupted(task.id, {
+        nextScheduledFor: next,
+      });
+      if (!requeued) return this.options.store.get(task.id);
+      this.options.metrics?.recordTaskRecurringRequeued({
+        taskId: requeued.id,
+        sessionId: requeued.sessionId ?? "<unassigned>",
+        nextScheduledFor: next,
+      });
+      this.options.logger?.info("recurring task run interrupted; requeued", {
+        taskId: requeued.id,
+        sessionId: requeued.sessionId,
+        nextScheduledFor: next,
+        reason: message,
+      });
+      return requeued;
+    }
+    if (interrupted) {
+      const pending = this.options.store.markInterrupted(task.id, {
+        nextScheduledFor: null,
+      });
+      if (!pending) return this.options.store.get(task.id);
+      this.options.logger?.info("task run interrupted; left pending", {
+        taskId: pending.id,
+        sessionId: pending.sessionId,
+        attempt: pending.attempts,
+        reason: message,
+      });
+      return pending;
+    }
     const cancelled = this.options.store.cancel(task.id);
     if (!cancelled) {
       return { ...task, status: "cancelled" as TaskStatus, lastError: message };
