@@ -880,7 +880,7 @@ function collectOneOffSignals(userTexts: readonly string[]): OneOffSignals {
 }
 
 function containsToken(text: string, token: string): boolean {
-  const tokens = lower(text).match(/[\p{L}\p{N}_]+/gu) ?? [];
+  const tokens: readonly string[] = lower(text).match(/[\p{L}\p{N}_]+/gu) ?? [];
   return tokens.includes(token);
 }
 
