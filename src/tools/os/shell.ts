@@ -5,10 +5,6 @@ import {
   startCommandJob,
 } from "../../sandbox/command-job.js";
 import {
-  buildSubshellInvocation,
-  quoteCmdArg,
-} from "../../sandbox/shell-invocation.js";
-import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
@@ -26,6 +22,7 @@ import {
   describeArgsShape,
   isOpaqueInterpreterShape,
   needsShellInterpretation,
+  resolveShellSpawn,
 } from "./shell-interpretation.js";
 import {
   classifyShellCall,
@@ -217,18 +214,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         );
       }
 
-      // For the subshell path we hand a single command line to the OS
-      // shell (`sh -c` / `cmd.exe /c`). When the model supplied separate
-      // argv tokens alongside a shell-bearing `cmd`, quote them on Windows
-      // so paths with spaces survive `cmd.exe` parsing. POSIX keeps the
-      // legacy raw join for byte-identical behaviour.
-      const subshellCommandLine =
-        execArgs.length > 0 && process.platform === "win32"
-          ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
-          : commandLine;
-      const spawnSpec = useShell
-        ? buildSubshellInvocation(subshellCommandLine)
-        : { command: cmd, args: execArgs };
+      const spawnSpec = resolveShellSpawn(cmd, execArgs, useShell);
       const facts: ShellCommandFacts = {
         cmd,
         args: execArgs,
@@ -250,6 +236,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       const job = startCommandJob(spawnSpec.command, spawnSpec.args, {
         cwd,
         ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+        ...(spawnSpec.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: true }
+          : {}),
       });
       // A spawn failure (ENOENT) rejects here, as the runner's always did.
       const outcome = await job.waitFor(timeout.timeoutMs, ctx.signal);
