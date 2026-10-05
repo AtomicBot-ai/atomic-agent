@@ -58,6 +58,9 @@ test("numbers are clamped and nulls only pass where allowed", () => {
   const p = V.validateEvent("fusion_configured", { action: "set_workers", workers: 99, degraded: false }, "main").props;
   assert.equal(p.workers, 8);
   assert.deepEqual(V.validateEvent("approval_answered", { choice: "deny", category: "shell", input: "key", ms_to_answer: null }, "ui").props.ms_to_answer, null);
+  // ATO-203: a card closed with no answer.
+  assert.deepEqual(V.validateEvent("approval_closed", { how: "stopped", category: "shell", level: 3, ms_open: 1200 }, "ui").props,
+    { how: "stopped", category: "shell", level: 3, ms_open: 1200 });
   assert.equal("ms" in V.validateEvent("llama_runtime_updated", { trigger: "setup", result: "ok", ms: null }, "main").props, false);
 });
 
@@ -184,6 +187,18 @@ test("a turn's summary: first token, tools, steers, approvals, failure category"
     outcome: "failed", ms_to_first_token: 250, ms_total: 400, queue_wait_ms: 40, steer_count: 1,
     approvals_asked: 1, tool_calls: 2, tools_used: ["os.shell.run", "mcp"], error_category: "transport", coding_mode: "plan",
   });
+});
+
+test("a redelivered approval request is counted once (ATO-203)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  t.begin("t3");
+  t.observe({ turnId: "t3", kind: "session_id", payload: { session_id: "s3" } });
+  t.approval({ sessionId: "s3", approvalId: "a1", tool: "os.shell.run" });
+  t.approval({ sessionId: "s3", approvalId: "a1", tool: "os.shell.run" });
+  t.approval({ sessionId: "s3", approvalId: "a2", tool: "os.shell.run" });
+  t.observe({ turnId: "t3", kind: "done" });
+  assert.equal(out[0].approvals_asked, 2);
 });
 
 test("work after an error frame completes the turn", () => {

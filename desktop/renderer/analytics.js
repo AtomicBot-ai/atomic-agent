@@ -109,6 +109,24 @@ const ANX = (() => {
     });
   }
 
+  /* ATO-203: a card that closed with no answer (`how`: stopped, expired,
+     replaced, not_waiting). Once per card: a replay that opens it again and a
+     second close are the same card going away. */
+  const apprClosedSeen = new WeakSet();
+  function apprClosed(req, how) {
+    if (!req || typeof req !== 'object' || apprClosedSeen.has(req)) return;
+    try { apprClosedSeen.add(req); } catch (e) { return; }
+    const at = apprShownAt.get(req);
+    const cats = reg(() => CATS.map((c) => c[0]), []);
+    const lvl = Number(req.lvl);
+    track('approval_closed', {
+      how,
+      category: cats.includes(req.cat) ? req.cat : 'other',
+      level: Number.isInteger(lvl) ? lvl : null,
+      ms_open: typeof at === 'number' ? Math.max(0, Date.now() - at) : null,
+    });
+  }
+
   /* ---------- coding mode and the plan hand-off ---------- */
   const MODE_IDS = ['default', 'plan', 'auto', 'bypass'];
   /* Read at the top of setCodingMode, while the caller's marker is live. */
@@ -232,7 +250,7 @@ const ANX = (() => {
 
   return {
     track, via, viaNow, sanitizeAct, aroundAct, slashUsed, messageAction,
-    apprShown, apprAnswered, modeVia, modeChanged, planHandoff, paneTick,
+    apprShown, apprAnswered, apprClosed, modeVia, modeChanged, planHandoff, paneTick,
     obStep, obSkipped, modelPicked, ramBucket, endpointTested, providerStarted, providerFailed,
     mcpAdded, mcpAction,
   };

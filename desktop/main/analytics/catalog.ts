@@ -220,6 +220,19 @@ export const EVENTS: Record<string, EventSpec> = {
       ms_to_answer: int({ nullable: true }),
     },
   },
+  /* ATO-203: a card that closed with no answer: its turn was stopped or ended
+     (`stopped` / `expired`), a newer request for the same call replaced it
+     (`replaced`), or the agent no longer held it when it was answered
+     (`not_waiting`, the resolve route's 404). */
+  approval_closed: {
+    owner: "ui",
+    props: {
+      how: en(["stopped", "expired", "replaced", "not_waiting"]),
+      category: en(APPROVAL_CATEGORIES),
+      level: int({ max: 9, nullable: true }),
+      ms_open: int({ nullable: true }),
+    },
+  },
   coding_mode_changed: {
     owner: "ui",
     props: {

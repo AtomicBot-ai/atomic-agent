@@ -8223,6 +8223,7 @@ function onChatEvent(ev) {
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
+      const endedTools = turnToolNames(LIVE_TURNS.get(ev.turnId));          // ATO-203: and the calls it made
       liveTurnEnded(ev, sid);          // item 38: a failed or stopped turn is kept for its chat
       // Review fix: the turn is over, so nothing of it is waiting for an
       // approval any more. Without this the row kept saying "waiting for your
@@ -8231,7 +8232,7 @@ function onChatEvent(ev) {
       // B01: its cards too. Left with their buttons (and S.pending on one of
       // them), "terminated" was followed by live cards nothing waited for and
       // a composer still saying "Waiting for your approval".
-      if (sid) closeChatApprovals(sid, ev.kind === 'aborted' ? 'stopped' : 'expired', endedSince);
+      if (sid) closeChatApprovals(sid, ev.kind === 'aborted' ? 'stopped' : 'expired', endedSince, endedTools);
       // Review fix: the composer's busy flag belongs to the chat on screen.
       // When this turn's frames are no longer the ones S.turnId points at, the
       // branch below never runs and the composer would stay busy for good.
@@ -8871,7 +8872,10 @@ function approvalOver(sid, status, askedAt) {
   if (!req || !askedAt || !(req.seenAt < askedAt)) return false;
   PENDING_APPROVALS.delete(sid);
   APPROVAL_CARDS.delete(sid);
-  if (req && !req.state) { req.state = 'expired'; req.at = new Date().toTimeString().slice(0, 8); }
+  if (req && !req.state) {
+    req.state = 'expired'; req.at = new Date().toTimeString().slice(0, 8);
+    if (req.drawn) ANX.apprClosed(req, 'expired');   // ATO-203: closed with no answer
+  }
   if (req && S.pending === req) S.pending = null;
   return true;
 }
@@ -8889,6 +8893,15 @@ function chatApprovalCards(sid) {
   return [...out];
 }
 
+/* ATO-203: the tools turn `rec` (LIVE_TURNS) called, from its own rows; null
+   when the window keeps no record of it. */
+function turnToolNames(rec) {
+  if (!rec) return null;
+  try {
+    return new Set(liveSegment(rec).filter((m) => m && m.k === 'tool' && m.name).map((m) => m.name));
+  } catch (e) { return null; }
+}
+
 /* B01: a card whose request is over says so (`state`), answers nothing, and
    is not the request the composer, y/n or Esc act on. `forGood` (a newer
    request for the same call replaced it) closes its approvalId for good: a
@@ -8898,7 +8911,11 @@ function chatApprovalCards(sid) {
    the card again (onApprovalEvent). */
 function closeApprovalCard(req, state, at, forGood) {
   if (forGood && req.approvalId) CLOSED_APPROVALS.add(req.approvalId);
-  if (!req.state) { req.state = state; req.at = at; }
+  if (!req.state) {
+    req.state = state; req.at = at;
+    // ATO-203: a card the person saw went away unanswered; analytics only counted answers.
+    if (req.drawn) ANX.apprClosed(req, forGood ? 'replaced' : state);
+  }
   if (S.pending === req) S.pending = null;
 }
 
@@ -8948,8 +8965,15 @@ function sameApprovalCall(a, b) {
    approvalOver. A turn of the same chat sent after the one that ended (a
    message right after Stop) may have asked already; a card that came after
    that turn started stays. A running entry this window keeps no record of
-   (a stale one whose end never came) protects nothing. */
-function closeChatApprovals(sid, state, since) {
+   (a stale one whose end never came) protects nothing.
+   ATO-203: nor one another surface raised WHILE it ran (a scheduled task's
+   or Telegram's turn in the same chat): `tools` names the calls the ended
+   turn made (its own rows), and a card of a call it did not make is left
+   to approvalOver. A call the agent asks about has its card already: its
+   tool_progress frame comes as the call is parsed, before the gate. With no
+   record of the turn's rows (null), every card in the window closes, as
+   before. */
+function closeChatApprovals(sid, state, since, tools) {
   if (!sid) return;
   let from = Infinity;
   for (const [t, s] of RUNNING) {
@@ -8957,7 +8981,8 @@ function closeChatApprovals(sid, state, since) {
     if (rec && !rec.ended && rec.startedAt) from = Math.min(from, rec.startedAt);
   }
   const at = new Date().toTimeString().slice(0, 8);
-  const closed = chatApprovalCards(sid).filter((req) => !(req.seenAt >= from) && !(since && req.seenAt < since));
+  const closed = chatApprovalCards(sid).filter((req) => !(req.seenAt >= from) && !(since && req.seenAt < since)
+    && !(tools && !tools.has(req.tool)));
   closed.forEach((req) => closeApprovalCard(req, state, at));
   const kept = APPROVAL_CARDS.get(sid);
   if (!kept || closed.includes(kept)) {
@@ -9111,6 +9136,29 @@ function agentReplyWords(why) {
   if (/did not confirm/i.test(w)) return 'the agent did not confirm it.';
   return 'the agent did not accept it.';
 }
+/* ATO-203: the resolve route answers a request its gate no longer holds with
+   a 404, `approvalId not pending` (src/http/route-approval.ts), and main hands
+   the body over as data. Stop's race draws one: a request of the stopped turn
+   that came after "turn stopped". The answer went nowhere, and the card read
+   Allowed / Denied as if it had decided something. */
+function approvalNotWaiting(data) {
+  if (!data || typeof data !== 'object' || data.resolved === true) return false;
+  const e = data.error;
+  const msg = typeof e === 'string' ? e : (e && typeof e.message === 'string' ? e.message : '');
+  return /not pending/i.test(msg);
+}
+/** That card closes calmly, says nothing was decided, and the chat stops looking busy on its account. */
+function apprNoLongerWaiting(req) {
+  LOGS.push([new Date().toTimeString().slice(0, 8), 'info', 'approval answer: ' + req.approvalId + ' was no longer pending']);
+  req.state = 'expired'; req.at = new Date().toTimeString().slice(0, 8);
+  if (req.approvalId) CLOSED_APPROVALS.add(req.approvalId);
+  ANX.apprClosed(req, 'not_waiting');
+  if (S.pending === req) S.pending = null;
+  placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
+    text:'This request is no longer waiting: its turn had already ended, so nothing was allowed or denied.'});
+  // The busy look answerLive put up was for a turn that is not running.
+  if (req.sessionId && req.sessionId === S.agentSession && !sessionTurnId(req.sessionId)) S.busy = false;
+}
 function answerLive(req, key) {
   const approve = key === 'y' || key === 's' || key === 'a';
   ANX.apprAnswered(req, key);
@@ -9152,7 +9200,8 @@ function answerLive(req, key) {
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
     req.answering = false;
     req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
-    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
+    if (res && res.ok !== false && approvalNotWaiting(res.data)) apprNoLongerWaiting(req);
+    else if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();
   });
   // Backlog 25: the chat on screen stays busy when the turn stopped here was
