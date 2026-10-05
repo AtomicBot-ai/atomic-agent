@@ -909,4 +909,110 @@ describe("createReflectionRunner", () => {
       "timezone=Europe/Lisbon",
     ]);
   });
+
+  // ATO-201: a name the user only confirmed ("Тебя зовут Алекс?" — "да")
+  // is theirs; the window's own naming question vouches for it.
+  it("ATO-201: writes a name the user confirmed with a bare yes", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Alex\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "да",
+      assistantReply: "Отлично, запомню.",
+      transcript: [
+        { user: "привет", assistant: "Привет! Тебя зовут Алекс?" },
+        { user: "да", assistant: "Отлично, запомню." },
+      ],
+    });
+
+    expect(h.store.get("name")).toMatchObject({ value: "Alex", nameGrounding: "grounded" });
+  });
+
+  it("ATO-201: keeps a late-turn note naming the user from earlier in the session", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("NOTE I am Nadia and I moved to Lisbon\n"),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Я переехала в Лиссабон",
+      assistantReply: "Поздравляю!",
+      groundingTexts: ["Меня зовут Надя", "Я переехала в Лиссабон"],
+    });
+
+    expect(h.notesStore.list().map((n) => n.content)).toEqual([
+      "I am Nadia and I moved to Lisbon",
+    ]);
+  });
+
+  it("ATO-201: a checked profile name vouches for a note; an unchecked one does not", async () => {
+    h.store.set("first_name", "Надя", { nameGrounding: "grounded" });
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion("NOTE The user is Nadia and likes short answers\nNOTE The user is Anna and likes tea\n"),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Отвечай короче, и я люблю чай",
+      assistantReply: "Хорошо.",
+    });
+
+    expect(h.notesStore.list().map((n) => n.content)).toEqual([
+      "The user is Nadia and likes short answers",
+    ]);
+  });
+
+  it("ATO-201: logs a dropped item at info with a short reason and never its text", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Анна\nSET language=ru\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Отвечай на русском",
+      assistantReply: "Хорошо.",
+    });
+
+    const drops = h.logEvents.filter((e) => e.message === "reflection.ungrounded_dropped");
+    expect(drops).toHaveLength(1);
+    expect(drops[0]!.level).toBe("info");
+    expect(drops[0]!.context).toMatchObject({
+      kind: "fact",
+      reason: "ungrounded_identity",
+      detail: "names the user by a name the user never wrote",
+    });
+    expect(JSON.stringify(drops[0]!.context)).not.toContain("Анна");
+  });
 });

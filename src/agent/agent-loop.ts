@@ -80,6 +80,7 @@ import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
+import { chatLinesOf, groundingTextsOf } from "../memory/name-grounding.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import type { MemoryHealthWarning } from "../memory/health/index.js";
 import { executeStep } from "./step-executor.js";
@@ -2961,6 +2962,10 @@ export class AgentLoop {
               ...(segmentationActive && transcript.length > 0
                 ? { transcript }
                 : {}),
+              // ATO-201. What may vouch for a name besides the window:
+              // the session's user messages, and a naming question the
+              // user answered "yes".
+              groundingTexts: groundingTextsOf(chatLinesOf(state.turns)),
             })
             .catch((err: unknown) => {
               this.deps.logger?.warn("reflection failed after dispatch", {

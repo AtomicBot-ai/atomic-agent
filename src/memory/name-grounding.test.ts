@@ -214,6 +214,31 @@ describe("verifyProfileNameFacts", () => {
     expect(store.get("name")?.nameGrounding).toBe("grounded");
   });
 
+  // Review finding: one stored session that is mostly pasted Chinese must
+  // not make an invented Latin name unverifiable (and so visible) for good.
+  it("judges 'writes mostly in another script' over all sessions, not one", async () => {
+    store.set("name", "Anna", 500);
+    const sessions = nadyaSessions();
+    sessions.push({ id: "zh", updatedAt: 2_000, lines: [user("翻译：错误无法连接到服务器请稍后再试")] });
+    await verifyProfileNameFacts({ store, source: sessionGroundingSource(fakeReader(sessions), 10) });
+    expect(store.get("name")?.nameGrounding).toBe("ungrounded");
+
+    // A user who writes mostly in another script still fails open on a
+    // Latin name.
+    const chinese = [{ id: "c1", updatedAt: 1, lines: [user("我叫小明，请记住，谢谢你的帮助")] }];
+    const other = new ProfileStore({ dbFile: join(tmp, "other.sqlite") });
+    try {
+      other.set("name", "Xiaoming", 500);
+      await verifyProfileNameFacts({
+        store: other,
+        source: sessionGroundingSource(fakeReader(chinese), 10),
+      });
+      expect(other.get("name")?.nameGrounding).toBe("unverifiable");
+    } finally {
+      other.close();
+    }
+  });
+
   it("does nothing when no name needs a check", async () => {
     store.set("name", "Надя", { nameGrounding: "grounded" }, 500);
     const reader = fakeReader(nadyaSessions());

@@ -23,11 +23,15 @@
  *  2. `filterUngroundedReflection` — runs AFTER parsing, before any
  *     write. Drops a SET / NOTE when:
  *       - it claims a name for the user (a `name`-like SET key, "my name
- *         is X", "call me X", "the user's name is X", or a clause-final
- *         "I am X" / "I am X and …") and the name never appears in the
- *         user's own messages in the reflected window (a name already
- *         stored in the profile does NOT count — it may itself have
- *         been invented);
+ *         is X", "call me X", "the user's name is X", "The user is X",
+ *         "Пользователь X", or a clause-final "I am X" / "I am X and …")
+ *         and the name never appears in the user's own words: the
+ *         reflected window, plus the name evidence the caller passes
+ *         (`GroundingContext.nameEvidence` — the rest of the session's
+ *         user messages, an assistant naming question the user answered
+ *         "yes", names the profile holds as checked). A stored name no
+ *         check vouched for does NOT count — it may itself have been
+ *         invented;
  *       - it describes the assistant itself ("you are my personal
  *         assistant", "I'm your AI assistant");
  *       - it repeats the literal payload of a one-off echo instruction
@@ -37,30 +41,32 @@
  *
  * Known false-negative risk (a real fact being dropped), kept small on
  * purpose:
- *  - A name the user only *confirmed* ("Is your name Alex?" — "yes")
- *    never appears in the user's own words, so an identity claim built
- *    on it is dropped.
  *  - Name matching is fuzzy (romanisation, Russian case endings, edit
  *    distance) but not exhaustive; an unusual romanisation of a
- *    Cyrillic name may miss.
+ *    Cyrillic name may miss, and a capitalised word that opens a long
+ *    sentence ("Nadia, from Lisbon, …") only matches exactly.
  *  - Short Latin names (≤ 4 letters after normalisation) must match a
  *    user word exactly, so "Sam" is not vouched for by "same" — and a
  *    user who wrote "Samm" will not get "Sam" either.
- *  - A real name the user gave in an earlier turn outside the reflected
- *    window is not restated: a note "Nadia moved to Lisbon" written
- *    from a later turn is dropped if it phrases the name as an identity
- *    claim. The stored `name` fact itself is untouched.
+ *  - A name the user gave in an earlier SESSION is not in the evidence
+ *    unless the profile holds it as checked; a note restating it is
+ *    then dropped. The stored fact itself is untouched.
+ *  - "The user is X" / "I am X" skips only attributes it knows
+ *    (`ATTRIBUTE_WORDS`, -ish adjectives, acronyms like "CTO"); a rarer
+ *    nationality ("Malagasy") is checked like a name and dropped unless
+ *    the user wrote it.
  *  - A one-off probe is lifted only by a marker in the same clause or a
- *    marker-only clause right before it ("Запомни, отвечай только
- *    JSON"); "Always: reply only JSON" phrased differently may still be
- *    treated as one-off.
- * The opposite risk (an invented name slipping through) exists where
+ *    marker-only clause right before or after it ("Запомни, отвечай
+ *    только OK", "Отвечай только OK, всегда"); a marker elsewhere in the
+ *    message does not count.
+ * The opposite risk (an invented name slipping through) remains where
  * matching is loose on purpose: stems of name-like Russian words
- * (capitalised, or right after "зови меня" / "меня зовут" / "я" — so a
- * sentence-initial «Данные» still vouches for "Dan"), "The user is X"
- * where X ends like a demonym ("Ivan", "Dmitri" are not checked), and
- * names written in a script other than Latin / Cyrillic, which fail
- * open.
+ * (capitalised inside a sentence, or right after "зови меня" / "меня
+ * зовут" / "я", or anywhere in a sentence that says "зовут" / "имя" /
+ * "name" — so «Данные … меня зовут Надя» still makes «Данные» name-like),
+ * a Latin name in a window written mostly in a script other than Latin /
+ * Cyrillic (fails open; a Cyrillic name is still checked), and a
+ * nationality from `ATTRIBUTE_WORDS` used as a name.
  * Everything that is not an identity claim, assistant persona, echo
  * payload or one-off tool restriction passes through untouched.
  */
@@ -91,6 +97,15 @@ export interface GroundingContext {
    * re-written as `name=Anna`).
    */
   userTexts: readonly string[];
+  /**
+   * ATO-201. More texts that may vouch for a NAME, and for nothing else
+   * (the one-off checks read `userTexts` only): the rest of the
+   * session's user messages, an assistant naming question the user
+   * answered with a bare "yes" (`groundingTextsOf`), and name values the
+   * profile holds as checked against the user's messages. Never an
+   * unchecked or ungrounded stored name.
+   */
+  nameEvidence?: readonly string[];
 }
 
 export interface GroundedReflection {
@@ -273,6 +288,24 @@ const LITERAL_PAYLOAD_WORDS: ReadonlySet<string> = new Set([
   "пинг",
 ]);
 
+/** Output formats: "reply only JSON" is a format rule, not a literal. */
+const FORMAT_PAYLOAD_WORDS: ReadonlySet<string> = new Set([
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "xml",
+  "csv",
+  "tsv",
+  "html",
+  "markdown",
+  "md",
+  "toml",
+  "sql",
+  "latex",
+  "ascii",
+]);
+
 const TOOL_RESTRICTION =
   /^(?:(?:please\s+)?(?:do not|don't|dont|no need to|you don't need to|without)\s+(?:use|using|call|calling|run|running|invoke|invoking)?\s*(?:any\s+)?|no\s+)(?:tools?|tool calls?|functions?|function calls?|commands?)(?:\s+(?:for this|here|now|this time|in this reply|in your reply|for this reply|please))?$/;
 
@@ -346,6 +379,12 @@ function stripQuotes(s: string): string {
  */
 function isLiteralPayload(quoted: boolean, payload: string): boolean {
   if (quoted) return true;
+  // ATO-201: "Отвечай только JSON" names a format, it is not an echo
+  // probe — even sent on its own and in capitals.
+  const words = payload.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  if (words.length > 0 && words.every((w) => FORMAT_PAYLOAD_WORDS.has(lower(w)))) {
+    return false;
+  }
   if (/[_\d]/.test(payload)) return true;
   const tokens = payload.match(/[\p{L}\p{N}_]+/gu) ?? [];
   if (
@@ -447,8 +486,9 @@ const FIRST_PERSON_LEAD =
  * Third-person "The user is Alex." — the form the prompt now asks for.
  * Counted only for a single capitalised, unhyphenated token that ends
  * the clause or is followed by "and" (a hyphen fails the lookahead, so
- * "Russian-speaking" is never captured); demonyms are filtered out in
- * `claimedNames` so "Brazilian" / "Russian" stay attributes.
+ * "Russian-speaking" is never captured); attributes are filtered out in
+ * `claimedNames` (`isAttributeWord`) so "Brazilian" / "French" / "CTO"
+ * stay attributes and "Ivan" is checked like any name.
  */
 const USER_IS_LEAD =
   /(?:^|[^\p{L}])[Uu]ser is\s+(\p{Lu}[\p{L}'’]*)(?=\s*(?:$|[,.;:!?)])|\s+and\b)/gu;
@@ -463,8 +503,48 @@ const USER_IS_LEAD =
 const RU_USER_LEAD =
   /(?:^|[^\p{L}])(?:[Пп]ользовател(?:ь|я|ю|ем|е)|[Ии]мя пользователя)(?:\s+(?:зовут|по имени))?\s*[:—–-]?\s+([А-ЯЁ][а-яё]+)(?![\p{L}-])/gu;
 
-/** Demonym / adjective endings: "Brazilian", "Japanese", "Polish", "Israeli", "Slavic". */
-const DEMONYM_SUFFIX = /(?:an|ian|ese|ish|i|ic)$/i;
+/**
+ * Capitalised attributes that follow "The user is" / "I am" without
+ * being a name: nationalities, languages, regions, faiths. ATO-201: a
+ * suffix rule (-an, -i, -ic …) used to stand in for this list and let
+ * "Ivan", "Dmitri", "Ryan", "Logan", "Alexei" through unchecked, while
+ * "French", "Dutch", "Swiss" — no such suffix — were checked as names
+ * and dropped whenever the user wrote in another language.
+ */
+const ATTRIBUTE_WORDS: ReadonlySet<string> = new Set([
+  "afghan", "african", "albanian", "algerian", "american", "arab", "arabic",
+  "argentine", "argentinian", "armenian", "asian", "australian", "austrian",
+  "azerbaijani", "balkan", "bangladeshi", "belarusian", "belgian", "bilingual",
+  "bolivian", "bosnian", "brazilian", "british", "buddhist", "bulgarian",
+  "burmese", "cambodian", "canadian", "catholic", "caucasian", "chilean",
+  "chinese", "colombian", "congolese", "croatian", "cuban", "cypriot", "czech",
+  "danish", "dutch", "ecuadorian", "egyptian", "english", "estonian",
+  "ethiopian", "european", "filipino", "finnish", "flemish", "french",
+  "georgian", "german", "ghanaian", "greek", "hindu", "hispanic", "hungarian",
+  "icelandic", "indian", "indonesian", "iranian", "iraqi", "irish", "israeli",
+  "italian", "jamaican", "japanese", "jewish", "jordanian", "kazakh", "kenyan",
+  "korean", "kurdish", "kyrgyz", "latin", "latina", "latino", "latvian",
+  "lebanese", "lithuanian", "luxembourgish", "malaysian", "maltese", "mexican",
+  "moldovan", "mongolian", "montenegrin", "moroccan", "multilingual", "muslim",
+  "nepalese", "nepali", "nigerian", "nordic", "norwegian", "orthodox",
+  "pakistani", "palestinian", "persian", "peruvian", "polish", "portuguese",
+  "romanian", "russian", "saudi", "scandinavian", "scottish", "senegalese",
+  "serbian", "singaporean", "slavic", "slovak", "slovenian", "spanish",
+  "sudanese", "swedish", "swiss", "syrian", "taiwanese", "tajik", "thai",
+  "tunisian", "turkish", "turkmen", "ukrainian", "uruguayan", "uzbek",
+  "venezuelan", "vietnamese", "welsh",
+]);
+
+/**
+ * `true` for a word that is an attribute, not a name: listed above, an
+ * "-ish" adjective ("Cornish"), or an acronym ("CTO", "QA", "SRE").
+ */
+function isAttributeWord(word: string): boolean {
+  const lowered = lower(word);
+  if (ATTRIBUTE_WORDS.has(lowered)) return true;
+  if (lowered.length > 5 && lowered.endsWith("ish")) return true;
+  return word.length >= 2 && /^\p{Lu}+$/u.test(word);
+}
 
 /** Capitalised words that follow a lead without being a name. */
 const NON_NAME_CAPITALISED: ReadonlySet<string> = new Set([
@@ -657,6 +737,9 @@ const OTHER_SCRIPT_GLOBAL = /(?![\p{Script=Latin}\p{Script=Cyrillic}])\p{L}/gu;
  */
 const OTHER_SCRIPT_MIN_LETTERS = 3;
 
+const CYRILLIC = /\p{Script=Cyrillic}/u;
+const LATIN_OR_CYRILLIC_GLOBAL = /[\p{Script=Latin}\p{Script=Cyrillic}]/gu;
+
 interface VocabEntry {
   /** Lower-cased token as typed. */
   raw: string;
@@ -676,9 +759,34 @@ interface VocabEntry {
 
 interface Vocabulary {
   entries: VocabEntry[];
-  /** When true, the identity check cannot verify and fails open. */
+  /**
+   * When true, a Latin name cannot be verified and fails open: the user
+   * writes mostly in another script ("我叫小明" → "Xiaoming"). ATO-201:
+   * this used to switch on at any three foreign letters, so a Russian
+   * user pasting a Chinese error message let any invented name through;
+   * it now needs those letters to be at least half of all letters, and a
+   * Cyrillic name is checked regardless — nobody romanises a Chinese name
+   * into Cyrillic.
+   */
   unverifiable: boolean;
 }
+
+/**
+ * Words that make a whole sentence a naming context, so its first word
+ * is name-like even though it opens the sentence ("Надей меня зови").
+ */
+const NAMING_HINT_WORDS: ReadonlySet<string> = new Set([
+  "зовут",
+  "зови",
+  "зовите",
+  "называй",
+  "называйте",
+  "звать",
+  "имя",
+  "name",
+  "named",
+  "call",
+]);
 
 /** Two-word Russian naming leads ("зови меня Надей", "меня зовут Надя"). */
 const RU_NAMING_LEADS_2: ReadonlySet<string> = new Set([
@@ -709,33 +817,83 @@ function buildVocabulary(ctx: GroundingContext): Vocabulary {
     entries.push(entry);
   };
   let otherScriptLetters = 0;
+  let comparableLetters = 0;
   const addText = (text: string): void => {
     otherScriptLetters += text.match(OTHER_SCRIPT_GLOBAL)?.length ?? 0;
-    const tokens = text.match(/[\p{L}\p{N}]+/gu) ?? [];
-    for (let i = 0; i < tokens.length; i += 1) {
-      const token = tokens[i]!;
-      const cyrillic = /\p{Script=Cyrillic}/u.test(token);
-      // Name-like: capitalised, or right after a
-      // Russian naming lead ("зови меня надей"). Ordinary lower-case
-      // words — Latin "same"/"make" or Russian «данные»/«макет»/«алерты» —
-      // only ever match exactly, never fuzzily or by stem.
-      const nameLike =
-        /^\p{Lu}/u.test(token) || (cyrillic && followsRuNamingLead(tokens, i));
-      add({
-        raw: lower(token),
-        key: looseKey(token),
-        fuzzy: nameLike,
-        cyrillic: cyrillic && nameLike,
-      });
-      if (cyrillic && nameLike) {
-        for (const stem of cyrillicStems(token)) {
-          add({ raw: stem, key: looseKey(stem), fuzzy: true, cyrillic: true });
+    comparableLetters += text.match(LATIN_OR_CYRILLIC_GLOBAL)?.length ?? 0;
+    for (const sentence of text.split(/[.!?…\n]+/)) {
+      const tokens = sentence.match(/[\p{L}\p{N}]+/gu) ?? [];
+      const namingSentence =
+        tokens.length <= 2 || tokens.some((t) => NAMING_HINT_WORDS.has(lower(t)));
+      for (let i = 0; i < tokens.length; i += 1) {
+        const token = tokens[i]!;
+        const cyrillic = CYRILLIC.test(token);
+        // Name-like: capitalised inside a sentence, or right after a
+        // Russian naming lead ("зови меня надей"). A capitalised word
+        // that only opens a sentence is name-like just in a short or
+        // naming sentence ("Надя.", "Надей меня зови") — ATO-201: a
+        // sentence-initial «Данные …» used to vouch for "Dan" by stem.
+        // Ordinary lower-case words — Latin "same"/"make" or Russian
+        // «данные»/«макет»/«алерты» — only ever match exactly, never
+        // fuzzily or by stem.
+        const nameLike =
+          (/^\p{Lu}/u.test(token) && (i > 0 || namingSentence)) ||
+          (cyrillic && followsRuNamingLead(tokens, i));
+        add({
+          raw: lower(token),
+          key: looseKey(token),
+          fuzzy: nameLike,
+          cyrillic: cyrillic && nameLike,
+        });
+        if (cyrillic && nameLike) {
+          for (const stem of cyrillicStems(token)) {
+            add({ raw: stem, key: looseKey(stem), fuzzy: true, cyrillic: true });
+          }
         }
       }
     }
   };
   for (const text of ctx.userTexts) addText(text);
-  return { entries, unverifiable: otherScriptLetters >= OTHER_SCRIPT_MIN_LETTERS };
+  for (const text of ctx.nameEvidence ?? []) addText(text);
+  return {
+    entries,
+    unverifiable: writesMostlyOtherScript({
+      other: otherScriptLetters,
+      comparable: comparableLetters,
+    }),
+  };
+}
+
+/** Letters of some user texts, by whether a name in them can be compared. */
+export interface ScriptLetterCounts {
+  /** Letters outside Latin / Cyrillic. */
+  other: number;
+  /** Latin / Cyrillic letters. */
+  comparable: number;
+}
+
+export function countScriptLetters(texts: readonly string[]): ScriptLetterCounts {
+  let other = 0;
+  let comparable = 0;
+  for (const text of texts) {
+    other += text.match(OTHER_SCRIPT_GLOBAL)?.length ?? 0;
+    comparable += text.match(LATIN_OR_CYRILLIC_GLOBAL)?.length ?? 0;
+  }
+  return { other, comparable };
+}
+
+function writesMostlyOtherScript(counts: ScriptLetterCounts): boolean {
+  return counts.other >= OTHER_SCRIPT_MIN_LETTERS && counts.other >= counts.comparable;
+}
+
+/**
+ * Whether a claimed name word can be compared at all: not when it is in
+ * another script, and not a Latin one when the user writes mostly in
+ * another script (see `Vocabulary.unverifiable`).
+ */
+function isComparable(word: string, vocab: Vocabulary): boolean {
+  if (OTHER_SCRIPT.test(word)) return false;
+  return !vocab.unverifiable || CYRILLIC.test(word);
 }
 
 function isGrounded(word: string, vocab: Vocabulary): boolean {
@@ -811,8 +969,9 @@ function claimedNames(text: string): string[] {
   for (const match of text.matchAll(FIRST_PERSON_LEAD)) {
     const first = match[1];
     if (!first || !startsUppercase(cleanWord(first))) continue;
-    out.push(...namePartsOf(first));
-    if (match[2]) out.push(...namePartsOf(match[2]));
+    // "I am French", "I'm Russian-speaking": attributes, not names.
+    out.push(...namePartsOf(first).filter((w) => !isAttributeWord(w)));
+    if (match[2]) out.push(...namePartsOf(match[2]).filter((w) => !isAttributeWord(w)));
   }
   for (const match of text.matchAll(RU_USER_LEAD)) {
     const word = match[1] ?? "";
@@ -820,7 +979,7 @@ function claimedNames(text: string): string[] {
   }
   for (const match of text.matchAll(USER_IS_LEAD)) {
     const word = cleanWord(match[1] ?? "");
-    if (word.length < 2 || DEMONYM_SUFFIX.test(word)) continue;
+    if (word.length < 2 || isAttributeWord(word)) continue;
     if (NON_NAME_CAPITALISED.has(lower(word))) continue;
     out.push(word);
   }
@@ -863,12 +1022,16 @@ function collectOneOffSignals(userTexts: readonly string[]): OneOffSignals {
       // Persistence is decided per fragment, not per message: "Reply
       // exactly OK, no tools, I prefer quick answers" keeps "no tools"
       // one-off. A probe is lasting only when it carries a marker
-      // itself or directly follows a marker-only fragment
-      // ("Запомни, отвечай только JSON", "From now on, reply only JSON").
+      // itself or sits right next to a marker-only fragment
+      // ("Запомни, отвечай только OK", "Reply only OK, always").
       const previous = i > 0 ? fragments[i - 1]! : null;
+      const next = i + 1 < fragments.length ? fragments[i + 1]! : null;
       if (
         hasPersistenceMarker(fragment) ||
-        (previous !== null && isMarkerOnlyFragment(previous))
+        (previous !== null && isMarkerOnlyFragment(previous)) ||
+        // ATO-201: the marker may come after it, too ("Отвечай только
+        // JSON, всегда").
+        (next !== null && isMarkerOnlyFragment(next))
       ) {
         continue;
       }
@@ -917,12 +1080,10 @@ function judge(
     const hit = re.exec(text);
     if (hit && !userTextLower.includes(lower(hit[0]).trim())) return "assistant_persona";
   }
-  if (!vocab.unverifiable) {
-    for (const word of [...nameWords, ...claimedNames(text)]) {
-      // A name written in a script we cannot compare fails open.
-      if (OTHER_SCRIPT.test(word)) continue;
-      if (!isGrounded(word, vocab)) return "ungrounded_identity";
-    }
+  for (const word of [...nameWords, ...claimedNames(text)]) {
+    // A name we cannot compare fails open.
+    if (!isComparable(word, vocab)) continue;
+    if (!isGrounded(word, vocab)) return "ungrounded_identity";
   }
   for (const token of oneOff.payloadTokens) {
     if (containsToken(text, token)) return "one_off_payload";
@@ -972,6 +1133,82 @@ export function filterUngroundedReflection(
   return { facts, notes, dropped };
 }
 
+/** Words a bare confirmation is made of ("да, это я", "yes, that's right"). */
+const CONFIRMATION_WORDS: ReadonlySet<string> = new Set([
+  "yes",
+  "yeah",
+  "yep",
+  "yup",
+  "correct",
+  "right",
+  "exactly",
+  "sure",
+  "indeed",
+  "ok",
+  "okay",
+  "да",
+  "ага",
+  "угу",
+  "верно",
+  "точно",
+  "именно",
+  "правильно",
+  "конечно",
+  "ок",
+  "так",
+]);
+
+/** Filler a confirmation may carry around its "yes". */
+const CONFIRMATION_FILLER: ReadonlySet<string> = new Set([
+  "that's",
+  "thats",
+  "that",
+  "it",
+  "it's",
+  "its",
+  "is",
+  "me",
+  "i",
+  "am",
+  "это",
+  "я",
+  "всё",
+  "все",
+]);
+
+/**
+ * ATO-201. `true` for a message that is only a "yes" ("да", "Yes,
+ * that's right", "Да, это я") — the answer that confirms the name in
+ * the assistant's question right before it.
+ */
+export function isBareConfirmation(text: string): boolean {
+  const tokens = wordTokens(text);
+  if (tokens.length === 0 || tokens.length > 5) return false;
+  let yes = false;
+  for (const token of tokens) {
+    if (CONFIRMATION_WORDS.has(token)) yes = true;
+    else if (!CONFIRMATION_FILLER.has(token)) return false;
+  }
+  return yes;
+}
+
+const NAMING_QUESTION = /\b(?:name|call you|address you)\b|зовут|звать|имя|называть|обращаться/i;
+
+/**
+ * ATO-201. The questions in an assistant reply that ask for or check the
+ * user's name ("Тебя зовут Алекс?", "Can I call you Sam?"). When the user
+ * answers one with a bare "yes", its words vouch for the name — a name
+ * the user only confirmed never appears in their own words otherwise.
+ */
+export function namingQuestionsOf(reply: string): string[] {
+  const out: string[] = [];
+  for (const match of reply.matchAll(/[^.!?\n]*\?/g)) {
+    const question = match[0].trim();
+    if (NAMING_QUESTION.test(question)) out.push(question);
+  }
+  return out;
+}
+
 /**
  * ATO-200. The names `text` claims for the user ("The user is Anna",
  * "Пользователь Анна …", "my name is Anna") that no text in `texts` —
@@ -984,10 +1221,9 @@ export function ungroundedClaimedNames(
   texts: readonly string[],
 ): string[] {
   const vocab = buildVocabulary({ userTexts: texts });
-  if (vocab.unverifiable) return [];
   const out: string[] = [];
   for (const word of claimedNames(text.replace(/’/g, "'"))) {
-    if (OTHER_SCRIPT.test(word)) continue;
+    if (!isComparable(word, vocab)) continue;
     if (!isGrounded(word, vocab) && !out.includes(word)) out.push(word);
   }
   return out;
@@ -1006,14 +1242,27 @@ export function ungroundedClaimedNames(
 export function nameGroundingIn(
   value: string,
   texts: readonly string[],
+  options: {
+    /**
+     * Decide "does the user write mostly in another script" from these
+     * counts instead of from `texts` — for a verdict over many stored
+     * conversations, where one pasted Chinese log must not make an
+     * invented Latin name unverifiable (`name-grounding.ts`).
+     */
+    letters?: ScriptLetterCounts;
+  } = {},
 ): NameGroundingStatus {
-  const vocab = buildVocabulary({ userTexts: texts });
+  const built = buildVocabulary({ userTexts: texts });
+  const vocab =
+    options.letters !== undefined
+      ? { ...built, unverifiable: writesMostlyOtherScript(options.letters) }
+      : built;
   const words = nameValueWords(value);
   // Nothing to compare ("J", digits): no verdict either way.
   if (words.length === 0) return "unverifiable";
   let unverifiable = false;
   for (const word of words) {
-    if (OTHER_SCRIPT.test(word) || vocab.unverifiable) {
+    if (!isComparable(word, vocab)) {
       unverifiable = true;
       continue;
     }

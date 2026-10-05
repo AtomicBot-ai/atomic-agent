@@ -21,7 +21,9 @@ import {
   filterUngroundedReflection,
   isTrivialReflectionWindow,
   nameGroundingIn,
+  type UngroundedReason,
 } from "./reflection-grounding.js";
+import { groundingTextsOf, type ChatLine } from "../name-grounding.js";
 
 export interface ReflectionInput {
   sessionId: string;
@@ -81,6 +83,15 @@ export interface ReflectionInput {
    * the runner trusts the agent loop to project consistently.
    */
   transcript?: readonly { user: string; assistant: string }[];
+  /**
+   * ATO-201. The whole session's texts that may vouch for a name
+   * (`groundingTextsOf` over the transcript): every user message so
+   * far, plus an assistant naming question the user answered "yes".
+   * Name evidence only — the one-off checks still read just the
+   * reflected window — so a note restating a name the user gave three
+   * turns ago ("I am Nadia…") is no longer dropped.
+   */
+  groundingTexts?: readonly string[];
 }
 
 /**
@@ -408,17 +419,29 @@ export function createReflectionRunner(
       // instructions dressed up as preferences. See
       // `reflection-grounding.ts` for the exact (narrow) rules.
       //
-      // Grounding comes ONLY from the user's own words in this window.
-      // Stored profile names are deliberately not a source: a name the
-      // old reflection once invented (field case: `name=Анна`, never
-      // typed in any session) would otherwise vouch for itself and get
-      // re-written / superseded on every turn.
-      const grounded = filterUngroundedReflection(parsed, { userTexts });
+      // Grounding comes ONLY from the user's own words: this window,
+      // the rest of the session, a naming question they answered "yes",
+      // and names the profile holds as checked against their messages
+      // (ATO-201). A stored name no check vouched for is deliberately
+      // not a source: a name the old reflection once invented (field
+      // case: `name=Анна`, never typed in any session) would otherwise
+      // vouch for itself and get re-written on every turn.
+      const nameEvidence = reflectedNameEvidence(input, deps.profileStore);
+      const grounded = filterUngroundedReflection(parsed, {
+        userTexts,
+        nameEvidence,
+      });
+      // ATO-201: at info, so a dropped fact is visible in an ordinary
+      // log. Never the text: it is about the user (a name, a
+      // preference), and the logs carry no profile content — the kind,
+      // the reason and its length are enough to find it in a trace.
       for (const item of grounded.dropped) {
-        deps.logger?.debug("reflection.ungrounded_dropped", {
+        deps.logger?.info("reflection.ungrounded_dropped", {
           sessionId: input.sessionId,
           kind: item.kind,
           reason: item.reason,
+          detail: DROP_REASON_DETAIL[item.reason],
+          chars: item.text.length,
         });
       }
       const factsWritten = writeFacts(
@@ -427,7 +450,7 @@ export function createReflectionRunner(
         deps.maxFactsPerCall,
         input.sessionId,
         deps.logger,
-        userTexts,
+        [...userTexts, ...nameEvidence],
       );
       const notesWritten = writeNotes(
         grounded.notes,
@@ -507,6 +530,46 @@ export function createReflectionRunner(
       }
     },
   };
+}
+
+/** One short line per drop reason, for the info log. */
+const DROP_REASON_DETAIL: Readonly<Record<UngroundedReason, string>> = {
+  ungrounded_identity: "names the user by a name the user never wrote",
+  assistant_persona: "describes the assistant, not the user",
+  one_off_payload: "repeats a one-off reply instruction",
+  one_off_tool_restriction: "turns a one-off 'no tools' into a preference",
+};
+
+/**
+ * ATO-201. What may vouch for a name besides the reflected window: the
+ * session's grounding texts from the agent loop, the window's own
+ * naming questions answered "yes", and names the profile holds as
+ * checked against the user's messages. Never a stored name no check
+ * vouched for — an invented one would vouch for itself.
+ */
+function reflectedNameEvidence(
+  input: ReflectionInput,
+  profileStore: ProfileStore,
+): string[] {
+  const out = [...(input.groundingTexts ?? [])];
+  if (input.transcript && input.transcript.length > 0) {
+    const lines: ChatLine[] = [];
+    for (const turn of input.transcript) {
+      lines.push({ kind: "user", text: turn.user });
+      lines.push({ kind: "assistant_reply", text: turn.assistant });
+    }
+    out.push(...groundingTextsOf(lines));
+  }
+  try {
+    for (const fact of profileStore.list()) {
+      if (isNameProfileKey(fact.key) && fact.nameGrounding === "grounded") {
+        out.push(fact.value);
+      }
+    }
+  } catch {
+    // A closed store costs only the evidence, never the reflection.
+  }
+  return out;
 }
 
 /**

@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   filterUngroundedReflection,
   isTrivialReflectionWindow,
+  isBareConfirmation,
   nameGroundingIn,
+  namingQuestionsOf,
   ungroundedClaimedNames,
 } from "./reflection-grounding.js";
 import type { ReflectionFact, ReflectionNote } from "./reflection-parser.js";
+import { groundingTextsOf, type ChatLine } from "../name-grounding.js";
 
 function fact(key: string, value: string): ReflectionFact {
   return { key, value, pinned: true, keywords: [], supersedes: null, validFrom: null };
@@ -521,5 +524,127 @@ describe("ungroundedClaimedNames", () => {
     );
     expect(out.notes).toEqual([]);
     expect(out.dropped[0]?.reason).toBe("ungrounded_identity");
+  });
+});
+
+// ATO-201: holes found in the B09 filter after it shipped.
+describe("filterUngroundedReflection — ATO-201", () => {
+  const keeps = (
+    facts: ReflectionFact[],
+    notes: ReflectionNote[],
+    userTexts: string[],
+    nameEvidence?: string[],
+  ) =>
+    filterUngroundedReflection(
+      { facts, notes },
+      { userTexts, ...(nameEvidence !== undefined ? { nameEvidence } : {}) },
+    );
+  const user = (text: string): ChatLine => ({ kind: "user", text });
+  const reply = (text: string): ChatLine => ({ kind: "assistant_reply", text });
+
+  it("a capitalised word that only opens a sentence does not vouch for a short name", () => {
+    const out = keeps([fact("name", "Dan")], [], ["Данные показывают рост продаж в марте"]);
+    expect(out.facts).toEqual([]);
+    // A short or naming sentence still makes its first word a name.
+    expect(keeps([fact("name", "Nadya")], [], ["Надей меня зови"]).facts).toHaveLength(1);
+    expect(keeps([fact("name", "Nadya")], [], ["Надя."]).facts).toHaveLength(1);
+  });
+
+  it("checks 'The user is Ivan / Dmitri / Ryan / Logan / Alexei' like any name", () => {
+    const names = ["Ivan", "Dmitri", "Ryan", "Logan", "Alexei"];
+    const dropped = keeps(
+      [],
+      names.map((n) => note(`The user is ${n}.`)),
+      ["Summarise this article about Rust"],
+    );
+    expect(dropped.notes).toEqual([]);
+    expect(dropped.dropped.every((d) => d.reason === "ungrounded_identity")).toBe(true);
+    expect(keeps([], [note("The user is Ivan.")], ["Меня зовут Иван"]).notes).toHaveLength(1);
+  });
+
+  it("keeps 'The user is French / Dutch / Swiss / CTO' whatever language the user wrote in", () => {
+    const notes = ["French", "Dutch", "Swiss", "CTO"].map((a) => note(`The user is ${a}.`));
+    const out = keeps([], [...notes, note("I am French.")], [
+      "Я француз, живу в Амстердаме и работаю техническим директором",
+    ]);
+    expect(out.notes).toHaveLength(5);
+  });
+
+  it("a pasted foreign-script snippet does not switch the name check off", () => {
+    const pasted = ["Посмотри ошибку: 错误：无法连接到服务器"];
+    expect(keeps([fact("name", "Anna")], [], pasted).facts).toEqual([]);
+    // A window written mostly in another script still fails open for a
+    // Latin name, but never for a Cyrillic one.
+    const chinese = ["我叫小明，请记住"];
+    expect(keeps([fact("name", "Xiaoming")], [], chinese).facts).toHaveLength(1);
+    expect(keeps([fact("name", "Анна")], [], chinese).facts).toEqual([]);
+  });
+
+  it("keeps a name the user only confirmed ('Тебя зовут Алекс?' — 'да')", () => {
+    const confirmed = groundingTextsOf([reply("Привет! Тебя зовут Алекс?"), user("да")]);
+    expect(keeps([fact("name", "Alex")], [], ["да"], confirmed).facts).toHaveLength(1);
+    const english = groundingTextsOf([reply("Can I call you Sam?"), user("Yes, that's right")]);
+    expect(keeps([fact("name", "Sam")], [], ["Yes, that's right"], english).facts).toHaveLength(1);
+    // Not a "yes", or not a naming question: the assistant's words count for nothing.
+    const refused = groundingTextsOf([reply("Тебя зовут Алекс?"), user("нет, Саша")]);
+    expect(keeps([fact("name", "Alex")], [], ["нет, Саша"], refused).facts).toEqual([]);
+    const greeting = groundingTextsOf([reply("Привет, Алекс!"), user("да")]);
+    expect(keeps([fact("name", "Alex")], [], ["да"], greeting).facts).toEqual([]);
+  });
+
+  it("keeps 'Отвечай только JSON, всегда' — the marker may come after the command", () => {
+    const out = keeps(
+      [fact("reply_format", "JSON")],
+      [note("The user wants replies in JSON.")],
+      ["Отвечай только JSON, всегда"],
+    );
+    expect(out.facts).toHaveLength(1);
+    expect(out.notes).toHaveLength(1);
+    const pong = keeps([], [note("The user wants every reply to be exactly PONG.")], [
+      "Reply exactly PONG, always",
+    ]);
+    expect(pong.notes).toHaveLength(1);
+  });
+
+  it("does not treat 'Отвечай только JSON' on its own as a test command", () => {
+    expect(isTrivialReflectionWindow(["Отвечай только JSON"])).toBe(false);
+    expect(isTrivialReflectionWindow(["Reply only YAML"])).toBe(false);
+    const out = keeps([], [note("The user wants replies only in JSON.")], ["Отвечай только JSON"]);
+    expect(out.notes).toHaveLength(1);
+    // A literal payload is still a probe.
+    expect(isTrivialReflectionWindow(["Reply exactly LOCAL_OK"])).toBe(true);
+  });
+
+  it("keeps a late-turn 'I am Nadia…' note when the name came earlier in the session", () => {
+    const later = ["Я переехала в Лиссабон"];
+    const late = note("I am Nadia and I moved to Lisbon.");
+    expect(keeps([], [late], later).notes).toEqual([]);
+    expect(keeps([], [late], later, ["Меня зовут Надя"]).notes).toHaveLength(1);
+  });
+
+  it("name evidence never lifts a one-off gate", () => {
+    const out = keeps([], [note("The user prefers not to use tools.")], ["Do not use tools."], [
+      "From now on, never use tools",
+    ]);
+    expect(out.notes).toEqual([]);
+  });
+});
+
+describe("isBareConfirmation / namingQuestionsOf", () => {
+  it("recognises a bare yes and nothing more", () => {
+    for (const text of ["да", "Да, это я", "yes", "Yes, that's right", "ага", "верно!"]) {
+      expect(isBareConfirmation(text)).toBe(true);
+    }
+    for (const text of ["нет", "да, но зови меня Сашей", "", "ok so what now then really"]) {
+      expect(isBareConfirmation(text)).toBe(false);
+    }
+  });
+
+  it("picks the naming questions out of a reply", () => {
+    expect(namingQuestionsOf("Привет! Как дела? Тебя зовут Алекс?")).toEqual([
+      "Тебя зовут Алекс?",
+    ]);
+    expect(namingQuestionsOf("Hi Sam! What's your name?")).toEqual(["What's your name?"]);
+    expect(namingQuestionsOf("Привет, Анна!")).toEqual([]);
   });
 });

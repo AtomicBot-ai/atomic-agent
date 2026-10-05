@@ -35,7 +35,13 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 
 import type { NameGroundingStatus } from "./profile-name-keys.js";
 import type { ProfileStore } from "./profile-store.js";
-import { nameGroundingIn } from "./reflection/reflection-grounding.js";
+import {
+  countScriptLetters,
+  isBareConfirmation,
+  nameGroundingIn,
+  namingQuestionsOf,
+  type ScriptLetterCounts,
+} from "./reflection/reflection-grounding.js";
 
 /** One user message or closing reply, as `SessionStore.listChatLines` returns it. */
 export interface ChatLine {
@@ -64,12 +70,22 @@ export function chatLinesOf(
 
 /**
  * The texts of one conversation that may vouch for a name the user
- * gave: every user message, never the assistant's words.
+ * gave: every user message, and — ATO-201 — the assistant's naming
+ * question right before a bare "yes" ("Тебя зовут Алекс?" — "да"), the
+ * one way a name gets confirmed without the user typing it. Nothing
+ * else the assistant wrote ever counts: "Привет, Анна!" vouches for
+ * nothing.
  */
 export function groundingTextsOf(lines: readonly ChatLine[]): string[] {
   const out: string[] = [];
-  for (const line of lines) {
-    if (line.kind === "user") out.push(line.text);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (line.kind !== "user") continue;
+    out.push(line.text);
+    const previous = i > 0 ? lines[i - 1]! : null;
+    if (previous?.kind === "assistant_reply" && isBareConfirmation(line.text)) {
+      out.push(...namingQuestionsOf(previous.text));
+    }
   }
   return out;
 }
@@ -142,13 +158,43 @@ export async function nameGroundingAcrossSessions(
   value: string,
   source: GroundingConversationSource,
 ): Promise<NameGroundingStatus> {
-  let unverifiable = false;
+  const letters: ScriptLetterCounts = { other: 0, comparable: 0 };
   for await (const conversation of source()) {
-    const verdict = nameGroundingIn(value, conversation.texts);
-    if (verdict === "grounded") return "grounded";
-    if (verdict === "unverifiable") unverifiable = true;
+    if (groundedInConversation(value, conversation)) return "grounded";
+    addLetters(letters, conversation);
   }
-  return unverifiable ? "unverifiable" : "ungrounded";
+  return verdictOverAll(value, letters);
+}
+
+/**
+ * Whether one conversation carries the name. Each conversation is
+ * compared as if written in Latin / Cyrillic: whether the user writes
+ * "mostly in another script" is decided once, over every conversation
+ * scanned (`verdictOverAll`) — a single stored session that is mostly
+ * a pasted Chinese log must not make an invented Latin name
+ * unverifiable for good.
+ */
+function groundedInConversation(
+  value: string,
+  conversation: GroundingConversation,
+): boolean {
+  return (
+    nameGroundingIn(value, conversation.texts, { letters: COMPARABLE }) === "grounded"
+  );
+}
+
+const COMPARABLE: ScriptLetterCounts = { other: 0, comparable: 1 };
+
+function addLetters(into: ScriptLetterCounts, conversation: GroundingConversation): void {
+  const counts = countScriptLetters(conversation.texts);
+  into.other += counts.other;
+  into.comparable += counts.comparable;
+}
+
+/** The verdict for a name no conversation carried. */
+function verdictOverAll(value: string, letters: ScriptLetterCounts): NameGroundingStatus {
+  const verdict = nameGroundingIn(value, [], { letters });
+  return verdict === "grounded" ? "ungrounded" : verdict;
 }
 
 export interface ProfileNameCheckReport {
@@ -186,7 +232,8 @@ export async function verifyProfileNameFacts(args: {
   const startedAt = now();
   const open = pending.map((item) => ({
     ...item,
-    verdict: "ungrounded" as NameGroundingStatus,
+    grounded: false,
+    letters: { other: 0, comparable: 0 } as ScriptLetterCounts,
   }));
   // A never-checked fact needs every session; an `ungrounded` one only
   // those written after its last check.
@@ -197,29 +244,40 @@ export async function verifyProfileNameFacts(args: {
     since !== undefined ? { since } : {},
   )) {
     for (const item of open) {
-      if (item.verdict === "grounded") continue;
+      if (item.grounded) continue;
       if (item.checkedAt !== null && conversation.updatedAt <= item.checkedAt) {
         continue;
       }
-      const verdict = nameGroundingIn(item.fact.value, conversation.texts);
-      if (verdict !== "ungrounded") item.verdict = verdict;
+      if (groundedInConversation(item.fact.value, conversation)) {
+        item.grounded = true;
+      } else {
+        addLetters(item.letters, conversation);
+      }
     }
-    if (open.every((item) => item.verdict === "grounded")) break;
+    if (open.every((item) => item.grounded)) break;
   }
   for (const item of open) {
+    // A re-check never turns an `ungrounded` name `unverifiable`: newer
+    // sessions in another script say nothing about a name every older
+    // one was compared against.
+    const verdict: NameGroundingStatus = item.grounded
+      ? "grounded"
+      : item.checkedAt !== null
+        ? "ungrounded"
+        : verdictOverAll(item.fact.value, item.letters);
     // Only over a verdict nothing else gave while the walk ran: a name
     // `memory.profile.set` or reflection confirmed in the meantime keeps
     // that. A re-checked `ungrounded` fact still ungrounded only moves
     // its check time forward.
     if (
-      !args.store.markNameGrounding(item.fact.id, item.verdict, startedAt, {
+      !args.store.markNameGrounding(item.fact.id, verdict, startedAt, {
         ifUnconfirmed: true,
       })
     ) {
       continue;
     }
     report.checked += 1;
-    report[item.verdict] += 1;
+    report[verdict] += 1;
   }
   args.logger?.info("profile name facts checked against the user's messages", {
     checked: report.checked,
