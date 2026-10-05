@@ -145,7 +145,9 @@ export function createGetTaskHandler(): HttpHandler {
  * `DELETE /api/tasks/:id` — cancel the task. Idempotent on already-
  * terminal rows: returns the existing record unchanged. 404 when the
  * row is unknown so callers can distinguish "missing" from "already
- * cancelled".
+ * cancelled". A task this agent is running has its turn stopped too
+ * (`TaskRunner.cancel`); the row used to say `cancelled` while the turn
+ * went on to its end.
  */
 export function createCancelTaskHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -158,7 +160,7 @@ export function createCancelTaskHandler(): HttpHandler {
       sendError(res, 400, openaiError("task id is required"));
       return;
     }
-    const cancelled = ctx.runtime.taskStore.cancel(id);
+    const cancelled = ctx.runtime.taskRunner.cancel(id);
     if (!cancelled) {
       sendError(res, 404, openaiError(`task not found: ${id}`));
       return;

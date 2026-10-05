@@ -142,10 +142,13 @@ export class TasksOrchestrator {
     }
   }
 
-  /** Cancel `taskId` via `TaskStore.cancel`. Refresh afterwards. */
+  /**
+   * Cancel `taskId` via `TaskRunner.cancel`, which also stops its turn
+   * when it is running. Refresh afterwards.
+   */
   cancelTask(taskId: string): void {
     try {
-      const after = this.runtime.taskStore.cancel(taskId);
+      const after = this.runtime.taskRunner.cancel(taskId);
       let line: string;
       if (after === null) line = `task ${taskId} not found`;
       else if (after.status === "cancelled") line = `task ${taskId} cancelled`;

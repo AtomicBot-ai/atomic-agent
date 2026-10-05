@@ -1670,7 +1670,7 @@ A session row used to hold only a turn's end, written by `executeTurn` once the 
 
 - **Its own end.** `finishTurn` writes the state the loop handed back.
 - **A throw.** `releaseTurn` writes `failed` with the error, or `cancelled` (restoring the pre-turn `lastError`) when the turn's signal had aborted — an abort can surface as any error. The loop itself classifies a step error as `cancelled` once its signal has aborted, unless `classifyFailure` answered `tool` (an error it does not recognise, which is how a programming error arrives — that stays a reported failure).
-- **Shutdown.** `releaseOwnTurns` writes `cancelled` + `lastError: "turn interrupted: …"` first thing, as a stand-in that keeps the mark, so a stop that turns into a kill partway through teardown still leaves the row right and a turn that still reaches its own end (or throws) replaces it. Then shutdown waits up to `SHUTDOWN_TURN_GRACE_MS` (1.5 s) for the turns their hosts stopped to write their own end (`TurnsInFlight.settleCancelled`; a turn nobody stopped — a scheduled task — is not waited for), releases what is left, and only then closes the store. `serve`'s `handle.close()` resolves only once every connection has closed, so its turns have been aborted by then; the scheduler's ticker stops at the top of shutdown.
+- **Shutdown.** `releaseOwnTurns` writes `cancelled` + `lastError: "turn interrupted: …"` first thing, as a stand-in that keeps the mark, so a stop that turns into a kill partway through teardown still leaves the row right and a turn that still reaches its own end (or throws) replaces it. Then shutdown waits up to `SHUTDOWN_TURN_GRACE_MS` (1.5 s) for the turns their hosts stopped to write their own end (`TurnsInFlight.settleCancelled`; a turn nobody stopped is not waited for), releases what is left, and only then closes the store. `serve`'s `handle.close()` resolves only once every connection has closed, so its turns have been aborted by then; the scheduler's ticker stops at the top of shutdown, and the task turns in flight are aborted there too (`TaskRunner.stop`, `Scheduler.stop` — see §"Durable tasks").
 - **A process that is gone.** The boot sweep (`recoverInterruptedTurns`, right after `new SessionStore()` and before the retention pass) ends live-status rows whose owner is gone: no mark; a mark written into another database file (`db` — a copy, such as the desktop's "bring your terminal setup over" import); this process's own pid; a dead pid; a host whose uptime went backwards since the mark (a reboot — uptime does not move with the wall clock); a pid whose process started at another moment (`processStart`: `/proc/<pid>/stat` on Linux, `ps -o lstart=` in UTC on macOS). A mark from another pid namespace (`host`: the platform, plus `/proc/self/ns/pid` on Linux — a container sharing the state dir) is never judged, and a live pid without such evidence is left alone: cancelling a turn another window is still running is the worse mistake.
 
 Invariants:
@@ -1710,8 +1710,11 @@ running --(success)--> completed
 running --(retryable, attempts < maxAttempts)--> pending   [retry loop]
 running --(retryable, attempts == maxAttempts)--> failed
 running --(grammar | tool failure)--> blocked              [permanent — same input, same wall]
-running --(cancelled signal)--> cancelled
-pending --(cancel())--> cancelled
+running --(its turn stopped, one-shot)--> cancelled
+running --(its turn stopped, recurring)--> pending          [rearmed for its next firing]
+running --(agent shutting down, one-shot)--> pending        [due again at the next start]
+running --(owner process gone, at boot)--> pending          [recoverInterrupted]
+pending|running --(cancel())--> cancelled                   [a run in progress here has its turn aborted]
 ```
 
 Failure classification is delegated to `classifyFailure` from [src/llm/reliability/](src/llm/reliability/) (the LLM reliability policy below) so retry semantics never drift from the rest of the runtime.
@@ -1732,9 +1735,10 @@ Inter-attempt sleep on retry uses `nextDelayMs(attempts, { initialMs, maxMs })` 
 1. **Tasks always run via `runtime.runTurn(..., { origin: "scheduler" })`.** Never via `executeTurn` (which bypasses the controller). Per-session FIFO + cross-session parallelism are inherited from §"Concurrency contract".
 2. **Retries are turn-level only.** The same `userMessage` is replayed; partial-tool replay is out of scope. Step-level retries inside a single `runTurn` remain the LLM reliability layer's responsibility.
 3. **`TaskRunner` never holds a `SessionState` reference between attempts.** It always re-reads via `sessionStore.load(sessionId)` inside the next attempt — same pattern as the sidecar `send_message` callback.
-4. **`cancel(id)` is idempotent on terminal rows** — returns the existing record unchanged, so HTTP `DELETE` and CLI `cancel` are safe to retry.
-5. **Stale recovery is one-shot.** `taskStore.recoverStale(staleAfterMs)` runs exactly once on bootstrap; there is **no background sweeper**. Process crash between `markRunning` and the terminal write leaves a `running` row that the next bootstrap flips back to `pending`.
-6. **`tasks.enabled=false` ≠ `TaskStore` is absent.** The store is always constructed (it owns a SQLite handle that must be closed in `shutdown`), but `drainPending` is a no-op and HTTP routes return 404. Mirrors `memory.profile.enabled` from Memory fabric.
+4. **`cancel(id)` is idempotent on terminal rows** — returns the existing record unchanged, so HTTP `DELETE` and CLI `cancel` are safe to retry. HTTP `DELETE` and the TUI go through `TaskRunner.cancel`, which writes `cancelled` first and then aborts the turn of a run this process has in progress; the run unwinding finds the row ended and writes nothing over it — it neither retries it nor rearms a recurring one. Any outcome a run reaches after its row was cancelled elsewhere (the CLI's `cancel` from another process) is dropped the same way.
+5. **Interrupted runs go back, not away.** A run whose turn ends cancelled with the row still `running` is put back by `markInterrupted` (`last_error_cat = 'cancelled'`): a recurring task is rearmed for its next firing (attempts reset, as after a completed firing); a one-shot task stopped from outside — `TaskRunner.stop`, an aborted drain — is left due for the next start, its attempt still counted; a one-shot task whose own turn was stopped is cancelled. Shutdown aborts every task run in flight (`TaskRunner.stop`, and `Scheduler.stop` aborts its tick) and waits for them at most `SHUTDOWN_TURN_GRACE_MS`; it used to wait out the tick with its turn running, which on a model server that did not answer held `serve`'s SIGTERM for minutes until the desktop killed it.
+6. **Boot recovery is by owner, one-shot.** `markRunning` records the claiming process in `run_owner` (a `TurnOwner`, the same mark session turns carry — §"Turn marks"), with the claim's `started_at` as its `at`. `taskStore.recoverInterrupted({ staleAfterMs })` runs exactly once on bootstrap, before the scheduler starts; there is **no background sweeper**. A `running` row goes back to `pending` when its owner is gone by `isTurnOwnerGone` (dead pid, pid reused by a later process, host rebooted, a copy of the file, this process's own pid); a live owner — another agent on the same state dir — keeps it however long it runs, and one from another pid namespace is never judged. Age (`started_at` older than `staleAfterMs`) is only the fallback for a row whose owner says nothing about the run: claimed by a binary that records no owner (an owner whose `at` is not the row's `started_at` is a leftover), or a database the column could not be added to. Age alone missed the case that mattered: an agent restarted 4 s after it was stopped found its own task "fresh" and left it `running` for good. `run_owner` is added outside the numbered migrations (`ensureRunOwnerColumn`), so an older binary sharing the file still opens it.
+7. **`tasks.enabled=false` ≠ `TaskStore` is absent.** The store is always constructed (it owns a SQLite handle that must be closed in `shutdown`), but `drainPending` is a no-op and HTTP routes return 404. Mirrors `memory.profile.enabled` from Memory fabric.
 
 ### Surfaces
 
@@ -1752,7 +1756,7 @@ All under `tasks.*` in [src/config/config-schema.ts](src/config/config-schema.ts
 - `tasks.maxAttempts` (default `3`) — retry budget per task.
 - `tasks.backoffInitialMs` (default `1000`) / `tasks.backoffMaxMs` (default `60000`) — exponential capped backoff.
 - `tasks.runOnCreate` (default `true`) — auto-drain immediately after `create()`. Detached, fire-and-forget.
-- `tasks.staleAfterMs` (default `300000`) — `recoverStale` threshold.
+- `tasks.staleAfterMs` (default `300000`) — `recoverInterrupted`'s age fallback, for `running` rows that name no owner.
 - `paths.tasksDbFile` — resolved to `<stateDir>/tasks.sqlite`.
 
 ### Out of scope (deferred)
@@ -1786,7 +1790,7 @@ Schema bumped `TASK_SCHEMA_VERSION` 1 → 2, idempotent migration adding columns
 2. `await taskRunner.runDue(Date.now(), batch)`.
 3. Errors are swallowed + logged + counted in `agent.scheduler.tick_errors`; interval keeps running.
 
-Wired in [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) after `taskStore.recoverStale`. `shutdown()` awaits `scheduler?.stop()` **before** `taskStore.close()` to prevent a final tick from touching a closed handle.
+Wired in [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) after `taskStore.recoverInterrupted`. Every tick's `runDue` gets the scheduler's stop signal: `stop()` aborts it, so the drain claims nothing more and the task turn in flight is stopped (its task put back, §"Durable tasks" invariant 5). `shutdown()` calls `scheduler?.stop(SHUTDOWN_TURN_GRACE_MS)` at the top and awaits it **before** `taskStore.close()` to prevent a final tick from touching a closed handle; a tick whose turn ignores its signal past the grace finishes on its own, and its task is taken back by the next boot.
 
 ### Session lifecycle for scheduled tasks
 
