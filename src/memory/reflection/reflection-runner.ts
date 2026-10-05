@@ -24,6 +24,7 @@ import {
   type UngroundedReason,
 } from "./reflection-grounding.js";
 import { groundingTextsOf, type ChatLine } from "../name-grounding.js";
+import { findDuplicateFact } from "../profile-duplicates.js";
 
 export interface ReflectionInput {
   sessionId: string;
@@ -376,6 +377,10 @@ export function createReflectionRunner(
         ...(input.transcript && input.transcript.length > 0
           ? { transcript: input.transcript }
           : {}),
+        // ATO-188. What the profile already says, so the model reuses a
+        // key instead of writing the same fact under a new one. Not in
+        // any-speaker mode, whose keys name third parties.
+        ...(deps.anySpeaker ? {} : { knownProfile: knownProfileOf(deps.profileStore) }),
       });
       const completion =
         deps.toolTransport === "native_tools"
@@ -532,6 +537,20 @@ export function createReflectionRunner(
   };
 }
 
+/**
+ * ATO-188. The profile as the prompt shows it, for `### known profile`.
+ * `listForPrompt`, never `list`: a name no check vouched for must not
+ * be handed back to the model that may have invented it.
+ */
+function knownProfileOf(store: ProfileStore): { key: string; value: string }[] {
+  try {
+    return store.listForPrompt().map((f) => ({ key: f.key, value: f.value }));
+  } catch {
+    // A closed store costs only the hint, never the reflection.
+    return [];
+  }
+}
+
 /** One short line per drop reason, for the info log. */
 const DROP_REASON_DETAIL: Readonly<Record<UngroundedReason, string>> = {
   ungrounded_identity: "names the user by a name the user never wrote",
@@ -619,9 +638,37 @@ function writeFacts(
       // ATO-199. A name that got past the filter is stamped with the
       // same verdict, so it reaches `### profile` without waiting for
       // the startup check; a fail-open one says so.
-      if (isNameProfileKey(fact.key)) {
+      const nameGrounding = isNameProfileKey(fact.key)
+        ? nameGroundingIn(fact.value, userTexts)
+        : undefined;
+      if (nameGrounding !== undefined) {
         (opts as { nameGrounding?: NameGroundingStatus }).nameGrounding =
-          nameGroundingIn(fact.value, userTexts);
+          nameGrounding;
+      }
+      // ATO-188. The same fact again — under its key, or (without an
+      // explicit supersession) under another key that already says it —
+      // is not written: the agent's own `memory.profile.set` may have
+      // stored it this turn. Re-read per fact, so a repeat inside one
+      // completion is caught too.
+      const duplicate = findDuplicateFact(store.list(), fact.key, fact.value);
+      if (
+        duplicate !== null &&
+        (duplicate.kind === "same" || !fact.supersedes)
+      ) {
+        // A name the user has now written confirms the stored one —
+        // under its key, or the same name under another name key.
+        const confirmed =
+          (duplicate.kind === "same" || isNameProfileKey(duplicate.fact.key)) &&
+          nameGrounding === "grounded" &&
+          duplicate.fact.nameGrounding !== "grounded" &&
+          store.markNameGrounding(duplicate.fact.id, "grounded");
+        logger?.debug("reflection.duplicate_fact", {
+          sessionId,
+          kind: duplicate.kind,
+          ...(confirmed ? { confirmed: true } : {}),
+        });
+        if (confirmed) written += 1;
+        continue;
       }
       if (typeof fact.supersedes === "string" && fact.supersedes.length > 0) {
         (opts as { supersedesKey?: string }).supersedesKey = fact.supersedes;

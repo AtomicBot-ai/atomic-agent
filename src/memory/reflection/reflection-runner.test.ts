@@ -1015,4 +1015,85 @@ describe("createReflectionRunner", () => {
     });
     expect(JSON.stringify(drops[0]!.context)).not.toContain("Анна");
   });
+
+  // ATO-188: the agent's profile.set and reflection wrote the same fact
+  // twice, once under a new key.
+  it("ATO-188: shows reflection the profile and skips a fact it already holds", async () => {
+    h.store.set("name", "Надя", { nameGrounding: "grounded" });
+    h.store.set("nickname", "Аня", { nameGrounding: "ungrounded" });
+    h.store.set("prefers_short_answers", "yes");
+    const prompts: string[] = [];
+    const runner = createReflectionRunner({
+      llmComplete: async (params) => {
+        prompts.push(params.prompt);
+        return completion(
+          "SET name=Надя\nSET response_length_preference=short\nSET timezone=Europe/Lisbon\n",
+        );
+      },
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Меня зовут Надя, отвечай кратко, я в Лиссабоне (Europe/Lisbon)",
+      assistantReply: "Хорошо.",
+    });
+
+    // The known profile rides in the tail — never the unconfirmed name.
+    const tail = prompts[0]!.slice(REFLECTION_STABLE_PREFIX.length);
+    expect(tail).toContain("### known profile\n- name=Надя\n- prefers_short_answers=yes\n");
+    expect(tail).not.toContain("Аня");
+    expect(h.store.history("name")).toHaveLength(1);
+    expect(h.store.get("response_length_preference")).toBeNull();
+    expect(h.store.get("timezone")?.value).toBe("Europe/Lisbon");
+  });
+
+  it("ATO-188: a repeated name the user has now written confirms the stored one", async () => {
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Анна\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Вообще-то меня правда зовут Анна",
+      assistantReply: "Поняла, Анна.",
+    });
+
+    expect(h.store.history("name")).toHaveLength(1);
+    expect(h.store.get("name")?.nameGrounding).toBe("grounded");
+  });
+
+  it("ATO-188: the same name under another name key confirms the stored one", async () => {
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET first_name=Анна\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Меня зовут Анна",
+      assistantReply: "Приятно познакомиться!",
+    });
+
+    expect(h.store.get("first_name")).toBeNull();
+    expect(h.store.get("name")?.nameGrounding).toBe("grounded");
+  });
 });

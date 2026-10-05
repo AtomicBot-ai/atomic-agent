@@ -2,6 +2,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import {
   ProfileStore,
   ProfileValidationError,
+  type ProfileFact,
   type ProfileSetOptions,
 } from "../../memory/profile-store.js";
 import {
@@ -63,25 +64,50 @@ export function buildProfileSetTool(
       const value = rawArgs.value;
       try {
         const setOptions = parseSetOptions(rawArgs);
-        if (
+        // ATO-188: the same fact again is not a new version. Nothing is
+        // written; a name the user has now written is only confirmed.
+        const existing =
+          typeof key === "string" && typeof value === "string"
+            ? options.store.get(key)
+            : null;
+        const repeat =
+          existing !== null && sameFact(existing, value as string, setOptions);
+        const isName =
           typeof key === "string" &&
           typeof value === "string" &&
-          isNameProfileKey(key.trim())
-        ) {
-          const verdict = await checkName(value, ctx, options.groundingSource);
+          isNameProfileKey(key.trim());
+        // A name already saved and confirmed needs no new check: its
+        // evidence may sit in a session deleted since.
+        if (repeat && (!isName || existing.nameGrounding === "grounded")) {
+          return unchangedResult(existing, false);
+        }
+        if (isName) {
+          const verdict = await checkName(
+            value as string,
+            ctx,
+            options.groundingSource,
+          );
           if (verdict === "ungrounded") {
             return compressToolResult({
               tool: "memory.profile.set",
               status: "error",
-              output: `not saved: the user has not written the name "${truncatePreview(value, 60)}" in any conversation. Do not save it or call the user by it — ask the user for their name and save exactly what they write.`,
+              output: `not saved: the user has not written the name "${truncatePreview(value as string, 60)}" in any conversation. Do not save it or call the user by it — ask the user for their name and save exactly what they write.`,
               details: {
                 field: "value",
                 reason: "name_not_written_by_user",
-                key: key.trim(),
+                key: (key as string).trim(),
               },
             });
           }
           if (verdict !== null) setOptions.nameGrounding = verdict;
+        }
+        if (repeat) {
+          const confirmed =
+            setOptions.nameGrounding !== undefined &&
+            setOptions.nameGrounding !== "ungrounded" &&
+            existing.nameGrounding !== setOptions.nameGrounding &&
+            options.store.markNameGrounding(existing.id, setOptions.nameGrounding);
+          return unchangedResult(existing, confirmed);
         }
         const fact = options.store.set(
           typeof key === "string" ? key : "",
@@ -143,6 +169,52 @@ async function checkName(
   return current === "unverifiable" || stored === "unverifiable"
     ? "unverifiable"
     : "ungrounded";
+}
+
+function unchangedResult(existing: ProfileFact, confirmed: boolean) {
+  return compressToolResult({
+    tool: "memory.profile.set",
+    status: "ok",
+    output: confirmed
+      ? `confirmed ${existing.key} = ${truncatePreview(existing.value)} (already saved; now used)`
+      : `already saved: ${existing.key} = ${truncatePreview(existing.value)} (unchanged)`,
+    details: {
+      key: existing.key,
+      value: existing.value,
+      updatedAt: existing.updatedAt,
+      pinned: existing.pinned,
+      keywords: existing.keywords,
+      updated: false,
+      ...(confirmed ? { confirmed: true } : {}),
+    },
+  });
+}
+
+/**
+ * Whether a write would store exactly what the key already holds: the
+ * same value, pin and keywords (as the store normalises them). A
+ * changed pin or keyword list is a real update and is written.
+ */
+function sameFact(
+  existing: ProfileFact,
+  value: string,
+  options: ProfileSetOptions,
+): boolean {
+  if (existing.value !== value) return false;
+  const pinned = options.pinned ?? true;
+  if (existing.pinned !== pinned) return false;
+  if (pinned) return true;
+  const wanted: string[] = [];
+  for (const keyword of options.keywords ?? []) {
+    // Malformed keywords: let the store's validation answer.
+    if (typeof keyword !== "string") return false;
+    const normalised = keyword.trim().toLowerCase();
+    if (!wanted.includes(normalised)) wanted.push(normalised);
+  }
+  return (
+    wanted.length === existing.keywords.length &&
+    wanted.every((k) => existing.keywords.includes(k))
+  );
 }
 
 function parseSetOptions(rawArgs: Record<string, unknown>): ProfileSetOptions {

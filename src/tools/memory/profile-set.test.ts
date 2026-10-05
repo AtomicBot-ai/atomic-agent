@@ -199,4 +199,64 @@ describe("memory.profile.set", () => {
       expect(store.listForPrompt()).toEqual([]);
     });
   });
+
+  // ATO-188: `name = Надя` landed twice — the same fact is not a new
+  // version.
+  describe("the same fact again", () => {
+    it("writes nothing when the key already holds the value", async () => {
+      const tool = buildProfileSetTool({ store });
+      await tool.run({ key: "language", value: "ru" }, makeCtx());
+      const again = await tool.run({ key: "language", value: "ru" }, makeCtx());
+      expect(again.status).toBe("ok");
+      expect(again.details.updated).toBe(false);
+      expect(again.summary).toContain("already saved: language = ru (unchanged)");
+      expect(store.history("language")).toHaveLength(1);
+    });
+
+    it("still writes a changed value, pin or keyword list", async () => {
+      const tool = buildProfileSetTool({ store });
+      await tool.run({ key: "deploy_cmd", value: "make ship" }, makeCtx());
+      await tool.run({ key: "deploy_cmd", value: "make ship-prod" }, makeCtx());
+      await tool.run(
+        { key: "deploy_cmd", value: "make ship-prod", pinned: false, keywords: ["deploy"] },
+        makeCtx(),
+      );
+      const same = await tool.run(
+        { key: "deploy_cmd", value: "make ship-prod", pinned: false, keywords: ["Deploy"] },
+        makeCtx(),
+      );
+      expect(same.details.updated).toBe(false);
+      await tool.run(
+        { key: "deploy_cmd", value: "make ship-prod", pinned: false, keywords: ["release"] },
+        makeCtx(),
+      );
+      expect(store.history("deploy_cmd")).toHaveLength(4);
+    });
+
+    it("confirms a stored unconfirmed name the user has now written, without a new row", async () => {
+      store.set("name", "Анна", { nameGrounding: "ungrounded" });
+      const tool = buildProfileSetTool({ store, groundingSource: storedSessions() });
+      const result = await tool.run(
+        { key: "name", value: "Анна" },
+        makeCtx(["Да, меня зовут Анна"]),
+      );
+      expect(result.status).toBe("ok");
+      expect(result.details.confirmed).toBe(true);
+      expect(store.history("name")).toHaveLength(1);
+      expect(store.get("name")?.nameGrounding).toBe("grounded");
+      expect(store.listForPrompt().map((f) => f.key)).toEqual(["name"]);
+    });
+
+    // A confirmed name re-set as is needs no new check: the session that
+    // carried it may have been deleted since.
+    it("does not re-check a confirmed name saved again unchanged", async () => {
+      store.set("name", "Надя", { nameGrounding: "grounded" });
+      const source = storedSessions();
+      const tool = buildProfileSetTool({ store, groundingSource: source });
+      const result = await tool.run({ key: "name", value: "Надя" }, makeCtx([]));
+      expect(result.status).toBe("ok");
+      expect(result.details.updated).toBe(false);
+      expect(source.walks).toBe(0);
+    });
+  });
 });

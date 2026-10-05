@@ -84,6 +84,7 @@ Rules:
 - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
 - Use NOTE [type=X] for anything episodic, behavioural, knowledge-bearing, or skill-shaped that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional trailing tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
 - If a SET already captures the fact, do not also emit a NOTE repeating it.
+- A "### known profile" block, when present, lists facts already stored. Never emit a SET that repeats one of them, under its key or any other; to change one, reuse its exact key.
 - If there is nothing worth remembering, output exactly: NONE
 - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE [type=X] body" (optionally followed by a trailing tags marker).
 `;
@@ -181,6 +182,7 @@ Rules:
 - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
 - Use NOTE for anything episodic or narrative that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
 - If a SET already captures the fact, do not also emit a NOTE repeating it.
+- A "### known profile" block, when present, lists facts already stored. Never emit a SET that repeats one of them, under its key or any other; to change one, reuse its exact key.
 - If there is nothing worth remembering, output exactly: NONE
 - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE body".
 `;
@@ -218,7 +220,20 @@ export interface ReflectionPromptInput {
    * slot's KV cache stable.
    */
   transcript?: readonly { user: string; assistant: string }[];
+  /**
+   * ATO-188. The profile as the prompt shows it (`listForPrompt` — never
+   * a name no check vouched for), rendered into the tail as `### known
+   * profile` so the model reuses existing keys instead of writing the
+   * same fact a second time under a new one. Omitted or empty ⇒ no
+   * block, and the tail is byte-identical to before.
+   */
+  knownProfile?: readonly { key: string; value: string }[];
 }
+
+/** At most this many facts go into `### known profile`. */
+export const REFLECTION_KNOWN_PROFILE_MAX_FACTS = 40;
+/** Each value in `### known profile` is clipped to this many characters. */
+export const REFLECTION_KNOWN_PROFILE_VALUE_CAP = 80;
 
 /**
  * Build the full reflection prompt. The `stable prefix` is always
@@ -250,11 +265,14 @@ export function buildReflectionPrompt(input: ReflectionPromptInput): string {
   // `anySpeaker` wins over `typedNotes` — the any-speaker prefix
   // already enforces typed NOTEs, so the typed variant would be
   // redundant. Order: anySpeaker → typedNotes → default.
-  const prefix = input.anySpeaker
+  const stablePrefix = input.anySpeaker
     ? REFLECTION_STABLE_PREFIX_ANY_SPEAKER
     : input.typedNotes
       ? REFLECTION_STABLE_PREFIX_TYPED
       : REFLECTION_STABLE_PREFIX;
+  // The known profile opens the variable tail, so the stable prefix —
+  // and the reflection slot's KV cache over it — never moves.
+  const prefix = `${stablePrefix}${renderKnownProfile(input.knownProfile)}`;
   if (input.transcript && input.transcript.length > 0) {
     const blocks: string[] = [];
     for (let i = 0; i < input.transcript.length; i += 1) {
@@ -268,6 +286,22 @@ export function buildReflectionPrompt(input: ReflectionPromptInput): string {
   const user = clampMessage(input.userMessage);
   const assistant = clampMessage(input.assistantReply);
   return `${prefix}\nUSER: ${user}\nASSISTANT: ${assistant}\n\n### output\n`;
+}
+
+function renderKnownProfile(
+  facts: readonly { key: string; value: string }[] | undefined,
+): string {
+  if (!facts || facts.length === 0) return "";
+  const lines = facts
+    .slice(0, REFLECTION_KNOWN_PROFILE_MAX_FACTS)
+    .map((f) => `- ${f.key}=${clampValue(f.value)}`);
+  return `\n### known profile\n${lines.join("\n")}\n`;
+}
+
+function clampValue(raw: string): string {
+  const normalised = raw.replace(/\s+/g, " ").trim();
+  if (normalised.length <= REFLECTION_KNOWN_PROFILE_VALUE_CAP) return normalised;
+  return `${normalised.slice(0, REFLECTION_KNOWN_PROFILE_VALUE_CAP - 1)}…`;
 }
 
 function clampMessage(raw: string): string {
