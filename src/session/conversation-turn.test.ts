@@ -5,10 +5,13 @@ import {
   assistantToolCallTurn,
   findCurrentMacroTurnStart,
   isFinalReplyTurn,
+  isStoppedTurnMarker,
   macroTurnBoundaries,
   packConversation,
   renderToolResultBody,
   renderTurnForPrompt,
+  STOPPED_TURN_MARKER_TEXT,
+  stoppedTurnMarker,
   toolResultTurn,
   trimTurnsToTokens,
   userTurn,
@@ -691,5 +694,43 @@ describe("a progress note is a reply row that did not end the macro-turn", () =>
     expect(findCurrentMacroTurnStart(turns)).toBe(6);
     // …and a steer after a note does not open a task of its own.
     expect(macroTurnBoundaries(turns)).toEqual([0]);
+  });
+});
+
+describe("a stop marker closes the stopped request (ATO-233)", () => {
+  const marker = stoppedTurnMarker(2);
+
+  it("is a flagged reply row, and only it reads as one", () => {
+    expect(marker).toEqual({
+      kind: "assistant_reply",
+      text: STOPPED_TURN_MARKER_TEXT,
+      stopped: true,
+      at: 2,
+    });
+    expect(isStoppedTurnMarker(marker)).toBe(true);
+    expect(isStoppedTurnMarker(assistantReplyTurn("done", 3))).toBe(false);
+    expect(isStoppedTurnMarker(userTurn("hi", 1))).toBe(false);
+    expect(isStoppedTurnMarker(undefined)).toBe(false);
+    // It ends its macro-turn the way a reply does.
+    expect(isFinalReplyTurn(marker)).toBe(true);
+  });
+
+  it("tells the model the request was stopped and must not be picked up", () => {
+    const line = renderTurnForPrompt(marker);
+    expect(line).toBe(`assistant: ${STOPPED_TURN_MARKER_TEXT}`);
+    expect(line).toContain("stopped by the user");
+    expect(line).toContain("Do not continue it");
+    expect(line).toContain("unless the user asks for it again");
+  });
+
+  it("leaves the next message a task of its own", () => {
+    const turns: ConversationTurn[] = [
+      userTurn("write a 1000-word story about a dog", 1),
+      marker,
+      userTurn("how are you?", 3),
+    ];
+    // The stopped story is history; only the new message is current.
+    expect(findCurrentMacroTurnStart(turns)).toBe(2);
+    expect(macroTurnBoundaries(turns)).toEqual([0, 2]);
   });
 });

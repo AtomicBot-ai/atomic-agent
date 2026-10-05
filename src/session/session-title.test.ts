@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { stoppedTurnMarker } from "./conversation-turn.js";
 import { createEmptySessionState } from "./session-state.js";
 import type { SessionState } from "./session-state.js";
 import {
@@ -80,6 +81,18 @@ describe("shouldNameSession", () => {
 
   it("has nothing to name a session nobody spoke to", () => {
     expect(shouldNameSession(session([]))).toBe(false);
+  });
+
+  it("does not count a stopped turn as answered", () => {
+    // Its stop marker is a reply row, but nothing in it answers.
+    const stopped = session([ASKED, stoppedTurnMarker(2)]);
+    expect(shouldNameSession(stopped)).toBe(false);
+    const answeredLater = session([
+      ...stopped.turns,
+      { ...ASKED, at: 3 },
+      { ...ANSWERED, at: 4 },
+    ]);
+    expect(shouldNameSession(answeredLater)).toBe(true);
   });
 });
 

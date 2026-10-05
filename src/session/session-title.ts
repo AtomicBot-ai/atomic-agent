@@ -5,6 +5,7 @@ import type {
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
 import type { SessionState } from "./session-state.js";
+import { isStoppedTurnMarker } from "./conversation-turn.js";
 
 /**
  * Where a generated session name lives. Reserved metadata, set by the
@@ -59,13 +60,17 @@ export function sanitizeSessionTitle(raw: string): string | null {
  * is often "посмотри на это" with the substance in what the agent then
  * found. Naming once and keeping it is deliberate — a title that
  * rewrites itself as the thread grows is a moving label on a list the
- * operator navigates by memory.
+ * operator navigates by memory. A turn the user stopped answered
+ * nothing: its stop marker does not count, and the thread is named after
+ * the first turn that does answer.
  */
 export function shouldNameSession(state: SessionState): boolean {
   if (readSessionTitle(state.metadata) !== null) return false;
   const firstUser = state.turns.find((turn) => turn.kind === "user");
   if (!firstUser) return false;
-  return state.turns.some((turn) => turn.kind === "assistant_reply");
+  return state.turns.some(
+    (turn) => turn.kind === "assistant_reply" && !isStoppedTurnMarker(turn),
+  );
 }
 
 /** The first user turn's text, which is what the title is drawn from. */
