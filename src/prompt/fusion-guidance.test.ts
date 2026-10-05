@@ -120,6 +120,12 @@ describe("the ### fusion prefix section", () => {
     expect(FUSION_GUIDANCE).toContain("needs_orchestrator");
   });
 
+  it("tells shaped shared contracts to verify meaning at the boundary (#491)", () => {
+    expect(FUSION_GUIDANCE).toContain("`provides.shape`");
+    expect(FUSION_GUIDANCE).toContain("`contract.checks`");
+    expect(FUSION_GUIDANCE).toMatch(/semantic boundary assertion/i);
+  });
+
   it("says a task that replaced a user's file is not done until it is restored or the replacement was wanted (F43)", () => {
     // The status table carries `replaced the user's file sales.csv
     // (2,401 → 9 lines)` on the row; without this line the orchestrator
