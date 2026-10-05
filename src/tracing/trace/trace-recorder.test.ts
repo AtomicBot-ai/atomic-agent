@@ -34,6 +34,23 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("writes the noted route onto the next turn_started only", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-route", emit, now });
+    const route = {
+      mode: "cloud" as const,
+      main: { providerId: "aimlapi", model: "anthropic/claude-sonnet-5" },
+      worker: null,
+    };
+    rec.noteTurnRoute(route);
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 } as AgentLoopEvent);
+    // A turn nobody noted a route for must not inherit the last one.
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 } as AgentLoopEvent);
+    expect(events[0]).toMatchObject({ type: "turn_started", route });
+    expect(events[1]).toMatchObject({ type: "turn_started", turnIndex: 1 });
+    expect(events[1]).not.toHaveProperty("route");
+  });
+
   it("records a profile clip against the current turn (issue #407)", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-clip", emit, now });

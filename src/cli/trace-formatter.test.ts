@@ -30,6 +30,38 @@ function render(events: readonly TraceEvent[]): string {
   return formatTraceChronology(events);
 }
 
+describe("formatTraceChronology turn_started", () => {
+  const row = {
+    type: "turn_started" as const,
+    seq: 1,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 2,
+    userMessage: "hello",
+  };
+
+  it("names the model the turn ran on", () => {
+    expect(
+      render([
+        {
+          ...row,
+          route: {
+            mode: "cloud",
+            main: { providerId: "aimlapi", model: "anthropic/claude-sonnet-5" },
+            worker: null,
+          },
+        },
+      ]),
+    ).toMatch(
+      / turn=2 mode=cloud model=aimlapi\/anthropic\/claude-sonnet-5 user=hello$/,
+    );
+  });
+
+  it("stays as it was for a trace written before the route existed", () => {
+    expect(render([row])).toMatch(/ turn=2 user=hello$/);
+  });
+});
+
 describe("formatTraceChronology error", () => {
   const row = {
     type: "error" as const,
