@@ -5808,7 +5808,7 @@ function submit() {
      while the agent was down is drained when it is back (drainOwed). */
   if (!S.busy && !S.pending && S.live.state !== 'connected') {
     if (S.live.state === 'starting' || S.live.state === 'stopped') {
-      toast('The agent is still starting', 'Your message is still in the box. Send it once the agent is up', 'bad');
+      toast('The agent is still starting', 'Wait a moment and send it again. Your message stays in the box');
     } else {
       toast('The agent is not running', (S.live.error ? S.live.error + '. ' : '') + 'Your message is still in the box', 'bad');
     }
