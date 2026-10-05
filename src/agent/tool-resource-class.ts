@@ -419,7 +419,11 @@ export function listApprovalCategoriesByTool(): Readonly<
   return APPROVAL_CATEGORIES_BY_TOOL;
 }
 
-/** Whether a gated tool is solo for a reason other than approval — for tests. */
+/**
+ * Whether a gated tool is solo for a reason other than approval. Read by
+ * the step's approval barriers too: such a call is never lined up behind
+ * other calls, approved or not.
+ */
 export function isSoloRegardlessOfApproval(toolName: string): boolean {
   return SOLO_REGARDLESS_OF_APPROVAL.has(toolName);
 }

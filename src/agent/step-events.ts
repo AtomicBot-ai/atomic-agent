@@ -4,6 +4,12 @@ import type { LlmFailureCategory } from "../llm/reliability/index.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 
+/**
+ * Why an approval barrier stopped its batch: the gated call was not
+ * approved (whoever or whatever answered no), or it ran and failed.
+ */
+export type ApprovalBarrierStopCause = "not_approved" | "failed";
+
 export interface PromptCapturedTokens {
   total: number;
   stablePrefix: number;
@@ -198,6 +204,43 @@ export type StepEvent =
       waveCount: number;
       /** Start index of each wave in the original call array. */
       boundaries: number[];
+    }
+  /**
+   * A multi-call batch holding approval-gated calls that could prompt ran
+   * behind approval barriers instead of being trimmed to its first gated
+   * call (issue #109): the batchable calls ahead of each gated call ran
+   * through the class-aware planner and settled, then the gated call ran
+   * alone, and the calls after it ran only once it was approved and came
+   * back `ok`. Emitted after the batch ran. Every call keeps the payload
+   * the model emitted; none is re-generated.
+   */
+  | {
+      type: "batch_approval_barriers";
+      stepIndex: number;
+      /** Calls the model emitted. Always >= 2. */
+      originalSize: number;
+      /** Runs of batchable calls that completed. */
+      waves: number;
+      /** Approval-gated calls that ran, each alone. */
+      barriers: number;
+      /** Calls that ran, with the payload the model emitted. */
+      retained: number;
+      /**
+       * Calls that never ran: a barrier before them did not succeed, or
+       * the turn was cancelled.
+       */
+      invalidated: number;
+      /**
+       * The gated call that stopped the batch and why — the user did not
+       * approve it, or it ran and failed. Omitted when nothing stopped it.
+       */
+      stoppedBy?: {
+        tool: string;
+        batchIndex: number;
+        cause: ApprovalBarrierStopCause;
+      };
+      /** The turn was cancelled while the batch ran. */
+      cancelled: boolean;
     }
   /**
    * Terminal error for this step. The `category` follows the canonical

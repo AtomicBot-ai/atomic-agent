@@ -30,6 +30,7 @@ export type TraceEvent =
   | TraceToolInvocation
   | TraceParseRetry
   | TraceBatchTrimmed
+  | TraceBatchApprovalBarriers
   | TraceLoopDetected
   | TraceTaskContinued
   | TraceProviderWaiting
@@ -223,6 +224,37 @@ export interface TraceBatchTrimmed extends TraceEventBase {
   /** Tools the turn's policy would have refused anyway; omitted when none. */
   refused?: string[];
   reason: "approval-gated-batched";
+}
+
+/**
+ * The model emitted several calls in one completion, approval-gated ones
+ * among them, and the runtime ran them behind approval barriers rather
+ * than keeping only the first gated call: each gated call alone, the
+ * calls after it only once it was approved and came back `ok`. The
+ * counts say how much of the emission ran; `stoppedBy` names the gated
+ * call that kept the rest from running.
+ */
+export interface TraceBatchApprovalBarriers extends TraceEventBase {
+  type: "batch_approval_barriers";
+  turnIndex: number;
+  stepIndex: number;
+  /** Calls the model emitted. Always >= 2. */
+  originalSize: number;
+  /** Runs of batchable calls that completed. */
+  waves: number;
+  /** Approval-gated calls that ran, each alone. */
+  barriers: number;
+  /** Calls that ran, with the payload the model emitted. */
+  retained: number;
+  /** Calls that never ran. */
+  invalidated: number;
+  /** The gated call that stopped the batch; omitted when none did. */
+  stoppedBy?: {
+    tool: string;
+    batchIndex: number;
+    cause: "not_approved" | "failed";
+  };
+  cancelled: boolean;
 }
 
 /**

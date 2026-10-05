@@ -436,6 +436,42 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a batch run behind approval barriers with what never ran", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-barrier", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 } as AgentLoopEvent);
+    rec.onAgentEvent({ type: "step_started", stepIndex: 2 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "batch_approval_barriers",
+        stepIndex: 2,
+        originalSize: 3,
+        waves: 0,
+        barriers: 1,
+        retained: 1,
+        invalidated: 2,
+        stoppedBy: { tool: "os.fs.write", batchIndex: 0, cause: "not_approved" },
+        cancelled: false,
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "batch_approval_barriers",
+      seq: 2,
+      sessionId: "s-barrier",
+      ts: 1000,
+      turnIndex: 1,
+      stepIndex: 2,
+      originalSize: 3,
+      waves: 0,
+      barriers: 1,
+      retained: 1,
+      invalidated: 2,
+      stoppedBy: { tool: "os.fs.write", batchIndex: 0, cause: "not_approved" },
+      cancelled: false,
+    });
+  });
+
   it("emits parse_retry and error events", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-6", emit, now });

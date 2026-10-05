@@ -12,6 +12,9 @@ import {
 } from "../llm/model-profile.js";
 import {
   REPAIR_MAX_TOKENS,
+  approvalBarrierSegments,
+  emptyApprovalBarrierReport,
+  formatApprovalBarrierNotice,
   TRIM_REFUSED_BY_FUSION_GATE,
   TRIM_REFUSED_BY_PLAN_MODE,
   detectFabricatedToolTranscript,
@@ -37,6 +40,8 @@ import { replyTool } from "../tools/conversation/reply.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import { reviewStallToolSet } from "./review-stall.js";
 import { resetConfigCache } from "../config/index.js";
+import { ApprovalGate, requireApproval } from "../approval/index.js";
+import type { ApprovalRequest } from "../approval/index.js";
 import {
   StructuredLogger,
   type LogRecord,
@@ -1846,18 +1851,27 @@ describe("executeStep approval-gated batches that would not prompt", () => {
     ]);
   });
 
-  it("still trims when a gated call could prompt (fs write below level 5)", async () => {
+  it("runs a batch whose gated calls could prompt behind approval barriers, not trimmed (fs write below level 5)", async () => {
+    // Below level 5 a write asks. It used to keep the first write and
+    // ask the model to emit the second again (#109); now each write is a
+    // barrier of its own and both run, in order, as emitted.
     const body = JSON.stringify([
       { tool: "os.fs.write", args: { path: "a", content: "1" } },
       { tool: "os.fs.write", args: { path: "b", content: "2" } },
     ]);
     const { outcome, log, events } = await run(body, { getLevel: () => 4 });
-    expect(outcome.toolCalls).toHaveLength(1);
-    expect(log).toEqual(["start os.fs.write a", "end os.fs.write a"]);
-    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(1);
-    expect(outcome.trimmedBatchNotice).toContain(
-      "Dropped from the batch — retry",
-    );
+    expect(outcome.toolCalls).toHaveLength(2);
+    expect(log).toEqual([
+      "start os.fs.write a",
+      "end os.fs.write a",
+      "start os.fs.write b",
+      "end os.fs.write b",
+    ]);
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(0);
+    expect(
+      events.find((e) => e.type === "batch_approval_barriers"),
+    ).toMatchObject({ barriers: 2, waves: 0, retained: 2, invalidated: 0 });
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
   });
 
   it("still trims when no approval posture is wired", async () => {
@@ -1883,13 +1897,22 @@ describe("executeStep approval-gated batches that would not prompt", () => {
     expect(whole.outcome.toolCalls).toHaveLength(2);
     expect(whole.outcome.trimmedBatchNotice).toBeUndefined();
 
+    // The write can still prompt, so the mixed batch is not the
+    // unattended run: it goes behind approval barriers (#109), one per
+    // gated call, and the shell's grant spares only its own question.
     const mixed = JSON.stringify([
-      { tool: "os.shell.run", args: { command: "ls" } },
+      { tool: "os.shell.run", args: { cmd: "ls" } },
       { tool: "os.fs.write", args: { path: "a", content: "1" } },
     ]);
-    const trimmed = await run(mixed, shellGrant);
-    expect(trimmed.outcome.toolCalls).toHaveLength(1);
-    expect(trimmed.outcome.trimmedBatchNotice).toBeDefined();
+    const behind = await run(mixed, shellGrant);
+    expect(behind.outcome.toolCalls).toHaveLength(2);
+    expect(behind.outcome.trimmedBatchNotice).toBeUndefined();
+    expect(
+      behind.events.find((e) => e.type === "batch_approval_barriers"),
+    ).toMatchObject({ barriers: 2, invalidated: 0 });
+    expect(whole.events.some((e) => e.type === "batch_approval_barriers")).toBe(
+      false,
+    );
   });
 
   it("does not run a gated batch past the wave-split ceiling, even at level 5", async () => {
@@ -1900,6 +1923,470 @@ describe("executeStep approval-gated batches that would not prompt", () => {
       })),
     );
     await expect(run(body, LEVEL_5)).rejects.toThrow(/maxParallelToolCalls/);
+  });
+});
+
+describe("executeStep approval-gated batches behind approval barriers (#109)", () => {
+  // `[write, read it back]` used to keep the write and drop the read: the
+  // model spent another step emitting the read again, and with "ask
+  // first" every re-emitted call was one more card. Now the batch runs in
+  // order behind its approvals and nothing is emitted twice.
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  interface BarrierRun {
+    outcome: Awaited<ReturnType<typeof executeStep>>;
+    log: string[];
+    asked: string[];
+    events: StepEvent[];
+    llmCalls: number;
+  }
+
+  /**
+   * A real `ApprovalGate` at level 1 (everything asks), answered by
+   * `answer` (yes by default). The gated tools ask it the way the real
+   * ones do (`requireApproval`), so a denial comes back as the error
+   * result and ledger record it is in production.
+   */
+  async function run(
+    bodies: string | string[],
+    opts: {
+      answer?: (request: ApprovalRequest) => boolean;
+      failing?: string;
+    } = {},
+  ): Promise<BarrierRun> {
+    const log: string[] = [];
+    const asked: string[] = [];
+    const events: StepEvent[] = [];
+    const answer = opts.answer ?? (() => true);
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 1,
+      emit: (request) => {
+        asked.push(`${request.tool} ${request.preview ?? ""}`);
+        const approved = answer(request);
+        setImmediate(() =>
+          gate.resolve({ approvalId: request.approvalId, approved }),
+        );
+      },
+    });
+    const registry = new ToolRegistry();
+    const define = (
+      name: string,
+      gated: { category: "fs_write_workspace" | "shell" } | null,
+      delayMs = 0,
+    ): void => {
+      registry.register({
+        name,
+        description: name,
+        readonly: gated === null,
+        async run(args, toolCtx) {
+          const target = String(args.path ?? args.cmd ?? "");
+          if (gated !== null) {
+            await requireApproval(
+              { approvals: gate, approvalRequired: true },
+              {
+                sessionId: toolCtx.sessionId,
+                tool: name,
+                category: gated.category,
+                reason: name,
+                preview: target,
+              },
+              toolCtx.signal,
+            );
+          }
+          log.push(`start ${name} ${target}`);
+          if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+          log.push(`end ${name} ${target}`);
+          return compressToolResult({
+            tool: name,
+            status: target === opts.failing ? "error" : "ok",
+            output: `${name} ${target}`,
+          });
+        },
+      });
+    };
+    define("os.fs.read", null, 15);
+    define("os.fs.write", { category: "fs_write_workspace" });
+    define("os.shell.run", { category: "shell" });
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const queue = Array.isArray(bodies) ? bodies : [bodies];
+    let llmCalls = 0;
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-barrier", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => {
+          const body = queue[Math.min(llmCalls, queue.length - 1)]!;
+          llmCalls += 1;
+          return mockCompletion(body);
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        onEvent: (event) => events.push(event),
+        approvalPosture: { getLevel: () => gate.getLevel() },
+      },
+    );
+    return { outcome, log, asked, events, llmCalls };
+  }
+
+  const barrierEvent = (events: StepEvent[]) =>
+    events.find((e) => e.type === "batch_approval_barriers");
+
+  it("runs the read behind an approved write with its original arguments, in one inference", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "out.txt", content: "hi" } },
+      { tool: "os.fs.read", args: { path: "out.txt" } },
+    ]);
+    const { outcome, log, asked, events, llmCalls } = await run(body);
+    expect(asked).toEqual(["os.fs.write out.txt"]);
+    expect(log).toEqual([
+      "start os.fs.write out.txt",
+      "end os.fs.write out.txt",
+      "start os.fs.read out.txt",
+      "end os.fs.read out.txt",
+    ]);
+    expect(outcome.toolCalls).toEqual([
+      { tool: "os.fs.write", args: { path: "out.txt", content: "hi" } },
+      { tool: "os.fs.read", args: { path: "out.txt" } },
+    ]);
+    expect(outcome.toolResults.map((r) => r.status)).toEqual(["ok", "ok"]);
+    expect(llmCalls).toBe(1);
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(0);
+    expect(barrierEvent(events)).toEqual({
+      type: "batch_approval_barriers",
+      stepIndex: 0,
+      originalSize: 2,
+      waves: 1,
+      barriers: 1,
+      retained: 2,
+      invalidated: 0,
+      cancelled: false,
+    });
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
+  });
+
+  it("settles the calls ahead of a non-first gated call first, with their usual concurrency and batch indices", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+      { tool: "os.fs.write", args: { path: "c", content: "1" } },
+      { tool: "os.fs.read", args: { path: "c" } },
+    ]);
+    const { outcome, log, events } = await run(body);
+    // The two reads fan out together (pure_read), and both settle before
+    // the write is even asked about.
+    expect(log).toEqual([
+      "start os.fs.read a",
+      "start os.fs.read b",
+      "end os.fs.read a",
+      "end os.fs.read b",
+      "start os.fs.write c",
+      "end os.fs.write c",
+      "start os.fs.read c",
+      "end os.fs.read c",
+    ]);
+    expect(outcome.toolResults.map((r) => r.summary)).toEqual([
+      "os.fs.read a",
+      "os.fs.read b",
+      "os.fs.write c",
+      "os.fs.read c",
+    ]);
+    const executed = events.flatMap((e) =>
+      e.type === "tool_call_executed" ? [[e.batchIndex, e.batchSize]] : [],
+    );
+    expect(executed.map(([index]) => index).sort()).toEqual([0, 1, 2, 3]);
+    expect(executed.every(([, size]) => size === 4)).toBe(true);
+    expect(barrierEvent(events)).toMatchObject({
+      waves: 2,
+      barriers: 1,
+      retained: 4,
+      invalidated: 0,
+    });
+  });
+
+  it("makes every gated call a barrier of its own that asks its own question", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.shell.run", args: { cmd: "ls" } },
+      { tool: "os.fs.read", args: { path: "a" } },
+    ]);
+    const { outcome, log, asked, events } = await run(body);
+    expect(asked).toEqual(["os.fs.write a", "os.shell.run ls"]);
+    expect(log.filter((line) => line.startsWith("start"))).toEqual([
+      "start os.fs.write a",
+      "start os.shell.run ls",
+      "start os.fs.read a",
+    ]);
+    expect(outcome.toolResults.every((r) => r.status === "ok")).toBe(true);
+    expect(barrierEvent(events)).toMatchObject({ barriers: 2, waves: 1 });
+  });
+
+  it("does not run, or ask about, anything behind a write the user did not approve", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.shell.run", args: { cmd: "cat a" } },
+    ]);
+    const { outcome, log, asked, events } = await run(body, {
+      answer: () => false,
+    });
+    expect(asked).toEqual(["os.fs.write a"]);
+    expect(log).toEqual([]);
+    expect(outcome.toolResults.map((r) => r.status)).toEqual([
+      "error",
+      "error",
+      "error",
+    ]);
+    expect(outcome.toolResults[0]!.approvals).toMatchObject([
+      { verdict: "denied" },
+    ]);
+    for (const result of outcome.toolResults.slice(1)) {
+      expect(result.details).toMatchObject({
+        notRun: true,
+        blockedBy: "os.fs.write",
+        blockedByIndex: 0,
+        blockedCause: "not_approved",
+      });
+      expect(result.summary).toContain("not run");
+      expect(result.summary).toContain("was not approved");
+    }
+    // Every call still gets its executed event, so a host closes its row.
+    expect(
+      events.filter((e) => e.type === "tool_call_executed"),
+    ).toHaveLength(3);
+    expect(barrierEvent(events)).toEqual({
+      type: "batch_approval_barriers",
+      stepIndex: 0,
+      originalSize: 3,
+      waves: 0,
+      barriers: 1,
+      retained: 1,
+      invalidated: 2,
+      stoppedBy: { tool: "os.fs.write", batchIndex: 0, cause: "not_approved" },
+      cancelled: false,
+    });
+    expect(outcome.trimmedBatchNotice).toContain(
+      "stopped at `os.fs.write` (call 1 of 3), which was not approved",
+    );
+    expect(outcome.trimmedBatchNotice).toContain(
+      "Not run: `os.fs.read`, `os.shell.run`",
+    );
+    expect(outcome.trimmedBatchNotice).toContain("Do not ask for the call");
+  });
+
+  it("stops at a gated call that was approved but failed", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "in" } },
+      { tool: "os.shell.run", args: { cmd: "make" } },
+      { tool: "os.fs.read", args: { path: "out" } },
+    ]);
+    const { outcome, log, events } = await run(body, { failing: "make" });
+    expect(log).toEqual([
+      "start os.fs.read in",
+      "end os.fs.read in",
+      "start os.shell.run make",
+      "end os.shell.run make",
+    ]);
+    expect(outcome.toolResults.map((r) => r.status)).toEqual([
+      "ok",
+      "error",
+      "error",
+    ]);
+    expect(outcome.toolResults[2]!.details).toMatchObject({
+      notRun: true,
+      blockedCause: "failed",
+    });
+    expect(barrierEvent(events)).toMatchObject({
+      waves: 1,
+      barriers: 1,
+      retained: 2,
+      invalidated: 1,
+      stoppedBy: { tool: "os.shell.run", batchIndex: 1, cause: "failed" },
+    });
+    expect(outcome.trimmedBatchNotice).toContain("which failed");
+  });
+
+  it("cancels everything not yet run when the turn is cancelled during a question, and still reports it", async () => {
+    const controller = new AbortController();
+    const events: StepEvent[] = [];
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 1,
+      emit: () => setImmediate(() => controller.abort()),
+    });
+    const registry = new ToolRegistry();
+    let readRan = false;
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      async run(args, toolCtx) {
+        await requireApproval(
+          { approvals: gate, approvalRequired: true },
+          {
+            sessionId: toolCtx.sessionId,
+            tool: "os.fs.write",
+            category: "fs_write_workspace",
+            reason: "write",
+          },
+          toolCtx.signal,
+        );
+        return compressToolResult({
+          tool: "os.fs.write",
+          status: "ok",
+          output: `wrote ${args.path}`,
+        });
+      },
+    });
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      async run() {
+        readRan = true;
+        return compressToolResult({
+          tool: "os.fs.read",
+          status: "ok",
+          output: "read",
+        });
+      },
+    });
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.read", args: { path: "a" } },
+    ]);
+    await expect(
+      executeStep(
+        {
+          session: createEmptySessionState({ id: "s-cancel", workingDir: "/w" }),
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: controller.signal,
+          userMessage: "x",
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async () => mockCompletion(body),
+          grammar,
+          profile: PLAIN_INSTRUCT_PROFILE,
+          onEvent: (event) => events.push(event),
+          approvalPosture: { getLevel: () => gate.getLevel() },
+        },
+      ),
+    ).rejects.toMatchObject({ category: "cancelled" });
+    expect(readRan).toBe(false);
+    expect(barrierEvent(events)).toMatchObject({
+      barriers: 0,
+      retained: 0,
+      invalidated: 2,
+      cancelled: true,
+    });
+    expect(
+      events.find((e) => e.type === "batch_approval_barriers"),
+    ).not.toHaveProperty("stoppedBy");
+  });
+
+  it("keeps the trim when a sibling's arguments fail its schema", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      // `os.fs.read` requires `path`.
+      { tool: "os.fs.read", args: { file: "a" } },
+    ]);
+    const { outcome, log, events } = await run(body);
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.write"]);
+    expect(log).toEqual(["start os.fs.write a", "end os.fs.write a"]);
+    expect(barrierEvent(events)).toBeUndefined();
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(1);
+  });
+
+  it("keeps the trim when the batch ends in a terminal: `finish` is never replayed behind a barrier", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "finish", args: { summary: "done" } },
+    ]);
+    const { outcome, events } = await run(body);
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.write"]);
+    expect(outcome.terminal).toBeNull();
+    expect(barrierEvent(events)).toBeUndefined();
+    expect(events.find((e) => e.type === "batch_trimmed")).toMatchObject({
+      kept: "os.fs.write",
+      dropped: ["finish"],
+    });
+  });
+
+  it("sends an oversized batch with a gated call to repair and dispatches nothing from it", async () => {
+    const oversized = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        tool: "os.fs.read",
+        args: { path: `r${i}` },
+      })),
+    ]);
+    const repaired = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+    ]);
+    const { outcome, log, asked, events, llmCalls } = await run([
+      oversized,
+      repaired,
+    ]);
+    expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(1);
+    expect(llmCalls).toBe(2);
+    expect(barrierEvent(events)).toBeUndefined();
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(0);
+    // Only the repaired emission ran — none of the oversized one.
+    expect(asked).toEqual(["os.fs.write a"]);
+    expect(log).toEqual(["start os.fs.write a", "end os.fs.write a"]);
+    expect(outcome.toolCalls).toHaveLength(1);
+  });
+});
+
+describe("approvalBarrierSegments", () => {
+  const input = (batchIndex: number, tool: string) => ({
+    batchIndex,
+    call: { tool, args: {} },
+    resourceClass:
+      tool === "os.fs.write" || tool === "os.shell.run"
+        ? ("approval_gated" as const)
+        : ("pure_read" as const),
+  });
+
+  it("puts each gated call alone and keeps the runs between them together, in order", () => {
+    const segments = approvalBarrierSegments([
+      input(0, "os.fs.read"),
+      input(1, "os.fs.read"),
+      input(2, "os.fs.write"),
+      input(3, "os.shell.run"),
+      input(4, "os.fs.read"),
+    ]);
+    expect(segments.map((s) => s.map((i) => i.batchIndex))).toEqual([
+      [0, 1],
+      [2],
+      [3],
+      [4],
+    ]);
+  });
+
+  it("formats no notice when nothing was left unrun", () => {
+    const report = emptyApprovalBarrierReport();
+    report.stoppedBy = {
+      call: { tool: "os.fs.write", args: {} },
+      batchIndex: 1,
+      cause: "not_approved",
+    };
+    // The stopping call was the last one: its own result says it all.
+    expect(formatApprovalBarrierNotice(report, 2)).toBeNull();
   });
 });
 

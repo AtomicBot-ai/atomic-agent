@@ -351,6 +351,25 @@ export function createTraceRecorder(
           reason: inner.reason,
         });
         return;
+      case "batch_approval_barriers":
+        push({
+          type: "batch_approval_barriers",
+          seq: nextSeq(),
+          sessionId,
+          ts: now(),
+          turnIndex: currentTurnIndex,
+          stepIndex: inner.stepIndex,
+          originalSize: inner.originalSize,
+          waves: inner.waves,
+          barriers: inner.barriers,
+          retained: inner.retained,
+          invalidated: inner.invalidated,
+          ...(inner.stoppedBy !== undefined
+            ? { stoppedBy: { ...inner.stoppedBy } }
+            : {}),
+          cancelled: inner.cancelled,
+        });
+        return;
       case "step_error": {
         const codeField = causeCodeOf(inner.error, inner.category);
         lastStepError = {
