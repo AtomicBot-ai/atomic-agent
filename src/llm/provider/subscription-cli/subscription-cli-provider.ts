@@ -227,6 +227,7 @@ export class SubscriptionCliProvider implements LlmProvider {
         maxOutputBytes: MAX_HEALTH_BYTES,
         installHint: this.descriptor.installHint,
         authHint: this.descriptor.authHint,
+        stripEnv: this.descriptor.billingEnvKeys,
       });
       return {
         reachable: true,
@@ -286,6 +287,7 @@ export class SubscriptionCliProvider implements LlmProvider {
       maxOutputBytes: MAX_COMPLETION_BYTES,
       installHint: this.descriptor.installHint,
       authHint: this.descriptor.authHint,
+      stripEnv: this.descriptor.billingEnvKeys,
       ...(request.signal ? { signal: request.signal } : {}),
     };
   }

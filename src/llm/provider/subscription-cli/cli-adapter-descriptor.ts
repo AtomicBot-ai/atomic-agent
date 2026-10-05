@@ -52,6 +52,12 @@ export interface CliAdapterDescriptor {
   readonly installHint: string;
   readonly authHint: string;
   /**
+   * Environment variables the child is spawned without: the ones that
+   * switch the CLI from the signed-in subscription to per-token API
+   * billing or to another endpoint (`cliChildEnv`).
+   */
+  readonly billingEnvKeys: readonly string[];
+  /**
    * The text written to the child's stdin. Exists because only some
    * CLIs have a system-prompt flag; the rest must carry that steering
    * inside the prompt itself.

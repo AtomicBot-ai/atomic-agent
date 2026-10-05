@@ -111,6 +111,16 @@ describe("SubscriptionCliProvider.complete", () => {
     expect(calls[0]?.signal).toBe(controller.signal);
   });
 
+  it("spawns the CLI without the keys that would bill the API", async () => {
+    // ATO-176: the anthropic provider's key in `.env` moved a
+    // "Claude Code subscription" user onto per-token billing.
+    const calls: CliRunOptions[] = [];
+    const provider = makeProvider({ runCliImpl: stubRunner(SUCCESS, calls) });
+    await provider.complete({ prompt: "x" });
+    expect(calls[0]?.stripEnv).toEqual(claudeCliAdapter.billingEnvKeys);
+    expect(calls[0]?.stripEnv).toContain("ANTHROPIC_API_KEY");
+  });
+
   it("passes responseFormat through as --json-schema", async () => {
     const calls: CliRunOptions[] = [];
     const provider = makeProvider({ runCliImpl: stubRunner(SUCCESS, calls) });
@@ -238,6 +248,7 @@ describe("SubscriptionCliProvider.health", () => {
     expect(calls[0]?.args).toEqual(["--version"]);
     // A health probe must never send a prompt or cost tokens.
     expect(calls[0]?.input).toBeUndefined();
+    expect(calls[0]?.stripEnv).toEqual(claudeCliAdapter.billingEnvKeys);
   });
 
   it("reports an actionable message when the binary is missing", async () => {

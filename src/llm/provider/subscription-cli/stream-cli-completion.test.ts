@@ -237,3 +237,20 @@ describe("streamCliCommand SIGKILL escalation", () => {
     expect(tookMs).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("streamCliCommand environment", () => {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = saved;
+  });
+
+  it("keeps the agent's API key away from the CLI", async () => {
+    // `claude` takes this key over the user's subscription (ATO-176).
+    process.env.ANTHROPIC_API_KEY = "sk-ant-agent";
+    const script = `process.stdout.write(String(process.env.ANTHROPIC_API_KEY) + "\\n")`;
+    expect(
+      await collect(options(script, { stripEnv: ["ANTHROPIC_API_KEY"] })),
+    ).toEqual(["undefined"]);
+  });
+});

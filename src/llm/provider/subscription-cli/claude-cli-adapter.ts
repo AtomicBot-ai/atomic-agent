@@ -245,6 +245,19 @@ export const claudeCliAdapter: CliAdapterDescriptor = {
   installHint:
     "Install Claude Code (https://claude.com/claude-code) and run `claude` once to sign in, or set llm.providers[].subscriptionCli.binPath to the binary's absolute path.",
   authHint: "Run `claude` in a terminal and complete /login, then retry.",
+  // Each of these takes precedence over the /login subscription: an API
+  // key or bearer token bills per token, a base URL sends the turn to
+  // another endpoint, and the cloud switches bill the cloud account.
+  // `CLAUDE_CODE_OAUTH_TOKEN` stays — it IS the subscription
+  // (`claude setup-token`).
+  billingEnvKeys: [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+  ],
   buildStdin(prompt) {
     // Claude takes the steering through --system-prompt, so the prompt
     // reaches the model exactly as atomic-agent built it.
