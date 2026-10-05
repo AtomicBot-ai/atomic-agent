@@ -9,6 +9,14 @@ import { sendJson, type HttpHandler } from "./request-context.js";
 export function createCapabilitiesHandler(): HttpHandler {
   return async (_req, res, ctx) => {
     const { runtime } = ctx;
+    // The registry holds every tool bootstrap wired, including the ones
+    // the config gates hide: `github.*` stays registered without a token,
+    // `fusion.delegate` outside fusion (`filter-disabled-tools.ts`). What
+    // the agent is offered is `runtime.toolDescriptors`, the live, gated
+    // catalog the loop and `/tools` read, so only those are listed.
+    // Listing the registry put tools in the desktop's built-in list that
+    // the agent could never be asked to use.
+    const offered = new Set(runtime.toolDescriptors.map((d) => d.name));
     sendJson(res, 200, {
       runtime: "atomic-agent",
       capabilities: runtime.capabilities,
@@ -56,11 +64,14 @@ export function createCapabilitiesHandler(): HttpHandler {
         // carries that, which is why this field is deprecated.
         approvalRequired: runtime.getApprovalLevel() < 5,
       },
-      tools: runtime.toolRegistry.list().map((t) => ({
-        name: t.name,
-        description: t.description,
-        readonly: t.readonly,
-      })),
+      tools: runtime.toolRegistry
+        .list()
+        .filter((t) => offered.has(t.name))
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          readonly: t.readonly,
+        })),
       skills: runtime.skillCatalog.map((s) => ({
         name: s.name,
         description: s.description,

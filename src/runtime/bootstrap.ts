@@ -3157,7 +3157,16 @@ export async function createAgentRuntime(
     logger.info("llm: provider refreshed", { id });
   };
 
-  const ensureRecorder = (session: SessionState): TraceRecorder | null => {
+  const ensureRecorder = (
+    session: SessionState,
+    /**
+     * What the `session_started` line records instead of the stored
+     * metadata, when the caller is about to change it: `executeTurn`
+     * passes this turn's `llm` stamp and route, so a file opened at turn
+     * start does not name the previous turn's model in its header.
+     */
+    headerMetadata?: Record<string, unknown>,
+  ): TraceRecorder | null => {
     if (!traceBus) return null;
     const existing = touchRecorder(session.id);
     if (existing) return existing;
@@ -3165,9 +3174,10 @@ export async function createAgentRuntime(
       sessionId: session.id,
       emit: (event) => traceBus.emit(event),
     });
+    const metadata = headerMetadata ?? session.metadata;
     recorder.beginSession({
       workingDir: session.workingDir,
-      ...(session.metadata ? { metadata: session.metadata } : {}),
+      ...(metadata ? { metadata } : {}),
     });
     recorders.set(session.id, recorder);
     // Exempt the entry just created: the caller pins it only after this
@@ -3492,13 +3502,6 @@ export async function createAgentRuntime(
         }
       });
     }
-    ensureRecorder(session);
-    // Pin this session for the duration of the turn. Without it a burst of
-    // new sessions can push this one's recorder out mid-turn, after which
-    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
-    // remaining event of the turn and any tool call whose `pendingCalls`
-    // entry went with it is logged with empty args.
-    activeTraceSessions.add(session.id);
     // Resolved before the turn runs, from the live config: the model the
     // operator chose for this turn is what the session should remember,
     // not whatever the config says by the time the turn finishes — and
@@ -3541,6 +3544,21 @@ export async function createAgentRuntime(
         to: turnRoute,
       });
     }
+    // The session's trace records the model this turn runs on, not the
+    // one in the stored metadata: that is the previous turn's until the
+    // turn's save below, so after a switch the log named the old model.
+    const recorder = ensureRecorder(session, {
+      ...session.metadata,
+      [SESSION_LLM_METADATA_KEY]: llmStamp,
+      [SESSION_ROUTE_METADATA_KEY]: turnRoute,
+    });
+    recorder?.noteTurnRoute(turnRoute);
+    // Pin this session for the duration of the turn. Without it a burst of
+    // new sessions can push this one's recorder out mid-turn, after which
+    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
+    // remaining event of the turn and any tool call whose `pendingCalls`
+    // entry went with it is logged with empty args.
+    activeTraceSessions.add(session.id);
     return turnContext.run({ sessionId: session.id }, async () => {
       // Registered before the mark and ended after the turn's end is
       // written, so `shutdown` waiting on it waits for the row to be right.

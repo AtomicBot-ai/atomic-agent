@@ -2,6 +2,7 @@ import type { AgentLoopReason } from "../../agent/agent-loop.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import type { MemorySubcallKind } from "../../memory/health/index.js";
+import type { SessionRoute } from "../../session/session-route.js";
 
 /**
  * Append-only trace event emitted by the runtime for postmortem analysis
@@ -73,6 +74,16 @@ export interface TraceTurnStarted extends TraceEventBase {
   type: "turn_started";
   turnIndex: number;
   userMessage?: string;
+  /**
+   * What this turn is served by, resolved from the live config at turn
+   * start (`resolveTurnRoute`): provider, model, run mode and fusion
+   * worker. `session_started` only carries the session's metadata as it
+   * stood when the file was opened, so after a model switch it names
+   * the previous turn's model; this is the per-turn answer. Absent on
+   * traces written before it existed and for turns run outside
+   * `executeTurn`.
+   */
+  route?: SessionRoute;
 }
 
 export interface TraceTurnFinished extends TraceEventBase {
