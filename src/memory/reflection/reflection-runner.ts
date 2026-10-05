@@ -13,6 +13,10 @@ import { buildCloudSubcallRequest } from "../../llm/provider/cloud-subcall.js";
 import type { LlmStreamParams } from "../../agent/step-executor.js";
 import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 import { buildReflectionPrompt } from "./reflection-prompt.js";
+import {
+  filterUngroundedReflection,
+  isTrivialReflectionWindow,
+} from "./reflection-grounding.js";
 
 export interface ReflectionInput {
   sessionId: string;
@@ -310,6 +314,22 @@ export function createReflectionRunner(
   };
 
   const runOne = async (input: ReflectionInput): Promise<void> => {
+    const userTexts = reflectedUserTexts(input);
+    // A window whose user side is only probes / echo commands / pings
+    // ("Reply exactly LOCAL_OK. Do not use tools.") has nothing durable
+    // to extract, and small models reliably invent something when asked
+    // anyway. Skip the call before touching `pending`, so a trivial
+    // turn never cancels a substantive reflection still in flight.
+    // Not in any-speaker mode: there the USER channel carries a
+    // third-party transcript, not the user's own instructions.
+    if (!deps.anySpeaker && isTrivialReflectionWindow(userTexts)) {
+      finish("none", {
+        sessionId: input.sessionId,
+        startedAt: now(),
+        reason: "trivial_window",
+      });
+      return;
+    }
     const previous = pending.get(input.sessionId);
     if (previous) {
       previous.abort();
@@ -378,15 +398,33 @@ export function createReflectionRunner(
         finish("none", { sessionId: input.sessionId, startedAt });
         return;
       }
+      // Deterministic grounding guard: drop identity claims the user
+      // never made, the assistant describing itself, and one-off
+      // instructions dressed up as preferences. See
+      // `reflection-grounding.ts` for the exact (narrow) rules.
+      //
+      // Grounding comes ONLY from the user's own words in this window.
+      // Stored profile names are deliberately not a source: a name the
+      // old reflection once invented (field case: `name=Анна`, never
+      // typed in any session) would otherwise vouch for itself and get
+      // re-written / superseded on every turn.
+      const grounded = filterUngroundedReflection(parsed, { userTexts });
+      for (const item of grounded.dropped) {
+        deps.logger?.debug("reflection.ungrounded_dropped", {
+          sessionId: input.sessionId,
+          kind: item.kind,
+          reason: item.reason,
+        });
+      }
       const factsWritten = writeFacts(
-        parsed.facts,
+        grounded.facts,
         deps.profileStore,
         deps.maxFactsPerCall,
         input.sessionId,
         deps.logger,
       );
       const notesWritten = writeNotes(
-        parsed.notes,
+        grounded.notes,
         deps.memoryStore,
         deps.maxNotesPerCall ?? 0,
         input.sessionId,
@@ -403,7 +441,13 @@ export function createReflectionRunner(
         input,
       );
       if (factsWritten === 0 && notesWritten === 0 && evolvesApplied === 0) {
-        finish("none", { sessionId: input.sessionId, startedAt });
+        finish("none", {
+          sessionId: input.sessionId,
+          startedAt,
+          ...(grounded.dropped.length > 0
+            ? { reason: `ungrounded_dropped=${grounded.dropped.length}` }
+            : {}),
+        });
         return;
       }
       finish("ok", {
@@ -457,6 +501,18 @@ export function createReflectionRunner(
       }
     },
   };
+}
+
+/**
+ * The user's own messages for the reflected window: every USER turn of
+ * the segmentation transcript when one is attached, otherwise the
+ * single trailing user message.
+ */
+function reflectedUserTexts(input: ReflectionInput): string[] {
+  if (input.transcript && input.transcript.length > 0) {
+    return input.transcript.map((turn) => turn.user);
+  }
+  return [input.userMessage];
 }
 
 /**

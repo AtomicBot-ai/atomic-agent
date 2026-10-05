@@ -14,6 +14,16 @@ export type {
   ParsedReflection,
 } from "./reflection-parser.js";
 
+export {
+  filterUngroundedReflection,
+  isTrivialReflectionWindow,
+} from "./reflection-grounding.js";
+export type {
+  DroppedReflectionItem,
+  GroundingContext,
+  UngroundedReason,
+} from "./reflection-grounding.js";
+
 export { createReflectionRunner } from "./reflection-runner.js";
 export type {
   ReflectionInput,
