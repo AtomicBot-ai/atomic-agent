@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { TransportError } from "../../reliability/llm-failures.js";
+import { claudeCliAdapter } from "./claude-cli-adapter.js";
 import {
   isEnoent,
+  isSubscriptionCliSetupError,
   isSpawnEinval,
   looksLikeAuthFailure,
   mapCliFailure,
@@ -142,5 +145,45 @@ describe("error messages", () => {
     const err = new SubscriptionCliNotInstalledError("claude", "Install it.");
     expect(err.message).toMatch(/"claude" was not found on PATH/);
     expect(err.message).toMatch(/Install it\./);
+  });
+});
+
+describe("the not-installed message for a named CLI", () => {
+  it("says which tool is missing in the words of someone who picked it", () => {
+    // ATO-117: the desktop user had picked "Claude Code subscription".
+    const err = new SubscriptionCliNotInstalledError(
+      "claude",
+      claudeCliAdapter.installHint,
+      claudeCliAdapter.productName,
+    );
+    expect(err.message).toMatch(
+      /^Claude Code isn't installed \(the `claude` command was not found\)\. Install Claude Code and sign in, or choose another provider\./,
+    );
+  });
+});
+
+describe("isSubscriptionCliSetupError", () => {
+  it("finds a missing or signed-out CLI however it was wrapped", () => {
+    const missing = new SubscriptionCliNotInstalledError("claude", "x");
+    expect(isSubscriptionCliSetupError(missing)).toBe(true);
+    expect(
+      isSubscriptionCliSetupError(new SubscriptionCliAuthError("claude", "x")),
+    ).toBe(true);
+    // The step executor's wrapping: a status-less TransportError.
+    expect(
+      isSubscriptionCliSetupError(
+        new TransportError(missing.message, null, "", { cause: missing }),
+      ),
+    ).toBe(true);
+  });
+
+  it("is nothing else", () => {
+    expect(
+      isSubscriptionCliSetupError(new SubscriptionCliInvocationError("boom", 1)),
+    ).toBe(false);
+    expect(isSubscriptionCliSetupError(new TypeError("fetch failed"))).toBe(
+      false,
+    );
+    expect(isSubscriptionCliSetupError(null)).toBe(false);
   });
 });

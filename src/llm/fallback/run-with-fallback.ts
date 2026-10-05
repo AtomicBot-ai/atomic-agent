@@ -3,7 +3,11 @@ import {
   attachFailingLink,
   type FailedAttempt,
 } from "./failed-attempts.js";
-import { isBillingRefusal, isCredentialRejection } from "./link-failure-kind.js";
+import {
+  isBillingRefusal,
+  isCliSetupRefusal,
+  isCredentialRejection,
+} from "./link-failure-kind.js";
 import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import { shouldAdvance } from "./should-advance.js";
 
@@ -37,6 +41,10 @@ import { shouldAdvance } from "./should-advance.js";
  * nothing is recorded beside it; each later link's failure is in the
  * advance log. A fallback that has been serving is the route the user
  * is actually on, so its outage still gets the outage wait, as before.
+ *
+ * **The same for a vendor CLI that cannot run** (`isCliSetupRefusal`:
+ * `claude` not installed, or signed out). The user has to install it or
+ * sign in; a later link's outage must not stand in for that (ATO-117).
  *
  * **The same for an account that cannot pay** (`isBillingRefusal`: a
  * 402, AI/ML API's 403 "You've run out of funds", OpenAI's 429
@@ -133,7 +141,9 @@ export async function runWithFallback<T>(
       }
       if (
         chain.isPrimary(currentId) &&
-        (isCredentialRejection(err) || isBillingRefusal(err))
+        (isCredentialRejection(err) ||
+          isBillingRefusal(err) ||
+          isCliSetupRefusal(err))
       ) {
         primaryRefusal = { providerId: currentId, error: err };
       } else if (routeRefusal === null && serving && isBillingRefusal(err)) {

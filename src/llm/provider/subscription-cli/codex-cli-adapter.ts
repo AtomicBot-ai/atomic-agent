@@ -164,6 +164,7 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
 export const codexCliAdapter: CliAdapterDescriptor = {
   cli: "codex",
   displayName: "OpenAI Codex subscription",
+  productName: "Codex",
   defaultBinary: "codex",
   // Empty on purpose: Codex picks the model the account supports.
   defaultChatModel: "",
@@ -181,6 +182,10 @@ export const codexCliAdapter: CliAdapterDescriptor = {
     "Install the Codex CLI (`npm i -g @openai/codex`) and run `codex login`, or set llm.providers[].subscriptionCli.binPath to the binary's absolute path.",
   authHint:
     "Run `codex login` and sign in with your ChatGPT account, then retry.",
+  // The `openai` provider's key from `.env` would otherwise reach
+  // `codex exec`, which takes an API key from its environment over the
+  // ChatGPT login; the base URL would point it at another endpoint.
+  billingEnvKeys: ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"],
   buildStdin(prompt, systemPrompt) {
     return `${systemPrompt}\n\n${prompt}`;
   },

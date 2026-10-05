@@ -2,6 +2,7 @@ import {
   lacksRequiredApiKeyIn,
   resolveFallbackChain,
   withoutKeylessLinks,
+  withoutUnavailableLinks,
   withoutUnbuiltLinks,
   type ResolvedFallbackChain,
 } from "../llm/fallback/index.js";
@@ -17,6 +18,12 @@ export interface FallbackChainResolverDeps {
    * provider that early.
    */
   builtProviderIds: () => readonly string[] | null;
+  /**
+   * Whether a link cannot serve on this machine right now — the managed
+   * local link with no model downloaded (`isLocalLinkWithoutModel`).
+   * Absent, no link is judged unavailable.
+   */
+  linkUnavailable?: (llm: ResolvedLlmConfig, id: string) => boolean;
   logger: Pick<StructuredLogger, "warn">;
 }
 
@@ -24,8 +31,9 @@ export interface FallbackChainResolverDeps {
  * The `resolve` the runtime's `ProviderFallbackChain` runs on every pick
  * and every advance: the configured chain (`resolveFallbackChain`), minus
  * the links that cannot serve a turn at all. That is a link the registry
- * did not build, and a link with no API key for a service that wants one
- * (`lacksRequiredApiKey`); the primary is never dropped.
+ * did not build, a link with no API key for a service that wants one
+ * (`lacksRequiredApiKey`), and a link the host says cannot serve here
+ * (`linkUnavailable`); the primary is never dropped.
  *
  * Separate from bootstrap so the whole path from a config to the links a
  * turn walks can be driven by a test with fake providers. A dropped link
@@ -38,6 +46,7 @@ export function createFallbackChainResolver(
 ): () => ResolvedFallbackChain {
   const droppedFallbackLinks = new Set<string>();
   let keylessLinks = new Set<string>();
+  let unavailableLinks = new Set<string>();
   return () => {
     const llm = deps.readLlmConfig();
     let resolved = resolveFallbackChain(llm);
@@ -67,6 +76,25 @@ export function createFallbackChainResolver(
       },
     );
     keylessLinks = keylessNow;
+    const linkUnavailable = deps.linkUnavailable;
+    if (linkUnavailable) {
+      // Logged like a keyless link: once, and again if it comes back
+      // (the model was pulled) and goes away again (it was removed).
+      const unavailableNow = new Set<string>();
+      resolved = withoutUnavailableLinks(
+        resolved,
+        (id) => linkUnavailable(llm, id),
+        (id) => {
+          unavailableNow.add(id);
+          if (unavailableLinks.has(id)) return;
+          deps.logger.warn(
+            "llm: fallback link skipped (local model not downloaded)",
+            { id },
+          );
+        },
+      );
+      unavailableLinks = unavailableNow;
+    }
     return resolved;
   };
 }

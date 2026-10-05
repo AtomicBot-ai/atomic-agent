@@ -1,4 +1,5 @@
 import { runCommand } from "../../../sandbox/command-runner.js";
+import { cliChildEnv } from "./cli-child-env.js";
 import {
   isEnoent,
   isSpawnEinval,
@@ -19,6 +20,13 @@ export interface CliRunOptions {
   signal?: AbortSignal;
   installHint: string;
   authHint: string;
+  /** What the not-installed message calls the CLI ("Claude Code"). */
+  productName?: string;
+  /**
+   * Variables to leave out of the child's environment
+   * (`CliAdapterDescriptor.billingEnvKeys`); absent inherits it whole.
+   */
+  stripEnv?: readonly string[];
 }
 
 export interface CliRunOutcome {
@@ -56,10 +64,11 @@ export const runCliCommand: CliRunner = async (options) => {
       timeoutMs: options.timeoutMs,
       maxOutputBytes: options.maxOutputBytes,
       shell: false,
-      // Inherit the environment untouched. We deliberately neither set
-      // nor clear ANTHROPIC_API_KEY: setting it would silently move the
-      // user onto API billing, clearing it would break anyone who wants
-      // exactly that.
+      // The agent's environment minus what would move the CLI off the
+      // subscription — the agent's own provider keys among it
+      // (`cliChildEnv`). Nothing is ever set: the CLI authenticates
+      // from its own session.
+      env: cliChildEnv(options.stripEnv),
       ...(options.input === undefined ? {} : { input: options.input }),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(invocation.windowsVerbatimArguments
@@ -76,6 +85,7 @@ export const runCliCommand: CliRunner = async (options) => {
       throw new SubscriptionCliNotInstalledError(
         options.binary,
         options.installHint,
+        options.productName,
       );
     }
     throw err;

@@ -108,6 +108,7 @@ import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import { LearnedContextWindows } from "./learned-context-windows.js";
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
+import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import {
   createFallbackCompleter,
   createFallbackStreamer,
@@ -1160,6 +1161,12 @@ export async function createAgentRuntime(
     resolve: createFallbackChainResolver({
       readLlmConfig: () => resolveLlmConfig(getConfig()),
       builtProviderIds: () => builtProviderIds?.() ?? null,
+      // The auto-appended local link with no weights on disk is not a
+      // backstop: its daemon cannot start, and the turn would wait out
+      // its refused connection instead of failing on the primary's own
+      // error (ATO-117).
+      linkUnavailable: (llm, id) =>
+        isLocalLinkWithoutModel(llm, id, getConfig()),
       logger,
     }),
     noticeSink: (notice) =>
@@ -3309,6 +3316,7 @@ export async function createAgentRuntime(
         // bare prompt with an empty `content`, so the title has to be
         // asked for the way every other sub-call asks.
         toolTransport: resolveActiveLlmSlice().transport,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
         onError: (err: unknown) =>
           logger.debug("session naming failed", {
             sessionId: state.id,
