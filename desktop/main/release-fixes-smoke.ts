@@ -50,6 +50,7 @@ import { checks60 } from "./smoke-tasks/t60.js";
 import { checks61 } from "./smoke-tasks/t61.js";
 import { checks62 } from "./smoke-tasks/t62.js";
 import { checks63 } from "./smoke-tasks/t63.js";
+import { checks64 } from "./smoke-tasks/t64.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -86,7 +87,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -705,6 +706,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("62")) await guarded("62", check, () => checks62(js, check));
   // 63 — the context popover drew a 96k reply cap as reserved on a 32.8k model, so "free" was always 0.
   if (want.has("63")) await guarded("63", check, () => checks63(js, check));
+  // 64 (02.10 build, B01/B06) — a terminated turn left several live approval cards for one call, and ⌘N denied one.
+  if (want.has("64")) await guarded("64", check, () => checks64(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));
