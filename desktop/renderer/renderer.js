@@ -5981,7 +5981,12 @@ function dropStaleGateNotices() {
   for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i] && S.log[i].gateNotice) { S.log.splice(i, 1); gone = true; }
   return gone;
 }
-/** refreshLiveConfig: the config moved; the refusals go if a turn would now get past the gate. */
+/** refreshLiveConfig: the config moved; the refusals go if a turn would now get past the gate.
+    ATO-204 (B02 c): and every other read of the config or of the catalogue —
+    the start's (loadResources), Settings › LLM, MCP and Telegram, the model
+    snapshot (bswSnapshot). A provider added or a model picked in Settings was
+    read there, not by refreshLiveConfig, and "no local model is selected"
+    stayed. Callers that draw nothing themselves render once it went. */
 function dropGateNoticesIfCleared() {
   if (!S.log.some((m) => m && m.gateNotice)) return false;
   const kind = localTurnGate().kind;
@@ -7362,6 +7367,7 @@ async function loadResources() {
   }
   if (cfg && cfg.ok && cfg.data && cfg.data.config) {
     LIVE_CONFIG = cfg.data.config;
+    dropGateNoticesIfCleared();   // ATO-204: B02's refusal goes once the route can run
     const provider = (LIVE_CONFIG.llm && (LIVE_CONFIG.llm.providers || [])
       .find((p) => p.id === LIVE_CONFIG.llm.activeTextProvider)) || null;
     if (provider) {
@@ -7924,6 +7930,7 @@ function liveTurnEnded(ev, sid) {
     rec.endRows = ev.kind === 'error' ? liveFailureRows(rec, ev, liveOnScreen(ev.turnId, rec) ? WAIT : liveWaitOf(rec)) : [];
     rec.ended = ev.kind; rec.sid = sid; rec.endedAt = Date.now();
     rec.log = liveSegment(rec);   // its own rows, not the whole transcript they were in
+    tpDropRecoveredNote(rec.item.id, rec.log);   // ATO-204: nor "the turn continues" over its end (tui-parity.js)
     const ended = [...LIVE_TURNS].filter(([, r]) => r.ended);
     ended.slice(0, Math.max(0, ended.length - 20)).forEach(([id]) => LIVE_TURNS.delete(id));
   } catch (e) {
@@ -7989,6 +7996,8 @@ function liveEndedView(own, turns, data, stored) {
     S.turnId = keep.turnId; S.streamId = keep.streamId; S.reasonId = keep.reasonId; S.busy = keep.busy;
     FZ.live = keep.fz; liveSetWait(keep.wait);
   }
+  // ATO-204: a recovery replayed from its kept frames, under a turn that then failed or was stopped.
+  tpDropRecoveredNote(rec.item.id);
   rec.log = liveSegment(rec);   // its own rows, for the next time
   // The reply row reads as onChatEvent's end leaves it.
   if (!String(rec.item.text || '').trim()) {
@@ -8489,6 +8498,7 @@ function onChatEvent(ev) {
     // bracketed category mirrors the TUI's `failed [${category}]: …`.
     if (ev.kind === 'error' && item && WAIT) S.log.push(tpWaitGaveUpEntry(WAIT));
     if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
+    else if (item) tpDropRecoveredNote(item.id);   // ATO-204: failed or stopped, it did not "continue" (tui-parity.js)
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       text: turnFailureLine(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
@@ -18376,7 +18386,9 @@ function bswSnapshot() {
     if (!(res && res.ok)) return;
     const was = JSON.stringify([BSW.localLoaded, SEL.local]);
     SEL.local = res.models; BSW.localLoaded = true;
-    if (JSON.stringify([BSW.localLoaded, SEL.local]) !== was) bswRepaint();
+    // ATO-204: a model now on disk retires B02's "not downloaded" refusal too.
+    if (dropGateNoticesIfCleared()) render();
+    else if (JSON.stringify([BSW.localLoaded, SEL.local]) !== was) bswRepaint();
   }).catch(() => {});
 }
 /** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
@@ -20622,7 +20634,8 @@ async function mcpRefreshRun(quiet) {
   const [cfg, caps] = await Promise.all([BR.config(), BR.capabilities()]);
   MCP.loading = false;
   // The time of a read that worked, as the other panes keep it: the status line says "Updated" at it (Д26).
-  if (cfg && cfg.ok && cfg.data && cfg.data.config) { LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); }
+  // ATO-204: B02's refusal goes once the route can run (dropGateNoticesIfCleared).
+  if (cfg && cfg.ok && cfg.data && cfg.data.config) { LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); dropGateNoticesIfCleared(); }
   else MCP.lastError = 'mcp refresh failed: ' + ((cfg && cfg.error) || 'config unavailable');
   if (caps && caps.ok && caps.data) LIVE_CAPS = caps.data;
   if (quiet && (mcpTyping() || before === JSON.stringify(mcpRows()))) { settingsStatusRepaint(); return; }
@@ -21127,6 +21140,8 @@ async function llmRefreshRun() {
   ]);
   if (seq !== LLMP.seq) return;
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  if (list && list.ok && BSW.localLoaded) SEL.local = list.models;   // ATO-204: the gate reads the catalogue as this read has it
+  dropGateNoticesIfCleared();   // ATO-204: B02's refusal goes once the route can run
   // The snapshot the arming in llmTabEntered was waiting for.
   llmSyncModeToRoute();
   LLMP.localBusy = false; LLMP.busy = false; LLMP.lastRefreshedAt = Date.now();
@@ -23251,7 +23266,7 @@ async function tgRefreshOnce() {
     tgCfgBlock() && typeof tgCfgBlock().enabled === 'boolean' ? Promise.resolve(null) : BR.configGetKey('telegram'),
   ]);
   TG.keysBusy = false;
-  if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  if (cfg && cfg.ok && cfg.config) { LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared(); }   // ATO-204: B02's refusal
   TG.envKeys = Array.isArray(env) ? env : [];
   TG.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
   if (dotenv && dotenv.ok === false) TG.lastError = 'Could not read the saved token: ' + (dotenv.error || 'unknown error');
