@@ -1,8 +1,8 @@
 import { BrowserWindow } from "electron";
 
 /**
- * Release-fix checks for ATO-226 (see main/release-fixes-smoke.ts). Run alone
- * with `--smoke --smoke-task=106`.
+ * Release-fix checks for ATO-226 and ATO-227 (see main/release-fixes-smoke.ts).
+ * Run alone with `--smoke --smoke-task=106`.
  *
  * ATO-226 — the approval keys matched the character a key types (e.key), so
  * on a Russian layout, where the period key types "ю", ⌘. (Ctrl+. off macOS)
@@ -13,9 +13,19 @@ import { BrowserWindow } from "electron";
  * Enter and the period. A Latin layout keeps the character: ⌘: on AZERTY's
  * period key is not ⌘.
  *
+ * ATO-227 — Enter with a message in the box while an approval card waited
+ * denied the call and sent the words as the reason (the card said so: "Enter
+ * denies this call and sends your words to the agent"). Now the message goes
+ * to the agent as any message typed under a running turn does, steered into
+ * the turn or, when the turn cannot take it, queued as the next one; the box
+ * clears, a toast says the request still waits, and the card stays open for
+ * its buttons and ⌘↩ / ⌘., whose verdicts carry no words. A queued message
+ * runs once the turn has ended.
+ *
  * Nothing reaches the agent and the config is not touched. The requests go
- * through the real onApprovalEvent and the keys through the real keydown
- * handler; the verdicts and the cancel are answered by stand-ins on the
+ * through the real onApprovalEvent, the keys through the real keydown handler
+ * and the turn's end through the real onChatEvent; the verdicts, the steers,
+ * the next turn's chat call and the cancel are answered by stand-ins on the
  * window's own IPC (a webContents handler is asked before ipcMain's; a probe
  * proves it first, as in t64) and recorded, never forwarded. What the check
  * staged comes back out and the window is put back as it was.
@@ -31,6 +41,8 @@ const A = `${PREFIX}chat-a`;
 const TURN = `${PREFIX}turn-a`;
 const QUIET = "smoke t106: not answered while the check runs";
 const DRAFT = "smoke t106: a draft kept through the answers";
+const SAID = "smoke t106: a message typed while the card waits";
+const PARKED = "smoke t106: a message the turn cannot take";
 const q = (v: unknown) => JSON.stringify(v);
 const show = (x: unknown) => JSON.stringify(x);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -39,6 +51,10 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 class StandIn {
   readonly approved: string[] = [];
   readonly cancelled: string[] = [];
+  readonly steered: string[] = [];
+  readonly chats: string[] = [];
+  /** Whether the running turn takes a steer (200 steered), or refuses it (the 409, as the IPC hands it over). */
+  takeSteers = true;
   private readonly quiet: Handler = () => ({ ok: false, error: QUIET });
   private readonly noParked: Handler = () => ({ ok: true, data: { undelivered: [], discarded: 0 } });
   private readonly session: Handler = (_e, id) => {
@@ -52,13 +68,23 @@ class StandIn {
     return { ok: true, data: { resolved: true } };
   };
   private readonly cancel: Handler = (_e, turnId) => { this.cancelled.push(String(turnId)); return true; };
+  private readonly steer: Handler = (_e, payload) => {
+    const p = (payload ?? {}) as { sessionId?: unknown; text?: unknown };
+    this.steered.push(`${String(p.sessionId)}: ${String(p.text)}`);
+    return this.takeSteers ? { ok: true, steered: true } : { ok: false, error: "session has no turn accepting steers" };
+  };
+  private readonly chat: Handler = (_e, payload) => {
+    const p = (payload ?? {}) as { messages?: Array<{ content?: unknown }>; sessionId?: unknown };
+    this.chats.push(`${String(p.sessionId)}: ${String(p.messages?.[0]?.content ?? "")}`);
+    return { ok: true, turnId: `${PREFIX}turn-next-${this.chats.length}` };
+  };
 
   private channels(): Array<[string, Handler]> {
     return [
       ["agent:session", this.session], ["agent:approve", this.approve], ["agent:cancel", this.cancel],
-      ["agent:steer", this.quiet], ["agent:chat", this.quiet], ["agent:contextPreview", this.quiet],
-      ["agent:undeliveredSteers", this.noParked], ["cli:traceTools", this.quiet], ["app:statPaths", this.quiet],
-      ["cli:chatModelsList", this.quiet],
+      ["agent:steer", this.steer], ["agent:chat", this.chat], ["agent:contextPreview", this.quiet],
+      ["agent:undeliveredSteers", this.noParked], ["agent:ackSteers", this.quiet], ["cli:traceTools", this.quiet],
+      ["app:statPaths", this.quiet], ["cli:chatModelsList", this.quiet],
     ];
   }
 
@@ -117,6 +143,8 @@ const FORGET = String.raw`
   for (const sid of [...APPROVAL_CARDS.keys()]) if (mine(sid)) APPROVAL_CARDS.delete(sid);
   for (const id of [...CLOSED_APPROVALS]) if (mine(id)) CLOSED_APPROVALS.delete(id);
   for (const id of [...LIVE_TURNS.keys()]) if (mine(id)) LIVE_TURNS.delete(id);
+  for (const id of [...FIRST_TURNS.keys()]) if (mine(id)) FIRST_TURNS.delete(id);
+  for (const id of [...PENDING_CHATS.keys()]) if (mine(id)) PENDING_CHATS.delete(id);
   for (const sid of [...ATTN]) if (mine(sid)) ATTN.delete(sid);
   if (typeof QUEUES !== 'undefined') for (const key of [...QUEUES.keys()]) if (mine(key)) QUEUES.delete(key);
   const seen = Object.keys(PREFS.seen).filter(mine);
@@ -151,7 +179,7 @@ const STAGE = `(() => { ${H}
   if (S.overlay === 'palette') act('close');
   S.queued.length = 0; STEER.ahead = 0;
   if (typeof DRAIN_OWED !== 'undefined') DRAIN_OWED = false;
-  OPENING = null; S.room = 'chat'; S.busy = true; S.pending = null; S.turnId = ${q(TURN)}; PLAN.on = false;
+  OPENING = null; S.room = 'chat'; S.busy = true; S.pending = null; S.turnId = ${q(TURN)}; PLAN.on = false; PLAN.startedMode = null;
   S.sessionId = ${q(A)}; S.agentSession = ${q(A)};
   const item = {id: nid(), k: 'assistant', text: '', turn: ${q(TURN)}};
   S.log = [{id: nid(), k: 'user', text: 'smoke t106: check free disk space'}, item];
@@ -273,6 +301,99 @@ export async function checks106(js: Js, check: Check): Promise<void> {
       "T106 (ATO-226): ⌘K (Ctrl+K) on a Russian layout opens the command palette",
       palette.overlay === "palette",
       show(palette),
+    );
+
+    // (g) ATO-227. The turn runs again and asks; a message in the box and Enter, as a person sends one.
+    await js<boolean>(STAGE);
+    const markA = agent.approved.length;
+    const typed = await js<{ asked: View; foot: string; after: View; state: string | null; toasts: string[];
+      systems: string[]; bubble: boolean }>(`(async () => { ${H}
+      ask(${q(`${PREFIX}approval-4`)});
+      draft(${q(SAID)});
+      const asked = view();
+      const foot = (document.querySelector('#apprcard .apprfoot') || {}).textContent || '';
+      const toastAt = S.toastId;
+      const req = S.pending;
+      inBox('Enter', 'Enter');
+      await STEER.chain;
+      await tick(50);
+      const after = view();
+      const state = req ? (req.state || null) : 'no request';
+      const toasts = S.toasts.filter((t) => t.id > toastAt).map((t) => t.t + ' | ' + (t.s || ''));
+      const systems = S.log.filter((m) => m.k === 'system').map((m) => String(m.text || ''));
+      const bubble = S.log.some((m) => m.k === 'user' && m.steered && m.text === ${q(SAID)});
+      return {asked, foot, after, state, toasts, systems, bubble};
+    })()`);
+    const sentEnter = agent.approved.slice(markA);
+    check(
+      "T106 (ATO-227): the card says a message typed below goes to the agent and the request still waits",
+      typed.foot === "A message typed below goes to the agent; this request still waits for Allow or Deny.",
+      show(typed.foot),
+    );
+    check(
+      "T106 (ATO-227): Enter with a message under a waiting card answers nothing: no verdict, the card stays open",
+      typed.asked.pending === `${PREFIX}approval-4` && sentEnter.length === 0 && typed.state === null
+        && typed.after.pending === `${PREFIX}approval-4` && show(typed.after.cards) === show([`${PREFIX}approval-4`])
+        && !typed.systems.some((t) => /^Denied|deny that call/i.test(t)),
+      `typed=${show(typed)} sent=${show(sentEnter)}`,
+    );
+    check(
+      "T106 (ATO-227): the message is steered into the chat's turn, drawn in it, the box clears and a calm toast says the request still waits",
+      show(agent.steered) === show([`${A}: ${SAID}`]) && typed.bubble && typed.after.entry === ""
+        && typed.systems.includes("steering the running turn — the agent reads it once the request is answered")
+        && typed.toasts.some((t) => t.startsWith("The request still waits for your answer | Your message goes to the agent.")),
+      `typed=${show(typed)} steered=${show(agent.steered)}`,
+    );
+    const allowed = await js<View>(`(async () => { ${H}
+      inBox('Enter', 'NumpadEnter', CHORD);
+      await tick(150);
+      return view();
+    })()`);
+    const sentA = agent.approved.slice(markA);
+    check(
+      "T106 (ATO-227): the card is answered by its key afterwards, with no words: ⌘↩ (Ctrl+↩) allows it once, and the message is not sent again",
+      show(sentA) === show([`${PREFIX}approval-4 allow-once`]) && allowed.pending === null && agent.steered.length === 1,
+      `sent=${show(sentA)} allowed=${show(allowed)} steered=${show(agent.steered)}`,
+    );
+
+    // (h) The turn cannot take the message (the steer is refused): it is queued as the next turn, the card
+    // still waits, ⌘. (on a Russian layout) denies it with no words, and the message runs once the turn ends.
+    agent.takeSteers = false;
+    const markB = agent.approved.length;
+    const markSteer = agent.steered.length;
+    const parked = await js<{ after: View; queued: string[]; denied: View; queuedAfterDeny: string[] }>(`(async () => { ${H}
+      ask(${q(`${PREFIX}approval-5`)});
+      draft(${q(PARKED)});
+      inBox('Enter', 'Enter');
+      await STEER.chain;
+      await tick(50);
+      const after = view();
+      const queued = S.queued.slice();
+      inBox('ю', 'Period', CHORD);
+      await tick(150);
+      return {after, queued, denied: view(), queuedAfterDeny: S.queued.slice()};
+    })()`);
+    const sentB = agent.approved.slice(markB);
+    check(
+      "T106 (ATO-227): a message the turn cannot take is queued as the next turn and the card keeps waiting; ⌘. then denies it with no words",
+      show(agent.steered.slice(markSteer)) === show([`${A}: ${PARKED}`]) && parked.after.pending === `${PREFIX}approval-5`
+        && parked.after.entry === "" && show(parked.queued) === show([PARKED])
+        && show(sentB) === show([`${PREFIX}approval-5 deny`]) && parked.denied.pending === null
+        && show(parked.queuedAfterDeny) === show([PARKED]),
+      `parked=${show(parked)} sent=${show(sentB)} steered=${show(agent.steered)}`,
+    );
+    const markChat = agent.chats.length;
+    await js<boolean>(`(() => { onChatEvent({turnId: ${q(TURN)}, kind: 'done', payload: {}}); return true; })()`);
+    for (let i = 0; i < 20 && agent.chats.length === markChat; i++) await wait(100);
+    const drained = await js<string[]>("S.queued.slice()");
+    // That turn (the stand-in's) ends too, so the window is not left waiting on it.
+    if (agent.chats.length > markChat) {
+      await js<boolean>(`(() => { onChatEvent({turnId: ${q(`${PREFIX}turn-next-${agent.chats.length}`)}, kind: 'done', payload: {}}); return true; })()`);
+    }
+    check(
+      "T106 (ATO-227): once the turn has ended, the queued message goes to the agent as the chat's next turn",
+      show(agent.chats.slice(markChat)) === show([`${A}: ${PARKED}`]) && drained.length === 0,
+      `chats=${show(agent.chats)} queued=${show(drained)}`,
     );
   } finally {
     /* The stand-ins come off before anything else is awaited (see t25). */

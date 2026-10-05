@@ -718,7 +718,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("102")) await guarded("102", check, () => checks102(js, check));
   // 103 (e2e scenario 06) — a message sent before the agent was up was cleared from the box and never sent.
   if (want.has("103")) await guarded("103", check, () => checks103(js, check));
-  // 106 (ATO-226) — on a Russian layout ⌘. ("ю") did not deny the card on screen or stop a turn, and ⌘K and the rest did nothing.
+  // 106 (ATO-226) — on a Russian layout ⌘. ("ю") did not deny the card on screen or stop a turn, and ⌘K and the rest did nothing;
+  // (ATO-227) Enter with a message under a waiting card denied it with those words instead of sending them to the agent.
   if (want.has("106")) await guarded("106", check, () => checks106(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.

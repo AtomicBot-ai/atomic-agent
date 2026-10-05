@@ -10935,62 +10935,36 @@ async function planHandoffTest(
         `on=${afterOpen.on} bars=${afterOpen.bars} session=${other}`,
       );
 
-      // ---- approval parity: typed prose IS the verdict ----
-      // A session is open here, which the scope guard needs: prose may never
-      // become the deny reason for a question another thread asked.
-      const order = await js<{ sent?: { id: string; decision: string; reason: string }; queuedWhileDenying?: number;
-        queuedBefore: number; queuedAfter: number; state: string | null; at: number;
-        steered?: boolean; systems?: string[] }>(
-        "window.__approvalProseOrder('put it in ~/Documents instead')",
-      );
-      check(
-        "typed prose denies the open call with the operator's own words as the reason",
-        !!order.sent && order.sent.decision === "deny" && order.sent.reason === "put it in ~/Documents instead"
-          && order.state === "denied",
-        JSON.stringify(order),
-      );
-      /* Two separate claims, and only the first is this check's subject: the
-         verdict must be sent BEFORE the text is delivered (nothing may have
-         joined the queue while the deny was in flight), and the text must
-         then actually reach the agent. Delivery has two correct routes — the
-         queue when nothing is running, a steer into the live turn when
-         something is — and asserting only the queue read a steered delivery
-         as a lost message whenever a turn happened to still be running. */
-      const delivered = order.steered === true || order.queuedAfter === order.queuedBefore + 1;
-      check(
-        "the verdict goes out BEFORE the same text is sent into the turn",
-        order.queuedWhileDenying === order.queuedBefore && delivered,
-        `queued before=${order.queuedBefore} while denying=${order.queuedWhileDenying} after=${order.queuedAfter};`
-        + ` delivered by ${order.steered ? "steering the running turn" : order.queuedAfter > order.queuedBefore ? "the queue" : "NOTHING"}`,
-      );
-      await js<unknown>(`window.__approvalRestore(${order.at})`);
-
-      type Prose = { foot: string; mode: string; verbs: string[]; grantS: number; grantA: number;
+      // ---- ATO-227 (05.10): a message typed under an open approval is a message, not a verdict ----
+      // A session is open here, so the steer has a chat to go to.
+      type Typed = { foot: string; mode: string; verbs: string[]; grantS: number; grantA: number;
         afterGrantKeys: { pending: boolean; state: string | null };
-        state: string | null; pending: boolean; doneCards: number; okCards: number;
+        state: string | null; pending: boolean; card: boolean; entry: string; toasts: string[];
         queuedBefore: number; queued: string[]; systems: string[]; at: number };
-      // The route confirmed the verdict: `{resolved:true, …}` is its success
-      // body and the only thing that counts as delivery.
-      const prose = await js<Prose>("window.__approvalProse('use the other folder', 'confirmed')");
+      const typed = await js<Typed>("window.__approvalTyped('use the other folder')");
       check(
-        "Enter under an open approval flips the card to Denied and lands the text",
-        prose.state === "denied" && prose.pending === false && prose.doneCards > prose.okCards
-          && (prose.queued.includes("use the other folder")
-            /* or steered into a live turn — both are real deliveries (r4 item 7) */
-            || prose.systems.some((t) => /steering the running turn/i.test(t)))
-          && prose.systems.some((t) => t === "Denied, with your message as the reason."),
-        JSON.stringify({ state: prose.state, pending: prose.pending, done: prose.doneCards, ok: prose.okCards, queued: prose.queued, systems: prose.systems }),
+        "Enter under an open approval answers nothing: the card stays open and nothing is denied",
+        typed.state === null && typed.pending === true && typed.card === true
+          && !typed.systems.some((t) => /^Denied|deny that call/i.test(t)),
+        JSON.stringify({ state: typed.state, pending: typed.pending, card: typed.card, systems: typed.systems }),
+      );
+      check(
+        "the typed words go to the agent as a message (steered into the turn or queued), the box clears and a toast says the request still waits",
+        typed.entry === ""
+          && (typed.queued.includes("use the other folder") || typed.systems.some((t) => /steering the running turn/i.test(t)))
+          && typed.toasts.some((t) => t.startsWith("The request still waits for your answer")),
+        JSON.stringify({ entry: typed.entry, queued: typed.queued, systems: typed.systems, toasts: typed.toasts }),
       );
       /* Calm (S4): the engineer paragraph under the buttons is gone (U30).
          What typing does is one plain line on the card; the pointer to the
          mode control sits under the card's Details disclosure. */
       check(
         "the approval card says on screen what typing now does",
-        prose.foot.includes("Or type below to answer instead. Enter denies this call and sends your words to the agent.")
-          && !/HTTP API|session-wide/i.test(prose.foot)
-          && prose.mode.includes("To be asked less often, change the mode in the composer.")
-          && !prose.foot.includes("Privacy") && !prose.mode.includes("Privacy"),
-        JSON.stringify({ foot: prose.foot, mode: prose.mode }),
+        typed.foot.includes("A message typed below goes to the agent; this request still waits for Allow or Deny.")
+          && !/denies|HTTP API|session-wide/i.test(typed.foot)
+          && typed.mode.includes("To be asked less often, change the mode in the composer.")
+          && !typed.foot.includes("Privacy") && !typed.mode.includes("Privacy"),
+        JSON.stringify({ foot: typed.foot, mode: typed.mode }),
       );
       /* Review fix: sampled while the request is LIVE, from inside the fixture,
          and against the card's own three verbs — the previous form counted
@@ -11000,43 +10974,13 @@ async function planHandoffTest(
          as well: a key that cannot do what it says must do nothing. */
       check(
         "the approval card offers no grant the wire cannot carry",
-        JSON.stringify(prose.verbs) === JSON.stringify(["y", "n", "esc"])
-          && prose.grantS === 0 && prose.grantA === 0
-          && prose.afterGrantKeys.pending === true && prose.afterGrantKeys.state === null,
-        `verbs=${JSON.stringify(prose.verbs)} s=${prose.grantS} a=${prose.grantA}`
-          + ` afterSA=${JSON.stringify(prose.afterGrantKeys)}`,
+        JSON.stringify(typed.verbs) === JSON.stringify(["y", "n", "esc"])
+          && typed.grantS === 0 && typed.grantA === 0
+          && typed.afterGrantKeys.pending === true && typed.afterGrantKeys.state === null,
+        `verbs=${JSON.stringify(typed.verbs)} s=${typed.grantS} a=${typed.grantA}`
+          + ` afterSA=${JSON.stringify(typed.afterGrantKeys)}`,
       );
-      await js<unknown>(`window.__approvalRestore(${prose.at})`);
-
-      /* The route answering that it is NOT holding that approvalId — a 404,
-         which the IPC layer still hands over as ok:true with an `{error:…}`
-         body. Nothing was told to the agent, and the window must say exactly
-         that rather than announcing a deny that never happened. */
-      const unknownId = await js<Prose>("window.__approvalProse('use the other folder', 'unknown')");
-      check(
-        "a verdict the agent never took is reported as not taken, not as a deny",
-        unknownId.state === "undelivered"
-          && unknownId.systems.some((t) => t === "Couldn\u2019t deny that call with your message: the agent was no longer waiting for an answer.")
-          && !unknownId.systems.some((t) => t === "Denied, with your message as the reason.")
-          && (unknownId.queued.includes("use the other folder")
-            || unknownId.systems.some((t) => /steering the running turn/i.test(t))),
-        JSON.stringify({ state: unknownId.state, systems: unknownId.systems, queued: unknownId.queued }),
-      );
-      await js<unknown>(`window.__approvalRestore(${unknownId.at})`);
-
-      /* And the same thing against the LIVE route, with an approvalId no gate
-         ever issued: the real 404 body, read through the real preload → main →
-         agent-client seam. This is the check that would have caught the
-         fabricated success line, because nothing here is injected. */
-      const liveDeny = await js<Prose>("window.__approvalProse('use the other folder')");
-      check(
-        "the live route's 404 for an unheld approvalId is read, not assumed to be a success",
-        liveDeny.state === "undelivered"
-          && liveDeny.systems.some((t) => t.startsWith("Couldn\u2019t deny that call with your message:"))
-          && !liveDeny.systems.some((t) => t === "Denied, with your message as the reason."),
-        JSON.stringify({ state: liveDeny.state, systems: liveDeny.systems }),
-      );
-      await js<unknown>(`window.__approvalRestore(${liveDeny.at})`);
+      await js<unknown>(`window.__approvalRestore(${typed.at})`);
     } else {
       check("plan bar session-switch check skipped: the agent has no other session", !other, "sessions=0");
     }
