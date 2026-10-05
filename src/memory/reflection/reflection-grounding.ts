@@ -25,7 +25,9 @@
  *       - it claims a name for the user (a `name`-like SET key, "my name
  *         is X", "call me X", "the user's name is X", or a clause-final
  *         "I am X" / "I am X and …") and the name never appears in the
- *         user's own messages (nor among names already in the profile);
+ *         user's own messages in the reflected window (a name already
+ *         stored in the profile does NOT count — it may itself have
+ *         been invented);
  *       - it describes the assistant itself ("you are my personal
  *         assistant", "I'm your AI assistant");
  *       - it repeats the literal payload of a one-off echo instruction
@@ -44,6 +46,10 @@
  *  - Short Latin names (≤ 4 letters after normalisation) must match a
  *    user word exactly, so "Sam" is not vouched for by "same" — and a
  *    user who wrote "Samm" will not get "Sam" either.
+ *  - A real name the user gave in an earlier turn outside the reflected
+ *    window is not restated: a note "Nadia moved to Lisbon" written
+ *    from a later turn is dropped if it phrases the name as an identity
+ *    claim. The stored `name` fact itself is untouched.
  *  - A one-off probe is lifted only by a marker in the same clause or a
  *    marker-only clause right before it ("Запомни, отвечай только
  *    JSON"); "Always: reply only JSON" phrased differently may still be
@@ -75,14 +81,14 @@ export interface DroppedReflectionItem {
 }
 
 export interface GroundingContext {
-  /** The user's own messages for the reflected window (oldest first). */
-  userTexts: readonly string[];
   /**
-   * Names already stored in the profile (values of `name`-like keys).
-   * They count as grounded so a note that restates a known name is not
-   * dropped just because this turn did not repeat it.
+   * The user's own messages for the reflected window (oldest first).
+   * The ONLY grounding source. Stored profile values are deliberately
+   * not accepted: a name an earlier reflection invented would vouch for
+   * itself forever (field case: `name=Анна`, never typed by the user,
+   * re-written as `name=Anna`).
    */
-  knownNames?: readonly string[];
+  userTexts: readonly string[];
 }
 
 export interface GroundedReflection {
@@ -649,7 +655,8 @@ interface VocabEntry {
   key: string;
   /**
    * Fuzzy matching (edit distance) is allowed only from tokens that can
-   * plausibly be names: capitalised, Cyrillic, or a stored profile name.
+   * plausibly be names: capitalised, or a Russian word right after a
+   * naming lead.
    * A lower-case Latin word ("same", "make", "been") never vouches for a
    * name it merely resembles.
    */
@@ -693,18 +700,18 @@ function buildVocabulary(ctx: GroundingContext): Vocabulary {
     entries.push(entry);
   };
   let otherScriptLetters = 0;
-  const addText = (text: string, alwaysFuzzy: boolean): void => {
+  const addText = (text: string): void => {
     otherScriptLetters += text.match(OTHER_SCRIPT_GLOBAL)?.length ?? 0;
     const tokens = text.match(/[\p{L}\p{N}]+/gu) ?? [];
     for (let i = 0; i < tokens.length; i += 1) {
       const token = tokens[i]!;
       const cyrillic = /\p{Script=Cyrillic}/u.test(token);
-      // Name-like: capitalised, a stored profile name, or right after a
+      // Name-like: capitalised, or right after a
       // Russian naming lead ("зови меня надей"). Ordinary lower-case
       // words — Latin "same"/"make" or Russian «данные»/«макет»/«алерты» —
       // only ever match exactly, never fuzzily or by stem.
       const nameLike =
-        alwaysFuzzy || /^\p{Lu}/u.test(token) || (cyrillic && followsRuNamingLead(tokens, i));
+        /^\p{Lu}/u.test(token) || (cyrillic && followsRuNamingLead(tokens, i));
       add({
         raw: lower(token),
         key: looseKey(token),
@@ -718,8 +725,7 @@ function buildVocabulary(ctx: GroundingContext): Vocabulary {
       }
     }
   };
-  for (const text of ctx.userTexts) addText(text, false);
-  for (const name of ctx.knownNames ?? []) addText(name, true);
+  for (const text of ctx.userTexts) addText(text);
   return { entries, unverifiable: otherScriptLetters >= OTHER_SCRIPT_MIN_LETTERS };
 }
 

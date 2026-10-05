@@ -816,6 +816,37 @@ describe("createReflectionRunner", () => {
     ).toHaveLength(2);
   });
 
+  // Field case (desktop QA 05.10, session 063c8a9b): the profile already
+  // held an invented `name=Анна` (never typed in any of 56 sessions); the
+  // new reflection wrote `SET name=Anna`, superseding it, because stored
+  // profile names counted as grounded. They no longer do. The existing
+  // row is left alone — cleaning it up is a separate product decision.
+  it("B09 field case: a stored invented name does not ground `SET name=Anna`", async () => {
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Anna\nSET language=ru\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "063c8a9b",
+      userMessage: "Отвечай, пожалуйста, на русском языке",
+      assistantReply: "Хорошо, буду отвечать на русском.",
+    });
+
+    expect(h.store.get("name")?.value).toBe("Анна");
+    expect(h.store.history("name")).toHaveLength(1);
+    expect(h.store.get("language")?.value).toBe("ru");
+    expect(
+      h.logEvents.filter((e) => e.message === "reflection.ungrounded_dropped"),
+    ).toHaveLength(1);
+  });
+
   it("B09: keeps a legit 'my name is Nadia' + 'remember I prefer TypeScript' session", async () => {
     const runner = createReflectionRunner({
       llmComplete: async () =>
