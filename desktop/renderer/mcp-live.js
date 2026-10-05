@@ -28,14 +28,18 @@ function mcpStateChipHTML(name, cfgState) {
   return '<span class="tk-chip tk-chip--sm ' + cls + '" title="' + esc(title) + '">' + esc(MCP_STATE_WORDS[st.state] || st.state) + '</span>';
 }
 
-/* The row's own controls: Restart (enabled servers only) and the enable
-   switch. Spans, because the row itself is the button that opens the
-   detail; the click handler resolves the innermost [data-act]. */
+/* The row's own controls: Restart (enabled servers only), Remove and the
+   enable switch. Spans, because the row itself is the button that opens the
+   detail; the click handler resolves the innermost [data-act].
+   ATO-240: Remove is on every row, on or off. A turned-off row had nothing
+   but its switch, so the server read as one that cannot be deleted; it opens
+   the same confirm as the detail's Remove and `d`. */
 function mcpRowControlsHTML(name, enabled) {
   const busy = MCP_LIVE.busy !== null;
   return (enabled
       ? '<span class="iconbtn sm" role="button" data-act="mcp:restart:' + esc(name) + '" title="Restart (R)" aria-label="Restart ' + esc(name) + '"' + (busy ? ' aria-disabled="true"' : '') + '>' + ic('refresh') + '</span>'
       : '')
+    + '<span class="iconbtn sm" role="button" data-act="mcp:remove:' + esc(name) + '" title="Remove (d)" aria-label="Remove ' + esc(name) + '">' + ic('trash') + '</span>'
     + '<span class="tk-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" aria-label="' + (enabled ? 'Disable ' : 'Enable ') + esc(name) + '" title="Turn ' + (enabled ? 'off' : 'on') + ' (e)" data-act="mcp:toggle:' + esc(name) + '"' + (busy ? ' aria-disabled="true"' : '') + '></span>';
 }
 
