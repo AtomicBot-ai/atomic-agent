@@ -59,7 +59,7 @@ run falls back to the installed agent as before.
 
 | file | what it drives | command |
 | --- | --- | --- |
-| `scenarios/01`…`07` + `run-all.mjs` | seven end-to-end human errands: build a website, write a document, arrange files, hold a conversation, answer an approval, survive a Force Quit, and be told what went wrong when the agent will not answer | `npm run scenarios` |
+| `scenarios/01`…`09` + `run-all.mjs` | end-to-end human errands: build a website, write a document, arrange files, hold a conversation, answer an approval, survive a Force Quit, be told what went wrong when the agent will not answer, answer approvals from the keyboard (⌘↩ / ⌘.) with a draft in the box, and (opt-in, `ATAG_TEST_REOPEN=1`) two chats waiting on approvals across a window closed and reopened | `npm run scenarios` |
 | `onboarding-mouse.mjs` | the whole first-run wizard with the mouse, plus a resting-state design review of every screen | `npm run drive:onboarding` |
 | `drive-selector.mjs` | the composer's parameter controls across the three backends (`composerSwitchKindsFor`), and the pane Settings › LLM opens on | `npm run drive:selector` |
 | `fusion.drive.mjs` | Run mode · Fusion on a configured COPY: the fusion row's pre-flight refusal, entering Fusion from the Backend control (one config write, the intro), the Workers and Provider controls under Fusion, ⇄, `/runmode status` and `/runmode workers N`, Settings › LLM's cards and count, and Backend › cloud really leaving Fusion in the file. Screenshots light + dark at 1470×923; the live worker list shot is taken on synthetic frames and says so. Run with `env -u OPENROUTER_API_KEY -u AIMLAPI_API_KEY` | `npm run drive:fusion -- <state copy> <workspace> [shots]` |
