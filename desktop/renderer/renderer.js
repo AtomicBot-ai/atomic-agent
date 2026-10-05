@@ -2705,7 +2705,12 @@ function toolLine(m) {
   if (n === 'browser.tabs' && a.url) return 'Opened ' + code(toolHost(a.url));
   if (n === 'vision.describe' && path) return 'Looked at ' + code(wsName(toolPath(path))) + more(a.paths);
   if (n === 'fusion.delegate') {
-    const k = Array.isArray(a.tasks) ? a.tasks.length : (String(m.args || m.arg || '').match(/"instructions"\s*:/g) || []).length;
+    /* ATO-235: only whole args are counted. A live card's are clipped to 120
+       characters, so its tasks come from the approval request (fzTasks, set
+       in onApprovalEvent); counting "instructions" in the clip read two tasks
+       as one. Not known yet: no number at all. */
+    const full = cardArgs(m);
+    const k = full && Array.isArray(full.tasks) ? full.tasks.length : (m.fzTasks > 0 ? m.fzTasks : 0);
     return k ? 'Delegated ' + plural(k, 'task') : 'Delegated tasks';
   }
   if (/^memory\..*\.store$/.test(n) && a.content) return 'Remembered ' + quote(a.content);
@@ -8941,6 +8946,14 @@ function onApprovalEvent(payload) {
     if (!req.drawn) { req.drawn = true; ANX.apprShown(req); }   // analytics: ms_to_answer starts when the card is drawn
     placeInLiveTurn(req, {afterTool: req.tool});
     S.apprFocused = false;
+  }
+  /* ATO-235: the fan-out's own request says how many tasks it has ("2 tasks
+     to 3 workers on …", fusion-delegate.ts); the card of the call, whose
+     args are a clipped stream label, takes its count from that. */
+  const fzN = req.tool === 'fusion.delegate' ? /^(\d+) tasks? to /.exec(String(req.reason || '')) : null;
+  if (fzN) {
+    const card = S.log.slice().reverse().find((m) => m.k === 'tool' && m.name === 'fusion.delegate' && m.ok === null);
+    if (card) card.fzTasks = Number(fzN[1]);
   }
   S.pending = req;
   // Backlog 25: waiting is not "busy" for the chat that asked, which is the one on screen.
