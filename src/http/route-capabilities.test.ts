@@ -49,6 +49,41 @@ describe("GET /api/capabilities", () => {
     ).toBe(true);
   });
 
+  it("lists only the tools the agent is offered under the current config", async () => {
+    // `github.*` and `fusion.delegate` are registered unconditionally and
+    // hidden from the agent by config gates (no token, not in fusion).
+    // The desktop's built-in tools list read them off this route anyway.
+    const savedToken = process.env.GITHUB_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    try {
+      harness = await startTestHarness();
+      const registered = harness.runtime.toolRegistry.list().map((t) => t.name);
+      const offered = new Set(
+        harness.runtime.toolDescriptors.map((d) => d.name),
+      );
+      // Preconditions: both families are registered but gated off here.
+      expect(registered).toContain("github.whoami");
+      expect(registered).toContain("fusion.delegate");
+      expect(offered.has("github.whoami")).toBe(false);
+      expect(offered.has("fusion.delegate")).toBe(false);
+
+      const res = await fetch(`${harness.baseUrl}/api/capabilities`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { tools: Array<{ name: string }> };
+      const names = body.tools.map((t) => t.name);
+
+      expect(names.filter((n) => n.startsWith("github."))).toEqual([]);
+      expect(names).not.toContain("fusion.delegate");
+      expect(names).toEqual(registered.filter((n) => offered.has(n)));
+      // Still the agent's real surface, not an emptied list.
+      expect(names).toContain("reply");
+      expect(names).toContain("os.fs.read");
+    } finally {
+      if (savedToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = savedToken;
+    }
+  });
+
   it("does not advertise agent.toolTimeoutMs, which no tool reads (#548)", async () => {
     harness = await startTestHarness();
 
