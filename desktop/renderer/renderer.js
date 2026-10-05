@@ -2867,7 +2867,16 @@ function apprCard(m) {
   const res = apprResource(m);
   const typed = !!(m.approvalId && m.sessionId && m.sessionId === S.agentSession);
   const pv = String(m.preview || '').trim();
-  return '<div class="appr' + (isTrust ? ' danger' : '') + '" id="apprcard" data-appr-id="' + esc(m.approvalId || '') + '">'
+  /* ATO-209: one id per page. Every open card carried id="apprcard" and its
+     Deny id="denybtn", and afterChat focused `#denybtn`: the FIRST Deny in
+     the page, whichever card that was, taking the focus from the box the
+     person was typing in, so their Enter (or Space) denied a call with no
+     reason. Now only the card of the request y/n/Esc answer (S.pending) has
+     the id, which scenario 05, drive.mjs and harness.mjs read; Deny is
+     `.apprdeny`. The card takes the focus itself (tabindex), never a button. */
+  const current = m === S.pending;
+  return '<div class="appr' + (isTrust ? ' danger' : '') + '"' + (current ? ' id="apprcard"' : '')
+    + ' tabindex="-1" data-appr-id="' + esc(m.approvalId || '') + '">'
     + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'shield') + '</span>'
       + '<div class="apprmain"><div class="ttl">' + apprAsk(m) + '</div>'
       + (why ? '<div class="apprwhy">' + why + '</div>' : '')
@@ -2875,7 +2884,7 @@ function apprCard(m) {
     + '</div></div>'
     + '<div class="apprbtns">'
       + '<button class="btn sm appr-yes" data-appr="y" title="Allow this one call (Y)">Allow once</button>'
-      + '<button class="btn sm btn-s" data-appr="n" id="denybtn" title="Deny (N)">Deny</button>'
+      + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny (N)">Deny</button>'
       + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run (Esc)">Abort run</button>'
     + '</div>'
     /* Item 1 (approval parity): typing prose under an open request denies
@@ -3513,8 +3522,8 @@ function afterChat(keep, hadFocus, caret) {
      here, after the render that rebuilt this textarea. The carry leg below is
      what makes it survive every render that follows: by then #entry is already
      the active element, so the focus is re-established rather than dropped.
-     Both legs stay ABOVE the approval branch, or an arriving approval would
-     stop taking the focus to #denybtn and y/n would land in the textarea.
+     Both legs stay ABOVE the approval branch, which reads where the focus
+     ended up (ATO-209: a card never takes it from the box the person types in).
 
      r5 item 6 review fix: the carry leg is gated on there being no modal up.
      render() runs renderContent() BEFORE renderSettings()/renderOverlays(), so
@@ -3554,7 +3563,18 @@ function afterChat(keep, hadFocus, caret) {
     // / tui-app.tsx:1327 <-> the Escape branch of the keydown handler).
     else if (keep != null) sc.scrollTop = keep;
   }
-  if (S.pending && !S.apprFocused) { const d = $('#denybtn'); if (d) { d.focus(); S.apprFocused = true; } }
+  /* ATO-209: a card that comes takes the focus to itself, not to a Deny
+     button (Enter or Space there denied the call), and never from a text
+     field the person is in: y / n / Esc are read at the document, and in the
+     box they are letters, as they should be. A focused card answers no key
+     of its own; a button gets the focus only when the person tabs to it. */
+  if (S.pending && !S.apprFocused) {
+    const at = document.activeElement;
+    const typing = !!at && (at.tagName === 'TEXTAREA' || at.tagName === 'INPUT' || at.isContentEditable);
+    const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(S.pending.approvalId || '') + '"]');
+    if (!typing && card) card.focus({preventScroll:true});
+    if (typing || card) S.apprFocused = true;
+  }
 }
 function autosize(e) { e.style.height = 'auto'; e.style.height = Math.min(e.scrollHeight, 180) + 'px'; }
 

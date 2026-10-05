@@ -222,7 +222,7 @@ async function downloadCard(js: Js, check: Check): Promise<void> {
       const b = n && n.getBoundingClientRect(); const at = b ? document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) : null;
       return !!(at && (at === n || n.contains(at))); };
     const shot = () => ({appr: box(document.getElementById('apprcard')), card: box(document.querySelector('#dlcard:not([hidden]) > *')),
-      first: box(document.querySelector('#scroller .turn')), abort: reach('.apprabort'), allow: reach('[data-appr="y"]'), deny: reach('#denybtn')});
+      first: box(document.querySelector('#scroller .turn')), abort: reach('.apprabort'), allow: reach('[data-appr="y"]'), deny: reach('.apprdeny')});
     const keep = {log: S.log, pending: S.pending, focused: S.apprFocused, stick: S.stick, room: S.room, toasts: S.toasts.slice()};
     try {
       window.__dlClear(); S.toasts = []; renderToasts(); S.room = 'chat';

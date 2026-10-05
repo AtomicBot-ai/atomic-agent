@@ -523,7 +523,7 @@ async function chatRoom(js: Js, check: Check, w: BrowserWindow | null): Promise<
         const insp = document.getElementById('inspector');
         const c = card();
         return {width: innerWidth, height: innerHeight, scroller: box(sc), appr: box(appr),
-          abort: btn('.apprabort'), allow: btn('[data-appr="y"]'), deny: btn('#denybtn'),
+          abort: btn('.apprabort'), allow: btn('[data-appr="y"]'), deny: btn('.apprdeny'),
           card: c ? c.box : null, dock: box(document.querySelector('#content .composerwrap')),
           inspector: insp && insp.getBoundingClientRect().width > 0 ? box(insp) : null,
           stuck: sc ? sc.scrollHeight - sc.scrollTop - sc.clientHeight < 2 : null,

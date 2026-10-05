@@ -42,6 +42,12 @@ import { BrowserWindow } from "electron";
  * lists, the replay on request) needs a real agent and a reload, and is not
  * covered.
  *
+ * ATO-209: every open card's Deny had id="denybtn" and a card that came
+ * focused the first one in the page, taking the focus from the box: Enter
+ * there denied a call with no reason. Now a card that comes focuses itself
+ * (never a button), and never takes the focus from a text field; only the
+ * card y/n/Esc answer has id="apprcard".
+ *
  * Nothing reaches the agent and the config is not touched. The requests go
  * through the real onApprovalEvent, the turn's end through the real
  * onChatEvent, the keys through the real keydown handler; the verdict and the
@@ -77,6 +83,8 @@ const N2 = `${PREFIX}chat-n2`;         // a second new chat, its first turn wait
 const TURN_N2 = `${PREFIX}turn-n2`;
 const ASK_N2 = `${PREFIX}approval-n2`;
 const ASKED_N2 = "smoke t64: Создай файл test67.txt с текстом привет";
+const G = `${PREFIX}chat-g`;           // ATO-209: a chat with two calls waiting, the person typing
+const TURN_G = `${PREFIX}turn-g`;
 const QUIET = "smoke t64: not answered while the check runs";
 const q = (v: unknown) => JSON.stringify(v);
 const show = (x: unknown) => JSON.stringify(x);
@@ -441,6 +449,62 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       taken.opened2.sessionId === N2 && taken.asked2 && !taken.other && taken.opened2.pending === ASK_N2
         && show(taken.opened2.cards) === show([ASK_N2]),
       show(taken.opened2),
+    );
+
+    // (g) ATO-209: two calls of the chat on screen wait (two open cards). The first card took the focus
+    // itself, not a button. Then the person is typing in the box when a third request comes: the focus
+    // stays in the box, Enter there answers no card, and no id is on the page twice.
+    const markG = agent.approved.length;
+    const focus = await js<{ first: string; typing: string; enter: string; open: string[]; dupes: string[]; current: number; denyIds: number; deny: number }>(`(async () => { ${H}
+      for (const [t, s] of [...RUNNING]) if (mine(t) || mine(s)) RUNNING.delete(t);
+      OPENING = null; S.sessionId = ${q(G)}; S.agentSession = ${q(G)}; S.pending = null; S.turnId = null;
+      S.busy = true; S.room = 'chat';
+      const item = {id: nid(), k: 'assistant', text: '', turn: ${q(TURN_G)}};
+      S.log = [{id: nid(), k: 'user', text: 'smoke t64: two files and a read'}, item];
+      S.streamId = item.id;
+      RUNNING.set(${q(TURN_G)}, ${q(G)});
+      const a = document.activeElement;
+      if (a && a !== document.body && a.blur) a.blur();
+      const asks = (id, tool, cat, preview) => onApprovalEvent({approvalId: id, tool, category: cat, reason: 'smoke t64',
+        preview, affectedResources: ['/tmp/smoke-t64/' + preview], sessionId: ${q(G)}});
+      asks(${q(`${PREFIX}approval-g1`)}, 'os.shell.run', 'shell', 'g1.txt');
+      await tick(50);
+      const where = () => { const x = document.activeElement; return x ? (x.id || '') + '|' + x.tagName + '|' + (x.getAttribute('data-appr-id') || x.getAttribute('data-appr') || '') : ''; };
+      const first = where();
+      asks(${q(`${PREFIX}approval-g2`)}, 'os.fs.read', 'fs_read_outside', 'g2.txt');
+      const e = document.getElementById('entry');
+      if (e) e.focus();
+      asks(${q(`${PREFIX}approval-g3`)}, 'os.fs.write', 'fs_write_workspace', 'g3.txt');
+      await tick(50);
+      const typing = where();
+      const box = document.getElementById('entry');
+      if (box) box.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
+      await tick(150);
+      // The transcript's ids; the two the cards used to repeat are counted page-wide below.
+      const ids = [...document.querySelectorAll('#scroller [id]')].map((n) => n.id);
+      return {first, typing, enter: where(),
+        open: [...document.querySelectorAll('#scroller .appr[data-appr-id]')].map((n) => n.getAttribute('data-appr-id') || ''),
+        dupes: ids.filter((id, i) => ids.indexOf(id) !== i),
+        current: document.querySelectorAll('[id="apprcard"]').length,
+        denyIds: document.querySelectorAll('[id="denybtn"]').length,
+        deny: document.querySelectorAll('#scroller .appr .apprdeny').length};
+    })()`);
+    const sentG = agent.approved.slice(markG);
+    check(
+      "T64 (ATO-209): a card that comes takes the focus itself, never a Deny button",
+      focus.first === `apprcard|DIV|${PREFIX}approval-g1`,
+      show(focus),
+    );
+    check(
+      "T64 (ATO-209): with two cards open and the person typing in the box, a third card does not take the focus, and Enter there answers no card",
+      focus.typing.startsWith("entry|TEXTAREA") && focus.enter.startsWith("entry|TEXTAREA") && sentG.length === 0
+        && show(focus.open) === show([`${PREFIX}approval-g1`, `${PREFIX}approval-g2`, `${PREFIX}approval-g3`]),
+      `focus=${show(focus)} sent=${show(sentG)}`,
+    );
+    check(
+      "T64 (ATO-209): no id is in the transcript twice; one card is #apprcard, and every open card has its own Deny",
+      focus.dupes.length === 0 && focus.current === 1 && focus.denyIds === 0 && focus.deny === 3,
+      show(focus),
     );
 
     // What the turn's end set off (the session list re-read) is answered before the stand-ins go.
