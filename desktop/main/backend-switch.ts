@@ -853,7 +853,7 @@ async function afterRunModeWrite(res: {
   changed: boolean;
   error?: string;
   verdict?: RunModeVerdict;
-}): Promise<SwitchResult> {
+}, opts: { daemonByCaller?: boolean } = {}): Promise<SwitchResult> {
   if (!res.ok) return { ok: false, error: res.error };
   const v = res.verdict;
   if (v?.refusal) return { ok: false, refusal: v.refusal, error: v.refusal };
@@ -871,11 +871,15 @@ async function afterRunModeWrite(res: {
   let up: BringUp = { daemon: "untouched" };
   const lm = read.config.localModels ?? {};
   const modelId = lm.managed?.modelId ?? "";
-  const plan = runModeDaemonPlan(now, lm, v);
+  /* ATO-127: a worker model pick brings up the model it picked itself, after
+     `models use` (selectFusionWorkerModel). Waiting here started the model
+     the file still named — the one the workers were leaving — for tens of
+     seconds and its memory, only to stop it for the new one. */
+  const plan = opts.daemonByCaller ? "none" : runModeDaemonPlan(now, lm, v);
   if (plan === "wait") up = (await onDisk(modelId)) ? await bringUpLocalDaemon(false) : { daemon: "skipped" };
   else if (plan === "background") bringUpBehindSwap(modelId);
   // The seats no longer need it (a seat moved to the cloud): a start on its way is moot, and what it spawned goes.
-  else if (supersedeBringUp()) await modelsStop();
+  else if (!opts.daemonByCaller && supersedeBringUp()) await modelsStop();
   return {
     ok: true,
     providerId: leg,
@@ -952,7 +956,8 @@ export async function selectFusionWorkerModel(modelId: string): Promise<SwitchRe
     if (rm.effective === "fusion" && rm.workerProviderId === LOCAL_ID) return { write: false, before: rm };
     return planEnterFusion(cfg, { workerProvider: LOCAL_ID }, isKeyed);
   });
-  const settled = await afterRunModeWrite(pin);
+  // ATO-127: the daemon is this pick's to bring up, below, on the model picked.
+  const settled = await afterRunModeWrite(pin, { daemonByCaller: true });
   if (!settled.ok) return settled;
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };
