@@ -629,8 +629,10 @@ async function diagnostics(js: Js, check: Check): Promise<void> {
 
   /* Д58: the log's poll never turns into a `models status` spawn every 2 s:
      a failed status is asked once, an external route (no data dir) never,
-     Refresh asks once per press; an unchanged read repaints only for Refresh. */
-  const poll = await safe<{ failed: { calls: number; error: string | null }; external: { calls: number; external: boolean }; pressed: number; quiet: number; forced: number }>(js, `(async () => {
+     Refresh asks once per press; an unchanged read repaints only for Refresh.
+     ATO-195: a failed status no longer leaves the log unread — main reads the
+     managed folder itself. */
+  const poll = await safe<{ failed: { calls: number; read: boolean }; external: { calls: number; external: boolean }; pressed: number; quiet: number; forced: number }>(js, `(async () => {
     const saved = {status: LLMP.status, statusErr: LLMP.statusErr, open: DIAG.logOpen, log: DIAG.log, asked: DIAG.statusAsked, ask: llmRefreshStatus, repaint: diagRepaint};
     let calls = 0, repaints = 0;
     try {
@@ -640,7 +642,7 @@ async function diagnostics(js: Js, check: Check): Promise<void> {
       Object.assign(DIAG, {logOpen: true, log: null, statusAsked: false});
       Object.assign(LLMP, {status: null, statusErr: 'smoke t49: status refused'});
       for (let i = 0; i < 4; i++) await diagLogRefresh();
-      const failed = {calls, error: DIAG.log && DIAG.log.error};
+      const failed = {calls, read: !!DIAG.log && !DIAG.log.error && !DIAG.log.external};
       calls = 0; DIAG.statusAsked = false; Object.assign(LLMP, {status: {mode: 'external', dataDir: null}, statusErr: null});
       for (let i = 0; i < 4; i++) await diagLogRefresh();
       const external = {calls, external: !!(DIAG.log && DIAG.log.external)};
@@ -658,8 +660,8 @@ async function diagnostics(js: Js, check: Check): Promise<void> {
     }
   })()`);
   check(
-    "T49 (Д58): the log's poll asks models status at most once — a failed answer is not retried every 2 s, an external route is never asked",
-    !poll.err && poll.failed.calls === 1 && /smoke t49: status refused/.test(poll.failed.error ?? "") && poll.external.calls === 0 && poll.external.external,
+    "T49 (Д58): the log's poll asks models status at most once — a failed answer is not retried every 2 s (the log is read anyway), an external route is never asked",
+    !poll.err && poll.failed.calls === 1 && poll.failed.read && poll.external.calls === 0 && poll.external.external,
     poll.err ?? show(poll),
   );
   check(

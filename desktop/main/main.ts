@@ -2243,8 +2243,10 @@ function wireIpc(client: AgentClient): void {
     if (res.ok) A.maybeModelConfigured();   // the custom-endpoint route: model_configured, once
     return res;
   });
+  // ATO-195: null asks for the managed folder main resolves itself, as the agent does.
   ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
-    typeof dataDir === "string" && isAbsoluteOn(process.platform, dataDir) ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
+    dataDir === null ? llamaLogTail(null)
+      : typeof dataDir === "string" && isAbsoluteOn(process.platform, dataDir) ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
   );
   ipcMain.handle("app:llamaProbe", (_event, url: unknown) =>
     typeof url === "string" ? llamaProbe(url) : { ok: false, error: "url required" },

@@ -5007,8 +5007,14 @@ function diagLogHTML() {
    per opening of the log (and once per Refresh press), and only when nothing
    has read the status yet: an external route never names a data dir, and a
    failed call is not repeated on every 2 s tick — each one spawns the CLI and
-   a /health call. `force` (Refresh) repaints even when the file is the same,
-   so the read time moves. */
+   a /health call.
+   ATO-195: the log no longer waits for that answer. While none has come (a
+   status call already on its way, which llmRefreshStatus does not wait for,
+   or one that failed or timed out while the model loaded), main reads the
+   managed folder it resolves from the config as the agent does, so a model
+   that is up and answering never shows "No log yet" over a log on disk.
+   `force` (Refresh) repaints even when the file is the same, so the read
+   time moves. */
 async function diagLogRefresh(force) {
   if (!BR || DIAG.logBusy) return;
   const none = (extra) => Object.assign({path:null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:null}, extra);
@@ -5017,20 +5023,19 @@ async function diagLogRefresh(force) {
   if (!BR.llamaLogTail) { DIAG.log = none({error:'This build cannot read the model server’s log.'}); if (force || before !== key(DIAG.log)) diagRepaint(); return; }
   DIAG.logBusy = true;
   try {
-    let dataDir = LLMP.status && LLMP.status.dataDir;
-    if (!dataDir && !DIAG.statusAsked && (!LLMP.status || force)) {
+    if (!(LLMP.status && LLMP.status.dataDir) && !DIAG.statusAsked && (!LLMP.status || force)) {
       DIAG.statusAsked = true;
       await llmRefreshStatus(true);
-      dataDir = LLMP.status && LLMP.status.dataDir;
     }
-    if (dataDir) {
-      const res = await BR.llamaLogTail(dataDir);
-      DIAG.log = res && res.ok ? res : none({path:(res && res.path) || null, error:'Could not read the log: ' + ((res && res.error) || 'unknown error')});
-    } else if (LLMP.status) {
+    const st = LLMP.status;
+    if (st && st.mode === 'external' && !st.dataDir) {
       // An external llama.cpp route has no data dir: the server, and its log, are the user's own.
-      DIAG.log = none({external: LLMP.status.mode === 'external'});
-    } else if (LLMP.statusErr) DIAG.log = none({error:'Could not find the model server’s folder: ' + LLMP.statusErr});
-    // Otherwise a `models status` already on its way has not answered: the next tick looks again, with no call of its own.
+      DIAG.log = none({external: true});
+    } else {
+      // null: no answer names the folder yet, so main reads the managed one (ATO-195).
+      const res = await BR.llamaLogTail((st && st.dataDir) || null);
+      DIAG.log = res && res.ok ? res : none({path:(res && res.path) || null, error:'Could not read the log: ' + ((res && res.error) || 'unknown error')});
+    }
     if (force || before !== key(DIAG.log)) diagRepaint();
   } finally { DIAG.logBusy = false; }
 }

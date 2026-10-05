@@ -3226,9 +3226,12 @@ export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
  * the file behind the TUI's "LLM logs" tab: the last 64 KB, the size and
  * whether the read was truncated. `path: null` when the file does not
  * exist yet — the panel prints its "waiting for the first daemon start" line.
+ * ATO-195: with no `dataDir` (no `models status` has answered yet), the
+ * folder the agent resolves from the same config: `localModels.managed.
+ * dataDirOverride`, else `<state dir>/models`.
  */
-export function llamaLogTail(dataDir: string): { ok: boolean; path: string | null; size: number | null; truncated: boolean; text: string; lastReadAt: number; error?: string } {
-  const file = join(dataDir, "llama-server.log");
+export function llamaLogTail(dataDir?: string | null): { ok: boolean; path: string | null; size: number | null; truncated: boolean; text: string; lastReadAt: number; error?: string } {
+  const file = join(dataDir || managedFactsFromFile().dataDir, "llama-server.log");
   try {
     const size = statSync(file).size;
     const from = Math.max(0, size - 64 * 1024);
