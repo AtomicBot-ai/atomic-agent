@@ -123,6 +123,12 @@ async function finishOnboarding({ timeoutMs = 90000 } = {}) {
   while (Date.now() < deadline) {
     if (!(await app.js(`!!document.querySelector('#onboarding')`))) return;
     let moved = false;
+    /* ATO-161: the model step that follows a verified key. Take the default
+       with its own button; the click is taken the moment the step goes. */
+    if (await app.js(`!!document.querySelector('#onboarding [data-act="wiz:useDefault"]')`)) {
+      await app.clickSel('#onboarding [data-act="wiz:useDefault"]', { settleMs: 2000 });
+      continue;
+    }
     // The import step's skip is an action-bar button, not a row (B.5).
     if (await app.js(`!!document.querySelector('#onboarding [data-obact="import:skip"]')`)) {
       await app.clickSel('#onboarding [data-obact="import:skip"]', { settleMs: 2000 });
@@ -311,7 +317,11 @@ try {
   check('the API key screen is up', /API key/.test(w.head || '') && w.key, JSON.stringify(w.head));
   await app.type('#wiz-key', 'sk-or-v1-' + '0'.repeat(64), { settleMs: 400 });
   await app.clickText('Next', { settleMs: 2000 });
-  await app.waitFor(`!/asking the provider/.test((document.querySelector('#onboarding')||{}).textContent || '')`,
+  /* "asking the provider" is no longer drawn; while the check runs the
+     button reads "Verifying…". Wait for a verdict: a reason under the box,
+     or (wrongly) the model step. */
+  await app.waitFor(`!/Verifying/.test((document.querySelector('#onboarding')||{}).textContent || '')`
+    + ` && (!!document.querySelector('#onboarding .ob-err') || !!document.querySelector('#onboarding [data-wizmodel]'))`,
     { timeoutMs: 90000, label: 'the bogus key is checked' });
   w = await wizard();
   /* The wizard used to say it was "checking the key against the
@@ -331,7 +341,10 @@ try {
   await app.clickText('Next', { settleMs: 2000 });
   const verifying = await app.js(`/Verifying|asking the provider/.test((document.querySelector('#onboarding')||{}).textContent || '')`);
   check('the click actually starts the verification (it used to do nothing at all)', !!verifying);
-  await app.waitFor(`!/asking the provider/.test((document.querySelector('#onboarding')||{}).textContent || '')`,
+  /* ATO-161: a verified key lands on the model step (the `[data-wizmodel]`
+     rows); a refused one stays on the key screen with a reason. */
+  await app.waitFor(`!!document.querySelector('#onboarding [data-wizmodel]')`
+    + ` || (!/Verifying/.test((document.querySelector('#onboarding')||{}).textContent || '') && !!document.querySelector('#onboarding .ob-err'))`,
     { timeoutMs: 120000, label: 'key verification' });
   w = await wizard();
   check('the real key is accepted and the key screen is left behind',
@@ -362,6 +375,13 @@ try {
     await app.js(`!!document.querySelector('#wiz-key') && /AI\\/ML API/.test(document.body.textContent)`));
   await app.type('#wiz-key', ENV.AIMLAPI_API_KEY, { settleMs: 400 });
   await app.clickText('Next', { settleMs: 2000 });
+  /* ATO-161: the model step comes up in the popover before anything is
+     activated; take the default there. */
+  await app.waitFor(`!!document.querySelector('.popover [data-act="wiz:useDefault"]') || !!document.querySelector('.popover .ob-err')`,
+    { timeoutMs: 90000, label: 'the AI/ML API key answered' });
+  if (await app.js(`!!document.querySelector('.popover [data-act="wiz:useDefault"]')`)) {
+    await app.clickSel('.popover [data-act="wiz:useDefault"]', { settleMs: 1500 });
+  }
   await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => n.dataset.id === 'aimlapi')`,
     { timeoutMs: 90000, label: 'aimlapi becomes the active provider' });
   c = await chips();

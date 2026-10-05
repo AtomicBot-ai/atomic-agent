@@ -29,7 +29,7 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../drive.mjs';
 import {
-  scenario, main, check, pick, providerKey, SCENARIO_NAME,
+  scenario, main, check, pick, obStep, providerKey, SCENARIO_NAME,
 } from '../harness.mjs';
 
 export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app }) => {
@@ -41,8 +41,10 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app }
      so nothing is pressed to get past it — an Enter landing just after it
      left would choose the highlighted route on the screen behind it. */
   await app.waitFor(`/Cloud models/.test(${wizText})`, 'the three backend choices', { timeout: 30000 });
-  // The rows are two-stage — one click selects, the next activates.
-  await pick(app, 'Cloud models', `/LLM provider/.test(${wizText})`, 'the provider list');
+  /* Calm (S6): a click selects the row and the step's primary button sends
+     it (pick does both). The provider list is read by its step id: the
+     "LLM provider" subtitle this used to wait for is no longer drawn. */
+  await pick(app, 'Cloud models', `${obStep('cloud')} && !document.querySelector('#wiz-key')`, 'the provider list');
   await pick(app, 'AI/ML API', `!!document.querySelector('#wiz-key')`, 'the key field');
   await app.clickSel('#wiz-key');
   await app.typeSecret(providerKey(), 'the AI/ML API key');

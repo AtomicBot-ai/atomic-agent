@@ -108,10 +108,20 @@ export function activeModel(stateDir) {
 }
 
 /* ------------------------------------------------------------ first run -- */
+/** Calm (S6): the steps are read by id; their old subtitles are no longer
+    drawn. Read-only: `window.__ob()` reports the flow's state, it changes
+    nothing. */
+export const obStep = (id) => `(window.__ob && window.__ob().open && window.__ob().step === '${id}')`;
+/** The model step that follows a verified key (ATO-161): its rows. */
+const MODEL_STEP = `!!document.querySelector('#onboarding [data-wizmodel]')`;
+/** The reason under the key box, when there is one. */
+const KEY_ERR = `((document.querySelector('#onboarding .ob-err')||{textContent:''}).textContent||'').trim()`;
+
 /**
  * Get through the first-run wizard by clicking, exactly as a person does:
  * dismiss the intro, choose Cloud models, choose the provider, type the key,
- * click Next, decline the local model, decline importing other agents' data.
+ * click Next, take the default on the model step ("Use default"), decline
+ * the local model, decline importing other agents' data.
  *
  * r6 INTEGRATION: the row lists used to be two-stage — the first click only
  * moved the cursor and the second activated — which is the operator's own
@@ -178,8 +188,6 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
     await sleep(400);
   }
   await app.waitFor(`/Cloud models/.test(${wizText})`, 'the three backend choices');
-  // Calm (S6): the steps are read by id; their old subtitles are no longer drawn.
-  const obStep = (id) => `(window.__ob && window.__ob().open && window.__ob().step === '${id}')`;
   await pick(app, 'Cloud models', `${obStep('cloud')} && !document.querySelector('#wiz-key')`, 'the provider list');
   await pick(app, P.row, `!!document.querySelector('#wiz-key')`, `the ${P.label} key field`);
   await app.clickSel('#wiz-key');
@@ -196,8 +204,51 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
       `typed ${secret.length}, the box holds ${got} — a repaint took the caret`);
   }
   await app.clickText('Next');
-  await app.waitFor(`${obStep('propose_second')} || /Verifying/.test(${wizText})`, 'the key going off to be verified', { timeout: 30000 });
-  await app.waitFor(obStep('propose_second'), 'the key accepted — “Cloud model ready”', { timeout: 90000 });
+  await app.waitFor(`${MODEL_STEP} || /Verifying/.test(${wizText}) || ${KEY_ERR}.length > 0`,
+    'the key going off to be verified', { timeout: 30000 });
+  /* ATO-161: a verified key lands on the MODEL STEP — "Model · <provider>",
+     the provider's catalogue with our default preselected and marked Default,
+     and Back / Use default / Use this model. It is still the `cloud` step of
+     the flow; "Cloud model ready" only comes AFTER a model is chosen, on the
+     second-backend offer. Waiting for that straight after Next is what timed
+     out at 90 s once the step was added. A key that is refused (or could not
+     be checked) stays on the key screen with its reason under the box: say
+     that reason instead of timing out. */
+  await app.waitFor(`${MODEL_STEP} || (!!document.querySelector('#wiz-key') && !/Verifying/.test(${wizText}) && ${KEY_ERR}.length > 0)`,
+    'the key accepted — the model step', { timeout: 90000 });
+  if (!(await app.eval(MODEL_STEP))) {
+    throw new Failure(`the ${P.label} key was not accepted`, `the key screen says: ${JSON.stringify(await app.eval(KEY_ERR))}`);
+  }
+  const offered = await app.eval(`(() => {
+    const on = document.querySelector('#onboarding [data-wizmodel].on');
+    return { rows: document.querySelectorAll('#onboarding [data-wizmodel]').length,
+             picked: on ? on.getAttribute('data-wizmodel') : null,
+             help: ((document.querySelector('#onboarding .ob-help')||{}).textContent||'').trim() };
+  })()`);
+  app.log(`the model step offers ${offered.rows} models; preselected ${offered.picked} — ${JSON.stringify(offered.help)}`);
+  /* Take the default with the button that says so. One click is one action:
+     the step goes the instant the click is taken (the save re-enters with the
+     choice made), so a second click is only spent if the first landed during
+     a repaint and the step is still sitting there. */
+  for (let i = 0; i < 3 && (await app.eval(MODEL_STEP)); i++) {
+    await app.clickText('Use default', { scope: '#onboarding', timeout: 5000 });
+    await sleep(1500);
+  }
+  /* The choice is saved, the route switched and the agent restarted, then the
+     flow settles on whichever offer is owed — the second backend (which
+     opens on "Cloud model ready"), the import, or none — or the wizard
+     closes. An activation that fails drops back to the key screen with a
+     reason; report it. */
+  await app.waitFor(`${obStep('propose_second')} || ${obStep('import_pick')} || !document.querySelector('#onboarding')`
+    + ` || (!!document.querySelector('#wiz-key') && !/Verifying/.test(${wizText}) && ${KEY_ERR}.length > 0)`,
+    'the default model taken and the cloud set up', { timeout: 120000 });
+  if (await app.eval(`!!document.querySelector('#wiz-key')`)) {
+    throw new Failure('taking the default model did not set the cloud up',
+      `the key screen says: ${JSON.stringify(await app.eval(KEY_ERR))}`);
+  }
+  if (await app.eval(obStep('propose_second'))) {
+    check(await app.eval(`/Cloud model ready/.test(${wizText})`), 'the wizard says “Cloud model ready”');
+  }
 
   await pick(app, 'Skip — take me to the agent',
     `${obStep('import_pick')} || !document.querySelector('#onboarding')`, 'the import offer');
@@ -295,8 +346,12 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
       pending: !!document.querySelector('#apprcard'),
     }))()`);
     if (st.pending && approve === 'auto') {
-      const kind = await app.eval(`(document.querySelector('#apprcard .badge')||{textContent:''}).textContent.trim()`);
-      await app.clickText('Allow once');
+      /* The open card has no badge (only an answered one does); its question
+         is the `.ttl` line. The click is scoped to the card the request is
+         ON — `#apprcard` is only ever the current request's (ATO-209) — and
+         "Allow once ⌘↩" still contains "Allow once". */
+      const kind = await app.eval(`(document.querySelector('#apprcard .ttl')||{textContent:''}).textContent.trim().slice(0, 80)`);
+      await app.clickText('Allow once', { scope: '#apprcard' });
       approvals++;
       idleSince = 0;
       app.log(`approved a "${kind}" request with a click (${approvals} so far)`);
