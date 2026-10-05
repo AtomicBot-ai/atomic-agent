@@ -7584,6 +7584,40 @@ function liveTurnStarted(turnId, live, sid) {
   if (RUNNING.size > 1) llamaSlotsRefresh();
 }
 
+/* B01 QA, ATO-198: this page loaded while turns main streams were running
+   (the window closed with ⌘W and opened again from the Dock, a reload, a
+   renderer brought back after a crash). The page that started them kept
+   their chats; this one starts empty, and a new chat's first turn is not
+   even on the chat list (the agent stores a turn when it ends). Each is
+   taken over as a turn of a chat the person has left (liveLeave): RUNNING
+   and its record, with the message it was sent with, so its frames are kept
+   for its chat from here and drawn into it when it is opened (liveRebuild),
+   its approval is kept for that chat (approvalReachable), and a new chat's
+   row stands in on the list (noteFirstPrompt) until the agent stores it.
+   What the turn drew before this page loaded is not known here; a line says
+   so, and the stored transcript has all of it once the turn ends. */
+const LIVE_TAKEN_LINE = 'This window was opened while this reply was being written. What it did before that shows once it finishes.';
+function adoptLiveTurns(list) {
+  let took = 0;
+  for (const t of Array.isArray(list) ? list : []) {
+    if (!t || typeof t.turnId !== 'string' || !t.turnId || RUNNING.has(t.turnId)) continue;
+    const sid = typeof t.sessionId === 'string' && t.sessionId ? t.sessionId : null;
+    const text = String(t.text || '');
+    const asked = {id:nid(), k:'user', text};
+    const item = {id:nid(), k:'assistant', text:'', turn:t.turnId};
+    const note = {id:nid(), k:'system', text:LIVE_TAKEN_LINE};
+    const startedAt = Number.isFinite(t.startedAt) ? t.startedAt : Date.now();
+    RUNNING.set(t.turnId, sid);
+    if (t.firstTurn) FIRST_TURNS.set(t.turnId, text);
+    if (sid) noteFirstPrompt(t.turnId, sid);
+    liveTurnStarted(t.turnId, {text, asked, item, log:[asked, note, item], startedAt, planMode:null, prior:null}, sid);
+    LIVE_TURNS.get(t.turnId).view = {wait:null, fz:[]};   // as liveLeave leaves a turn whose chat was left
+    took++;
+  }
+  if (took) render();
+  return took;
+}
+
 /** A frame of a turn this window started, before onChatEvent draws it. One
     that draws into the turn's rows while they are not on screen is kept, to
     be drawn when the chat is opened again, and nothing else is done with it
@@ -9076,6 +9110,14 @@ if (BR) {
   BR.onStatus(applyStatus);
   BR.onChat(onChatEvent);
   BR.onApproval(onApprovalEvent);
+  /* B01 QA, ATO-198: the turns main is streaming are this page's from here
+     (adoptLiveTurns), and only then does the agent replay the approvals still
+     pending: a request then finds its chat, and is kept for it instead of
+     being drawn over the empty start view. */
+  if (BR.liveTurns) {
+    BR.liveTurns().then(adoptLiveTurns, () => 0)
+      .then(() => (BR.replayApprovals ? BR.replayApprovals() : null)).catch(() => {});
+  }
   BR.onMenu((command) => { if (typeof command === 'string') { ANX.via('menu'); act(command); } });
   BR.onLog((entry) => {
     if (!entry || !entry.line) return;

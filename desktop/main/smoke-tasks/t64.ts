@@ -31,9 +31,16 @@ import { BrowserWindow } from "electron";
  * request then stays kept for its chat (its dot) instead of being drawn over
  * the empty start view; the chat shows it, with its transcript, when it is
  * opened. Only a request whose chat has no row once the list is in is drawn
- * where the person is. Simulated here by marking the list unread; the
- * replay itself (main.ts did-finish-load → AgentClient.reopenApprovalStream)
- * needs a real agent and a reload, and is not covered.
+ * where the person is. Simulated here by marking the list unread.
+ *
+ * ATO-198: such a page also takes over the turns main is streaming before it
+ * asks for that replay (agent:liveTurns, adoptLiveTurns, then
+ * agent:replayApprovals). A new chat's first turn waiting on an approval is
+ * not on the chat list yet: its row stands in, the request is kept for it,
+ * its frames are kept, and opening it shows the message, the card and what
+ * streamed since. Fed here through adoptLiveTurns; main's side (the turns it
+ * lists, the replay on request) needs a real agent and a reload, and is not
+ * covered.
  *
  * Nothing reaches the agent and the config is not touched. The requests go
  * through the real onApprovalEvent, the turn's end through the real
@@ -62,6 +69,10 @@ const C = `${PREFIX}chat-c`;           // a session with no row anywhere (a one-
 const ASK_B = `${PREFIX}approval-b`;
 const ASK_C = `${PREFIX}approval-c`;
 const ASKED_B = "smoke t64: Создай файл test2.txt с текстом привет";
+const N = `${PREFIX}chat-n`;           // a new chat whose first turn runs, started by the page before this one
+const TURN_N = `${PREFIX}turn-n`;
+const ASK_N = `${PREFIX}approval-n`;
+const ASKED_N = "smoke t64: Создай файл test5.txt с текстом привет";
 const QUIET = "smoke t64: not answered while the check runs";
 const q = (v: unknown) => JSON.stringify(v);
 const show = (x: unknown) => JSON.stringify(x);
@@ -76,6 +87,7 @@ class StandIn {
   private readonly session: Handler = (_e, id) => {
     const sid = typeof id === "string" ? id : "";
     if (sid === PROBE) return { ok: true, data: { id: sid, turns: [], smokeT64: true } };
+    if (sid === N) return { ok: true, data: { id: sid, status: "running", turns: [] } };
     if (sid === B) return { ok: true, data: { id: sid, status: "running", turns: [{ kind: "user", text: ASKED_B }] } };
     return { ok: false, error: QUIET };
   };
@@ -152,6 +164,9 @@ const FORGET = String.raw`
   for (const sid of [...PENDING_APPROVALS.keys()]) if (mine(sid)) PENDING_APPROVALS.delete(sid);
   for (const sid of [...APPROVAL_CARDS.keys()]) if (mine(sid)) APPROVAL_CARDS.delete(sid);
   for (const id of [...CLOSED_APPROVALS]) if (mine(id)) CLOSED_APPROVALS.delete(id);
+  for (const id of [...LIVE_TURNS.keys()]) if (mine(id)) LIVE_TURNS.delete(id);
+  for (const id of [...FIRST_TURNS.keys()]) if (mine(id)) FIRST_TURNS.delete(id);
+  for (const id of [...PENDING_CHATS.keys()]) if (mine(id)) PENDING_CHATS.delete(id);
   for (const sid of [...ATTN]) if (mine(sid)) ATTN.delete(sid);
   if (typeof QUEUES !== 'undefined') for (const key of [...QUEUES.keys()]) if (mine(key)) QUEUES.delete(key);
   for (let i = SESSIONS.length - 1; i >= 0; i--) if (mine(SESSIONS[i].id)) SESSIONS.splice(i, 1);
@@ -371,6 +386,38 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       loaded.opened.sessionId === B && loaded.asked && loaded.opened.pending === ASK_B
         && show(loaded.opened.cards) === show([ASK_B]) && loaded.opened.gated,
       `opened=${show(loaded.opened)} asked=${loaded.asked}`,
+    );
+
+    // (f) ATO-198: the page before this one started a new chat's first turn, which waits on an approval.
+    // This page takes the turn over, then the request is replayed: kept for that chat, whose row stands in
+    // on the list; a frame of the turn is kept; opening the chat shows the message, the card and the frame.
+    const taken = await js<{ took: number; early: View; row: boolean; opened: View; asked: boolean; reply: string; turn: boolean }>(`(async () => { ${H}
+      for (const [t, s] of [...RUNNING]) if (mine(t) || mine(s)) RUNNING.delete(t);
+      OPENING = null; S.sessionId = ''; S.agentSession = null; S.pending = null; S.turnId = null; S.streamId = null;
+      S.busy = false; S.log = [];
+      SESSIONS_READ = true;
+      const took = adoptLiveTurns([{turnId: ${q(TURN_N)}, sessionId: ${q(N)}, text: ${q(ASKED_N)}, startedAt: Date.now() - 60000, firstTurn: true}]);
+      onApprovalEvent({approvalId: ${q(ASK_N)}, tool: 'os.fs.write', category: 'fs_write_workspace', reason: 'smoke t64',
+        preview: 'test5.txt', affectedResources: ['/tmp/smoke-t64/test5.txt'], sessionId: ${q(N)}});
+      onChatEvent({turnId: ${q(TURN_N)}, kind: 'delta', text: 'smoke t64 reply'});
+      const early = view();
+      const row = !!chatById(${q(N)});
+      await openSession(${q(N)});
+      const item = S.log.find((m) => m.k === 'assistant' && m.turn === ${q(TURN_N)});
+      return {took, early, row, opened: view(), asked: S.log.some((m) => m.k === 'user' && m.text === ${q(ASKED_N)}),
+        reply: item ? String(item.text || '') : '', turn: S.turnId === ${q(TURN_N)}};
+    })()`);
+    check(
+      "T64 (ATO-198): a page that loads while a new chat's first turn runs takes the turn over; its replayed approval is kept for that chat, whose row stands in on the list, not drawn over the empty view",
+      taken.took === 1 && taken.row && taken.early.pending === null && taken.early.cards.length === 0 && taken.early.rows.length === 0
+        && taken.early.waiting.includes(`${N}>${ASK_N}`) && !taken.early.gated,
+      show(taken),
+    );
+    check(
+      "T64 (ATO-198): opening that chat shows its message, its card once, and what the turn streamed since, and the turn streams on there",
+      taken.opened.sessionId === N && taken.asked && taken.opened.pending === ASK_N && show(taken.opened.cards) === show([ASK_N])
+        && taken.reply.includes("smoke t64 reply") && taken.turn && taken.opened.gated,
+      show(taken),
     );
 
     // What the turn's end set off (the session list re-read) is answered before the stand-ins go.

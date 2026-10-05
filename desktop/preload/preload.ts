@@ -100,6 +100,10 @@ contextBridge.exposeInMainWorld("atomic", {
   onApproval: (cb: (payload: unknown) => void) => on("agent:approval", cb),
   approve: (approvalId: string, decision: "allow-once" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),
+  /** B01 QA, ATO-198: the turns main streams, for a page that loads while they run. */
+  liveTurns: () => ipcRenderer.invoke("agent:liveTurns"),
+  /** B01 review: the agent replays the approvals still pending (asked once the page has taken the turns over). */
+  replayApprovals: () => ipcRenderer.invoke("agent:replayApprovals"),
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),

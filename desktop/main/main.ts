@@ -669,14 +669,12 @@ function createWindow(): BrowserWindow {
   window.webContents.on("render-process-gone", (_e, details) =>
     process.stderr.write(`RENDERER GONE ${JSON.stringify(details)}\n`),
   );
-  /* B01 review: every load of this window (the first, a reload, a renderer
-     brought back after a crash, a window opened again from the dock) asks
-     the agent to replay the approvals still pending, so a turn waiting on
-     one gets its card in the new page. No-op before the agent is up: its
-     stream opens, and replays, once it is healthy. */
-  window.webContents.on("did-finish-load", () => {
-    agent?.reopenApprovalStream();
-  });
+  /* B01 review: a page that loads (the first, a reload, a renderer brought
+     back after a crash, a window opened again from the Dock) asks for the
+     replay of the approvals still pending itself (agent:replayApprovals),
+     once it has taken over the turns main is streaming (agent:liveTurns):
+     asked from here, the replay could land before the page knew the chat
+     the request belongs to. */
 
   window.once("ready-to-show", () => {
     // The probe shows its window without taking the keyboard: it runs beside
@@ -865,6 +863,32 @@ async function leaveManagedRoute<T extends { ok: boolean }>(res: T): Promise<T> 
 function wireIpc(client: AgentClient): void {
   // Analytics: chat_turn_ui, one per turn (analytics/chat-turns.ts).
   const chatTurns = new A.ChatTurnTracker((summary) => { A.turnEnded(); A.track("chat_turn_ui", { ...summary }); });
+  /* B01 QA, ATO-198: the turns main is streaming, for a page that loads
+     while they run (the window closed with ⌘W and opened again from the
+     Dock, a reload, a renderer brought back after a crash). The page that
+     started a turn kept its chat, its message and its state; a new page has
+     none of them, and the agent stores a turn only when it ends, so a new
+     chat's first turn is not even on the chat list yet. Its frames still
+     come here and went to a page that did not know the turn, and its
+     approval was drawn over whatever the new page showed. The page takes
+     these over (agent:liveTurns) before it asks for the approvals still
+     pending (agent:replayApprovals). */
+  const liveTurns = new Map<string, {
+    turnId: string; sessionId: string | null; text: string; startedAt: number; firstTurn: boolean;
+  }>();
+  client.on("chat", (ev: { turnId?: unknown; kind?: unknown; payload?: unknown }) => {
+    const rec = typeof ev?.turnId === "string" ? liveTurns.get(ev.turnId) : undefined;
+    if (!rec) return;
+    const p = ev.payload && typeof ev.payload === "object" ? (ev.payload as Record<string, unknown>) : null;
+    if (ev.kind === "session_id" && p) {
+      const sid = typeof p.sessionId === "string" ? p.sessionId : typeof p.session_id === "string" ? p.session_id : null;
+      if (sid) rec.sessionId = sid;
+    }
+    // A named error frame (with a payload) is not the end: `done` follows it (agent-client.ts chat()).
+    if (ev.kind === "done" || ev.kind === "aborted" || (ev.kind === "error" && !p)) liveTurns.delete(rec.turnId);
+  });
+  ipcMain.handle("agent:liveTurns", () => [...liveTurns.values()].map((t) => ({ ...t })));
+  ipcMain.handle("agent:replayApprovals", () => client.reopenApprovalStream());
   ipcMain.on("analytics:track", (_event, payload: unknown) => A.trackFromRenderer(payload));
   ipcMain.on("errors:report", (_event, payload: unknown) => reportRendererError(payload));
   /* End-of-turn notification (tui.notify): a native notification when a
@@ -1012,6 +1036,10 @@ function wireIpc(client: AgentClient): void {
     const turnId = randomUUID();
     turnNotifier.begin(turnId);
     chatTurns.begin(turnId, Date.now() - queuedAt);
+    const known = typeof sessionId === "string" && sessionId ? sessionId : null;
+    liveTurns.set(turnId, {
+      turnId, sessionId: known, text: clean[clean.length - 1]!.content, startedAt: Date.now(), firstTurn: !known,
+    });
     void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
     return { ok: true, turnId };
   });
