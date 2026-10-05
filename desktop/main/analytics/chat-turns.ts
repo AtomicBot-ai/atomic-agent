@@ -29,6 +29,8 @@ interface Turn {
   sessionId: string | null;
   steers: number;
   approvals: number;
+  /** ATO-203: the requests counted, so a redelivered one (the events stream replays every request still pending) counts once. */
+  approvalIds: Set<string>;
   toolCalls: number;
   tools: string[];
   heldError: boolean;
@@ -65,6 +67,7 @@ export class ChatTurnTracker {
       sessionId: null,
       steers: 0,
       approvals: 0,
+      approvalIds: new Set(),
       toolCalls: 0,
       tools: [],
       heldError: false,
@@ -75,10 +78,16 @@ export class ChatTurnTracker {
 
   /** An approval request: counted against the open turn on the same session. */
   approval(ev: unknown): void {
-    const sid = ev && typeof ev === "object" ? (ev as { sessionId?: unknown }).sessionId : undefined;
+    const o = ev && typeof ev === "object" ? (ev as { sessionId?: unknown; approvalId?: unknown }) : {};
+    const sid = o.sessionId;
     if (typeof sid !== "string") return;
     for (const t of this.turns.values()) {
       if (t.sessionId === sid) {
+        // ATO-203: one request once, however many times the stream delivers it.
+        if (typeof o.approvalId === "string" && o.approvalId) {
+          if (t.approvalIds.has(o.approvalId)) return;
+          t.approvalIds.add(o.approvalId);
+        }
         t.approvals += 1;
         return;
       }

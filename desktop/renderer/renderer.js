@@ -908,7 +908,12 @@ const SWX = { pending:0, since:0, label:'', want:null, err:null, timer:null, pai
   /* r5 review (minor): `route` is the funnel method the switch in flight is
      using, and `times` keeps the last measured wall time PER route, so the
      suite reports every switch rather than only the most recent one. */
-  route:null, times:{} };
+  route:null, times:{},
+  /* ATO-194: `seq` names the switch in flight, so a late answer or timer of
+     one already given up on touches nothing of the next; `slow` is a local
+     model start past SWX_MAX_MS, still waited for (swxWatchdog); `tick`
+     counts its seconds on the composer's line. */
+  seq:0, slow:false, tick:null };
 /* Below this, a switch is over before the eye can see a spinner start. */
 const SWX_SPINNER_DELAY_MS = 150;
 /* The agent client's own health deadline is 30 s and always resolves
@@ -916,6 +921,14 @@ const SWX_SPINNER_DELAY_MS = 150;
    ~11 s at worst — so this watchdog is a belt for an IPC that vanishes
    entirely, not for a slow switch. It never claims the switch failed. */
 const SWX_MAX_MS = 45000;
+/* ATO-194: a switch that starts a local model waits on `models start`, whose
+   own budget is 90 s (agent-cli.ts modelsStart) and which a first load of a
+   big model can use up. Past SWX_MAX_MS such a switch is still on its way, not
+   lost: it keeps its lock and its paint until this, and says it is loading. */
+const SWX_START_MAX_MS = 180000;
+/* How long a local model start runs before the composer says so (a server
+   already up answers in a second or two, and should not flash a line). */
+const SWX_START_LINE_MS = 2000;
 /* How long the lock waits for the coding mode to come back after a restart
    (see modeSettled). Past this the chip's own blank-until-confirmed state
    is the honest answer, so the composer is released. */
@@ -3155,6 +3168,16 @@ function composer() {
        agent is sitting out, or a failure. The one Stop stays the composer's
        send button, and drivers that waited on `.statusstrip` also accept
        `.sendbtn.stop`, which is drawn for the whole turn. */
+    /* ATO-194: a local model start says what it is waiting on, and for how
+       long, where the send button is locked. The only progress there is to
+       know is the time: `models start` prints nothing until the model is up. */
+    : swxStartingShown()
+    ? '<div class="statusstrip gated swxstart">'
+      + '<span class="ss-ic"><span class="ss-dot"></span></span>'
+      + '<span class="ss-text">' + esc(swxStartLine()) + '</span>'
+      + '<span class="ss-grow"></span>'
+      + '<span class="readout">' + esc(swxStartElapsed()) + '</span>'
+      + '</div>'
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
     // the operator needs this next to the button that was disabled. The
     // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
@@ -6117,7 +6140,14 @@ function dropStaleGateNotices() {
   for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i] && S.log[i].gateNotice) { S.log.splice(i, 1); gone = true; }
   return gone;
 }
-/** refreshLiveConfig: the config moved; the refusals go if a turn would now get past the gate. */
+/** refreshLiveConfig: the config moved; the refusals go if a turn would now get past the gate.
+    ATO-204 (B02 c): and every other read of the config or of the catalogue —
+    the start's (loadResources), Settings › LLM, MCP and Telegram, the model
+    snapshot (bswSnapshot). A provider added or a model picked in Settings was
+    read there, not by refreshLiveConfig, and "no local model is selected"
+    stayed. The Settings panes leave the transcript to the next render (the
+    one that closes Settings), so a pane being typed in is not drawn again
+    under the caret; the snapshot, which runs over the chat, renders. */
 function dropGateNoticesIfCleared() {
   if (!S.log.some((m) => m && m.gateNotice)) return false;
   const kind = localTurnGate().kind;
@@ -7510,6 +7540,7 @@ async function loadResources() {
   }
   if (cfg && cfg.ok && cfg.data && cfg.data.config) {
     LIVE_CONFIG = cfg.data.config;
+    dropGateNoticesIfCleared();   // ATO-204: B02's refusal goes once the route can run
     const provider = (LIVE_CONFIG.llm && (LIVE_CONFIG.llm.providers || [])
       .find((p) => p.id === LIVE_CONFIG.llm.activeTextProvider)) || null;
     if (provider) {
@@ -8085,6 +8116,7 @@ function liveTurnEnded(ev, sid) {
     rec.endRows = ev.kind === 'error' ? liveFailureRows(rec, ev, liveOnScreen(ev.turnId, rec) ? WAIT : liveWaitOf(rec)) : [];
     rec.ended = ev.kind; rec.sid = sid; rec.endedAt = Date.now();
     rec.log = liveSegment(rec);   // its own rows, not the whole transcript they were in
+    tpDropRecoveredNote(rec.item.id, rec.log);   // ATO-204: nor "the turn continues" over its end (tui-parity.js)
     const ended = [...LIVE_TURNS].filter(([, r]) => r.ended);
     ended.slice(0, Math.max(0, ended.length - 20)).forEach(([id]) => LIVE_TURNS.delete(id));
   } catch (e) {
@@ -8150,6 +8182,8 @@ function liveEndedView(own, turns, data, stored) {
     S.turnId = keep.turnId; S.streamId = keep.streamId; S.reasonId = keep.reasonId; S.busy = keep.busy;
     FZ.live = keep.fz; liveSetWait(keep.wait);
   }
+  // ATO-204: a recovery replayed from its kept frames, under a turn that then failed or was stopped.
+  tpDropRecoveredNote(rec.item.id);
   rec.log = liveSegment(rec);   // its own rows, for the next time
   // The reply row reads as onChatEvent's end leaves it.
   if (!String(rec.item.text || '').trim()) {
@@ -8376,6 +8410,7 @@ function onChatEvent(ev) {
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
+      const endedTools = turnToolNames(LIVE_TURNS.get(ev.turnId));          // ATO-203: and the calls it made
       liveTurnEnded(ev, sid);          // item 38: a failed or stopped turn is kept for its chat
       // Review fix: the turn is over, so nothing of it is waiting for an
       // approval any more. Without this the row kept saying "waiting for your
@@ -8384,7 +8419,7 @@ function onChatEvent(ev) {
       // B01: its cards too. Left with their buttons (and S.pending on one of
       // them), "terminated" was followed by live cards nothing waited for and
       // a composer still saying "Waiting for your approval".
-      if (sid) closeChatApprovals(sid, ev.kind === 'aborted' ? 'stopped' : 'expired', endedSince);
+      if (sid) closeChatApprovals(sid, ev.kind === 'aborted' ? 'stopped' : 'expired', endedSince, endedTools);
       // Review fix: the composer's busy flag belongs to the chat on screen.
       // When this turn's frames are no longer the ones S.turnId points at, the
       // branch below never runs and the composer would stay busy for good.
@@ -8678,6 +8713,7 @@ function onChatEvent(ev) {
     // bracketed category mirrors the TUI's `failed [${category}]: …`.
     if (ev.kind === 'error' && item && WAIT) S.log.push(tpWaitGaveUpEntry(WAIT));
     if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
+    else if (item) tpDropRecoveredNote(item.id);   // ATO-204: failed or stopped, it did not "continue" (tui-parity.js)
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       text: turnFailureLine(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
@@ -9050,7 +9086,10 @@ function approvalOver(sid, status, askedAt) {
   if (!req || !askedAt || !(req.seenAt < askedAt)) return false;
   PENDING_APPROVALS.delete(sid);
   APPROVAL_CARDS.delete(sid);
-  if (req && !req.state) { req.state = 'expired'; req.at = new Date().toTimeString().slice(0, 8); }
+  if (req && !req.state) {
+    req.state = 'expired'; req.at = new Date().toTimeString().slice(0, 8);
+    if (req.drawn) ANX.apprClosed(req, 'expired');   // ATO-203: closed with no answer
+  }
   if (req && S.pending === req) S.pending = null;
   return true;
 }
@@ -9068,6 +9107,25 @@ function chatApprovalCards(sid) {
   return [...out];
 }
 
+/* ATO-203: the tools turn `rec` (LIVE_TURNS) called: its own rows, and the
+   frames kept while its chat was not on screen (liveKeep). Null when the
+   window does not know them all: no record of it, a turn taken over from an
+   earlier page (adoptLiveTurns: what it did before is not here), or one that
+   fanned out (Fusion: a worker's calls are lines in its feed, not cards). */
+function turnToolNames(rec) {
+  if (!rec) return null;
+  try {
+    const rows = liveSegment(rec);
+    if (rows.some((m) => m && m.k === 'system' && m.text === LIVE_TAKEN_LINE)) return null;
+    const names = new Set(rows.filter((m) => m && m.k === 'tool' && m.name).map((m) => m.name));
+    for (const f of rec.missed || []) {
+      const name = f && f.kind === 'tool_progress' ? pick(f.payload, 'tool', 'name') : null;
+      if (name) names.add(name);
+    }
+    return names.has('fusion.delegate') ? null : names;
+  } catch (e) { return null; }
+}
+
 /* B01: a card whose request is over says so (`state`), answers nothing, and
    is not the request the composer, y/n or Esc act on. `forGood` (a newer
    request for the same call replaced it) closes its approvalId for good: a
@@ -9077,7 +9135,11 @@ function chatApprovalCards(sid) {
    the card again (onApprovalEvent). */
 function closeApprovalCard(req, state, at, forGood) {
   if (forGood && req.approvalId) CLOSED_APPROVALS.add(req.approvalId);
-  if (!req.state) { req.state = state; req.at = at; }
+  if (!req.state) {
+    req.state = state; req.at = at;
+    // ATO-203: a card the person saw went away unanswered; analytics only counted answers.
+    if (req.drawn) ANX.apprClosed(req, forGood ? 'replaced' : state);
+  }
   if (S.pending === req) S.pending = null;
 }
 
@@ -9127,8 +9189,15 @@ function sameApprovalCall(a, b) {
    approvalOver. A turn of the same chat sent after the one that ended (a
    message right after Stop) may have asked already; a card that came after
    that turn started stays. A running entry this window keeps no record of
-   (a stale one whose end never came) protects nothing. */
-function closeChatApprovals(sid, state, since) {
+   (a stale one whose end never came) protects nothing.
+   ATO-203: nor one another surface raised WHILE it ran (a scheduled task's
+   or Telegram's turn in the same chat): `tools` names the calls the ended
+   turn made (its own rows), and a card of a call it did not make is left
+   to approvalOver. A call the agent asks about has its card already: its
+   tool_progress frame comes as the call is parsed, before the gate. With no
+   record of the turn's rows (null), every card in the window closes, as
+   before. */
+function closeChatApprovals(sid, state, since, tools) {
   if (!sid) return;
   let from = Infinity;
   for (const [t, s] of RUNNING) {
@@ -9136,12 +9205,25 @@ function closeChatApprovals(sid, state, since) {
     if (rec && !rec.ended && rec.startedAt) from = Math.min(from, rec.startedAt);
   }
   const at = new Date().toTimeString().slice(0, 8);
-  const closed = chatApprovalCards(sid).filter((req) => !(req.seenAt >= from) && !(since && req.seenAt < since));
+  const closed = chatApprovalCards(sid).filter((req) => !(req.seenAt >= from) && !(since && req.seenAt < since)
+    && !(tools && !tools.has(req.tool)));
   closed.forEach((req) => closeApprovalCard(req, state, at));
   const kept = APPROVAL_CARDS.get(sid);
   if (!kept || closed.includes(kept)) {
-    PENDING_APPROVALS.delete(sid);
-    APPROVAL_CARDS.delete(sid);
+    /* ATO-203: a card left open (another surface's, raised before or while
+       this turn ran) is what the chat waits on now — its dot, the card kept
+       for it, the composer's y/n — as approvalAnswered hands over. Left
+       untracked, it kept live buttons nothing else could reach, and
+       approvalOver could never close it. */
+    const still = chatApprovalCards(sid).filter((c) => !closed.includes(c) && approvalOpen(c)).pop() || null;
+    if (still) {
+      PENDING_APPROVALS.set(sid, still.approvalId);
+      APPROVAL_CARDS.set(sid, still);
+      if (!S.pending && S.log.includes(still) && approvalOnScreen(sid)) S.pending = still;
+    } else {
+      PENDING_APPROVALS.delete(sid);
+      APPROVAL_CARDS.delete(sid);
+    }
   }
 }
 
@@ -9254,6 +9336,7 @@ function stoppedCard(req) {
   if (!req || req.state) return;
   req.state = 'stopped';
   req.at = new Date().toTimeString().slice(0, 8);
+  if (req.drawn) ANX.apprClosed(req, 'stopped');   // ATO-203: Stop is the commonest way a card goes unanswered
 }
 
 function pick(obj, ...keys) {
@@ -9289,6 +9372,29 @@ function agentReplyWords(why) {
   if (!w || /no reply|fetch failed|ECONN|ETIMEDOUT|timed? ?out|socket|network|abort/i.test(w)) return 'the agent did not answer.';
   if (/did not confirm/i.test(w)) return 'the agent did not confirm it.';
   return 'the agent did not accept it.';
+}
+/* ATO-203: the resolve route answers a request its gate no longer holds with
+   a 404, `approvalId not pending` (src/http/route-approval.ts), and main hands
+   the body over as data. Stop's race draws one: a request of the stopped turn
+   that came after "turn stopped". The answer went nowhere, and the card read
+   Allowed / Denied as if it had decided something. */
+function approvalNotWaiting(data) {
+  if (!data || typeof data !== 'object' || data.resolved === true) return false;
+  const e = data.error;
+  const msg = typeof e === 'string' ? e : (e && typeof e.message === 'string' ? e.message : '');
+  return /not pending/i.test(msg);
+}
+/** That card closes calmly, says nothing was decided, and the chat stops looking busy on its account. */
+function apprNoLongerWaiting(req) {
+  LOGS.push([new Date().toTimeString().slice(0, 8), 'info', 'approval answer: ' + req.approvalId + ' was no longer pending']);
+  req.state = 'expired'; req.at = new Date().toTimeString().slice(0, 8);
+  if (req.approvalId) CLOSED_APPROVALS.add(req.approvalId);
+  ANX.apprClosed(req, 'not_waiting');
+  if (S.pending === req) S.pending = null;
+  placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
+    text:'This request is no longer waiting: its turn had already ended, so nothing was allowed or denied.'});
+  // The busy look answerLive put up was for a turn that is not running.
+  if (req.sessionId && req.sessionId === S.agentSession && !sessionTurnId(req.sessionId)) S.busy = false;
 }
 function answerLive(req, key) {
   const approve = key === 'y' || key === 's' || key === 'a';
@@ -9331,7 +9437,8 @@ function answerLive(req, key) {
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
     req.answering = false;
     req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
-    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
+    if (res && res.ok !== false && approvalNotWaiting(res.data)) apprNoLongerWaiting(req);
+    else if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();
   });
   // Backlog 25: the chat on screen stays busy when the turn stopped here was
@@ -14548,21 +14655,77 @@ function swxFailLine(label, res) {
  * replacing three different existing refusals with one toast would be a
  * copy change nobody asked for.
  */
-/** What the 45 s watchdog says about a switch that is still out. */
-function swxSlowLine(label) { return label + ' has not finished — the agent may still be restarting'; }
+/** What the watchdog says about a switch that is still out. ATO-194: since
+ *  ATO-157 a switch restarts the agent in seconds, so "the agent may still be
+ *  restarting" named the wrong wait: what runs long is a local model loading. */
+function swxSlowLine(label, want) {
+  return label + ' has not finished — ' + (swxStartsModel(want)
+    ? 'the model may still be loading; Settings › Models says when it is ready'
+    : 'it may still land; the chips show what the config says now');
+}
+/** ATO-194: a switch that starts (or restarts) the managed local model — the Local route, or a local model picked. */
+function swxStartsModel(want) { return !!(want && want.backend === 'local'); }
+/** ATO-194: the composer's line while a local model start is on its way, once it has run long enough to be seen. */
+function swxStartingShown() {
+  return SWX.pending > 0 && swxStartsModel(SWX.want) && Date.now() - SWX.since >= SWX_START_LINE_MS;
+}
+/** How long the start has run, in whole seconds as a clock counts them. */
+function swxStartElapsed() {
+  const s = Math.max(0, Math.round((Date.now() - SWX.since) / 1000));
+  return s < 60 ? s + ' s' : dur(s * 1000);
+}
+function swxStartLine() {
+  const id = SWX.want && SWX.want.model;
+  return 'Starting ' + (id ? modelWord(id) : 'the local model') + ' — '
+    + (SWX.slow ? 'still loading it into memory; a first start can take a few minutes' : 'loading it into memory');
+}
+/** The line's seconds, once a second while a local start runs; drawn by render() the first time it is due. */
+function swxTickStart() {
+  if (SWX.tick) return;
+  SWX.tick = setInterval(() => {
+    if (!(SWX.pending > 0 && swxStartsModel(SWX.want))) { swxTickStop(); return; }
+    const el = document.querySelector('.statusstrip.swxstart .readout');
+    if (el) el.textContent = swxStartElapsed();
+    // Drawn by a render the first time it is due, and only where the composer is (not over a pane being typed in).
+    else if (swxStartingShown() && !S.pending && !WAIT && document.getElementById('composer')) render();
+  }, 1000);
+}
+function swxTickStop() { if (SWX.tick) { clearInterval(SWX.tick); SWX.tick = null; } }
 /** The 45 s watchdog. The IPC is still outstanding, so this never asserts a
  *  failure: it force-clears the visual lock and says what is actually known. */
-function swxWatchdog(label) {
+function swxWatchdog(label, seq) {
   SWX.timer = null;
+  // ATO-194: the timer of a switch that has ended or was given up on says nothing about the one in flight.
+  if (seq != null && seq !== SWX.seq) return;
+  /* ATO-194: a local model start past 45 s is a model loading, not a switch
+     gone missing. Letting go here rolled the chips back to the cloud and
+     printed "has not finished" while the model was still coming up, and the
+     model then answered under a cloud label. It keeps the lock (a message
+     sent now would run on the route being left) and its paint, says it is
+     loading, and is given up on only at SWX_START_MAX_MS. */
+  if (swxStartsModel(SWX.want) && !SWX.slow && SWX.pending > 0) {
+    SWX.slow = true;
+    SWX.timer = setTimeout(() => swxWatchdog(label, seq), SWX_START_MAX_MS - SWX_MAX_MS);
+    render();
+    return;
+  }
+  const want = SWX.want;
   if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
   SWX.pending = 0;
-  SWX.want = null;
+  SWX.slow = false;
+  swxTickStop();
+  /* ATO-194: a local route is written before its model starts, so the chips
+     are let go only once the config is read again: they then name the route
+     the file has, rather than snapping back to the one being left. */
+  if (swxStartsModel(want)) {
+    refreshLiveConfig().catch(() => {}).then(() => { if (SWX.pending === 0 && SWX.want === want) { SWX.want = null; render(); } });
+  } else SWX.want = null;
   /* Item 11: a ⇄ queued behind the switch goes with the lock. Its seats were
      painted on top of a switch that has not landed, so the chips would show
      a swap the config does not have — and running it later would start a
      switch beside an IPC that may still be out. */
   FZ.swapQueued = false;
-  SWX.err = swxSlowLine(label);
+  SWX.err = swxSlowLine(label, want);
   render();
 }
 /** A switch that did what it was for — a local model that did not start (or stop) is a failure, though the write landed. */
@@ -14647,14 +14810,17 @@ async function swxRun(label, want, run, refuse) {
      reply from a generation past this one lands. Captured before `run()`
      so a confirm that happened before the click cannot satisfy it. */
   const gen0 = AGENT_GEN;
+  const seq = ++SWX.seq;
   SWX.route = null;
   SWX.pending++;
   SWX.since = t0;
   SWX.label = label;
   SWX.want = want || null;
   SWX.err = null;
+  SWX.slow = false;
   if (SWX.timer) clearTimeout(SWX.timer);
-  SWX.timer = setTimeout(() => swxWatchdog(label), SWX_MAX_MS);
+  SWX.timer = setTimeout(() => swxWatchdog(label, seq), SWX_MAX_MS);
+  if (swxStartsModel(want)) swxTickStart();
   if (SWX.paint) clearTimeout(SWX.paint);
   SWX.paint = setTimeout(() => { SWX.paint = null; refreshSend(); }, SWX_SPINNER_DELAY_MS);
   render();
@@ -14663,27 +14829,34 @@ async function swxRun(label, want, run, refuse) {
     res = await run();
     // The IPC has resolved. That is one of three things, not the end.
     await swxSettle(res, gen0);
+    // ATO-194: a switch begun since this one was given up on owns the line.
+    if (seq !== SWX.seq) return res;
     if (res && res.ok === false) SWX.err = swxFailLine(label, res);
     /* The watchdog's line is a wait, not a verdict. A first local model
        load runs past 45 s, and the line stayed up for minutes after the
        switch had landed and Models said Ready. Landing clears it. */
-    else if (SWX.err === swxSlowLine(label)) SWX.err = null;
+    else if (SWX.err === swxSlowLine(label, want) || SWX.err === swxSlowLine(label)) SWX.err = null;
     return res;
   } catch (err) {
-    SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
+    if (seq === SWX.seq) SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
     throw err;
   } finally {
-    SWX.lastMs = Date.now() - t0;
+    /* ATO-194: only this switch's own lock. One given up on (the watchdog let
+       go, and another switch began since) ends here without taking the
+       newer one's timer, spinner, count or timing with it. */
+    const mine = seq === SWX.seq;
+    if (mine) SWX.lastMs = Date.now() - t0;
     /* r5 review (minor): "measure and report the real wall time of EACH
        switch". SWX.lastMs only ever named the last one, so the suite could
        print the backend switch and the coding-mode route and nothing else.
        The funnel below stamps SWX.route, so every route keeps its own
        measurement and one report check can print them all. */
-    if (SWX.route) SWX.times[SWX.route] = SWX.lastMs;
-    if (SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
-    if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
+    if (mine && SWX.route) SWX.times[SWX.route] = SWX.lastMs;
+    if (mine && SWX.timer) { clearTimeout(SWX.timer); SWX.timer = null; }
+    if (mine && SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
+    if (mine) { SWX.slow = false; swxTickStop(); }
     // The watchdog may already have zeroed this; never decrement past 0.
-    if (SWX.pending > 0) SWX.pending--;
+    if (mine && SWX.pending > 0) SWX.pending--;
     // Clearing `want` makes every chip read LIVE_CONFIG again — which, on a
     // failure, still names the old route, so the rollback is one frame and
     // costs nothing. That is only true because no call site mutates
@@ -14821,12 +14994,27 @@ async function selLoadLocal() {
   render();
 }
 
+/* ATO-202: a failed model list in words, from main's fields, for the lists
+   that otherwise show the agent's own text ("fetch failed" for a server with
+   a self-signed certificate). '' when the fields say nothing more. */
+function modelListFailLine(res, name) {
+  if (!res) return '';
+  const who = name || 'The provider';
+  if (res.certificate) return who + ' answered with a certificate this app does not trust (' + res.certificate + ').';
+  if (res.timedOut) return 'The model list from ' + who + ' did not come back within 90 s. Try again.';
+  if (res.status === 401) return who + ' did not accept the saved key (401).';
+  if (res.status === 403) return who + ' refused access (403): check the account\u2019s region, organisation and credit.';
+  if (res.status === 429) return who + ' is limiting requests right now (429). Try again in a moment.';
+  if (res.status >= 500) return who + ' had a problem answering (HTTP ' + res.status + '). Try again in a moment.';
+  if (res.unreachable) return 'Nothing answered at ' + who + '\u2019s address. Check that it is running and reachable.';
+  return '';
+}
 async function selLoadModels(providerId) {
   const entry = selProviders().find((p) => p.id === providerId);
   SEL.modelsFor = providerId; SEL.models = []; SEL.modelsBusy = true; SEL.modelsErr = null; render();
   const res = await BR.providerModels(providerId, (entry && entry.kind) || '');
   SEL.modelsBusy = false;
-  if (!res || !res.ok) { SEL.modelsErr = (res && res.error) || 'could not list models'; render(); return; }
+  if (!res || !res.ok) { SEL.modelsErr = modelListFailLine(res, providerWord(providerId)) || (res && res.error) || 'could not list models'; render(); return; }
   SEL.models = res.models || [];
   render();
 }
@@ -17526,7 +17714,9 @@ async function wizNextStep() {
     ? {ok: true, models: WIZ.models}
     : await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
-    ANX.providerFailed('catalog_empty', OB.open);
+    // ATO-202: a server that did not answer (or answered with a certificate not trusted) is not an empty catalogue.
+    ANX.providerFailed(listed && listed.certificate ? 'certificate' : listed && listed.timedOut ? 'timed_out'
+      : listed && listed.unreachable ? 'server_unreachable' : 'catalog_empty', OB.open);
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
@@ -17545,10 +17735,14 @@ async function wizNextStep() {
        is nobody answering at its address. The text test stays as the
        fallback for an answer without them. */
     const said = String((listed && listed.error) || '');
-    const httpSaid = /\bhttp (\d{3})\b/.exec(said);
-    const status = listed && typeof listed.status === 'number' ? listed.status : httpSaid ? Number(httpSaid[1]) : 0;
+    /* ATO-202: the status is main's field only. Read back out of the words, a
+       `http 401` in the stderr tail our own 90 s deadline quotes said "didn't
+       accept this key" about a list that had simply timed out; main reads the
+       provider's own line (modelListFailure), or nothing. */
+    const status = listed && typeof listed.status === 'number' ? listed.status : 0;
     const refused = status === 401 || status === 403;
     const unreachable = !!(listed && listed.unreachable);
+    const cert = listed && listed.certificate ? String(listed.certificate) : '';
     /* B04: a server on this machine (Ollama, LM Studio, Atomic Chat, a custom
        loopback URL) has no key, so nothing here may blame one: an empty
        field there was never a key to check. Ollama not running read "Could
@@ -17560,7 +17754,12 @@ async function wizNextStep() {
     const name = k.custom ? (local ? 'your local server' : host || wizService(k)) : wizService(k);
     const Name = name.charAt(0).toUpperCase() + name.slice(1);
     const where = entry.baseUrl || host;
-    WIZ.error = unreachable && local
+    WIZ.error = cert
+      ? (local || k.custom ? Name : wizService(k)) + ' at ' + where + ' answered with a certificate this app does not trust (' + cert + '). '
+        + 'Give the server a trusted certificate' + (local ? ', or use http:// for a server on this machine' : '') + ', then try again.'
+      : listed && listed.timedOut
+      ? 'The model list from ' + name + ' did not come back within 90 s. Try again; if it keeps happening, check the address.'
+      : unreachable && local
       ? (k.custom ? 'Nothing is answering at ' + where + '. Start your local server, then try again.'
         : name + ' isn\u2019t answering at ' + where + '. Start ' + name + ', then try again.')
       : unreachable && k.custom
@@ -17569,8 +17768,18 @@ async function wizNextStep() {
       ? 'Couldn\u2019t reach ' + name + '. Check your internet connection, then try again.'
       : refused && local && !WIZ.apiKey
       ? Name + ' at ' + where + ' turned the request down. Check its server settings, then try again.'
+      /* ATO-202: a 403 on the model list is the account or the place, as
+         often as the key (a region block, an organisation's limit, no credit):
+         a key that may well be good is not called wrong. 401 is the key. */
+      : status === 403
+      ? wizService(k) + ' refused access (403). The key may be fine: check the account\u2019s region, organisation and credit, then try again.'
       : refused
       ? wizService(k) + ' didn\u2019t accept this key. Check that you copied all of it.'
+      // ATO-202: the provider answered, with its own trouble: nothing to say about the key.
+      : status === 429
+      ? wizService(k) + ' is limiting requests right now (429). Wait a moment, then try again.'
+      : status >= 500
+      ? wizService(k) + ' had a problem answering (HTTP ' + status + '). Try again in a moment.'
       : local && (!said || /\bno models\b/.test(said))
       ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
       : local
@@ -17579,7 +17788,9 @@ async function wizNextStep() {
       ? 'Could not check this key with ' + wizService(k) + '.'
       : wizService(k) + ' returned no models for this key.';
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
-    WIZ.errorKind = unreachable ? {for: WIZ.error, kind: 'unreachable'} : null;
+    // ATO-202: and for every line that is not about the key, the key field stays unlit (wizErrUnreachable).
+    const notTheKey = unreachable || cert || (listed && listed.timedOut) || status === 403 || status === 429 || status >= 500;
+    WIZ.errorKind = notTheKey && !(refused && local && !WIZ.apiKey) ? {for: WIZ.error, kind: 'unreachable'} : null;
     render();
     return;
   }
@@ -18541,7 +18752,9 @@ function bswSnapshot() {
     if (!(res && res.ok)) return;
     const was = JSON.stringify([BSW.localLoaded, SEL.local]);
     SEL.local = res.models; BSW.localLoaded = true;
-    if (JSON.stringify([BSW.localLoaded, SEL.local]) !== was) bswRepaint();
+    // ATO-204: a model now on disk retires B02's "not downloaded" refusal too.
+    if (dropGateNoticesIfCleared()) render();
+    else if (JSON.stringify([BSW.localLoaded, SEL.local]) !== was) bswRepaint();
   }).catch(() => {});
 }
 /** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
@@ -20794,7 +21007,8 @@ async function mcpRefreshRun(quiet) {
   const [cfg, caps] = await Promise.all([BR.config(), BR.capabilities()]);
   MCP.loading = false;
   // The time of a read that worked, as the other panes keep it: the status line says "Updated" at it (Д26).
-  if (cfg && cfg.ok && cfg.data && cfg.data.config) { LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); }
+  // ATO-204: B02's refusal goes once the route can run (dropGateNoticesIfCleared).
+  if (cfg && cfg.ok && cfg.data && cfg.data.config) { LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); dropGateNoticesIfCleared(); }
   else MCP.lastError = 'mcp refresh failed: ' + ((cfg && cfg.error) || 'config unavailable');
   if (caps && caps.ok && caps.data) LIVE_CAPS = caps.data;
   if (quiet && (mcpTyping() || before === JSON.stringify(mcpRows()))) { settingsStatusRepaint(); return; }
@@ -21299,6 +21513,8 @@ async function llmRefreshRun() {
   ]);
   if (seq !== LLMP.seq) return;
   if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  if (list && list.ok && BSW.localLoaded) SEL.local = list.models;   // ATO-204: the gate reads the catalogue as this read has it
+  dropGateNoticesIfCleared();   // ATO-204: B02's refusal goes once the route can run
   // The snapshot the arming in llmTabEntered was waiting for.
   llmSyncModeToRoute();
   LLMP.localBusy = false; LLMP.busy = false; LLMP.lastRefreshedAt = Date.now();
@@ -21388,7 +21604,7 @@ async function llmEnsureModels() {
   const res = await BR.providerModels(p.id, p.kind || '');
   if (LLMP.modelsFor !== p.id) return;
   LLMP.modelsBusy = false;
-  if (!res || !res.ok) LLMP.modelsErr = (res && res.error) || 'could not list models';
+  if (!res || !res.ok) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
   else LLMP.models = res.models || [];
   llmClampCursors();
   llmRepaint();
@@ -23423,7 +23639,7 @@ async function tgRefreshOnce() {
     tgCfgBlock() && typeof tgCfgBlock().enabled === 'boolean' ? Promise.resolve(null) : BR.configGetKey('telegram'),
   ]);
   TG.keysBusy = false;
-  if (cfg && cfg.ok && cfg.config) LIVE_CONFIG = cfg.config;
+  if (cfg && cfg.ok && cfg.config) { LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared(); }   // ATO-204: B02's refusal
   TG.envKeys = Array.isArray(env) ? env : [];
   TG.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
   if (dotenv && dotenv.ok === false) TG.lastError = 'Could not read the saved token: ' + (dotenv.error || 'unknown error');

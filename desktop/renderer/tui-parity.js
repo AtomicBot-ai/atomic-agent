@@ -149,8 +149,28 @@ function tpOnProviderWaiting(wait) {
 function tpOnProviderRecovered(waitedMs) {
   // ATO-185: what the wait said ("No answer from …", "Start it in Settings › Models.") is not true any more.
   tpDropWaitNotes(S.streamId);
-  placeInLiveTurn({id:nid(), k:'system', note:true, waitFor:S.streamId,
+  // ATO-204: `recovered` marks it, so a turn that fails or is stopped after all takes it back (tpDropRecoveredNote).
+  placeInLiveTurn({id:nid(), k:'system', note:true, recovered:true, waitFor:S.streamId,
     text: esc('The model is answering again after ' + tpSeconds(waitedMs) + '. The turn continues.')});
+}
+
+/* ATO-204 (B02): "The model is answering again … The turn continues." is
+   true of a turn that went on to answer, and `done` takes it with the wait's
+   lines. A turn that failed (or was stopped) after the model came back did
+   not continue: the line stood right above "turn failed", saying the
+   opposite. It goes as that turn ends; the failure line says what happened.
+   `rows` is the transcript to take it from (S.log, or a turn's kept rows). */
+function tpIsRecoveredNote(m, streamId) {
+  return !!m && m.k === 'system' && m.recovered === true && m.waitFor === streamId;
+}
+function tpDropRecoveredNote(streamId, rows) {
+  const log = rows || S.log;
+  if (!streamId || !log) return false;
+  let gone = false;
+  for (let i = log.length - 1; i >= 0; i--) {
+    if (tpIsRecoveredNote(log[i], streamId)) { log.splice(i, 1); gone = true; }
+  }
+  return gone;
 }
 
 /* ATO-185: the wait's lines are about a turn that is held up. Once it moves
