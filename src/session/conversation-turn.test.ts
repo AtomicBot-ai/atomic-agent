@@ -737,6 +737,8 @@ describe("a stop marker closes the stopped request (ATO-233)", () => {
     // The stopped story is history; only the new message is current.
     expect(findCurrentMacroTurnStart(turns)).toBe(2);
     expect(macroTurnBoundaries(turns)).toEqual([0, 2]);
+  });
+});
 
 // ATO-60: a re-read of an unchanged range that is still in the prompt
 // renders as a pointer to the earlier read, never when that read is out
