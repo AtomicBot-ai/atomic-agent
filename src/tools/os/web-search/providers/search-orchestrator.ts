@@ -42,8 +42,8 @@ export interface WebSearchOrchestratorResult {
   fromCache: boolean;
   /**
    * Providers that did not get to answer, and why — a rate limit they
-   * had just hit, or one they are still parked for. Empty on the happy
-   * path.
+   * had just hit, one they are still parked for, or a failure a later
+   * provider covered for. Empty on the happy path.
    *
    * This is the answer to the half of #179 that backoff does not touch:
    * the fallback chain worked exactly as designed, so nothing failed,
@@ -66,7 +66,7 @@ export async function runWebSearchWithFallback(
 ): Promise<WebSearchOrchestratorResult> {
   const search = input.config.web.search;
   const env = input.env ?? process.env;
-  const chain = buildProviderChain(search.provider, search.fallback);
+  const chain = buildProviderChain(search, env);
 
   const now = input.now ?? Date.now;
   const cooldown = input.cooldown;
@@ -132,6 +132,11 @@ export async function runWebSearchWithFallback(
         degraded.push(
           `${name} rate limited (HTTP 429), parked for ${formatCooldown(parked)}`,
         );
+      } else {
+        // Recorded, not raised: if a later provider answers, this search
+        // succeeded and the tool reports ok. The failure stays readable
+        // in the notes instead of becoming the tool's error (ATO-120).
+        degraded.push(`${name} failed: ${describeError(err)}`);
       }
       // WebSearchBlockedError and transport throws both advance the chain.
     }
@@ -147,24 +152,46 @@ export async function runWebSearchWithFallback(
   );
 }
 
-/** Ordered, deduped chain: primary first, then each configured fallback. */
+/**
+ * Ordered, deduped chain: primary first, then each configured fallback.
+ *
+ * Exa without a key is not in it (`isProviderUsable` skips it), and a
+ * chain that loses Exa that way gains DuckDuckGo at the end when it does
+ * not already have it. Without that, `provider: "exa"` with
+ * `fallback: []` would go from "searches through keyless Exa" to "cannot
+ * search at all" the moment the keyless tier is skipped.
+ */
 function buildProviderChain(
-  primary: WebSearchProviderName,
-  fallback: readonly WebSearchProviderName[],
+  search: AtomicAgentConfig["web"]["search"],
+  env: NodeJS.ProcessEnv,
 ): WebSearchProviderName[] {
   const seen = new Set<WebSearchProviderName>();
   const chain: WebSearchProviderName[] = [];
-  for (const name of [primary, ...fallback]) {
+  for (const name of [search.provider, ...search.fallback]) {
     if (seen.has(name)) continue;
     seen.add(name);
     chain.push(name);
+  }
+  if (
+    seen.has("exa") &&
+    !hasEnvKey(env, search.exa.apiKeyEnv) &&
+    !seen.has("duckduckgo")
+  ) {
+    chain.push("duckduckgo");
   }
   return chain;
 }
 
 /**
- * `searxng` needs an `instanceUrl`; `brave` needs its API key in the env.
- * `duckduckgo` and `exa` are always attempted (Exa has a keyless MCP path).
+ * `searxng` needs an `instanceUrl`; `brave` and `exa` need their API key
+ * in the env. `duckduckgo` is always attempted.
+ *
+ * Exa used to be attempted keyless too, through its public MCP endpoint.
+ * That tier answered 429 under any real load and has since been seen
+ * answering 403 outright, so every search paid a doomed request before
+ * reaching the provider that would serve it, and a run where DuckDuckGo
+ * was also blocked surfaced Exa's error instead of the real one
+ * (ATO-120). Without a key Exa is now skipped like Brave is.
  */
 function isProviderUsable(
   name: WebSearchProviderName,
@@ -179,8 +206,19 @@ function isProviderUsable(
       const key = env[search.brave.apiKeyEnv];
       return typeof key === "string" && key.length > 0;
     }
-    case "duckduckgo":
     case "exa":
+      return hasEnvKey(env, search.exa.apiKeyEnv);
+    case "duckduckgo":
       return true;
   }
+}
+
+/** Same reading the Exa provider applies: a whitespace-only key is no key. */
+function hasEnvKey(env: NodeJS.ProcessEnv, name: string): boolean {
+  const key = env[name]?.trim();
+  return typeof key === "string" && key.length > 0;
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

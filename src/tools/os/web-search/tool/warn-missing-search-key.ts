@@ -2,32 +2,39 @@ import type { AtomicAgentConfig } from "../../../../config/index.js";
 import type { WebSearchProviderName } from "../web-search-provider.js";
 
 /**
- * Startup diagnostic for a keyless primary search provider.
+ * Startup diagnostic for a primary search provider that cannot run without
+ * its API key.
  *
- * `web.search.provider` defaults to `exa` with a `duckduckgo` fallback, and
- * Exa's keyless endpoint answers HTTP 429 under sustained agent load. The
- * fallback chain then works exactly as designed, so nothing hard-fails — the
- * run just quietly produces weaker groundings than the operator configured.
- * That silent degradation is the failure mode this warning exists to break:
- * it neither works well nor tells you why (#179).
+ * That is Brave: it has no keyless tier, so a keyless Brave primary is
+ * skipped outright and every search goes to the fallback chain. The
+ * operator configured one provider and is silently getting another, which
+ * is the failure mode this warning exists to break (#179).
+ *
+ * Exa used to be reported here as well, as "running on the keyless tier —
+ * expect HTTP 429". That line went to stderr on every start, which the
+ * desktop logs as an error, and it described a request the agent no longer
+ * makes: without a key Exa is skipped and the keyless chain (DuckDuckGo)
+ * serves the search (ATO-120). That is the shipped default, not a
+ * misconfiguration, so it says nothing.
  */
 
-/** Providers whose configured `apiKeyEnv` materially changes their quota. */
-const KEYED_PROVIDERS = new Set<WebSearchProviderName>(["exa", "brave"]);
+/** Providers that are skipped entirely when their `apiKeyEnv` is unset. */
+const KEY_REQUIRED_PROVIDERS = new Set<WebSearchProviderName>(["brave"]);
 
 export interface MissingSearchKeyWarning {
   provider: WebSearchProviderName;
   apiKeyEnv: string;
-  /** Providers that will actually serve traffic once the primary is limited. */
+  /** Providers that will actually serve traffic instead of the primary. */
   fallback: WebSearchProviderName[];
   message: string;
 }
 
 /**
- * Returns a warning when the configured primary provider reads an API key
+ * Returns a warning when the configured primary provider needs an API key
  * from the environment and that variable resolves to nothing. Returns `null`
- * for a keyed primary, a keyless-by-design primary (`duckduckgo`, `searxng`),
- * or when search is disabled outright.
+ * for a keyed primary, a primary that runs without a key (`duckduckgo`,
+ * `searxng`) or is skipped in favour of one (`exa`), or when search is
+ * disabled outright.
  */
 export function checkMissingSearchKey(input: {
   config: Pick<AtomicAgentConfig, "web">;
@@ -37,10 +44,9 @@ export function checkMissingSearchKey(input: {
   if (!search.enabled) return null;
 
   const provider = search.provider;
-  if (!KEYED_PROVIDERS.has(provider)) return null;
+  if (!KEY_REQUIRED_PROVIDERS.has(provider)) return null;
 
-  const apiKeyEnv =
-    provider === "exa" ? search.exa.apiKeyEnv : search.brave.apiKeyEnv;
+  const apiKeyEnv = search.brave.apiKeyEnv;
   const key = input.env[apiKeyEnv]?.trim();
   if (typeof key === "string" && key.length > 0) return null;
 
@@ -55,16 +61,6 @@ export function checkMissingSearchKey(input: {
   };
 }
 
-/**
- * Providers that actually have a keyless tier. Exa falls back to the
- * public MCP endpoint without a key; Brave has no such tier, so a
- * keyless Brave is not "degraded" — `isProviderUsable` skips it outright
- * and the chain never sends it a request. Telling that operator to
- * expect 429s points them at a rate limit that cannot happen instead of
- * at the real problem: their configured primary is disabled.
- */
-const KEYLESS_TIER_PROVIDERS = new Set<WebSearchProviderName>(["exa"]);
-
 function buildMessage(
   provider: WebSearchProviderName,
   apiKeyEnv: string,
@@ -72,20 +68,9 @@ function buildMessage(
 ): string {
   const destination =
     fallback.length > 0 ? fallback.join(", ") : "no other provider";
-  if (!KEYLESS_TIER_PROVIDERS.has(provider)) {
-    return (
-      `web.search: provider "${provider}" is configured but ${apiKeyEnv} is not set, ` +
-      `so it is skipped entirely — every search goes to ${destination}. ` +
-      `Set ${apiKeyEnv} to use it.`
-    );
-  }
-  const consequence =
-    fallback.length > 0
-      ? `expect HTTP 429 and silent degradation to ${fallback.join(", ")}`
-      : "expect HTTP 429 with no fallback configured";
   return (
-    `web.search: provider "${provider}" is configured but ${apiKeyEnv} is not set; ` +
-    `running on the keyless tier — ${consequence}. ` +
-    `Set ${apiKeyEnv} for search-heavy autonomous work.`
+    `web.search: provider "${provider}" is configured but ${apiKeyEnv} is not set, ` +
+    `so it is skipped entirely — every search goes to ${destination}. ` +
+    `Set ${apiKeyEnv} to use it.`
   );
 }

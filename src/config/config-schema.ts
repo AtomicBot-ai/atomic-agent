@@ -104,6 +104,12 @@ export interface WebFetchConfig {
 
 export interface WebSearchConfig {
   enabled: boolean;
+  /**
+   * Primary provider. The default `exa` is used only when its `apiKeyEnv`
+   * resolves to a key; without one it is skipped and the fallback chain
+   * serves every search, with `duckduckgo` appended when the chain lacks
+   * it. Existing configs need no rewrite for that (ATO-120).
+   */
   provider: WebSearchProviderName;
   maxResults: number;
   timeoutMs: number;
@@ -130,11 +136,13 @@ export interface WebSearchConfig {
   persistCache: boolean;
   /**
    * Ordered fallback providers tried (after the primary) when a search is
-   * blocked / empty / throws. Default `["duckduckgo"]` — the keyless Exa
-   * primary degrades to DuckDuckGo's keyless HTML endpoint. Both are
-   * config-free; `searxng` (needs `instanceUrl`) and `brave` (needs an API
-   * key) are skipped by the orchestrator until configured. Set to `[]` to
-   * disable fallback entirely. The primary is always deduped out of this list.
+   * blocked / empty / throws. Default `["duckduckgo"]` — DuckDuckGo's
+   * keyless HTML endpoint, which also takes over from an Exa primary that
+   * has no key. `searxng` (needs `instanceUrl`), `brave` and `exa` (need
+   * an API key) are skipped by the orchestrator until configured. Set to
+   * `[]` to disable fallback entirely (a keyless Exa primary still gets
+   * DuckDuckGo, see `provider`). The primary is always deduped out of
+   * this list.
    */
   fallback: WebSearchProviderName[];
   searxng: {

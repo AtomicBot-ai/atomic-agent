@@ -29,23 +29,18 @@ function makeConfig(
 }
 
 describe("checkMissingSearchKey", () => {
-  it("warns on the shipped default: exa primary with no EXA_API_KEY", () => {
-    const warning = checkMissingSearchKey({ config: makeConfig(), env: {} });
-
-    expect(warning).not.toBeNull();
-    expect(warning!.provider).toBe("exa");
-    expect(warning!.apiKeyEnv).toBe("EXA_API_KEY");
-    // The message must name the silent consequence, not just the missing key.
-    expect(warning!.message).toContain("EXA_API_KEY");
-    expect(warning!.message).toContain("duckduckgo");
-    expect(warning!.message).toContain("429");
+  it("stays silent on the shipped default: exa primary with no EXA_API_KEY", () => {
+    // Keyless Exa is skipped and DuckDuckGo serves the search (ATO-120).
+    // The old "expect HTTP 429" line went to stderr on every start and the
+    // desktop logged it as an error for a setup that is working as shipped.
+    expect(checkMissingSearchKey({ config: makeConfig(), env: {} })).toBeNull();
   });
 
   it("stays silent when the key is present", () => {
     expect(
       checkMissingSearchKey({
-        config: makeConfig(),
-        env: { EXA_API_KEY: "k" },
+        config: makeConfig({ provider: "brave" }),
+        env: { BRAVE_SEARCH_API_KEY: "k" },
       }),
     ).toBeNull();
   });
@@ -53,14 +48,14 @@ describe("checkMissingSearchKey", () => {
   it("treats a whitespace-only key as missing", () => {
     expect(
       checkMissingSearchKey({
-        config: makeConfig(),
-        env: { EXA_API_KEY: "   " },
+        config: makeConfig({ provider: "brave" }),
+        env: { BRAVE_SEARCH_API_KEY: "   " },
       }),
     ).not.toBeNull();
   });
 
-  it("stays silent for keyless-by-design providers", () => {
-    for (const provider of ["duckduckgo", "searxng"] as const) {
+  it("stays silent for providers that search without a key", () => {
+    for (const provider of ["duckduckgo", "searxng", "exa"] as const) {
       expect(
         checkMissingSearchKey({ config: makeConfig({ provider }), env: {} }),
       ).toBeNull();
@@ -73,13 +68,19 @@ describe("checkMissingSearchKey", () => {
       env: {},
     });
 
+    expect(warning!.provider).toBe("brave");
     expect(warning!.apiKeyEnv).toBe("BRAVE_SEARCH_API_KEY");
+    // The message must name the consequence, not just the missing key.
+    expect(warning!.message).toContain("BRAVE_SEARCH_API_KEY");
+    expect(warning!.message).toContain("skipped entirely");
+    expect(warning!.message).toContain("duckduckgo");
+    expect(warning!.message).not.toContain("429");
   });
 
   it("stays silent when search is disabled outright", () => {
     expect(
       checkMissingSearchKey({
-        config: makeConfig({ enabled: false }),
+        config: makeConfig({ provider: "brave", enabled: false }),
         env: {},
       }),
     ).toBeNull();
@@ -87,16 +88,19 @@ describe("checkMissingSearchKey", () => {
 
   it("says so when no fallback is configured", () => {
     const warning = checkMissingSearchKey({
-      config: makeConfig({ fallback: [] }),
+      config: makeConfig({ provider: "brave", fallback: [] }),
       env: {},
     });
 
-    expect(warning!.message).toContain("no fallback configured");
+    expect(warning!.message).toContain("no other provider");
   });
 
   it("dedupes the primary out of the reported fallback chain", () => {
     const warning = checkMissingSearchKey({
-      config: makeConfig({ fallback: ["exa", "duckduckgo"] }),
+      config: makeConfig({
+        provider: "brave",
+        fallback: ["brave", "duckduckgo"],
+      }),
       env: {},
     });
 
