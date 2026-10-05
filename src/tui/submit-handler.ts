@@ -165,10 +165,13 @@ function handleSessionPickerSubmit(
 ): void {
   const entry = state.sessionPickerList[state.sessionPickerCursor];
   if (entry && callbacks.onSessionSwitchRequested) {
+    // No clear after this one: the switch has already parked the buffer
+    // with the thread being left and put the target's own draft in it
+    // (`session_switched`), and clearing now would throw that away.
     callbacks.onSessionSwitchRequested(entry.sessionId);
-  } else {
-    dispatch({ type: "session_picker_closed" });
+    return;
   }
+  dispatch({ type: "session_picker_closed" });
   dispatch({ type: "input_changed", value: "" });
 }
 
