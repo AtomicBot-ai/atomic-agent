@@ -2763,7 +2763,32 @@ function toolTense(line, state) {
   if (state === 'run') return forms[mt[1]][0] + rest;
   if (state === 'wait') return 'Waiting for your OK to ' + forms[mt[1]][1] + rest;
   if (state === 'deny' || state === 'skip') return (state === 'deny' ? 'Denied: ' : 'Not run: ') + forms[mt[1]][1] + rest;
-  return (state === 'unk' ? 'Tried to ' : 'Couldn\u2019t ') + forms[mt[1]][1] + rest;
+  return (state === 'unk' ? 'Tried to ' : state === 'held' ? 'Didn\u2019t ' : 'Couldn\u2019t ') + forms[mt[1]][1] + rest;
+}
+/* ATO-181: os.fs.write refusing to replace a file the request names (the
+   agent's overwrite guard, fs-input-guard.ts) is not a failure. The file is
+   left as it is, and the agent edits it in place or asks before replacing
+   it; the card said "Couldn't write test.txt" in red over the guard's own
+   note to the model. Such a call is `held` (toolState): calm words, a muted
+   glyph, no red. 'request' when the person's request names the file,
+   'fanout' for a Fusion worker's declared input, null for anything else — a
+   write that really failed keeps its red. */
+function toolGuardHeld(m) {
+  if (!m || m.name !== 'os.fs.write' || m.ok !== false) return null;
+  const mt = /(?:^|\n)\s*refused: .+? is an input (the request names|this fan-out declared) \(/.exec(String(m.out || ''));
+  return mt ? (mt[1] === 'the request names' ? 'request' : 'fanout') : null;
+}
+/* The held call's line, in words: "test.txt already exists — the agent will
+   ask before replacing it". The file by its name; the guard's own text is
+   inside the expanded part. */
+function toolHeldLine(m) {
+  const a = toolArgsObj(m.args || m.arg);
+  const said = /refused: (.+?) is an input /.exec(String(m.out || ''));
+  const p = a.path != null ? String(a.path) : said ? said[1] : '';
+  const name = p ? '<span class="tl-m">' + esc(wsName(p)) + '</span>' : 'The file';
+  return toolGuardHeld(m) === 'fanout'
+    ? name + ' is an input of this task \u2014 the worker left it as it is'
+    : name + ' already exists \u2014 the agent will ask before replacing it';
 }
 /* The failure, in one line, for a card that failed: the first line of the
    result that says something \u2014 the shell's own `$ cmd` / `exit: N` header and
@@ -2799,6 +2824,7 @@ function toolStatus(state) {
     : state === 'deny' ? '<span class="tl-st deny" title="Denied">' + ic('x') + '</span>'
     : state === 'skip' ? '<span class="tl-st skip" title="Not run: the turn ended first">' + ic('slash') + '</span>'
     : state === 'unk' ? '<span class="tl-st unk" title="The outcome was not recorded">' + ic('minus') + '</span>'
+    : state === 'held' ? '<span class="tl-st held" title="Not replaced: the file was left as it is">' + ic('info') + '</span>'
     : '<span class="tl-st ok" title="Done">' + ic('check') + '</span>';
 }
 /* The ONE place a call's state is decided; the headline's tense, the red
@@ -2808,10 +2834,11 @@ function toolStatus(state) {
    store never described it) is `unk` — never drawn as a success.
    ATO-197: `outcome` says more about a call that did not succeed: `denied`
    (the person refused it) is `deny`, `notrun` (the turn was stopped, failed
-   or ended before it) is `skip`. */
+   or ended before it) is `skip`. A write the overwrite guard held back is
+   `held` (ATO-181, toolGuardHeld): not done, not failed either. */
 function toolState(m) {
   return m.ok === null ? 'run' : m.outcome === 'denied' ? 'deny' : m.outcome === 'notrun' ? 'skip'
-    : m.ok === false ? 'err' : m.forced ? 'unk' : 'ok';
+    : m.ok === false ? (toolGuardHeld(m) ? 'held' : 'err') : m.forced ? 'unk' : 'ok';
 }
 /* ATO-197: the turns whose agent said each call's outcome on the stream
    (`event: tool_result`); their end needs no store to stop a spinner. */
@@ -2908,7 +2935,7 @@ function toolCard(m) {
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
       + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
-      + '<span class="nm">' + toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st) + '</span>'
+      + '<span class="nm">' + (st === 'held' ? toolHeldLine(m) : toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st)) + '</span>'
       // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
       // until the store lands, the wall time this window observed. The TUI prints a fabricated
       // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
@@ -4572,8 +4599,9 @@ function contextHTML() {
       + '<span class="mono tnum ctxval">' + pairs + '</span>'
       + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="Keep more earlier messages"' + (pairs >= PAIRS_MAX ? ' disabled' : '') + '>' + ic('plus') + '</button>'
       + '</span></div></div>'
-    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
-    + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
+    /* ATO-182: no Done, as in the mode and model popovers (ATO-167): a step
+       applies as it is pressed, and a click outside or Escape closes it. */
+    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span></div></div></div>';
 }
 
 /* The kit dot for a chatDot()/taskDot() pair, in the Tactile status grammar:
@@ -5432,6 +5460,21 @@ function toast(t, s, kind) {
   renderToasts();
   setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
 }
+/* ATO-186: a toast about the chat on screen ("New session · The next turn
+   starts fresh", "Transcript cleared") is that chat's: it goes when another
+   chat is opened (openSession) or a newer one of its kind replaces it, where
+   it stayed for its six seconds over a chat it was not about. */
+function chatToast(t, s) {
+  dropChatToasts();
+  toast(t, s);
+  const mine = S.toasts.find((x) => x.id === S.toastId);
+  if (mine) mine.chat = true;
+}
+function dropChatToasts() {
+  const n = S.toasts.length;
+  S.toasts = S.toasts.filter((x) => !x.chat);
+  if (S.toasts.length !== n) renderToasts();
+}
 
 /* r5 item 4: the one honest clipboard seam. There is no clipboard IPC — the
    renderer writes navigator.clipboard directly and the main process allows both
@@ -5565,11 +5608,13 @@ function act(a) {
                                 same reason; a new chat is a chat. */
                              S.settings = null;
                              FOCUS.entry = true;   // r5 item 6: afterChat focuses #entry after this render
-                             render(); toast('New session', 'The next turn starts fresh');
+                             render(); chatToast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
-  if (a === 'clear') { close(); S.log = liveClearedLog(); S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
+  if (a === 'clear') { close();
+                        if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
+                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -6132,6 +6177,11 @@ function apprOnScreen() {
   if (S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open) return null;
   const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
   return card ? req : null;
+}
+/* ATO-224: whether a dialog, a popover, a sheet, Settings or the menu is
+   open over the chat — the layers ⌘↩ must not send the composer from under. */
+function layerOverChat() {
+  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open);
 }
 /** 05.10: the keys named on the card's buttons and in the shortcuts sheet. */
 function apprKeyLabel(which) {
@@ -7265,7 +7315,14 @@ document.addEventListener('keydown', (e) => {
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts'};
     if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
-    if (sk === 'Enter') { e.preventDefault(); submit(); return; }
+    /* ATO-224: ⌘↩ (Ctrl+↩) is Send only with nothing over the chat. With a
+       dialog, a popover or a sheet open (Delete chat?, the model picker, the
+       provider wizard, the mode or context popover, the palette, Settings)
+       it sent the composer's draft from under it. It does nothing there now:
+       Delete chat? is a destructive confirm whose Enter is Cancel, and no
+       other layer has a ⌘↩ of its own (the Tasks form and the Add MCP
+       server box took theirs above). */
+    if (sk === 'Enter') { e.preventDefault(); if (!layerOverChat()) submit(); return; }
   }
   if (mod && e.shiftKey && sk.toLowerCase() === 'y') { e.preventDefault(); ANX.via('shortcut'); act('toggle:console'); return; }
 
@@ -7935,11 +7992,23 @@ function liveSegment(rec) {
   while (from > 0 && log[from - 1].k !== 'user' && log[from - 1].k !== 'assistant') from--;
   return [rec.asked].concat(log.slice(from, end + 1));
 }
-/** The turn's reasoning row: onChatEvent grows one per turn (S.reasonId). */
+/** The turn's reasoning row still growing (S.reasonId): its last one, unless a
+    tool call came after it — ATO-207: onChatEvent grows one row per step. */
 function liveReasonId(rec) {
   const from = S.log.indexOf(rec.asked), to = S.log.indexOf(rec.item);
-  for (let i = to - 1; i > from; i--) if (S.log[i].k === 'reason') return S.log[i].id;
+  for (let i = to - 1; i > from; i--) {
+    if (S.log[i].k === 'tool') return null;
+    if (S.log[i].k === 'reason') return S.log[i].id;
+  }
   return null;
+}
+/** ATO-207: which step of its turn a reasoning row put at `at` is (the
+    inspector's "Step N"): one more than the turn's rows above it, back to the
+    message that started the turn (a steer does not start one). */
+function reasonStepAt(log, at) {
+  let n = 1;
+  for (let i = Math.min(at, log.length) - 1; i >= 0 && !(log[i].k === 'user' && !log[i].steered); i--) if (log[i].k === 'reason') n++;
+  return n;
 }
 
 /** openSession: chat `own` runs a turn here. The stored transcript, the
@@ -8447,7 +8516,8 @@ function onChatEvent(ev) {
     if (!text || !item) return;   // review fix: no streaming item on screen, nothing to splice against
     let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
     if (!block) {
-      block = {id:nid(), k:'reason', steps:1, open:false, text:''};
+      // ATO-207: one row per step — a tool call ends the step (tool_progress clears S.reasonId).
+      block = {id:nid(), k:'reason', steps:reasonStepAt(S.log, S.log.indexOf(item)), open:false, text:''};
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
       streamPaint('chat');   // a new row in the transcript
@@ -8468,6 +8538,11 @@ function onChatEvent(ev) {
     const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId,
       callId: typeof callId === 'string' && callId ? callId : null};
     S.log.splice(S.log.indexOf(item), 0, card);
+    /* ATO-207: the call ends the step its reasoning was for. The next
+       reasoning is a row of its own under this card, as a reopened chat
+       draws it (one per stored call); it used to grow the turn's first row
+       above every card, one "Reasoning" that read as endless thinking. */
+    S.reasonId = null;
     render();
     return;
   }
@@ -14786,6 +14861,22 @@ function selRowName(r) {
   return String(r.label || '');
 }
 
+/* ATO-186: the address of the person's own llama.cpp server, for the Custom
+   server row, or '' when there is none to name. On a managed route
+   localModels.url is the built-in model's own server (the agent points it at
+   127.0.0.1 and its managed port), so the row read "your llama.cpp server at
+   127.0.0.1:29470" on a Mac with no server of its own. An external route's
+   url is the person's; on a managed one only an address off this machine
+   can still be one they set up (a loopback one may be the built-in model's,
+   and the schema default is one nobody chose). */
+function customServerUrl() {
+  const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
+  const url = typeof lm.url === 'string' ? lm.url.trim() : '';
+  if (!url || lm.mode === 'external') return url;
+  let u = null;
+  try { u = new URL(url); } catch (e) { return ''; }
+  return ['127.0.0.1', 'localhost', '[::1]', '::1', '0.0.0.0'].includes(u.hostname) ? '' : url;
+}
 /** Rows for the current pane, as objects the delegate can act on by index. */
 function selRows() {
   if (SEL.kind === 'backend') {
@@ -14797,7 +14888,7 @@ function selRows() {
     // TUI's "Download more models…" row deep-links into its Local pane.
     const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
     const here = selBackend();
-    const customUrl = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
+    const customUrl = customServerUrl();
     /* Calm (S7): the rows speak the chip's words ("Cloud", "Local models",
        "Custom server", "Fusion" — backendWord, drawn in selectorHTML) and
        each detail is one plain line. `id` stays the route, `label` the id.
@@ -16766,7 +16857,7 @@ function sessionTurnsToLog(turns) {
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
     if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
     if (t.kind === 'assistant_tool_call') {
-      if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
+      if (t.reasoning) log.push({id:nid(), k:'reason', steps:reasonStepAt(log, log.length), open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
         arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
         argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
@@ -16813,6 +16904,13 @@ function sessionTurnsToLog(turns) {
 /* Backlog 22: bumped by every openSession that starts a load, so an answer
    that a newer load overtook can tell (see the check after the await). */
 let OPEN_SEQ = 0;
+/* ATO-131: the load (its OPEN_SEQ) that Clear Transcript was pressed under,
+   or 0. Clear set S.log while the chat was still loading, and the answer
+   then wrote the whole transcript back over it. Unlike New chat (item 22),
+   the answer may not simply be dropped: Clear keeps the person on this
+   chat, and its session, its running turn and its open request are only
+   bound when the answer lands. It lands with the history left out. */
+let OPEN_CLEARED = 0;
 async function openSession(id) {
   if (!BR || !id) return;
   // item 6: is a turn of this session streaming into this window right now?
@@ -16842,6 +16940,7 @@ async function openSession(id) {
      chat's own comes back; a reload of the chat on screen keeps its own. */
   if (queueKey() !== id) { stashQueue(); restoreQueue(id); }
   liveLeave();   // Item 38: a turn whose rows are on screen keeps its view for when its chat is back
+  if (S.sessionId !== id) dropChatToasts();   // ATO-186: "New session" and the like were about the chat being left
   S.sessionId = id;
   // Backlog 24: and until the answer lands, the composer holds what is sent here.
   const opening = {id, failed:false};
@@ -16906,6 +17005,8 @@ async function openSession(id) {
     // did not survive this reload, so no frame may position a card against it.
     S.streamId = null;
   }
+  // ATO-131: cleared while this loaded: as Clear leaves a chat that is open (its running turn's own rows stay).
+  if (OPEN_CLEARED === seq) { OPEN_CLEARED = 0; S.log = rebuilt ? liveClearedLog() : []; }
   // item 6: a turn of this session is still running, but its stream is not in
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
@@ -17713,10 +17814,10 @@ function groupCard(run) {
        separate "3 failed"), "Listing files" while one still runs. */
     + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad === run.length ? 'err'
         : states.every((x) => x === 'unk') ? 'unk' : states.every((x) => x === 'deny') ? 'deny'
-        : states.every((x) => x === 'skip') ? 'skip' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
+        : states.every((x) => x === 'skip') ? 'skip' : states.every((x) => x === 'held') ? 'held' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
     + (bad && bad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
-    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : 'ok')
+    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }

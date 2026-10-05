@@ -80,8 +80,9 @@ const STREAM_PROBE = String.raw`(async () => {
     think(200, 260);
     await frame();
     out.upAfter = body().scrollTop;
-    // ... nor does a whole render (a tool call starting renders the window) ...
-    ev('tool_progress', {payload: {tool: 'os.fs.list', label: '{"path":"."}'}});
+    // ... nor does a whole render (as a tool call starting renders the window; not a tool call
+    // itself, which since ATO-207 ends the step, and the next reasoning is a row of its own) ...
+    render();
     await frame();
     out.upAfterRender = body().scrollTop;
     // ... and at the end it stays at the end while the text grows.

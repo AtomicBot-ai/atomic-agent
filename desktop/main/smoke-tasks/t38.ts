@@ -454,7 +454,8 @@ async function leftAndBackTwice(js: Js, check: Check, agent: StandIn, w: Browser
   check(
     "T38: left and opened again a second time, all of it is there once, in order, and it streams on",
     away2 && back2
-      && show(twice.rows) === show([...stored, "reason:smoke t38: first thought and more", "tool:os.fs.read_file",
+      // ATO-207: reasoning after the tool call is that step's own row, under the card.
+      && show(twice.rows) === show([...stored, "reason:smoke t38: first thought", "tool:os.fs.read_file", "reason: and more",
         "assistant:smoke t38: part one. smoke t38: part two. smoke t38: part three."])
       && twice.busy && neverSaid(twice),
     `away=${away2} back=${back2} twice=${show(twice)}`,
