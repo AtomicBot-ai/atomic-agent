@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAX_CONTRACT_CHECKS,
+  MAX_CONTRACT_CHECK_ITEM_CHARS,
   MAX_CONTRACT_PROVIDES,
   MAX_CONTRACT_RENDERED_CHARS,
 } from "./contract.js";
@@ -331,8 +332,8 @@ describe("parseDelegateArgs — contract", () => {
     ],
     requires: [{ task: "main", name: "HD.Ship" }],
     checks: [
-      { task: "main", kind: "page", path: "index.html" },
-      { kind: "command", cmd: "node", args: ["--check", "js/main.js"] },
+      { task: "main", item: "page behavior", kind: "page", path: "index.html" },
+      { item: "main parses", kind: "command", cmd: "node", args: ["--check", "js/main.js"] },
     ],
   };
 
@@ -396,6 +397,17 @@ describe("parseDelegateArgs — contract", () => {
     );
     expect(bad({ checks: [{ task: "main" }] })).toContain(
       "contract.checks[0] carries no verify.run arguments",
+    );
+    expect(bad({ checks: [{ item: "   ", cmd: "x" }] })).toContain(
+      "contract.checks[0].item must be a non-empty string",
+    );
+    expect(bad({ checks: [{ item: 3, cmd: "x" }] })).toContain(
+      "contract.checks[0].item must be a non-empty string",
+    );
+    expect(
+      bad({ checks: [{ item: "x".repeat(MAX_CONTRACT_CHECK_ITEM_CHARS + 1), cmd: "x" }] }),
+    ).toContain(
+      `contract.checks[0].item has ${MAX_CONTRACT_CHECK_ITEM_CHARS + 1} characters; at most ${MAX_CONTRACT_CHECK_ITEM_CHARS}`,
     );
   });
 

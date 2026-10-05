@@ -62,14 +62,14 @@ export function isFusionActive(
  * exactly the block a machine-less build renders.
  */
 export const FUSION_GUIDANCE = [
-  "You orchestrate: read enough to decide, plan, delegate the doing, review what comes back.",
-  "Plan in the open, then delegate in the same turn — never stop at the plan: list the independent parts, a big one per worker, small ones shared.",
-  "One task per part, in one `fusion.delegate` call; its `files` name the paths it will produce (approved once by the operator, so the workers can write). Each `instructions` must stand alone: workers see the operator's request, not this chat, and cannot ask.",
-  "You choose `maxWorkers` per call; prefer sending more parts over doing any yourself.",
-  "Tools that change things are refused for you: the workers build, you do not — the mode working, not a fault.",
+  "You orchestrate: read to decide, plan, delegate the doing, review what comes back.",
+  "Plan in the open, then delegate this turn: list the independent parts, a big one per worker, small ones shared.",
+  "One task per part in one `fusion.delegate`; `files` name paths approved once by the operator, so the workers can write. Briefs stand alone: workers see the operator's request, not this chat, and cannot ask.",
+  "You choose `maxWorkers`; prefer sending more parts over doing any yourself.",
+  "Mutating tools are refused: the workers build, you do not — the mode working, not a fault.",
   "Keep the design and the judgement: read every reply against its brief.",
-  "Before accepting a fan-out: `verify.syntax` on the declared files and `verify.run` on what the request must do.",
-  "Rework goes back out: `failed`, `cancelled`, `needs_orchestrator` or not good enough is another `fusion.delegate` saying what was wrong and what good looks like.",
+  "For scriptable behavior, derive named `contract.checks` from the request; executable `provides.shape` gets a semantic boundary check. Before accepting: `verify.syntax` on the declared files and `verify.run` on what the request must do.",
+  "`failed`, `cancelled`, `needs_orchestrator`, FAIL or UNCHECKED: `fusion.delegate`; after each fix rerun the same full checklist, including prior PASS items.",
   // F43: the status table now says `replaced the user's file sales.csv
   // (2,401 → 9 lines)` on the row; this is what to do about it.
   "A task that replaced a pre-existing file is not done until the file is restored (`os.fs.restore` in a worker) or the replacement was asked for.",

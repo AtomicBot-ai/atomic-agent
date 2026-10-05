@@ -1641,6 +1641,7 @@ export async function createAgentRuntime(
   // call a tool on the session (the controller runs one turn per
   // session), so a read always finds its own turn's request.
   const turnRequests = new Map<string, string>();
+  const operatorTurnIds = new Map<string, string>();
   // The files a fan-out's contract declared as inputs, per worker
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
@@ -3416,6 +3417,7 @@ export async function createAgentRuntime(
       const inFlight = turnsInFlight.begin(runOptions.signal);
       markTurnRunning(session.id);
       try {
+        operatorTurnIds.set(session.id, randomUUID());
         // Recorded for `fusion.delegate`, which quotes it to the workers.
         const turnRequest = pickOriginalRequest({
           current: userMessage,
@@ -3485,6 +3487,7 @@ export async function createAgentRuntime(
         shellJobs.endTurn(session.id);
         lastTurnContextUsage.delete(session.id);
         turnRequests.delete(session.id);
+        operatorTurnIds.delete(session.id);
         activeTraceSessions.delete(session.id);
         // A delete that arrived mid-turn was deferred to keep the pin honest;
         // complete it now that nothing is writing through the recorder.
@@ -3664,7 +3667,11 @@ export async function createAgentRuntime(
       runTurn: (session, userMessage, turnOptions) =>
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
+      resolveOperatorTurnId: (sessionId) => operatorTurnIds.get(sessionId),
       resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+      // Optional and read live, like the effective Fusion mode itself.
+      requireBehaviorChecklist: () =>
+        getConfig().llm?.runMode?.fusion?.requireBehaviorChecklist === true,
       declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.

@@ -289,3 +289,20 @@ describe("reviewStallSteps (F41)", () => {
     expect(DEFAULT_FUSION_REVIEW_STALL_STEPS).toBe(6);
   });
 });
+
+describe("Fusion behavior checklist opt-in (#605)", () => {
+  it("leaves old configurations unchanged when the flag is absent", () => {
+    expect(parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode"))
+      .toEqual({ fusion: {} });
+  });
+
+  it.each([false, true])("round-trips the explicit flag %s", (requireBehaviorChecklist) => {
+    expect(parseLlmRunModeConfig({ fusion: { requireBehaviorChecklist } }, providers, "llm.runMode"))
+      .toEqual({ fusion: { requireBehaviorChecklist } });
+  });
+
+  it.each(["true", "false", 0, 1, null, {}, []].map((value) => ({ value })))("rejects a non-boolean flag $value", ({ value: requireBehaviorChecklist }) => {
+    expect(() => parseLlmRunModeConfig({ fusion: { requireBehaviorChecklist } }, providers, "llm.runMode"))
+      .toThrow(/llm\.runMode\.fusion\.requireBehaviorChecklist/);
+  });
+});

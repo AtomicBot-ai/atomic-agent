@@ -11,10 +11,13 @@ import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.j
 import { getConfig } from "../../config/index.js";
 import { workerReplyAllowance } from "../../local-llm/worker-slots.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { parseDelegateArgs } from "./delegate-args.js";
+import { parseVerifyRunArgs } from "../verify/verify-run-args.js";
+import { parseDelegateArgs, readJsonArg } from "./delegate-args.js";
+import { MAX_CONTRACT_CHECKS, MAX_CONTRACT_CHECK_ITEM_CHARS, type ContractCheck } from "./contract.js";
 import {
   applyCheckOutcomes,
   applyContractFindings,
+  contractChecklistPasses,
   inspectContractProvides,
   renderContractLine,
   runContractChecks,
@@ -38,6 +41,166 @@ import {
 
 export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
+const MAX_BEHAVIOR_REPAIR_ROUNDS = 3;
+
+interface PendingCheckDefinition {
+  /** Opaque verify.run arguments, captured by value; never executed here. */
+  spec?: string;
+  specComplete?: boolean;
+  item?: string;
+  /** null pins a call-level check; undefined leaves an invalid binding repairable. */
+  task?: string | null;
+}
+
+interface PendingBehaviorChecklist {
+  turnId: string | AbortSignal;
+  /** Set only after the complete checklist has passed argument validation. */
+  signature?: string;
+  /** Before validation, preserve known names and item count while allowing argument repair. */
+  requiredNamedItems?: readonly string[];
+  requiredDefinitions?: readonly PendingCheckDefinition[];
+  minimumItems?: number;
+  items: readonly string[];
+  failedRounds: number;
+  remaining: readonly string[];
+  lastVerdict?: string;
+}
+
+function canonicalChecklistValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalChecklistValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, canonicalChecklistValue(entry)]),
+    );
+  }
+  return value;
+}
+
+function behaviorChecklistSignature(checks: readonly ContractCheck[]): string {
+  return JSON.stringify(canonicalChecklistValue(checks));
+}
+
+function behaviorChecklistItems(checks: readonly ContractCheck[]): string[] {
+  return checks.map((check, i) =>
+    typeof check.item === "string" && check.item.trim().length > 0
+      ? check.item.trim()
+      : `check-${i + 1}`,
+  );
+}
+
+/**
+ * Recover only public checklist labels from rejected raw args for a fail-closed verdict.
+ * Nothing returned here is trusted for execution; parsing still fails and no worker starts.
+ */
+function rawBehaviorChecklistItems(rawArgs: Record<string, unknown>, namedOnly = false): string[] {
+  const contract = readJsonArg(rawArgs.contract);
+  if (contract === null || typeof contract !== "object" || Array.isArray(contract)) return [];
+  const checks = (contract as Record<string, unknown>).checks;
+  if (!Array.isArray(checks)) return namedOnly || checks === undefined || checks === null ? [] : ["behavior acceptance"];
+  return checks.slice(0, MAX_CONTRACT_CHECKS).flatMap((check, i) => {
+    if (check !== null && typeof check === "object" && !Array.isArray(check)) {
+      const item = (check as Record<string, unknown>).item;
+      if (typeof item === "string" && item.trim().length > 0) {
+        return [item.trim().slice(0, MAX_CONTRACT_CHECK_ITEM_CHARS)];
+      }
+    }
+    return namedOnly ? [] : [`check-${i + 1}`];
+  });
+}
+
+function rawBehaviorChecklistSize(rawArgs: Record<string, unknown>): number {
+  const contract = readJsonArg(rawArgs.contract);
+  if (contract === null || typeof contract !== "object" || Array.isArray(contract)) return 0;
+  const checks = (contract as Record<string, unknown>).checks;
+  return Array.isArray(checks) ? checks.length : checks === undefined || checks === null ? 0 : 1;
+}
+
+/** Structural validation only: reuse the verifier's parser, never run a second verifier. */
+function completeVerifySpec(spec: Record<string, unknown>): boolean {
+  try { parseVerifyRunArgs(spec); return true; } catch { return false; }
+}
+
+/** Missing fields may be filled in an incomplete spec; captured values cannot change. */
+function preservesSpecValues(before: unknown, after: unknown): boolean {
+  if (Array.isArray(before)) {
+    return Array.isArray(after) && before.length === after.length &&
+      before.every((value, i) => preservesSpecValues(value, after[i]));
+  }
+  if (before !== null && typeof before === "object") {
+    return after !== null && typeof after === "object" && !Array.isArray(after) &&
+      Object.entries(before).every(([key, value]) => Object.hasOwn(after, key) &&
+        preservesSpecValues(value, (after as Record<string, unknown>)[key]));
+  }
+  return before === after;
+}
+
+/** Preserve assertions independently of repairable labels, task bindings or task args. */
+function pinBehaviorCheckDefinitions(
+  rawArgs: Record<string, unknown>,
+  previous: readonly PendingCheckDefinition[] = [],
+): PendingCheckDefinition[] {
+  const contract = readJsonArg(rawArgs.contract);
+  const rawTasks = readJsonArg(rawArgs.tasks);
+  const taskIds = new Set(Array.isArray(rawTasks) ? rawTasks.flatMap((task) =>
+    task !== null && typeof task === "object" && !Array.isArray(task) &&
+      typeof task.id === "string" && task.id.trim().length > 0 ? [task.id.trim()] : [],
+  ) : []);
+  const checks = contract !== null && typeof contract === "object" && !Array.isArray(contract)
+    ? (contract as Record<string, unknown>).checks : undefined;
+  const current: PendingCheckDefinition[] = Array.isArray(checks) ? checks.slice(0, MAX_CONTRACT_CHECKS).map((check) => {
+    if (check === null || typeof check !== "object" || Array.isArray(check)) return {};
+    const { item, task, ...spec } = check as Record<string, unknown>;
+    return {
+      ...(Object.keys(spec).length === 0 ? {} : {
+        spec: JSON.stringify(canonicalChecklistValue(spec)), specComplete: completeVerifySpec(spec),
+      }),
+      ...(typeof item === "string" && item.trim().length > 0 && item.trim().length <= MAX_CONTRACT_CHECK_ITEM_CHARS
+        ? { item: item.trim() } : {}),
+      ...(task === undefined || task === null ? { task: null }
+        : typeof task === "string" && taskIds.has(task.trim()) ? { task: task.trim() } : {}),
+    };
+  }) : [];
+  // Repeated invalid requests may fill missing definitions, never overwrite earlier ones.
+  return Array.from({ length: Math.max(previous.length, current.length) }, (_, i) => {
+    const prior = previous[i];
+    const next = current[i];
+    const extend = prior?.spec === undefined || (prior.specComplete === false && next?.spec !== undefined &&
+      preservesSpecValues(JSON.parse(prior.spec), JSON.parse(next.spec)));
+    return {
+      spec: extend ? next?.spec : prior.spec,
+      specComplete: extend ? next?.specComplete : prior.specComplete,
+      item: prior?.item ?? next?.item,
+      task: prior?.task !== undefined ? prior.task : next?.task,
+    };
+  });
+}
+
+function preservesBehaviorCheckDefinitions(
+  pinned: readonly PendingCheckDefinition[],
+  checks: readonly ContractCheck[],
+): boolean {
+  return pinned.every((definition, i) => {
+    const check = checks[i];
+    if (check === undefined) return false;
+    const { item, task, ...spec } = check;
+    const preservedSpec = definition.spec === undefined || (definition.specComplete === false
+      ? preservesSpecValues(JSON.parse(definition.spec), spec)
+      : definition.spec === JSON.stringify(canonicalChecklistValue(spec)));
+    return preservedSpec &&
+      (definition.item === undefined || definition.item === item) &&
+      (definition.task === undefined || definition.task === (task ?? null));
+  });
+}
+
+function uncheckedChecklistVerdict(items: readonly string[], detail: string): string {
+  const report: ContractReport = {
+    findings: [],
+    checks: items.map((item) => ({ item, checked: false, ok: false, detail })),
+  };
+  return renderContractLine(report) ?? `contract: checklist: ${items.join("; ")}=UNCHECKED`;
+}
 export interface FusionDelegateDeps extends WorkerRunnerDeps {
   /**
    * Whether the fan-out asks the operator before it runs. Same seam as
@@ -62,6 +225,11 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * only the orchestrator's instructions, as they did before.
    */
   resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /** Unique per operator turn, independent of request text. Without it, callers
+   * must reuse the turn signal for repairs and provide a new signal next turn. */
+  resolveOperatorTurnId?: (sessionId: string) => string | undefined;
+  /** Opt-in requirement for named checks. Production reads the operator's flag live. */
+  requireBehaviorChecklist?: boolean | (() => boolean);
   /**
    * Runs a contract's `checks` (`verify.run` specs) after the fan-out —
    * the verify tool family's `runChecks`, wired by the runtime. Absent,
@@ -97,7 +265,7 @@ function error(
     status: "error",
     output,
     details,
-  });
+  }, details.checklistPinned === true ? { maxSummaryLength: output.length + 100 } : {});
 }
 
 /**
@@ -168,10 +336,11 @@ export function describeFanoutPreview(
 export function buildFusionDelegateTool(
   deps: FusionDelegateDeps,
 ): ToolDefinition {
+  const pendingChecklistBySession = new Map<string, PendingBehaviorChecklist>();
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. A `contract` can carry owners, provides, requires and checks; named `contract.checks` are optional unless the operator enables `llm.runMode.fusion.requireBehaviorChecklist`. Treat `contract.checks` as the behavior checklist: give each check a short `item` label plus its `verify.run` arguments; FAIL or UNCHECKED makes the call fail. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. For executable `shape` meaning, include a `verify.run` boundary assertion in `contract.checks`; `shape` alone is guidance, not proof. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -188,8 +357,190 @@ export function buildFusionDelegateTool(
           { reason: "not-fusion", effective: mode.effective },
         );
       }
+      const turnId = deps.resolveOperatorTurnId?.(ctx.sessionId) ?? ctx.signal;
+      let pendingChecklist = pendingChecklistBySession.get(ctx.sessionId);
+      // A new operator turn is a new job, not another repair round.
+      if (pendingChecklist !== undefined && pendingChecklist.turnId !== turnId) {
+        pendingChecklistBySession.delete(ctx.sessionId);
+        pendingChecklist = undefined;
+      }
+
+      const requireBehaviorChecklist = typeof deps.requireBehaviorChecklist === "function"
+        ? deps.requireBehaviorChecklist()
+        : deps.requireBehaviorChecklist === true;
       const parsed = parseDelegateArgs(rawArgs);
-      if (!parsed.ok) return error(parsed.error, { field: "tasks" });
+      if (!parsed.ok) {
+        const recoveredItems = rawBehaviorChecklistItems(rawArgs);
+        // A plain argument error is not a failed behavior check. In particular it
+        // must not turn a missing-check policy refusal into a permanent evidence block.
+        if (pendingChecklist !== undefined || rawBehaviorChecklistSize(rawArgs) > 0) {
+          const items = pendingChecklist?.items ?? (recoveredItems.length > 0 ? recoveredItems : ["behavior acceptance"]);
+          const line = uncheckedChecklistVerdict(
+            items,
+            `not run — fusion.delegate arguments were invalid: ${parsed.error}`,
+          );
+          if (pendingChecklist === undefined) {
+            // Placeholder labels are not identities: unnamed checks can be named,
+            // but neither declared item count nor known names may disappear.
+            pendingChecklist = {
+              turnId, items, remaining: items, failedRounds: 0,
+              requiredNamedItems: rawBehaviorChecklistItems(rawArgs, true),
+              minimumItems: rawBehaviorChecklistSize(rawArgs),
+              requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs),
+            };
+          }
+          if (pendingChecklist !== undefined) {
+            pendingChecklistBySession.set(ctx.sessionId, {
+              ...pendingChecklist,
+              ...(pendingChecklist.signature === undefined ? {
+                requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs, pendingChecklist.requiredDefinitions),
+              } : {}),
+              remaining: [...pendingChecklist.items],
+              lastVerdict: line,
+            });
+          }
+          return error(`${parsed.error}\n${line}`, {
+            field: "tasks",
+            reason: "behavior-checklist-invalid",
+            checklistPassed: false,
+            checklistVerdict: line,
+            requiredChecklistItems: [...items],
+          });
+        }
+        return error(parsed.error, { field: "tasks" });
+      }
+
+      const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
+      const checklist = parsed.contract?.checks ?? [];
+      const checklistSignature = behaviorChecklistSignature(checklist);
+      // Pin declared items before the optional naming gate too. A later missing
+      // checklist must not downgrade this declaration to a policy-only refusal.
+      if (checklist.length > 0 && pendingChecklist === undefined) {
+        const items = behaviorChecklistItems(checklist);
+        pendingChecklist = {
+          turnId, items, remaining: items, failedRounds: 0,
+          requiredNamedItems: rawBehaviorChecklistItems(rawArgs, true),
+          minimumItems: checklist.length,
+          requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs),
+        };
+        pendingChecklistBySession.set(ctx.sessionId, pendingChecklist);
+      }
+      if (
+        pendingChecklist !== undefined &&
+        pendingChecklist.failedRounds >= MAX_BEHAVIOR_REPAIR_ROUNDS
+      ) {
+        const line = pendingChecklist.lastVerdict ?? uncheckedChecklistVerdict(
+          pendingChecklist.items,
+          "not run — behavior repair budget exhausted",
+        );
+        return error(
+          `behavior repair budget exhausted after ${pendingChecklist.failedRounds} failed full-checklist rounds; remaining failing/unchecked items: ${pendingChecklist.remaining.join("; ")}\n${line}`,
+          {
+            reason: "behavior-repair-budget-exhausted",
+            checklistPinned: true,
+            checklistPassed: false,
+            checklistVerdict: line,
+            remainingChecklistItems: [...pendingChecklist.remaining],
+            failedRounds: pendingChecklist.failedRounds,
+            maxRounds: MAX_BEHAVIOR_REPAIR_ROUNDS,
+            requiredChecklistItems: [...pendingChecklist.items],
+          },
+        );
+      }
+      if (pendingChecklist !== undefined && (
+        pendingChecklist.signature === undefined
+          ? checklist.length < (pendingChecklist.minimumItems ?? pendingChecklist.items.length) ||
+            (pendingChecklist.requiredNamedItems ?? pendingChecklist.items)
+              .some((item) => !behaviorChecklistItems(checklist).includes(item)) ||
+            !preservesBehaviorCheckDefinitions(pendingChecklist.requiredDefinitions ?? [], checklist)
+          : pendingChecklist.signature !== checklistSignature
+      )) {
+        const line = uncheckedChecklistVerdict(
+          pendingChecklist.items,
+          "not rerun — attempted fan-out changed or omitted the pinned checklist",
+        );
+        return error(
+          `the behavior checklist is pinned for this operator turn; rerun every original item unchanged: ${pendingChecklist.items.join("; ")}\n${line}`,
+          {
+            reason: "behavior-checklist-changed",
+            checklistPinned: true,
+            checklistPassed: false,
+            checklistVerdict: line,
+            requiredChecklistItems: [...pendingChecklist.items],
+          },
+        );
+      }
+
+      if (pendingChecklist !== undefined && pendingChecklist.signature === undefined) {
+        pendingChecklist = {
+          ...pendingChecklist,
+          requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs, pendingChecklist.requiredDefinitions),
+        };
+        pendingChecklistBySession.set(ctx.sessionId, pendingChecklist);
+      }
+      if (requireBehaviorChecklist) {
+        if (checklist.length === 0) {
+          const line = uncheckedChecklistVerdict(
+            ["behavior acceptance"],
+            "not run — no named contract.checks item was declared before fan-out",
+          );
+          return error(`behavior checklist required before fan-out\n${line}`, {
+            reason: "behavior-checklist-required",
+            checklistPolicyRefusal: true,
+            checklistPassed: false,
+            checklistVerdict: line,
+            requiredChecklistItems: ["behavior acceptance"],
+          });
+        }
+        const unnamed = checklist
+          .map((check, i) =>
+            typeof check.item === "string" && check.item.trim().length > 0 ? undefined : `check-${i + 1}`,
+          )
+          .filter((item): item is string => item !== undefined);
+        if (unnamed.length > 0) {
+          const items = behaviorChecklistItems(checklist);
+          const line = uncheckedChecklistVerdict(
+            items,
+            "not run — the enabled checklist policy requires a non-empty item label for every check",
+          );
+          return error(`named behavior checklist required before fan-out\n${line}`, {
+            reason: "behavior-checklist-items-must-be-named",
+            checklistPassed: false,
+            checklistVerdict: line,
+            unnamedChecklistItems: unnamed,
+            requiredChecklistItems: items,
+          });
+        }
+      }
+      // Pin before dispatch too: a refused or interrupted fan-out cannot erase
+      // the checklist. No full-checklist round has failed yet.
+      if (checklist.length > 0 && pendingChecklist?.signature === undefined) {
+        pendingChecklist = {
+          turnId,
+          signature: checklistSignature,
+          items: behaviorChecklistItems(checklist),
+          remaining: behaviorChecklistItems(checklist),
+          failedRounds: 0,
+        };
+        pendingChecklistBySession.set(ctx.sessionId, pendingChecklist);
+      }
+      const failBeforeChecks = (output: string, details: Record<string, unknown>): CompressedToolResult => {
+        if (checklist.length === 0) return error(output, details);
+        const report: ContractReport = { findings: [], checks: checklist.map((check, i) => ({
+          ...(check.task === undefined ? {} : { task: check.task }),
+          item: behaviorChecklistItems(checklist)[i], checked: false, ok: false, detail: "fan-out did not complete",
+        })) };
+        const line = renderContractLine(report)!;
+        if (pendingChecklist !== undefined) {
+          pendingChecklistBySession.set(ctx.sessionId, {
+            ...pendingChecklist,
+            remaining: [...pendingChecklist.items],
+            lastVerdict: line,
+          });
+        }
+        return compressToolResult({ tool: FUSION_DELEGATE_TOOL, status: "error", output: output + "\n" + line,
+          details: { ...details, checklistPassed: false, checklistVerdict: line, contract: report } }, { maxSummaryLength: output.length + line.length + 100 });
+      };
 
       // Before the pool is measured: warming replays the probes a cloud
       // boot deferred, and it is the `/props` round trip inside it that
@@ -311,7 +662,7 @@ export function buildFusionDelegateTool(
           );
         deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
       } catch (err) {
-        return error(
+        return failBeforeChecks(
           `the fan-out was not approved: ${err instanceof Error ? err.message : String(err)}`,
           { reason: "fan-out-denied" },
         );
@@ -320,7 +671,6 @@ export function buildFusionDelegateTool(
       // The orchestrator's brief is a summary, and summaries were thin
       // enough that workers built the wrong thing or scavenged the disk
       // for the missing spec. Every worker also gets what was asked.
-      const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
       // A local worker's time limit is sized from the machine's measured
       // speed (F19); a cloud leg has no such measurement and keeps the
       // configured ceiling.
@@ -403,7 +753,7 @@ export function buildFusionDelegateTool(
       } catch (err) {
         // `runWorkerTasks` is written not to throw; if it ever does, the
         // orchestrator still gets a readable result rather than a dead turn.
-        return error(
+        return failBeforeChecks(
           `the fan-out failed: ${err instanceof Error ? err.message : String(err)}`,
           { reason: "fan-out-failed" },
         );
@@ -451,6 +801,8 @@ export function buildFusionDelegateTool(
       }
       const contractLine =
         contract === undefined ? undefined : renderContractLine(contract);
+      const checklistPasses =
+        contract === undefined ? true : contractChecklistPasses(contract);
 
       // …and takes the turn back. One line, so the operator can see the
       // spend return to the cloud leg instead of guessing which of the
@@ -463,7 +815,9 @@ export function buildFusionDelegateTool(
         phase: "finished",
         role: "orchestrator",
         model: orchestratorModel,
-        summary: `${okCount}/${results.length} ok — merging`,
+        summary: checklistPasses
+          ? `${okCount}/${results.length} ok — merging`
+          : `${okCount}/${results.length} ok — checklist blocked`,
       });
 
       // When the pool is what held the fan-out down, the orchestrator is
@@ -480,6 +834,33 @@ export function buildFusionDelegateTool(
       // every worker failed used to come back `ok`, and an orchestrator
       // reading only the status merged nothing as if it were something.
       const outcome = delegateOutcome(results);
+      let behaviorRepairRound: number | undefined;
+      if (checklist.length > 0) {
+        if (!checklistPasses) {
+          behaviorRepairRound = (pendingChecklist?.failedRounds ?? 0) + 1;
+          pendingChecklistBySession.set(ctx.sessionId, {
+            turnId,
+            signature: checklistSignature,
+            items: behaviorChecklistItems(checklist),
+            failedRounds: behaviorRepairRound,
+            remaining: (contract?.checks ?? [])
+              .filter((check) => !check.ok || check.checked === false)
+              .map((check) => check.item!),
+            ...(contractLine === undefined ? {} : { lastVerdict: contractLine }),
+          });
+        } else {
+          // PASS verifies the current bytes, but it does not release the checklist.
+          // Any later worker round in this operator turn must rerun the same full list.
+          pendingChecklistBySession.set(ctx.sessionId, {
+            turnId,
+            signature: checklistSignature,
+            items: behaviorChecklistItems(checklist),
+            failedRounds: pendingChecklist?.failedRounds ?? 0,
+            remaining: [],
+            ...(contractLine === undefined ? {} : { lastVerdict: contractLine }),
+          });
+        }
+      }
       // What the fan-out cost on the worker leg, when its model is priced
       // (a cloud leg with a catalogue entry); a local leg resolves to no
       // pricing and the header says nothing.
@@ -491,11 +872,11 @@ export function buildFusionDelegateTool(
         pricing === undefined
           ? null
           : fanoutSpend(results, pricing, workerModel);
-      return compressToolResult(
+      const compressed = compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
-          status: outcome === "all_failed" ? "error" : "ok",
-          output: `${formatDelegateOutput(results, deps.outputCharCap, {
+          status: outcome === "all_failed" || !checklistPasses ? "error" : "ok",
+          output: `${formatDelegateOutput(results, deps.outputCharCap + (contractLine?.length ?? 0), {
             ...(contractLine === undefined ? {} : { contractLine }),
             spend,
             ...(ordered ? { waves: plan.waves } : {}),
@@ -503,6 +884,20 @@ export function buildFusionDelegateTool(
           details: {
             tasks: results,
             outcome,
+            // No declared checks means no checklist verdict, not a vacuous PASS.
+            ...(checklist.length === 0
+              ? { checklistNotRequired: !requireBehaviorChecklist }
+              : { checklistPassed: checklistPasses }),
+            ...(contractLine === undefined ? {} : { checklistVerdict: contractLine }),
+            ...(behaviorRepairRound === undefined
+              ? {}
+              : {
+                  behaviorRepair: {
+                    round: behaviorRepairRound,
+                    maxRounds: MAX_BEHAVIOR_REPAIR_ROUNDS,
+                    remaining: Math.max(0, MAX_BEHAVIOR_REPAIR_ROUNDS - behaviorRepairRound),
+                  },
+                }),
             maxWorkers,
             requestedWorkers: requested,
             ...(Number.isFinite(poolSize) ? { slotPoolSize: poolSize } : {}),
@@ -513,8 +908,14 @@ export function buildFusionDelegateTool(
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
           },
         },
-        { maxSummaryLength: deps.outputCharCap + 400, maxTailLines: 2000 },
+        { maxSummaryLength: deps.outputCharCap + (contractLine?.length ?? 0) + 400, maxTailLines: 2000 },
       );
+      // A long status header or a compressor cap may still cut the table.
+      // Preserve the authoritative verdict independently of worker prose.
+      if (contractLine !== undefined && !compressed.summary.includes(contractLine)) {
+        return { ...compressed, summary: `${contractLine}\n${compressed.summary}` };
+      }
+      return compressed;
     },
   };
 }
