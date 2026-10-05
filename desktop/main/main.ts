@@ -898,6 +898,7 @@ function wireUpdater(): void {
         liveTurns: liveTurnCount(),
         download: downloadRunning() !== null,
         agentState: client ? client.status.state : null,
+        agentAlive: client ? client.pid !== null : false,
         health: () => (client ? client.health() : Promise.resolve(undefined)),
       });
     },
