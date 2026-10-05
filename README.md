@@ -215,7 +215,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | Area | Capabilities |
 |---|---|
 | **Browser** | Navigate, click, type, search, manage tabs, scroll, and read compact ARIA state via `playwright-core` (Chrome / Edge / Brave / Chromium). |
-| **Web & HTTP** | Web search with configurable providers (Exa, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
+| **Web & HTTP** | Web search with configurable providers (Exa, DuckDuckGo, Brave, SearXNG, Tavily); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
 | **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
@@ -696,6 +696,7 @@ NOTION_API_KEY=ntn_xxxxxxxx
 GITHUB_TOKEN=ghp_xxxxxxxx
 TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 EXA_API_KEY=exa_xxxxxxxx
+TAVILY_API_KEY=tvly-xxxxxxxx
 OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 ```
 

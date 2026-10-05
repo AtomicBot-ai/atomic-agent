@@ -23,3 +23,5 @@ export type {
 } from "./search-orchestrator.js";
 export { createSearxngProvider, parseSearxngJson } from "./searxng-provider.js";
 export type { SearxngProviderConfig } from "./searxng-provider.js";
+export { createTavilyProvider, parseTavilyJson } from "./tavily-provider.js";
+export type { TavilyProviderConfig } from "./tavily-provider.js";
