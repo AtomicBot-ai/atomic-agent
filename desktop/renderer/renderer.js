@@ -5802,6 +5802,20 @@ async function steerOrQueueRun(text, post, typedIn) {
     render(); return;
   }
   parkIn(key, [text]);
+  /* ATO-183: refused because the chat's turn ended while the steer was on
+     its way. That turn's end found nothing queued, so nothing was left to run
+     it: it sat in the tray saying it runs as the next turn, the chat idle
+     under it, until something else happened. A chat on screen with no turn
+     of its own runs it now, unless something holds the composer (a request
+     waiting, the chat still loading, a switch landing, the agent down) — then
+     it is owed, and runs as soon as that goes (drainOwed). */
+  const own = queueKey();
+  if (here && own && queueOwner(key) === own && !queueChatRunning(own) && !S.busy) {
+    STEER.ahead = 0;
+    DRAIN_OWED = true;
+    drainOwed();
+    if (!DRAIN_OWED) return;   // sent as the chat's next turn
+  }
   // The queue tray, like the sentence explaining it, is the chat's it was
   // typed in (Backlog 26): another chat on screen shows neither.
   if (here) placeInLiveTurn({id:nid(), k:'system', text: asked
