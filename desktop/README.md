@@ -1289,7 +1289,7 @@ the electron-builder config; it used to be the `build` key of package.json):
 
 | Variable | Meaning |
 |---|---|
-| `ATAG_UPDATE_FEED_URL` | Base URL the update files are served from (an R2 bucket, a releases-only repo, ...). The one place to change when hosting is decided. `https://` only; `http://` is accepted for `127.0.0.1` / `localhost` (a local test feed, `scripts/serve-test-feed.sh`), anything else stops the build. Unset: `publish: null`, no `app-update.yml` in the app, and Settings says "Updates are not set up for this build". |
+| `ATAG_UPDATE_FEED_URL` | Base URL the update files are served from: the `desktop-latest` pre-release (below), set as a repository variable. `https://` only; `http://` is accepted for `127.0.0.1` / `localhost` (a local test feed, `scripts/serve-test-feed.sh`), anything else stops the build. Unset: `publish: null`, no `app-update.yml` in the app, and Settings says "Updates are not set up for this build". |
 | `ATAG_UPDATE_CHANNEL` | `stable` by default (`canary` later). It names the files below. |
 
 With the variable set, `electron-builder ... --publish never` still writes
@@ -1323,6 +1323,31 @@ The app accepts an installer only when its signer's CN is in
 app-update.yml; "AtomicMail Systems OU", the DigiCert certificate). The
 workflow fails a signed build whose installer's CN is not in that list.
 
+### Where the feed lives
+
+The feed is one fixed GitHub pre-release in this repository, tag
+`desktop-latest`:
+
+```
+ATAG_UPDATE_FEED_URL=https://github.com/AtomicBot-ai/atomic-agent/releases/download/desktop-latest/
+```
+
+It is a pre-release so it never becomes the repository's Latest release,
+which the terminal installers read. Each desktop release replaces its files
+(installers first, the `.yml` files last):
+
+```bash
+gh release upload desktop-latest \
+  "Atomic Agent-<version>-arm64-mac.zip" "Atomic Agent-<version>-arm64-mac.zip.blockmap" \
+  "Atomic-Agent-Setup-<version>-x64.exe" "Atomic-Agent-Setup-<version>-x64.exe.blockmap" \
+  --repo AtomicBot-ai/atomic-agent --clobber
+gh release upload desktop-latest stable-mac.yml stable.yml --repo AtomicBot-ai/atomic-agent --clobber
+```
+
+Until the `desktop-latest` release exists, a check finds nothing (a failed
+automatic check shows nothing). A draft release does not work as a feed: its
+files need a GitHub login.
+
 Release notes: a `release-notes.md` in `build/` (or `releaseInfo.releaseNotes`)
 goes into the `.yml`; the toast shows its first line.
 
@@ -1348,8 +1373,13 @@ Run the desktop workflow by hand twice from the same ref, both with
 `feed_url = http://127.0.0.1:8765/desktop/`: A with `version_override` e.g.
 `0.0.90`, B with `0.0.91` (the version is set in the runner only). Put B's
 `stable-mac.yml` and `*-mac.zip` in `<dir>/desktop/`, run
-`desktop/scripts/serve-test-feed.sh <dir>`, install A into /Applications and
-open it.
+`desktop/scripts/serve-test-feed.sh <dir>`, install A into /Applications
+(or ~/Applications) and open it.
+
+After Restart, ShipIt starts B without the environment A was opened with: B
+uses the default state (`~/.atomic-agent-desktop`) and userData, not an
+`ATOMIC_AGENT_STATE_DIR` passed to A. Back both up before the test, or quit B
+as soon as it is up and open it again with the test state.
 
 ## Layout
 
