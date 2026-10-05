@@ -11645,7 +11645,7 @@ function obWizardHTML() {
     /* Calm (S6, U14): where the key goes, in the user's words; the file and
        who can read it are the tooltip (ATO-132: what main does with it). */
     + (k.env ? '<div class="ob-help" title="' + esc(keySavedHint()) + '">Your key stays on ' + THIS_MACHINE + '.</div>' : '')
-    + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once with this key…</div>' : '')
+    + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once' + (k.local ? '' : ' with this key') + '…</div>' : '')
     + (unchecked
       ? '<div class="ob-foot">'
         + '<button class="btn btn-g" data-act="wiz:back">' + ic('chevL') + 'Back</button>'
@@ -16750,7 +16750,7 @@ function wizardHTML() {
      Same class, same slot, same two buttons when a key could not be checked. */
   return selShell(k.label,
     '<div class="selbody selwiz">' + fields
-    + (verifying ? '<p class="ob-help">Asking the provider to answer once with this key\u2026</p>' : '')
+    + (verifying ? '<p class="ob-help">Asking the provider to answer once' + (k.local ? '' : ' with this key') + '\u2026</p>' : '')
     + (WIZ.error && soft ? '<p class="ob-help wiz-ask">' + esc(WIZ.error) + '</p>' : '')
     + (WIZ.error && !soft ? '<div class="ob-err' + (unchecked ? ' tk-help--warn' : '') + '"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
     + '</div>',
@@ -16965,12 +16965,42 @@ async function wizNextStep() {
        (fetch-openai-compat-models.ts). That is a verdict on the key, as
        plain as the one-token check's — say it the same way, not "could not
        check", which read as the provider being down. */
-    const refused = !!(listed && /\bhttp 40[13]\b/.test(String(listed.error || '')));
-    WIZ.error = refused
-      ? k.label.split(' (')[0] + ' didn\u2019t accept this key. Check that you copied all of it.'
-      : listed && listed.error
-      ? 'Could not check this key with ' + k.label.split(' (')[0] + '.'
-      : k.label.split(' (')[0] + ' returned no models for this key.';
+    /* B04: main reads the agent's words into fields (agent-cli.ts
+       modelListFailure): `status` is the provider answering, `unreachable`
+       is nobody answering at its address. The text test stays as the
+       fallback for an answer without them. */
+    const said = String((listed && listed.error) || '');
+    const httpSaid = /\bhttp (\d{3})\b/.exec(said);
+    const status = listed && typeof listed.status === 'number' ? listed.status : httpSaid ? Number(httpSaid[1]) : 0;
+    const refused = status === 401 || status === 403;
+    const unreachable = !!(listed && listed.unreachable);
+    /* B04: a server on this machine (Ollama, LM Studio, Atomic Chat, a custom
+       loopback URL) has no key, so nothing here may blame one: an empty
+       field there was never a key to check. Ollama not running read "Could
+       not check this key with Ollama". Say what was asked, and where. A key
+       typed into such a field and refused is still that key's fault. */
+    const local = !!k.local || llmKeylessLocal(entry);
+    let host = '';
+    try { host = new URL(entry.baseUrl).host; } catch (e) { host = ''; }
+    const name = k.custom ? (local ? 'your local server' : host || wizService(k)) : wizService(k);
+    const Name = name.charAt(0).toUpperCase() + name.slice(1);
+    const where = entry.baseUrl || host;
+    WIZ.error = unreachable && local
+      ? (k.custom ? 'Nothing is answering at ' + where + '. Start your local server, then try again.'
+        : name + ' isn\u2019t answering at ' + where + '. Start ' + name + ', then try again.')
+      : unreachable
+      ? 'Couldn\u2019t reach ' + name + '. Check your internet connection, then try again.'
+      : refused && local && !WIZ.apiKey
+      ? Name + ' at ' + where + ' turned the request down. Check its server settings, then try again.'
+      : refused
+      ? wizService(k) + ' didn\u2019t accept this key. Check that you copied all of it.'
+      : local && (!said || /\bno models\b/.test(said))
+      ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
+      : local
+      ? Name + ' at ' + where + ' didn\u2019t list its models.'
+      : said
+      ? 'Could not check this key with ' + wizService(k) + '.'
+      : wizService(k) + ' returned no models for this key.';
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
     render();
     return;

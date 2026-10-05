@@ -1,6 +1,6 @@
 import { BrowserWindow } from "electron";
 
-import { providerKeyPresent } from "../agent-cli.js";
+import { modelListFailure, providerKeyPresent, providerModels, withCliStandIn } from "../agent-cli.js";
 
 /**
  * Release-fix checks for backlog item 51 (see main/release-fixes-smoke.ts).
@@ -20,6 +20,13 @@ import { providerKeyPresent } from "../agent-cli.js";
  * its own key screen, saying it once; the popover's strip does not follow the
  * wizard's screens.
  *
+ * B04 (tester, build 02.10): Ollama picked with nothing running on :11434 said
+ * "Could not check this key with Ollama" — a key question for a server with no
+ * key, about a server that was not there. Main now reads the model list's
+ * failure into fields (unreachable / http status), and the setup says the
+ * server is not answering at its address, with a start hint; a cloud provider
+ * that cannot be reached is "couldn't reach", not a bad key.
+ *
  * Nothing reaches a provider and the config is not written: the setup's writes,
  * the key check and main's "is there a key behind the empty field" are answered
  * by stand-ins on the window's own IPC (a webContents handler is asked before
@@ -35,6 +42,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function checks51(js: Js, check: Check): Promise<void> {
   await keyPresentInMain(check);
+  await listFailureInMain(check);
   await keyScreens(js, check);
 }
 
@@ -65,10 +73,48 @@ async function keyPresentInMain(check: Check): Promise<void> {
   }
 }
 
+/* B04: main tells a host that did not answer from a provider that answered "no", in fields, not words. */
+async function listFailureInMain(check: Check): Promise<void> {
+  const cases: Array<[string, ReturnType<typeof modelListFailure>]> = [
+    ['could not list models from "ollama": fetch failed', { unreachable: true }],
+    ['could not list models from "x": connect ECONNREFUSED 127.0.0.1:11434', { unreachable: true }],
+    ['could not list models from "groq": getaddrinfo ENOTFOUND api.groq.com', { unreachable: true }],
+    ['could not list models from "groq": The operation was aborted due to timeout', { unreachable: true }],
+    ['could not list models from "groq": http 401: Invalid API Key', { status: 401 }],
+    ['could not list models from "x": http 403', { status: 403 }],
+    ['could not list models from "x": server listed no models', {}],
+    ["the agent did not answer `atag models search` within 90s — it may be busy or starting up. Try again. (fetch failed)", {}],
+  ];
+  const wrong = cases.filter(([text, want]) => JSON.stringify(modelListFailure(text)) !== JSON.stringify(want));
+  check(
+    "B04: main reads a failed model list as unreachable (fetch failed, ECONNREFUSED, ENOTFOUND, timeout) or as the provider's HTTP status (401/403) — and our own deadline as neither",
+    wrong.length === 0,
+    show(wrong.map(([text, want]) => ({ text, want, got: modelListFailure(text) }))),
+  );
+  const said = 'could not list models from "ollama": fetch failed';
+  const listed = await withCliStandIn(
+    async () => ({ ok: false, stdout: "", stderr: `${said}\n`, error: said }),
+    () => providerModels("ollama", "openai-compatible"),
+  );
+  check(
+    "B04: providerModels hands the setup `unreachable: true` with the agent's words when nothing answers at Ollama's address",
+    listed.ok === false && listed.unreachable === true && listed.status === undefined && listed.error === said,
+    show(listed),
+  );
+}
+
 async function keyScreens(js: Js, check: Check): Promise<void> {
   const wins = BrowserWindow.getAllWindows().filter((x) => !x.isDestroyed());
   const seen: Array<{ ch: string; id?: unknown; baseUrl?: unknown }> = [];
-  const answer = { present: false, verify: { ok: true, checked: true, status: 200 } as Record<string, unknown> };
+  const answer = {
+    present: false,
+    verify: { ok: true, checked: true, status: 200 } as Record<string, unknown>,
+    /* B04: a model list's failure by provider id, as main hands it over (providerModels + modelListFailure). */
+    list: {
+      groq: { ok: false, error: 'could not list models from "groq": http 401: Invalid API Key', status: 401 },
+      ollama: { ok: false, error: 'could not list models from "ollama": fetch failed', unreachable: true },
+    } as Record<string, unknown>,
+  };
   const stand: Record<string, (_e: unknown, payload: unknown) => unknown> = {
     "cli:providerKeyPresent": (_e, p) => {
       seen.push({ ch: "present", baseUrl: (p as { baseUrl?: unknown } | null)?.baseUrl });
@@ -78,7 +124,8 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
     "cli:providerModels": (_e, p) => {
       seen.push({ ch: "models" });
       // Groq ships no catalog: its list is a live call with the key, and a bad key is refused there.
-      if ((p as { id?: unknown } | null)?.id === "groq") return { ok: false, error: 'could not list models from "groq": http 401: Invalid API Key' };
+      const listId = String((p as { id?: unknown } | null)?.id ?? "");
+      if (answer.list[listId]) return answer.list[listId];
       return { ok: true, models: [{ provider: "openrouter", id: "openrouter/auto", kind: "chat" }] };
     },
     "cli:verifyProviderKey": () => { seen.push({ ch: "verify" }); return answer.verify; },
@@ -222,6 +269,45 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       listRefused["phase"] === "configure" && /^Groq didn\u2019t accept this key/.test(String(listRefused["error"] ?? ""))
         && listRefused["soft"] === false && !!listRefused["redLine"],
       show(listRefused),
+    );
+
+    // 6c (B04). Ollama with the field left blank and nothing running on :11434: the server is not answering — no word of a key.
+    seen.length = 0;
+    const ollamaDown = await js<Record<string, unknown>>(`(async () => {
+      WIZ.phase = null; window.__t51Stage([]);
+      Object.assign(WIZ, {row: KIND_ROWS.find((k) => k.id === 'ollama'), phase: 'configure', apiKey: '', baseUrl: '', error: null,
+        softError: null, forId: null, unfinishedId: null, modelChosen: false}); render();
+      act('wiz:next'); await window.__t51Settle();
+      return Object.assign(window.__t51View(), {detail: WIZ.errorDetail && WIZ.errorDetail.text});
+    })()`);
+    check(
+      "B04: Ollama not running reads \"Ollama isn't answering at http://localhost:11434. Start Ollama, then try again.\" in red, no word of a key, the agent's words as the Details",
+      ollamaDown["phase"] === "configure"
+        && ollamaDown["error"] === "Ollama isn’t answering at http://localhost:11434. Start Ollama, then try again."
+        && !/\bkey\b/i.test(String(ollamaDown["error"] ?? "")) && ollamaDown["soft"] === false && !!ollamaDown["redLine"]
+        && /fetch failed/.test(String(ollamaDown["detail"] ?? "")),
+      show(ollamaDown),
+    );
+    check(
+      "B04: …nothing is asked about a key for it or checked, and the entry it wrote is taken back",
+      !seen.some((c) => c.ch === "present" || c.ch === "verify") && seen.some((c) => c.ch === "models")
+        && seen.some((c) => c.ch === "remove" && c.id === "ollama"),
+      show(seen),
+    );
+
+    // 6d (B04). A cloud provider that cannot be reached is the network, not the key.
+    answer.list["groq"] = { ok: false, error: 'could not list models from "groq": fetch failed', unreachable: true };
+    const groqDown = await js<Record<string, unknown>>(`(async () => {
+      WIZ.phase = null; window.__t51Stage([]);
+      Object.assign(WIZ, {row: KIND_ROWS.find((k) => k.id === 'groq'), phase: 'configure', apiKey: 'smoke-t51-some-key-0123', baseUrl: '', error: null,
+        softError: null, forId: null, unfinishedId: null, modelChosen: false}); render();
+      act('wiz:next'); await window.__t51Settle(); return window.__t51View();
+    })()`);
+    check(
+      "B04: Groq out of reach reads \"Couldn't reach Groq. Check your internet connection, then try again.\" — not \"didn't accept this key\" or \"Could not check this key\"",
+      groqDown["phase"] === "configure"
+        && groqDown["error"] === "Couldn’t reach Groq. Check your internet connection, then try again.",
+      show(groqDown),
     );
 
     // 7. A failure is still red: a key the provider turned down.

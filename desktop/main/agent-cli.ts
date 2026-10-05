@@ -952,6 +952,39 @@ function managedPortFromFile(): number | null {
 }
 
 /**
+ * B04 — why a provider's live model list did not come back, as fields the
+ * setup can decide on rather than words it has to read.
+ *
+ * Ollama added with nothing running on :11434 said "Could not check this key
+ * with Ollama", with `could not list models from "ollama": fetch failed`
+ * under Details: a key question for a provider that has no key, about a
+ * server that simply was not there. A host that does not answer is not a key
+ * turned down — for a cloud provider either (no network, a DNS failure).
+ *
+ * `models search` reports the failure only as text on stderr (the error
+ * object, and undici's `cause.code`, stay in the agent), so this is the one
+ * place that reads it: `http <status>` is the provider answering
+ * (fetch-openai-compat-models.ts modelListHttpError); undici's "fetch
+ * failed", a socket error code, or the list request's own 10s timeout is
+ * nobody answering. Our own deadline on the agent ("the agent did not answer
+ * …") is neither: it says nothing about the provider.
+ */
+export interface ModelListFailure {
+  /** The provider answered with this HTTP status (401/403: it refused the key). */
+  status?: number;
+  /** Nothing answered at the provider's address: not running, no network, no such host, timed out. */
+  unreachable?: boolean;
+}
+const LIST_UNREACHABLE =
+  /\b(?:fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EHOSTDOWN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|socket hang up|aborted due to timeout|operation was aborted|connect timeout)\b/i;
+export function modelListFailure(error: string): ModelListFailure {
+  if (/^the agent did not answer\b/.test(error)) return {};
+  const http = /\bhttp ([1-5]\d\d)\b/.exec(error);
+  if (http) return { status: Number(http[1]) };
+  return LIST_UNREACHABLE.test(error) ? { unreachable: true } : {};
+}
+
+/**
  * A provider's model list.
  *
  * Two quirks of `models search`, both load-bearing:
@@ -964,13 +997,13 @@ function managedPortFromFile(): number | null {
 export async function providerModels(
   providerId: string,
   kind: string,
-): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string }> {
+): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string } & ModelListFailure> {
   if (!/^[\w.-]{1,48}$/.test(providerId)) return { ok: false, error: "bad provider id" };
   const bundled = kind === "openrouter" || kind === "aimlapi";
   const args = ["models", "search", " ", "--provider", providerId, "--limit", "200", "--json"];
   if (!bundled) args.push("--refresh");
   const res = await cli(args, 90_000);
-  if (!res.ok) return { ok: false, error: res.error };
+  if (!res.ok) return { ok: false, error: res.error, ...modelListFailure(res.error ?? "") };
   try {
     const parsed = JSON.parse(res.stdout) as SearchedModel[];
     return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
