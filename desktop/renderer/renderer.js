@@ -4491,8 +4491,9 @@ function contextHTML() {
       + '<span class="mono tnum ctxval">' + pairs + '</span>'
       + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="Keep more earlier messages"' + (pairs >= PAIRS_MAX ? ' disabled' : '') + '>' + ic('plus') + '</button>'
       + '</span></div></div>'
-    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
-    + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
+    /* ATO-182: no Done, as in the mode and model popovers (ATO-167): a step
+       applies as it is pressed, and a click outside or Escape closes it. */
+    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span></div></div></div>';
 }
 
 /* The kit dot for a chatDot()/taskDot() pair, in the Tactile status grammar:
