@@ -157,12 +157,20 @@ describe("filterUngroundedReflection", () => {
     expect(out.notes).toHaveLength(1);
   });
 
-  it("treats a name already stored in the profile as grounded", () => {
+  // Field case (desktop QA 05.10): the old reflection invented
+  // `name=Анна`; the new one rewrote it as `name=Anna` because stored
+  // profile names counted as grounded. Only the user's own words count now.
+  it("does not ground a name the user never typed in the window, in any script", () => {
     const out = filterUngroundedReflection(
-      { facts: [], notes: [note("I am Nadia and I moved to Lisbon.")] },
-      { userTexts: ["I moved to Lisbon last week, remember that"], knownNames: ["Nadia"] },
+      {
+        facts: [fact("name", "Anna"), fact("name", "Анна")],
+        notes: [note("I am Anna and I prefer Russian."), note("The user is Anna.")],
+      },
+      { userTexts: ["Отвечай, пожалуйста, на русском языке"] },
     );
-    expect(out.notes).toHaveLength(1);
+    expect(out.facts).toEqual([]);
+    expect(out.notes).toEqual([]);
+    expect(out.dropped.every((d) => d.reason === "ungrounded_identity")).toBe(true);
   });
 
   it("does not mistake 'I am an assistant professor' for the assistant persona", () => {

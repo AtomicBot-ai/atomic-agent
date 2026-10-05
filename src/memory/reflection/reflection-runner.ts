@@ -15,7 +15,6 @@ import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 import { buildReflectionPrompt } from "./reflection-prompt.js";
 import {
   filterUngroundedReflection,
-  isNameProfileKey,
   isTrivialReflectionWindow,
 } from "./reflection-grounding.js";
 
@@ -403,10 +402,13 @@ export function createReflectionRunner(
       // never made, the assistant describing itself, and one-off
       // instructions dressed up as preferences. See
       // `reflection-grounding.ts` for the exact (narrow) rules.
-      const grounded = filterUngroundedReflection(parsed, {
-        userTexts,
-        knownNames: knownProfileNames(deps.profileStore),
-      });
+      //
+      // Grounding comes ONLY from the user's own words in this window.
+      // Stored profile names are deliberately not a source: a name the
+      // old reflection once invented (field case: `name=Анна`, never
+      // typed in any session) would otherwise vouch for itself and get
+      // re-written / superseded on every turn.
+      const grounded = filterUngroundedReflection(parsed, { userTexts });
       for (const item of grounded.dropped) {
         deps.logger?.debug("reflection.ungrounded_dropped", {
           sessionId: input.sessionId,
@@ -511,23 +513,6 @@ function reflectedUserTexts(input: ReflectionInput): string[] {
     return input.transcript.map((turn) => turn.user);
   }
   return [input.userMessage];
-}
-
-/**
- * Names already stored in the profile. They count as grounded for the
- * identity check, so a note that restates a known name is kept even
- * when this turn did not repeat it. A store failure just means no
- * extra vocabulary — never a failed reflection.
- */
-function knownProfileNames(store: ProfileStore): string[] {
-  try {
-    return store
-      .list()
-      .filter((fact) => isNameProfileKey(fact.key))
-      .map((fact) => fact.value);
-  } catch {
-    return [];
-  }
 }
 
 /**
