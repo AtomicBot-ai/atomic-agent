@@ -23,6 +23,7 @@ export type {
 } from "./provider-cooldown.js";
 export {
   buildSearchCacheKey,
+  buildSearchCacheExtras,
   createPersistentSearchCache,
   createSearchCache,
 } from "./search-cache.js";

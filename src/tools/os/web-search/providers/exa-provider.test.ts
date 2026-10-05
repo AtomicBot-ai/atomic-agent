@@ -87,7 +87,7 @@ describe("createExaProvider", () => {
         signal: new AbortController().signal,
       });
 
-      expect(results[0]?.title).toBe("A");
+      expect(results.results[0]?.title).toBe("A");
       expect(calls[0]?.args).toContain("https://api.exa.ai/search");
       expect(calls[0]?.args.join("\n")).toContain("x-api-key: test-key");
       expect(calls[0]?.input).toContain('"query":"atomic agent"');

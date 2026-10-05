@@ -68,7 +68,7 @@ export function createExaProvider(
           lookup: deps.lookup,
         });
         assertProviderStatus(response, "exa", "Exa API");
-        return parseExaApiJson(response.body, options.maxResults);
+        return { results: parseExaApiJson(response.body, options.maxResults) };
       }
 
       const response = await searchHttp({
@@ -98,7 +98,7 @@ export function createExaProvider(
       });
       assertProviderStatus(response, "exa", "Exa");
       const text = extractExaText(response.body);
-      return parseExaTextResults(text, options.maxResults);
+      return { results: parseExaTextResults(text, options.maxResults) };
     },
   };
 }
