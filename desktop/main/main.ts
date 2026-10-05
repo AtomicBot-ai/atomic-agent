@@ -302,6 +302,31 @@ ipcMain.on("app:voiceSupported", (event) => {
   event.returnValue = voiceSupported(process.platform);
 });
 
+/* ATO-135: the messages queued in each chat (renderer QUEUES and the queue on
+   screen), by session id, as the window last told it. A window closed with
+   the app still running (macOS) lost them; the next window takes them back
+   at load (app:queuesTake, sendSync, so they are there before its first
+   paint). They live in this process only: a full quit drops them, and says so
+   first (before-quit). */
+let keptQueues: Record<string, string[]> = {};
+ipcMain.on("app:queuesKeep", (_event, snapshot: unknown) => {
+  const next: Record<string, string[]> = {};
+  if (snapshot && typeof snapshot === "object") {
+    for (const [sid, texts] of Object.entries(snapshot as Record<string, unknown>)) {
+      if (!sid || !Array.isArray(texts)) continue;
+      const list = texts.filter((t): t is string => typeof t === "string" && t.length > 0).slice(0, 50);
+      if (list.length) next[sid] = list;
+    }
+  }
+  keptQueues = next;
+});
+ipcMain.on("app:queuesTake", (event) => {
+  event.returnValue = keptQueues;
+});
+function queuedMessageCount(): number {
+  return Object.values(keptQueues).reduce((n, list) => n + list.length, 0);
+}
+
 /* Item 2 (voice input): the chosen dictation languages. This is a viewer
    preference, not agent state — the agent has no voice surface at all — so
    it lives beside prefs.json in Electron's userData and never touches
@@ -9040,8 +9065,34 @@ app.on("window-all-closed", () => {
    and only its own app.quit() at the end goes through. */
 let quitShutdown: { done: boolean } | null = null;
 
+/* ATO-135: a quit with messages still queued in a chat asks first — they are
+   kept across a closed window, not across a quit. Once per quit. */
+let queuedQuitAsked = false;
+
 // Never leave the agent running after the app is gone.
 app.on("before-quit", (event) => {
+  /* Off macOS the last window closing is the quit: asked then, a Cancel would
+     leave the app running with no window, so it is not asked. Nor is the quit
+     an update's install makes (ATO-229): the person asked for it, the agent is
+     stopped for it already, and a Cancel would leave the install half done. */
+  const windowUp = !!win && !win.isDestroyed();
+  const installing = appUpdater()?.state().phase === "installing";
+  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin")) {
+    const n = queuedMessageCount();
+    if (n > 0) {
+      const opts = {
+        type: "warning" as const,
+        buttons: ["Quit", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        message: n === 1 ? "A queued message has not been sent" : `${n} queued messages have not been sent`,
+        detail: "They wait for their chat's turn to end. Quitting now drops them.",
+      };
+      const pick = win && windowUp ? dialog.showMessageBoxSync(win, opts) : dialog.showMessageBoxSync(opts);
+      if (pick !== 0) { event.preventDefault(); return; }
+      queuedQuitAsked = true;
+    }
+  }
   // Item 2 (voice input): BEFORE the guard below. `if (!agent) return` skips
   // everything after it whenever the agent is not running, which is exactly
   // the degraded state in which someone is most likely to be poking at the

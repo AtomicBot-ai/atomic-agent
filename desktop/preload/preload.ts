@@ -212,6 +212,9 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsPullEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsPullEmbedding", id),
   modelsUseEmbedding: (idOrDisable: string) => ipcRenderer.invoke("cli:modelsUseEmbedding", idOrDisable),
   modelsUpdate: () => ipcRenderer.invoke("cli:modelsUpdate"),
+  /** ATO-135: the chats' queued messages, kept in main across a closed window (not across a quit). */
+  queuesKeep: (snapshot: Record<string, string[]>) => ipcRenderer.send("app:queuesKeep", snapshot),
+  queuesTake: (): unknown => ipcRenderer.sendSync("app:queuesTake"),
   /** ATO-130: Settings' llama.cpp update waiting for its turn behind a model start, or running. */
   onUpdatePhase: (cb: (payload: unknown) => void) => on("cli:updatePhase", cb),
   modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
