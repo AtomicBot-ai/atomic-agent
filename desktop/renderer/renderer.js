@@ -5784,6 +5784,23 @@ function submit() {
     toast(SWX.label, 'The message stays in the box until the new configuration is live');
     return;
   }
+  /* A new message with no agent up — the app just opened (after a Force Quit
+     the agent is respawned and takes seconds to answer /health), or the
+     agent stopped. It used to be cleared from the box, drawn as sent and
+     answered with "the agent is still starting — send this again in a
+     moment": the words the person had to send again were gone, under a
+     send button that looked ready. Nothing goes out now and the draft stays,
+     as for a chat still loading above. A message typed under a running turn
+     (S.busy / S.pending) keeps the steer / queue path below: a queue owed
+     while the agent was down is drained when it is back (drainOwed). */
+  if (!S.busy && !S.pending && S.live.state !== 'connected') {
+    if (S.live.state === 'starting' || S.live.state === 'stopped') {
+      toast('The agent is still starting', 'Your message is still in the box. Send it once the agent is up', 'bad');
+    } else {
+      toast('The agent is not running', (S.live.error ? S.live.error + '. ' : '') + 'Your message is still in the box', 'bad');
+    }
+    return;
+  }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
@@ -5825,14 +5842,6 @@ function submit() {
   // trace entry for a send that did not happen is not evidence of anything.
   if (text === EXECUTE_PLAN_MESSAGE) PLAN_TRACE.push('send');
   S.log.push({id:nid(), k:'user', text});
-  if (S.live.state !== 'connected') {
-    // Nothing may be fabricated. If the agent is not answering, say so.
-    S.log.push({id:nid(), k:'system', text: S.live.state === 'starting'
-      ? 'the agent is still starting — send this again in a moment'
-      : esc(S.live.error || 'no agent is attached, so nothing was run')});
-    render();
-    return;
-  }
   // Lane B — backend switch: the TUI's pre-turn gate for the managed local
   // route (src/tui/local-turn-gate.ts). `atag serve` has no equivalent, so
   // without this a turn against a model that is not on disk burns the
