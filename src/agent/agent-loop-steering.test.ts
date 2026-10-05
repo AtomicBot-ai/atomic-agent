@@ -81,6 +81,7 @@ function buildLoop(opts: {
   inbox?: SteeringInbox;
   onStep?: (stepIndex: number) => void;
   steps?: number;
+  forgetDeclinedApprovals?: (sessionId: string) => void;
 }): Harness {
   const tails: string[] = [];
   const events: AgentLoopEvent[] = [];
@@ -115,6 +116,9 @@ function buildLoop(opts: {
     capabilities: CAPS,
     skillCatalog: SKILLS,
     ...(opts.inbox ? { steeringInbox: opts.inbox } : {}),
+    ...(opts.forgetDeclinedApprovals
+      ? { forgetDeclinedApprovals: opts.forgetDeclinedApprovals }
+      : {}),
     onEvent: (event) => {
       events.push(event);
       if (
@@ -161,6 +165,33 @@ describe("AgentLoop mid-turn steering", () => {
     expect(tails[0]).not.toContain("actually, check the logs first");
     expect(tails[1]).toContain("### notice");
     expect(tails[1]).toContain("actually, check the logs first");
+  });
+
+  it("forgets what the user declined when the turn starts and when a steer lands (ATO-225)", async () => {
+    const inbox = new SteeringInbox();
+    const forgotten: Array<{ sessionId: string; beforeStep: number }> = [];
+    let stepsStarted = 0;
+    const { loop } = buildLoop({
+      inbox,
+      steps: 3,
+      forgetDeclinedApprovals: (sessionId) =>
+        forgotten.push({ sessionId, beforeStep: stepsStarted }),
+      onStep: (step) => {
+        stepsStarted = step + 1;
+        if (step === 0) inbox.push("s-forget", "yes, go ahead and write it");
+      },
+    });
+    await loop.runTurn(createEmptySessionState({ id: "s-forget", workingDir }), {
+      userMessage: "write test10.txt",
+      maxSteps: 4,
+      signal: new AbortController().signal,
+    });
+    // Once before any step, once when the steer is applied before step
+    // 1 — and not again on the steps after it.
+    expect(forgotten).toEqual([
+      { sessionId: "s-forget", beforeStep: 0 },
+      { sessionId: "s-forget", beforeStep: 1 },
+    ]);
   });
 
   it("does not leak the notice into the step after that", async () => {

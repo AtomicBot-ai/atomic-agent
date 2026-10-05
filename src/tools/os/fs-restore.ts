@@ -71,6 +71,7 @@ export function buildOsFsRestoreTool(
           reason: `restore ${absolute} to the ${formatBytes(copy.bytes)} (${formatLines(copy.lines)}) it held before ${copy.tool}`,
           preview,
           affectedResources: [absolute],
+          targetPaths: [absolute],
           workingDir: ctx.workingDir,
           trustConfigPaths: options.trustConfigPaths,
         },

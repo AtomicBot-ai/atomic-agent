@@ -107,6 +107,9 @@ export function buildOsFsWriteTool(
             preview,
             affectedResources: [target],
             redirectablePath: target,
+            // An append adds to the file rather than replacing it, so a
+            // no to it is not a no to every later write of the file.
+            targetPaths: mode === "replace" ? [target] : [],
             workingDir: ctx.workingDir,
             trustConfigPaths: options.trustConfigPaths,
           },

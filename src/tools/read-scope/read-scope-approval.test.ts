@@ -134,8 +134,16 @@ describe("a read outside the scope asks through the ladder", () => {
     );
     expect(innerReads).toBe(0);
     expect(gate.readScopeGrants.rootsFor("s-plain")).toEqual([]);
-    // The model may try again; it is asked again.
+    // The same read again this turn is refused unasked, in the gate's
+    // words rather than the scope sentence (ATO-225).
     answer = { approved: true };
+    const again = await read(solution);
+    expect(again.status).toBe("error");
+    expect(again.summary).toContain("the user already declined this same call");
+    expect(prompts).toHaveLength(1);
+    expect(innerReads).toBe(0);
+    // The next turn is a new answer: it is asked again.
+    gate.forgetDeclined("s-plain");
     expect((await read(solution)).status).toBe("ok");
     expect(prompts).toHaveLength(2);
   });

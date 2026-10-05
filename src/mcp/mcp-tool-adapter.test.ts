@@ -412,6 +412,34 @@ describe("approval gating", () => {
     expect(callTool).not.toHaveBeenCalled();
   });
 
+  it("a repeat of a call the user declined earlier in the turn is stamped as their no", async () => {
+    const callTool = vi.fn(async () => ({ content: [] }));
+    const approvals = {
+      request: async () => ({
+        approvalId: "a-test",
+        approved: false,
+        reason: "this same call",
+        automatic: true,
+        declinedEarlier: true,
+      }),
+    } as unknown as ApprovalGate;
+    const def = createMcpToolDefinition(
+      metaOf("windows", "registry_write"),
+      fakeClient(callTool),
+      { trust: "approval_gated", dangerous: { approvals, approvalRequired: true } },
+    );
+    const result = await def.run({ key: "HKLM\\..." }, ctx);
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain(
+      "the user already declined this same call earlier in this turn",
+    );
+    expect(result.details).toMatchObject({
+      approvalDenied: true,
+      deniedByUser: true,
+    });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
   it("exempts a discovery-time readOnlyHint === true", async () => {
     const { dangerous, requests } = fakeDangerous(true);
     const def = createMcpToolDefinition(

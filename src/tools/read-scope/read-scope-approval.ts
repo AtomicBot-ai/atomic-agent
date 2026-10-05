@@ -166,7 +166,10 @@ export class ReadOutsideApprover {
         );
       } catch (err) {
         if (err instanceof ApprovalDeniedError) {
-          return err.byUser
+          // A repeat the gate refused because the user already said no
+          // keeps the gate's words: the scope sentence would invite the
+          // model to ask for the very path the user just declined.
+          return err.byUser || err.declinedEarlier
             ? sessionReadDeclined(tool, path, roots, err.message)
             : sessionReadRefusal(tool, path, ctx, roots);
         }

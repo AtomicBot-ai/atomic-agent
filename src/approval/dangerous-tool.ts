@@ -27,6 +27,11 @@ export interface ApprovalPrompt {
    * `ApprovalRequest.redirectablePath` — set only by `os.fs.write`.
    */
   redirectablePath?: string;
+  /**
+   * Files the call would change, for the gate's same-turn denial rule.
+   * See `ApprovalRequest.targetPaths`.
+   */
+  targetPaths?: readonly string[];
 }
 
 /**
@@ -51,21 +56,28 @@ export interface ApprovalOutcome {
  *
  * `byUser` is false when no person made the call: a session refuse
  * policy, a prompt that timed out or could not be delivered, one dropped
- * because its surface went away. Those carry the system's `reason`;
- * a person's denial carries their own words, if they typed any.
+ * because its surface went away. Those carry the system's `reason`; a
+ * person's denial carries their own words, if they typed any. A repeat
+ * the gate refused because the user already declined it this turn is
+ * `declinedEarlier`: nobody was asked this time, but it reads, and is
+ * reported, as the user's decision.
  */
 export class ApprovalDeniedError extends Error {
   public readonly byUser: boolean;
+  /** See `ApprovalDecision.declinedEarlier`. */
+  public readonly declinedEarlier: boolean;
 
   constructor(
     public readonly tool: string,
     public readonly reason?: string,
-    options: { byUser?: boolean } = {},
+    options: { byUser?: boolean; declinedEarlier?: boolean } = {},
   ) {
     const byUser = options.byUser ?? false;
-    super(describeApprovalDenial(tool, reason, byUser));
+    const declinedEarlier = options.declinedEarlier ?? false;
+    super(describeApprovalDenial(tool, reason, byUser, declinedEarlier));
     this.name = "ApprovalDeniedError";
     this.byUser = byUser;
+    this.declinedEarlier = declinedEarlier;
   }
 }
 
@@ -79,14 +91,26 @@ export class ApprovalDeniedError extends Error {
  * it was their decision and what to do with it; their words, when they
  * typed some instead of pressing Deny, come last so a long reply only
  * loses its own tail to the summary cap. A denial nobody decided says
- * so too, and never claims the user declined.
+ * so too, and never claims the user declined. A repeat of something the
+ * user declined earlier in the turn (`declinedEarlier`, with `reason`
+ * naming what they declined) says that, not "refused without a
+ * decision": the system-refusal framing is what ATO-245 removed.
  */
 export function describeApprovalDenial(
   tool: string,
   reason: string | undefined,
   byUser: boolean,
+  declinedEarlier = false,
 ): string {
   const words = reason?.trim() ?? "";
+  if (declinedEarlier) {
+    return (
+      `${tool} was not run: the user already declined ${words || "it"} ` +
+      "earlier in this turn, so it was not asked again. " +
+      "Do not try it again or another way; " +
+      "tell the user it was not done and ask what they would like instead."
+    );
+  }
   if (!byUser) {
     return (
       `${tool} was not run: refused without a decision from the user` +
@@ -135,12 +159,16 @@ export async function requireApproval(
       ...(prompt.redirectablePath !== undefined
         ? { redirectablePath: prompt.redirectablePath }
         : {}),
+      ...(prompt.targetPaths !== undefined && prompt.targetPaths.length > 0
+        ? { targetPaths: [...prompt.targetPaths] }
+        : {}),
     },
     { signal },
   );
   if (!decision.approved) {
     throw new ApprovalDeniedError(prompt.tool, decision.reason, {
       byUser: decision.automatic !== true,
+      declinedEarlier: decision.declinedEarlier === true,
     });
   }
   // A retarget is only meaningful for a request that offered one. A host

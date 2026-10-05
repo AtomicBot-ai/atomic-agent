@@ -154,7 +154,9 @@ export function createMcpToolDefinition(
                 server: meta.server,
                 rawName: meta.rawName,
                 approvalDenied: true,
-                deniedByUser: err.byUser,
+                // A repeat of a call the user declined earlier in the
+                // turn is their no too, though nobody was asked again.
+                deniedByUser: err.byUser || err.declinedEarlier,
               },
             },
             MCP_COMPRESSOR_OPTIONS,

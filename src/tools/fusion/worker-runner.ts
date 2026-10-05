@@ -332,7 +332,17 @@ export interface WorkerRunnerDeps {
   /** `runtime.createEphemeralSession` — in-memory, never persisted. */
   createEphemeralSession: (meta: FusionWorkerMeta) => SessionState;
   approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
-    Partial<Pick<ApprovalGate, "fanoutScopes">>;
+    Partial<
+      Pick<
+        ApprovalGate,
+        | "fanoutScopes"
+        | "followDeclined"
+        | "clearSessionGrants"
+        | "hasDeclinedUnder"
+        | "forgetDeclinedUnder"
+        | "wouldPrompt"
+      >
+    >;
   /**
    * Where a worker's declared inputs (the contract's `inputs`, F51) are
    * registered for its session so `os.fs.write` refuses to replace
@@ -568,6 +578,10 @@ async function runOneTask(
   if (writeScope.length > 0) {
     deps.approvals.fanoutScopes?.grant(session.id, writeScope);
   }
+  // A file the user declined on the orchestrator's turn stays declined
+  // for its workers: inside the scope or not, a write of it goes to the
+  // gate, which refuses it (`ApprovalGate.followDeclined`).
+  deps.approvals.followDeclined?.(session.id, options.parentSessionId);
   // The contract's inputs (F51), resolved as this worker's tools will
   // resolve them: `os.fs.write` on one is refused whatever the brief
   // says, with no `overwrite` exemption — the orchestrator redeclares.
@@ -904,6 +918,9 @@ async function runOneTask(
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
     deps.approvals.fanoutScopes?.clear(session.id);
+    // Its declines and the link to the parent's, with nothing else to
+    // drop: a worker never gets a grant of its own.
+    deps.approvals.clearSessionGrants?.(session.id);
     deps.declaredInputs?.clear(session.id);
   }
 

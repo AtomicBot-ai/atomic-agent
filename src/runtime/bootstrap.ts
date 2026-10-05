@@ -2714,6 +2714,8 @@ export async function createAgentRuntime(
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
     clearFanoutTurnGrant: (sessionId: string) =>
       approvals.fanoutScopes.clearTurnGrant(sessionId),
+    forgetDeclinedApprovals: (sessionId: string) =>
+      approvals.forgetDeclined(sessionId),
     slotManager,
     grammar,
     llmComplete,
