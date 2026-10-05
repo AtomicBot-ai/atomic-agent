@@ -218,7 +218,6 @@ button.set-search:hover{border-color:var(--bd)}
 .set-firings{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
 .set-firings li{display:flex;align-items:center;gap:8px;font:400 12.5px/1.3 var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
 .set-firings li > svg{width:14px;height:14px;color:var(--ink-3)}
-.set-atnote{line-height:1.5}
 .set-formfoot{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:4px}
 .set-formfoot .grow{flex:1}
 /* tkPreview writes an inline success colour onto the submit button while the

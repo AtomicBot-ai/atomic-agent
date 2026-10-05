@@ -36,6 +36,7 @@
 .statusstrip .ss-jump{color:var(--blue)}
 .statusstrip .ss-jump:hover{color:var(--blue-deep)}
 .statusstrip .ss-jump svg{width:13px;height:13px}
+.statusstrip .ss-jump[hidden]{display:none} /* ATO-187: the card is in view */
 .ss-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 1.6s var(--ease) infinite}
 @media (prefers-reduced-motion:reduce){.ss-dot{animation:none}}
 

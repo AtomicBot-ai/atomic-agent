@@ -217,7 +217,7 @@ contextBridge.exposeInMainWorld("atomic", {
   configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),
   importRun: (input: Record<string, unknown>) => ipcRenderer.invoke("cli:importRun", input),
   importDefaults: () => ipcRenderer.invoke("app:importDefaults"),
-  llamaLogTail: (dataDir: string) => ipcRenderer.invoke("app:llamaLogTail", dataDir),
+  llamaLogTail: (dataDir: string | null) => ipcRenderer.invoke("app:llamaLogTail", dataDir),
   llamaProbe: (url: string) => ipcRenderer.invoke("app:llamaProbe", url),
   dotenvKeys: (stateDir: string) => ipcRenderer.invoke("app:dotenvKeys", stateDir),
   envPresent: (names: string[]) => ipcRenderer.invoke("app:envPresent", names),

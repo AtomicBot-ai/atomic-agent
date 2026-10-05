@@ -2243,8 +2243,10 @@ function wireIpc(client: AgentClient): void {
     if (res.ok) A.maybeModelConfigured();   // the custom-endpoint route: model_configured, once
     return res;
   });
+  // ATO-195: null asks for the managed folder main resolves itself, as the agent does.
   ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
-    typeof dataDir === "string" && isAbsoluteOn(process.platform, dataDir) ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
+    dataDir === null ? llamaLogTail(null)
+      : typeof dataDir === "string" && isAbsoluteOn(process.platform, dataDir) ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
   );
   ipcMain.handle("app:llamaProbe", (_event, url: unknown) =>
     typeof url === "string" ? llamaProbe(url) : { ok: false, error: "url required" },
@@ -5002,9 +5004,9 @@ async function settingsTest(
     );
     createdId = created.id ?? "";
     check("tasks tab: create goes through atag task create", created.ok && !!createdId && created.line === `task ${createdId} scheduled (at)`, created.error ?? created.line);
-    // The one-shot caveat rides under the success line, not only in the form preview.
+    // ATO-193: the agent keeps a one-shot's time (ATO-133), so no 0.5.4 caveat follows the success line.
     const note = await js<string>("window.__tasksNote()");
-    check("tasks tab: the `at` caveat follows the success line", note.includes("stores no next-run for a one-shot"), JSON.stringify(note));
+    check("tasks tab: no 0.5.4 `at` caveat follows the success line", note === "", JSON.stringify(note));
     if (createdId) {
       // A one-shot with no scheduledFor sorts last, so it may sit outside the
       // 14-row window: find it the way the TUI does, through `/` search.
@@ -5399,13 +5401,22 @@ async function settingsTestPartB(
     await promisify(execFile)("/usr/bin/sqlite3", [join(stateDir, "memory.sqlite"), sql], { timeout: 10_000 });
   };
   const memory = () => js<MemState>("window.__memory()");
-  const mem = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
+  let mem = await until(memory, (m) => m.refreshed !== null || !!m.error, 20_000);
   const memCfg = await configGetKey("memory");
   const mc = (memCfg.ok && memCfg.value && typeof memCfg.value === "object" ? memCfg.value : {}) as Record<string, { enabled?: boolean }>;
   const expectedChannels = ["profile", "notes", ...(mc.lessons?.enabled ? ["lessons"] : []), ...(mc.procedures?.enabled ? ["procedures"] : []), ...(mc.links?.enabled ? ["links"] : []), ...(mc.voting?.enabled ? ["votes"] : [])];
   const memChannelsOk = await until(memory, (m) => same(m.channels, expectedChannels), 10_000);
   check("memory tab: channels follow memory.*.enabled as resolveAvailableChannels does", same(memChannelsOk.channels, expectedChannels), `${JSON.stringify(memChannelsOk.channels)} vs ${JSON.stringify(expectedChannels)}`);
-  const profileSql = await js<{ ok: boolean; rows?: unknown[]; via?: string; error?: string }>("window.__memQuery('profile.list', [])");
+  /* ATO-232: the agent writes profile facts in the background, so the tab's
+     first read and the SQL below could straddle a write. The tab reads again
+     right before the SQL, and once more with it when the two still differ. */
+  type ProfileSql = { ok: boolean; rows?: unknown[]; via?: string; error?: string };
+  let profileSql: ProfileSql = { ok: false, error: "not read" };
+  for (let i = 0; i < 2; i++) {
+    mem = await js<MemState>("window.__memoryRefresh()");
+    profileSql = await js<ProfileSql>("window.__memQuery('profile.list', [])");
+    if (!profileSql.ok || mem.rows === (profileSql.rows ?? []).length) break;
+  }
   // What the tab draws: the one pressed channel button, the painted rows (a
   // 14-row window, memory-panel.tsx maxRows), the profile table's headers, the empty state's title.
   type MemView = { pressed: string[]; painted: number; heads: string[]; empty: string };

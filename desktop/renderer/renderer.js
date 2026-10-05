@@ -816,6 +816,9 @@ const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating
    and nothing else holds the agent (`flushTimer`, fzFlushSoon).
    Declared here, before the first render(), because composer() reads it. */
 const FZ = { live:[], swapQueued:false, flushTimer:null };
+/* ATO-187: whether the approval card is in view, so the waiting strip draws
+   no Jump to request (apprJumpWatch). Before the first render() too. */
+const APPR_JUMP = { seen:false, io:null, card:null };
 /* src/tui/run-mode/fusion-intro.ts FUSION_MARK: one model on top deciding,
    several underneath doing. */
 const FUSION_MARK = [
@@ -1124,7 +1127,7 @@ const TK = {
   rows:[], filter:'all', search:'', searchOpen:false, auto:true, lastRefreshedAt:null, loading:false,
   primed:false, mode:'list', cursor:0, detailId:null, cancel:null, msg:null, err:null, timer:null,
   form:null,
-  note:null, // muted line under `msg` — the one-shot `at` degradation on 0.5.4, repeated after submit
+  note:null, // muted line under `msg` (the 0.5.4 one-shot caveat used it; nothing sets it since ATO-193)
 };
 const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
 const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row window around the cursor, as in the TUI
@@ -1169,7 +1172,7 @@ const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-pan
    sqlite over <stateDir>/memory.sqlite (app:memoryQuery, named statements). */
 const MEM = {
   mode:'list', channel:'profile', available:['profile','notes'], rows:[], cursor:0, search:'',
-  notesFilter:'active', lastRefreshedAt:null, loading:false, auto:true,
+  notesFilter:'active', lastRefreshedAt:null, loading:false, loadingAt:0, auto:true,
   detailRowKey:null, detail:null, lastError:null, channelHint:null, timer:null, seq:0,
   cfg:null, cfgBusy:false, // `atag config get memory` — the effective flags when the user file has no memory.* key
   expandRuns:0, expandQueries:0, // g expand graph: completed walks and the links.outgoing/incoming statements they ran (the smoke tells a walk from the no-op)
@@ -3034,7 +3037,8 @@ function composer() {
     ? '<div class="statusstrip gated">'
       + '<span class="ss-ic warn">' + ic('shield') + '</span><span class="ss-text">Waiting for your approval</span>'
       + '<span class="ss-grow"></span>'
-      + '<button class="btn btn-g xs ss-jump" data-act="jump:appr">Jump to request' + ic('up') + '</button></div>'
+      // ATO-187: Jump only while the card is out of view (apprJumpWatch); the words stay, drivers read them.
+      + '<button class="btn btn-g xs ss-jump" data-act="jump:appr"' + (APPR_JUMP.seen ? ' hidden' : '') + '>Jump to request' + ic('up') + '</button></div>'
     /* A parked turn says so, and says when it tries again. The
        shape: WAITING · <provider> · ATTEMPT n · NEXT TRY 30s, with a Stop.
        Caution, not critical: nothing has failed yet. */
@@ -3575,6 +3579,7 @@ function afterChat(keep, hadFocus, caret) {
     sc.addEventListener('scroll', () => {
       S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
       $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
+      apprJumpSync();
     });
     if (S.stick) sc.scrollTop = sc.scrollHeight;
     // Scroll-stable cards: a scrolled-up user is put back at the same pixel
@@ -3593,7 +3598,42 @@ function afterChat(keep, hadFocus, caret) {
      button's. Focusing the first Deny on the page let an Enter or a Space
      meant for the box deny a call. The card's keys (⌘↩, ⌘.) work wherever
      the focus is; a person who tabs to the card or a button gets it there. */
+  apprJumpWatch();
 }
+/* ATO-187: "Waiting for your approval · Jump to request ↑" stood over the
+   composer with the card in full view right above it. The words stay (the
+   turn is waiting, and drivers read them); Jump is drawn only while the card
+   is out of view. Looked again on every paint, on a scroll of the transcript,
+   on a resize, and by an IntersectionObserver for what moves the card
+   without a scroll (rows that come under it, an expanded card above it).
+   In view: the whole card, or as much of it as the transcript can show.
+   APPR_JUMP is declared up by FZ, before the first render(). */
+function apprCardInView(card, sc) {
+  if (!card || !sc || !card.isConnected) return false;
+  const r = card.getBoundingClientRect(), v = sc.getBoundingClientRect();
+  if (!r.height || !v.height) return false;
+  const shown = Math.min(r.bottom, v.bottom) - Math.max(r.top, v.top);
+  return shown >= Math.min(r.height, v.height) - 2;
+}
+function apprJumpSync() {
+  APPR_JUMP.seen = apprCardInView(document.getElementById('apprcard'), $('#scroller'));
+  const b = document.querySelector('.statusstrip.gated .ss-jump');
+  if (b && b.hidden !== APPR_JUMP.seen) b.hidden = APPR_JUMP.seen;
+}
+function apprJumpWatch() {
+  const card = document.getElementById('apprcard');
+  if (card !== APPR_JUMP.card) {
+    if (APPR_JUMP.io) { APPR_JUMP.io.disconnect(); APPR_JUMP.io = null; }
+    APPR_JUMP.card = card;
+    const sc = $('#scroller');
+    if (card && sc && typeof IntersectionObserver !== 'undefined') {
+      APPR_JUMP.io = new IntersectionObserver(() => apprJumpSync(), {root: sc, threshold: [0, 0.25, 0.5, 0.75, 0.9, 1]});
+      APPR_JUMP.io.observe(card);
+    }
+  }
+  apprJumpSync();
+}
+if (typeof window !== 'undefined') window.addEventListener('resize', () => apprJumpSync());
 function autosize(e) { e.style.height = 'auto'; e.style.height = Math.min(e.scrollHeight, 180) + 'px'; }
 
 /* ---- Scroll-stable cards ----
@@ -5007,8 +5047,14 @@ function diagLogHTML() {
    per opening of the log (and once per Refresh press), and only when nothing
    has read the status yet: an external route never names a data dir, and a
    failed call is not repeated on every 2 s tick — each one spawns the CLI and
-   a /health call. `force` (Refresh) repaints even when the file is the same,
-   so the read time moves. */
+   a /health call.
+   ATO-195: the log no longer waits for that answer. While none has come (a
+   status call already on its way, which llmRefreshStatus does not wait for,
+   or one that failed or timed out while the model loaded), main reads the
+   managed folder it resolves from the config as the agent does, so a model
+   that is up and answering never shows "No log yet" over a log on disk.
+   `force` (Refresh) repaints even when the file is the same, so the read
+   time moves. */
 async function diagLogRefresh(force) {
   if (!BR || DIAG.logBusy) return;
   const none = (extra) => Object.assign({path:null, size:null, truncated:false, text:'', lastReadAt:Date.now(), error:null}, extra);
@@ -5017,20 +5063,19 @@ async function diagLogRefresh(force) {
   if (!BR.llamaLogTail) { DIAG.log = none({error:'This build cannot read the model server’s log.'}); if (force || before !== key(DIAG.log)) diagRepaint(); return; }
   DIAG.logBusy = true;
   try {
-    let dataDir = LLMP.status && LLMP.status.dataDir;
-    if (!dataDir && !DIAG.statusAsked && (!LLMP.status || force)) {
+    if (!(LLMP.status && LLMP.status.dataDir) && !DIAG.statusAsked && (!LLMP.status || force)) {
       DIAG.statusAsked = true;
       await llmRefreshStatus(true);
-      dataDir = LLMP.status && LLMP.status.dataDir;
     }
-    if (dataDir) {
-      const res = await BR.llamaLogTail(dataDir);
-      DIAG.log = res && res.ok ? res : none({path:(res && res.path) || null, error:'Could not read the log: ' + ((res && res.error) || 'unknown error')});
-    } else if (LLMP.status) {
+    const st = LLMP.status;
+    if (st && st.mode === 'external' && !st.dataDir) {
       // An external llama.cpp route has no data dir: the server, and its log, are the user's own.
-      DIAG.log = none({external: LLMP.status.mode === 'external'});
-    } else if (LLMP.statusErr) DIAG.log = none({error:'Could not find the model server’s folder: ' + LLMP.statusErr});
-    // Otherwise a `models status` already on its way has not answered: the next tick looks again, with no call of its own.
+      DIAG.log = none({external: true});
+    } else {
+      // null: no answer names the folder yet, so main reads the managed one (ATO-195).
+      const res = await BR.llamaLogTail((st && st.dataDir) || null);
+      DIAG.log = res && res.ok ? res : none({path:(res && res.path) || null, error:'Could not read the log: ' + ((res && res.error) || 'unknown error')});
+    }
     if (force || before !== key(DIAG.log)) diagRepaint();
   } finally { DIAG.logBusy = false; }
 }
@@ -18887,19 +18932,9 @@ function tkPreviewHTML(f) {
   if (f.preview.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
   if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next firings</b></div><div class="set-cap">(preview unavailable)</div>';
   return head
-    + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>'
-    // Item 7: honest degradation on 0.5.4 — the desktop cannot reach TaskRunner.create, only the CLI.
-    // The desktop submits through `atag task create --at`; on agent 0.5.4 that CLI path writes the
-    // one-shot through the bare TaskStore with no next-run (scheduled_for NULL), which the scheduler
-    // treats as due now — the row will show next-run "-" and be picked up at the next tick. The TUI
-    // creates in-process through TaskRunner.create and keeps the `at`; the desktop says so instead
-    // of pretending.
-    + (f.kind === 'at' ? '<div class="tk-help tk-help--warn set-atnote">' + esc(tkAtNote('the time above')) + '</div>' : '');
-}
-/* The same caveat, worded for the preview ("the time above") and for the
-   success line/toast after submit ("the `at` time"). */
-function tkAtNote(when) {
-  return 'note: on agent 0.5.4 `atag task create --at` stores no next-run for a one-shot, so the scheduler picks it up at its next tick (the row shows next-run "-"), not at ' + when + '.';
+    + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>';
+  // ATO-193: no 0.5.4 caveat under a one-shot any more. Since ATO-133 `atag task create --at`
+  // stores the next run and the scheduler waits for it; the agent the app runs is 0.6.7 or later.
 }
 function tkFieldInput(name, value) {
   const f = TK.form || (TK.form = tkNewForm());
@@ -18933,9 +18968,9 @@ async function tkSubmit() {
   f.submitting = false;
   if (!res || !res.ok) { f.error = (res && res.error) || 'task create failed'; render(); return {ok:false, error:f.error}; }
   TK.msg = 'task ' + res.id + ' scheduled (' + sc.kind + ')';
-  // The TUI's success line stays verbatim; a one-shot carries the 0.5.4 caveat under it and in the toast.
-  TK.note = sc.kind === 'at' ? tkAtNote('the `at` time') : null;
-  toast('Task scheduled', TK.msg + (TK.note ? ' — ' + TK.note : ''));
+  // The TUI's success line stays verbatim (ATO-193: a one-shot no longer carries the 0.5.4 caveat).
+  TK.note = null;
+  toast('Task scheduled', TK.msg);
   TK.mode = 'list'; TK.form = null;
   await tasksRefresh();
   return {ok:true, id:res.id};
@@ -19955,14 +19990,31 @@ function ensureMemoryPoll() {
   if (!BR || MEM.timer) return;
   MEM.timer = setInterval(() => {
     if (!memoryVisible()) { clearInterval(MEM.timer); MEM.timer = null; return; }
-    if (MEM.auto && MEM.mode === 'list') memRefresh(true);
+    memAutoRefresh();
   }, 5000);
+}
+/* ATO-196: the line said "Refreshes every 5 s" over rows and a time that
+   stayed as they were until Refresh. Each tick started a read that dropped
+   the one before it (MEM.seq), so reads slower than the tick never landed;
+   coming back to the tab showed what it held when it was left; and a window
+   in the background, whose timers the browser slows, came back stale. A
+   tick now lets a read on its way land, and the tab reads again when it is
+   shown and when the window comes back to the front. */
+function memAutoRefresh() {
+  if (!BR || !memoryVisible() || !MEM.auto || MEM.mode !== 'list') return;
+  if (MEM.loading && Date.now() - MEM.loadingAt < 30000) return;
+  memRefresh(true);
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('focus', () => memAutoRefresh());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) memAutoRefresh(); });
 }
 function memoryTabEntered() {
   if (MEM.timer) { clearInterval(MEM.timer); MEM.timer = null; }
   ensureMemoryPoll();
   memEnsureCfg();
-  if (MEM.lastRefreshedAt === null && !MEM.loading) memRefresh();
+  if (MEM.lastRefreshedAt === null) { if (!MEM.loading) memRefresh(); }
+  else memAutoRefresh();   // ATO-196: shown again, read again; the rows on screen stay until the answer
 }
 async function memQ(name, params) {
   const dir = memStateDir();
@@ -20081,7 +20133,7 @@ function memSelected() {
 }
 async function memRefresh(quiet) {
   if (!BR) return;
-  MEM.loading = true; MEM.lastError = null;
+  MEM.loading = true; MEM.loadingAt = Date.now(); MEM.lastError = null;
   MEM.available = memAvailableChannels();
   if (!MEM.available.includes(MEM.channel)) MEM.channel = MEM.available[0] || 'profile';
   if (!quiet) render();
