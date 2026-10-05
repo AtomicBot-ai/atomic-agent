@@ -63,8 +63,8 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   let afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
   /* A model told no may try the same thing another way, which puts a new
      card up in the same turn. A person keeps saying no until the turn ends;
-     asking the next question under an open card would answer the card with
-     those words instead (Enter denies and sends them). */
+     the next question asked under an open card would only go into this turn
+     as a message, and the card would keep waiting (ATO-227). */
   for (let again = 0; afterDeny.pending && again < 3; again++) {
     app.log('it asked again in the same turn — Deny again');
     const had = await app.eval(`document.querySelectorAll('#scroller .appr.done').length`);

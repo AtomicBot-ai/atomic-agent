@@ -344,11 +344,13 @@ Real, driven by the running agent:
   POST is still in flight, which cancels the send and says which stance the
   ladder ended on. At `agent.approvalLevel: 5` the two run buttons resolve to
   the same stance, and the bar says so where the choice is made.
-- **typed prose under an open approval is the verdict**, as in the TUI
-  (`src/tui/submit-handler.ts`): the call is denied with your words as the
-  model-visible reason, and the same text then goes into the running turn — in
-  that order, awaited, because a steer that arrived first would be pushed at a
-  turn still parked on the gate. The card's footer says so on screen.
+- **a message typed under an open approval is a message, not the verdict**
+  (ATO-227, a deliberate divergence from the TUI's `src/tui/submit-handler.ts`,
+  which denies the call with the typed words): Enter steers it into the running
+  turn, or queues it as the next turn when the turn cannot take it, and the card
+  keeps waiting for Allow once / Deny (⌘↩ / ⌘.). The agent reads a steer at its
+  next step, which comes once the call is answered. A verdict never carries
+  words. The card's footer and a toast say so on screen.
 
 Honestly degraded, and labelled as such in the UI:
 
@@ -383,14 +385,6 @@ Honestly degraded, and labelled as such in the UI:
   window that is not a terminal. (c) deny is `n` here and `ctrl+d` in the TUI.
   Both are guarded (the desktop's letter keys are dead inside any text field),
   and `n` is what the card's own keycap prints, so the key and the label agree.
-- **A verdict the agent does not take is reported, not assumed.** `POST
-  /api/approval/resolve` answers 404 with an `{error:…}` body for an
-  `approvalId` the gate is no longer holding, and the IPC layer hands that back
-  as a perfectly successful call. So the reply is read: only the route's own
-  `{resolved:true, …}` counts as delivery, and anything else prints *could not
-  deny that call with your message: …* and marks the card **Not denied — the
-  agent never took the verdict**. The typed text is still sent into the turn
-  either way.
 - **The plan chords are dead inside the composer.** `ctrl+y` / `ctrl+b` /
   `ctrl+d` fire the bar's three verbs everywhere else, as in the TUI, but not in
   a text field: macOS binds all three inside a Chromium textarea (back a

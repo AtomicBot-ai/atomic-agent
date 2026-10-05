@@ -78,11 +78,6 @@ const SEL = {
    the agent's side rather than inferred. The object replaces a vestigial
    `{on, supported}` that had no reader anywhere in the file. */
 const PLAN = { on:false, itemId:null, sessionId:null, startedMode:null, busy:false, failMode:false, hold:null };
-/* Review fix (Item 1): the deny-with-reason round trip, injectable the same
-   way setCodingMode's `post` is. Null in every real window — the smoke sets it
-   to watch the verdict leave, and to drive both answers the route can give
-   (`{resolved:true,…}` and the 404 body for an id no gate is holding). */
-const APPR_SEAM = { post:null };
 /* The ordering proof for the acceptance check: executePlan pushes 'mode:<m>'
    only once the agent has CONFIRMED the new stance, and submit() pushes 'send'
    when it accepts the execute message — so ["mode:auto","send"] is the whole
@@ -2868,22 +2863,15 @@ function toolCard(m) {
 function apprCard(m) {
   if (m.state) {
     const ok = m.state === 'approved';
-    /* Review fix (Item 1): two states the deny-with-reason path can be in that
-       are not "Denied". `denying` is the round trip still in flight, and
-       `undelivered` is the route answering that it is not holding that
-       approvalId (404) — printing "Denied" for either would state as fact
-       something the agent was never told. Everything else keeps its label. */
+    /* ATO-227: the deny-with-words path and its `denying` / `undelivered`
+       states are gone; a typed message is never a verdict. */
     const label = ok ? 'Approved'
-      : m.state === 'denying' ? 'Denying…'
-      : m.state === 'undelivered' ? 'Not denied — the agent never took the verdict'
       : m.state === 'stopped' ? 'Not answered — the run was stopped'   // Backlog 25: its turn was stopped
       : m.state === 'expired' ? 'Not answered — the agent stopped waiting'   // Q60 review: its turn ended elsewhere
       : 'Denied';
     /* Soft Tactile: the receipt pill. The label still opens the row's text
        ("Approved · 14:32:09"), which scenario 05 reads back. */
     const glyph = ok ? toolGlyph('ok')
-      : m.state === 'denying' ? '<span class="tk-gly"><span class="tk-spin"></span></span>'
-      : m.state === 'undelivered' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
       : m.state === 'expired' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
@@ -2926,11 +2914,11 @@ function apprCard(m) {
       + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny' + (current ? ' (' + apprKeyLabel('n') + ')' : '') + '">Deny' + keyOn('n') + '</button>'
       + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run">Abort run</button>'
     + '</div>'
-    /* Item 1 (approval parity): typing prose under an open request denies
-       the call with those words and sends them on (denyByProse). Said only
-       on a card typing can answer: a live approvalId and this chat's own
-       request, so a background thread's question makes no such promise. */
-    + (typed ? '<div class="apprfoot">Or type below to answer instead. Enter denies this call and sends your words to the agent.</div>' : '')
+    /* ATO-227: what typing does while the card waits. A message typed below
+       goes to the agent (submit steers or queues it) and the card keeps
+       waiting; it is never the answer. Said on this chat's own live request:
+       another thread's question has nothing to do with the box. */
+    + (typed ? '<div class="apprfoot">A message typed below goes to the agent; this request still waits for Allow or Deny.</div>' : '')
     + '<details class="apprdet"' + (m.open ? ' open' : '') + '><summary data-apprdet="' + m.id + '">' + ic('chevR') + 'Details</summary>'
       + '<dl class="aplate">'
         + '<dt>Tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
@@ -5699,9 +5687,9 @@ function steerOrQueue(text, typed) {
   // Sequenced: submit() clears the editor optimistically and returns, so
   // two Enters in quick succession would otherwise interleave.
   /* Backlog 26: which chat the message is for is read here, at Enter (or by
-     denyByProse, before its round trip). The chain can run it after the
-     person has opened another chat, and it still goes to the turn, or the
-     queue, of the chat it was typed in. */
+     submit, which also says whether an approval card was waiting). The chain
+     can run it after the person has opened another chat, and it still goes
+     to the turn, or the queue, of the chat it was typed in. */
   const typedIn = typed || {sid:S.agentSession, key:queueKey()};
   STEER.chain = STEER.chain.then(() => steerOrQueueRun(text, null, typedIn)).catch(() => {});
   return STEER.chain;
@@ -5744,7 +5732,11 @@ async function steerOrQueueRun(text, post, typedIn) {
       // Under the steer it explains, inside the turn — appended, it landed
       // under the reply the turn went on to write (see placeInLiveTurn).
       pushSteerEntry(text);
-      placeInLiveTurn({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
+      /* ATO-227: under a waiting card the next step is after its answer;
+         the line says that much, and the card stays as it is. */
+      placeInLiveTurn({id:nid(), k:'system', text: typedIn && typedIn.card
+        ? 'steering the running turn — the agent reads it once the request is answered'
+        : 'steering the running turn — the agent reads it at the next step'});
       render();
     }
     return;
@@ -5855,30 +5847,22 @@ function submit() {
   // window; stream frames no longer touch the composer, and a steer's POST can
   // take a while to answer and render.
   refreshSend();
-  /* Item 1 (approval parity): a prompt is open and the operator typed prose
-     instead of a verdict. That IS the verdict — src/tui/submit-handler.ts:
-     this one call is denied with THEIR words as the model-visible reason ("put
-     it in ~/Documents" rather than a bare refusal) and the same text is folded
-     into the running turn, which keeps going. The desktop used to only steer,
-     leaving the gate open and the turn parked.
-
-     Scoped to the visible session's own request, exactly as the TUI scopes it,
-     so typed prose can never become the deny reason for a question some
-     background thread asked; a foreign request falls through to the ordinary
-     steer/queue path below. A card with no approvalId is prototype furniture
-     and has nothing to resolve, so it falls through too.
-
-     The deny is AWAITED before the steer, which is the ordering the TUI's own
-     comment gives ("resolve first so the blocked tool call fails fast with the
-     operator's words … steering before the resolve would push the note at a
-     turn still parked on `await approvals.request(...)`"). In-process the TUI
-     gets that ordering for free; over HTTP it costs one round trip. */
-  if (S.pending && S.pending.approvalId && S.pending.sessionId
-      && S.pending.sessionId === S.agentSession) {
-    denyByProse(S.pending, text);
+  /* ATO-227 (05.10): a message typed while an approval card waits is a
+     message, not an answer. Enter used to deny the call with the typed words
+     as its reason (the TUI's submit-handler.ts does): a half-written thought
+     sent with Enter decided a call the person had not looked at. Now it goes
+     the way any message typed under a running turn goes, steered into the
+     turn or queued as the next one, and the card stays open for its buttons
+     and ⌘↩ / ⌘.; a toast says so. A steer is read at the agent's next step,
+     which comes once the call is answered. Only the card's buttons and keys
+     send a verdict, and they carry no words. */
+  if (S.busy || S.pending) {
+    ANX.messageAction('steer');
+    const card = approvalOpen(S.pending);
+    steerOrQueue(text, {sid:S.agentSession, key:queueKey(), card});
+    if (card) toast('The request still waits for your answer', 'Your message goes to the agent. Allow once (' + apprKeyLabel('y') + ') or Deny (' + apprKeyLabel('n') + ')');
     return;
   }
-  if (S.busy || S.pending) { ANX.messageAction('steer'); steerOrQueue(text); return; }
   // Item 1 (plan hand-off): the second half of the ordering proof. executePlan
   // records 'mode:<m>' only after the agent has confirmed the new stance, and
   // this records the moment the execute message is actually accepted as a new
@@ -5997,8 +5981,27 @@ function approvalOpen(req) {
   return !!req && !req.state && !(req.approvalId && CLOSED_APPROVALS.has(req.approvalId));
 }
 
+/* ATO-226: the key a shortcut was pressed on, whatever the keyboard layout.
+   e.key is the character the layout types: on a Russian layout ⌘. comes as
+   'ю' and ⌘K as 'л', and no shortcut matched. A character outside ASCII is
+   read by its physical key instead (e.code: KeyK is 'k', Period is '.'); an
+   ASCII one is kept, so a Latin layout (AZERTY, Dvorak) keeps a shortcut on
+   the key that prints it, as before. The keypad's Enter is Enter and its
+   decimal key is '.' (',' on some layouts; Delete with Num Lock off stays). */
+function shortcutKey(e) {
+  const k = e.key || '';
+  const c = e.code || '';
+  if (c === 'NumpadEnter') return 'Enter';
+  if (c === 'NumpadDecimal' && k !== 'Delete') return '.';
+  if (k.length !== 1 || k.charCodeAt(0) < 128) return k;
+  if (/^Key[A-Z]$/.test(c)) return e.shiftKey ? c.slice(3) : c.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(c)) return c.slice(5);
+  return {Period: '.', Comma: ',', Slash: '/', Enter: 'Enter'}[c] || k;
+}
+
 /* 05.10: the approval chord a keydown is, if any: 'y' for ⌘↩ (Ctrl+↩ off
-   macOS), 'n' for ⌘. (Ctrl+.). On macOS Ctrl+. stays Stop. */
+   macOS), 'n' for ⌘. (Ctrl+.). On macOS Ctrl+. stays Stop. `k` is the
+   keydown's shortcutKey (ATO-226), so these work on any layout. */
 function apprChordOf(e, k) {
   const mod = IS_MAC ? (e.metaKey && !e.ctrlKey) : (e.ctrlKey && !e.metaKey);
   if (!mod || e.altKey || e.shiftKey) return null;
@@ -7059,9 +7062,13 @@ function acceptSlash(name) {
 document.addEventListener('keydown', (e) => {
   if (e.isComposing) return;
   const k = e.key;
+  /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
+     physical key on a non-Latin layout (shortcutKey). `k` stays the typed
+     character for everything that reads text. */
+  const sk = shortcutKey(e);
   const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
   // Item 7: the TUI's ctrl+g menu chords, live everywhere as in the TUI.
-  if (chordKey(e, k)) return;
+  if (chordKey(e, sk)) return;
 
   // Item 2 (voice input): Escape cancels a live recording BEFORE anything
   // else looks at it. Five later Escape branches return first — a pending
@@ -7088,7 +7095,7 @@ document.addEventListener('keydown', (e) => {
      Abort run is the card's button. The Tasks form and the Add MCP server box
      keep their own ⌘↩ (below). On Windows the menu's Send and Stop share these
      chords and may fire too; onMenu drops them right after a card took one. */
-  const apprKey = apprChordOf(e, k);
+  const apprKey = apprChordOf(e, sk);
   if (apprKey && !(e.target.dataset && e.target.dataset.tkField) && e.target.id !== 'mcp-json' && apprOnScreen()) {
     e.preventDefault(); ANX.via('key'); APPR_CHORD_AT = Date.now(); answer(apprKey); return;
   }
@@ -7121,7 +7128,7 @@ document.addEventListener('keydown', (e) => {
      blocked. */
   if (PLAN.on && !inText && !S.pending && !S.settings && !S.overlay && !S.menuOpen
       && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-    const pk = k.toLowerCase();
+    const pk = sk.toLowerCase();
     if (pk === 'y' || pk === 'b' || pk === 'd') ANX.via('plan_bar');
     if (pk === 'y') { e.preventDefault(); executePlan('auto'); return; }
     if (pk === 'b') { e.preventDefault(); executePlan('bypass'); return; }
@@ -7133,14 +7140,20 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
+  /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
+     too. ⌘N, ⌘0, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
+     and Windows already match on a Russian layout; with the page taking
+     them as well, that layout now goes the way a Latin one always has.
+     ⌘↩ and ⌘. are only shown in the menu (menu.ts), so nothing fires them
+     twice. */
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts'};
-    if (map[k.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[k.toLowerCase()]); return; }
-    if (k === 'Enter') { e.preventDefault(); submit(); return; }
+    if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
+    if (sk === 'Enter') { e.preventDefault(); submit(); return; }
   }
-  if (mod && e.shiftKey && k.toLowerCase() === 'y') { e.preventDefault(); ANX.via('shortcut'); act('toggle:console'); return; }
+  if (mod && e.shiftKey && sk.toLowerCase() === 'y') { e.preventDefault(); ANX.via('shortcut'); act('toggle:console'); return; }
 
   // palette
   if (S.overlay === 'palette') {
@@ -9113,75 +9126,6 @@ function answerLive(req, key) {
   // another chat's (Q60: a request with no chat of its own, drawn here), and its own runs on.
   if (key === 'esc') { if (turn) BR.cancel(turn); const own = screenTurnId(); S.busy = !!own && own !== turn; }
   render();
-}
-
-/**
- * Item 1 (approval parity): the operator answered the agent in words.
- *
- * Ported from src/tui/tui-command.ts onApprovalReply, ordering included: the
- * verdict is resolved FIRST, so the blocked tool call fails fast carrying the
- * operator's words as its reason, and only then does the same text go into the
- * turn. `POST /api/approval/resolve` already forwards `reason` to the gate, and
- * the desktop's approve() already carries it through preload → main →
- * agent-client, so this is the whole of what the wire needs.
- *
- * The sentence the spec wrote as one line is split in two, because only the
- * first half is known when it is printed: this function knows the call was
- * denied with the typed reason, and steerOrQueue knows — a round trip later —
- * whether the running turn actually took the text or whether it had to be
- * parked as the next turn. Printing "and the same text was sent into the
- * running turn" before asking would be inventing the second half.
- */
-async function denyByProse(req, text, post) {
-  const typedIn = {sid:S.agentSession, key:queueKey()};   // Backlog 26: read at Enter, as steerOrQueue does
-  ANX.apprAnswered(req, 'prose');
-  S.pending = null;
-  approvalAnswered(req);   // the row stops asking (B01 review: unless another call of the chat still waits)
-  req.at = new Date().toTimeString().slice(0, 8);
-  req.state = 'denying';   // in flight — not yet a fact, and the card says so
-  req.answering = true; delete req.landed;   // Q60 review: see answerLive
-  render();
-  // `post` is the same injected-round-trip seam setCodingMode takes: the smoke
-  // needs to watch the verdict leave without answering a real gate.
-  const send = post || APPR_SEAM.post || ((id, decision, reason) => BR.approve(id, decision, reason));
-  const res = await send(req.approvalId, 'deny', text);
-  /* Review fix (Item 1): the reply must be READ, not merely received. The IPC
-     wrapper answers `{ok:true, data:<whatever the route returned>}` for every
-     reply the HTTP call produced, and agent-client's resolveApproval returns
-     `res.json()` with no status check — so a 404 for an approvalId the gate is
-     no longer holding arrives as ok:true carrying an `{error:{message}}` body.
-     Announcing "denied with your message as the reason" on that reply would
-     state as fact that the agent was told, when it was not: the one path that
-     carries the operator's own words to the model is the last place to guess.
-     `{resolved:true}` is the route's success body (src/http/route-approval.ts)
-     and nothing else counts as delivery. */
-  const data = res && res.ok === false ? null : (res ? res.data : null);
-  const landed = !!(data && data.resolved === true);
-  const why = res && res.ok === false ? String(res.error || '')
-    : (data && data.error && data.error.message) ? String(data.error.message)
-    : (data && typeof data.error === 'string') ? data.error
-    : 'the agent did not confirm it';
-  req.state = landed ? 'denied' : 'undelivered';
-  req.answering = false; req.landed = landed;
-  /* r6: same contract as answerLive — a delivered refusal does not end the
-     turn, it fails one call and the agent goes back to the model with the
-     operator's words. The window must therefore go back to saying so. Only
-     on `landed`: if the verdict never reached the gate there is nothing
-     running to report on. */
-  // Backlog 25: the turn that asked, as in answerLive.
-  if (landed && approvalTurnId(req) && (!req.sessionId || req.sessionId === S.agentSession)) {
-    S.busy = true;
-  }
-  /* Calm (S4): plain words. The route's 404 body ("approvalId not pending:
-     <id>") is the agent's, not a sentence for a person: it means the agent
-     had stopped waiting for that answer. */
-  placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev: landed ? '' : 'warn', text: landed
-    ? 'Denied, with your message as the reason.'
-    : 'Couldn\u2019t deny that call with your message: ' + esc(agentReplyWords(why))});
-  render();
-  // Then the text itself. steerOrQueue prints its own honest line about where
-  // it landed — folded into the running turn, or parked as the next one.
-  await steerOrQueue(text, typedIn);
 }
 
 /* Windows: the minimise / maximise / close buttons are overlaid on the
@@ -16827,8 +16771,8 @@ async function openSession(id) {
   // a stream, so it shows the stored snapshot and says what is still happening
   // — the TUI's "a turn is still running here".
   // Item 38: now only where nothing of the turn was kept here.
-  // Backlog 25: set outright, not only raised: a verdict that came back while
-  // this loaded (denyByProse) may have raised it for the chat that was left.
+  // Backlog 25: set outright, not only raised: a verdict given while this
+  // loaded (answerLive) may have raised it for the chat that was left.
   S.busy = live;
   // ATO-164: plain words, not "a turn is still running here — the reply lands when it finishes".
   if (live && !rebuilt) S.log.push({id:nid(), k:'system', text:LIVE_ELSEWHERE_LINE});
@@ -25327,7 +25271,7 @@ if (typeof window !== 'undefined') {
 /* ---- Item 1 (plan hand-off + approval parity): --smoke hooks --------------
    Everything here is read-only or a fixture that runs the REAL code path —
    __planRaise feeds onChatEvent its own `done` frame rather than reimplementing
-   the raise, and __approvalProse calls submit()'s own denyByProse. */
+   the raise, and __approvalTyped presses Enter through submit() itself. */
 if (typeof window !== 'undefined') {
   window.__plan = () => ({
     on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId,
@@ -25407,7 +25351,7 @@ if (typeof window !== 'undefined') {
     clearPlanOffer(); PLAN.failMode = false; PLAN_TRACE.length = 0;
     PLAN.startedMode = null; PLAN.busy = false;
     if (planRelease) { planRelease(); planRelease = null; }
-    PLAN.hold = null; APPR_SEAM.post = null;
+    PLAN.hold = null;
     S.busy = false; S.turnId = null; S.streamId = null;
     if (typeof at === 'number' && at >= 0 && at <= S.log.length) S.log.length = at;
     render();
@@ -25419,33 +25363,21 @@ if (typeof window !== 'undefined') {
     return '';
   };
   window.__queued = () => S.queued.slice();
-  /* Approval parity: plant this chat's own open request, type prose at it, and
-     record what left the window and in what order.
-
-     `reply` chooses the round trip. 'confirmed' and 'unknown' inject the two
-     answers the route can actually give — `{resolved:true,…}` and the 404 body
-     for an approvalId no gate is holding — so BOTH the success sentence and
-     the honest failure sentence are exercised against the code that reads
-     them. Anything else (the default) leaves APPR_SEAM.post null and lets the
-     real POST go to the live agent, where this fabricated id draws that 404
-     for real. The steer that follows is always the real one. */
-  window.__approvalProse = async (text, reply) => {
+  /* ATO-227: plant this chat's own open request, type a message under it and
+     press Enter through the real submit(). The message goes to the agent the
+     way any message typed under a running turn does (the real steer, or the
+     queue when the agent cannot take it), and the card stays open: no
+     verdict, and the typed words are no one's reason. */
+  window.__approvalTyped = async (text) => {
     const at = S.log.length;
     const rec = {};
     const req = {id:nid(), k:'approval', approvalId:'smoke-plan-appr', tool:'os.fs.write',
       cat:'fs_write_workspace', kind:CATEGORY_LABEL.fs_write_workspace, lvl:2,
       reason:'smoke fixture', preview:'(no preview)', shape:'', affectsBase:'x', affectsDir:'',
       sessionGrants:false, sessionId:S.agentSession};
-    APPR_SEAM.post = reply === 'confirmed'
-      ? (id) => Promise.resolve({ok:true, data:{resolved:true, approvalId:id, approved:false}})
-      : reply === 'unknown'
-      ? (id) => Promise.resolve({ok:true, data:{error:{message:'approvalId not pending: ' + id}}})
-      : null;
     S.pending = req; S.log.push(req); S.apprFocused = true; render();
     const queuedBefore = S.queued.length;
-    // Sampled while the request is still LIVE — the card is finished by the
-    // time submit() returns, and a finished card draws no buttons at all, so
-    // counting them afterwards would pass however apprCard drew the live one.
+    // Sampled while the request is live: a finished card draws no buttons at all.
     rec.verbs = [...document.querySelectorAll('#apprcard [data-appr]')].map((n) => n.dataset.appr);
     rec.grantS = document.querySelectorAll('#apprcard [data-appr="s"]').length;
     rec.grantA = document.querySelectorAll('#apprcard [data-appr="a"]').length;
@@ -25461,61 +25393,28 @@ if (typeof window !== 'undefined') {
         {key:kk, bubbles:true, cancelable:true}));
     }
     rec.afterGrantKeys = {pending: !!S.pending, state: req.state || null};
+    const toastAt = S.toastId;
     if (entry) entry.value = String(text);
     S.draft = String(text);
-    // The real Enter path: submit() decides this is a verdict, not a steer.
+    // The real Enter path.
     submit();
-    // submit() calls denyByProse without awaiting it; drain the chain here.
-    await new Promise((r) => setTimeout(r, 1500));
-    APPR_SEAM.post = null;
+    // The steer's round trip (or the park that follows a refusal).
+    await STEER.chain;
     rec.state = req.state || null;
-    rec.pending = !!S.pending;
-    rec.doneCards = document.querySelectorAll('.appr.done').length;
-    rec.okCards = document.querySelectorAll('.appr.done.ok').length;
+    rec.pending = S.pending === req;
+    rec.card = !!document.querySelector('#apprcard[data-appr-id="smoke-plan-appr"] [data-appr="y"]');
+    rec.entry = (document.getElementById('entry') || {}).value || '';
+    rec.toasts = S.toasts.filter((t) => t.id > toastAt).map((t) => t.t + ' | ' + (t.s || ''));
     rec.queuedBefore = queuedBefore;
     rec.queued = S.queued.slice();
-    rec.systems = S.log.filter((m) => m.k === 'system').slice(-3).map((m) => m.text);
-    rec.at = at;
-    return rec;
-  };
-  /* The same thing with the verdict's round trip injected, so the ORDER is
-     observable: what the deny carried, and that nothing had been steered or
-     queued while it was still in flight. */
-  window.__approvalProseOrder = async (text) => {
-    const at = S.log.length;
-    const rec = {};
-    const req = {id:nid(), k:'approval', approvalId:'smoke-plan-appr2', tool:'os.fs.write',
-      cat:'fs_write_workspace', kind:CATEGORY_LABEL.fs_write_workspace, lvl:2,
-      reason:'smoke fixture', preview:'(no preview)', shape:'', affectsBase:'x', affectsDir:'',
-      sessionGrants:false, sessionId:S.agentSession};
-    S.pending = req; S.log.push(req); render();
-    const queuedBefore = S.queued.length;
-    await denyByProse(req, String(text), (id, decision, reason) => {
-      rec.sent = {id, decision, reason};
-      rec.queuedWhileDenying = S.queued.length;
-      // The route's own success body — `{resolved:true, approvalId, approved}`
-      // — wrapped as the IPC layer wraps it. A bare `{ok:true}` would not be
-      // accepted as delivery any more, which is the point of the fix.
-      return new Promise((r) => setTimeout(() => r({ok:true, data:{resolved:true, approvalId:id, approved:false}}), 50));
-    });
-    rec.queuedBefore = queuedBefore;
-    rec.queuedAfter = S.queued.length;
-    rec.state = req.state || null;
-    rec.at = at;
-    /* How the text reached the agent. With no turn running it joins the
-       queue; with one running it is STEERED into it (r4 item 7), and both
-       are correct deliveries. The ordering guarantee — verdict first — is
-       what this fixture exists to prove, so the route must be reported
-       rather than assumed, or the check reads a steered delivery as a
-       lost message. */
     rec.systems = S.log.slice(at)
       .filter((m) => m && m.k === 'system')
       .map((m) => String(m.text || m.html || '').replace(/<[^>]*>/g, '').slice(0, 120));
-    rec.steered = rec.systems.some((t) => /steering the running turn/i.test(t));
+    rec.at = at;
     return rec;
   };
   window.__approvalRestore = (at) => {
-    S.pending = null; APPR_SEAM.post = null;
+    S.pending = null;
     PENDING_APPROVALS.delete(S.agentSession);
     S.queued.length = 0; STEER.ahead = 0;
     if (typeof at === 'number' && at >= 0 && at <= S.log.length) S.log.length = at;

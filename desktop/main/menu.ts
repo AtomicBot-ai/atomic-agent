@@ -118,7 +118,8 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
            card on screen (Allow once, Deny), which only the page knows about;
            registered here they could fire Send / Stop alongside (Windows,
            Linux). The page's own keys run Send and Stop when no card takes
-           them (renderer.js keydown: mod+Enter submit, mod+. stop). */
+           them (renderer.js keydown: mod+Enter submit, mod+. stop), by the
+           physical key on any layout (ATO-226: ⌘. is ⌘ю on a Russian one). */
         { ...item("Send", "send", "CommandOrControl+Return"), registerAccelerator: false },
         { ...item("Stop", "stop", "CommandOrControl+."), registerAccelerator: false },
         // Not off macOS: Ctrl+Backspace is delete-previous-word in every

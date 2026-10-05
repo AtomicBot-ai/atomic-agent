@@ -46,7 +46,8 @@ import { BrowserWindow } from "electron";
  * there denied a call with no reason. Now no card takes the focus; only the
  * card the keys answer has id="apprcard". In the box with a draft, ⌘↩ allows
  * and ⌘. denies and the draft stays; y is a letter; Enter with nothing typed
- * does nothing, and with a draft denies with those words, never bare.
+ * does nothing. ATO-227: Enter with a draft sends it to the agent as a
+ * message and the card keeps waiting; it no longer denies with those words.
  *
  * Nothing reaches the agent and the config is not touched. The requests go
  * through the real onApprovalEvent, the turn's end through the real
@@ -95,6 +96,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 class StandIn {
   readonly approved: string[] = [];
   readonly cancelled: string[] = [];
+  readonly steered: string[] = [];
   private readonly quiet: Handler = () => ({ ok: false, error: QUIET });
   private readonly noParked: Handler = () => ({ ok: true, data: { undelivered: [], discarded: 0 } });
   private readonly session: Handler = (_e, id) => {
@@ -106,13 +108,17 @@ class StandIn {
   };
   private readonly approve: Handler = (_e, payload) => {
     const p = (payload ?? {}) as { approvalId?: unknown; decision?: unknown; reason?: unknown };
-    // A verdict with words (denyByProse) says them; a bare one ends on its decision.
+    // A verdict with words would say them (none carries any since ATO-227); a bare one ends on its decision.
     this.approved.push(`${String(p.approvalId)} ${String(p.decision)}` + (typeof p.reason === "string" && p.reason ? ` reason=${p.reason}` : ""));
     return { ok: true, data: { resolved: true } };
   };
   private readonly cancel: Handler = (_e, turnId) => { this.cancelled.push(String(turnId)); return true; };
-  // (g): the words of a refusal go on into the running turn; taken, so nothing is queued or started.
-  private readonly steer: Handler = () => ({ ok: true, steered: true });
+  // (g): a message typed under a card goes into the running turn; taken, so nothing is queued or started.
+  private readonly steer: Handler = (_e, payload) => {
+    const p = (payload ?? {}) as { sessionId?: unknown; text?: unknown };
+    this.steered.push(`${String(p.sessionId)}: ${String(p.text)}`);
+    return { ok: true, steered: true };
+  };
 
   private channels(): Array<[string, Handler]> {
     return [
@@ -509,12 +515,14 @@ export async function checks64(js: Js, check: Check): Promise<void> {
 
     // (g) ATO-209, 05.10: calls of the chat on screen wait at once. No card takes the focus, neither when the
     // focus is nowhere nor from the box with a draft in it. No id is in the transcript twice. In the box, keys
-    // pressed where the focus is: ⌘↩ allows and ⌘. denies the card on screen, the draft kept; Enter with the
-    // draft denies the next one with those words (denyByProse), never bare; Enter with nothing typed does nothing.
+    // pressed where the focus is: ⌘↩ allows and ⌘. denies the card on screen, the draft kept. ATO-227: Enter
+    // with the draft sends it to the agent (a steer) and the next card keeps waiting; Enter with nothing typed does nothing.
     const markG = agent.approved.length;
+    const markS = agent.steered.length;
     const DRAFT = "smoke t64: half a sentence";
     const focus = await js<{ first: string; typing: string; open: string[]; dupes: string[]; current: number; denyIds: number;
-      deny: number; afterKeys: string; draftAfterKeys: string; afterEmpty: string | null }>(`(async () => { ${H}
+      deny: number; afterKeys: string; draftAfterKeys: string; afterEnter: string | null; draftAfterEnter: string;
+      cardsAfterEnter: string[]; afterEmpty: string | null }>(`(async () => { ${H}
       for (const [t, s] of [...RUNNING]) if (mine(t) || mine(s)) RUNNING.delete(t);
       OPENING = null; S.sessionId = ${q(G)}; S.agentSession = ${q(G)}; S.pending = null; S.turnId = null;
       S.busy = true; S.room = 'chat'; S.draft = '';
@@ -561,12 +569,17 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       const draftAfterKeys = (document.getElementById('entry') || {}).value || '';
       inBox('Enter');
       await tick(300);
+      const afterEnter = S.pending ? String(S.pending.approvalId) : null;
+      const draftAfterEnter = (document.getElementById('entry') || {}).value || '';
+      const cardsAfterEnter = [...document.querySelectorAll('#scroller .appr[data-appr-id] [data-appr="y"]')]
+        .map((n) => n.closest('.appr').getAttribute('data-appr-id') || '');
       inBox('Enter');
       await tick(100);
-      return Object.assign({first, typing, afterKeys, draftAfterKeys,
+      return Object.assign({first, typing, afterKeys, draftAfterKeys, afterEnter, draftAfterEnter, cardsAfterEnter,
         afterEmpty: S.pending ? String(S.pending.approvalId) : null}, shot);
     })()`);
     const sentG = agent.approved.slice(markG);
+    const steeredG = agent.steered.slice(markS);
     check(
       "T64 (ATO-209): a card that comes takes no focus",
       focus.first === "|BODY",
@@ -590,10 +603,12 @@ export async function checks64(js: Js, check: Check): Promise<void> {
       `focus=${show(focus)} sent=${show(sentG)}`,
     );
     check(
-      "T64 (ATO-209): Enter with the draft denies the next request with the typed words, never bare; Enter with nothing typed answers nothing",
-      show(sentG) === show([`${PREFIX}approval-g3 allow-once`, `${PREFIX}approval-g2 deny`, `${PREFIX}approval-g1 deny reason=${DRAFT}`])
-        && focus.afterEmpty === null,
-      `focus=${show(focus)} sent=${show(sentG)}`,
+      "T64 (ATO-227): Enter with the draft answers no request: the draft goes into the turn as a message, the box clears and the next card keeps waiting; Enter with nothing typed answers nothing",
+      show(sentG) === show([`${PREFIX}approval-g3 allow-once`, `${PREFIX}approval-g2 deny`])
+        && show(steeredG) === show([`${G}: ${DRAFT}`]) && focus.draftAfterEnter === ""
+        && focus.afterEnter === `${PREFIX}approval-g1` && show(focus.cardsAfterEnter) === show([`${PREFIX}approval-g1`])
+        && focus.afterEmpty === `${PREFIX}approval-g1`,
+      `focus=${show(focus)} sent=${show(sentG)} steered=${show(steeredG)}`,
     );
 
     // What the turn's end set off (the session list re-read) is answered before the stand-ins go.
