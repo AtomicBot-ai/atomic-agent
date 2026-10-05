@@ -118,7 +118,8 @@ const H = String.raw`
       cards: [...document.querySelectorAll('#scroller .appr[data-appr-id]')].map((n) => n.getAttribute('data-appr-id') || ''),
       waiting: [...PENDING_APPROVALS].filter(([s]) => mine(s)).map(([s, a]) => s + '>' + a),
       kept: [...APPROVAL_CARDS].filter(([s, r]) => mine(s) && !r.state).map(([s, r]) => s + '>' + r.approvalId),
-      gated: !!document.querySelector('#composer .statusstrip.gated'),
+      // The strip sits above the composer in .composerwrap, not inside #composer (as t25 reads it).
+      gated: [...document.querySelectorAll('.statusstrip')].some((n) => /Waiting for your approval/.test(n.textContent || '')),
       busy: !!S.busy, settings: !!S.settings || !!S.overlay};
   };
 `;
