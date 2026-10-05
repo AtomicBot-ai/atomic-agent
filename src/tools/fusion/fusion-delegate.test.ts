@@ -1263,6 +1263,116 @@ describe("fusion.delegate", () => {
       expect((await invoke([{ ...spec, item: "wall" }, { ...spec, item: "boxes" }])).status).toBe("ok");
     });
 
+    it.each([
+      ["naming", false], ["naming", true],
+      ["task-args", false], ["task-args", true],
+      ["check-task", false], ["check-task", true],
+      ["check-item", false], ["check-item", true],
+    ] as const)("preserves executable definitions during %s repair (JSON=%s)", async (defect, json) => {
+      const runTurn = vi.fn(async () => turnResult());
+      const runChecks = vi.fn(async (specs: readonly Record<string, unknown>[]) => ({
+        ok: true, results: specs.map(() => ({ ok: true, summary: "passed" })),
+      }));
+      const tool = buildFusionDelegateTool(deps({ runTurn, runChecks, requireBehaviorChecklist: true }));
+      const callCtx = ctx();
+      const wall = { item: "wall", kind: "command", cmd: "node", args: ["wall.js"] };
+      const boxes = { item: "boxes", kind: "command", cmd: "node", args: ["boxes.js"] };
+      const contract = (checks: Record<string, unknown>[]) => json ? JSON.stringify({ checks }) : { checks };
+      const firstChecks = defect === "naming" ? [wall, { ...boxes, item: undefined }]
+        : defect === "check-task" ? [{ ...wall, task: "unknown-task" }, boxes]
+        : defect === "check-item" ? [{ ...wall, item: "" }, boxes] : [wall, boxes];
+      const first = await tool.run({ tasks: defect === "task-args" ? [] : TASKS, contract: contract(firstChecks) }, callCtx);
+      expect(first.status).toBe("error");
+      expect(runTurn).not.toHaveBeenCalled();
+      const weakened = await tool.run({ tasks: TASKS, contract: contract([
+        { ...wall, args: ["-e", "process.exit(0)"] }, boxes,
+      ]) }, callCtx);
+      expect(weakened.details.reason).toBe("behavior-checklist-changed");
+      expect(weakened.details.checklistPassed).toBe(false);
+      expect(runTurn).not.toHaveBeenCalled();
+      expect(runChecks).not.toHaveBeenCalled();
+      const repaired = await tool.run({ tasks: TASKS, contract: contract([wall, boxes]) }, callCtx);
+      expect(repaired.status).toBe("ok");
+      expect(repaired.details.checklistPassed).toBe(true);
+      expect(runChecks).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves executable definitions filled during repeated invalid task repairs", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn, requireBehaviorChecklist: true,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true })) }),
+      }));
+      const callCtx = ctx();
+      const wall = { item: "wall", kind: "command", cmd: "node", args: ["wall.js"] };
+      expect((await tool.run({ tasks: [], contract: { checks: [{ item: "wall" }] } }, callCtx)).status).toBe("error");
+      expect((await tool.run({ tasks: [], contract: { checks: [wall] } }, callCtx)).status).toBe("error");
+      const changed = await tool.run({ tasks: TASKS, contract: { checks: [{ ...wall, args: ["-e", "process.exit(0)"] }] } }, callCtx);
+      expect(changed.details.reason).toBe("behavior-checklist-changed");
+      expect(runTurn).not.toHaveBeenCalled();
+      expect((await tool.run({ tasks: TASKS, contract: { checks: [wall] } }, callCtx)).status).toBe("ok");
+    });
+
+    it.each(["unnamed-spec", "task-binding", "extra-predicate"])("preserves executable definitions and their scope during %s changes", async (change) => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn, requireBehaviorChecklist: true,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true })) }),
+      }));
+      const callCtx = ctx();
+      const wall = { item: "wall", task: "t1", kind: "command", cmd: "node", args: ["wall.js"] };
+      const unnamed = { kind: "command", cmd: "node", args: ["boxes.js"] };
+      expect((await tool.run({ tasks: TASKS, contract: { checks: [wall, unnamed] } }, callCtx)).status).toBe("error");
+      const boxes = { ...unnamed, item: "boxes" };
+      const checks = change === "unnamed-spec" ? [wall, { ...boxes, args: ["-e", "process.exit(0)"] }]
+        : change === "task-binding" ? [{ ...wall, task: "t2" }, boxes]
+        : [{ ...wall, checks: ["exit 1"] }, boxes];
+      expect((await tool.run({ tasks: TASKS, contract: { checks } }, callCtx)).details.reason).toBe("behavior-checklist-changed");
+      expect(runTurn).not.toHaveBeenCalled();
+      expect((await tool.run({ tasks: TASKS, contract: { checks: [wall, boxes] } }, callCtx)).status).toBe("ok");
+    });
+
+    it.each([
+      ["command", false], ["command", true],
+      ["service", false], ["service", true],
+      ["page", false], ["page", true],
+    ] as const)("preserves executable definitions while adding missing %s arguments (JSON=%s)", async (kind, json) => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn, requireBehaviorChecklist: true,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true })) }),
+      }));
+      const callCtx = ctx();
+      const incomplete: Record<string, unknown> = kind === "command" ? { kind, args: ["wall.js"] }
+        : kind === "service" ? { kind, start: { args: ["server.js"] }, ready: { port: 8080 } }
+        : { kind, probes: [{ name: "wall", expr: "window.wallMoved" }] };
+      const complete = kind === "command" ? { ...incomplete, cmd: "node" }
+        : kind === "service" ? { ...incomplete, start: { cmd: "node", args: ["server.js"] } }
+        : { ...incomplete, path: "scene.html" };
+      const contract = (spec: Record<string, unknown>) => {
+        const value = { checks: [{ item: "wall", ...spec }] };
+        return json ? JSON.stringify(value) : value;
+      };
+      expect((await tool.run({ tasks: [], contract: contract(incomplete) }, callCtx)).status).toBe("error");
+      const repaired = await tool.run({ tasks: TASKS, contract: contract(complete) }, callCtx);
+      expect(repaired.status).toBe("ok");
+      expect(repaired.details.checklistPassed).toBe(true);
+      expect(runTurn).toHaveBeenCalled();
+    });
+
+    it.each([false, true])("preserves executable definitions when a partial spec becomes complete on an invalid retry (JSON=%s)", async (json) => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn, requireBehaviorChecklist: true,
+        runChecks: async (specs) => ({ ok: true, results: specs.map(() => ({ ok: true })) }),
+      }));
+      const callCtx = ctx();
+      const contract = (spec: Record<string, unknown>) => json ? JSON.stringify({ checks: [spec] }) : { checks: [spec] };
+      const partial = { item: "wall", kind: "command", args: ["wall.js"] };
+      const complete = { ...partial, cmd: "node" };
+      expect((await tool.run({ tasks: [], contract: contract(partial) }, callCtx)).status).toBe("error");
+      expect((await tool.run({ tasks: [], contract: contract(complete) }, callCtx)).status).toBe("error");
+      expect((await tool.run({ tasks: TASKS, contract: contract({ ...complete, checks: ["exit 1"] }) }, callCtx)).details.reason).toBe("behavior-checklist-changed");
+      expect(runTurn).not.toHaveBeenCalled();
+      expect((await tool.run({ tasks: TASKS, contract: contract(complete) }, callCtx)).status).toBe("ok");
+    });
+
     it("treats null checks as absent even when an unrelated task argument is invalid", async () => {
       const tool = buildFusionDelegateTool(deps({ requireBehaviorChecklist: true }));
       const result = await tool.run({ tasks: [], contract: { checks: null } }, ctx());

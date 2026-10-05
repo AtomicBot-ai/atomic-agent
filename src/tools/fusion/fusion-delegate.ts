@@ -11,6 +11,7 @@ import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.j
 import { getConfig } from "../../config/index.js";
 import { workerReplyAllowance } from "../../local-llm/worker-slots.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { parseVerifyRunArgs } from "../verify/verify-run-args.js";
 import { parseDelegateArgs, readJsonArg } from "./delegate-args.js";
 import { MAX_CONTRACT_CHECKS, MAX_CONTRACT_CHECK_ITEM_CHARS, type ContractCheck } from "./contract.js";
 import {
@@ -42,12 +43,22 @@ export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
 const MAX_BEHAVIOR_REPAIR_ROUNDS = 3;
 
+interface PendingCheckDefinition {
+  /** Opaque verify.run arguments, captured by value; never executed here. */
+  spec?: string;
+  specComplete?: boolean;
+  item?: string;
+  /** null pins a call-level check; undefined leaves an invalid binding repairable. */
+  task?: string | null;
+}
+
 interface PendingBehaviorChecklist {
   turnId: string | AbortSignal;
   /** Set only after the complete checklist has passed argument validation. */
   signature?: string;
   /** Before validation, preserve known names and item count while allowing argument repair. */
   requiredNamedItems?: readonly string[];
+  requiredDefinitions?: readonly PendingCheckDefinition[];
   minimumItems?: number;
   items: readonly string[];
   failedRounds: number;
@@ -104,6 +115,83 @@ function rawBehaviorChecklistSize(rawArgs: Record<string, unknown>): number {
   if (contract === null || typeof contract !== "object" || Array.isArray(contract)) return 0;
   const checks = (contract as Record<string, unknown>).checks;
   return Array.isArray(checks) ? checks.length : checks === undefined || checks === null ? 0 : 1;
+}
+
+/** Structural validation only: reuse the verifier's parser, never run a second verifier. */
+function completeVerifySpec(spec: Record<string, unknown>): boolean {
+  try { parseVerifyRunArgs(spec); return true; } catch { return false; }
+}
+
+/** Missing fields may be filled in an incomplete spec; captured values cannot change. */
+function preservesSpecValues(before: unknown, after: unknown): boolean {
+  if (Array.isArray(before)) {
+    return Array.isArray(after) && before.length === after.length &&
+      before.every((value, i) => preservesSpecValues(value, after[i]));
+  }
+  if (before !== null && typeof before === "object") {
+    return after !== null && typeof after === "object" && !Array.isArray(after) &&
+      Object.entries(before).every(([key, value]) => Object.hasOwn(after, key) &&
+        preservesSpecValues(value, (after as Record<string, unknown>)[key]));
+  }
+  return before === after;
+}
+
+/** Preserve assertions independently of repairable labels, task bindings or task args. */
+function pinBehaviorCheckDefinitions(
+  rawArgs: Record<string, unknown>,
+  previous: readonly PendingCheckDefinition[] = [],
+): PendingCheckDefinition[] {
+  const contract = readJsonArg(rawArgs.contract);
+  const rawTasks = readJsonArg(rawArgs.tasks);
+  const taskIds = new Set(Array.isArray(rawTasks) ? rawTasks.flatMap((task) =>
+    task !== null && typeof task === "object" && !Array.isArray(task) &&
+      typeof task.id === "string" && task.id.trim().length > 0 ? [task.id.trim()] : [],
+  ) : []);
+  const checks = contract !== null && typeof contract === "object" && !Array.isArray(contract)
+    ? (contract as Record<string, unknown>).checks : undefined;
+  const current: PendingCheckDefinition[] = Array.isArray(checks) ? checks.slice(0, MAX_CONTRACT_CHECKS).map((check) => {
+    if (check === null || typeof check !== "object" || Array.isArray(check)) return {};
+    const { item, task, ...spec } = check as Record<string, unknown>;
+    return {
+      ...(Object.keys(spec).length === 0 ? {} : {
+        spec: JSON.stringify(canonicalChecklistValue(spec)), specComplete: completeVerifySpec(spec),
+      }),
+      ...(typeof item === "string" && item.trim().length > 0 && item.trim().length <= MAX_CONTRACT_CHECK_ITEM_CHARS
+        ? { item: item.trim() } : {}),
+      ...(task === undefined || task === null ? { task: null }
+        : typeof task === "string" && taskIds.has(task.trim()) ? { task: task.trim() } : {}),
+    };
+  }) : [];
+  // Repeated invalid requests may fill missing definitions, never overwrite earlier ones.
+  return Array.from({ length: Math.max(previous.length, current.length) }, (_, i) => {
+    const prior = previous[i];
+    const next = current[i];
+    const extend = prior?.spec === undefined || (prior.specComplete === false && next?.spec !== undefined &&
+      preservesSpecValues(JSON.parse(prior.spec), JSON.parse(next.spec)));
+    return {
+      spec: extend ? next?.spec : prior.spec,
+      specComplete: extend ? next?.specComplete : prior.specComplete,
+      item: prior?.item ?? next?.item,
+      task: prior?.task !== undefined ? prior.task : next?.task,
+    };
+  });
+}
+
+function preservesBehaviorCheckDefinitions(
+  pinned: readonly PendingCheckDefinition[],
+  checks: readonly ContractCheck[],
+): boolean {
+  return pinned.every((definition, i) => {
+    const check = checks[i];
+    if (check === undefined) return false;
+    const { item, task, ...spec } = check;
+    const preservedSpec = definition.spec === undefined || (definition.specComplete === false
+      ? preservesSpecValues(JSON.parse(definition.spec), spec)
+      : definition.spec === JSON.stringify(canonicalChecklistValue(spec)));
+    return preservedSpec &&
+      (definition.item === undefined || definition.item === item) &&
+      (definition.task === undefined || definition.task === (task ?? null));
+  });
 }
 
 function uncheckedChecklistVerdict(items: readonly string[], detail: string): string {
@@ -298,11 +386,15 @@ export function buildFusionDelegateTool(
               turnId, items, remaining: items, failedRounds: 0,
               requiredNamedItems: rawBehaviorChecklistItems(rawArgs, true),
               minimumItems: rawBehaviorChecklistSize(rawArgs),
+              requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs),
             };
           }
           if (pendingChecklist !== undefined) {
             pendingChecklistBySession.set(ctx.sessionId, {
               ...pendingChecklist,
+              ...(pendingChecklist.signature === undefined ? {
+                requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs, pendingChecklist.requiredDefinitions),
+              } : {}),
               remaining: [...pendingChecklist.items],
               lastVerdict: line,
             });
@@ -329,6 +421,7 @@ export function buildFusionDelegateTool(
           turnId, items, remaining: items, failedRounds: 0,
           requiredNamedItems: rawBehaviorChecklistItems(rawArgs, true),
           minimumItems: checklist.length,
+          requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs),
         };
         pendingChecklistBySession.set(ctx.sessionId, pendingChecklist);
       }
@@ -358,7 +451,8 @@ export function buildFusionDelegateTool(
         pendingChecklist.signature === undefined
           ? checklist.length < (pendingChecklist.minimumItems ?? pendingChecklist.items.length) ||
             (pendingChecklist.requiredNamedItems ?? pendingChecklist.items)
-              .some((item) => !behaviorChecklistItems(checklist).includes(item))
+              .some((item) => !behaviorChecklistItems(checklist).includes(item)) ||
+            !preservesBehaviorCheckDefinitions(pendingChecklist.requiredDefinitions ?? [], checklist)
           : pendingChecklist.signature !== checklistSignature
       )) {
         const line = uncheckedChecklistVerdict(
@@ -377,6 +471,13 @@ export function buildFusionDelegateTool(
         );
       }
 
+      if (pendingChecklist !== undefined && pendingChecklist.signature === undefined) {
+        pendingChecklist = {
+          ...pendingChecklist,
+          requiredDefinitions: pinBehaviorCheckDefinitions(rawArgs, pendingChecklist.requiredDefinitions),
+        };
+        pendingChecklistBySession.set(ctx.sessionId, pendingChecklist);
+      }
       if (requireBehaviorChecklist) {
         if (checklist.length === 0) {
           const line = uncheckedChecklistVerdict(
