@@ -97,8 +97,14 @@ const KEYS = {
   Space:      { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
   y:          { key: 'y', code: 'KeyY', keyCode: 89, text: 'y' },
   n:          { key: 'n', code: 'KeyN', keyCode: 78, text: 'n' },
+  /* 05.10: ⌘. (Ctrl+. off macOS) denies the approval card on screen, ⌘↩
+     allows it — press('.', [MOD_KEY]) and press('Enter', [MOD_KEY]). */
+  '.':        { key: '.', code: 'Period', keyCode: 190, text: '.' },
 };
 const MOD = { alt: 1, ctrl: 2, meta: 4, cmd: 4, shift: 8 };
+/** The app's command modifier on this machine: ⌘ on macOS, Ctrl elsewhere
+    (renderer.js apprChordOf, the menu's CommandOrControl). */
+export const MOD_KEY = process.platform === 'darwin' ? 'meta' : 'ctrl';
 
 /* The elements a person can click. `clickText` searches these and nothing
    else, so a stray <div> carrying the same words never wins over the button. */
@@ -151,6 +157,14 @@ class App {
     if (!target) throw new Error(`no page target on port ${this.port} within ${timeoutMs}ms\n${this.output().slice(-4000)}`);
     await this._attach(target.webSocketDebuggerUrl);
     return this;
+  }
+
+  /** Attach again after the page target went away and came back (a window
+      closed and opened again). Looking only: nothing is asked of the app. */
+  async reconnect(timeoutMs = 60000) {
+    try { this.ws?.close(); } catch { /* already gone */ }
+    this.ws = null;
+    return this.connect(timeoutMs);
   }
 
   async _attach(url) {
@@ -341,6 +355,27 @@ class App {
     const placed = (scroll ? await this._wheelInto(() => this._boxOf(sel, nth)) : null) || box;
     await this._clickBox(placed, `${sel}${nth ? `[${nth}]` : ''} — ${placed.label}`);
     return placed.label;
+  }
+
+  /**
+   * Leave an open popover the way a person does since ATO-167 took its Done
+   * away: a click OUTSIDE it, on the transparent scrim behind it. A trusted
+   * press at a point where the scrim itself is the top element — never a
+   * `.click()` from Runtime.evaluate. No popover, nothing pressed.
+   */
+  async clickAway() {
+    const at = await this.eval(`(() => {
+      const s = document.querySelector('#overlays .scrim[data-close]');
+      if (!s) return null;
+      const r = s.getBoundingClientRect();
+      const pts = [[r.left + 24, r.bottom - 24], [r.right - 24, r.bottom - 24], [r.left + 24, r.top + 80],
+                   [r.right - 24, r.top + 80], [r.left + r.width / 2, r.bottom - 24]];
+      for (const [x, y] of pts) if (document.elementFromPoint(x, y) === s) return { x, y };
+      return null;
+    })()`);
+    if (!at) return false;
+    await this._clickBox({ x: at.x, y: at.y, disabled: false }, 'outside the popover');
+    return true;
   }
 
   /** Type into whatever has focus. Refuses if nothing editable is focused —

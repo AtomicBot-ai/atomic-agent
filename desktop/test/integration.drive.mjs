@@ -128,7 +128,10 @@ const systemSays = (app) => app.eval(`[...document.querySelectorAll('#scroller .
     user asked for that), and the settings window it raises then covers the composer. */
 async function closeSel(app) {
   if (await app.eval(`!!document.querySelector('.selpop')`)) {
-    await app.eval(`(() => { const s = document.querySelector('#overlays .scrim[data-close]'); if (s) s.click(); })()`);
+    /* A trusted press on the scrim beside the popover (drive.mjs clickAway),
+       not a `.click()` from Runtime.evaluate: the page must not be able to
+       tell this from a hand. */
+    await app.clickAway();
     await app.waitFor(`!document.querySelector('.selpop')`, 'the popover closed', { quiet: true });
   }
 }
@@ -212,8 +215,20 @@ async function main() {
       await app.clickSel('#wiz-key');
       await app.typeSecret(readKey(stateDir, OTHER.env), `the ${OTHER.row} key`);
       await app.clickText('Next');
-      await app.waitFor(`!document.querySelector('#wiz-key')`,
-        'the key accepted and the wizard closing', { timeout: 120000 });
+      /* ATO-161: a verified key opens the MODEL STEP in the popover (the
+         catalogue, our default preselected, Use default / Use this model).
+         The key field leaving is not the wizard closing any more — the
+         provider is only written as active once a model is chosen, and
+         closing the popover on the model step drops the unfinished entry. */
+      await app.waitFor(`!!document.querySelector('.popover [data-wizmodel]') || !!document.querySelector('.popover .ob-err')`,
+        'the key accepted — the model step', { timeout: 120000 });
+      if (!(await app.eval(`!!document.querySelector('.popover [data-wizmodel]')`))) {
+        throw new Error(`the ${OTHER.row} key was not accepted: `
+          + JSON.stringify(await app.eval(`((document.querySelector('.popover .ob-err')||{}).textContent||'').trim()`)));
+      }
+      await app.clickText('Use default', { scope: '.popover' });
+      await app.waitFor(`!document.querySelector('#wiz-key') && !document.querySelector('.popover [data-wizmodel]')`,
+        'the default model taken and the wizard closing', { timeout: 120000 });
     }
     await closeSel(app);
     const onOther = await settled(app);

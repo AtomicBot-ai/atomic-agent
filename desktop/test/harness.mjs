@@ -18,7 +18,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { cpus, homedir, loadavg, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { launch, sleep } from './drive.mjs';
+import { launch, sleep, MOD_KEY } from './drive.mjs';
 
 /* ------------------------------------------------------------------ env --
    Where the scenarios put their throwaway state, and where they get a
@@ -108,10 +108,22 @@ export function activeModel(stateDir) {
 }
 
 /* ------------------------------------------------------------ first run -- */
+/** Calm (S6): the steps are read by id; their old subtitles are no longer
+    drawn. Read-only: `window.__ob()` reports the flow's state, it changes
+    nothing. */
+export const obStep = (id) => `(window.__ob && window.__ob().open && window.__ob().step === '${id}')`;
+/** The model step that follows a verified key (ATO-161): its rows. */
+const MODEL_STEP = `!!document.querySelector('#onboarding [data-wizmodel]')`;
+/** The reason under the key box, when there is one: a failure (`.ob-err`) or,
+    since ATO-161, the calm request for a key ("Paste your … API key to
+    continue.", `.wiz-ask`). */
+const KEY_ERR = `((document.querySelector('#onboarding .ob-err, #onboarding .wiz-ask')||{textContent:''}).textContent||'').trim()`;
+
 /**
  * Get through the first-run wizard by clicking, exactly as a person does:
  * dismiss the intro, choose Cloud models, choose the provider, type the key,
- * click Next, decline the local model, decline importing other agents' data.
+ * click Next, take the default on the model step ("Use default"), decline
+ * the local model, decline importing other agents' data.
  *
  * r6 INTEGRATION: the row lists used to be two-stage — the first click only
  * moved the cursor and the second activated — which is the operator's own
@@ -178,8 +190,6 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
     await sleep(400);
   }
   await app.waitFor(`/Cloud models/.test(${wizText})`, 'the three backend choices');
-  // Calm (S6): the steps are read by id; their old subtitles are no longer drawn.
-  const obStep = (id) => `(window.__ob && window.__ob().open && window.__ob().step === '${id}')`;
   await pick(app, 'Cloud models', `${obStep('cloud')} && !document.querySelector('#wiz-key')`, 'the provider list');
   await pick(app, P.row, `!!document.querySelector('#wiz-key')`, `the ${P.label} key field`);
   await app.clickSel('#wiz-key');
@@ -196,8 +206,51 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
       `typed ${secret.length}, the box holds ${got} — a repaint took the caret`);
   }
   await app.clickText('Next');
-  await app.waitFor(`${obStep('propose_second')} || /Verifying/.test(${wizText})`, 'the key going off to be verified', { timeout: 30000 });
-  await app.waitFor(obStep('propose_second'), 'the key accepted — “Cloud model ready”', { timeout: 90000 });
+  await app.waitFor(`${MODEL_STEP} || /Verifying/.test(${wizText}) || ${KEY_ERR}.length > 0`,
+    'the key going off to be verified', { timeout: 30000 });
+  /* ATO-161: a verified key lands on the MODEL STEP — "Model · <provider>",
+     the provider's catalogue with our default preselected and marked Default,
+     and Back / Use default / Use this model. It is still the `cloud` step of
+     the flow; "Cloud model ready" only comes AFTER a model is chosen, on the
+     second-backend offer. Waiting for that straight after Next is what timed
+     out at 90 s once the step was added. A key that is refused (or could not
+     be checked) stays on the key screen with its reason under the box: say
+     that reason instead of timing out. */
+  await app.waitFor(`${MODEL_STEP} || (!!document.querySelector('#wiz-key') && !/Verifying/.test(${wizText}) && ${KEY_ERR}.length > 0)`,
+    'the key accepted — the model step', { timeout: 90000 });
+  if (!(await app.eval(MODEL_STEP))) {
+    throw new Failure(`the ${P.label} key was not accepted`, `the key screen says: ${JSON.stringify(await app.eval(KEY_ERR))}`);
+  }
+  const offered = await app.eval(`(() => {
+    const on = document.querySelector('#onboarding [data-wizmodel].on');
+    return { rows: document.querySelectorAll('#onboarding [data-wizmodel]').length,
+             picked: on ? on.getAttribute('data-wizmodel') : null,
+             help: ((document.querySelector('#onboarding .ob-help')||{}).textContent||'').trim() };
+  })()`);
+  app.log(`the model step offers ${offered.rows} models; preselected ${offered.picked} — ${JSON.stringify(offered.help)}`);
+  /* Take the default with the button that says so. One click is one action:
+     the step goes the instant the click is taken (the save re-enters with the
+     choice made), so a second click is only spent if the first landed during
+     a repaint and the step is still sitting there. */
+  for (let i = 0; i < 3 && (await app.eval(MODEL_STEP)); i++) {
+    await app.clickText('Use default', { scope: '#onboarding', timeout: 5000 });
+    await sleep(1500);
+  }
+  /* The choice is saved, the route switched and the agent restarted, then the
+     flow settles on whichever offer is owed — the second backend (which
+     opens on "Cloud model ready"), the import, or none — or the wizard
+     closes. An activation that fails drops back to the key screen with a
+     reason; report it. */
+  await app.waitFor(`${obStep('propose_second')} || ${obStep('import_pick')} || !document.querySelector('#onboarding')`
+    + ` || (!!document.querySelector('#wiz-key') && !/Verifying/.test(${wizText}) && ${KEY_ERR}.length > 0)`,
+    'the default model taken and the cloud set up', { timeout: 120000 });
+  if (await app.eval(`!!document.querySelector('#wiz-key')`)) {
+    throw new Failure('taking the default model did not set the cloud up',
+      `the key screen says: ${JSON.stringify(await app.eval(KEY_ERR))}`);
+  }
+  if (await app.eval(obStep('propose_second'))) {
+    check(await app.eval(`/Cloud model ready/.test(${wizText})`), 'the wizard says “Cloud model ready”');
+  }
 
   await pick(app, 'Skip — take me to the agent',
     `${obStep('import_pick')} || !document.querySelector('#onboarding')`, 'the import offer');
@@ -268,8 +321,45 @@ export async function ask(app, text) {
   await app.waitFor(
     `!!document.querySelector('.statusstrip')`
     + ` || (document.querySelector('#entry')||{}).value === ''`
-    + ` || document.querySelectorAll('#content .turn').length > ${before}`,
+    + ` || document.querySelectorAll('#content .turn').length > ${before}`
+    + ` || /The agent is (still starting|not running)/.test((document.querySelector('#toasts')||{}).textContent||'')`,
     'the question sent', { timeout: 20000 });
+  /* Sent is not run. With no agent up yet (just launched, or restarting
+     after setup) the app does not start a turn: it answers the message with
+     a line of its own ("the agent is still starting — send this again in a
+     moment", renderer.js submit()), or — once the box keeps the message
+     (fix/desktop-reopen-after-force-quit) — with a refusal toast. No turn
+     ever starts, so waiting for one ran out the 90 s start grace and read an
+     empty reply. Say what the window said, at once. */
+  await sleep(300);
+  const refused = await app.eval(`(() => {
+    const flat = (n) => ((n && n.textContent) || '').replace(/\\s+/g, ' ').trim();
+    const rows = [...document.querySelectorAll('#scroller .sysrow')];
+    const line = rows.length ? flat(rows[rows.length - 1]) : '';
+    if (/still starting|no agent is attached|agent stopped/.test(line)) return line;
+    const toast = flat(document.querySelector('#toasts'));
+    return /The agent is (still starting|not running)/.test(toast) ? toast : '';
+  })()`);
+  if (refused) {
+    throw new Failure('the app did not run the message: the agent was not up yet', `the chat says: ${JSON.stringify(refused)}`);
+  }
+}
+
+/**
+ * Pick a stance from the composer's Mode chip, by clicking: the chip, then
+ * the row ("Ask first", "Plan", "Auto", "Bypass"). A row applies as it is
+ * picked and closes the popover (ATO-167: there is no Done). `id` is the
+ * agent's own mode id: default | plan | auto | bypass.
+ */
+export async function chooseMode(app, id) {
+  await app.waitFor(`!!document.querySelector('.cmodechip[data-id]:not([data-id=""])')`,
+    'the Mode chip, once the agent has reported its stance', { timeout: 60000 });
+  if (await app.eval(`(document.querySelector('.cmodechip')||{dataset:{}}).dataset.id === ${JSON.stringify(id)}`)) return;
+  await app.clickSel('.cmodechip');
+  await app.waitFor(`!!document.querySelector('.modepop [data-mode="${id}"]')`, 'the Mode popover');
+  await app.clickSel(`.modepop [data-mode="${id}"]`, { scroll: false });
+  await app.waitFor(`(document.querySelector('.cmodechip')||{dataset:{}}).dataset.id === ${JSON.stringify(id)}`
+    + ` && !document.querySelector('.modepop')`, `the Mode chip reading ${id}`, { timeout: 20000 });
 }
 
 /**
@@ -288,15 +378,25 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
   let sawBusy = false;
   for (;;) {
     if (Date.now() > until) throw new Failure(`the turn was still running after ${Math.round(timeout / 1000)}s`);
+    /* `steer`: with words in the box the running turn's button is the steer
+       arrow, not Stop — a person drafting their next message while the agent
+       works is still watching a busy window. `lit`: the composer's
+       travelling light, drawn for the whole turn (Calm S2). */
     const st = await app.eval(`(() => ({
       strip: !!document.querySelector('.statusstrip'),
       stop: !!document.querySelector('.sendbtn.stop'),
+      steer: !!document.querySelector('.sendbtn.steer'),
+      lit: !!document.querySelector('#composer.cl-on'),
       locked: !!document.querySelector('.sendbtn[disabled]'),
       pending: !!document.querySelector('#apprcard'),
     }))()`);
     if (st.pending && approve === 'auto') {
-      const kind = await app.eval(`(document.querySelector('#apprcard .badge')||{textContent:''}).textContent.trim()`);
-      await app.clickText('Allow once');
+      /* The open card has no badge (only an answered one does); its question
+         is the `.ttl` line. The click is scoped to the card the request is
+         ON — `#apprcard` is only ever the current request's (ATO-209) — and
+         "Allow once ⌘↩" still contains "Allow once". */
+      const kind = await app.eval(`(document.querySelector('#apprcard .ttl')||{textContent:''}).textContent.trim().slice(0, 80)`);
+      await app.clickText('Allow once', { scope: '#apprcard' });
       approvals++;
       idleSince = 0;
       app.log(`approved a "${kind}" request with a click (${approvals} so far)`);
@@ -304,7 +404,7 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
       continue;
     }
     if (st.pending && approve === 'none') return { pending: true, approvals, reply: await app.lastReply() };
-    const busy = st.strip || st.stop || st.locked;
+    const busy = st.strip || st.stop || st.steer || st.lit || st.locked;
     if (busy) { sawBusy = true; idleSince = 0; await sleep(700); continue; }
     /* The gap between the send click and the app looking busy. `ask` returns
        as soon as the composer empties, which happens instantly; the strip only
@@ -339,9 +439,15 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
  *
  * Every scenario is independently runnable: `node desktop/test/scenarios/<f>.mjs`.
  */
-export async function scenario(name, body, { firstRunFirst = true, setup } = {}) {
+export async function scenario(name, body, { firstRunFirst = true, setup, skip = null } = {}) {
   const t0 = Date.now();
   console.log(`\n▶ ${name}`);
+  /* A scenario that cannot be driven honestly on this machine says why and
+     stops before anything is launched. Counted apart from passes. */
+  if (skip) {
+    console.log(`– ${name} — SKIPPED: ${skip}`);
+    return { name, ok: true, skipped: skip, secs: '0' };
+  }
   const dirs = freshDirs(name);
   console.log(`   state ${dirs.stateDir}`);
   console.log(`   workspace ${dirs.workspace}`);
@@ -404,7 +510,7 @@ function write(path, content) {
   return path;
 }
 function readIf(path) { return existsSync(path) ? readFileSync(path, 'utf8') : null; }
-export { write, readIf as read, sleep };
+export { write, readIf as read, sleep, MOD_KEY };
 
 /** `node scenarios/foo.mjs` → run it and set the exit code. */
 export async function main(result) {

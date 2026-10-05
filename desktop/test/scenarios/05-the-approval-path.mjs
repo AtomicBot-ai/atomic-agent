@@ -39,14 +39,16 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
 
   const card = await app.eval(`(() => {
     const c = document.querySelector('#apprcard');
-    return { kind: (c.querySelector('.badge') || {}).textContent?.trim() || null,
+    return { kind: (c.querySelector('.ttl') || {}).textContent?.trim() || null,
              text: c.innerText.replace(/\\s+/g, ' ').trim().slice(0, 260),
              buttons: [...c.querySelectorAll('[data-appr]')].map((b) => b.textContent.trim().slice(0, 40)) };
   })()`);
   app.log(`the card says: ${JSON.stringify(card.text)}`);
   app.log(`its buttons are: ${JSON.stringify(card.buttons)}`);
 
-  // Calm (S4): the card's buttons read "Allow once" and "Deny".
+  /* Calm (S4): the card's buttons read "Allow once" and "Deny" — since 05.10
+     with their keys on them ("Allow once ⌘↩", "Deny ⌘."); the match is by
+     inclusion, so both still read as asked. */
   check(/allow once/i.test(card.buttons.join(' ')) && /deny/i.test(card.buttons.join(' ')),
     'the card offers me both Allow once and Deny', JSON.stringify(card.buttons));
   check(!existsSync(target),
@@ -54,9 +56,24 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
     `${target} already exists, so the gate did not gate`);
 
   // ---- deny first: the button has to mean something -----------------------
-  await app.clickText('Deny');
+  /* Scoped to the card: `#apprcard` is the request the keys answer, and once
+     answered the page also carries a "Denied" receipt. */
+  await app.clickText('Deny', { scope: '#apprcard' });
   await sleep(1200);
-  const afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
+  let afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
+  /* A model told no may try the same thing another way, which puts a new
+     card up in the same turn. A person keeps saying no until the turn ends;
+     asking the next question under an open card would answer the card with
+     those words instead (Enter denies and sends them). */
+  for (let again = 0; afterDeny.pending && again < 3; again++) {
+    app.log('it asked again in the same turn — Deny again');
+    const had = await app.eval(`document.querySelectorAll('#scroller .appr.done').length`);
+    await app.clickText('Deny', { scope: '#apprcard' });
+    await app.waitFor(`document.querySelectorAll('#scroller .appr.done').length > ${had}`,
+      'that Deny answered the card', { timeout: 15000 });
+    afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
+  }
+  if (afterDeny.pending) modelDidNot('take no for an answer — it kept asking after four Denies');
   check(!existsSync(target),
     'clicking Deny left the file uncreated — the button is wired to a real refusal',
     `${target} exists after a Deny`);
@@ -71,7 +88,7 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   }
   check(true, 'it asked again rather than remembering a permission I never gave');
 
-  await app.clickText('Allow once');
+  await app.clickText('Allow once', { scope: '#apprcard' });
   app.log('clicked Allow once — a real mouse press on the button');
 
   /* The moment after the click is the one a person judges the app on: did
