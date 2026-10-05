@@ -340,7 +340,6 @@ export async function chooseMode(app, id) {
   await app.clickSel(`.modepop [data-mode="${id}"]`, { scroll: false });
   await app.waitFor(`(document.querySelector('.cmodechip')||{dataset:{}}).dataset.id === ${JSON.stringify(id)}`
     + ` && !document.querySelector('.modepop')`, `the Mode chip reading ${id}`, { timeout: 20000 });
-  if (await app.eval(`!!document.querySelector('.modepop')`)) await app.clickAway();
 }
 
 /**

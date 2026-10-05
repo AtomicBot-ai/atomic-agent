@@ -67,8 +67,10 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
      those words instead (Enter denies and sends them). */
   for (let again = 0; afterDeny.pending && again < 3; again++) {
     app.log('it asked again in the same turn — Deny again');
+    const had = await app.eval(`document.querySelectorAll('#scroller .appr.done').length`);
     await app.clickText('Deny', { scope: '#apprcard' });
-    await sleep(1200);
+    await app.waitFor(`document.querySelectorAll('#scroller .appr.done').length > ${had}`,
+      'that Deny answered the card', { timeout: 15000 });
     afterDeny = await waitTurn(app, { timeout: 180000, approve: 'none' });
   }
   if (afterDeny.pending) modelDidNot('take no for an answer — it kept asking after four Denies');

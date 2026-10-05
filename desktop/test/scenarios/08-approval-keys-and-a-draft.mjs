@@ -27,6 +27,15 @@ const FIRST = 'kittiwake-08';
 const SECOND = 'fulmar-08';
 const CHORD = MOD_KEY === 'meta' ? '⌘' : 'Ctrl+';
 
+/** How many answered cards ("Approved" / "Denied") the chat shows. */
+const receipts = (app) => app.eval(`document.querySelectorAll('#scroller .appr.done .apprlbl b').length`);
+/** Press a chord and insist it answered a card: one more receipt in the chat. */
+async function answerWith(app, key, word) {
+  const before = await receipts(app);
+  await app.press(key, [MOD_KEY]);
+  await app.waitFor(`document.querySelectorAll('#scroller .appr.done .apprlbl b').length > ${before}`,
+    `the card answered by ${word}`, { timeout: 15000 });
+}
 /** What a person can read off the screen about the approvals so far. */
 const looks = (app) => app.eval(`(() => ({
   open: !!document.querySelector('#apprcard'),
@@ -48,7 +57,10 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   await chooseMode(app, 'default');
   check(await app.eval(`(document.querySelector('.cmodechip')||{dataset:{}}).dataset.id === 'default'`),
     'the Mode chip reads Ask first');
-  check(!(await app.eval(`!!document.querySelector('.modewarn')`)),
+  /* At approval level 5 Ask first asks nothing, and the chip's tooltip says
+     so (codingModeChip). Caught here, as the setup it is, rather than later
+     as a model that "did not reach for a tool". */
+  check(!/approval level is 5/.test(await app.eval(`(document.querySelector('.cmodechip')||{}).title||''`)),
     'Ask first really asks here (the approval level is not 5)');
 
   // ---- the first request: a card, and it does not take the focus ----------
@@ -91,8 +103,7 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   let firstDone = await waitTurn(app, { timeout: 240000, approve: 'none' });
   for (let more = 0; firstDone.pending && more < 5; more++) {
     await app.clickSel('#entry');
-    await app.press('Enter', [MOD_KEY]);
-    await sleep(1200);
+    await answerWith(app, 'Enter', `${CHORD}↩`);
     check((await looks(app)).box === DRAFT, `another ${CHORD}↩ in the same turn still left the draft alone`);
     firstDone = await waitTurn(app, { timeout: 240000, approve: 'none' });
   }
@@ -135,10 +146,10 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   let after = await waitTurn(app, { timeout: 180000, approve: 'none' });
   for (let again = 0; after.pending && again < 3; again++) {
     app.log(`it asked again in the same turn — ${CHORD}. again`);
-    await app.press('.', [MOD_KEY]);
-    await sleep(1200);
+    await answerWith(app, '.', `${CHORD}.`);
     after = await waitTurn(app, { timeout: 180000, approve: 'none' });
   }
+  if (after.pending) modelDidNot(`take no for an answer — it kept asking after four ${CHORD}.`);
   check(!existsSync(two), 'second.txt was never created — the denial held');
   app.log(`after the denial the agent said: ${JSON.stringify(after.reply.slice(0, 160))}`);
 });

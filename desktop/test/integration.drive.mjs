@@ -222,9 +222,11 @@ async function main() {
          closing the popover on the model step drops the unfinished entry. */
       await app.waitFor(`!!document.querySelector('.popover [data-wizmodel]') || !!document.querySelector('.popover .ob-err')`,
         'the key accepted — the model step', { timeout: 120000 });
-      if (await app.eval(`!!document.querySelector('.popover [data-wizmodel]')`)) {
-        await app.clickText('Use default', { scope: '.popover' });
+      if (!(await app.eval(`!!document.querySelector('.popover [data-wizmodel]')`))) {
+        throw new Error(`the ${OTHER.row} key was not accepted: `
+          + JSON.stringify(await app.eval(`((document.querySelector('.popover .ob-err')||{}).textContent||'').trim()`)));
       }
+      await app.clickText('Use default', { scope: '.popover' });
       await app.waitFor(`!document.querySelector('#wiz-key') && !document.querySelector('.popover [data-wizmodel]')`,
         'the default model taken and the wizard closing', { timeout: 120000 });
     }
