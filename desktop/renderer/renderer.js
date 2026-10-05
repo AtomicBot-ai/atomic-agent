@@ -16902,13 +16902,28 @@ function fzChipsHtml() {
   // Item 11: a queued swap says what it waits for, and that a second press takes it back.
   const queued = FZ.swapQueued
     ? 'Seats swapped — this takes effect once ' + fzQueuedWhen() + '. Press again to swap back' : '';
+  // ATO-136: a local model planning is the slow way round, said where the swap is.
+  const slow = fzLocalPlannerHint();
+  const tip = (queued || 'Swap the seats — the orchestrator runs the workers and back') + (slow ? '. ' + slow : '');
   return '<button class="cchip fzswap' + (queued ? ' is-queued' : '') + '" data-act="runmode:swap"'
-      + ' title="' + esc(queued || 'Swap the seats — the orchestrator runs the workers and back') + '"'
+      + ' title="' + esc(tip) + '"'
       + ' aria-label="' + esc(queued || 'Swap orchestrator and workers') + '">'
       + ic('swap') + '</button>'
     + '<button class="cchip workerschip' + cchipOpen('workers') + '" data-sel-open="workers" data-id="' + esc(label) + '"'
       + ' title="Does the work: ' + esc(label) + '" aria-label="Does the work: ' + esc(fzSeatWord(label)) + '">' + modelMark(label, 'xs')
       + '<span class="cval">' + esc(fzSeatWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+}
+/**
+ * ATO-136 — the planner is a local model (after a ⇄, or picked so), as the
+ * seats are painted: every turn then waits on the local model's planning,
+ * and work is much slower than with a cloud planner. Nothing said so. One
+ * calm sentence, or '' when the planner is in the cloud.
+ */
+function fzLocalPlannerHint() {
+  const seats = fzSeats();
+  if (seats.plans.provider !== 'local-llama') return '';
+  return seats.works.provider === 'local-llama' ? 'A local planner is slower'
+    : 'A local planner is slower — the cloud model is now doing the work';
 }
 /** A Fusion seat's chip word: the catalogue name for a local model, else the id without its vendor prefix. */
 function fzSeatWord(label) {
@@ -17054,8 +17069,15 @@ async function fzSwapNow() {
   if (rm.stored !== 'fusion') { fzNotice(SWAP_NEEDS_FUSION, 'run mode: ' + SWAP_NEEDS_FUSION); return {ok:false, refusal:SWAP_NEEDS_FUSION}; }
   const before = fzBefore('swapping…');
   // `swap` is the whole paint: the seats it trades, which fzSeats paints traded until the file has them.
-  return fzAfter(await swxRun(BSW.line, {backend:'fusion', swap:{orchestrator: rm.orchestratorProviderId, worker: rm.workerProviderId}},
+  const res = fzAfter(await swxRun(BSW.line, {backend:'fusion', swap:{orchestrator: rm.orchestratorProviderId, worker: rm.workerProviderId}},
     () => SWXBR.swapFusionLegs()), before);
+  /* ATO-136: the swap put a local model in the planner's seat. A short calm
+     word, once, as it lands; the ⇄'s own tooltip keeps saying it. */
+  if (res && res.ok && rmNow().orchestratorProviderId === 'local-llama') {
+    toast('A local planner is slower', rmNow().workerProviderId === 'local-llama'
+      ? 'Every turn now waits on the local model\u2019s planning' : 'The cloud model is now doing the work');
+  }
+  return res;
 }
 /** The queued swap, once nothing holds it back (fzSwapWaitsFor). */
 function fzFlushQueuedSwap() {
