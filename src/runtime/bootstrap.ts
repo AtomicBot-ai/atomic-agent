@@ -3442,6 +3442,12 @@ export async function createAgentRuntime(
           lastTurnContextUsage.delete(session.id);
           // A worker's turn is its whole life: nothing waits on its jobs.
           shellJobs.endSession(session.id);
+          // …nor on its slot pin. The step executor pinned whatever slot
+          // the server put the worker's prompt in; the session id is never
+          // seen again, so the entry would outlive it for the life of the
+          // process, one per worker ever run, and `reserveReflectionSlot`
+          // would keep treating those slots as taken by a live session.
+          slotManager.release(session.id);
         }
       });
     }
