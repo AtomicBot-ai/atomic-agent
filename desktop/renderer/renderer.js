@@ -1877,7 +1877,7 @@ const PENDING_CHATS = new Map();
 const LIVE_TURNS = new Map();
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'delta', 'progress_note', 'fusion_worker',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'fusion_worker',
   'steer_applied', 'finish', 'provider_waiting', 'provider_recovered']);
 /* Item 38: the local model server's request slots (`total_slots` in its
    /props), read when two chats run at once. */
@@ -2734,7 +2734,9 @@ function toolLine(m) {
    until its result lands, and "Couldn't run touch x" when it failed. A
    command that ran and exited non-zero did run — it keeps "Ran … · exit N".
    A call whose outcome was never recorded (`unk`, see toolState) reads
-   "Tried to write x": it may or may not have happened.
+   "Tried to write x": it may or may not have happened. ATO-197: one the
+   person refused reads "Denied: write x", and one the turn ended before
+   (`skip`) "Not run: write x".
    The past tense is only ever returned for `ok`: a verb this table does not
    know still cannot claim a failed call happened. */
 function toolTense(line, state) {
@@ -2753,12 +2755,14 @@ function toolTense(line, state) {
   if (state === 'err' && mt && mt[1] === 'Ran' && /\u00b7 exit /.test(line)) return line;
   if (!mt || !forms[mt[1]]) {
     if (state === 'wait') return 'Waiting for your OK: ' + line.charAt(0).toLowerCase() + line.slice(1);
+    if (state === 'deny' || state === 'skip') return (state === 'deny' ? 'Denied: ' : 'Not run: ') + line.charAt(0).toLowerCase() + line.slice(1);
     return state === 'run' ? line
       : (state === 'unk' ? 'Tried: ' : 'Couldn\u2019t finish: ') + line.charAt(0).toLowerCase() + line.slice(1);
   }
   const rest = line.slice(mt[1].length);
   if (state === 'run') return forms[mt[1]][0] + rest;
   if (state === 'wait') return 'Waiting for your OK to ' + forms[mt[1]][1] + rest;
+  if (state === 'deny' || state === 'skip') return (state === 'deny' ? 'Denied: ' : 'Not run: ') + forms[mt[1]][1] + rest;
   return (state === 'unk' ? 'Tried to ' : 'Couldn\u2019t ') + forms[mt[1]][1] + rest;
 }
 /* The failure, in one line, for a card that failed: the first line of the
@@ -2787,10 +2791,13 @@ function toolIcon(name) {
   return 'wand';
 }
 /* Status, small and on the right: a spinner while it runs, a muted tick when
-   done, a red alert when it failed. */
+   done, a red alert when it failed, a cross when it was denied and a stroke
+   when the turn ended before it (ATO-197). */
 function toolStatus(state) {
   return state === 'run' ? '<span class="tl-st run" title="Running"><span class="tk-spin"></span></span>'
     : state === 'err' ? '<span class="tl-st err" title="Failed">' + ic('alert') + '</span>'
+    : state === 'deny' ? '<span class="tl-st deny" title="Denied">' + ic('x') + '</span>'
+    : state === 'skip' ? '<span class="tl-st skip" title="Not run: the turn ended first">' + ic('slash') + '</span>'
     : state === 'unk' ? '<span class="tl-st unk" title="The outcome was not recorded">' + ic('minus') + '</span>'
     : '<span class="tl-st ok" title="Done">' + ic('check') + '</span>';
 }
@@ -2798,9 +2805,70 @@ function toolStatus(state) {
    styling, the error line and the status glyph all read it. `ok === null`
    is still running (or waiting on an approval), `false` failed or was
    denied, and a card reconcileToolCards had to settle itself (`forced`: the
-   store never described it) is `unk` — never drawn as a success. */
+   store never described it) is `unk` — never drawn as a success.
+   ATO-197: `outcome` says more about a call that did not succeed: `denied`
+   (the person refused it) is `deny`, `notrun` (the turn was stopped, failed
+   or ended before it) is `skip`. */
 function toolState(m) {
-  return m.ok === null ? 'run' : m.ok === false ? 'err' : m.forced ? 'unk' : 'ok';
+  return m.ok === null ? 'run' : m.outcome === 'denied' ? 'deny' : m.outcome === 'notrun' ? 'skip'
+    : m.ok === false ? 'err' : m.forced ? 'unk' : 'ok';
+}
+/* ATO-197: the turns whose agent said each call's outcome on the stream
+   (`event: tool_result`); their end needs no store to stop a spinner. */
+const TOOL_RESULT_TURNS = new Set();
+/* ATO-197: the card `event: tool_result` answers. By `call_id`, the key its
+   tool_progress carried (the newest running card with it, should a step be
+   run again); a card with no id, by tool, the oldest still running. */
+function toolResultCard(p, turnId) {
+  const id = typeof p.call_id === 'string' ? p.call_id : '';
+  const mine = S.log.filter((c) => c.k === 'tool' && c.turn === turnId);
+  const hit = id ? mine.filter((c) => c.callId === id) : [];
+  if (hit.length) return hit.slice().reverse().find((c) => c.ok === null) || hit[hit.length - 1];
+  return mine.find((c) => c.ok === null && !c.callId && c.name === String(p.tool || '')) || null;
+}
+/* ATO-197: one call ended, as the agent says (`status`: ok / error / denied /
+   cancelled). The card says so now, its error line from `summary`, its time
+   from `duration_ms` (the agent's own, so a call queued behind another of its
+   batch is not charged the wait), ended at `at`: toolTook reads it as it reads
+   the window's wall time, approval wait apart. The store and the trace may
+   still correct it when the turn is over (reconcileToolCards). */
+function toolSettle(c, p, at) {
+  const status = String(p.status || '');
+  c.told = true;   // the agent's own word: reconcileToolCards does not overwrite it
+  if (status === 'cancelled') { toolNotRun(c); return; }
+  c.ok = status === 'ok';
+  c.forced = false;
+  if (status === 'denied') c.outcome = 'denied'; else delete c.outcome;
+  if (typeof p.summary === 'string') c.out = p.summary;
+  const ms = Number(p.duration_ms);
+  if (p.duration_ms != null && Number.isFinite(ms)) {
+    c.observedMs = Math.max(1, Math.round(ms));
+    c.startedAt = Math.max(c.startedAt || 0, at - c.observedMs);
+  } else if (c.startedAt) c.observedMs = Math.max(1, at - c.startedAt);
+}
+/* ATO-197: a call the turn ended before: no spinner, no time, no claim it ran. */
+function toolNotRun(c) {
+  c.ok = false; c.outcome = 'notrun'; c.forced = false;
+  delete c.observedMs;
+}
+/* ATO-197: a turn's end settles the calls nothing answered. A stopped or
+   failed turn runs none of them on; a finished one whose agent said each
+   outcome (TOOL_RESULT_TURNS) has none left running either. When that agent
+   said every outcome, "not run" is its word too (`told`); an agent without
+   the frame leaves the store free to say a call did run, and a finished turn
+   of that agent waits for the store, as before (reconcileToolCards).
+   Answers whether a card changed. */
+function toolCardsTurnEnded(ev) {
+  const told = TOOL_RESULT_TURNS.delete(ev.turnId);
+  if (ev.kind === 'done' && !told) return false;
+  let n = 0;
+  S.log.forEach((c) => {
+    if (c.k !== 'tool' || c.ok !== null || c.turn !== ev.turnId) return;
+    toolNotRun(c);
+    if (told) c.told = true;
+    n++;
+  });
+  return n > 0;
 }
 /* Calm (S7): a call that is waiting on the approval card under it has not
    started; "Running touch x" above "Allow Atomic Agent to run…?" read as if
@@ -2833,7 +2901,8 @@ function toolCard(m) {
   const running = st === 'run';
   const failed = st === 'err';
   const took = toolTook(m);
-  const ms = running || !took ? '' : dur(took.ms);
+  // ATO-197: a denied call's time is the wait for the answer, and one not run has none.
+  const ms = running || st === 'deny' || st === 'skip' || !took ? '' : dur(took.ms);
   /* `data-tool` is the raw id the drivers compare (turn-order.drive reads it);
      the same id is printed, visibly, inside the expanded part. */
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
@@ -7906,7 +7975,8 @@ function liveReplay(rec) {
 }
 function liveReplayFrames(rec) {
   for (const f of rec.missed.splice(0)) {
-    for (let i = S.log.length - 1; i >= 0; i--) {   // as the top of onChatEvent brackets it, at the frame's time
+    // ATO-197: not on a call's own result, which says its time itself (toolSettle).
+    for (let i = S.log.length - 1; i >= 0 && f.kind !== 'tool_result'; i--) {   // as the top of onChatEvent brackets it, at the frame's time
       const c = S.log[i];
       if (c.k === 'tool' && c.ok === null && c.startedAt && !c.observedMs) { c.observedMs = Math.max(1, f.at - c.startedAt); break; }
       if (c.k === 'tool') break;
@@ -8022,10 +8092,11 @@ function liveEndedView(own, turns, data, stored) {
   return true;
 }
 /** Nothing runs in a chat opened on a turn that is over, so no card may go
-    on spinning: one the store never describes is finished, its outcome
-    unknown, as reconcileToolCards leaves it at a turn's end (`forced`). */
+    on spinning. The turn kept here was stopped or failed, so a call its
+    stream never answered was not run (ATO-197, as toolCardsTurnEnded says it
+    on screen). */
 function liveSettleCards() {
-  S.log.forEach((c) => { if (c.k === 'tool' && c.ok === null) { c.ok = true; c.forced = true; c.out = c.out || ''; } });
+  S.log.forEach((c) => { if (c.k === 'tool' && c.ok === null) toolNotRun(c); });
 }
 /** Clear Transcript while the chat's turn runs on screen: the history goes,
     the turn's own rows stay, and it streams on there with its wait strip and
@@ -8266,6 +8337,8 @@ function onChatEvent(ev) {
       });
     }
   }
+  // ATO-197: wherever its rows are, a turn's end settles the calls nothing answered (Stop, a failure).
+  if (ev && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && ev.turnId && toolCardsTurnEnded(ev)) render();
   // Item 38: what a turn draws while its rows are not on screen waits for its chat to be opened.
   if (liveTurnFrame(ev)) return;
   if (!ev || ev.turnId !== S.turnId) return;
@@ -8286,7 +8359,8 @@ function onChatEvent(ev) {
   const ownQueue = !!item || (!!turnSid && turnSid === S.sessionId);
   // Any frame after a running tool card brackets that tool's wall time as
   // observed here. The trace's own measurement replaces it after the turn.
-  for (let i = S.log.length - 1; i >= 0; i--) {
+  // ATO-197: not a call's own result, which says its time itself (toolSettle).
+  for (let i = S.log.length - 1; i >= 0 && ev.kind !== 'tool_result'; i--) {
     const c = S.log[i];
     if (c.k === 'tool' && c.ok === null && c.startedAt && !c.observedMs) { c.observedMs = Math.max(1, Date.now() - c.startedAt); break; }
     if (c.k === 'tool') break;
@@ -8389,8 +8463,26 @@ function onChatEvent(ev) {
     if (name === 'reply' || name === 'finish' || !item) return;   // review fix: see above
     // The stream carries the args as `label` (stringified, clipped to 120).
     const arg = pick(ev.payload, 'label') || '';
-    const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId};
+    // ATO-197: `call_id` (agent with the tool_result frame) is the key the call's outcome comes back under.
+    const callId = pick(ev.payload, 'call_id');
+    const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId,
+      callId: typeof callId === 'string' && callId ? callId : null};
     S.log.splice(S.log.indexOf(item), 0, card);
+    render();
+    return;
+  }
+  /* ATO-197: one call ended (`event: tool_result`). Its card said "Running"
+     until the turn was over and the store described it, so a write done in a
+     second, a failed command or a denied call spun as long as the turn ran,
+     and after Stop for good. Now it settles when the agent says so; an agent
+     without the frame still leaves it to the turn's end (toolCardsTurnEnded,
+     reconcileToolCards). */
+  if (ev.kind === 'tool_result') {
+    const p = ev.payload || {};
+    TOOL_RESULT_TURNS.add(ev.turnId);
+    const card = toolResultCard(p, ev.turnId);
+    if (!card) return;   // reply / finish draw no card
+    toolSettle(card, p, ev.at || Date.now());
     render();
     return;
   }
@@ -17597,9 +17689,10 @@ function groupCard(run) {
   const m = run[0];
   // item 4: the run's total counts only members with a number (trace, or observed while live);
   // the tooltip says when some are unmeasured, and a fold with no measured member prints nothing, never 0ms.
-  const measured = run.filter((c) => c.msSource === 'trace' || c.observedMs);
-  const ms = measured.reduce((n, c) => n + toolTook(c).ms, 0);   // ATO-237: each without its approval wait
   const states = run.map(toolState);
+  // ATO-197: a denied call's wait and a call not run are no time the run took.
+  const measured = run.filter((c, i) => (c.msSource === 'trace' || c.observedMs) && states[i] !== 'deny' && states[i] !== 'skip');
+  const ms = measured.reduce((n, c) => n + toolTook(c).ms, 0);   // ATO-237: each without its approval wait
   const bad = states.filter((x) => x === 'err').length;
   const pending = states.includes('run');
   // The title says where the numbers come from: a fold of live cards is window-observed until the store lands.
@@ -17619,10 +17712,11 @@ function groupCard(run) {
        "Couldn't list files · 3 times" when every member failed (and then no
        separate "3 failed"), "Listing files" while one still runs. */
     + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad === run.length ? 'err'
-        : states.every((x) => x === 'unk') ? 'unk' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
+        : states.every((x) => x === 'unk') ? 'unk' : states.every((x) => x === 'deny') ? 'deny'
+        : states.every((x) => x === 'skip') ? 'skip' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
     + (bad && bad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
-    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('unk') ? 'unk' : 'ok')
+    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }
@@ -17662,14 +17756,26 @@ async function reconcileToolCards(attempt = 0) {
   }
   for (let c = cards.length - 1, k = calls.length - 1; c >= 0 && k >= 0; c--, k--) {
     const card = cards[c], {call, result} = calls[k];
+    /* ATO-197: a call stored before this card was born is not its call. A
+       stopped step is not stored at all, so the cards the stream settled
+       (`told`) or the turn's end left not run may have no row: they do not
+       take the row of an older call of the same tool. */
+    if ((card.told || card.outcome === 'notrun') && !(call.at >= (card.startedAt || 0) - 1000)) { k++; continue; }
     if (call.tool !== card.name) break;
     card.args = call.args || card.args;
     card.at = call.at; card.argsKey = JSON.stringify(call.args ?? {});   // item 4: for the trace merge
-    if (result) {
+    if (result && !card.told) {   // ATO-197: the agent already said how a `told` card's call ended
       card.ok = result.status === 'ok';
       card.out = result.summary || '';
       card.truncated = !!result.truncated;
       card.forced = false;   // the store answered after all: this card's status is known
+      /* ATO-197: the store's word on the outcome too (an agent without the
+         tool_result frame). A call the batch never started is stored as such;
+         one with a prompted approval answered no was denied; one the turn's
+         end marked not run that the store says ran did run. */
+      if (/^cancelled before invocation\b/.test(card.out)) card.outcome = 'notrun';
+      else if (Array.isArray(result.approvals) && result.approvals.some((a) => a && a.verdict === 'denied')) card.outcome = 'denied';
+      else if (card.outcome === 'notrun') delete card.outcome;
     }
   }
   // Whatever the store still does not describe is finished, just unmeasured.
@@ -17713,6 +17819,7 @@ async function applyTraceDurations() {
   const cards = log.filter((m) => m.k === 'tool');
   let k = 0, hit = 0;
   for (const card of cards) {
+    if (card.outcome === 'notrun') continue;         // ATO-197: never ran, so no row is its own
     // A live card still running keeps observedMs and halts the walk; a store card whose
     // result never landed (an interrupted turn) is skipped so the cards after it are still measured.
     // Review fix: the skip still WALKS the cursor past the row that card would have
