@@ -1610,7 +1610,18 @@ if (typeof document !== 'undefined') {
   }, true);
 }
 
-const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
+/* ATO-237: in words a person reads, "850 ms", "4.9 s", "42 s", "1 min 42 s",
+   as the "Working…" line counts ("48951ms" was the TUI's raw number, item 4). */
+const dur = (ms) => {
+  if (ms == null) return '…';
+  const n = Math.max(0, Math.round(Number(ms) || 0));
+  if (n < 1000) return n + ' ms';
+  if (n < 9950) return (n / 1000).toFixed(1) + ' s';
+  const s = Math.round(n / 1000);
+  if (s < 60) return s + ' s';
+  if (s < 3600) return Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+  return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min';
+};
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $ = (s) => document.querySelector(s);
 const keycaps = (raw) => { const str = kbd(raw); return str ? str.split(' ').map((k) => '<span class="kc">' + esc(k) + '</span>').join('') : ''; };
@@ -2804,11 +2815,25 @@ function toolAwaitsApproval(m) {
   }
   return false;
 }
+/* ATO-237: how long a finished call took, or null when nothing measured it.
+   Both numbers (the trace's, and the wall time this window saw) run from the
+   call to its result, so a call held for your approval counted the wait:
+   fusion.delegate read "302078ms". When the time of the answer is known
+   (`apprAt`: stamped live by approvalAnswered, or the stored receipt's `at`)
+   the call is timed from it, and the wait is said apart. */
+function toolTook(m) {
+  const total = m.msSource === 'trace' ? m.ms : m.observedMs;
+  if (total == null || !Number.isFinite(total)) return null;
+  const end = m.msSource === 'trace' ? m.traceTs : m.startedAt ? m.startedAt + m.observedMs : null;
+  if (!m.apprAt || !end || m.apprAt > end || m.apprAt < end - total) return {ms: total, waited: 0};
+  return {ms: end - m.apprAt, waited: total - (end - m.apprAt)};
+}
 function toolCard(m) {
   const st = toolState(m);
   const running = st === 'run';
   const failed = st === 'err';
-  const ms = running ? '' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '';
+  const took = toolTook(m);
+  const ms = running || !took ? '' : dur(took.ms);
   /* `data-tool` is the raw id the drivers compare (turn-order.drive reads it);
      the same id is printed, visibly, inside the expanded part. */
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
@@ -2820,9 +2845,10 @@ function toolCard(m) {
       // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
       // with no trace row prints nothing and says so in the tooltip.
       + '<span class="du tnum" title="' + (running ? 'running'
-          : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
-          : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
-          : 'no trace for this call') + '">' + ms + '</span>'
+          : (m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step'
+            : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
+            : 'no trace for this call')
+            + (took && took.waited ? '; from your answer on (it waited ' + dur(took.waited) + ' for your approval before that)' : '')) + '">' + ms + '</span>'
       + toolStatus(st)
       + '<span class="chev">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
@@ -3776,11 +3802,11 @@ function renderInspector() {
         // item 4: the same cell as the tool card — running is '…'; a finished step prints the trace's
         // number, or the wall time this window observed, or nothing (never '…' or 0ms for a call with no trace row).
         + '<span class="mono ter tnum" title="' + (m.ok === null ? 'running'
-            : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
-            : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
+            : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, or minus your approval when it waited for one'
+            : m.observedMs ? 'wall time observed by this window, from the call frame (or your approval) to the next frame'
             : 'no trace for this call') + '">'
         // Soft Tactile (SH-05): a running step shows the spinner where the card shows '\u2026'.
-        + (m.ok === null ? '<span class="tk-spin" aria-label="running"></span>' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span></span></button>').join('')
+        + (m.ok === null ? '<span class="tk-spin" aria-label="running"></span>' : toolTook(m) ? dur(toolTook(m).ms) : '') + '</span></span></button>').join('')
       : '<p class="cap">No steps yet.</p>';
   } else if (S.inspTab === 'reasoning') {
     const r = S.log.filter((m) => m.k === 'reason');
@@ -8834,6 +8860,7 @@ function closeApprovalCard(req, state, at, forGood) {
    can wait at once), or stop waiting. A chat whose newest request is
    another one keeps waiting on that. */
 function approvalAnswered(req) {
+  toolWaitAnswered(req);
   const sid = req && req.sessionId;
   if (!sid) { if (S.pending === req) S.pending = null; return; }
   const mapped = PENDING_APPROVALS.get(sid);
@@ -8847,6 +8874,16 @@ function approvalAnswered(req) {
   PENDING_APPROVALS.set(sid, still.approvalId);
   APPROVAL_CARDS.set(sid, still);
   if (S.pending === req) S.pending = S.log.includes(still) ? still : null;
+}
+
+/* ATO-237: the call this answer releases (the newest running card of its
+   tool, the one toolAwaitsApproval says waits) is timed from now on. */
+function toolWaitAnswered(req) {
+  if (!req || !req.tool || req.state) return;
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const c = S.log[i];
+    if (c.k === 'tool' && c.name === req.tool && c.ok === null) { c.apprAt = Date.now(); return; }
+  }
 }
 
 /* B01: the same call asked for again: same chat, tool, category, preview and target. */
@@ -16640,6 +16677,9 @@ function sessionTurnsToLog(turns) {
         .map((a) => ({id:nid(), k:'approval', stored:true, tool:t.tool || 'tool',
           cat:a.category || 'other', kind:CATEGORY_LABEL[a.category] || a.category || 'action',
           state:a.verdict, at: Number.isFinite(a.at) ? new Date(a.at).toTimeString().slice(0, 8) : ''}));
+      // ATO-237: the last answer's time, so the card is timed from it (toolTook).
+      const answered = (Array.isArray(t.approvals) ? t.approvals : []).map((a) => a && a.at).filter(Number.isFinite);
+      if (answered.length) card.apprAt = Math.max(...answered);
       if (receipts.length) {
         let at = log.indexOf(card) + 1;
         while (at < log.length && log[at].k === 'approval') at++;
@@ -17530,7 +17570,7 @@ function groupCard(run) {
   // item 4: the run's total counts only members with a number (trace, or observed while live);
   // the tooltip says when some are unmeasured, and a fold with no measured member prints nothing, never 0ms.
   const measured = run.filter((c) => c.msSource === 'trace' || c.observedMs);
-  const ms = measured.reduce((n, c) => n + (c.msSource === 'trace' ? c.ms : c.observedMs), 0);
+  const ms = measured.reduce((n, c) => n + toolTook(c).ms, 0);   // ATO-237: each without its approval wait
   const states = run.map(toolState);
   const bad = states.filter((x) => x === 'err').length;
   const pending = states.includes('run');

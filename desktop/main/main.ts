@@ -3253,11 +3253,11 @@ async function smokeTest(): Promise<void> {
     if (traced.length !== reopened.length || !listed.every((c) => c.ms > 0)) {
       process.stdout.write(`DIAG reopened=${JSON.stringify(reopened)}\n`);
     }
-    // Every finished duration cell reads as the TUI prints it (<n>ms) or is empty.
+    // Every finished duration cell reads in words (ATO-237: "850 ms", "4.9 s", "1 min 42 s") or is empty.
     const cells = await js<string[]>("window.__overflow().durations");
     check(
-      "durations read as the TUI prints them",
-      cells.length > 0 && cells.every((t) => /^\d+ms$/.test(t) || t === "" || t === "\u2026"),
+      "durations read in words",
+      cells.length > 0 && cells.every((t) => /^(\d+ ms|\d\.\d s|\d+ s|\d+ min \d+ s|\d+ h \d+ min)$/.test(t) || t === "" || t === "\u2026"),
       JSON.stringify(cells.slice(0, 12)),
     );
 
