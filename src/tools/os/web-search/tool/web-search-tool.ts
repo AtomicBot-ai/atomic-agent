@@ -75,9 +75,10 @@ export function buildOsWebSearchTool(
           filePath: join(persistDir, COOLDOWN_FILE_NAME),
         });
 
-  // Emitted once at construction, not per search: a keyless primary provider
-  // degrades every subsequent query, and one line at startup is what turns
-  // that from invisible into diagnosable (#179).
+  // Emitted once at construction, not per search: a primary that is skipped
+  // for want of its key redirects every subsequent query, and one line at
+  // startup is what turns that from invisible into diagnosable (#179).
+  // Keyless Exa is not one of them: it is skipped by design (ATO-120).
   const missingKey = checkMissingSearchKey({
     config: options.config,
     env: options.env ?? process.env,
@@ -92,9 +93,9 @@ export function buildOsWebSearchTool(
     name: TOOL_NAME,
     description:
       "Search the web through the configured provider and return compact " +
-      "title/url/snippet results. Default provider is keyless Exa with a " +
-      "DuckDuckGo fallback; SearXNG is keyless, Exa/Brave use an environment " +
-      "API key when present. " +
+      "title/url/snippet results. Default provider is Exa when its " +
+      "environment API key is set, DuckDuckGo otherwise and as the " +
+      "fallback; SearXNG is keyless, Brave needs an environment API key. " +
       "Use os.web.fetch to read a chosen result page.",
     readonly: true,
     async run(rawArgs, ctx) {

@@ -524,8 +524,18 @@ There is currently **no per-tool env filtering**. `runCommand` in [src/sandbox/c
 `["duckduckgo"]` fallback. Exa's MCP endpoint answers **keyless** when
 `EXA_API_KEY` is unset, and that keyless tier returns HTTP 429 under sustained
 agent load — a GAIA validation campaign logged 1341 `Exa returned HTTP 429`
-errors, 44% of all tool failures in the run (#179). Two mechanisms keep that
-from silently deciding answer quality:
+errors, 44% of all tool failures in the run (#179) — and has since been seen
+answering HTTP 403 outright. So the orchestrator **never calls keyless Exa**
+(ATO-120): `isProviderUsable` in [providers/search-orchestrator.ts](src/tools/os/web-search/providers/search-orchestrator.ts)
+skips `exa` when its `apiKeyEnv` is unset or blank, exactly as it skips a
+keyless `brave`, and `buildProviderChain` appends `duckduckgo` to a chain that
+lost Exa that way and does not list it, so `provider: "exa"` with
+`fallback: []` still searches. Existing configs need no rewrite; with a key,
+Exa stays first. A provider that fails (any throw that is not a 429) while a
+later one answers is recorded in `degraded` as `<name> failed: <message>`
+and the call stays `ok`; only a search where every provider failed is the
+tool's error. Two mechanisms keep a rate-limited keyed provider from silently
+deciding answer quality:
 
 1. **Retry before falling through.** [transport/retry-after.ts](src/tools/os/web-search/transport/retry-after.ts)
    owns the schedule; `searchHttp` retries a 429 against the **same** provider
@@ -539,11 +549,15 @@ from silently deciding answer quality:
    absent). Retries are spent, not skipped, when the limit is real — the
    fallback chain remains the backstop.
 2. **Name the degradation.** [tool/warn-missing-search-key.ts](src/tools/os/web-search/tool/warn-missing-search-key.ts)
-   emits one stderr line at tool construction when the primary provider reads
-   an `apiKeyEnv` that resolves to nothing. The fallback chain works as
-   designed, so nothing hard-fails; the run just produces weaker groundings
-   than configured. Warning **once at construction** (not per search) is
-   deliberate: a long autonomous run would drown in a per-query warning.
+   emits one stderr line at tool construction when the primary provider is
+   skipped for want of its key — today only `brave`, which has no keyless
+   tier. The fallback chain works as designed, so nothing hard-fails; the run
+   just uses a provider other than the configured one. Warning **once at
+   construction** (not per search) is deliberate: a long autonomous run would
+   drown in a per-query warning. Keyless Exa says nothing: it is the shipped
+   default, DuckDuckGo serving it is the intended path, and the old "expect
+   HTTP 429" line was logged by the desktop as an error on every start
+   (ATO-120).
 
 The result cache and the #241 provider cooldown **survive the process**
 (#256): given a `stateDir`, [transport/search-cache.ts](src/tools/os/web-search/transport/search-cache.ts)
@@ -572,8 +586,13 @@ Pinned by [retry-after.test.ts](src/tools/os/web-search/transport/retry-after.te
 non-429 untouched, old-curl tolerance),
 [warn-missing-search-key.test.ts](src/tools/os/web-search/tool/warn-missing-search-key.test.ts),
 [web-search-tool.test.ts](src/tools/os/web-search/tool/web-search-tool.test.ts)
-("warns once at construction, not once per search"; the persistent-cache
-describe: cross-instance hit, `persistCache: false`, no `stateDir`),
+("warns once at construction, not once per search"; the Exa-primary
+describe: keyless Exa never contacted, a covered failure stays `ok`; the
+persistent-cache describe: cross-instance hit, `persistCache: false`, no
+`stateDir`), the "an Exa primary without a key" describe in
+[search-orchestrator.test.ts](src/tools/os/web-search/providers/search-orchestrator.test.ts)
+(skipped, DuckDuckGo appended to an empty fallback, configured order kept,
+the chain's own error surfaced, keyed Exa still first),
 [search-cache.test.ts](src/tools/os/web-search/transport/search-cache.test.ts)
 and [provider-cooldown.test.ts](src/tools/os/web-search/transport/provider-cooldown.test.ts)
 (round-trip, load-time expiry/eviction, ladder-across-restart, corrupt and
