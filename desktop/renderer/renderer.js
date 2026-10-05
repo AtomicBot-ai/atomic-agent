@@ -1124,7 +1124,7 @@ const TK = {
   rows:[], filter:'all', search:'', searchOpen:false, auto:true, lastRefreshedAt:null, loading:false,
   primed:false, mode:'list', cursor:0, detailId:null, cancel:null, msg:null, err:null, timer:null,
   form:null,
-  note:null, // muted line under `msg` — the one-shot `at` degradation on 0.5.4, repeated after submit
+  note:null, // muted line under `msg` (the 0.5.4 one-shot caveat used it; nothing sets it since ATO-193)
 };
 const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
 const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row window around the cursor, as in the TUI
@@ -18887,19 +18887,9 @@ function tkPreviewHTML(f) {
   if (f.preview.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
   if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next firings</b></div><div class="set-cap">(preview unavailable)</div>';
   return head
-    + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>'
-    // Item 7: honest degradation on 0.5.4 — the desktop cannot reach TaskRunner.create, only the CLI.
-    // The desktop submits through `atag task create --at`; on agent 0.5.4 that CLI path writes the
-    // one-shot through the bare TaskStore with no next-run (scheduled_for NULL), which the scheduler
-    // treats as due now — the row will show next-run "-" and be picked up at the next tick. The TUI
-    // creates in-process through TaskRunner.create and keeps the `at`; the desktop says so instead
-    // of pretending.
-    + (f.kind === 'at' ? '<div class="tk-help tk-help--warn set-atnote">' + esc(tkAtNote('the time above')) + '</div>' : '');
-}
-/* The same caveat, worded for the preview ("the time above") and for the
-   success line/toast after submit ("the `at` time"). */
-function tkAtNote(when) {
-  return 'note: on agent 0.5.4 `atag task create --at` stores no next-run for a one-shot, so the scheduler picks it up at its next tick (the row shows next-run "-"), not at ' + when + '.';
+    + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>';
+  // ATO-193: no 0.5.4 caveat under a one-shot any more. Since ATO-133 `atag task create --at`
+  // stores the next run and the scheduler waits for it; the agent the app runs is 0.6.7 or later.
 }
 function tkFieldInput(name, value) {
   const f = TK.form || (TK.form = tkNewForm());
@@ -18933,9 +18923,9 @@ async function tkSubmit() {
   f.submitting = false;
   if (!res || !res.ok) { f.error = (res && res.error) || 'task create failed'; render(); return {ok:false, error:f.error}; }
   TK.msg = 'task ' + res.id + ' scheduled (' + sc.kind + ')';
-  // The TUI's success line stays verbatim; a one-shot carries the 0.5.4 caveat under it and in the toast.
-  TK.note = sc.kind === 'at' ? tkAtNote('the `at` time') : null;
-  toast('Task scheduled', TK.msg + (TK.note ? ' — ' + TK.note : ''));
+  // The TUI's success line stays verbatim (ATO-193: a one-shot no longer carries the 0.5.4 caveat).
+  TK.note = null;
+  toast('Task scheduled', TK.msg);
   TK.mode = 'list'; TK.form = null;
   await tasksRefresh();
   return {ok:true, id:res.id};

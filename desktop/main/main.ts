@@ -5002,9 +5002,9 @@ async function settingsTest(
     );
     createdId = created.id ?? "";
     check("tasks tab: create goes through atag task create", created.ok && !!createdId && created.line === `task ${createdId} scheduled (at)`, created.error ?? created.line);
-    // The one-shot caveat rides under the success line, not only in the form preview.
+    // ATO-193: the agent keeps a one-shot's time (ATO-133), so no 0.5.4 caveat follows the success line.
     const note = await js<string>("window.__tasksNote()");
-    check("tasks tab: the `at` caveat follows the success line", note.includes("stores no next-run for a one-shot"), JSON.stringify(note));
+    check("tasks tab: no 0.5.4 `at` caveat follows the success line", note === "", JSON.stringify(note));
     if (createdId) {
       // A one-shot with no scheduledFor sorts last, so it may sit outside the
       // 14-row window: find it the way the TUI does, through `/` search.
