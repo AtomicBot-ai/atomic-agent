@@ -2,7 +2,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
-import { bringUpAtLaunch, bringUpInFlight, daemonTurnsOnTheirWay, runModeWantsDaemon, stopsMark } from "./backend-switch.js";
+import {
+  bringUpAtLaunch,
+  bringUpInFlight,
+  daemonTurnsOnTheirWay,
+  inDaemonTurn,
+  pairEmbeddingServer,
+  runModeWantsDaemon,
+  stopsMark,
+} from "./backend-switch.js";
 import {
   DaemonSupervisor,
   type DaemonLook,
@@ -299,6 +307,30 @@ export function onAgentFrame(ev: { kind?: unknown; payload?: unknown }): void {
   if (typeof p.provider_id !== "string" || p.cause?.kind !== "refused") return;
   if (!isManagedServer(p.provider_id, readConfig())) return;
   void daemonWatch.checkNow("the agent could not reach the local model server").catch(() => undefined);
+}
+
+/**
+ * ATO-126, at launch. `atag serve` wires the embedding server only when it
+ * answers as serve boots (bootstrap's one probe), and the launch's start
+ * (startLocalDaemonAtBoot, beside serve's own start) brought it up only after
+ * the chat model had loaded — tens of seconds after serve had looked. So
+ * semantic search was off for every session begun on the local route. It is
+ * started first now, alone (it is small, and up in seconds), before serve
+ * starts: only when the route needs the local server and the file wants
+ * embeddings (backend-switch pairEmbeddingServer), in the daemon's turn, and
+ * never holding the agent back past `limitMs`.
+ */
+export async function pairEmbeddingsBeforeServe(limitMs = 20_000): Promise<void> {
+  if (!routeNeedsDaemon(readConfig())) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const mark = stopsMark();
+  const pair = inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), () => ({ paired: false }));
+  const r = await Promise.race([
+    pair.catch(() => null),
+    new Promise<null>((res) => { timer = setTimeout(() => res(null), limitMs); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (r?.line) host.say(`[desktop] ${r.line}`);
 }
 
 /** For the window (a reopened one asks) and the smoke. */

@@ -89,6 +89,7 @@ import {
   closeDaemonTurns,
   enterFusion,
   inDaemonTurn,
+  pairEmbeddingServer,
   daemonTurnsOnTheirWay,
   lastTurnEnded,
   onBackgroundBringUp,
@@ -102,6 +103,7 @@ import {
   startDaemonNow,
   stopDaemonForQuit,
   stopDaemonNow,
+  stopsMark,
   supersedeBringUp,
   swapFusionLegs,
   switchBackend,
@@ -117,6 +119,7 @@ import {
   daemonWatchState,
   hostDaemonWatch,
   onAgentFrame,
+  pairEmbeddingsBeforeServe,
   updateBegins,
   type UpdateHold,
 } from "./daemon-watch.js";
@@ -149,6 +152,8 @@ import {
   stopEmbeddingServer,
   modelsPullEmbedding,
   modelsUseEmbedding,
+  managedDaemonPidAlive,
+  configFileHint,
   modelsUpdate,
   modelsDevices,
   modelsUseDevice,
@@ -2083,9 +2088,19 @@ function wireIpc(client: AgentClient): void {
     });
     return { ok: true, started: true };
   });
-  ipcMain.handle("cli:modelsUseEmbedding", (_event, id: unknown) =>
-    typeof id === "string" ? modelsUseEmbedding(id) : { ok: false, error: "embedding model id required" },
-  );
+  ipcMain.handle("cli:modelsUseEmbedding", async (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "embedding model id required" };
+    const res = await modelsUseEmbedding(id);
+    /* ATO-126: switched on beside a local model already serving, the
+       embedding server is started now, in the daemon's turn (the TUI's
+       ensureEmbeddingPaired); `use-embedding` only writes the file, and no
+       `models start` comes while the chat server is up. Wired into the agent
+       at its next start, as before. */
+    if (!res.ok || id === "--disable" || !managedDaemonPidAlive(configFileHint() ?? {})) return res;
+    const mark = stopsMark();
+    const pair = await inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), () => ({ paired: false }));
+    return pair.line ? { ...res, stdout: `${res.stdout.trimEnd()}\n${pair.line}\n` } : res;
+  });
   /* Deferred F8: Settings' llama.cpp update is a download as well — it fetches
      the runtime and replaces the binary — and it ran beside a setup download,
      where a model landing meanwhile started on a binary being replaced. It
@@ -9143,7 +9158,10 @@ void app.whenReady().then(async () => {
     const sweepAtLaunch = () => sweepBackendStaging(managedDataDirNow(), { minAgeMs: STAGING_STALE_MS })
       .then((swept) => { if (swept.length) console.error(`[desktop] local-llm: tidied what an earlier llama.cpp update left behind (${swept.join(", ")})`); })
       .catch(() => undefined);
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(() => {
+    /* ATO-126: the embedding server before `atag serve` boots, which is the
+       only moment serve looks for it (a smoke run starts no model server). */
+    const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(embeddingsFirst).then(() => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();

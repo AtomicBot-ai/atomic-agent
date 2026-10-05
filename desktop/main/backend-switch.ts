@@ -10,13 +10,17 @@ import {
   configLockTurns,
   daemonFoundUp,
   daemonPidsIn,
+  embeddingPidAlive,
+  embeddingsWanted,
   keyNamesAvailable,
   killDaemonLeftovers,
   localDaemonRunning,
   managedDaemonPidAlive,
   modelsList,
   modelsStart,
+  modelsStartEmbedding,
   modelsStop,
+  stopEmbeddingServer,
   modelsUse,
   providerHasKey,
   providerIsUsable,
@@ -342,7 +346,7 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
   /* Another model: a background start for the old one is moot (item 11); the
      same one is waited for. The daemon's turn is bringUpLocalDaemon's, which
      this body was a copy of: started when down, restarted when the model moved. */
-  const { daemon, daemonLine, error } = await bringUpLocalDaemon(changed);
+  const { daemon, daemonLine, error, paired } = await bringUpLocalDaemon(changed);
   return {
     ok: true,
     providerId: LOCAL_ID,
@@ -351,7 +355,8 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
     daemon,
     daemonLine,
     // Backlog 18 (its second review): a superseded start restarts nothing (restartAfterSwitch).
-    restart: restart && daemon !== "superseded",
+    // ATO-126: an embedding server paired just now is wired by the restart.
+    restart: (restart || !!paired) && daemon !== "superseded",
     error,
   };
 }
@@ -443,7 +448,86 @@ function keyed(): (p: RunModeProvider) => boolean {
   return (p) => providerHasKey(p as ProviderEntry, names);
 }
 
-export type BringUp = { daemon: DaemonEffect; daemonLine?: string; error?: string };
+export type BringUp = {
+  daemon: DaemonEffect;
+  daemonLine?: string;
+  error?: string;
+  /** ATO-126: the embedding server was started, or hybrid recall switched back on, for it: `atag serve` wires it only as it boots. */
+  paired?: boolean;
+};
+type Paired = { paired: boolean; line?: string };
+
+/**
+ * ATO-126 — the embedding server beside the chat one.
+ *
+ * Semantic search (hybrid recall over memory and files) needs a second
+ * llama-server for `/embedding`, and only `atag models start` brought it up:
+ * chat first, then embedding, both or neither. Every bring-up here skips that
+ * start when the chat server is already up (a model found up at launch, a pick
+ * of the model already serving, a ⇄, Settings' Start), and `models start`
+ * itself refuses as a whole once the chat server runs. So with a local chat
+ * model running the embedding server never started — an embedding model
+ * enabled or downloaded later, one that had stopped, all stayed off. The TUI
+ * pairs them in-process (ensureEmbeddingPaired); the CLI now can too (`models
+ * start-embedding`, agent side). A Cloud switch also writes
+ * `memory.embeddings.enabled = false` as it stops both servers (the TUI's
+ * stopDaemon order), and nothing here put it back on the way back to local,
+ * where the TUI latches it on once its server runs. `atag serve` reads both
+ * only as it boots.
+ *
+ * Asked in the daemon's turn, once the chat server is up (and at launch before
+ * it, daemon-watch pairEmbeddingsBeforeServe): when the file wants embeddings
+ * and their server is not up, it is started alone; once it is up, hybrid
+ * recall is switched back on. `startOut` is the `models start` that
+ * just ran, which already tried the embedding side: its failure is not tried
+ * again. No guard of memory stands in its way here — the agent's own start
+ * fits the chat context to the memory free as it starts, and the embedding
+ * server (2048 context) is small. `paired`: something `atag serve` has not
+ * seen, which the switch's restart then picks up.
+ */
+export async function pairEmbeddingServer(opts: {
+  /** The `models start` that just ran. */
+  startOut?: string;
+  /** False once a stop, a switch or the quit came: what this started then goes again, and nothing is written. */
+  stillWanted: () => boolean;
+  /** Whether the agent restarts after this (a switch): only then is semantic search on at once. */
+  restarts?: boolean;
+}): Promise<Paired> {
+  const cfg = configFileHint();
+  if (!embeddingsWanted(cfg)) return { paired: false };
+  let started = false;
+  let up = embeddingPidAlive(cfg);
+  let line: string | undefined;
+  if (opts.startOut !== undefined) {
+    started = /^embedding: started pid/m.test(opts.startOut);
+    up = up || started;
+  } else if (!up) {
+    const r = await modelsStartEmbedding({ stillWanted: opts.stillWanted });
+    if (r.notStarted) return { paired: false };
+    started = r.started;
+    up = r.up;
+    // Exit 0 without a server: the model is not on disk (or not chosen), which Settings › Models says itself.
+    if (!r.ok) {
+      const why = (r.stderr.match(/^embedding: failed to start \((.*)\)\s*$/m)?.[1] ?? r.error ?? "").trim();
+      line = `local-llm: the embedding server did not start${why ? ` — ${why}` : ""}; semantic search is off, keyword search still works`;
+    }
+  }
+  if (!up) return { paired: false, line };
+  /* A stop or a switch away while it started (they do not wait for the
+     daemon's turn): the server it brought up is nobody's any more, and the
+     Cloud switch's own write of the flag is the last word. */
+  if (!opts.stillWanted()) {
+    if (started) await stopEmbeddingServer().catch(() => undefined);
+    return { paired: false };
+  }
+  if (started) {
+    line = opts.restarts
+      ? "local-llm: embedding server up — semantic search on"
+      : "local-llm: embedding server up — semantic search comes on with the agent's next start";
+  }
+  const m = await setMemoryEmbeddingsEnabled(true);
+  return { paired: started || m.changed, line };
+}
 
 /* ---- the managed daemon: starts one at a time, stops at once (item 11) ----
    Every sequence that checks the daemon and then starts (or restarts) it holds
@@ -556,7 +640,10 @@ async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
     const st = await modelsStart({ stillWanted: stillAsked });
     // It reached its spawn after a stop, a switch or the quit: nothing was started.
     if (st.notStarted) return SUPERSEDED;
-    return st.ok ? { daemon: effect, daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+    if (!st.ok) return { daemon: "start-failed", error: st.error };
+    // ATO-126: hybrid recall back on when `models start` brought its server up too.
+    const pair = await pairEmbeddingServer({ startOut: st.stdout, stillWanted: stillAsked, restarts: true });
+    return { daemon: effect, daemonLine: readyLine(st.stdout), ...(pair.paired ? { paired: true } : {}) };
   };
   return withDaemonLock(async (): Promise<BringUp> => {
     if (!stillAsked()) return SUPERSEDED;
@@ -564,7 +651,9 @@ async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
     if (running && !modelChanged) {
       // ATO-123: found up when it was asked for, so it is the app's to bring back — unless a stop came meanwhile.
       if (stillAsked()) daemonFoundUp();
-      return { daemon: "untouched" };
+      // ATO-126: the chat server stays as it is; the embedding one is started beside it when it is not up.
+      const pair: Paired = stillAsked() ? await pairEmbeddingServer({ stillWanted: stillAsked, restarts: true }) : { paired: false };
+      return { daemon: "untouched", ...(pair.line ? { daemonLine: pair.line } : {}), ...(pair.paired ? { paired: true } : {}) };
     }
     if (running) {
       const s = await modelsStop();
@@ -641,6 +730,8 @@ async function startIfDown(s: BringUpSteps): Promise<BringUp> {
   if (await localDaemonRunning()) {
     // ATO-123: found up when it was asked for (a ⇄, the launch, the supervisor's own restart) — the app's from here on.
     if (!s.superseded()) daemonFoundUp();
+    // ATO-126: and the embedding server beside it. Nothing restarts the agent from here: the next restart wires it.
+    if (!s.superseded()) await pairEmbeddingServer({ stillWanted: () => !s.superseded() });
     return { daemon: "untouched" };
   }
   if (s.superseded()) return SUPERSEDED;
@@ -648,7 +739,9 @@ async function startIfDown(s: BringUpSteps): Promise<BringUp> {
   const st = await modelsStart({ signal: s.signal });
   // The quit had begun (closeStarts): nothing was started.
   if (st.notStarted) return SUPERSEDED;
-  return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+  if (!st.ok) return { daemon: "start-failed", error: st.error };
+  if (!s.superseded()) await pairEmbeddingServer({ startOut: st.stdout, stillWanted: () => !s.superseded() });
+  return { daemon: "started", daemonLine: readyLine(st.stdout) };
 }
 function report(r: BringUp, modelId: string, via: "swap" | "launch" | "update"): void {
   if (r.daemon !== "started" && r.daemon !== "start-failed") return;   // nothing started, or it was superseded
@@ -689,10 +782,14 @@ export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean
     if (await localDaemonRunning()) {
       // ATO-123: Settings' Start found it up: the app's to bring back from here on, unless a stop came meanwhile.
       if (stillAsked()) daemonFoundUp();
-      return { ok: true, stdout: "", stderr: "", alreadyRunning: true };
+      // ATO-126: the embedding server beside it, when the file wants one and it is not up.
+      const pair: Paired = stillAsked() ? await pairEmbeddingServer({ stillWanted: stillAsked }) : { paired: false };
+      return { ok: true, stdout: pair.line ? `${pair.line}\n` : "", stderr: "", alreadyRunning: true };
     }
     // Its second review: asked again at the spawn — one may have come, or the quit begun, during that status read.
-    return modelsStart({ stillWanted: stillAsked });
+    const st = await modelsStart({ stillWanted: stillAsked });
+    if (st.ok && !st.notStarted && stillAsked()) await pairEmbeddingServer({ startOut: st.stdout, stillWanted: stillAsked });
+    return st;
   }, () => ({ ok: false, stdout: "", stderr: "", error: START_REFUSED_QUITTING }));
 }
 /** Settings › Models › Stop, and quitting: at once — a bring-up on its way is ended, not waited for. */
@@ -887,7 +984,7 @@ async function afterRunModeWrite(res: {
     transport: transportFor(leg),
     ...up,
     // Backlog 18 (its second review): a superseded start restarts nothing (restartAfterSwitch).
-    restart: res.changed && up.daemon !== "superseded",
+    restart: (res.changed || !!up.paired) && up.daemon !== "superseded",
     runMode: {
       before: v?.before.effective ?? now.effective,
       after: now.effective,
@@ -973,7 +1070,7 @@ export async function selectFusionWorkerModel(modelId: string): Promise<SwitchRe
     ...up,
     modelId,
     // Backlog 18 (its second review): a superseded start restarts nothing (restartAfterSwitch).
-    restart: (!!settled.restart || changed) && up.daemon !== "superseded",
+    restart: (!!settled.restart || changed || !!up.paired) && up.daemon !== "superseded",
   };
 }
 

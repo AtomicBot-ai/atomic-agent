@@ -117,6 +117,22 @@ describe("maybeAutoUpdateBackend", () => {
     expect(downloadBackend).toHaveBeenCalledTimes(1);
   });
 
+  it("stops an embedding daemon running alone before it replaces the binary", async () => {
+    vi.mocked(checkForBackendUpdate).mockResolvedValue({
+      updateAvailable: true,
+      latestTag: "turboquant-new",
+      currentTag: "turboquant-old",
+    });
+    // `models start-embedding` ran it without a chat daemon beside it.
+    vi.mocked(readRunningPid).mockImplementation((_dir, role) => (role === "embedding" ? 77 : null));
+    vi.mocked(stopChatAndEmbeddingDaemons).mockResolvedValue();
+    vi.mocked(downloadBackend).mockResolvedValue({ ok: true, tag: "turboquant-new" });
+
+    const result = await maybeAutoUpdateBackend("/tmp/data", { enabled: true });
+    expect(result.action).toBe("updated");
+    expect(stopChatAndEmbeddingDaemons).toHaveBeenCalledWith("/tmp/data");
+  });
+
   it("does not stop when nothing is running, then still downloads", async () => {
     vi.mocked(checkForBackendUpdate).mockResolvedValue({
       updateAvailable: true,

@@ -3156,6 +3156,59 @@ export async function modelsUseEmbedding(idOrDisable: string): Promise<CliResult
   return cli(["models", "use-embedding", idOrDisable], 60_000);
 }
 
+/**
+ * ATO-126: `atag models start-embedding` — the embedding server alone, beside
+ * a chat server that is already up, which `models start` refuses to touch as
+ * a whole. `up`: the server runs after it (started now, or already running);
+ * `started`: this call started it. An agent without the verb (before it) says
+ * "unknown subcommand", and nothing is up.
+ */
+export async function modelsStartEmbedding(
+  opts: { stillWanted?: () => boolean } = {},
+): Promise<CliResult & { up: boolean; started: boolean; notStarted?: boolean }> {
+  // As a `models start`: nothing spawns once the quit began, or after a stop or a switch that came first.
+  if (startsClosed) return { ok: false, stdout: "", stderr: "", error: START_REFUSED_QUITTING, up: false, started: false, notStarted: true };
+  if (opts.stillWanted && !opts.stillWanted()) {
+    return { ok: false, stdout: "", stderr: "", error: START_REFUSED_MOVED_ON, up: false, started: false, notStarted: true };
+  }
+  const read = (res: CliResult) => {
+    const started = /^embedding: started pid/m.test(res.stdout);
+    return { ...res, started, up: started || /^embedding: already running/m.test(res.stdout) };
+  };
+  if (cliStandIns.getStore()) return read(await cli(["models", "start-embedding"], 60_000));
+  // One of the starts quitting ends (abortStarts); what it spawned is in its pid file for the stop after.
+  const abort = new AbortController();
+  const run = cli(["models", "start-embedding"], 60_000, undefined, abort.signal);
+  const entry = { abort, done: run };
+  startsOnTheirWay.add(entry);
+  try {
+    return read(await run);
+  } finally {
+    startsOnTheirWay.delete(entry);
+  }
+}
+
+/** ATO-126: whether the file asks for the embedding server — switched on, with a model chosen. A hint read from disk (configFileHint). */
+export function embeddingsWanted(cfg: UserConfigShape | null): boolean {
+  const emb = cfg?.localModels?.embeddings;
+  return cfg?.localModels?.mode === "managed" && emb?.enabled === true && typeof emb.modelId === "string" && emb.modelId.length > 0;
+}
+
+/** ATO-126: whether `llama-embed.pid` names a live process — the embedding server is up. No `atag` process asked. */
+export function embeddingPidAlive(cfg: UserConfigShape | null): boolean {
+  const h = cliStandIns.getStore();
+  if (h) return false;   // a smoke's stand-in world has no embedding server
+  const override = (cfg?.localModels?.managed as unknown as { dataDirOverride?: unknown } | undefined)?.dataDirOverride;
+  try {
+    const pid = Number(readFileSync(join(managedDataDir(typeof override === "string" ? override : null), "llama-embed.pid"), "utf8").trim());
+    if (!Number.isInteger(pid) || pid <= 1) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === "EPERM";
+  }
+}
+
 /** `atag models update` — downloads the latest backend; stops the daemon first. `signal` kills it (backlog 18: quitting). */
 export async function modelsUpdate(opts: { signal?: AbortSignal } = {}): Promise<CliResult> {
   return cli(["models", "update"], 300_000, undefined, opts.signal);

@@ -257,8 +257,11 @@ export async function maybeAutoUpdateBackend(
   // live pid. Stop both daemons first; the caller starts them after.
   // Skip the stop when another TUI/CLI session is live — killing their
   // model mid-chat is worse than sitting on an old tag until next solo start.
+  // The embedding daemon counts on its own: a host can run it alone (`models
+  // start-embedding`, which the desktop runs before the chat model starts),
+  // and its binary is the same one being replaced.
   try {
-    if (readRunningPid(dataDir) !== null) {
+    if (readRunningPid(dataDir) !== null || readRunningPid(dataDir, "embedding") !== null) {
       if (opts.keepDaemonRunning) {
         return { action: "deferred", reason: "daemon_live" };
       }

@@ -23201,7 +23201,8 @@ async function llmDaemon(which) {
   LLMP.daemonPhase = null;
   if (!res || res.ok === false) { LLMP.statusErr = llmFail('models ' + which + ' failed', res); }
   // Item 11: Start finds the daemon already up (a ⇄'s or the launch's start got there first) — it says so.
-  else if (which === 'start' && res.alreadyRunning) LLMP.msg = {text:'local-llm: daemon already running'};
+  // ATO-126: the embedding server it started beside it, or why not, says so instead.
+  else if (which === 'start' && res.alreadyRunning) LLMP.msg = {text: res.stdout && res.stdout.trim() ? res.stdout.trim().split('\n').pop() : 'local-llm: daemon already running'};
   else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
 }
