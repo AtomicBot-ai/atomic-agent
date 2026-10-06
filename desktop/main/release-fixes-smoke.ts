@@ -62,6 +62,7 @@ import { checks109 } from "./smoke-tasks/t109.js";
 import { checks110 } from "./smoke-tasks/t110.js";
 import { checks108 } from "./smoke-tasks/t108.js";
 import { checks111 } from "./smoke-tasks/t111.js";
+import { checks112 } from "./smoke-tasks/t112.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -98,7 +99,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -752,6 +753,10 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   // the setup's llama.cpp update had no time limit (ATO-128) and left its staging folder (ATO-129); Settings said "updating…"
   // while it waited (ATO-130); no "queued" on a chat row, queues lost with the window (ATO-135); a late refused steer sat idle (ATO-183).
   if (want.has("111")) await guarded("111", check, () => checks111(js, check));
+  // 112 (06.10 local models) — a switch ended a scheduled task or a Telegram reply (ATO-134); the embedding server never started
+  // beside a running chat model (ATO-126); a worker model pick started the old model first (ATO-127); no word that a local
+  // planner is slower (ATO-136).
+  if (want.has("112")) await guarded("112", check, () => checks112(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));

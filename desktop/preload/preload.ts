@@ -172,6 +172,8 @@ contextBridge.exposeInMainWorld("atomic", {
   cancelTask: (id: string) => ipcRenderer.invoke("agent:cancelTask", id),
   runTask: (id: string) => ipcRenderer.invoke("agent:runTask", id),
   health: () => ipcRenderer.invoke("agent:health"),
+  /** ATO-134: whether the agent runs a turn this window does not stream (a scheduled task, Telegram), for a switch to wait on. */
+  agentBusyAnywhere: () => ipcRenderer.invoke("agent:busyAnywhere"),
   /** Agent 0.6.6 live routes (main/agent-live.ts): a deep-merge config patch and per-server MCP control. */
   configPatch: (patch: Record<string, unknown>) => ipcRenderer.invoke("agent:configPatch", patch),
   mcpServer: (name: string, op: "restart" | "enable" | "disable") => ipcRenderer.invoke("agent:mcpServer", { name, op }),

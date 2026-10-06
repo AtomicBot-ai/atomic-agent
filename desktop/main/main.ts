@@ -89,6 +89,7 @@ import {
   closeDaemonTurns,
   enterFusion,
   inDaemonTurn,
+  pairEmbeddingServer,
   daemonTurnsOnTheirWay,
   lastTurnEnded,
   onBackgroundBringUp,
@@ -102,6 +103,7 @@ import {
   startDaemonNow,
   stopDaemonForQuit,
   stopDaemonNow,
+  stopsMark,
   supersedeBringUp,
   swapFusionLegs,
   switchBackend,
@@ -117,6 +119,7 @@ import {
   daemonWatchState,
   hostDaemonWatch,
   onAgentFrame,
+  pairEmbeddingsBeforeServe,
   updateBegins,
   type UpdateHold,
 } from "./daemon-watch.js";
@@ -149,6 +152,8 @@ import {
   stopEmbeddingServer,
   modelsPullEmbedding,
   modelsUseEmbedding,
+  managedDaemonPidAlive,
+  configFileHint,
   modelsUpdate,
   modelsDevices,
   modelsUseDevice,
@@ -978,6 +983,9 @@ async function shutdownForUpdate(): Promise<boolean> {
   await stopLocalDaemonOnQuit();
   return gone;
 }
+
+/** ATO-134: how long a switch waits for /health's busyTurns (asked without the llama probe, so milliseconds) before it counts the agent busy. */
+const SWITCH_BUSY_CHECK_MS = 5_000;
 
 function wireIpc(client: AgentClient): void {
   // Analytics: chat_turn_ui, one per turn (analytics/chat-turns.ts).
@@ -1900,6 +1908,36 @@ function wireIpc(client: AgentClient): void {
     return clean ? wrap(() => client.runTask(clean)).then((res) => (A.taskAction("run", res), res)) : { ok: false, error: "task id required" };
   });
   ipcMain.handle("agent:health", () => wrap(() => client.health()));
+  /* ATO-134: whether restarting `atag serve` now would cut short a turn this
+     window does not stream — a scheduled task, a Telegram reply, a bot. Every
+     switch restarts it; the window refuses for its own chats
+     (restartStopsTurn) and asks this for the rest, as the updater does
+     (updater.ts agentBusy, fail closed). `turns` is what /health said, null
+     when it said nothing in time or the agent is not up; an answer without
+     `busyTurns` is an agent before 0.6.6, which cannot say, and the window
+     then switches as it did before. */
+  ipcMain.handle("agent:busyAnywhere", async () => {
+    let turns: number | null = null;
+    let answered = false;
+    /* An agent still starting runs no turn yet, and a switch now is what
+       restarts it anyway: unlike an install (agentBusy's fail-closed
+       `starting`), there is nothing for a switch to wait for. */
+    if (client.status.state === "starting") return { busy: false, turns, answered, state: "starting" };
+    const busy = await agentBusy({
+      liveTurns: 0,      // the window's own: it refuses for those itself
+      download: false,   // a download is an atag child of its own, which no restart of serve touches
+      agentState: client.status.state,
+      agentAlive: client.pid !== null,
+      health: async () => {
+        const h = (await client.turnsHealth()) as { busyTurns?: unknown } | null;
+        answered = true;
+        if (typeof h?.busyTurns === "number" && Number.isFinite(h.busyTurns)) turns = h.busyTurns;
+        return h;
+      },
+      timeoutMs: SWITCH_BUSY_CHECK_MS,
+    });
+    return { busy, turns, answered, state: client.status.state };
+  });
   // 0.6.6 live routes: MCP restart / enable / disable and the deep-merge config patch.
   wireAgentLiveIpc(client);
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
@@ -2050,9 +2088,19 @@ function wireIpc(client: AgentClient): void {
     });
     return { ok: true, started: true };
   });
-  ipcMain.handle("cli:modelsUseEmbedding", (_event, id: unknown) =>
-    typeof id === "string" ? modelsUseEmbedding(id) : { ok: false, error: "embedding model id required" },
-  );
+  ipcMain.handle("cli:modelsUseEmbedding", async (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "embedding model id required" };
+    const res = await modelsUseEmbedding(id);
+    /* ATO-126: switched on beside a local model already serving, the
+       embedding server is started now, in the daemon's turn (the TUI's
+       ensureEmbeddingPaired); `use-embedding` only writes the file, and no
+       `models start` comes while the chat server is up. Wired into the agent
+       at its next start, as before. */
+    if (!res.ok || id === "--disable" || !managedDaemonPidAlive(configFileHint() ?? {})) return res;
+    const mark = stopsMark();
+    const pair = await inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), () => ({ paired: false }));
+    return pair.line ? { ...res, stdout: `${res.stdout.trimEnd()}\n${pair.line}\n` } : res;
+  });
   /* Deferred F8: Settings' llama.cpp update is a download as well — it fetches
      the runtime and replaces the binary — and it ran beside a setup download,
      where a model landing meanwhile started on a binary being replaced. It
@@ -9110,7 +9158,10 @@ void app.whenReady().then(async () => {
     const sweepAtLaunch = () => sweepBackendStaging(managedDataDirNow(), { minAgeMs: STAGING_STALE_MS })
       .then((swept) => { if (swept.length) console.error(`[desktop] local-llm: tidied what an earlier llama.cpp update left behind (${swept.join(", ")})`); })
       .catch(() => undefined);
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(() => {
+    /* ATO-126: the embedding server before `atag serve` boots, which is the
+       only moment serve looks for it (a smoke run starts no model server). */
+    const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(embeddingsFirst).then(() => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
