@@ -548,7 +548,8 @@ export class AppUpdateController {
        one and the next check asks again. It used to be cached as "not
        signed", which turned updates off on a signed build until a restart. */
     if (!this.eligibility) {
-      const run: Promise<void> = (async () => {
+      let run: Promise<void> | null = null;
+      run = (async () => {
         const probe = (await probeMacApp().catch(() => null)) ?? (await probeMacApp().catch(() => null));
         if (probe) this.applyEligibility(probe);
         else if (this.eligibility === run) this.eligibility = null;

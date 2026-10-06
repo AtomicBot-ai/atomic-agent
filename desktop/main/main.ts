@@ -2098,7 +2098,7 @@ function wireIpc(client: AgentClient): void {
        at its next start, as before. */
     if (!res.ok || id === "--disable" || !managedDaemonPidAlive(configFileHint() ?? {})) return res;
     const mark = stopsMark();
-    const pair = await inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), () => ({ paired: false }));
+    const pair = await inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), (): { paired: boolean; line?: string } => ({ paired: false }));
     return pair.line ? { ...res, stdout: `${res.stdout.trimEnd()}\n${pair.line}\n` } : res;
   });
   /* Deferred F8: Settings' llama.cpp update is a download as well — it fetches

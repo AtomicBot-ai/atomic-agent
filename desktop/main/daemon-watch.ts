@@ -324,7 +324,7 @@ export async function pairEmbeddingsBeforeServe(limitMs = 20_000): Promise<void>
   if (!routeNeedsDaemon(readConfig())) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const mark = stopsMark();
-  const pair = inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), () => ({ paired: false }));
+  const pair = inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), (): { paired: boolean; line?: string } => ({ paired: false }));
   const r = await Promise.race([
     pair.catch(() => null),
     new Promise<null>((res) => { timer = setTimeout(() => res(null), limitMs); }),
