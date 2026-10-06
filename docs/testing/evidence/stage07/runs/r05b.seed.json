@@ -1,0 +1,87 @@
+{
+  "snapshot": "/tmp/atomic-stage07-final-v2",
+  "dest": "/tmp/atomic-stage07-benchmark/runs/final-05",
+  "task": 5,
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "goldenPath": null,
+  "seed": {
+    "task": 5,
+    "kind": "seeded-regression",
+    "patches": [
+      {
+        "file": "src/local-llm/downloads/download-resume.ts",
+        "start": 2149,
+        "end": 2173,
+        "line": 60,
+        "old": "(holes[0]?.[0] ?? total)",
+        "new": "((holes[0]?.[0] ?? total) + 1)",
+        "anchor": "first missing byte offset"
+      }
+    ],
+    "beforeSha256": "a80e4bb70f080caeb246c6457e24f6084b665c5e0e61b3976ee2596abe28fa8a",
+    "afterSha256": "38b17baa75f57d3633cbe9c8373d7543137c4faee8b086a83d3dbe8e2286efcc"
+  },
+  "unseeded": {
+    "exit": 0,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 5,
+      "pass": true,
+      "assertions": 34,
+      "observed": [
+        "resume offset prefix",
+        "Range prefix",
+        "validator prefix",
+        "caller header prefix",
+        "resume offset hole",
+        "Range hole",
+        "validator hole",
+        "caller header hole",
+        "resume offset zero-hole",
+        "Range zero-hole",
+        "validator zero-hole",
+        "caller header zero-hole",
+        "resume offset complete",
+        "Range complete",
+        "validator complete",
+        "caller header complete",
+        "complete finalized",
+        "complete reported once",
+        "complete metadata cleaned",
+        "resume offset unknown",
+        "Range unknown",
+        "validator unknown",
+        "caller header unknown",
+        "actual 416 Range",
+        "actual 416 validator",
+        "416 one request",
+        "416 publishes actual partial",
+        "416 metadata cleanup",
+        "pre-cancel starts no request",
+        "cancel never publishes",
+        "cancel keeps resumable partial",
+        "foreign URL restarts",
+        "foreign no Range",
+        "foreign partial removed"
+      ]
+    },
+    "stdout": "{\"task\":5,\"pass\":true,\"assertions\":34,\"observed\":[\"resume offset prefix\",\"Range prefix\",\"validator prefix\",\"caller header prefix\",\"resume offset hole\",\"Range hole\",\"validator hole\",\"caller header hole\",\"resume offset zero-hole\",\"Range zero-hole\",\"validator zero-hole\",\"caller header zero-hole\",\"resume offset complete\",\"Range complete\",\"validator complete\",\"caller header complete\",\"complete finalized\",\"complete reported once\",\"complete metadata cleaned\",\"resume offset unknown\",\"Range unknown\",\"validator unknown\",\"caller header unknown\",\"actual 416 Range\",\"actual 416 validator\",\"416 one request\",\"416 publishes actual partial\",\"416 metadata cleanup\",\"pre-cancel starts no request\",\"cancel never publishes\",\"cancel keeps resumable partial\",\"foreign URL restarts\",\"foreign no Range\",\"foreign partial removed\"]}\n"
+  },
+  "seeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 5,
+      "pass": false,
+      "assertions": 0,
+      "error": {
+        "name": "AssertionError",
+        "message": "resume offset prefix\n\n5 !== 4\n",
+        "stack": "AssertionError [ERR_ASSERTION]: resume offset prefix\n\n5 !== 4\n\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\n    at Object.check5 (/private/tmp/atomic-stage07-benchmark/check.mjs:50:418)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":5,\"pass\":false,\"assertions\":0,\"error\":{\"name\":\"AssertionError\",\"message\":\"resume offset prefix\\n\\n5 !== 4\\n\",\"stack\":\"AssertionError [ERR_ASSERTION]: resume offset prefix\\n\\n5 !== 4\\n\\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\\n    at Object.check5 (/private/tmp/atomic-stage07-benchmark/check.mjs:50:418)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  }
+}

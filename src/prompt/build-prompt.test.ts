@@ -198,7 +198,7 @@ describe("buildPrompt", () => {
       skillCatalog: SKILLS,
     });
     // Phase 5 ships the first of two planned stable-prefix bumps for
-    // memory-v2. AGENTS.md "Memory fabric phase 5" documents the
+    // memory-v2. ../memory/docs/retrieval.md documents the
     // one-time KV-cache invalidation. The string below is the
     // canary — moving it requires bumping the snapshot test in
     // `stable-prefix.test.ts` and announcing the cache flush.
@@ -1043,7 +1043,7 @@ describe("buildPrompt", () => {
   });
 
   /**
-   * The two documented limits of this cap, pinned so the AGENTS.md prose
+   * The two documented limits of this cap, pinned so the assembly guide's prose
    * about them cannot rot the way the prose this key replaced did.
    *
    * It is enforced verbatim and never checked against the model's

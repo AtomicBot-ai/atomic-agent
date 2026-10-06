@@ -40,7 +40,7 @@ jobs:
       matrix:
         include:
           - label: default install
-            # The full suite, minus the known-bad tests excluded below.
+            # The full suite, with exclusions supplied only by the quarantine registry.
             drop_canvas: "false"
             scope: ""
           - label: no canvas
@@ -103,28 +103,31 @@ jobs:
             exit 1
           fi
 
+      - name: Check documentation contracts
+        if: matrix.drop_canvas == 'false'
+        run: |
+          npm run docs:check
+          npm run docs:check -- --self-test
+
+      - name: Check dependency boundaries
+        if: matrix.drop_canvas == 'false'
+        run: |
+          npm run imports:check
+          npm run imports:self-test
+
       - name: Typecheck
         run: npx tsc -p tsconfig.json --noEmit
 
-      - name: Run tests
-        # Two files are excluded, both because they fail on unmodified `main`
-        # for reasons that are not this PR's to fix. Neither is a timing flake;
-        # both are real and should be fixed and re-enabled. See issue #203.
-        #
-        #   send-message-concurrency — the runtime makes a third
-        #   non-reflection llamaComplete call ("m3") where the test expects
-        #   two. A sidecar behaviour question, not a CI one.
-        #
-        #   local-models-orchestrator-auto-update — reaches a real
-        #   `spawn()` of a stub llama-server binary instead of mocking it.
-        #   Its assertions pass, but the async throw is an *unhandled error*,
-        #   and vitest exits non-zero on those — so it would fail the job
-        #   while reporting "8 passed".
-        #
-        # `parallel-tool-calls` is deliberately NOT excluded: its wall-clock
-        # bound was replaced with a deterministic `peakInFlight` assertion in
-        # this PR, so it is now safe on a contended runner.
+      - name: Check test type debt
+        if: matrix.drop_canvas == 'false'
         run: |
-          npx vitest run ${{ matrix.scope }} \
-            --exclude '**/send-message-concurrency.test.ts' \
-            --exclude '**/local-models-orchestrator-auto-update.test.ts'
+          npm run typecheck:tests
+          npm run typecheck:tests:self-test
+
+      - name: Check quarantine registry
+        run: |
+          npm run quarantine:check
+          npm run quarantine:self-test
+
+      - name: Run tests
+        run: node scripts/run-tests.mjs ${{ matrix.scope }}

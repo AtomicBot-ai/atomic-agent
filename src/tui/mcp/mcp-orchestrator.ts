@@ -11,7 +11,7 @@
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import { getConfig } from "../../config/index.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
-import type { TuiEventBus } from "../tui-app.js";
+import type { TuiEventBusEmitter } from "../make-event-bus.js";
 import {
   McpAddServerError,
   McpRemoveServerError,
@@ -19,9 +19,23 @@ import {
   persistMcpServer,
   removeMcpServer,
   setMcpServerEnabled,
-} from "../persist-mcp-server.js";
+} from "../../config/mcp-server-commands.js";
 import { isMcpAction } from "./mcp-actions.js";
 import type { McpServerDetail, McpServerRow } from "./mcp-panel-state.js";
+
+/** Only the runtime operations owned by the MCP panel; full AgentRuntime is compatible. */
+export interface McpOrchestratorRuntime {
+  readonly mcpManager: Pick<
+    AgentRuntime["mcpManager"],
+    | "listStatuses"
+    | "getCatalog"
+    | "addServerLive"
+    | "removeServerLive"
+    | "restartServer"
+    | "setServerEnabled"
+  >;
+  refreshMcp: AgentRuntime["refreshMcp"];
+}
 
 export interface McpOrchestratorOptions {
   refreshIntervalMs?: number;
@@ -38,8 +52,8 @@ export class McpOrchestrator {
   private readonly busyServers = new Set<string>();
 
   constructor(
-    private readonly runtime: AgentRuntime,
-    private readonly bus: TuiEventBus & { emit(action: unknown): void },
+    private readonly runtime: McpOrchestratorRuntime,
+    private readonly bus: Pick<TuiEventBusEmitter, "subscribe" | "emit">,
     options: McpOrchestratorOptions = {},
   ) {
     this.refreshIntervalMs =
@@ -356,7 +370,7 @@ function readConfiguredServers(): readonly McpServerConfig[] {
   return getConfig().mcp?.servers ?? [];
 }
 
-function buildRows(runtime: AgentRuntime): McpServerRow[] {
+function buildRows(runtime: McpOrchestratorRuntime): McpServerRow[] {
   const configs = readConfiguredServers();
   if (configs.length === 0) return [];
   const statuses = new Map(
@@ -381,7 +395,7 @@ function buildRows(runtime: AgentRuntime): McpServerRow[] {
 }
 
 function buildDetail(
-  runtime: AgentRuntime,
+  runtime: McpOrchestratorRuntime,
   serverName: string,
 ): McpServerDetail | null {
   const cfg = readConfiguredServers().find((s) => s.name === serverName);

@@ -5,7 +5,7 @@ import type { TaskReport, TaskReportStatus } from "../../tasks/index.js";
  * owner when a scheduled task reaches a terminal status.
  *
  * The whole message is **channel infrastructure**, so it always sends
- * as plain text — never `parse_mode: "HTML"` — per the AGENTS.md
+ * as plain text — never `parse_mode: "HTML"` — per the ../README.md
  * §"Telegram remote-control channel" carve-out (formatted text ==
  * agent content, plain text == infrastructure). The result excerpt is
  * agent content embedded in an infra envelope; formatting only the

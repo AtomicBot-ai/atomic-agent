@@ -3,7 +3,7 @@ import { resolveLlmConfig } from "../../../llm/provider/registry/index.js";
 import {
   setFallbackChainInConfig,
   wrapLlmConfigError,
-} from "../../persist-llm-provider.js";
+} from "../../../config/llm-provider-commands.js";
 import type { TuiEventBus } from "../../tui-app.js";
 import {
   addLink,

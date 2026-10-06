@@ -1,5 +1,5 @@
 /**
- * Discord remote-control channel. See AGENTS.md §"Discord channel".
+ * Discord remote-control channel. See ../docs/adapters.md.
  */
 
 export { DiscordChannel } from "./discord-channel.js";

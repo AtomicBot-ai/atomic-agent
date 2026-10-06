@@ -1,0 +1,5 @@
+
+> atomic-agent@0.6.6 build
+> tsc -p tsconfig.json && node scripts/copy-starter-skills.mjs
+
+copied starter-skills → /Users/aleksejkalina/code/atomicbot/atomic-agent/dist/starter-skills

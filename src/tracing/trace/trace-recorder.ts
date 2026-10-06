@@ -1,5 +1,5 @@
-import type { AgentLoopEvent } from "../../agent/agent-loop.js";
-import type { StepEvent } from "../../agent/step-executor.js";
+import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import type { StepEvent } from "../../agent/step-events.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { decideOnboarding, needsOnboarding } from "./needs-onboarding.js";
-import { persistOnboardingState } from "../persist-onboarding-state.js";
+import { persistOnboardingState } from "./persist-onboarding-state.js";
 import {
   getConfig,
   resetConfigCache,

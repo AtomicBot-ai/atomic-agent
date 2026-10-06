@@ -1,0 +1,131 @@
+{
+  "status": "PASS",
+  "node": "v25.7.0",
+  "target": "actual dist/cli/index.js process in Python pty",
+  "terminal": {
+    "TERM": "xterm-256color",
+    "columns": 100,
+    "rows": 32
+  },
+  "scenarios": [
+    {
+      "scenario": "onboarding",
+      "exitCode": 0,
+      "forcedTermination": false,
+      "bytes": 178165,
+      "altEntered": true,
+      "altExited": true,
+      "mouseEnabled": true,
+      "mouseDisabled": true,
+      "steps": [
+        {
+          "label": "finish intro",
+          "offset": 173906
+        },
+        {
+          "label": "enter choice",
+          "offset": 173906
+        },
+        {
+          "label": "ctrl+c arm",
+          "offset": 175383
+        },
+        {
+          "label": "ctrl+c quit",
+          "offset": 176867
+        }
+      ]
+    },
+    {
+      "scenario": "main",
+      "exitCode": 0,
+      "forcedTermination": false,
+      "bytes": 48138,
+      "altEntered": true,
+      "altExited": true,
+      "mouseEnabled": true,
+      "mouseDisabled": true,
+      "steps": [
+        {
+          "label": "type help",
+          "offset": 16837
+        },
+        {
+          "label": "submit help",
+          "offset": 22927
+        },
+        {
+          "label": "type quit",
+          "offset": 29245
+        },
+        {
+          "label": "submit quit",
+          "offset": 35776
+        }
+      ]
+    },
+    {
+      "scenario": "navigation",
+      "exitCode": 0,
+      "forcedTermination": false,
+      "bytes": 77035,
+      "icanonRestored": true,
+      "echoRestored": true,
+      "altEntered": true,
+      "altExited": true,
+      "mouseEnabled": true,
+      "mouseDisabled": true,
+      "steps": [
+        {
+          "label": "type mcp",
+          "offset": 16839
+        },
+        {
+          "label": "submit mcp",
+          "offset": 22991
+        },
+        {
+          "label": "back to Run before skills",
+          "offset": 24633
+        },
+        {
+          "label": "type skills",
+          "offset": 30251
+        },
+        {
+          "label": "submit skills",
+          "offset": 36368
+        },
+        {
+          "label": "back to Run before privacy",
+          "offset": 42696
+        },
+        {
+          "label": "type privacy",
+          "offset": 48314
+        },
+        {
+          "label": "submit privacy",
+          "offset": 54431
+        },
+        {
+          "label": "back to Run before quit",
+          "offset": 56249
+        },
+        {
+          "label": "type quit",
+          "offset": 61865
+        },
+        {
+          "label": "submit quit",
+          "offset": 67955
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "No LLM generation, no real MCP server, no cloud credentials, no downloads, no mouse coordinates/resize exercise; startup/input/navigation/shutdown only.",
+    "Raw ANSI and flattened output saved; no native terminal screenshot or visual layout evaluation.",
+    "First attempts used invalid harness paste or sent slash commands while manage tab owned input; corrected to text + separate Enter and Esc back to Run."
+  ]
+}

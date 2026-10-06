@@ -77,8 +77,8 @@ export function estimateTokensFromCounts(chars: number, words: number): number {
  *    is known at that point would buy a guarantee that is still false,
  *    because `worldSnapshotMaxTokens` sits unclamped in the same tail.
  *    Set above the window this cap squeezes the transcript to
- *    `CONVERSATION_CAP_FLOOR` and then overflows the window; AGENTS.md
- *    says so.
+ *    `CONVERSATION_CAP_FLOOR` and then overflows the window; see
+ *    docs/assembly.md and the corresponding build-prompt tests.
  */
 export const SESSION_SECTIONS_CAP_AUTO = 0;
 

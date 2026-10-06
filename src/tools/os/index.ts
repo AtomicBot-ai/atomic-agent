@@ -2,38 +2,38 @@ import { resolve } from "node:path";
 import type { ToolRegistry } from "../tool-registry.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { buildOsShellTool } from "./shell.js";
+import { buildOsShellTool } from "./shell/shell.js";
 import type { ShellGuardPolicy } from "./shell-command-guard/index.js";
-import type { ShellJobRegistry } from "./shell-jobs.js";
-import { osFsReadTool } from "./fs-read.js";
-import { buildOsFsWriteTool } from "./fs-write.js";
-import { buildOsFsTrashTool } from "./fs-trash.js";
-import { osFsListTool } from "./fs-list.js";
-import { osFsGlobTool } from "./fs-glob.js";
-import { buildOsFsLocateProjectTool } from "./fs-locate-project.js";
-import type { RecentSessionDir } from "./fs-locate-project-sources.js";
-import { buildOsFsGrepTool } from "./fs-grep.js";
-import { buildOsFsEditTool } from "./fs-edit.js";
+import type { ShellJobRegistry } from "./shell/shell-jobs.js";
+import { osFsReadTool } from "./fs/fs-read.js";
+import { buildOsFsWriteTool } from "./fs/fs-write.js";
+import { buildOsFsTrashTool } from "./fs/fs-trash.js";
+import { osFsListTool } from "./fs/fs-list.js";
+import { osFsGlobTool } from "./fs/fs-glob.js";
+import { buildOsFsLocateProjectTool } from "./fs/fs-locate-project.js";
+import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
+import { buildOsFsGrepTool } from "./fs/fs-grep.js";
+import { buildOsFsEditTool } from "./fs/fs-edit.js";
 import { buildOsFsReadDocumentTool } from "./read-document/index.js";
 import {
   buildOsFsArchiveListTool,
   buildOsFsArchiveReadEntryTool,
   buildOsFsArchiveExtractTool,
 } from "./archive/index.js";
-import { buildOsHttpRequestTool } from "./http-request.js";
-import { buildOsWebFetchTool } from "./web-fetch.js";
+import { buildOsHttpRequestTool } from "./web/http-request.js";
+import { buildOsWebFetchTool } from "./web/web-fetch.js";
 import { buildOsWebSearchTool } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
 import { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 import { osNotifyTool } from "./notify.js";
-import { osFsHashTool } from "./fs-hash.js";
-import { osFsDiffTool } from "./fs-diff.js";
-import { buildOsFsPatchTool } from "./fs-patch.js";
-import { buildOsFsRestoreTool } from "./fs-restore.js";
-import { FileRestoreStore } from "./fs-restore-store.js";
-import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
-import { osFsWatchTool } from "./fs-watch.js";
+import { osFsHashTool } from "./fs/fs-hash.js";
+import { osFsDiffTool } from "./fs/fs-diff.js";
+import { buildOsFsPatchTool } from "./fs/fs-patch.js";
+import { buildOsFsRestoreTool } from "./fs/fs-restore.js";
+import { FileRestoreStore } from "./fs/fs-restore-store.js";
+import type { DeclaredInputsRegistry } from "./fs/fs-declared-inputs.js";
+import { osFsWatchTool } from "./fs/fs-watch.js";
 import {
   osGitStatusTool,
   osGitLogTool,
@@ -53,41 +53,41 @@ import {
 } from "./git/index.js";
 import { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 
-export { buildOsShellTool } from "./shell.js";
-export { osFsReadTool } from "./fs-read.js";
-export { buildOsFsWriteTool } from "./fs-write.js";
-export { buildOsFsTrashTool } from "./fs-trash.js";
-export { osFsListTool } from "./fs-list.js";
-export { osFsGlobTool } from "./fs-glob.js";
+export { buildOsShellTool } from "./shell/shell.js";
+export { osFsReadTool } from "./fs/fs-read.js";
+export { buildOsFsWriteTool } from "./fs/fs-write.js";
+export { buildOsFsTrashTool } from "./fs/fs-trash.js";
+export { osFsListTool } from "./fs/fs-list.js";
+export { osFsGlobTool } from "./fs/fs-glob.js";
 export {
   buildOsFsLocateProjectTool,
   type OsFsLocateProjectDeps,
-} from "./fs-locate-project.js";
-export type { RecentSessionDir } from "./fs-locate-project-sources.js";
-export { buildOsFsGrepTool } from "./fs-grep.js";
-export { buildOsFsEditTool } from "./fs-edit.js";
+} from "./fs/fs-locate-project.js";
+export type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
+export { buildOsFsGrepTool } from "./fs/fs-grep.js";
+export { buildOsFsEditTool } from "./fs/fs-edit.js";
 export { buildOsFsReadDocumentTool } from "./read-document/index.js";
 export {
   buildOsFsArchiveListTool,
   buildOsFsArchiveReadEntryTool,
   buildOsFsArchiveExtractTool,
 } from "./archive/index.js";
-export { buildOsHttpRequestTool } from "./http-request.js";
-export { buildOsWebFetchTool } from "./web-fetch.js";
+export { buildOsHttpRequestTool } from "./web/http-request.js";
+export { buildOsWebFetchTool } from "./web/web-fetch.js";
 export { buildOsWebSearchTool } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
 export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
-export { osFsHashTool } from "./fs-hash.js";
-export { osFsDiffTool } from "./fs-diff.js";
-export { buildOsFsPatchTool } from "./fs-patch.js";
-export { buildOsFsRestoreTool } from "./fs-restore.js";
-export { FileRestoreStore } from "./fs-restore-store.js";
-export { checkInputReplacement, refuseInputReplacement } from "./fs-input-guard.js";
-export type { InputGuardInput, InputRefusal } from "./fs-input-guard.js";
-export { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
-export { osFsWatchTool } from "./fs-watch.js";
+export { osFsHashTool } from "./fs/fs-hash.js";
+export { osFsDiffTool } from "./fs/fs-diff.js";
+export { buildOsFsPatchTool } from "./fs/fs-patch.js";
+export { buildOsFsRestoreTool } from "./fs/fs-restore.js";
+export { FileRestoreStore } from "./fs/fs-restore-store.js";
+export { checkInputReplacement, refuseInputReplacement } from "./fs/fs-input-guard.js";
+export type { InputGuardInput, InputRefusal } from "./fs/fs-input-guard.js";
+export { DeclaredInputsRegistry } from "./fs/fs-declared-inputs.js";
+export { osFsWatchTool } from "./fs/fs-watch.js";
 export {
   osGitStatusTool,
   osGitLogTool,
@@ -115,22 +115,22 @@ export {
   formatShellElapsed,
   formatShellTimeoutNotice,
   resolveShellTimeout,
-} from "./shell-timeout.js";
+} from "./shell/shell-timeout.js";
 export type {
   ResolvedShellTimeout,
   ShellTimeoutSource,
-} from "./shell-timeout.js";
+} from "./shell/shell-timeout.js";
 export {
   DEFAULT_SHELL_JOB_MAX_MS,
   DEFAULT_SHELL_MAX_JOBS,
   ShellJobRegistry,
-} from "./shell-jobs.js";
+} from "./shell/shell-jobs.js";
 export type {
   ShellJobRecord,
   ShellJobRegistryOptions,
   ShellJobState,
   ShellJobStopReason,
-} from "./shell-jobs.js";
+} from "./shell/shell-jobs.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;

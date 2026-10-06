@@ -4,7 +4,7 @@ import type {
   MemoryContext,
   MemoryContextProvider,
   MemoryContextProviderInput,
-} from "../../agent/agent-loop.js";
+} from "../../agent/agent-contract.js";
 
 import type { QueryRewriterRunner } from "./query-rewriter-runner.js";
 

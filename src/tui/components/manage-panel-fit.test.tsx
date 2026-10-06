@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import React from "react";
-import { LocalModelsPanel } from "./local-models-panel.js";
-import { LlmPanel } from "./llm-panel.js";
+import { LocalModelsPanel } from "../local-models/local-models-panel.js";
+import { LlmPanel } from "../llm-panel/llm-panel.js";
 import { createInitialLocalModelsPanelState } from "../local-models/local-models-panel-state.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import {
   LOCAL_MODELS_CATALOG,
   EMBEDDING_MODELS_CATALOG,
-} from "../../local-llm/models-catalog.js";
+} from "../../local-llm/catalog/models-catalog.js";
 
 /**
  * Regression guard for the "small window garbles the panel" bug. Ink 7

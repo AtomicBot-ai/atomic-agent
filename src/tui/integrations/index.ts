@@ -1,5 +1,5 @@
 /**
- * TUI slice for the Integrations tab. See AGENTS.md §"Integrations hub".
+ * TUI slice for the Integrations tab. See ../../integrations/README.md.
  */
 
 export {

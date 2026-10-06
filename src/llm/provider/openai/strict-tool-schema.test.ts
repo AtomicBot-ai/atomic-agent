@@ -679,8 +679,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   // The nine from `github-tool-args-schemas.ts`, spread into the same
   // registry. Left out of this list, a bound added to one of them would
   // have joined the refusal set silently — the exact surprise the pin
-  // exists to prevent, and `github.pr.list` is the schema AGENTS.md
-  // cites for the widened-enum note.
+  // exists to prevent. Strict wire contracts: ../../docs/profiles.md.
   "os.git.checkout",
   "os.git.commit",
   "os.git.push",

@@ -1,5 +1,5 @@
 /**
- * Swarm: extra Telegram / Discord bots on one runtime. See AGENTS.md §"Swarm".
+ * Swarm: extra Telegram / Discord bots on one runtime. See ../docs/adapters.md.
  */
 
 export { SwarmRegistry } from "./swarm-registry.js";

@@ -1,5 +1,5 @@
 import { getConfig } from "../config/index.js";
-import { apiKeyForUrl } from "../local-llm/managed-api-key.js";
+import { apiKeyForUrl } from "../local-llm/server/managed-api-key.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { verifyGuardedEndpoint } from "./llama-server-auth-probe.js";
 

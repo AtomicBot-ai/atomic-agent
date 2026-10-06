@@ -8,7 +8,7 @@ import { fakeSession } from "../test-fixtures.js";
 import { handleLlmPanelKey } from "./llm-panel-key-bindings.js";
 import { selectLocalRows } from "./llm-panel-row-builders.js";
 import { reduceProvidersPanel } from "../providers/providers-reducer.js";
-import { hasLlmModal } from "../components/llm-panel-modals.js";
+import { hasLlmModal } from "./llm-panel-modals.js";
 
 function emptyKey(overrides: Partial<Key> = {}): Key {
   return {

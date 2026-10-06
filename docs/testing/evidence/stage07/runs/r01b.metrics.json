@@ -1,0 +1,98 @@
+{
+  "actions": 20,
+  "returnedOutputBytes": 71296,
+  "observedSourceBytes": 69697,
+  "uniqueVersionedSourceBytes": 67356,
+  "repeatedSourceBytes": 2341,
+  "uniqueInstructionBytes": 9329,
+  "uniqueCodeBytes": 37754,
+  "uniqueOtherBytes": 20273,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+      "uniqueBytes": 6714
+    },
+    {
+      "path": "README.md",
+      "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+      "uniqueBytes": 7487
+    },
+    {
+      "path": "src/prompt/README.md",
+      "hash": "e36cc87c1e9acb9e963196889c5a624a9eda4cd23d7e696a4587c1ff33a84e67",
+      "uniqueBytes": 1609
+    },
+    {
+      "path": "src/prompt/AGENTS.md",
+      "hash": "9126f8c5f74be699dc8e567b7142e173ac3e0dfb9c8949751b542560c73e42d5",
+      "uniqueBytes": 1236
+    },
+    {
+      "path": "src/prompt/docs/assembly.md",
+      "hash": "2c96d88799d599067f5b653b3f493b73d776f9b4b8b934abe05ea4f294088066",
+      "uniqueBytes": 2336
+    },
+    {
+      "path": "src/prompt/token-budget.ts",
+      "hash": "d3395953da0d7a68c4ce691eaa25ff97e5d0c00d9474f04e10d348eaed0a9da5",
+      "uniqueBytes": 64
+    },
+    {
+      "path": "src/prompt/build-prompt.ts",
+      "hash": "5505f837899bf0c0819709485b18aecb5f3d26907dbe33376cd47e123adcfa48",
+      "uniqueBytes": 12901
+    },
+    {
+      "path": "src/prompt/build-prompt-types.ts",
+      "hash": "9385a0ba45175fe5b7d5a2ef33f8936a6cea5b7fdafba081a539c12e593ccd1d",
+      "uniqueBytes": 1381
+    },
+    {
+      "path": "src/prompt/build-prompt.test.ts",
+      "hash": "f7f05a344294c25818387b2695919d07b6491c73d059cb8eba175ad057a20cd5",
+      "uniqueBytes": 20720
+    },
+    {
+      "path": "src/prompt/stable-prefix.ts",
+      "hash": "d0167a0b6f4109ef4145cff24b9755e247efa3034d828897e7309527cab3a25e",
+      "uniqueBytes": 594
+    },
+    {
+      "path": "src/llm/README.md",
+      "hash": "fdc2818c8dc96131a5b8e658c03a6493042aeda50ecc199992ef0ad698f7880f",
+      "uniqueBytes": 1164
+    },
+    {
+      "path": "src/llm/AGENTS.md",
+      "hash": "f2624279a8605c84c6295c046f7baf3fc643b0c2a12dc6f32d8ff76869b52dca",
+      "uniqueBytes": 1379
+    },
+    {
+      "path": "package.json",
+      "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+      "uniqueBytes": 5318
+    },
+    {
+      "path": "src/llm/docs/profiles.md",
+      "hash": "0c791d6d442d35047ffc4d879aa8755da062b38f0c9ed75f72e45a7677606bf9",
+      "uniqueBytes": 2359
+    },
+    {
+      "path": "src/llm/profile-invariants.test.ts",
+      "hash": "c23a5535fb20dc8b449eff760a625ace8b9f8d0116a47901f65622757cf389e3",
+      "uniqueBytes": 88
+    },
+    {
+      "path": "src/prompt/build-prompt.ts",
+      "hash": "19258f55ef330a8b09d3e48dda26c8e054cf4c4606abfb287ae5c938d0129dc3",
+      "uniqueBytes": 2006
+    }
+  ],
+  "changedFiles": [
+    "src/prompt/build-prompt-types.ts",
+    "src/prompt/build-prompt.test.ts",
+    "src/prompt/build-prompt.ts",
+    "src/prompt/docs/assembly.md"
+  ]
+}

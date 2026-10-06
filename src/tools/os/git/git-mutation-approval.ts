@@ -4,7 +4,7 @@ import type { ApprovalCategory } from "../../../approval/approval-level.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
-} from "../fs-require-approval.js";
+} from "../fs/fs-require-approval.js";
 
 /**
  * Everything a git write tool needs to route itself through the

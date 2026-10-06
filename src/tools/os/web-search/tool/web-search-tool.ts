@@ -4,7 +4,7 @@ import { compressToolResult } from "../../../../compressor/result-compressor.js"
 import type { AtomicAgentConfig } from "../../../../config/index.js";
 import { runCommand as defaultRunCommand } from "../../../../sandbox/command-runner.js";
 import type { ToolDefinition } from "../../../tool-registry.js";
-import type { HostLookup } from "../../web-fetch-ssrf-guard.js";
+import type { HostLookup } from "../../web/web-fetch-ssrf-guard.js";
 import { runWebSearchWithFallback } from "../providers/index.js";
 import {
   createPersistentProviderCooldown,

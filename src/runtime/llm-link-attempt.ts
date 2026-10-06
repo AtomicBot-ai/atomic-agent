@@ -1,4 +1,4 @@
-import type { LlmStreamParams } from "../agent/step-executor.js";
+import type { LlmStreamParams } from "../agent/step/step-contract.js";
 import type {
   CompletionResult,
   StreamChunk,

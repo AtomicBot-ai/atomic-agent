@@ -2,7 +2,7 @@ import {
   CODING_MODES,
   codingModeLook,
   type CodingMode,
-} from "../coding-mode.js";
+} from "../coding-mode/coding-mode.js";
 import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";

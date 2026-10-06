@@ -14,13 +14,13 @@ export {
   type LocalModelDef,
   type EmbeddingModelId,
   type EmbeddingModelDef,
-} from "./models-catalog.js";
+} from "./catalog/models-catalog.js";
 
 export {
   resolvePlatformAsset,
   UnsupportedPlatformError,
   type PlatformAsset,
-} from "./platform-assets.js";
+} from "./backend/platform-assets.js";
 
 export {
   resolveDownloadAsset,
@@ -30,11 +30,11 @@ export {
   isWindowsGpuBackendAsset,
   setConfiguredBackendVariant,
   type BackendVariantPreference,
-} from "./windows-backend-variant.js";
+} from "./backend/windows-backend-variant.js";
 export {
   fallBackToCpuBackend,
   shouldFallBackToCpuBackend,
-} from "./cpu-backend-fallback.js";
+} from "./backend/cpu-backend-fallback.js";
 
 export {
   resolveBackendDir,
@@ -70,13 +70,13 @@ export {
   type DownloadRetryFn,
   type DownloadRetryInfo,
   type PartialDownloadMeta,
-} from "./download-file.js";
+} from "./downloads/download-file.js";
 export {
   DEFAULT_DOWNLOAD_CONNECTIONS,
   MAX_DOWNLOAD_CONNECTIONS,
   resolveDownloadConnections,
   setDefaultDownloadConnections,
-} from "./download-settings.js";
+} from "./downloads/download-settings.js";
 export {
   DEFAULT_HF_ENDPOINT,
   huggingFaceEndpointHost,
@@ -85,7 +85,7 @@ export {
   resolveHuggingFaceEndpoint,
   rewriteHuggingFaceUrl,
   setDefaultHuggingFaceEndpoint,
-} from "./huggingface-endpoint.js";
+} from "./catalog/huggingface-endpoint.js";
 export {
   DOWNLOAD_JOB_VERSION,
   downloadJobId,
@@ -105,18 +105,18 @@ export {
   type DownloadJobStatus,
   type DownloadJobNotified,
   type DownloadJobWaiting,
-} from "./download-jobs.js";
+} from "./downloads/download-jobs.js";
 export {
   STALE_RUNNING_MS,
   downloadJobSilenceMs,
   isDownloadJobStale,
-} from "./download-job-staleness.js";
+} from "./downloads/download-job-staleness.js";
 export {
   isDownloadNotifyChannel,
   readDownloadNotify,
   writeDownloadNotify,
   type DownloadNotifyChannel,
-} from "./download-notify-file.js";
+} from "./downloads/download-notify-file.js";
 export {
   downloadWorkerArgs,
   looksLikeDownloadWorker,
@@ -125,7 +125,7 @@ export {
   type SpawnDownloadWorkerInput,
   type SpawnDownloadWorkerResult,
   type StopDownloadWorkerResult,
-} from "./download-spawn.js";
+} from "./downloads/download-spawn.js";
 export {
   DEFAULT_WORKER_LIFETIME_MS,
   WORKER_GIVE_UP_AFTER_MS,
@@ -133,12 +133,12 @@ export {
   runDownloadWorker,
   type DownloadWorkerInput,
   type DownloadWorkerOutcome,
-} from "./download-worker.js";
+} from "./downloads/download-worker.js";
 export {
   readBackendVersion,
   writeBackendVersion,
   type BackendVersionInfo,
-} from "./backend-version.js";
+} from "./backend/backend-version.js";
 export {
   fetchLatestRelease,
   resetLatestReleaseCache,
@@ -147,7 +147,7 @@ export {
   isBackendDownloaded,
   GithubRateLimitedError,
   type LatestReleaseInfo,
-} from "./backend-installer.js";
+} from "./backend/backend-installer.js";
 export {
   AUTO_UPDATE_RECHECK_MS,
   AUTO_UPDATE_RETRY_MS,
@@ -155,7 +155,7 @@ export {
   forgetBackendCheck,
   maybeAutoUpdateBackend,
   type AutoUpdateBackendResult,
-} from "./ensure-latest-backend.js";
+} from "./backend/ensure-latest-backend.js";
 export {
   isModelDownloaded,
   isMmprojDownloaded,
@@ -166,7 +166,7 @@ export {
   downloadEmbeddingModel,
   removeEmbeddingModel,
   type ModelDownloadOptions,
-} from "./model-installer.js";
+} from "./downloads/model-installer.js";
 export { resolveChatTemplatePath } from "./chat-templates.js";
 export {
   parseListDevices,
@@ -177,13 +177,13 @@ export {
   sharesSystemMemory,
   type GpuDevice,
   type ListDevices,
-} from "./gpu-devices.js";
+} from "./backend/gpu-devices.js";
 export {
   resolveGpuBudgetGb,
   MAC_UNIFIED_GPU_FRACTION,
   type ResolveGpuBudgetInput,
-} from "./gpu-memory-budget.js";
-export { probeNvidiaVramMiB, parseNvidiaVramMiB } from "./nvidia-smi-vram.js";
+} from "./backend/gpu-memory-budget.js";
+export { probeNvidiaVramMiB, parseNvidiaVramMiB } from "./backend/nvidia-smi-vram.js";
 export {
   startDaemon,
   stopDaemon,
@@ -218,7 +218,7 @@ export {
   type StartBothResult,
   type ThroughputRecord,
   type ThroughputSample,
-} from "./daemon-lifecycle.js";
+} from "./server/daemon-lifecycle.js";
 export {
   classifyPrefixReuse,
   countSlidingWindowLayers,
@@ -234,7 +234,7 @@ export {
   type GgufMetadata,
   type PrefixReuse,
   type PrefixReuseVerdict,
-} from "./gguf-metadata.js";
+} from "./catalog/gguf-metadata.js";
 export {
   isSwaFullPreference,
   resolveSwaFullDecision,
@@ -242,27 +242,27 @@ export {
   SWA_FULL_PREFERENCES,
   type SwaFullDecision,
   type SwaFullPreference,
-} from "./swa-full.js";
-export { readLogTail, type LogTailResult } from "./log-tail.js";
-export { describeServerFault, type ServerFault } from "./server-fault.js";
+} from "./server/swa-full.js";
+export { readLogTail, type LogTailResult } from "./server/log-tail.js";
+export { describeServerFault, type ServerFault } from "./server/server-fault.js";
 export {
   assertPortFree,
   fetchServedModelIds,
   PortTakenError,
-} from "./daemon-launch-guard.js";
+} from "./server/daemon-launch-guard.js";
 export {
   describeReclaim,
   reclaimManagedPort,
   type ReclaimOutcome,
   type ReclaimRequest,
-} from "./port-reclaim.js";
+} from "./server/port-reclaim.js";
 
 export {
   huggingFaceToken,
   listHuggingFaceGgufFiles,
   resolveHuggingFaceFileUrl,
   type HuggingFaceFile,
-} from "./huggingface-api.js";
+} from "./catalog/huggingface-api.js";
 export {
   describeRejectedGgufFiles,
   isFullPrecisionGguf,
@@ -273,19 +273,19 @@ export {
   ramWarningFor,
   type GgufJudgement,
   type GgufVerdict,
-} from "./huggingface-fit.js";
+} from "./catalog/huggingface-fit.js";
 export {
   buildCustomModelDef,
   buildCustomModelId,
   formatGgufSize,
   ggufSizeGb,
-} from "./huggingface-model-def.js";
+} from "./catalog/huggingface-model-def.js";
 export {
   parseHuggingFaceModelRef,
   type HuggingFaceModelRef,
-} from "./huggingface-ref.js";
+} from "./catalog/huggingface-ref.js";
 export {
   resolveHuggingFaceGgufChoices,
   type HuggingFaceGgufChoice,
   type HuggingFaceRepoChoices,
-} from "./huggingface-resolve.js";
+} from "./catalog/huggingface-resolve.js";

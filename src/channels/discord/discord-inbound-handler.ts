@@ -11,7 +11,7 @@
  * about project A in `#a` and project B in `#b` never mixes context.
  */
 
-import type { AgentLoopEvent } from "../../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../../agent/agent-contract.js";
 import { describeFailedAttempts } from "../../llm/fallback/index.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";

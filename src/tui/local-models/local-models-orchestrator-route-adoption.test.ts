@@ -20,10 +20,10 @@ import {
   resolvePidFilePath,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import { ProviderRegistry } from "../../llm/provider/registry/provider-registry.js";
 import type { LlmProvider } from "../../llm/provider/llm-provider.js";
-import { setActiveTextProviderInConfig } from "../persist-llm-provider.js";
+import { setActiveTextProviderInConfig } from "../../config/llm-provider-commands.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
 type Internals = {

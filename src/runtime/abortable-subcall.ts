@@ -1,4 +1,4 @@
-import type { LlmStreamParams } from "../agent/step-executor.js";
+import type { LlmStreamParams } from "../agent/step/step-contract.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 
 /** What a memory sub-call sends, minus the signal — the helper owns that. */

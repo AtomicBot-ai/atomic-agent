@@ -1,6 +1,6 @@
 import { getConfig } from "../../../config/index.js";
 import { llamaEndpointUrl } from "../../llama-endpoint-url.js";
-import { apiKeyForUrl } from "../../../local-llm/managed-api-key.js";
+import { apiKeyForUrl } from "../../../local-llm/server/managed-api-key.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import type { VisionRequest, VisionResult } from "../llm-provider.js";

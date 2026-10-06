@@ -1,4 +1,4 @@
-import { withReportHint } from "./format-agent-error-for-chat.js";
+import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";

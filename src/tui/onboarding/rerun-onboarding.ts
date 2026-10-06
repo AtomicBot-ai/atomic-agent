@@ -1,6 +1,6 @@
 import type { OnboardingState } from "../../config/index.js";
 import { getConfig } from "../../config/index.js";
-import { persistOnboardingState } from "../persist-onboarding-state.js";
+import { persistOnboardingState } from "./persist-onboarding-state.js";
 import type { TuiAction } from "../tui-action.js";
 import { needsOnboarding } from "./needs-onboarding.js";
 import {

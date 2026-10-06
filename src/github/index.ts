@@ -1,6 +1,6 @@
 /**
  * GitHub integration — token resolution, the REST client, and the two
- * pure helpers the git tools need. See AGENTS.md §"GitHub integration".
+ * pure helpers the git tools need. See README.md.
  */
 
 export {

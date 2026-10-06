@@ -1,0 +1,44 @@
+{
+  "snapshot": "/tmp/atomic-stage07-final-v2",
+  "dest": "/tmp/atomic-stage07-benchmark/runs/final-01",
+  "task": 1,
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "goldenPath": "/tmp/atomic-stage07-benchmark/runs/final-01.hidden-golden.json",
+  "seed": {
+    "task": 1,
+    "kind": "feature-absent",
+    "patches": []
+  },
+  "unseeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 1,
+      "pass": false,
+      "assertions": 13,
+      "error": {
+        "name": "AssertionError",
+        "message": "notice last substantive section 3\n+ actual - expected\n\n+ '### notice\\n' +\n+   'fixed transient hint\\n' +\n+   '\\n' +\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\n- '### notice\\nfixed transient hint'\n",
+        "stack": "AssertionError [ERR_ASSERTION]: notice last substantive section 3\n+ actual - expected\n\n+ '### notice\\n' +\n+   'fixed transient hint\\n' +\n+   '\\n' +\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\n- '### notice\\nfixed transient hint'\n\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\n    at Object.check1 (/private/tmp/atomic-stage07-benchmark/check.mjs:24:433)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":1,\"pass\":false,\"assertions\":13,\"error\":{\"name\":\"AssertionError\",\"message\":\"notice last substantive section 3\\n+ actual - expected\\n\\n+ '### notice\\\\n' +\\n+   'fixed transient hint\\\\n' +\\n+   '\\\\n' +\\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\\n- '### notice\\\\nfixed transient hint'\\n\",\"stack\":\"AssertionError [ERR_ASSERTION]: notice last substantive section 3\\n+ actual - expected\\n\\n+ '### notice\\\\n' +\\n+   'fixed transient hint\\\\n' +\\n+   '\\\\n' +\\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\\n- '### notice\\\\nfixed transient hint'\\n\\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\\n    at Object.check1 (/private/tmp/atomic-stage07-benchmark/check.mjs:24:433)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  },
+  "seeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 1,
+      "pass": false,
+      "assertions": 13,
+      "error": {
+        "name": "AssertionError",
+        "message": "notice last substantive section 3\n+ actual - expected\n\n+ '### notice\\n' +\n+   'fixed transient hint\\n' +\n+   '\\n' +\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\n- '### notice\\nfixed transient hint'\n",
+        "stack": "AssertionError [ERR_ASSERTION]: notice last substantive section 3\n+ actual - expected\n\n+ '### notice\\n' +\n+   'fixed transient hint\\n' +\n+   '\\n' +\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\n- '### notice\\nfixed transient hint'\n\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\n    at Object.check1 (/private/tmp/atomic-stage07-benchmark/check.mjs:24:433)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":1,\"pass\":false,\"assertions\":13,\"error\":{\"name\":\"AssertionError\",\"message\":\"notice last substantive section 3\\n+ actual - expected\\n\\n+ '### notice\\\\n' +\\n+   'fixed transient hint\\\\n' +\\n+   '\\\\n' +\\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\\n- '### notice\\\\nfixed transient hint'\\n\",\"stack\":\"AssertionError [ERR_ASSERTION]: notice last substantive section 3\\n+ actual - expected\\n\\n+ '### notice\\\\n' +\\n+   'fixed transient hint\\\\n' +\\n+   '\\\\n' +\\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\\n- '### notice\\\\nfixed transient hint'\\n\\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\\n    at Object.check1 (/private/tmp/atomic-stage07-benchmark/check.mjs:24:433)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  }
+}

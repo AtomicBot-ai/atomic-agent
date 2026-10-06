@@ -25,12 +25,12 @@ import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import * as localLlm from "../local-llm/index.js";
 import { resolveBackendDir } from "../local-llm/index.js";
-import { writeBackendVersion } from "../local-llm/backend-version.js";
-import { DaemonHealthError } from "../local-llm/daemon-lifecycle.js";
+import { writeBackendVersion } from "../local-llm/backend/backend-version.js";
+import { DaemonHealthError } from "../local-llm/server/daemon-lifecycle.js";
 import {
   WINDOWS_BACKEND_ASSETS,
   setConfiguredBackendVariant,
-} from "../local-llm/windows-backend-variant.js";
+} from "../local-llm/backend/windows-backend-variant.js";
 import { runLocalModelsPull, runLocalModelsStart } from "./models-handlers.js";
 
 const healthError = () =>

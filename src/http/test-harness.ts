@@ -27,7 +27,7 @@ import type {
 } from "../tools/browser/browser-backend.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { LogSink } from "../tracing/structured-logger.js";
 import type { McpServerConfig } from "../mcp/mcp-types.js";
 

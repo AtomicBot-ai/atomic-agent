@@ -2,7 +2,7 @@ import type { ServerResponse } from "node:http";
 
 import { getConfig } from "../config/index.js";
 import type { McpServerConfig } from "../mcp/mcp-types.js";
-import { setMcpServerEnabled } from "../tui/persist-mcp-server.js";
+import { setMcpServerEnabled } from "../config/mcp-server-commands.js";
 
 import { openaiError } from "./openai-errors.js";
 import {

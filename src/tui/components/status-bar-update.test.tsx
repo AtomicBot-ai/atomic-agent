@@ -1,5 +1,4 @@
 import { render } from "ink-testing-library";
-import React from "react";
 import { describe, expect, it } from "vitest";
 import { reduceTuiState } from "../agent-event-reducer.js";
 import { apply, fakeSession } from "../test-fixtures.js";

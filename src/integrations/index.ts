@@ -1,6 +1,6 @@
 /**
  * Integrations hub — one place for every third-party credential.
- * See AGENTS.md §"Integrations hub".
+ * See README.md.
  */
 
 export { basicStatus, isConfigured } from "./integration-descriptor.js";

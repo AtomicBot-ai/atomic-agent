@@ -10,11 +10,11 @@ import {
   type LogLevel,
 } from "./config-schema.js";
 import { ensureUserConfigFileSync, getUserConfigPath } from "./config-file.js";
-import { setCustomLocalModels } from "../local-llm/models-catalog.js";
-import { setDefaultDownloadConnections } from "../local-llm/download-settings.js";
-import { setDefaultHuggingFaceEndpoint } from "../local-llm/huggingface-endpoint.js";
-import { setConfiguredBackendVariant } from "../local-llm/windows-backend-variant.js";
-import { resolveLocalLlamaApiKey } from "../local-llm/managed-api-key.js";
+import { setCustomLocalModels } from "../local-llm/catalog/models-catalog.js";
+import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
+import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
+import { setConfiguredBackendVariant } from "../local-llm/backend/windows-backend-variant.js";
+import { resolveLocalLlamaApiKey } from "../local-llm/server/managed-api-key.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";

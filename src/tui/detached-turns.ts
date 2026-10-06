@@ -1,4 +1,4 @@
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { SessionState } from "../session/session-state.js";
 import { DEFAULT_RING_BUFFER_SIZE } from "./tui-state.js";
@@ -7,7 +7,7 @@ import { DEFAULT_RING_BUFFER_SIZE } from "./tui-state.js";
  * Bookkeeping for turns the operator switched away from mid-run.
  *
  * The runtime needs none of this: `TurnController` already runs
- * sessions independently (AGENTS.md §"Concurrency contract"), so a turn
+ * sessions independently (../runtime/docs/lifecycle.md), so a turn
  * whose thread is no longer on screen simply keeps executing and saves
  * its transcript to its own session. What the TUI must track is the
  * abort handle — Esc in the new thread must abort nothing, switching

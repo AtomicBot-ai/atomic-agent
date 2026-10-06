@@ -1,0 +1,72 @@
+--- src/tui/mcp/mcp-reducer.test.ts (seeded before)
++++ src/tui/mcp/mcp-reducer.test.ts (agent after)
+@@ -1,5 +1,6 @@
+ import { describe, expect, it } from "vitest";
+ 
++import { fakeSession } from "../test-fixtures.js";
+ import { createInitialTuiState } from "../tui-state.js";
+ import type { TuiAction } from "../tui-action.js";
+ import { reduceMcpAction } from "./mcp-reducer.js";
+@@ -189,6 +190,51 @@
+     const next = dispatch(s, { type: "mcp_refresh_failed", error: "boom" });
+     expect(next.mcpPanel.loading).toBe(false);
+     expect(next.mcpPanel.lastError).toBe("boom");
++  });
++
++  it("preserves the current rows and detail through a failed refresh and retry", () => {
++    let s = createInitialTuiState(fakeSession());
++    s = dispatch(s, {
++      type: "mcp_rows_loaded",
++      rows: [row("a"), row("docs")],
++      emptyHint: null,
++      at: 1000,
++    });
++    s = dispatch(s, { type: "mcp_cursor_set", row: 1 });
++    s = dispatch(s, {
++      type: "mcp_detail_opened",
++      rowKey: "docs",
++      detail: detail("docs"),
++    });
++    s = dispatch(s, { type: "mcp_detail_tab_set", tab: "resources" });
++    const beforeRefresh = s.mcpPanel;
++
++    const started = dispatch(s, { type: "mcp_refresh_started" });
++    expect(started.mcpPanel).toEqual({
++      ...beforeRefresh,
++      loading: true,
++      lastError: null,
++    });
++
++    const failed = dispatch(started, {
++      type: "mcp_refresh_failed",
++      error: "catalog unavailable",
++    });
++    expect(failed.mcpPanel).toEqual({
++      ...beforeRefresh,
++      loading: false,
++      lastError: "catalog unavailable",
++    });
++    expect(started.mcpPanel.loading).toBe(true);
++    expect(started.mcpPanel.lastError).toBeNull();
++
++    const retry = dispatch(failed, { type: "mcp_refresh_started" });
++    expect(retry.mcpPanel).toEqual({
++      ...beforeRefresh,
++      loading: true,
++      lastError: null,
++    });
++    expect(failed.mcpPanel.lastError).toBe("catalog unavailable");
+   });
+ 
+   describe("add-server modal", () => {
+--- src/tui/mcp/mcp-reducer.ts (seeded before)
++++ src/tui/mcp/mcp-reducer.ts (agent after)
+@@ -35,7 +35,7 @@
+       };
+     }
+     case "mcp_refresh_failed":
+-      return { ...panel, loading: true, lastError: action.error };
++      return { ...panel, loading: false, lastError: action.error };
+     case "mcp_cursor_moved": {
+       const total = panel.rows.length;
+       return {

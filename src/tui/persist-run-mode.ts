@@ -9,7 +9,7 @@ import {
   type UserLlmFusionConfig,
   type RunModeName,
 } from "../config/index.js";
-import { readLlmBlockOrDefault } from "./persist-llm-provider.js";
+import { readLlmBlockOrDefault } from "../config/llm-provider-commands.js";
 
 export class RunModePersistError extends Error {
   constructor(message: string) {
@@ -51,8 +51,8 @@ export interface SetRunModeArgs extends RunModeChangeOptions {
  * fusion-block merge and the `managed.parallel` mirror ride the same
  * write for the same reason.
  *
- * Lives apart from `persist-llm-provider.ts`, which is past its line
- * budget; `readLlmBlockOrDefault` is the one thing shared.
+ * Uses the provider block owned by config; run-mode state is written
+ * together with its active-provider pin.
  */
 export function setRunModeInConfig(args: SetRunModeArgs): void {
   const path = getConfig().paths.userConfigFile;

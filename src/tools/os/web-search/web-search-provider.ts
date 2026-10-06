@@ -1,5 +1,5 @@
 import type { runCommand as defaultRunCommand } from "../../../sandbox/command-runner.js";
-import type { HostLookup } from "../web-fetch-ssrf-guard.js";
+import type { HostLookup } from "../web/web-fetch-ssrf-guard.js";
 
 export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
 

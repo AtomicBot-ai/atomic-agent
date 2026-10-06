@@ -10,7 +10,7 @@ import { REFLECTION_GRAMMAR } from "./reflection-grammar.js";
 import { parseReflectionOutput } from "./reflection-parser.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import { buildCloudSubcallRequest } from "../../llm/provider/cloud-subcall.js";
-import type { LlmStreamParams } from "../../agent/step-executor.js";
+import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 import { buildReflectionPrompt } from "./reflection-prompt.js";
 
@@ -231,7 +231,7 @@ export interface ReflectionRunnerDeps {
  * budget; the runner runs them sequentially as
  *   extract → for each NOTE { store → link-generator → for each link
  *   { neighbor-evolver.tryEvolve } } → vote-runner.
- * See [MEMORY_FABRIC_V2.md](../../../MEMORY_FABRIC_V2.md) §6.2 / §6.4.
+ * See [MEMORY_FABRIC_V2.md](../../../docs/archive/2026-10-06/MEMORY_FABRIC_V2.md) §6.2 / §6.4.
  */
 export function createReflectionRunner(
   deps: ReflectionRunnerDeps,

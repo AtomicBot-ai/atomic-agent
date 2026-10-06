@@ -13,7 +13,7 @@ import type { SessionStatus } from "./session-state.js";
  * bulk wipe that ships is `atag uninstall`, which destroys the whole
  * state dir. An install left running for a year therefore carries every
  * session it ever had, plus one `traces/<id>.ndjson` per session. Opt-in
- * (`sessions.retention.enabled`); see §"Session retention" in AGENTS.md.
+ * (`sessions.retention.enabled`); see README.md for lifecycle ownership.
  */
 
 /** Days → ms, so the config can talk in days and the SQL in epoch ms. */

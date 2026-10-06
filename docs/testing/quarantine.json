@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "tests": [
+    {
+      "path": "src/sidecar/send-message-concurrency.test.ts",
+      "owner": "src/sidecar/ (runtime turn ownership)",
+      "status": "released",
+      "issue": "https://github.com/AtomicBot-ai/atomic-agent/issues/203",
+      "reason": "Former CI comment reported a third non-reflection inference instead of two. This failure did not reproduce in the current source.",
+      "reproduce": "npx vitest run src/sidecar/send-message-concurrency.test.ts",
+      "observed": "2026-10-06: after rebuilding the existing better-sqlite3 addon for pinned Node 25.7, 1 test passed standalone and together with auto-update (exit 0). No test/runtime logic was changed.",
+      "returnCondition": "Two queued turns retain FIFO order and predecessor state under isolated state, fake browser and overridden inference; file completes with exit 0.",
+      "resolution": "Return to CI: current hermetic test passes. Original third-call cause is not established; the old comment is not treated as current evidence."
+    },
+    {
+      "path": "src/tui/local-models/local-models-orchestrator-auto-update.test.ts",
+      "owner": "src/tui/local-models/ (daemon orchestration tests)",
+      "status": "released",
+      "issue": "https://github.com/AtomicBot-ai/atomic-agent/issues/203",
+      "reason": "Partial local-llm mock left startChatAndEmbeddingDaemons real; the checked-backend case could spawn a placeholder binary and report unhandled process errors.",
+      "reproduce": "npx vitest run src/tui/local-models/local-models-orchestrator-auto-update.test.ts",
+      "observed": "2026-10-06: after mocking the paired daemon-start boundary, all 8 tests passed with exit 0, including alongside sidecar concurrency. Unsafe pre-fix process execution was not repeated.",
+      "returnCondition": "Real orchestrator honors backendAlreadyChecked, reaches exactly one fake paired start, resolves true, and leaves no unhandled errors or real daemon process.",
+      "resolution": "Typed fake paired start replaces process creation; success and exactly-once assertions strengthen the existing checked-backend test."
+    }
+  ]
+}

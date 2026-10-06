@@ -1,0 +1,5 @@
+
+> atomic-agent@0.6.6 typecheck:tests
+> node scripts/check-test-types.mjs
+
+test types: 2499 roots, 105 test TSX; 848 explicit debt diagnostics; no new errors

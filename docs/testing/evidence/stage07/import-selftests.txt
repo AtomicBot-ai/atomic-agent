@@ -1,0 +1,247 @@
+
+> atomic-agent@0.6.6 imports:self-test
+> node scripts/check-imports.selftest.mjs
+
+ok: ESM .js resolves to TS and TSX
+ok: new runtime cycle
+ok: self import cycle
+ok: dynamic literal cycle
+ok: missing local target
+ok: missing type-only target
+ok: domain cannot depend on UI types
+ok: channel cannot depend on TUI
+ok: HTTP cannot depend on TUI
+ok: domain cannot depend on channels
+ok: type-only cycle allowed
+ok: mixed type/value imports remain runtime
+ok: mixed type/value exports remain runtime
+ok: composition root allowed
+ok: composition root exception is exact
+ok: shared list cannot depend on wizard
+ok: shared input cannot depend on domain
+ok: composer shared contract cannot depend on builders
+ok: test cycles do not enter production graph
+ok: production cannot import excluded tests
+ok: JSON resolves, external packages do not enter graph
+ok: reviewed exact exception
+ok: stale exception rejected
+ok: wildcard exception rejected
+ok: unowned exception rejected
+ok: shared logo rejects chat types
+ok: shared editor rejects context handler
+ok: shared theme rejects chooser
+ok: shared formatting rejects domain
+ok: shared logo owns its types
+ok: shared editor can use row viewport
+ok: shell composition can use chat and updates
+ok: production cannot import filesystem test helper
+ok: filesystem tests may use their helper
+ok: production cannot import GGUF byte fixtures
+ok: GGUF tests may use byte fixtures
+ok: config primitives cannot import composing schema
+ok: config primitives cannot import root API types
+ok: config primitives cannot dynamically import composing schema
+ok: config primitives use the existing error owner
+ok: config composition can expose primitives
+ok: session rail config cannot import composing schema
+ok: session rail config cannot import root API types
+ok: session rail config cannot dynamically import composing schema
+ok: schema and error owner serve session rail config
+ok: hash contract cannot import prompt schema
+ok: hash contract cannot import agent taxonomy types
+ok: hash contract cannot dynamically import execution
+ok: hash composition depends inward on its contract
+ok: webhook config cannot import composing schema
+ok: webhook config cannot import root API types
+ok: webhook config cannot dynamically import composing schema
+ok: webhook config uses primitives and the existing error owner
+ok: execution config cannot import composing schema
+ok: execution config cannot import root API types
+ok: execution config cannot dynamically import composing schema
+ok: execution config depends inward on scalar and error owners
+ok: web config cannot import composing schema
+ok: web config cannot import root API types
+ok: web config cannot dynamically import composing schema
+ok: web config cannot import search execution
+ok: web config cannot import agent execution types
+ok: web config cannot dynamically import network transport
+ok: web config depends inward on scalar and error owners
+ok: memory config types cannot import composition
+ok: memory config types cannot import runtime types
+ok: memory config types cannot dynamically import an owner
+ok: memory defaults cannot import composition
+ok: memory defaults cannot import parser
+ok: memory parser cannot import composition
+ok: memory parser cannot import root API types
+ok: memory parser cannot dynamically import prompt execution
+ok: memory configuration composes concrete inward owners
+ok: config-values cannot import composing schema
+ok: config-values cannot import root API types
+ok: config-values cannot dynamically import composing schema
+ok: mcp-server-config cannot import composing schema
+ok: mcp-server-config cannot import root API types
+ok: mcp-server-config cannot dynamically import composing schema
+ok: shared config values cannot depend on MCP config
+ok: MCP config depends inward on shared values and neutral types
+ok: local models types cannot import composition types
+ok: local models types cannot load an allowed type owner at runtime
+ok: local models types cannot dynamically load an allowed type owner
+ok: local models types cannot import an arbitrary catalog type
+ok: local models defaults cannot import composing schema
+ok: local models defaults cannot import parser types
+ok: local models defaults cannot dynamically load download execution
+ok: local models defaults cannot load their type owner at runtime
+ok: local models parser cannot load their type owner at runtime
+ok: local models parser cannot import composition
+ok: local models parser cannot import root API types
+ok: local models parser cannot dynamically load server lifecycle
+ok: local models configuration composes concrete type/constant/validation owners
+ok: tui-config cannot import composition
+ok: tui-config cannot import composition types
+ok: tui-config cannot dynamically import runtime
+ok: tui-config cannot use another frontend config owner
+ok: tui-config composes inward value helpers
+ok: channel-config cannot import composition
+ok: channel-config cannot import composition types
+ok: channel-config cannot dynamically import runtime
+ok: channel-config cannot use another frontend config owner
+ok: channel-config composes inward value helpers
+ok: integration-config cannot import composition
+ok: integration-config cannot import composition types
+ok: integration-config cannot dynamically import runtime
+ok: integration-config cannot use another frontend config owner
+ok: integration-config composes inward value helpers
+ok: agent/agent-types cannot import composing schema
+ok: agent/agent-types cannot import root API types
+ok: agent/agent-types cannot dynamically load execution
+ok: agent/agent-defaults cannot import composing schema
+ok: agent/agent-defaults cannot import root API types
+ok: agent/agent-defaults cannot dynamically load execution
+ok: agent/agent-parser cannot import composing schema
+ok: agent/agent-parser cannot import root API types
+ok: agent/agent-parser cannot dynamically load execution
+ok: http-config cannot import composing schema
+ok: http-config cannot import root API types
+ok: http-config cannot dynamically load execution
+ok: tool-config cannot import composing schema
+ok: tool-config cannot import root API types
+ok: tool-config cannot dynamically load execution
+ok: skills-config cannot import composing schema
+ok: skills-config cannot import root API types
+ok: skills-config cannot dynamically load execution
+ok: session-retention-config cannot import composing schema
+ok: session-retention-config cannot import root API types
+ok: session-retention-config cannot dynamically load execution
+ok: tracing-config cannot import composing schema
+ok: tracing-config cannot import root API types
+ok: tracing-config cannot dynamically load execution
+ok: agent type owner cannot load neutral approval types at runtime
+ok: resource config composes only concrete value and type owners
+ok: read contract cannot load execution
+ok: read contract cannot import composition types
+ok: read contract cannot dynamically load node IO
+ok: read contract cannot depend on external types
+ok: list contract cannot load execution
+ok: list contract cannot import composition types
+ok: list contract cannot dynamically load node IO
+ok: list contract cannot depend on external types
+ok: glob contract cannot load execution
+ok: glob contract cannot import composition types
+ok: glob contract cannot dynamically load node IO
+ok: glob contract cannot depend on external types
+ok: grep contract cannot load execution
+ok: grep contract cannot import composition types
+ok: grep contract cannot dynamically load node IO
+ok: grep contract cannot depend on external types
+ok: hash contract cannot load execution
+ok: hash contract cannot import composition types
+ok: hash contract cannot dynamically load node IO
+ok: hash contract cannot depend on external types
+ok: diff contract cannot load execution
+ok: diff contract cannot import composition types
+ok: diff contract cannot dynamically load node IO
+ok: diff contract cannot depend on external types
+ok: watch contract cannot load execution
+ok: watch contract cannot import composition types
+ok: watch contract cannot dynamically load node IO
+ok: watch contract cannot depend on external types
+ok: write contract cannot load execution
+ok: write contract cannot import composition types
+ok: write contract cannot dynamically load node IO
+ok: write contract cannot depend on external types
+ok: edit contract cannot load execution
+ok: edit contract cannot import composition types
+ok: edit contract cannot dynamically load node IO
+ok: edit contract cannot depend on external types
+ok: patch contract cannot load execution
+ok: patch contract cannot import composition types
+ok: patch contract cannot dynamically load node IO
+ok: patch contract cannot depend on external types
+ok: trash contract cannot load execution
+ok: trash contract cannot import composition types
+ok: trash contract cannot dynamically load node IO
+ok: trash contract cannot depend on external types
+ok: restore contract cannot load execution
+ok: restore contract cannot import composition types
+ok: restore contract cannot dynamically load node IO
+ok: restore contract cannot depend on external types
+ok: locate-project contract cannot load execution
+ok: locate-project contract cannot import composition types
+ok: locate-project contract cannot dynamically load node IO
+ok: locate-project contract cannot depend on external types
+ok: core filesystem consumers can project import-free contracts
+ok: runtime-inference cannot import bootstrap
+ok: runtime-inference cannot use bootstrap types
+ok: runtime-inference cannot dynamically load bootstrap
+ok: runtime-turn-service cannot import bootstrap
+ok: runtime-turn-service cannot use bootstrap types
+ok: runtime-turn-service cannot dynamically load bootstrap
+ok: runtime-tool-catalog cannot import bootstrap
+ok: runtime-tool-catalog cannot use bootstrap types
+ok: runtime-tool-catalog cannot dynamically load bootstrap
+ok: runtime-memory-services cannot import bootstrap
+ok: runtime-memory-services cannot use bootstrap types
+ok: runtime-memory-services cannot dynamically load bootstrap
+ok: runtime-observability cannot import bootstrap
+ok: runtime-observability cannot use bootstrap types
+ok: runtime-observability cannot dynamically load bootstrap
+ok: runtime-channels cannot import bootstrap
+ok: runtime-channels cannot use bootstrap types
+ok: runtime-channels cannot dynamically load bootstrap
+ok: runtime-lifecycle cannot import bootstrap
+ok: runtime-lifecycle cannot use bootstrap types
+ok: runtime-lifecycle cannot dynamically load bootstrap
+ok: public runtime contract rejects runtime edge import "node:fs";
+ok: public runtime contract rejects runtime edge void import("some-package");
+ok: public runtime contract rejects runtime edge export * from "some-package";
+ok: public runtime contract rejects implementation types bootstrap
+ok: public runtime contract rejects implementation types composition/runtime-inference
+ok: cli cannot bypass public runtime API
+ok: tui cannot bypass public runtime API
+ok: sidecar cannot bypass public runtime API
+ok: config cannot bypass public runtime API
+ok: runtime cannot bypass public runtime API
+ok: component cannot load public type contract at runtime
+ok: runtime composition uses concrete owners and type-only public contract
+ok: agent contract rejects runtime edge agent-contract.ts: import "node:fs";
+ok: agent contract rejects runtime edge agent-contract.ts: void import("some-package");
+ok: agent contract rejects runtime edge step/step-contract.ts: import "node:fs";
+ok: agent contract rejects runtime edge step/step-contract.ts: void import("some-package");
+ok: agent contract rejects runtime edge dispatch/batch-contract.ts: import "node:fs";
+ok: agent contract rejects runtime edge dispatch/batch-contract.ts: void import("some-package");
+ok: agent contract rejects runtime edge progress/loop-contract.ts: import "node:fs";
+ok: agent contract rejects runtime edge progress/loop-contract.ts: void import("some-package");
+ok: agent contract rejects orchestrator types agent-contract.ts
+ok: agent contract rejects orchestrator types step/step-contract.ts
+ok: agent contract rejects orchestrator types dispatch/batch-contract.ts
+ok: agent leaf cannot load old facade step/step-inference.ts
+ok: agent leaf cannot load public barrel step/step-inference.ts
+ok: agent leaf cannot load old facade turn/turn-preparation.ts
+ok: agent leaf cannot load public barrel turn/turn-preparation.ts
+ok: agent leaf cannot load old facade dispatch/batch-gates.ts
+ok: agent leaf cannot load public barrel dispatch/batch-gates.ts
+ok: agent leaf cannot load old facade progress/loop-fingerprints.ts
+ok: agent leaf cannot load public barrel progress/loop-fingerprints.ts
+ok: agent nominal tracker resource can be type-only in batch contract
+ok: agent leaves use concrete owners and public contract types
+imports self-test: 242 fixtures passed

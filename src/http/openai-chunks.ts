@@ -1,4 +1,4 @@
-import type { RunTurnResult } from "../agent/agent-loop.js";
+import type { RunTurnResult } from "../agent/agent-contract.js";
 import { isFinalReplyTurn } from "../session/conversation-turn.js";
 
 /**

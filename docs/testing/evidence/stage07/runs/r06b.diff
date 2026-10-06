@@ -1,0 +1,107 @@
+--- src/llm/provider/model-vision.test.ts (seeded before)
++++ src/llm/provider/model-vision.test.ts (agent after)
+@@ -30,6 +30,27 @@
+ });
+ 
+ describe("resolveCloudModelVision", () => {
++  it.each([
++    [false, true, false, "config.userModels"],
++    [true, false, true, "config.userModels"],
++    [false, undefined, false, "config.userModels"],
++    [true, undefined, true, "config.userModels"],
++    [undefined, true, true, "config.provider"],
++    [undefined, false, false, "config.provider"],
++  ] as const)(
++    "model override %s with provider default %s resolves to %s",
++    (override, fallback, vision, visionSource) => {
++      const entry = aimlapi("house-model", {
++        supportsVision: fallback,
++        userModels: [{ id: "house-model", kind: "chat", supportsVision: override }],
++      });
++      expect(resolveCloudModelVision(entry, "house-model")).toEqual({
++        vision,
++        visionSource,
++      });
++    },
++  );
++
+   it("reads the catalogue per model: text-only and vision rows on one provider", () => {
+     expect(
+       resolveCloudModelVision(aimlapi("deepseek/deepseek-v4-flash"), "deepseek/deepseek-v4-flash"),
+--- src/llm/provider/model-vision.ts (seeded before)
++++ src/llm/provider/model-vision.ts (agent after)
+@@ -48,7 +48,7 @@
+ ): ModelVisionVerdict {
+   const row = entry.userModels?.find((model) => model.id === modelId);
+   if (row?.supportsVision !== undefined) {
+-    return { vision: row.supportsVision || entry.supportsVision || false, visionSource: "config.userModels" };
++    return { vision: row.supportsVision, visionSource: "config.userModels" };
+   }
+   if (entry.supportsVision !== undefined) {
+     return { vision: entry.supportsVision, visionSource: "config.provider" };
+--- src/runtime/vision-per-model.test.ts (seeded before)
++++ src/runtime/vision-per-model.test.ts (agent after)
+@@ -199,7 +199,63 @@
+ 
+   const offersVision = (runtime: Runtime): boolean =>
+     runtime.toolDescriptors.some((d) => d.name === "vision.describe");
++
++  it("honors explicit model flags and provider defaults across live model and provider switches", async () => {
++    const defaultModel = "house-default";
++    const cloud = (model: string, supportsVision: boolean) =>
++      aimlapi(model, {
++        supportsVision,
++        userModels: [
++          { id: TEXT_ONLY_MODEL, kind: "chat", supportsVision: false },
++          { id: VISION_MODEL, kind: "chat", supportsVision: true },
++          { id: defaultModel, kind: "chat" },
++        ],
++      });
++    writeConfig({ llm: llm("aimlapi", [cloud(TEXT_ONLY_MODEL, true)]) });
++    const runtime = await boot();
++    const switchModel = async (model: string, fallback: boolean) => {
++      writeConfig({ llm: llm("aimlapi", [cloud(model, fallback)]) });
++      await runtime.reloadLlmProvider("aimlapi");
++    };
++    try {
++      // Explicit false defeats provider true before an image is sent.
++      expect(offersVision(runtime)).toBe(false);
++      const refused = await describeShot(runtime);
++      expect(refused.status).toBe("error");
++      expect(refused.details).toMatchObject({ visionSource: "config.userModels" });
++      expect(traffic.visionCalls).toHaveLength(0);
++
++      // Explicit true defeats provider false on the next route read.
++      await switchModel(VISION_MODEL, false);
++      expect(offersVision(runtime)).toBe(true);
++      expect((await describeShot(runtime)).status).toBe("ok");
++      expect(traffic.visionCalls).toHaveLength(1);
+ 
++      // A row without an override uses either provider default.
++      await switchModel(defaultModel, true);
++      expect(offersVision(runtime)).toBe(true);
++      expect((await describeShot(runtime)).status).toBe("ok");
++      expect(traffic.visionCalls).toHaveLength(2);
++      await switchModel(defaultModel, false);
++      expect(offersVision(runtime)).toBe(false);
++      expect((await describeShot(runtime)).status).toBe("error");
++      expect(traffic.visionCalls).toHaveLength(2);
++
++      await runtime.providerRegistry.setActive("local-llama");
++      writeConfig({ llm: llm("local-llama", [cloud(defaultModel, false)]) });
++      expect(offersVision(runtime)).toBe(true);
++      expect((await describeShot(runtime)).summary).toContain("local sees");
++      expect(traffic.visionCalls).toHaveLength(3);
++      await runtime.providerRegistry.setActive("aimlapi");
++      writeConfig({ llm: llm("aimlapi", [cloud(defaultModel, false)]) });
++      expect(offersVision(runtime)).toBe(false);
++      expect((await describeShot(runtime)).status).toBe("error");
++      expect(traffic.visionCalls).toHaveLength(3);
++    } finally {
++      await runtime.shutdown();
++    }
++  });
++
+   it("a text-only cloud model is not offered vision, and a direct call is refused by model and provider with no request", async () => {
+     writeConfig({ llm: llm("aimlapi") });
+     const runtime = await boot();

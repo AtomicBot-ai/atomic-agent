@@ -1,4 +1,4 @@
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { formatTokens } from "./components/format-tokens.js";
 
 /** One leg of a fan-out, as the chat surface shows it while it runs. */

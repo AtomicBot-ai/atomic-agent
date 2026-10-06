@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
 import { returnKey } from "../mouse/synthetic-key.js";
-import { persistOnboardingState } from "../persist-onboarding-state.js";
+import { persistOnboardingState } from "./persist-onboarding-state.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { fakeSession } from "../test-fixtures.js";
 import type { TuiAction } from "../tui-action.js";

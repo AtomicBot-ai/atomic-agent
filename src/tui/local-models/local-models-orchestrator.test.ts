@@ -13,7 +13,7 @@ import {
   resolveBackendDir,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
 /**

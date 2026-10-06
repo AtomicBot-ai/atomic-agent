@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import { CROSS_MARKS, FACE_GLYPHS } from "./logo-art.js";
-import type { LogoVariant, WordmarkPlacement } from "./splash-fit.js";
+import type { LogoVariant, WordmarkPlacement } from "./logo-types.js";
 
 /**
  * Atomic cross + `ATOMIC AGENT` wordmark, rendered side-by-side and

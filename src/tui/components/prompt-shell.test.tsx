@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
-import { ContextChip } from "./context-chip.js";
+import { ContextChip } from "../context/context-chip.js";
 import { PromptShell } from "./prompt-shell.js";
 
 function strip(value: string): string {

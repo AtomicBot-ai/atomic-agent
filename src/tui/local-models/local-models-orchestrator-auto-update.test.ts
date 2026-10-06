@@ -18,6 +18,9 @@ vi.mock("../../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
+    // Exercise the real orchestrator while keeping process creation outside
+    // this unit test. The previous partial mock could spawn the stub binary.
+    startChatAndEmbeddingDaemons: vi.fn<typeof actual.startChatAndEmbeddingDaemons>(),
   };
 });
 
@@ -28,7 +31,7 @@ import {
   resolveModelFilePath,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
@@ -54,6 +57,22 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.stopEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockReset();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockReset();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValue({
+      chat: {
+        pid: 12345,
+        tokensPerSecond: null,
+        contextSize: 0,
+        swaFull: {
+          enabled: false,
+          reason: "unit test",
+          estimate: null,
+          slidingLayers: 0,
+        },
+        prefixReuse: null,
+      },
+      embedding: { skipped: true },
+    });
   });
 
   afterEach(() => {
@@ -223,9 +242,12 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
 
     // With the check skipped there is nothing to bail on, so the start
     // proceeds past the point where `backendUsable: false` would stop it.
-    await orchestrator.startDaemon({ backendAlreadyChecked: true });
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true }),
+    ).resolves.toBe(true);
 
     expect(localLlm.maybeAutoUpdateBackend).not.toHaveBeenCalled();
+    expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledOnce();
   });
 
   it("still checks when startDaemon is invoked without the flag", async () => {

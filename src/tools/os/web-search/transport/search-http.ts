@@ -7,8 +7,8 @@ import {
   formatResolveEntry,
   parseHttpUrl,
   type HostLookup,
-} from "../../web-fetch-ssrf-guard.js";
-import { CurlUnavailableError, isCurlMissingError } from "../../ensure-curl.js";
+} from "../../web/web-fetch-ssrf-guard.js";
+import { CurlUnavailableError, isCurlMissingError } from "../../web/ensure-curl.js";
 import {
   computeRetryDelayMs,
   DEFAULT_SEARCH_RETRY_POLICY,

@@ -1,6 +1,6 @@
 /**
  * Composio integration — hosted access to 1500+ SaaS toolkits, mounted
- * through the existing MCP client. See `AGENTS.md` §"Composio".
+ * through the existing MCP client. See `README.md` §"Composio".
  */
 
 export {

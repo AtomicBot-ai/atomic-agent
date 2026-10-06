@@ -1,0 +1,70 @@
+{
+  "snapshot": "/tmp/atomic-stage07-final-v2",
+  "dest": "/tmp/atomic-stage07-benchmark/runs/final-03",
+  "task": 3,
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "goldenPath": null,
+  "seed": {
+    "task": 3,
+    "kind": "seeded-regression",
+    "patches": [
+      {
+        "file": "src/config/agent/agent-parser.ts",
+        "start": 3135,
+        "end": 3136,
+        "line": 81,
+        "old": "5",
+        "new": "1",
+        "anchor": "legacy approval false ternary"
+      }
+    ],
+    "beforeSha256": "10410e96cd25bf224f01dc6235e06cf0e082add9b0b9f0e5a8f68ebb13898187",
+    "afterSha256": "1766f82d11c855329025e317ef6849f892957a9dc5a24068c6e95123384368e2"
+  },
+  "unseeded": {
+    "exit": 0,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 3,
+      "pass": true,
+      "assertions": 17,
+      "observed": [
+        "legacy approval {\"approvalRequired\":false}",
+        "legacy key removed",
+        "legacy approval {\"approvalRequired\":true}",
+        "legacy key removed",
+        "legacy approval {\"approvalRequired\":\"false\"}",
+        "legacy key removed",
+        "legacy approval {\"approvalRequired\":\"true\"}",
+        "legacy key removed",
+        "legacy approval {\"approvalLevel\":3,\"approvalRequired\":false}",
+        "legacy key removed",
+        "legacy approval {\"approvalLevel\":5,\"approvalRequired\":true}",
+        "legacy key removed",
+        "legacy approval {\"approvalLevel\":null,\"approvalRequired\":null}",
+        "legacy key removed",
+        "legacy approval {}",
+        "legacy key removed",
+        "current default"
+      ]
+    },
+    "stdout": "{\"task\":3,\"pass\":true,\"assertions\":17,\"observed\":[\"legacy approval {\\\"approvalRequired\\\":false}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":true}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":\\\"false\\\"}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":\\\"true\\\"}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":3,\\\"approvalRequired\\\":false}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":5,\\\"approvalRequired\\\":true}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":null,\\\"approvalRequired\\\":null}\",\"legacy key removed\",\"legacy approval {}\",\"legacy key removed\",\"current default\"]}\n"
+  },
+  "seeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 3,
+      "pass": false,
+      "assertions": 0,
+      "error": {
+        "name": "AssertionError",
+        "message": "legacy approval {\"approvalRequired\":false}\n\n1 !== 5\n",
+        "stack": "AssertionError [ERR_ASSERTION]: legacy approval {\"approvalRequired\":false}\n\n1 !== 5\n\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\n    at Object.check3 (/private/tmp/atomic-stage07-benchmark/check.mjs:46:362)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":3,\"pass\":false,\"assertions\":0,\"error\":{\"name\":\"AssertionError\",\"message\":\"legacy approval {\\\"approvalRequired\\\":false}\\n\\n1 !== 5\\n\",\"stack\":\"AssertionError [ERR_ASSERTION]: legacy approval {\\\"approvalRequired\\\":false}\\n\\n1 !== 5\\n\\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\\n    at Object.check3 (/private/tmp/atomic-stage07-benchmark/check.mjs:46:362)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  }
+}

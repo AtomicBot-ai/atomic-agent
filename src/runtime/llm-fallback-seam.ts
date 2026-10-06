@@ -1,4 +1,4 @@
-import type { LlmStreamParams } from "../agent/step-executor.js";
+import type { LlmStreamParams } from "../agent/step/step-contract.js";
 import type {
   CompletionResult,
   StreamChunk,
@@ -77,8 +77,7 @@ export interface FallbackSeamDeps extends LinkAttemptDeps {
  * THAT link), fold usage, and **stamp `servedTransport`** with the
  * transport of the link that actually answered — so the caller parses the
  * reply with the served provider's transport, not the primary's (they can
- * differ on a cloud→local fallover). See AGENTS.md §"Provider fallback
- * chain" → "Cross-transport fallover".
+ * differ on a cloud→local fallover). See README.md → "Cross-transport fallover".
  *
  * **A pinned request never falls over.** When `params.providerId` is
  * set, the single attempt runs directly against that provider and

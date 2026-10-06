@@ -1,0 +1,80 @@
+{
+  "actions": 20,
+  "returnedOutputBytes": 114464,
+  "observedSourceBytes": 103793,
+  "uniqueVersionedSourceBytes": 89082,
+  "repeatedSourceBytes": 14711,
+  "uniqueInstructionBytes": 54260,
+  "uniqueCodeBytes": 20106,
+  "uniqueOtherBytes": 14716,
+  "files": [
+    {
+      "path": "README.md",
+      "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+      "uniqueBytes": 9797
+    },
+    {
+      "path": "AGENTS.md",
+      "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+      "uniqueBytes": 54260
+    },
+    {
+      "path": "src/config/subcall-timeout-migration.test.ts",
+      "hash": "c56dce2f18d1eb5c7b837820af7906a9f078466c958212031ded56c4fc0f72d5",
+      "uniqueBytes": 135
+    },
+    {
+      "path": "src/config/custom-models-schema.test.ts",
+      "hash": "03adf03a328005fae5a4a755d436f76eafa32337eb4824baefbced32fbccc453",
+      "uniqueBytes": 225
+    },
+    {
+      "path": "src/config/config-file.ts",
+      "hash": "480f3502af42e77e8224c942750fe3f0becef71f15ae712545caf40b7844a761",
+      "uniqueBytes": 239
+    },
+    {
+      "path": "src/config/index.ts",
+      "hash": "ea5399af0c9eeccd8358160c19a77c61371b150444447246fcb341dcf856f668",
+      "uniqueBytes": 22
+    },
+    {
+      "path": "src/config/config-file.test.ts",
+      "hash": "de74721040481a300bf5b531f8141951b77200a7685b871dd89494e89b915bd4",
+      "uniqueBytes": 1918
+    },
+    {
+      "path": "src/config/config-paths.ts",
+      "hash": "a16e84df03545bf7cff160c27e8e6d2ec991659aca1a6e219464e3f92c8a4dd7",
+      "uniqueBytes": 219
+    },
+    {
+      "path": "src/config/custom-models-store.ts",
+      "hash": "2c5e0271ed52a2b2b94ab6e38386e231addd853c3e0205722801f2cfd29ef5f6",
+      "uniqueBytes": 98
+    },
+    {
+      "path": "src/config/config-schema.test.ts",
+      "hash": "48535e932580045b3f424412f77f556374daaeb88335eaa8ea075a82011ba00e",
+      "uniqueBytes": 12798
+    },
+    {
+      "path": "src/config/config-schema.ts",
+      "hash": "ea8949e17fb52312d4aa8231a475d1b86eaecdd59003dfea83cfcf0dcf1a4a48",
+      "uniqueBytes": 4019
+    },
+    {
+      "path": "package.json",
+      "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+      "uniqueBytes": 4919
+    },
+    {
+      "path": "src/config/config-schema.ts",
+      "hash": "cc148f792d9d6ee5723b27abc55dfd834e53a40ccbabf3dd7e32c8cd9822c394",
+      "uniqueBytes": 433
+    }
+  ],
+  "changedFiles": [
+    "src/config/config-schema.ts"
+  ]
+}

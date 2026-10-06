@@ -1,0 +1,263 @@
+{
+  "actions": 30,
+  "returnedOutputBytes": 118128,
+  "observedSourceBytes": 107007,
+  "uniqueVersionedSourceBytes": 105198,
+  "repeatedSourceBytes": 1809,
+  "uniqueInstructionBytes": 9278,
+  "uniqueCodeBytes": 75201,
+  "uniqueOtherBytes": 20719,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+      "uniqueBytes": 6714
+    },
+    {
+      "path": "README.md",
+      "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+      "uniqueBytes": 7288
+    },
+    {
+      "path": "src/tools/vision/describe.ts",
+      "hash": "0bb6348bfc82b769e4ac4c9d0dcf6ec650c1d6eb02983e0e5f8ac6bb114b7103",
+      "uniqueBytes": 167
+    },
+    {
+      "path": "src/analytics/turn-usage-meter.test.ts",
+      "hash": "690d4c0672f48fa8e0dc828feb1c62bc93994c9f4be55219a2fbc703266f29d4",
+      "uniqueBytes": 51
+    },
+    {
+      "path": "src/llm/provider/model-vision.test.ts",
+      "hash": "532b9a51de2ce3f1d8559817270763c0bd953cf4348318d70ce1d92688eaca6d",
+      "uniqueBytes": 5554
+    },
+    {
+      "path": "src/llm/provider/model-vision-rejections.ts",
+      "hash": "470766717cb28292ae5ae58268f5bff41f771b7f9e0d7719b0779202a96cf45a",
+      "uniqueBytes": 71
+    },
+    {
+      "path": "src/llm/provider/registry/register-built-in-providers.ts",
+      "hash": "65ced291e7196efdc45fd1298a6dc5bcdc4db942ef4a976f2680b2f730f77b8f",
+      "uniqueBytes": 4935
+    },
+    {
+      "path": "src/local-llm/downloads/model-installer.test.ts",
+      "hash": "ecdcbe28173fedd65be5bf02240470b4c5547211694d25bfcffb7003b8574900",
+      "uniqueBytes": 142
+    },
+    {
+      "path": "src/llm/provider/openrouter/openrouter-models-catalog.ts",
+      "hash": "33a754278ad057fa2c175d8c3a2880e287faec0c1f90712b5d9858ad05e179db",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/llm/provider/registry/provider-types.ts",
+      "hash": "c539fec04758bfba7ce8ef5ab05ec9697575cf7d38bfff5ef70e41aa0dce77c3",
+      "uniqueBytes": 4684
+    },
+    {
+      "path": "src/llm/provider/openrouter/fetch-openrouter-chat-catalog.ts",
+      "hash": "952f6aa84270263daf2c69ec07596fb80e8444308a1f698669c4aff18c591c4d",
+      "uniqueBytes": 167
+    },
+    {
+      "path": "src/llm/provider/openrouter/openrouter-open-weight-chat-models.ts",
+      "hash": "62db667553dc932d6aaff0d3bf10fe195c975d6fb538eb807b00727f21e6239d",
+      "uniqueBytes": 840
+    },
+    {
+      "path": "src/llm/provider/openrouter/openrouter-frontier-chat-models.ts",
+      "hash": "e2fa4013309d0b908fbd54997c8416f36540314b0c681a772b5c8b0e5d6d0398",
+      "uniqueBytes": 594
+    },
+    {
+      "path": "src/llm/provider/openai/openai-provider.ts",
+      "hash": "086d88436e0206bf591eabd20580b82184f9e7ad67a1e97e822a21fae804a00f",
+      "uniqueBytes": 2247
+    },
+    {
+      "path": "src/local-llm/downloads/download-worker.ts",
+      "hash": "8336eb60a2d1f33a15951c821716bc4db5218bb424e0f48f535aa5855f4947ad",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/llm/model-profile.ts",
+      "hash": "7152da5011e84120239e31472405dc3307d31b567d29aa615a7e815035f0e3e6",
+      "uniqueBytes": 69
+    },
+    {
+      "path": "src/llm/provider/aimlapi/aimlapi-models-catalog.ts",
+      "hash": "36da9fadef00d739e8f57e0c90aced134088d8298de0ce387e1133f4a498871e",
+      "uniqueBytes": 946
+    },
+    {
+      "path": "src/llm/provider/aimlapi/fetch-aimlapi-chat-catalog.ts",
+      "hash": "8cb75cad82660cd6675d3705a734965acbcd5e6ed8d6d83ec19e8056cc262498",
+      "uniqueBytes": 161
+    },
+    {
+      "path": "src/llm/provider/model-resolver.ts",
+      "hash": "80a323e3aee550c8589d951e137bd7fe1f0b695df5faf3cf1637db1ef776917c",
+      "uniqueBytes": 99
+    },
+    {
+      "path": "src/llm/provider/model-catalog-entry.ts",
+      "hash": "1ce76b1028478fbd8eea64f0353f5e51213bfd61c6ab45e521fceda760b53fe3",
+      "uniqueBytes": 105
+    },
+    {
+      "path": "src/llm/provider/model-pricing-filter.test.ts",
+      "hash": "fd7a5712302183e96bdc1fa967b6c4ea72e1c4fb5335d1dc8914ea7c72ac0d77",
+      "uniqueBytes": 26
+    },
+    {
+      "path": "src/llm/provider/format-model-details.ts",
+      "hash": "ed4996f94fe8b284663bed87401c6a71b87a955eb6661d1c78018adf8299a3b2",
+      "uniqueBytes": 60
+    },
+    {
+      "path": "src/llm/provider/model-search.test.ts",
+      "hash": "d93a9bcfbe574a3c28a67a7aa2e06904581f8ca0bc00c6c8f2e76c8b39aaa159",
+      "uniqueBytes": 111
+    },
+    {
+      "path": "src/llm/provider/model-search.ts",
+      "hash": "9f079f72701a0bfb74dcd34f250037732864a592b1e76fc27ce4aaf7383eb2a9",
+      "uniqueBytes": 54
+    },
+    {
+      "path": "src/llm/provider/model-vision.ts",
+      "hash": "5c02887afd7c747d97f819e1e9db51251c933e3dabe1ebe2364cf9dbf94604e3",
+      "uniqueBytes": 4431
+    },
+    {
+      "path": "src/local-llm/downloads/model-installer.ts",
+      "hash": "2466292e3e9b63f5c20be15da8e2502dc091c848e358c8f4c0ae3a0fd2dd899a",
+      "uniqueBytes": 217
+    },
+    {
+      "path": "src/local-llm/catalog/models-catalog.test.ts",
+      "hash": "8256fdfd1e0b5b4ccae504ea62d39e774d07e53f61f155da9526f7c0f8a9b4ef",
+      "uniqueBytes": 240
+    },
+    {
+      "path": "src/local-llm/catalog/huggingface-model-def.ts",
+      "hash": "0de0bc4f6b0da76c7029530cdbacdb464b0eb11e198ee91a42605f98cffdcb4d",
+      "uniqueBytes": 36
+    },
+    {
+      "path": "src/local-llm/catalog/models-catalog.ts",
+      "hash": "63e7cfaa61462171ea7e0aa05d49fbb10cb938468374aefb4b858e33457cfbed",
+      "uniqueBytes": 500
+    },
+    {
+      "path": "src/config/custom-models-schema.ts",
+      "hash": "a224574d6ca9d0abce9a0940310094ea59478eccf3f5f7618501fa1e1544b1bc",
+      "uniqueBytes": 108
+    },
+    {
+      "path": "src/cli/models-command.test.ts",
+      "hash": "4b8c5c826e0862af4fc13082dfa6104ba1fb4c016881788073b06bbadfa427ce",
+      "uniqueBytes": 24
+    },
+    {
+      "path": "src/local-llm/catalog/huggingface-resolve.test.ts",
+      "hash": "b092d328d7fd4b875a8aeee264b383b1076c6f4c8de044592498bd39b1dcec96",
+      "uniqueBytes": 85
+    },
+    {
+      "path": "src/runtime/composition/runtime-inference.test.ts",
+      "hash": "f2fc878a7866aee9dfefae719a9f8d8386d9c5f0c0bb05c77c36945f37733560",
+      "uniqueBytes": 140
+    },
+    {
+      "path": "src/llm/README.md",
+      "hash": "fdc2818c8dc96131a5b8e658c03a6493042aeda50ecc199992ef0ad698f7880f",
+      "uniqueBytes": 1164
+    },
+    {
+      "path": "src/llm/AGENTS.md",
+      "hash": "f2624279a8605c84c6295c046f7baf3fc643b0c2a12dc6f32d8ff76869b52dca",
+      "uniqueBytes": 1379
+    },
+    {
+      "path": "src/runtime/AGENTS.md",
+      "hash": "074ed252b3eee8f3da7bdeb32e7b5595ac574cdc95d6e24d2060e09fd97f12f2",
+      "uniqueBytes": 1185
+    },
+    {
+      "path": "src/runtime/README.md",
+      "hash": "7544aebb567568e79c73cb6801d8898b95681c82cf24a68a6de0bc46e0383e1a",
+      "uniqueBytes": 2052
+    },
+    {
+      "path": "src/runtime/vision-route.test.ts",
+      "hash": "8a6b40581206ce5975005a1af870aa34671647c892e3d10bec2e54f6065b2b6c",
+      "uniqueBytes": 4264
+    },
+    {
+      "path": "src/runtime/vision-per-model.test.ts",
+      "hash": "435d61e4826577942089da4f518842f2943b28b1f1197521051f8c1a6339f861",
+      "uniqueBytes": 12299
+    },
+    {
+      "path": "src/runtime/vision-follows-route.test.ts",
+      "hash": "3042249c28b3f522b15240804cab8206afcde65b23d364d22b3686460e31127f",
+      "uniqueBytes": 6506
+    },
+    {
+      "path": "src/runtime/composition/runtime-inference.ts",
+      "hash": "b2d79483216df4d8b005bb6500290150fb390044aa4e0eeaad04cd666b55cc1b",
+      "uniqueBytes": 3394
+    },
+    {
+      "path": "src/runtime/vision-route.ts",
+      "hash": "92fa4c9e739a79f05560ac65f13836060985b1ee54747c0da285d4263690e410",
+      "uniqueBytes": 3551
+    },
+    {
+      "path": "src/runtime/composition/README.md",
+      "hash": "0de03aaed51dd994dc1bb25882ce92aef0f150cc678937c209fbb205e16681eb",
+      "uniqueBytes": 4062
+    },
+    {
+      "path": "package.json",
+      "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+      "uniqueBytes": 5724
+    },
+    {
+      "path": "src/native/README.md",
+      "hash": "cc7f872056eb008c40c90b22ba5d96ec89c70ab5f446c6615d11be5ef1cd4896",
+      "uniqueBytes": 429
+    },
+    {
+      "path": "src/native/load-better-sqlite3.ts",
+      "hash": "ad60977ca226d2f5ded7edb80b1ae7c7a6019c4658789c3afe6e3f4271e124d5",
+      "uniqueBytes": 2707
+    },
+    {
+      "path": "src/llm/provider/registry/provider-registry.ts",
+      "hash": "2e76c20dc9ef7737e1ce89a44141d2d4a1adb7801448a36b5d920ddaa5f89b9d",
+      "uniqueBytes": 6745
+    },
+    {
+      "path": "src/llm/provider/registry/provider-registry.test.ts",
+      "hash": "778103ed159a4587fe320aa63ba84da66b7fe44c1b96167c2b08c75c1ca9cfc3",
+      "uniqueBytes": 4556
+    },
+    {
+      "path": "src/llm/provider/registry/register-built-in-providers.test.ts",
+      "hash": "54a0dfc21f9383f7fb92bb9e452f16fab916a64c90101b4414924cbe3cc3ed27",
+      "uniqueBytes": 4257
+    }
+  ],
+  "changedFiles": [
+    "src/llm/provider/model-vision.test.ts",
+    "src/llm/provider/model-vision.ts",
+    "src/runtime/vision-model-overrides.test.ts",
+    "src/runtime/vision-per-model.test.ts"
+  ]
+}

@@ -146,8 +146,7 @@ export type UserLlmProviderEntry = {
  * parallel tool calling independently of whether the transport does.
  * `"strict"` is the one level with a wire effect — it asks the provider
  * to constrain the decode to the tool schemas, per tool and only where
- * the schema can be expressed strictly. See AGENTS.md §"Strict tool
- * schemas".
+ * the schema can be expressed strictly. See ../llm/docs/profiles.md.
  */
 export type UserModelEntry = {
   id: string;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveChatTemplatePath } from "./chat-templates.js";
-import { getLocalModelDef, LOCAL_MODELS_CATALOG } from "./models-catalog.js";
+import { getLocalModelDef, LOCAL_MODELS_CATALOG } from "./catalog/models-catalog.js";
 
 describe("chat-templates", () => {
   it("returns null when model has no template asset", () => {

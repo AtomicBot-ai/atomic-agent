@@ -1,65 +1,17 @@
 export { AgentLoop } from "./agent-loop.js";
-export type {
-  AgentLoopDependencies,
-  AgentLoopEvent,
-  AgentLoopReason,
-  RunTurnOptions,
-  RunTurnResult,
-} from "./agent-loop.js";
+export type { AgentLoopDependencies, AgentLoopEvent, AgentLoopReason, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
 export { executeStep } from "./step-executor.js";
-export type {
-  StepContext,
-  StepDependencies,
-  StepEvent,
-  StepOutcome,
-} from "./step-executor.js";
-export {
-  ToolLoopTracker,
-  isLoopVetoResult,
-  hashToolCall,
-  hashToolOutcome,
-  formatReadRepeatNotice,
-  formatRepeatNotice,
-  formatTestRepeatNotice,
-  formatVetoInstruction,
-  formatForcedLoopReply,
-  extractLoopTarget,
-  BATCH_LOOP_LABEL,
-  LOOP_VETO_DENIED_REASON,
-  LOOP_WARNING_BUCKET_SIZE,
-  WANDERING_CEILING_SHARE,
-  TEST_REPEAT_WARNING_THRESHOLD,
-  READ_REPEAT_WARNING_THRESHOLD,
-} from "./loop-detector.js";
-export type {
-  ToolLoopTrackerOptions,
-  LoopCheckVerdict,
-  LoopCheckLevel,
-  WanderingStop,
-  TestRepeatCheck,
-  ReadRepeatCheck,
-} from "./loop-detector.js";
-export {
-  classifyReadResult,
-  describeCoverage,
-  mergeRange,
-  newlyCoveredCount,
-} from "./read-coverage.js";
-export type { LineRange, ReadObservation } from "./read-coverage.js";
-export {
-  PARSE_RECOVERY_BUDGET,
-  composeParseFailureNotice,
-  formatParseFailureNotice,
-  formatTurnFailedRecord,
-  isRecoverableParseFailure,
-} from "./parse-failure-recovery.js";
-export {
-  EMPTY_COMPLETION_RECOVERY_BUDGET,
-  composeEmptyCompletionNotice,
-  formatEmptyCompletionNotice,
-  isRecoverableEmptyCompletion,
-  repeatedEmptyCompletionError,
-} from "./empty-completion-recovery.js";
+export type { StepContext, StepDependencies, StepOutcome } from "./step/step-contract.js";
+export type { StepEvent } from "./step-events.js";
+export { ToolLoopTracker } from "./loop-detector.js";
+export { isLoopVetoResult, hashToolCall, hashToolOutcome } from "./progress/loop-fingerprints.js";
+export { formatReadRepeatNotice, formatRepeatNotice, formatTestRepeatNotice, formatVetoInstruction, formatForcedLoopReply, extractLoopTarget } from "./progress/loop-notices.js";
+export { BATCH_LOOP_LABEL, LOOP_VETO_DENIED_REASON, LOOP_WARNING_BUCKET_SIZE, WANDERING_CEILING_SHARE, TEST_REPEAT_WARNING_THRESHOLD, READ_REPEAT_WARNING_THRESHOLD } from "./progress/loop-constants.js";
+export type { ToolLoopTrackerOptions, LoopCheckVerdict, LoopCheckLevel, WanderingStop, TestRepeatCheck, ReadRepeatCheck } from "./progress/loop-contract.js";
+export { classifyReadResult, describeCoverage, mergeRange, newlyCoveredCount } from "./progress/read-coverage.js";
+export type { LineRange, ReadObservation } from "./progress/read-coverage.js";
+export { PARSE_RECOVERY_BUDGET, composeParseFailureNotice, formatParseFailureNotice, formatTurnFailedRecord, isRecoverableParseFailure } from "./turn/parse-failure-recovery.js";
+export { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, formatEmptyCompletionNotice, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./turn/empty-completion-recovery.js";
 export {
   PROGRESS_NOTE_RESULT,
   createProgressNoteNoticeState,
@@ -94,16 +46,8 @@ export type {
   ReviewStallSignal,
   ReviewStallState,
 } from "./review-stall.js";
-export {
-  narrowDescriptorsToToolSet,
-  toolSetAdmits,
-  toolSetRefusal,
-} from "./step-tool-set.js";
-export type { StepToolSet } from "./step-tool-set.js";
-export { classifyTestCommand } from "./test-command-key.js";
-export type { RecognizedTestCommand } from "./test-command-key.js";
-export {
-  fingerprintWorkspace,
-  FINGERPRINT_IGNORED_DIRS,
-  FINGERPRINT_IGNORED_FILES,
-} from "./workspace-fingerprint.js";
+export { narrowDescriptorsToToolSet, toolSetAdmits, toolSetRefusal } from "./policies/step-tool-set.js";
+export type { StepToolSet } from "./policies/step-tool-set.js";
+export { classifyTestCommand } from "./progress/test-command-key.js";
+export type { RecognizedTestCommand } from "./progress/test-command-key.js";
+export { fingerprintWorkspace, FINGERPRINT_IGNORED_DIRS, FINGERPRINT_IGNORED_FILES } from "./progress/workspace-fingerprint.js";

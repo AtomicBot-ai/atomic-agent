@@ -5,8 +5,8 @@ import {
   addCustomModel,
   removeCustomModel,
 } from "../../config/custom-models-store.js";
-import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
-import { apiKeyForUrl } from "../../local-llm/managed-api-key.js";
+import { hasOtherLiveSessions } from "../../local-llm/server/session-registry.js";
+import { apiKeyForUrl } from "../../local-llm/server/managed-api-key.js";
 import {
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
@@ -2103,7 +2103,7 @@ export class LocalModelsOrchestrator {
    * Returns `undefined` when embeddings are disabled, no model is selected, an
    * unknown model id is configured, or the model file isn't on disk — every
    * one of these is a "skip embedding" condition by design (graceful
-   * degradation, see AGENTS.md §Memory-v2 phase 1B).
+   * degradation, see ../../memory/docs/retrieval.md).
    */
   private buildEmbeddingStartOptions(
     cfg: ReturnType<typeof getConfig>,

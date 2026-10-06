@@ -247,7 +247,7 @@ Atomic Agent's memory is not a giant chat log pasted back into the prompt. It's 
 - **Reflection** runs after turns, off the main agent slot, and writes memory without blocking the reply.
 - **Obsidian export:** `atomic-agent memory export --vault <dir>` writes notes, lessons and procedures into a vault as linked Markdown files.
 
-New to this? [MEMORY_GUIDE.md](MEMORY_GUIDE.md) walks the whole loop end to end: what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
+New to this? [MEMORY_GUIDE.md](docs/user/memory.md) walks the whole loop end to end: what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
 
 ## Ways to Use It
 
@@ -275,7 +275,7 @@ atomic-agent trace list --limit 10
 
 Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prompt, `ctrl+y` approves, `ctrl+d` denies, `ctrl+f` grants the category, `ctrl+b` retargets a write or grants a shell command's shape, `esc` aborts, and typing answers the agent in words. `/theme` switches between six palettes: `classic-dark`, `classic-light`, `toxic-green`, `khorne-red`, `darky-dark`, `moon-yellow`. The TUI is clickable; to select text, drag over plain text, or turn the mouse off with `/mouse off` or `--no-mouse`. Handy slash commands: `/help`, `/tools`, `/model`, `/privacy`. A failed or long turn raises a desktop notification, sessions are named from their first prompt, and inside a [herdr](https://github.com/herdrdev/herdr) pane the TUI labels the pane with its state.
 
-Full TUI guide: [TUI.md](TUI.md).
+Full TUI guide: [TUI.md](docs/user/tui.md).
 
 </details>
 
@@ -797,12 +797,12 @@ npm run build
 
 Core docs:
 
-- [PROMPT.md](PROMPT.md): prompt anatomy
-- [MEMORY_GUIDE.md](MEMORY_GUIDE.md): memory end to end, with worked examples
-- [MEMORY.md](MEMORY.md): memory and recall internals
-- [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) / [MEMORY_FABRIC_V2.5.md](MEMORY_FABRIC_V2.5.md): memory fabric design
-- [SKILLS.md](SKILLS.md): skill format
-- [BUNDLING.md](BUNDLING.md): release packaging
+- [PROMPT.md](src/prompt/README.md): prompt anatomy
+- [MEMORY_GUIDE.md](docs/user/memory.md): memory end to end, with worked examples
+- [MEMORY.md](src/memory/README.md): memory and recall internals
+- [MEMORY_FABRIC_V2.md](docs/archive/2026-10-06/MEMORY_FABRIC_V2.md) / [MEMORY_FABRIC_V2.5.md](docs/archive/2026-10-06/MEMORY_FABRIC_V2.5.md): memory fabric design
+- [SKILLS.md](src/skills/docs/skill-format.md): skill format
+- [BUNDLING.md](scripts/docs/bundling.md): release packaging
 - [AGENTS.md](AGENTS.md): contributor invariants
 
 ## Acknowledgements

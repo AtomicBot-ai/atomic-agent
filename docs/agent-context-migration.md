@@ -1,0 +1,173 @@
+# Agent-context migration map
+
+Status: current
+Owner: repository maintainers
+
+The original guide is preserved byte-for-byte in [the archive](archive/2026-10-06/agent-guide.md); its checksum and heading coverage are recorded in [the machine-readable map](agent-context-migration.json). Each non-code heading below has a current owner; those guides summarize checked contracts. Incident narratives, rollout history and exact old wording remain historical in the archive, not active instructions. Missing former test targets are replaced with actual current source/test entry points, never fabricated files.
+
+- Original line 5, Mission: [docs/architecture.md](architecture.md).
+- Original line 14, Architectural invariants: [AGENTS.md](../AGENTS.md), [src/prompt/docs/assembly.md](../src/prompt/docs/assembly.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 25, Rare tools: `tool.view` and `### loaded-tools`: [src/tools/docs/contracts.md](../src/tools/docs/contracts.md).
+- Original line 35, Skills enable / disable: [src/skills/README.md](../src/skills/README.md).
+- Original line 39, Parallel tool calls per step: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 43, Grammar shape (array-only): [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 59, Resource-class taxonomy: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 77, Batch executor and step pipeline: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 89, Strict tool schemas: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 120, Refused before dispatch: control markers, unknown keys, a replaced user file: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 134, A command still running at the default timeout is detached, not killed: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 138, Reads are confined to the working directory: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 142, A reply batched with work is a progress note: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 146, Locked invariants (pinned by tests): [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 159, Configuration (`agent.*`): [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 175, A turn is a task, not a step budget: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 215, Waiting out a provider outage: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 288, Truncated completions: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 350, An unparseable completion is retried, not fatal: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 388, No-progress loop detection: [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 426, Out of scope (deferred): [src/agent/docs/batching.md](../src/agent/docs/batching.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md), [src/tools/docs/contracts.md](../src/tools/docs/contracts.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 430, Layout rules (enforced): [AGENTS.md](../AGENTS.md).
+- Original line 441, Mouse support: [src/tui/docs/interface.md](../src/tui/docs/interface.md).
+- Original line 463, Module map: [AGENTS.md](../AGENTS.md), [docs/architecture.md](architecture.md).
+- Original line 503, Atomic Mail: [src/atomic-mail/README.md](../src/atomic-mail/README.md).
+- Original line 513, Secrets and process environment: [src/config/docs/compatibility.md](../src/config/docs/compatibility.md), [src/mcp/docs/client.md](../src/mcp/docs/client.md), [src/integrations/README.md](../src/integrations/README.md).
+- Original line 521, Web search reliability: [src/tools/os/README.md](../src/tools/os/README.md).
+- Original line 586, HTTP retry contract: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md), [src/tools/os/README.md](../src/tools/os/README.md).
+- Original line 608, Build & test: [docs/development.md](development.md).
+- Original line 619, LLM provider abstraction: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 623, Registry and transport: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 637, Bootstrap wiring: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 645, Hot-swap: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 649, Credential check before save: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 659, Structured Outputs for memory sub-calls: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 670, Locked invariants: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 684, Embeddings: [src/llm/README.md](../src/llm/README.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 688, Output ceilings: [src/config/docs/compatibility.md](../src/config/docs/compatibility.md).
+- Original line 700, llama-server modes: [src/local-llm/docs/lifecycle.md](../src/local-llm/docs/lifecycle.md), [src/llm/docs/profiles.md](../src/llm/docs/profiles.md).
+- Original line 729, Current memory model: [src/memory/README.md](../src/memory/README.md).
+- Original line 755, Memory fabric: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 761, Memory-v2 phase 1B — hybrid FTS5 + embedding recall (opt-in): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 803, Memory-v2 phase 2 — reactive link graph (on by default): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 866, Memory-v2 phase 3 — neighbor-evolver (on by default): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 931, Memory-v2 phase 4 — bi-temporal ProfileStore: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 979, Memory-v2 phase 5 — lessons + cold-path consolidator (C-half): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1054, Memory-v2 phase 6 — lesson lifecycle and deprecation: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1102, Memory-v2 phase 7a — ExpeL-style vote curation: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1162, Memory-v2 phase 7b — MemP-style advisory procedure templates: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1251, ProfileStore (durable facts, in the prompt tail): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1262, MemoryStore (FTS5 freeform notes): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1272, Reflection (async end-of-turn memory formation): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1284, Configuration: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1297, Invariants: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1306, Explicit out-of-scope: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1310, Memory sub-call health warning: [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1321, Memory v2.5 — phase A heuristic-gated query rewriter (on by default): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1385, Memory v2.5 — phase B sliding-window reflection segmentation (opt-in): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1432, Memory v2.5 — phase C typed NOTE extraction (opt-in): [src/memory/docs/retrieval.md](../src/memory/docs/retrieval.md), [src/memory/docs/formation.md](../src/memory/docs/formation.md).
+- Original line 1477, Concurrency contract: [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1481, Invariants (locked, pinned by [src/runtime/turn-controller.test.ts](../src/runtime/turn-controller.test.ts)): [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1490, Fusion worker turns: [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1500, Ownership of shared resources: [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1512, What the scheduler / webhook paths may and may not assume: [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1520, Mid-turn steering: [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1548, Extension points: [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1555, Risk (acknowledged): [src/runtime/docs/lifecycle.md](../src/runtime/docs/lifecycle.md).
+- Original line 1559, Privacy tab (analytics + approvals): [src/analytics/README.md](../src/analytics/README.md), [src/approval/README.md](../src/approval/README.md), [src/tui/docs/interface.md](../src/tui/docs/interface.md).
+- Original line 1587, Analytics surface, install id, and environment: [src/analytics/README.md](../src/analytics/README.md), [src/approval/README.md](../src/approval/README.md), [src/tui/docs/interface.md](../src/tui/docs/interface.md).
+- Original line 1607, Session grants (prompt-side approval, issue #79): [src/analytics/README.md](../src/analytics/README.md), [src/approval/README.md](../src/approval/README.md), [src/tui/docs/interface.md](../src/tui/docs/interface.md).
+- Original line 1627, Session retention: [src/session/README.md](../src/session/README.md).
+- Original line 1633, Configuration (`sessions.retention.*`): [src/session/README.md](../src/session/README.md).
+- Original line 1639, The rules: [src/session/README.md](../src/session/README.md).
+- Original line 1650, Invariants: [src/session/README.md](../src/session/README.md).
+- Original line 1663, Out of scope (deferred): [src/session/README.md](../src/session/README.md).
+- Original line 1667, Turn marks: the row says when a turn is running: [src/tui/docs/interface.md](../src/tui/docs/interface.md), [src/session/README.md](../src/session/README.md).
+- Original line 1687, Durable tasks: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md).
+- Original line 1705, Lifecycle: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md).
+- Original line 1719, Drain semantics: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md).
+- Original line 1730, Locked invariants (pinned by tests): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md).
+- Original line 1739, Surfaces: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md).
+- Original line 1747, Configuration: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md).
+- Original line 1758, Out of scope (deferred): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md).
+- Original line 1762, Background autonomy: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1766, Schedules on `TaskRecord`: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1781, Scheduler: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1791, Session lifecycle for scheduled tasks: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1803, Wake reason on session metadata: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1814, Webhook ingress: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1826, Agent tools (`tasks.*`): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1842, Telegram reports for scheduled tasks (`notify`): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1857, Configuration (env-only under `tasks.*`): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1869, Metrics (tasks): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1877, CLI: [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1890, TUI surface (Tasks tab): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1929, Locked invariants (pinned by tests): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1943, TUI surface (Memory tab): [src/tasks/docs/queue.md](../src/tasks/docs/queue.md), [src/scheduler/README.md](../src/scheduler/README.md), [src/http/README.md](../src/http/README.md).
+- Original line 1966, New terminal window (Ctrl+N): [src/tui/docs/interface.md](../src/tui/docs/interface.md).
+- Original line 1984, Vision (multimodal input): [src/tools/vision/README.md](../src/tools/vision/README.md).
+- Original line 1988, Surfaces: [src/tools/vision/README.md](../src/tools/vision/README.md).
+- Original line 2003, Locked invariants: [src/tools/vision/README.md](../src/tools/vision/README.md).
+- Original line 2014, Configuration (`vision.*`): [src/tools/vision/README.md](../src/tools/vision/README.md).
+- Original line 2027, Out of scope (deferred): [src/tools/vision/README.md](../src/tools/vision/README.md).
+- Original line 2031, Reply attachments (`reply.attachments`): [src/tools/docs/contracts.md](../src/tools/docs/contracts.md).
+- Original line 2042, Telegram remote-control channel: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2046, Lifecycle: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2054, Polling — explicit AGENTS.md carve-out: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2063, Sessions: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2073, Approvals: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2084, Task reports: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2088, Attachments (inbound): [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2098, Attachments (outbound): [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2102, Live control: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2114, TUI panel: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2124, Configuration: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2135, Metrics: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2142, Outbound formatting (HTML mode): [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2150, Locked invariants: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2170, Out of scope (deferred): [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2174, MCP client: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2178, Why MCP: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2182, Lifecycle: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2196, Module map: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2211, Resource classification: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2222, Sampling forwarding: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2228, Configuration (`config.mcp.servers[]`): [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2250, Locked invariants: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2269, Out of scope (deferred): [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2273, TUI surface (Manage tab — Mcp panel): [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2287, Poller liveness: [src/mcp/docs/client.md](../src/mcp/docs/client.md).
+- Original line 2291, Discord channel: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2295, Why no client library: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2299, Attachments (inbound): [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2303, Attachments (outbound): [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2323, Swarm (extra bots): [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2327, Registry: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2333, TUI tab: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2337, The hatchery: [src/channels/docs/adapters.md](../src/channels/docs/adapters.md).
+- Original line 2359, Integrations hub: [src/integrations/README.md](../src/integrations/README.md).
+- Original line 2379, GitHub integration: [src/github/README.md](../src/github/README.md).
+- Original line 2394, Issue reports (`/report`): [src/tui/issue-report/README.md](../src/tui/issue-report/README.md), [src/error-reporting/README.md](../src/error-reporting/README.md).
+- Original line 2425, Git remote sync (`os.git.{remote,fetch,pull,push,clone}`): [src/tools/os/git/README.md](../src/tools/os/git/README.md).
+- Original line 2437, Composio (hosted toolkits): [src/composio/README.md](../src/composio/README.md).
+- Original line 2441, Why an MCP server and not an SDK: [src/composio/README.md](../src/composio/README.md).
+- Original line 2455, Project path resolution (`os.fs.locate_project`): [src/tools/os/README.md](../src/tools/os/README.md).
+- Original line 2478, LLM reliability policy: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md).
+- Original line 2494, Credit-limit repair (HTTP 402): [src/llm/docs/fallback.md](../src/llm/docs/fallback.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md).
+- Original line 2505, Structured-output refusal (sub-calls): [src/llm/docs/fallback.md](../src/llm/docs/fallback.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md).
+- Original line 2515, Failure taxonomy: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md).
+- Original line 2529, Observability propagation: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md), [src/agent/docs/recovery.md](../src/agent/docs/recovery.md).
+- Original line 2540, Provider fallback chain: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2544, Chain unit and config: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2565, Reset policy (circuit breaker, per provider id, per session): [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2575, No new timer (invariant): [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2579, Streaming: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2583, Cross-transport fallover (request AND response): [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2592, Locked invariants (Pinned by tests): [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2606, TUI: the Fallback pane: [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2618, Locked invariants (Pinned by tests): [src/llm/docs/fallback.md](../src/llm/docs/fallback.md).
+- Original line 2627, Run modes (Local / Cloud / Fusion): [src/llm/run-mode/README.md](../src/llm/run-mode/README.md), [src/tools/fusion/README.md](../src/tools/fusion/README.md).
+- Original line 2645, The resolver rule: [src/llm/run-mode/README.md](../src/llm/run-mode/README.md), [src/tools/fusion/README.md](../src/tools/fusion/README.md).
+- Original line 2659, TUI: the fourth "Where it runs" row: [src/llm/run-mode/README.md](../src/llm/run-mode/README.md), [src/tools/fusion/README.md](../src/tools/fusion/README.md).
+- Original line 2670, TUI: the fusion configurators: [src/llm/run-mode/README.md](../src/llm/run-mode/README.md), [src/tools/fusion/README.md](../src/tools/fusion/README.md).
+- Original line 2675, The orchestrator and its workers: [src/llm/run-mode/README.md](../src/llm/run-mode/README.md), [src/tools/fusion/README.md](../src/tools/fusion/README.md).
+- Original line 2699, Locked invariants (pinned by tests): [src/llm/run-mode/README.md](../src/llm/run-mode/README.md), [src/tools/fusion/README.md](../src/tools/fusion/README.md).
+- Original line 2717, Traceability and replay: [src/tracing/docs/traces.md](../src/tracing/docs/traces.md).

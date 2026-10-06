@@ -3,7 +3,7 @@ import type {
   AgentLoopEvent,
   AgentLoopReason,
   RunTurnResult,
-} from "../../agent/agent-loop.js";
+} from "../../agent/agent-contract.js";
 import {
   countReplacedInputs,
   describeReplacedInput,

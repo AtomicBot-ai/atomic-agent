@@ -1,4 +1,4 @@
-import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-loop.js";
+import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.js";
 import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { SessionState } from "../../session/session-state.js";
@@ -12,7 +12,7 @@ import {
   applyNoChangesRule,
   inspectDeclaredFiles,
 } from "./declared-files.js";
-import type { DeclaredInputsRegistry } from "../os/fs-declared-inputs.js";
+import type { DeclaredInputsRegistry } from "../os/fs/fs-declared-inputs.js";
 import {
   renderWorkerBrief,
   WORKER_REPLY_CHAR_BUDGET,
@@ -32,7 +32,7 @@ import {
   isWorkerVisibleTool,
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
-import { fingerprintToolOutcome } from "../../agent/loop-detector.js";
+import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's

@@ -1,9 +1,9 @@
 /**
  * Local UI state for the TUI "MCP" tab. Folded by `mcp-reducer.ts`
  * from `mcp_*` actions emitted by `McpOrchestrator` and the keyboard
- * layer. Read-only surface — operators inspect server status and
- * the discovered catalog; mutation (enable/disable/restart) is
- * deferred (see AGENTS.md §"MCP client" — Out of scope).
+ * layer. Operators inspect server status and the discovered catalog;
+ * add-server modal state lives here too. External mutations belong to
+ * the orchestrator and MCP manager (see ../../mcp/docs/client.md).
  */
 import type {
   McpPromptMeta,

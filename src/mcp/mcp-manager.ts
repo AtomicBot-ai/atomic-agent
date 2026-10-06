@@ -177,7 +177,7 @@ export class McpManager {
 
   /**
    * Live-add a server from a config previously written into
-   * `<stateDir>/config.json` (variant γ in AGENTS.md §"MCP client").
+   * `<stateDir>/config.json` (variant γ in docs/client.md).
    * The bootstrap-time path uses the constructor; this path is the
    * TUI-driven equivalent that comes after `persistMcpServer`. Idempotent
    * on the server name — a second call with the same name short-circuits

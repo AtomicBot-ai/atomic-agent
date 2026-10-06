@@ -60,7 +60,7 @@ import { DistillRunner } from "./distill-runner.js";
  * between an archived parent and an outside note. The
  * `excludeArchived` filter on `### memory-index` masks the visible
  * impact, but the graph itself is not yet pristine. Document is
- * the source of truth — see AGENTS.md "Memory fabric phase 5"
+ * the source of truth — see ../docs/retrieval.md
  * §5.C deferred for the full plan.
  */
 export interface ConsolidatorTickResult {

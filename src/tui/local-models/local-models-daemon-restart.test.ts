@@ -9,7 +9,7 @@ import { persistUserLocalModelsConfig } from "../persist-user-local-models-confi
 import {
   persistLlmProvider,
   setActiveTextProviderInConfig,
-} from "../persist-llm-provider.js";
+} from "../../config/llm-provider-commands.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 

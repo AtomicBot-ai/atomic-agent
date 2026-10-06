@@ -16,7 +16,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 import { killProcessTree } from "../../sandbox/kill-process-tree.js";
 import { buildSubshellInvocation } from "../../sandbox/shell-invocation.js";
-import { needsShellInterpretation } from "../os/shell.js";
+import { needsShellInterpretation } from "../os/shell/shell.js";
 
 export const OUTPUT_TAIL_CHARS = 8_000;
 /** Kept for `stdout contains` checks; past this the head is dropped. */

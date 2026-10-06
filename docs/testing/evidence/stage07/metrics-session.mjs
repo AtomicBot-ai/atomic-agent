@@ -1,0 +1,12 @@
+import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
+const [taskRoot,logFile]=process.argv.slice(2),groups=new Map();let total=0,outputBytes=0,actions=0;
+const rows=fs.existsSync(logFile)?fs.readFileSync(logFile,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[];
+for(const r of rows){actions++;outputBytes+=r.outputBytes;for(const s of r.spans){const key=s.path+'@'+s.hash;if(!groups.has(key))groups.set(key,{path:s.path,hash:s.hash,spans:[]});groups.get(key).spans.push([s.start,s.end]);total+=s.end-s.start;}}
+let unique=0,instructions=0,code=0,docs=0;for(const g of groups.values()){const spans=g.spans.sort((a,b)=>a[0]-b[0]);let a=-1,b=-1,n=0;for(const[s,e]of spans){if(s>b){if(a>=0)n+=b-a;a=s;b=e;}else b=Math.max(b,e);}if(a>=0)n+=b-a;g.uniqueBytes=n;unique+=n;if(path.basename(g.path)==='AGENTS.md')instructions+=n;else if(/\.(ts|tsx|mjs)$/.test(g.path))code+=n;else docs+=n;}
+const changed=[];const manifest=JSON.parse(fs.readFileSync(taskRoot+'.hidden-manifest.json','utf8'));const original=manifest.snapshot;
+const seededFile=manifest.seed.patches[0]?.file;
+const baselineHash=(rel)=>rel===seededFile?manifest.seed.afterSha256:hash(original+'/'+rel);const hash=f=>crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+function walk(d){return fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):e.isFile()?[path.join(d,e.name)]:[]);}
+for(const d of ['src','docs','scripts','grammars'])if(fs.existsSync(taskRoot+'/'+d)){for(const f of walk(taskRoot+'/'+d)){const rel=path.relative(taskRoot,f),before=original+'/'+rel;if(!fs.existsSync(before)||hash(f)!==baselineHash(rel))changed.push(rel);}if(fs.existsSync(original+'/'+d))for(const f of walk(original+'/'+d)){const rel=path.relative(original,f);if(!fs.existsSync(taskRoot+'/'+rel))changed.push(rel);}}
+for(const e of fs.readdirSync(taskRoot,{withFileTypes:true}))if(e.isFile()){const before=original+'/'+e.name;if(!fs.existsSync(before)||hash(taskRoot+'/'+e.name)!==hash(before))changed.push(e.name);}
+console.log(JSON.stringify({actions,returnedOutputBytes:outputBytes,observedSourceBytes:total,uniqueVersionedSourceBytes:unique,repeatedSourceBytes:total-unique,uniqueInstructionBytes:instructions,uniqueCodeBytes:code,uniqueOtherBytes:docs,files:[...groups.values()].map(({path,hash,uniqueBytes})=>({path,hash,uniqueBytes})),changedFiles:[...new Set(changed)].sort()},null,2));

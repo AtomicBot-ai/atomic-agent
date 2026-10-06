@@ -67,14 +67,14 @@ import {
   type SessionRailLayoutStore,
 } from "./session-rail/index.js";
 import type { TuiEventBus } from "./tui-app.js";
-import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
+import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
 import {
   ChatPullMirror,
   evaluateLocalTurnGate,
   readLocalTurnGateFacts,
   type LocalTurnGateFacts,
 } from "./local-turn-gate.js";
-import { turnsToMessages } from "./turns-to-messages.js";
+import { turnsToMessages } from "./chat/turns-to-messages.js";
 import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
@@ -1011,7 +1011,7 @@ export class ChatOrchestrator {
    *
    * With a turn in flight this is a DETACH, not an abort: the
    * concurrency contract gives every session its own FIFO and runs
-   * sessions in parallel (AGENTS.md §"Concurrency contract"), so the
+   * sessions in parallel (see ../runtime/docs/lifecycle.md), so the
    * turn keeps executing against its own session and saves its
    * transcript there. What must not follow the operator to the new
    * thread:
@@ -1221,13 +1221,13 @@ export class ChatOrchestrator {
    * yet" as well as "too late" or "full". `queueAsSteer` splices it
    * ahead of backlog, behind steers already re-routed for the same
    * turn, so typing order survives. `steer`'s answer is the only fact
-   * consulted — see §"Mid-turn steering" in AGENTS.md.
+   * consulted — see ../runtime/docs/lifecycle.md.
    */
   steerMessage(text: string): void {
     if (this.quitting) return;
     const session = this.ensureSession();
     // Offered to the inbox unconditionally: `steer`'s return value is
-    // the one authoritative fact (AGENTS.md §"Mid-turn steering"), and
+    // the one authoritative fact (see ../runtime/docs/lifecycle.md), and
     // since threads stay switchable mid-run, the turn running on this
     // session is not necessarily one this orchestrator started — a
     // scheduled task's or Telegram's turn is just as steerable.
@@ -1275,7 +1275,7 @@ export class ChatOrchestrator {
    *
    * `RunTurnResult.undelivered` carries anything pushed after the loop's
    * last step boundary — during the final inference, or into a turn
-   * cancelled before it stepped. AGENTS.md makes re-routing the caller's
+   * cancelled before it stepped. The runtime contract makes re-routing the caller's
    * job: `steer` already answered "yes" to whoever sent these, so
    * dropping them here would lose a message the operator watched being
    * accepted. They go to the FRONT of the queue — ahead of

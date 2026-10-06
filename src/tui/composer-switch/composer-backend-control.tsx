@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
-import { llmHealthLook } from "../components/llm-health-badge.js";
+import { llmHealthLook } from "../llm-health/llm-health-badge.js";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { fusionChipColors, fusionSurfaceInk } from "../theme/fusion-tint.js";

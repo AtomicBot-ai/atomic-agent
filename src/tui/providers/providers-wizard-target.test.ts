@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetConfigCache } from "../../config/index.js";
 import { verifyProviderKey } from "../../llm/provider/verify/index.js";
-import { upsertLlmProvider } from "../persist-llm-provider.js";
+import { upsertLlmProvider } from "../../config/llm-provider-commands.js";
 import {
   apiKeyForWizard,
   apiKeyPhaseError,

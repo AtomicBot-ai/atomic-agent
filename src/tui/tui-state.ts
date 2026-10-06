@@ -2,7 +2,7 @@ import {
   clampApprovalLevel,
   type ApprovalLevel,
 } from "../approval/approval-level.js";
-import type { CodingMode } from "./coding-mode.js";
+import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";

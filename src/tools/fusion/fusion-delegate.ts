@@ -9,7 +9,7 @@ import type { StructuredLogger } from "../../tracing/index.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
 import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
 import { getConfig } from "../../config/index.js";
-import { workerReplyAllowance } from "../../local-llm/worker-slots.js";
+import { workerReplyAllowance } from "../../local-llm/server/worker-slots.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
 import {

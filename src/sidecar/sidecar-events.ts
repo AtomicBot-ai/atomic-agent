@@ -97,7 +97,7 @@ export interface SendMessagePayload {
 /**
  * Fold a message into the turn already running on `sessionId`. Unlike
  * {@link SendMessagePayload} this never starts a turn and never queues
- * behind one — see §"Mid-turn steering" in AGENTS.md. The response's
+ * behind one — see §"Mid-turn steering" in README.md. The response's
  * `steered: false` means the session was idle (or the inbox was full)
  * and the host should fall back to `send_message`.
  */

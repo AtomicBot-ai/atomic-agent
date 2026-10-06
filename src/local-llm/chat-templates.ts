@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { LocalModelDef } from "./models-catalog.js";
+import type { LocalModelDef } from "./catalog/models-catalog.js";
 
 /**
  * Resolve bundled jinja asset path.

@@ -6,7 +6,7 @@ import { menuPlaceByTab } from "../menu/menu-registry.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
-import { DownloadChip } from "./download-chip.js";
+import { DownloadChip } from "../local-models/download-chip.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
@@ -16,7 +16,7 @@ import {
   planUpdateBanner,
   UpdateBanner,
   type UpdateBannerPhase,
-} from "./update-banner.js";
+} from "../update/update-banner.js";
 
 interface StatusBarProps {
   state: TuiState;

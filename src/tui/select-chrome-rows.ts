@@ -16,8 +16,8 @@
  * pane's own budget all need the same number, and three props are three
  * chances for one call site to keep the old baseline.
  */
-import { codingModeChipLabel } from "./components/coding-mode-chip.js";
-import { contextChipLabel } from "./components/context-chip.js";
+import { codingModeChipLabel } from "./coding-mode/coding-mode-chip.js";
+import { contextChipLabel } from "./context/context-chip.js";
 import { layoutChipRows } from "./components/hotkey-chip-rows.js";
 import { resolveChips } from "./components/hotkey-chips.js";
 import {
@@ -38,7 +38,7 @@ import {
   isSidebarVisible,
 } from "./layout.js";
 import { selectPromptLlmMeta } from "./llm-panel/llm-panel-selectors.js";
-import { selectComposerContextUsage } from "./select-context-usage.js";
+import { selectComposerContextUsage } from "./context/select-context-usage.js";
 import type { TuiState } from "./tui-state.js";
 
 /**

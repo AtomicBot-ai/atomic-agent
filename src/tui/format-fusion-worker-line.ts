@@ -1,4 +1,4 @@
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { formatTokens } from "./components/format-tokens.js";
 import type { FeedEntry } from "./tui-state.js";
 
