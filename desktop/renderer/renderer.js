@@ -5838,8 +5838,7 @@ function act(a) {
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
                            try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
-                           // ATO-251: on Windows the ground read in this same tick came back
-                           // one theme behind, so it is read again once the new theme has painted.
+                           // ATO-251: read again once the new theme has painted.
                            syncChromeTheme(); syncWindowGround(); render(); syncWindowGroundSoon(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
@@ -7554,10 +7553,8 @@ function syncWindowGround() {
   WINDOW_GROUND.sent = hex;
   Promise.resolve(BR.windowGround(hex)).catch(() => { /* the window keeps the ground it had */ });
 }
-/* ATO-251: the ground again on the frame after a theme change has painted.
-   On Windows a read in the same tick as the data-theme flip returned the
-   previous theme's colour, and the window kept the old ground until the
-   next switch. */
+/* ATO-251: the ground again once a theme change has painted, in case
+   anything still eases the page's background (styles.css reduced motion). */
 function syncWindowGroundSoon() {
   requestAnimationFrame(() => requestAnimationFrame(() => syncWindowGround()));
 }
@@ -11310,9 +11307,7 @@ function dlCardPublish(px, chat) {
     // A conversation held at its newest message stays there, now clear of the card.
     const sc = document.getElementById('scroller');
     if (sc && S.stick) sc.scrollTop = sc.scrollHeight;
-    // ATO-251: on Windows the room under the transcript was not laid out yet
-    // when it was scrolled, so the last row stayed under the card; scroll
-    // again once the new room has painted.
+    // ATO-251: and again once the new room has painted.
     if (sc && S.stick) requestAnimationFrame(() => { if (S.stick) sc.scrollTop = sc.scrollHeight; });
   }
   const v = Math.max(0, Math.round(px));

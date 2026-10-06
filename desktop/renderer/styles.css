@@ -273,9 +273,15 @@ body{scrollbar-color:color-mix(in srgb, var(--ink) 24%, transparent) transparent
 @keyframes flash{0%,100%{background:transparent}30%{background:var(--brand-wash-2)}}
 .flash{animation:flash .5s var(--ease)}
 /* Reduced motion: decorative motion goes, progress spinners keep turning at
-   a slower pace — a frozen spinner reads as a hang. */
+   a slower pace — a frozen spinner reads as a hang.
+   ATO-251: transitions go to 0s, not 80ms. transition-property defaults to
+   `all`, so an 80ms duration on every element animated what had no
+   transition at all: the page ground, the badge colours, the transcript's
+   bottom room. With "Show animations" off (common on Windows) the window
+   was handed the old theme's ground, and the download card covered the
+   approval it should have lifted. */
 @media (prefers-reduced-motion: reduce){
-  *:not(.tk-spin):not(.sspin){animation:none!important;transition-duration:80ms!important}
+  *:not(.tk-spin):not(.sspin){animation:none!important;transition-duration:0s!important}
   .tk-spin,.sspin{animation-duration:2.4s!important}
 }
 
