@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
+import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
 import {
   classifyProviderWaitCause,
@@ -329,6 +330,9 @@ async function handleStream(
  * Translate `AgentLoopEvent`s into SSE frames. Only the events that a
  * chat client can reasonably render are forwarded:
  *  - `tool_call_parsed` → `event: tool_progress` (extensions opt-in only)
+ *  - `tool_call_executed` → `event: tool_result` (extensions opt-in only),
+ *    the call's outcome the moment it lands, matched to its
+ *    `tool_progress` by `call_id`
  *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
  *    A terminal `assistant_reply` whose text the same step already streamed
  *    as deltas is skipped (no duplicate body); one that was never streamed
@@ -396,6 +400,32 @@ export function buildStreamEventHook(
           session_id: env.session.id,
           tool: inner.call.tool,
           label,
+          // The key its `tool_result` comes back under (ATO-197).
+          call_id: toolCallId(stepIndex, inner.batchIndex),
+        });
+      } else if (inner.type === "tool_call_executed") {
+        /* ATO-197: one call ended. A host drew the call from its
+           `tool_progress` and had no word on it until the turn was over
+           and the session store described it, so a call that finished,
+           failed or was denied in a second spun for as long as the turn
+           ran — and after a Stop, for good. Extensions-only, like its
+           `tool_progress`. Tools do not carry call ids, so the id is this
+           completion's own: the step and the call's place in its batch,
+           the same pair the `tool_progress` it answers carries. */
+        if (!env.request.extensionsEnabled) return;
+        sse.writeEvent("tool_result", {
+          id: env.completionId,
+          object: "chat.completion.tool_result",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          call_id: toolCallId(stepIndex, inner.batchIndex),
+          tool: inner.result.tool,
+          status: toolResultStatus(inner.result),
+          ...(typeof inner.durationMs === "number" && Number.isFinite(inner.durationMs)
+            ? { duration_ms: Math.max(0, Math.round(inner.durationMs)) }
+            : {}),
+          summary: clipToolSummary(inner.result.summary),
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
@@ -597,6 +627,47 @@ export function buildStreamEventHook(
       });
     }
   };
+}
+
+/**
+ * A tool call's id on the stream: the step and the call's place in its
+ * batch (`"3:0"`). Unique within one completion, which is all a host
+ * matching a `tool_result` to its `tool_progress` needs.
+ */
+function toolCallId(stepIndex: number, batchIndex: number): string {
+  return `${stepIndex}:${batchIndex}`;
+}
+
+/**
+ * How a call ended, as `tool_result` says it. `denied`: the operator (or
+ * the approval policy) refused it — an `ApprovalDeniedError` out of the
+ * tool, an MCP call stamped `approvalDenied`, or a prompted approval
+ * answered no. `cancelled`: it never ran because the turn was stopped.
+ * Anything else that is not `ok` is `error`, the loop guard's refusal
+ * included: that is the agent's own verdict, not the operator's.
+ */
+function toolResultStatus(
+  result: CompressedToolResult,
+): "ok" | "error" | "denied" | "cancelled" {
+  const details = result.details ?? {};
+  if (details.cancelled === true) return "cancelled";
+  if (result.status === "ok") return "ok";
+  if (
+    details.approvalDenied === true ||
+    details.errorName === "ApprovalDeniedError" ||
+    (result.approvals ?? []).some((a) => a.verdict === "denied")
+  ) {
+    return "denied";
+  }
+  return "error";
+}
+
+/** Longest `summary` a `tool_result` carries; the store keeps the whole one. */
+const TOOL_SUMMARY_MAX = 400;
+
+function clipToolSummary(summary: string): string {
+  const text = typeof summary === "string" ? summary : "";
+  return text.length > TOOL_SUMMARY_MAX ? `${text.slice(0, TOOL_SUMMARY_MAX - 1)}…` : text;
 }
 
 /**

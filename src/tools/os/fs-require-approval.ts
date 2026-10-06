@@ -97,6 +97,15 @@ export interface FsApprovalRequest {
    * those would be nonsense rather than a feature.
    */
   redirectablePath?: string;
+  /**
+   * Files the call would replace or remove as a whole, for the gate's
+   * same-turn denial rule (`ApprovalRequest.targetPaths`): set by
+   * `os.fs.write` replacing a file, `os.fs.trash` and `os.fs.restore`.
+   * None by default — an edit or a patch changes part of a file (a no
+   * to one hunk is not a no to the next), `extract` names a destination
+   * directory and a git verb its repository.
+   */
+  targetPaths?: readonly string[];
 }
 
 /**
@@ -146,9 +155,22 @@ export async function requireFsApproval(
   // happens to contain `config.json` or `.env` must not become the way
   // around that: the operator approved a directory of work, not a
   // change to what the agent is allowed to do next.
+  //
+  // Nor a file the user declined this turn: a worker writing it under
+  // the fan-out's yes would be the way round their no, so that call goes
+  // to the gate, which refuses it (`ApprovalGate.hasDeclinedTarget`).
+  const targetPaths = request.targetPaths ?? [];
   if (
     category !== "trust_config" &&
-    options.approvals.fanoutScopes.allows(request.sessionId, request.paths)
+    options.approvals.fanoutScopes.allows(request.sessionId, request.paths) &&
+    !(
+      options.approvals.hasDeclinedTarget?.({
+        sessionId: request.sessionId,
+        tool: request.tool,
+        category,
+        targetPaths: [...targetPaths],
+      }) ?? false
+    )
   ) {
     return { category };
   }
@@ -166,6 +188,7 @@ export async function requireFsApproval(
       ...(request.redirectablePath !== undefined
         ? { redirectablePath: request.redirectablePath }
         : {}),
+      targetPaths,
     },
     signal,
   );

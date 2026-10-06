@@ -31,6 +31,8 @@ describe("ApprovalGate", () => {
     const decision = await mine;
     expect(decision.approved).toBe(false);
     expect(decision.reason).toBe("operator switched away");
+    // Nobody answered it: never reported to the model as the user's no.
+    expect(decision.automatic).toBe(true);
     // The other session's request is untouched and still answerable.
     expect(gate.pendingCount()).toBe(1);
     const stayingId = emittedIds[1] ?? "";
@@ -620,12 +622,15 @@ describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
       emit: (req) => setImmediate(() => gate.reject(req.approvalId, "nope")),
     });
     for (let i = 0; i < 5; i += 1) {
+      // A distinct call each time: a repeat of a call the user declined in
+      // this turn is refused before it attaches a listener (ATO-225).
       const decision = await gate.request(
         {
           sessionId: "s",
           tool: "os.shell.run",
           category: "shell",
           reason: "r",
+          preview: `cmd ${i}`,
         },
         { signal },
       );

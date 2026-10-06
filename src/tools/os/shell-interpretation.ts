@@ -1,9 +1,16 @@
 /**
  * How `os.shell.run` reads its `cmd` / `args`: the argument coercion, the
- * direct-exec vs subshell decision, and the interpreter shapes whose
- * approval grant is withheld. Split out of shell.ts, which keeps the
- * tool itself.
+ * direct-exec vs subshell decision, the spawn it leads to, and the
+ * interpreter shapes whose approval grant is withheld. Split out of
+ * shell.ts, which keeps the tool itself.
  */
+
+import {
+  buildDirectInvocation,
+  buildSubshellInvocation,
+  quoteCmdArg,
+  type SpawnInvocation,
+} from "../../sandbox/shell-invocation.js";
 
 /**
  * Coerce the model-supplied `args` field into a string array. Returns
@@ -140,6 +147,31 @@ export function needsShellInterpretation(
   }
   if (args.length === 0 && /\s/.test(cmd.trim())) return true;
   return false;
+}
+
+/**
+ * The process `os.shell.run` starts for `cmd` / `execArgs` once
+ * `needsShellInterpretation` has picked the mode.
+ *
+ * For the subshell path we hand a single command line to the OS shell
+ * (`sh -c` / `cmd.exe /c`). When the model supplied separate argv tokens
+ * alongside a shell-bearing `cmd`, quote them on Windows so paths with
+ * spaces survive `cmd.exe` parsing. POSIX keeps the legacy raw join for
+ * byte-identical behaviour. On Windows both the subshell and a direct
+ * `cmd /c …` spawn verbatim (ATO-246: Node's own quoting turned
+ * `dir C:\` into `dir C:\\`).
+ */
+export function resolveShellSpawn(
+  cmd: string,
+  execArgs: readonly string[],
+  useShell: boolean,
+): SpawnInvocation {
+  if (!useShell) return buildDirectInvocation(cmd, execArgs);
+  const commandLine =
+    execArgs.length > 0 && process.platform === "win32"
+      ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
+      : [cmd, ...execArgs].join(" ");
+  return buildSubshellInvocation(commandLine);
 }
 
 /**

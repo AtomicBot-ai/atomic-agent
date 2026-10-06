@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS,
+  LOCAL_WORKER_TASK_BUDGET_FLOOR_MS,
   WORKER_BUDGET_CEILING_FACTOR,
   WORKER_QUEUE_BUDGET_DIVISOR,
   clampTaskBudget,
+  localTaskBudgetFloorMs,
   resolveQueueBudgetMs,
 } from "./worker-runner.js";
 import { classifyWorkerStatus, WORKER_STATUS_ORDER } from "./worker-result.js";
@@ -55,6 +58,52 @@ describe("the queue budget", () => {
 
   it("is always positive", () => {
     expect(resolveQueueBudgetMs(1, 30 * 60_000)).toBeGreaterThan(0);
+  });
+
+  it("lifts a third that is too short to read a brief in to the local floor (ATO-234)", () => {
+    // A 5-minute local worker: a third is 100 s, the floor is 120 s.
+    expect(
+      resolveQueueBudgetMs(
+        LOCAL_WORKER_TASK_BUDGET_FLOOR_MS,
+        30 * 60_000,
+        LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS,
+      ),
+    ).toBe(LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS);
+    // A long budget's third is already above it and stays.
+    expect(
+      resolveQueueBudgetMs(
+        45 * 60_000,
+        30 * 60_000,
+        LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS,
+      ),
+    ).toBe(15 * 60_000);
+  });
+
+  it("never lifts the wait past the configured first-token wait or the worker's own budget", () => {
+    expect(
+      resolveQueueBudgetMs(
+        LOCAL_WORKER_TASK_BUDGET_FLOOR_MS,
+        45_000,
+        LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS,
+      ),
+    ).toBe(45_000);
+    expect(
+      resolveQueueBudgetMs(60_000, 30 * 60_000, LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS),
+    ).toBe(60_000);
+  });
+
+  it("keeps a cloud worker's third, however short", () => {
+    expect(resolveQueueBudgetMs(60_000, 30 * 60_000)).toBe(20_000);
+  });
+});
+
+describe("the local task budget floor", () => {
+  it("is five minutes, or the configured budget when that is shorter", () => {
+    expect(localTaskBudgetFloorMs(45 * 60_000)).toBe(
+      LOCAL_WORKER_TASK_BUDGET_FLOOR_MS,
+    );
+    expect(LOCAL_WORKER_TASK_BUDGET_FLOOR_MS).toBe(5 * 60_000);
+    expect(localTaskBudgetFloorMs(2 * 60_000)).toBe(2 * 60_000);
   });
 });
 

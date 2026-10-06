@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readlinkSync } from "node:fs";
+import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { uptime } from "node:os";
+import { resolve } from "node:path";
 
 /**
  * Who is running the turn a session row is marked `running` for.
@@ -165,6 +166,20 @@ let ownStart: string | null | undefined;
 function ownProcessStart(): string | null {
   if (ownStart === undefined) ownStart = processStartOf(process.pid);
   return ownStart;
+}
+
+/**
+ * The real path of the database file, which every mark written into it
+ * carries: a mark found in another file came with a copy. `undefined`
+ * for an in-memory database, which nothing else can open.
+ */
+export function databaseIdentity(file: string): string | undefined {
+  if (file === ":memory:" || file.length === 0) return undefined;
+  try {
+    return realpathSync.native(file);
+  } catch {
+    return resolve(file);
+  }
 }
 
 /** This process and host, right now. */

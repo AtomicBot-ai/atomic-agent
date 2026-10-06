@@ -103,4 +103,39 @@ describe("createFallbackChainResolver", () => {
       expect(warn).not.toHaveBeenCalled();
     });
   });
+
+  describe("a local link with no model downloaded", () => {
+    const field: ResolvedLlmConfig = {
+      activeTextProvider: "claude-cli",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto",
+      providers: [
+        { id: "claude-cli", kind: "subscription-cli" },
+        { id: "local-llama", kind: "llama-server" },
+      ],
+    };
+
+    it("is skipped, logged once, and back the moment the model is pulled", () => {
+      // ATO-117: the auto-appended local link stood behind a `claude`
+      // that was not installed, and the turn parked on it.
+      const warn = vi.fn();
+      let pulled = false;
+      const resolve = createFallbackChainResolver({
+        readLlmConfig: () => field,
+        builtProviderIds: () => null,
+        linkUnavailable: (_llm, id) => id === "local-llama" && !pulled,
+        logger: { warn },
+      });
+      expect(resolve().chain).toEqual(["claude-cli"]);
+      expect(resolve().chain).toEqual(["claude-cli"]);
+      expect(warn.mock.calls).toEqual([
+        [
+          "llm: fallback link skipped (local model not downloaded)",
+          { id: "local-llama" },
+        ],
+      ]);
+      pulled = true;
+      expect(resolve().chain).toEqual(["claude-cli", "local-llama"]);
+    });
+  });
 });

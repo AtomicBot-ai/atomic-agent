@@ -601,7 +601,6 @@ function renderChatRow(
     panel.pull !== null &&
     panel.pull.modelId !== "_backend" &&
     panel.pull.modelId === r.id;
-  const mini = downloading ? renderProgressBar(panel.pull!.percent, 8) : "";
   const fit = classifyRamFit(r.def, panel.totalRamGb);
   const vramFit = classifyVramFit(r.def, panel.gpuBudgetGb);
   // A row that does not fit in RAM or VRAM is greyed out — but it
@@ -671,9 +670,11 @@ function renderChatRow(
           </Text>
         ) : null}
         {downloading ? (
+          // Text, not a bar: the banner under the list is this pull's
+          // bar, and a second one on the row read as a second download.
           <Text color="yellow" wrap="truncate-end">
             {" "}
-            [{mini}] {panel.pull!.percent}%
+            ⇣ {panel.pull!.percent}%
           </Text>
         ) : null}
       </Box>
@@ -712,9 +713,6 @@ function renderEmbeddingRow(
   const embOffset = panel.rows.length;
   const downloading =
     panel.embeddingPull !== null && panel.embeddingPull.modelId === r.id;
-  const mini = downloading
-    ? renderProgressBar(panel.embeddingPull!.percent, 8)
-    : "";
   const isCursor = embOffset + index === panel.cursor;
   const rowColor = downloading
     ? "yellow"
@@ -759,7 +757,7 @@ function renderEmbeddingRow(
         {downloading ? (
           <Text color="yellow" wrap="truncate-end">
             {" "}
-            [{mini}] {panel.embeddingPull!.percent}%
+            ⇣ {panel.embeddingPull!.percent}%
           </Text>
         ) : null}
       </Box>

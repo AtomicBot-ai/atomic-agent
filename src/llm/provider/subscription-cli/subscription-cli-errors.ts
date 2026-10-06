@@ -5,10 +5,20 @@
  */
 
 export class SubscriptionCliNotInstalledError extends Error {
-  constructor(binary: string, installHint = "") {
+  /**
+   * `productName` words it for someone who picked a subscription in a
+   * menu and has never heard of PATH: "Claude Code isn't installed (the
+   * `claude` command was not found)." Without it, the terse form.
+   */
+  constructor(binary: string, installHint = "", productName?: string) {
     // Trimmed: the Windows shim raises this for a configured `binPath`
     // that is not on disk and has no hint of its own to add.
-    super(`"${binary}" was not found on PATH. ${installHint}`.trim());
+    super(
+      (productName
+        ? `${productName} isn't installed (the \`${binary}\` command was not found). ${installHint}`
+        : `"${binary}" was not found on PATH. ${installHint}`
+      ).trim(),
+    );
     this.name = "SubscriptionCliNotInstalledError";
   }
 }
@@ -85,6 +95,33 @@ const AUTH_PATTERNS = [
 
 export function looksLikeAuthFailure(text: string): boolean {
   return AUTH_PATTERNS.some((re) => re.test(text));
+}
+
+/**
+ * A CLI-backed link that cannot serve until the user does something:
+ * the binary is not installed, or the CLI is signed out. Nothing about
+ * either changes by waiting or retrying, so the turn must end on it at
+ * once rather than park in the outage wait (ATO-117: a Windows user
+ * without `claude` read "no connection" for five minutes).
+ *
+ * Walks `cause`: the step executor hands the agent loop a
+ * `TransportError` wrapping the original.
+ */
+export function isSubscriptionCliSetupError(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (
+      current instanceof SubscriptionCliNotInstalledError ||
+      current instanceof SubscriptionCliAuthError
+    ) {
+      return true;
+    }
+    if (typeof current !== "object" || current === null) return false;
+    const next = (current as { cause?: unknown }).cause;
+    if (next === current) return false;
+    current = next;
+  }
+  return false;
 }
 
 /** `spawn` reports a missing binary as an ENOENT on the error event. */

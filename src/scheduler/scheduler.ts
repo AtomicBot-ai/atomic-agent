@@ -64,8 +64,9 @@ const DEFAULT_CLOCK: SchedulerClock = {
  *    the interval
  *  - skips re-entry when a previous tick is still draining (avoids
  *    pile-ups when a tick takes longer than `tickMs`)
- *  - `stop()` clears the interval and refuses to start again; waits
- *    for the in-flight tick to settle so shutdown ordering is stable
+ *  - `stop()` clears the interval and refuses to start again, aborts
+ *    the in-flight tick's task turns, and waits for the tick to settle
+ *    so shutdown ordering is stable
  */
 export class Scheduler {
   private readonly clock: SchedulerClock;
@@ -73,6 +74,12 @@ export class Scheduler {
   private running = false;
   private stopping = false;
   private inFlight: Promise<void> | null = null;
+  /**
+   * Handed to every tick's `runDue` and aborted by `stop()`: the drain
+   * stops claiming, and the turn of the task it is running is stopped
+   * (the runner puts that task back — see `TaskRunner.handleCancelled`).
+   */
+  private readonly stopController = new AbortController();
 
   constructor(private readonly options: SchedulerOptions) {
     this.clock = options.clock ?? DEFAULT_CLOCK;
@@ -93,22 +100,44 @@ export class Scheduler {
   }
 
   /**
-   * Stop polling. Clears the interval synchronously, then awaits the
-   * in-flight tick (if any) so callers can rely on "no more runTurn
-   * calls originate here" after the returned promise settles.
+   * Stop polling. Clears the interval and aborts the in-flight tick
+   * synchronously, then awaits that tick (if any) so callers can rely on
+   * "no more runTurn calls originate here" after the returned promise
+   * settles.
+   *
+   * The abort is what lets that wait be short: a tick used to be waited
+   * out with its task turn still running, and a turn waiting on a model
+   * server that did not answer held `serve`'s shutdown for minutes, until
+   * the desktop killed the agent. `graceMs` bounds the wait for a turn
+   * that ignores its signal; the tick then finishes on its own, and its
+   * task is taken back by the next boot (`TaskStore.recoverInterrupted`).
    */
-  async stop(): Promise<void> {
+  async stop(graceMs?: number): Promise<void> {
     this.stopping = true;
     if (this.timer !== null) {
       this.clock.clearInterval(this.timer);
       this.timer = null;
     }
-    if (this.inFlight) {
-      try {
-        await this.inFlight;
-      } catch {
-        // tickOnce already logs + metrics the error
-      }
+    this.stopController.abort();
+    const inFlight = this.inFlight;
+    if (!inFlight) return;
+    const settled = inFlight.catch(() => {
+      // tickOnce already logs + metrics the error
+    });
+    if (graceMs === undefined) {
+      await settled;
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        settled,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, graceMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -138,6 +167,7 @@ export class Scheduler {
       const outcome = await this.options.taskRunner.runDue(
         start,
         this.options.batch,
+        this.stopController.signal,
       );
       batchSize = outcome.drained;
       this.options.metrics?.recordSchedulerTick({

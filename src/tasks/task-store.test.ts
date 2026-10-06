@@ -3,18 +3,70 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type BetterSqlite3 from "better-sqlite3";
+
 import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 
-import { TaskStore } from "./task-store.js";
+import {
+  parseTurnOwner,
+  type TurnOwnerProbe,
+} from "../session/turn-owner.js";
+
+import { applyMigrations, TASK_SCHEMA_VERSION } from "./task-schema.js";
+import {
+  TASK_INTERRUPTED_ERROR,
+  TASK_OWNER_GONE_ERROR,
+  TaskStore,
+} from "./task-store.js";
 import {
   TASK_USER_MESSAGE_MAX_LENGTH,
   TaskStateError,
   TaskValidationError,
 } from "./task-types.js";
 
+/** A process and host for owners to name and be judged against. */
+function probe(overrides: Partial<TurnOwnerProbe> = {}): TurnOwnerProbe {
+  return {
+    pid: 100,
+    host: "darwin",
+    hostUptime: () => 50_000,
+    isAlive: () => true,
+    processStartOf: () => null,
+    ...overrides,
+  };
+}
+
 describe("TaskStore", () => {
   let tmp: string;
   let store: TaskStore;
+
+  /** Write to the store's file from outside, as another binary would. */
+  function rawDb(write: (db: BetterSqlite3.Database) => void): void {
+    const db = new DatabaseCtor(join(tmp, "tasks.sqlite"));
+    try {
+      write(db);
+    } finally {
+      db.close();
+    }
+  }
+
+  function setRunOwner(id: string, owner: string | null): void {
+    rawDb((db) =>
+      db.prepare(`UPDATE tasks SET run_owner = ? WHERE id = ?`).run(owner, id),
+    );
+  }
+
+  function runOwnerOf(id: string): string | null {
+    const db = new DatabaseCtor(join(tmp, "tasks.sqlite"));
+    try {
+      const row = db
+        .prepare(`SELECT run_owner FROM tasks WHERE id = ?`)
+        .get(id) as { run_owner: string | null };
+      return row.run_owner;
+    } finally {
+      db.close();
+    }
+  }
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "atomic-agent-tasks-"));
@@ -212,7 +264,76 @@ describe("TaskStore", () => {
     expect(again?.completedAt).toBe(1_500);
   });
 
-  it("recoverStale flips only running rows older than threshold", () => {
+  it("records the claiming process as the run's owner, stamped with the claim's start", () => {
+    const owned = new TaskStore({
+      dbFile: join(tmp, "tasks.sqlite"),
+      ownerProbe: probe({ pid: 4242 }),
+    });
+    try {
+      const t = owned.create(
+        { sessionId: "s-1", userMessage: "x", origin: "cli", maxAttempts: 1 },
+        1_000,
+      );
+      owned.markRunning(t.id, 2_000);
+      const owner = parseTurnOwner(runOwnerOf(t.id));
+      expect(owner).toMatchObject({ pid: 4242, at: 2_000 });
+      expect(owned.get(t.id)?.startedAt).toBe(2_000);
+    } finally {
+      owned.close();
+    }
+  });
+
+  it("recoverInterrupted takes back a run whose owner is gone however fresh, and leaves a live owner's however old", () => {
+    const dbFile = join(tmp, "tasks.sqlite");
+    const claimAs = (pid: number, at: number): string => {
+      const other = new TaskStore({ dbFile, ownerProbe: probe({ pid }) });
+      try {
+        const t = other.create(
+          {
+            sessionId: "s-1",
+            userMessage: `claimed by ${pid}`,
+            origin: "cli",
+            maxAttempts: 3,
+          },
+          at - 1,
+        );
+        other.markRunning(t.id, at);
+        return t.id;
+      } finally {
+        // Closing is not ending the run.
+        other.close();
+      }
+    };
+    const now = 10_000_000;
+    // Claimed 4 s before the sweep, by an agent that has since exited.
+    const dead = claimAs(7001, now - 4_000);
+    // Claimed an hour before, by an agent still running it.
+    const live = claimAs(7002, now - 3_600_000);
+
+    const booting = new TaskStore({
+      dbFile,
+      ownerProbe: probe({ pid: 100, isAlive: (pid) => pid === 7002 }),
+    });
+    try {
+      const recovered = booting.recoverInterrupted({
+        staleAfterMs: 300_000,
+        now,
+      });
+      expect(recovered).toEqual([dead]);
+      expect(booting.get(dead)).toMatchObject({
+        status: "pending",
+        startedAt: null,
+        lastError: TASK_OWNER_GONE_ERROR,
+        lastErrorCategory: "transport",
+      });
+      expect(booting.get(live)?.status).toBe("running");
+    } finally {
+      booting.close();
+    }
+  });
+
+  it("recoverInterrupted falls back to age for a run that names no owner", () => {
+    // Claimed by a binary that records no owner.
     const fresh = store.create(
       { sessionId: "s-1", userMessage: "fresh", origin: "cli", maxAttempts: 1 },
       10_000,
@@ -223,10 +344,155 @@ describe("TaskStore", () => {
     );
     store.markRunning(fresh.id, 19_500);
     store.markRunning(stale.id, 12_000);
-    const flipped = store.recoverStale(5_000, 20_000);
-    expect(flipped).toBe(1);
+    setRunOwner(fresh.id, null);
+    setRunOwner(stale.id, null);
+    const flipped = store.recoverInterrupted({
+      staleAfterMs: 5_000,
+      now: 20_000,
+      isOwnerGone: () => {
+        throw new Error("no owner to judge");
+      },
+    });
+    expect(flipped).toEqual([stale.id]);
     expect(store.get(stale.id)?.status).toBe("pending");
+    expect(store.get(stale.id)?.lastError).toBe("recovered from stale running");
     expect(store.get(fresh.id)?.status).toBe("running");
+  });
+
+  it("recoverInterrupted does not take an owner left from an earlier claim for the run in progress", () => {
+    const t = store.create(
+      { sessionId: "s-1", userMessage: "x", origin: "cli", maxAttempts: 3 },
+      1_000,
+    );
+    store.markRunning(t.id, 2_000);
+    // An older binary claimed it again: `started_at` moved, the owner
+    // column did not.
+    rawDb((db) =>
+      db.prepare(`UPDATE tasks SET started_at = 19000 WHERE id = ?`).run(t.id),
+    );
+    const flipped = store.recoverInterrupted({
+      staleAfterMs: 5_000,
+      now: 20_000,
+      isOwnerGone: () => true,
+    });
+    // Judged by age instead: 1 s old, so left alone.
+    expect(flipped).toEqual([]);
+    expect(store.get(t.id)?.status).toBe("running");
+  });
+
+  it("recoverInterrupted leaves pending and terminal rows alone", () => {
+    const pending = store.create(
+      { sessionId: "s-1", userMessage: "p", origin: "cli", maxAttempts: 1 },
+      1_000,
+    );
+    const done = store.create(
+      { sessionId: "s-1", userMessage: "d", origin: "cli", maxAttempts: 1 },
+      1_000,
+    );
+    store.markRunning(done.id, 2_000);
+    store.markCompleted(done.id, 3_000);
+    expect(
+      store.recoverInterrupted({
+        staleAfterMs: 0,
+        now: 1_000_000,
+        isOwnerGone: () => true,
+      }),
+    ).toEqual([]);
+    expect(store.get(pending.id)?.status).toBe("pending");
+    expect(store.get(done.id)?.status).toBe("completed");
+  });
+
+  it("markInterrupted leaves a one-shot task due as it was, its attempt counted", () => {
+    const t = store.create(
+      { sessionId: "s-1", userMessage: "once", origin: "cli", maxAttempts: 3 },
+      1_000,
+    );
+    store.markRunning(t.id, 2_000);
+    const back = store.markInterrupted(t.id, { nextScheduledFor: null }, 3_000);
+    expect(back).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      startedAt: null,
+      scheduledFor: null,
+      lastError: TASK_INTERRUPTED_ERROR,
+      lastErrorCategory: "cancelled",
+    });
+    expect(store.listDue(3_000).map((r) => r.id)).toEqual([t.id]);
+  });
+
+  it("markInterrupted rearms a recurring task for its next firing, keeping its session", () => {
+    const t = store.create(
+      {
+        sessionId: "s-rec",
+        userMessage: "every 5m",
+        origin: "cli",
+        maxAttempts: 3,
+        schedule: { kind: "interval", everyMs: 300_000 },
+        scheduledFor: 1_500,
+      },
+      1_000,
+    );
+    store.markRunning(t.id, 2_000);
+    const back = store.markInterrupted(
+      t.id,
+      { nextScheduledFor: 302_500 },
+      2_500,
+    );
+    expect(back).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      startedAt: null,
+      scheduledFor: 302_500,
+      lastScheduledAt: 2_500,
+      sessionId: "s-rec",
+      lastErrorCategory: "cancelled",
+    });
+    expect(store.listDue(3_000)).toEqual([]);
+  });
+
+  it("markInterrupted does not revive a task cancelled meanwhile", () => {
+    const t = store.create(
+      { sessionId: "s-1", userMessage: "x", origin: "cli", maxAttempts: 3 },
+      1_000,
+    );
+    store.markRunning(t.id, 2_000);
+    store.cancel(t.id, 2_100);
+    expect(
+      store.markInterrupted(t.id, { nextScheduledFor: 9_000 }, 2_200),
+    ).toBeNull();
+    expect(store.get(t.id)?.status).toBe("cancelled");
+  });
+
+  it("adds the run_owner column to a tasks file made before it, outside the schema version", () => {
+    const file = join(tmp, "old-tasks.sqlite");
+    const old = new DatabaseCtor(file);
+    try {
+      applyMigrations(old);
+    } finally {
+      old.close();
+    }
+    const opened = new TaskStore({ dbFile: file });
+    try {
+      expect(opened.runOwnersUnavailable).toBeNull();
+    } finally {
+      opened.close();
+    }
+    const check = new DatabaseCtor(file);
+    try {
+      const columns = (
+        check.prepare(`PRAGMA table_info(tasks)`).all() as Array<{
+          name: string;
+        }>
+      ).map((c) => c.name);
+      expect(columns).toContain("run_owner");
+      const version = check
+        .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+        .get() as { value: string };
+      // A binary that predates the column still opens the file.
+      expect(Number(version.value)).toBe(TASK_SCHEMA_VERSION);
+    } finally {
+      check.close();
+    }
   });
 
   it("list filters by status", () => {

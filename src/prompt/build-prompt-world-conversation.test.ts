@@ -126,3 +126,68 @@ describe("packedConversationTurns", () => {
     ]);
   });
 });
+
+describe("a repeated os.fs.read in the packed conversation", () => {
+  const read = {
+    path: "/repo/js/main.js",
+    contentHash: "c0ffee",
+    startLine: 1,
+    endLine: 300,
+    numbered: false,
+  };
+
+  function repeatRow(at: number) {
+    return toolResultTurn({
+      tool: "os.fs.read",
+      status: "ok",
+      summary: bigFile,
+      truncated: true,
+      read,
+      at,
+    });
+  }
+
+  it("draws the second read as a pointer in both prompt forms", () => {
+    const packed = {
+      visibleTurns: [
+        userTurn("review the game", 1),
+        readCall({ path: "js/main.js" }, 2),
+        repeatRow(3),
+        readCall({ path: "js/main.js" }, 4),
+        repeatRow(5),
+      ],
+      droppedSummary: null,
+    };
+    const flat = renderPackedConversation(packed);
+    const pointer =
+      "[unchanged since your earlier read: same 300 lines (1-300), identical text — see the os.fs.read result just above; not repeated here]";
+    expect(flat).toContain(`tool_result[os.fs.read ok]: ${pointer}`);
+    // The first read keeps its text, paging hint and truncated mark.
+    expect(pagingHints(flat)).toHaveLength(1);
+    expect(flat.match(/\(truncated\)/g)).toHaveLength(1);
+
+    const results = packedConversationTurns(packed).filter(
+      (t): t is Extract<typeof t, { kind: "tool_result" }> =>
+        t.kind === "tool_result",
+    );
+    expect(results[0]!.body).toContain("line 1 ");
+    expect(results[0]!.truncated).toBe(true);
+    expect(results[1]).toEqual({
+      kind: "tool_result",
+      tool: "os.fs.read",
+      status: "ok",
+      body: pointer,
+      truncated: false,
+    });
+  });
+
+  it("draws the read in full when the earlier one is not among the visible turns", () => {
+    const packed = {
+      visibleTurns: [readCall({ path: "js/main.js" }, 4), repeatRow(5)],
+      droppedSummary: "summary: 3 older turns dropped",
+    };
+    const flat = renderPackedConversation(packed);
+    expect(flat).not.toContain("[unchanged since your earlier read");
+    expect(pagingHints(flat)).toHaveLength(1);
+  });
+});

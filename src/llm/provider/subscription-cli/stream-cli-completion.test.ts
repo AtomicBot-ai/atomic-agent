@@ -73,6 +73,19 @@ describe("streamCliCommand", () => {
     ).rejects.toBeInstanceOf(SubscriptionCliNotInstalledError);
   });
 
+  it("names the missing tool when the caller says which one it is", async () => {
+    await expect(
+      collect(
+        options("", {
+          binary: "definitely-not-a-real-binary-xyz",
+          productName: "Claude Code",
+        }),
+      ),
+    ).rejects.toThrow(
+      /^Claude Code isn't installed \(the `definitely-not-a-real-binary-xyz` command was not found\)/,
+    );
+  });
+
   it("surfaces stderr when the child exits non-zero", async () => {
     const script = `
       process.stderr.write("weekly limit reached");
@@ -235,5 +248,22 @@ describe("streamCliCommand SIGKILL escalation", () => {
     expect(alive(pid)).toBe(true);
     const tookMs = await waitUntilGone(pid, 8_000);
     expect(tookMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("streamCliCommand environment", () => {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = saved;
+  });
+
+  it("keeps the agent's API key away from the CLI", async () => {
+    // `claude` takes this key over the user's subscription (ATO-176).
+    process.env.ANTHROPIC_API_KEY = "sk-ant-agent";
+    const script = `process.stdout.write(String(process.env.ANTHROPIC_API_KEY) + "\\n")`;
+    expect(
+      await collect(options(script, { stripEnv: ["ANTHROPIC_API_KEY"] })),
+    ).toEqual(["undefined"]);
   });
 });

@@ -35,6 +35,7 @@ export {
   type SubscriptionCliProviderOptions,
 } from "./subscription-cli-provider.js";
 export {
+  isSubscriptionCliSetupError,
   SubscriptionCliAuthError,
   SubscriptionCliCommandLineError,
   SubscriptionCliInvocationError,

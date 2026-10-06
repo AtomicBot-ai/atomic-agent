@@ -12,6 +12,7 @@ import { buildDefaultToolRegistry } from "../tools/index.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
+import { stoppedTurnMarker, userTurn } from "../session/conversation-turn.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 import type {
   CapabilitiesSummary,
@@ -93,6 +94,7 @@ interface ReflectCall {
   userMessage: string;
   assistantReply: string;
   transcript: readonly { user: string; assistant: string }[] | undefined;
+  groundingTexts: readonly string[] | undefined;
 }
 
 function captureReflectionRunner(calls: ReflectCall[]): ReflectionRunner {
@@ -103,6 +105,7 @@ function captureReflectionRunner(calls: ReflectCall[]): ReflectionRunner {
         userMessage: input.userMessage,
         assistantReply: input.assistantReply,
         transcript: input.transcript,
+        groundingTexts: input.groundingTexts,
       });
     },
     abortPending() {
@@ -182,6 +185,8 @@ describe("AgentLoop reflection segmentation (phase B)", () => {
     expect(calls[0]!.userMessage).toBe("hello");
     expect(calls[0]!.assistantReply).toBe("hi");
     expect(calls[0]!.transcript).toBeUndefined();
+    // ATO-201: the session's user messages ride along as name evidence.
+    expect(calls[0]!.groundingTexts).toEqual(["hello"]);
   });
 
   it("enabled: skips reflection on intermediate turns and fires on cadence turn with transcript window", async () => {
@@ -300,6 +305,36 @@ describe("AgentLoop reflection segmentation (phase B)", () => {
     expect(calls[0]!.transcript!.map((p) => p.user)).toEqual(["a-msg"]);
     expect(calls[1]!.sessionId).toBe("session-B");
     expect(calls[1]!.transcript!.map((p) => p.user)).toEqual(["b-msg"]);
+  });
+
+  it("enabled: a request the user stopped pairs with nothing and is not carried into the next pair", async () => {
+    // ATO-233. The stop marker is not the agent's words, and the stopped
+    // request was withdrawn: before the marker it was joined to the next
+    // message and extracted as part of what the user asked for then.
+    const calls: ReflectCall[] = [];
+    const loop = makeReplyLoop({
+      reflectionCalls: calls,
+      segmentation: { enabled: true, triggerEveryTurns: 1, windowTurns: 5 },
+      replyText: "fine, thanks",
+    });
+    const session: SessionState = {
+      ...createEmptySessionState({ id: "s-stopped", workingDir }),
+      turns: [
+        userTurn("write a 1000-word story about a dog", 1),
+        stoppedTurnMarker(2),
+      ],
+    };
+    await loop.runTurn(session, {
+      userMessage: "how are you?",
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.transcript).toEqual([
+      { user: "how are you?", assistant: "fine, thanks" },
+    ]);
+    expect(calls[0]!.userMessage).toBe("how are you?");
+    expect(calls[0]!.assistantReply).toBe("fine, thanks");
   });
 
   it("enabled: a 'finish' on an empty session skips reflection (no pairs to extract)", async () => {

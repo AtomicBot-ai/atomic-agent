@@ -5,15 +5,38 @@ import { join } from "node:path";
 
 import type { ToolContext } from "../tool-registry.js";
 import { ProfileStore } from "../../memory/profile-store.js";
+import type {
+  GroundingConversation,
+  GroundingConversationSource,
+} from "../../memory/name-grounding.js";
 import { buildProfileSetTool } from "./profile-set.js";
 
-function makeCtx(): ToolContext {
+function makeCtx(userGroundingTexts?: readonly string[]): ToolContext {
   return {
     workingDir: "/work",
     sessionId: "s1",
     stepIndex: 0,
     signal: new AbortController().signal,
+    ...(userGroundingTexts !== undefined ? { userGroundingTexts } : {}),
   };
+}
+
+/** Stored sessions, newest first; counts the walks it serves. */
+function storedSessions(...sessions: string[][]): GroundingConversationSource & {
+  walks: number;
+} {
+  const source = Object.assign(
+    async function* walk(): AsyncGenerator<GroundingConversation> {
+      source.walks += 1;
+      let updatedAt = 10_000;
+      for (const texts of sessions) {
+        updatedAt -= 1;
+        yield { updatedAt, texts };
+      }
+    },
+    { walks: 0 },
+  );
+  return source;
 }
 
 describe("memory.profile.set", () => {
@@ -98,5 +121,142 @@ describe("memory.profile.set", () => {
       makeCtx(),
     );
     expect(result.status).toBe("error");
+  });
+
+  // ATO-200: the agent saw an invented "Анна" in its profile and stored
+  // it again. A name is written only when the user wrote it.
+  describe("name keys", () => {
+    it("refuses a name the user never wrote, with an error that says to ask", async () => {
+      const tool = buildProfileSetTool({
+        store,
+        groundingSource: storedSessions(["сделай макет"], ["Отвечай на русском"]),
+      });
+      const result = await tool.run(
+        { key: "name", value: "Анна" },
+        makeCtx(["Привет! Сделай отчёт"]),
+      );
+      expect(result.status).toBe("error");
+      expect(result.details.reason).toBe("name_not_written_by_user");
+      expect(result.summary).toMatch(/has not written the name "Анна"/);
+      expect(result.summary).toMatch(/ask the user/);
+      expect(store.get("name")).toBeNull();
+    });
+
+    it("writes a name from the current session and marks it grounded", async () => {
+      const source = storedSessions();
+      const tool = buildProfileSetTool({ store, groundingSource: source });
+      const result = await tool.run(
+        { key: "name", value: "Nadya" },
+        makeCtx(["Меня зовут Надя"]),
+      );
+      expect(result.status).toBe("ok");
+      expect(store.get("name")?.nameGrounding).toBe("grounded");
+      // Found in this session: no walk over the stored ones.
+      expect(source.walks).toBe(0);
+    });
+
+    // The retry trap: a name the user gave in an earlier session must not
+    // be refused because this session never repeats it.
+    it("accepts a name the user gave in an earlier session", async () => {
+      const tool = buildProfileSetTool({
+        store,
+        groundingSource: storedSessions(["сделай макет"], ["Зови меня Надей"]),
+      });
+      const result = await tool.run(
+        { key: "first_name", value: "Надя" },
+        makeCtx(["Как меня зовут?"]),
+      );
+      expect(result.status).toBe("ok");
+      expect(store.get("first_name")?.nameGrounding).toBe("grounded");
+    });
+
+    it("fails open on a script it cannot compare, and says so on the row", async () => {
+      const tool = buildProfileSetTool({ store, groundingSource: storedSessions() });
+      const result = await tool.run(
+        { key: "name", value: "Xiaoming" },
+        makeCtx(["我叫小明，请记住"]),
+      );
+      expect(result.status).toBe("ok");
+      expect(store.get("name")?.nameGrounding).toBe("unverifiable");
+    });
+
+    it("leaves non-name keys alone", async () => {
+      const source = storedSessions();
+      const tool = buildProfileSetTool({ store, groundingSource: source });
+      const result = await tool.run(
+        { key: "project_name_style", value: "Kebab" },
+        makeCtx([]),
+      );
+      expect(result.status).toBe("ok");
+      expect(source.walks).toBe(0);
+    });
+
+    it("writes the name unchecked when no source is wired", async () => {
+      const tool = buildProfileSetTool({ store });
+      const result = await tool.run({ key: "name", value: "Анна" }, makeCtx());
+      expect(result.status).toBe("ok");
+      expect(store.get("name")?.nameGrounding).toBeNull();
+      expect(store.listForPrompt()).toEqual([]);
+    });
+  });
+
+  // ATO-188: `name = Надя` landed twice — the same fact is not a new
+  // version.
+  describe("the same fact again", () => {
+    it("writes nothing when the key already holds the value", async () => {
+      const tool = buildProfileSetTool({ store });
+      await tool.run({ key: "language", value: "ru" }, makeCtx());
+      const again = await tool.run({ key: "language", value: "ru" }, makeCtx());
+      expect(again.status).toBe("ok");
+      expect(again.details.updated).toBe(false);
+      expect(again.summary).toContain("already saved: language = ru (unchanged)");
+      expect(store.history("language")).toHaveLength(1);
+    });
+
+    it("still writes a changed value, pin or keyword list", async () => {
+      const tool = buildProfileSetTool({ store });
+      await tool.run({ key: "deploy_cmd", value: "make ship" }, makeCtx());
+      await tool.run({ key: "deploy_cmd", value: "make ship-prod" }, makeCtx());
+      await tool.run(
+        { key: "deploy_cmd", value: "make ship-prod", pinned: false, keywords: ["deploy"] },
+        makeCtx(),
+      );
+      const same = await tool.run(
+        { key: "deploy_cmd", value: "make ship-prod", pinned: false, keywords: ["Deploy"] },
+        makeCtx(),
+      );
+      expect(same.details.updated).toBe(false);
+      await tool.run(
+        { key: "deploy_cmd", value: "make ship-prod", pinned: false, keywords: ["release"] },
+        makeCtx(),
+      );
+      expect(store.history("deploy_cmd")).toHaveLength(4);
+    });
+
+    it("confirms a stored unconfirmed name the user has now written, without a new row", async () => {
+      store.set("name", "Анна", { nameGrounding: "ungrounded" });
+      const tool = buildProfileSetTool({ store, groundingSource: storedSessions() });
+      const result = await tool.run(
+        { key: "name", value: "Анна" },
+        makeCtx(["Да, меня зовут Анна"]),
+      );
+      expect(result.status).toBe("ok");
+      expect(result.details.confirmed).toBe(true);
+      expect(store.history("name")).toHaveLength(1);
+      expect(store.get("name")?.nameGrounding).toBe("grounded");
+      expect(store.listForPrompt().map((f) => f.key)).toEqual(["name"]);
+    });
+
+    // A confirmed name re-set as is needs no new check: the session that
+    // carried it may have been deleted since.
+    it("does not re-check a confirmed name saved again unchanged", async () => {
+      store.set("name", "Надя", { nameGrounding: "grounded" });
+      const source = storedSessions();
+      const tool = buildProfileSetTool({ store, groundingSource: source });
+      const result = await tool.run({ key: "name", value: "Надя" }, makeCtx([]));
+      expect(result.status).toBe("ok");
+      expect(result.details.updated).toBe(false);
+      expect(source.walks).toBe(0);
+    });
   });
 });

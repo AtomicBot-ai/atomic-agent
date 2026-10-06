@@ -79,6 +79,7 @@ import { registerTaskTools } from "../tools/tasks/index.js";
 import {
   buildFusionDelegateTool,
   pickOriginalRequest,
+  readSlotOccupancy,
 } from "../tools/fusion/index.js";
 import { confineReads } from "../tools/read-scope/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
@@ -108,6 +109,7 @@ import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import { LearnedContextWindows } from "./learned-context-windows.js";
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
+import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import {
   createFallbackCompleter,
   createFallbackStreamer,
@@ -117,6 +119,10 @@ import { abortableSubcall } from "./abortable-subcall.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
+import {
+  sessionGroundingSource,
+  verifyProfileNameFacts,
+} from "../memory/name-grounding.js";
 import { LessonStore } from "../memory/lessons/lesson-store.js";
 import { ProcedureStore } from "../memory/procedures/procedure-store.js";
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
@@ -1160,6 +1166,12 @@ export async function createAgentRuntime(
     resolve: createFallbackChainResolver({
       readLlmConfig: () => resolveLlmConfig(getConfig()),
       builtProviderIds: () => builtProviderIds?.() ?? null,
+      // The auto-appended local link with no weights on disk is not a
+      // backstop: its daemon cannot start, and the turn would wait out
+      // its refused connection instead of failing on the primary's own
+      // error (ATO-117).
+      linkUnavailable: (llm, id) =>
+        isLocalLinkWithoutModel(llm, id, getConfig()),
       logger,
     }),
     noticeSink: (notice) =>
@@ -1721,6 +1733,26 @@ export async function createAgentRuntime(
   registerGithubTools(toolRegistry, dangerous);
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
+  // ATO-199. Every stored user message, newest session first — the only
+  // source a stored name is checked against. Then check, once, every
+  // name-like profile fact no check has looked at yet (an older build
+  // stored names the user never wrote), and re-check the ones found
+  // ungrounded against the sessions written since. Not awaited: until a
+  // name is vouched for it simply stays out of `### profile`. A store
+  // closed under the walk (shutdown) ends it with a warning, nothing
+  // more; nothing is ever deleted.
+  const nameGroundingSource = sessionGroundingSource(sessionStore);
+  if (config.memory.profile.enabled) {
+    void verifyProfileNameFacts({
+      store: profileStore,
+      source: nameGroundingSource,
+      logger,
+    }).catch((err: unknown) => {
+      logger.warn("profile name check failed; unchecked names stay out of the prompt", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
   registerMemoryTools(toolRegistry, {
     profileStore,
     profileEnabled: config.memory.profile.enabled,
@@ -1732,6 +1764,7 @@ export async function createAgentRuntime(
     lessonsEnabled: config.memory.lessons.enabled,
     procedureStore,
     proceduresEnabled: config.memory.procedures.enabled,
+    nameGroundingSource,
   });
 
   // Vision provider wiring is deferred until after `profileManager` is
@@ -2333,11 +2366,28 @@ export async function createAgentRuntime(
   const webhookSessionStore = new WebhookSessionStore(
     resolve(config.paths.stateDir, WEBHOOK_SESSIONS_FILENAME),
   );
-  const recoveredStale = taskStore.recoverStale(config.tasks.staleAfterMs);
-  if (recoveredStale > 0) {
-    logger.info("recovered stale running tasks on bootstrap", {
-      count: recoveredStale,
-      thresholdMs: config.tasks.staleAfterMs,
+  if (taskStore.runOwnersUnavailable !== null) {
+    logger.warn("task runs will not record their process; boot recovery falls back to age", {
+      reason: taskStore.runOwnersUnavailable,
+    });
+  }
+  // Tasks left `running` by an agent that is gone go back to `pending`,
+  // judged by the process that claimed them — the way session turn marks
+  // are — before the scheduler can look at the table. Ones a live agent
+  // on the same state dir is running are left alone. Never blocks boot.
+  try {
+    const recoveredTasks = taskStore.recoverInterrupted({
+      staleAfterMs: config.tasks.staleAfterMs,
+    });
+    if (recoveredTasks.length > 0) {
+      logger.info("tasks left running by a stopped agent put back to pending", {
+        count: recoveredTasks.length,
+        taskIds: recoveredTasks.join(","),
+      });
+    }
+  } catch (err) {
+    logger.warn("could not recover tasks left running; continuing", {
+      error: err instanceof Error ? err.message : String(err),
     });
   }
 
@@ -2689,6 +2739,8 @@ export async function createAgentRuntime(
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
     clearFanoutTurnGrant: (sessionId: string) =>
       approvals.fanoutScopes.clearTurnGrant(sessionId),
+    forgetDeclinedApprovals: (sessionId: string) =>
+      approvals.forgetDeclined(sessionId),
     slotManager,
     grammar,
     llmComplete,
@@ -2723,7 +2775,7 @@ export async function createAgentRuntime(
     // lazy restore for a switch back to a local provider (issue #112).
     localBackend,
     ...(config.memory.profile.enabled
-      ? { profileFactsProvider: () => profileStore.list() }
+      ? { profileFactsProvider: () => profileStore.listForPrompt() }
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
     // v2.5 (Phase B). Sliding-window reflection
@@ -2879,14 +2931,29 @@ export async function createAgentRuntime(
     // through `releaseTurn`, replaces it with what really happened.
     releaseTurnsInterrupted({ keepMarks: true });
     // No scheduled turn may start on a runtime that is closing: the
-    // ticker stops here. The tick already running — and the task turn in
-    // it, which nothing stops — is waited for further down, where it
-    // always was.
-    const schedulerStopped = scheduler?.stop().catch((err: unknown) => {
-      logger.warn("scheduler stop failed", {
-        error: err instanceof Error ? err.message : String(err),
+    // ticker stops here, and the task turns in flight — the tick's, and
+    // any a create's drain or `POST /api/tasks/:id/run` started — are
+    // stopped now, so they write their ends while both stores are open.
+    // Each task goes back for a later run: a recurring one to its next
+    // firing, a one-shot one to the next start. Nothing stopped them
+    // before, and shutdown waited on them — on a model server that was
+    // not answering, until the desktop killed the agent. Both are waited
+    // for further down, at most `SHUTDOWN_TURN_GRACE_MS` from here.
+    const taskRunsStopped = taskRunner
+      .stop(SHUTDOWN_TURN_GRACE_MS)
+      .catch((err: unknown) => {
+        logger.warn("stopping task runs failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return 0;
       });
-    });
+    const schedulerStopped = scheduler
+      ?.stop(SHUTDOWN_TURN_GRACE_MS)
+      .catch((err: unknown) => {
+        logger.warn("scheduler stop failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     // Nothing will drain the inbox after this point; drop pending
     // steers so a message cannot resurface in a later process.
     steeringInbox.clearAll();
@@ -3002,8 +3069,16 @@ export async function createAgentRuntime(
     } catch {
       // already closed
     }
-    // Stopped at the top; this waits out the tick that was running then.
+    // Stopped at the top; this waits out the tick and the task runs that
+    // were in progress then. A run still going is left `running` under
+    // this process, for the next boot to take back.
     await schedulerStopped;
+    const tasksStillRunning = await taskRunsStopped;
+    if (tasksStillRunning > 0) {
+      logger.warn("task runs still going at shutdown; left for the next boot", {
+        count: tasksStillRunning,
+      });
+    }
     if (consolidatorJob) {
       try {
         await consolidatorJob.stop();
@@ -3110,7 +3185,16 @@ export async function createAgentRuntime(
     logger.info("llm: provider refreshed", { id });
   };
 
-  const ensureRecorder = (session: SessionState): TraceRecorder | null => {
+  const ensureRecorder = (
+    session: SessionState,
+    /**
+     * What the `session_started` line records instead of the stored
+     * metadata, when the caller is about to change it: `executeTurn`
+     * passes this turn's `llm` stamp and route, so a file opened at turn
+     * start does not name the previous turn's model in its header.
+     */
+    headerMetadata?: Record<string, unknown>,
+  ): TraceRecorder | null => {
     if (!traceBus) return null;
     const existing = touchRecorder(session.id);
     if (existing) return existing;
@@ -3118,9 +3202,10 @@ export async function createAgentRuntime(
       sessionId: session.id,
       emit: (event) => traceBus.emit(event),
     });
+    const metadata = headerMetadata ?? session.metadata;
     recorder.beginSession({
       workingDir: session.workingDir,
-      ...(session.metadata ? { metadata: session.metadata } : {}),
+      ...(metadata ? { metadata } : {}),
     });
     recorders.set(session.id, recorder);
     // Exempt the entry just created: the caller pins it only after this
@@ -3260,7 +3345,7 @@ export async function createAgentRuntime(
       suppressReasoningPrefill: transport === "native_tools",
       contextWindow: resolveCatalogContextWindow(),
       ...(config.memory.profile.enabled
-        ? { profileFacts: profileStore.list() }
+        ? { profileFacts: profileStore.listForPrompt() }
         : {}),
       ...(input.userMessage !== undefined
         ? { userMessage: input.userMessage }
@@ -3309,6 +3394,7 @@ export async function createAgentRuntime(
         // bare prompt with an empty `content`, so the title has to be
         // asked for the way every other sub-call asks.
         toolTransport: resolveActiveLlmSlice().transport,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
         onError: (err: unknown) =>
           logger.debug("session naming failed", {
             sessionId: state.id,
@@ -3441,16 +3527,15 @@ export async function createAgentRuntime(
           lastTurnContextUsage.delete(session.id);
           // A worker's turn is its whole life: nothing waits on its jobs.
           shellJobs.endSession(session.id);
+          // …nor on its slot pin. The step executor pinned whatever slot
+          // the server put the worker's prompt in; the session id is never
+          // seen again, so the entry would outlive it for the life of the
+          // process, one per worker ever run, and `reserveReflectionSlot`
+          // would keep treating those slots as taken by a live session.
+          slotManager.release(session.id);
         }
       });
     }
-    ensureRecorder(session);
-    // Pin this session for the duration of the turn. Without it a burst of
-    // new sessions can push this one's recorder out mid-turn, after which
-    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
-    // remaining event of the turn and any tool call whose `pendingCalls`
-    // entry went with it is logged with empty args.
-    activeTraceSessions.add(session.id);
     // Resolved before the turn runs, from the live config: the model the
     // operator chose for this turn is what the session should remember,
     // not whatever the config says by the time the turn finishes — and
@@ -3493,6 +3578,21 @@ export async function createAgentRuntime(
         to: turnRoute,
       });
     }
+    // The session's trace records the model this turn runs on, not the
+    // one in the stored metadata: that is the previous turn's until the
+    // turn's save below, so after a switch the log named the old model.
+    const recorder = ensureRecorder(session, {
+      ...session.metadata,
+      [SESSION_LLM_METADATA_KEY]: llmStamp,
+      [SESSION_ROUTE_METADATA_KEY]: turnRoute,
+    });
+    recorder?.noteTurnRoute(turnRoute);
+    // Pin this session for the duration of the turn. Without it a burst of
+    // new sessions can push this one's recorder out mid-turn, after which
+    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
+    // remaining event of the turn and any tool call whose `pendingCalls`
+    // entry went with it is logged with empty args.
+    activeTraceSessions.add(session.id);
     return turnContext.run({ sessionId: session.id }, async () => {
       // Registered before the mark and ended after the turn's end is
       // written, so `shutdown` waiting on it waits for the row to be right.
@@ -3761,6 +3861,16 @@ export async function createAgentRuntime(
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
       localTokensPerSecond: () => llama.measuredTokensPerSecond(),
+      // The same client again, for the one `/slots` read a local
+      // worker's queue watchdog makes before it gives up on the worker:
+      // the hint on that row is chosen from what the server was doing.
+      probeSlotOccupancy: async () => {
+        try {
+          return readSlotOccupancy(await llama.fetchSlots());
+        } catch {
+          return null;
+        }
+      },
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,

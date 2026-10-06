@@ -36,6 +36,8 @@ export type CliStreamEvent =
 export interface CliAdapterDescriptor {
   readonly cli: SubscriptionCliName;
   readonly displayName: string;
+  /** The tool's own name, for messages about it ("Claude Code"). */
+  readonly productName: string;
   readonly defaultBinary: string;
   readonly defaultChatModel: string;
   /** Replaces the CLI's own system prompt for the duration of a turn. */
@@ -51,6 +53,12 @@ export interface CliAdapterDescriptor {
   readonly streamMode: "ndjson" | "none";
   readonly installHint: string;
   readonly authHint: string;
+  /**
+   * Environment variables the child is spawned without: the ones that
+   * switch the CLI from the signed-in subscription to per-token API
+   * billing or to another endpoint (`cliChildEnv`).
+   */
+  readonly billingEnvKeys: readonly string[];
   /**
    * The text written to the child's stdin. Exists because only some
    * CLIs have a system-prompt flag; the rest must carry that steering

@@ -1349,6 +1349,46 @@ describe("reduceTuiState", () => {
     expect(line).toContain("2 of 3");
   });
 
+  it("reports the calls a not-approved barrier kept from running, and stays quiet when all ran", () => {
+    const barriers = (invalidated: number) =>
+      apply(createInitialTuiState(fakeSession()), [
+        { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+        {
+          type: "agent_event",
+          event: {
+            type: "llm_event",
+            event: {
+              type: "batch_approval_barriers",
+              stepIndex: 0,
+              originalSize: 3,
+              waves: 0,
+              barriers: 1,
+              retained: 3 - invalidated,
+              invalidated,
+              ...(invalidated > 0
+                ? {
+                    stoppedBy: {
+                      tool: "os.fs.write",
+                      batchIndex: 0,
+                      cause: "not_approved" as const,
+                    },
+                  }
+                : {}),
+              cancelled: false,
+            },
+          },
+        },
+      ]);
+    const stopped = barriers(2);
+    const line = stopped.feed[stopped.feed.length - 1]?.line ?? "";
+    expect(line).toContain("2 of 3 calls not run");
+    expect(line).toContain("os.fs.write was not approved");
+    const whole = barriers(0);
+    expect(whole.feed.some((entry) => entry.line.includes("not run"))).toBe(
+      false,
+    );
+  });
+
   it("reports a wave-split batch without implying anything was dropped", () => {
     const next = apply(createInitialTuiState(fakeSession()), [
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },

@@ -21,6 +21,26 @@ import type { ChannelLock } from "./telegram-lockfile.js";
 export interface BotFactoryHooks {
   /** A failure inside grammy's own middleware / polling loop. */
   onError?: (error: Error) => void;
+  /**
+   * Telegram answered a `getUpdates`. `lastUpdateId` is the highest
+   * `update_id` in the batch, `null` for an empty one or an error answer
+   * (a 429 still proves the connection is alive).
+   */
+  onPollAnswered?: (lastUpdateId: number | null) => void;
+  /**
+   * A `getUpdates` got no answer: a network failure, a request past its
+   * deadline, or a 5xx. grammy retries it by itself; the channel decides
+   * when that has gone on long enough to call the connection lost.
+   * Never fired for the abort of a deliberate stop.
+   */
+  onPollFailed?: (error: Error) => void;
+  /**
+   * The highest `update_id` this channel has already fetched, read
+   * before every `getUpdates`. A replacement bot polls from past it: the
+   * bot it replaces never confirmed its last batch, and Telegram would
+   * hand those messages out again.
+   */
+  resumeAfterUpdateId?: () => number | null;
 }
 
 export interface BotInstance {
@@ -68,6 +88,15 @@ export interface BotInstance {
   start(onStart: () => void, onStopped?: (error?: unknown) => void): void;
   /** Stop polling. Resolves when the in-flight update settles. */
   stop(): Promise<void>;
+  /**
+   * Stop polling at once, without `stop()`'s closing `getUpdates` that
+   * confirms the offset: abort every poll in flight and refuse new ones.
+   * For a poller on a connection that is gone (the confirmation would
+   * hang until its deadline) or one being replaced (a late confirmation
+   * would terminate the replacement's poll with a 409). Optional for
+   * fakes; the channel falls back to `stop()`.
+   */
+  abandon?(): void;
 }
 
 export type BotFactory = (

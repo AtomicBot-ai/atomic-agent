@@ -120,7 +120,7 @@ describe("os.git.push", () => {
       approvalRequired: true,
     });
     await expect(tool.run({}, makeCtx(repo))).rejects.toThrow(
-      /approval denied/,
+      /The user declined/,
     );
     const remoteBranches = await runGitRaw(bare, ["branch", "--list"]);
     expect(remoteBranches.stdout.trim()).toBe("");

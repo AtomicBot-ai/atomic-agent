@@ -31,9 +31,14 @@ import { sendOutbound, type TelegramParseMode } from "./outbound-sender.js";
 import { formatTaskReportMessage } from "./task-report-message.js";
 import { sendWelcomeMessage } from "./welcome-message.js";
 import {
+  POLL_STALL_MS,
   TelegramReconnect,
+  classifyTelegramFailure,
+  formatGivingUpError,
+  formatLockWaitError,
   formatReconnectingError,
-  isFatalTelegramError,
+  type ReconnectKind,
+  type TelegramFailureKind,
 } from "./telegram-reconnect.js";
 import {
   resolveTokenFromDeps,
@@ -77,6 +82,15 @@ export type TaskReportDelivery =
  * memory wins over completeness for a channel that may never start.
  */
 export const TASK_REPORT_QUEUE_LIMIT = 20;
+
+/**
+ * How long `stop()` waits for grammy's `bot.stop()`. The loop itself
+ * ends at once; what `bot.stop()` then awaits is one more `getUpdates`
+ * confirming the offset, which on a dead network runs to its deadline.
+ * Shutdown abandons the bot instead -- the next bot resumes after
+ * `lastUpdateId` either way, so nothing is handled twice.
+ */
+export const STOP_POLLING_TIMEOUT_MS = 3_000;
 
 /**
  * Outcome of a successful pairing claim. `claim` is what the operator
@@ -176,6 +190,19 @@ export class TelegramChannel {
    * backoff. See `telegram-reconnect.ts`.
    */
   private readonly reconnect = new TelegramReconnect();
+  /**
+   * When the live bot's `getUpdates` last got an answer (or polling
+   * began). A poll failure this long after it means the connection is
+   * gone; see `handlePollFailed`.
+   */
+  private lastPollAnsweredAt = 0;
+  /**
+   * Highest `update_id` any of this channel's bots has fetched. A
+   * replacement bot resumes after it: the poller it replaces never
+   * confirmed its last batch, and Telegram would otherwise hand those
+   * messages out again and run their turns twice.
+   */
+  private lastUpdateId: number | null = null;
 
   constructor(deps: TelegramChannelDeps) {
     this.deps = deps;
@@ -242,13 +269,16 @@ export class TelegramChannel {
   /**
    * Acquire the lock, validate the token via `getMe`, register
    * handlers, and begin polling. Idempotent. Failures land in `down`
-   * and never throw past this boundary. While an outage is being
-   * retried, a failure a retry can fix arms the next attempt instead;
-   * a first start that fails stays `down`, as the Discord channel's
-   * does.
+   * and never throw past this boundary. A failure a retry can fix --
+   * Telegram unreachable, another process holding the lock or polling
+   * the bot -- arms the next attempt, on the first start as on any
+   * other: a machine that boots offline must not need a restart once
+   * the network is back. Only a rejected token gives up.
    */
   async start(): Promise<void> {
-    if (this.currentState === "up" || this.startInFlight) return;
+    // `this.bot` too: never a second poller beside a live one, even
+    // while that one is still being stopped.
+    if (this.currentState === "up" || this.startInFlight || this.bot) return;
     // Whoever starts the channel -- the retry timer, the TUI, a
     // live-control setter -- supersedes a retry still waiting to run.
     this.reconnect.clearTimer();
@@ -260,18 +290,28 @@ export class TelegramChannel {
     this.startInFlight = true;
     const generation = this.stopGeneration;
     let lockAcquired = false;
-    this.transition("starting", null);
     try {
+      // Before `starting`: while another process holds the lock, the
+      // retries that wait for it must not flash `starting` on every try.
       this.lock.acquire();
       lockAcquired = true;
+      this.transition("starting", null);
       const factory = this.deps.botFactory ?? defaultGrammyBotFactory;
+      // The hooks fire for this bot only; `created` tells them apart
+      // from a previous bot's late reports.
+      let created: BotInstance | null = null;
       const bot = await factory(this.currentToken, {
         onError: (err) => {
           this.deps.logger.warn("telegram: polling error", {
             error: scrubErrorMessage(err),
           });
         },
+        onPollAnswered: (lastUpdateId) =>
+          this.handlePollAnswered(created, lastUpdateId),
+        onPollFailed: (err) => this.handlePollFailed(created, err),
+        resumeAfterUpdateId: () => this.lastUpdateId,
       });
+      created = bot;
       const me = await bot.api.getMe();
       this.currentBotIdentity = {
         id: me.id,
@@ -294,13 +334,23 @@ export class TelegramChannel {
           { botUsername: me.username },
         );
       }
-      const bridge = new ApprovalBridge({
-        api: bot.api,
-        approvals: this.deps.runtime.approvals,
-        ownerUserId: this.currentOwnerUserId,
-        logger: this.deps.logger,
-      });
-      this.approvalBridge = bridge;
+      // A bridge that survived a lost poller is kept, and so are the
+      // session bindings that dispatch to it: its pending approvals'
+      // keyboards are still in the chat, and their clicks now arrive
+      // through this bot.
+      let bridge = this.approvalBridge;
+      if (bridge) {
+        bridge.rebind(bot.api, this.currentOwnerUserId);
+      } else {
+        bridge = new ApprovalBridge({
+          api: bot.api,
+          approvals: this.deps.runtime.approvals,
+          ownerUserId: this.currentOwnerUserId,
+          logger: this.deps.logger,
+        });
+        this.approvalBridge = bridge;
+      }
+      const activeBridge = bridge;
       // One context for both handlers: the text and file paths share
       // the owner check, the session pointer, the in-flight map and
       // the approval binding, and must never drift apart.
@@ -333,7 +383,7 @@ export class TelegramChannel {
       };
       bot.setTextHandler((update) => handleInboundText(update, inboundCtx));
       bot.setFileHandler?.((update) => handleInboundFile(update, inboundCtx));
-      bot.setCallbackHandler?.((update) => bridge.handleCallback(update));
+      bot.setCallbackHandler?.((update) => activeBridge.handleCallback(update));
       try {
         await bot.api.setMyCommands?.([
           { command: "start", description: "Show help" },
@@ -364,6 +414,7 @@ export class TelegramChannel {
         return;
       }
       this.stopRequested = false;
+      this.lastPollAnsweredAt = Date.now();
       bot.start(
         () => {
           this.deps.logger.info("telegram: polling started");
@@ -389,17 +440,20 @@ export class TelegramChannel {
         // ignore — we are in the failure path already
       }
       const reason = scrubErrorMessage(err);
-      // A lock we could not take means another process serves this bot
-      // now; like a rejected token or a 409, no retry can help.
-      if (
-        lockAcquired &&
-        this.reconnect.inOutage() &&
-        !isFatalTelegramError(err)
-      ) {
-        this.scheduleReconnect(`reconnect failed: ${reason}`);
+      // A lock we could not take means another atomic-agent serves this
+      // bot right now -- worth waiting out, not worth reporting twice.
+      const kind = lockAcquired ? classifyTelegramFailure(err) : "locked";
+      if (kind === "fatal") {
+        this.giveUp(reason);
       } else {
-        this.reconnect.cancel();
-        this.transition("down", reason);
+        // The lock reason keeps its `channel-locked:` prefix up front,
+        // where the Integrations hub looks for it.
+        this.scheduleReconnect(
+          kind !== "locked" && this.reconnect.inOutage()
+            ? `reconnect failed: ${reason}`
+            : reason,
+          kind,
+        );
       }
     } finally {
       this.startInFlight = false;
@@ -422,29 +476,118 @@ export class TelegramChannel {
     this.deps.logger.info("telegram: start abandoned, stop() landed first");
   }
 
-  /** Report the outage and arm the next attempt. `cause` is already scrubbed. */
-  private scheduleReconnect(cause: string): void {
+  /**
+   * Report the outage and arm the next attempt. `cause` is already
+   * scrubbed. A transient failure leaves a `warn` per attempt -- the
+   * post-mortem trail on `serve`'s stderr. A conflict or a lock held
+   * elsewhere can last as long as the other process runs, so it is
+   * reported when it starts and then waited out at `debug`.
+   */
+  private scheduleReconnect(cause: string, kind: ReconnectKind): void {
     const next = this.reconnect.schedule(() => {
       void this.start().catch((err: unknown) => {
         this.deps.logger.error("telegram: reconnect start() rejected", {
           error: scrubErrorMessage(err),
         });
       });
-    });
-    this.deps.logger.warn("telegram: polling reconnect scheduled", {
+    }, kind);
+    const context = {
       attempt: next.attempt,
       delayMs: next.delayMs,
+      kind,
       reason: cause,
+    };
+    if (kind === "transient" || next.firstOfKind) {
+      this.deps.logger.warn("telegram: polling reconnect scheduled", context);
+    } else {
+      this.deps.logger.debug("telegram: polling reconnect scheduled", context);
+    }
+    this.transition(
+      "down",
+      kind === "locked"
+        ? formatLockWaitError(cause)
+        : formatReconnectingError(cause, next),
+    );
+  }
+
+  /**
+   * Telegram rejected the token (401 / 404). No retry can help, so the
+   * outage ends here: said once at `error` and in `lastError`, and every
+   * pending approval is denied now -- no click can reach this channel
+   * until the token is replaced.
+   */
+  private giveUp(reason: string): void {
+    this.reconnect.cancel();
+    this.retireApprovalBridge("telegram channel down: bot token rejected");
+    this.deps.logger.error("telegram: giving up, the bot token was rejected", {
+      reason,
     });
-    this.transition("down", formatReconnectingError(cause, next));
+    this.transition("down", formatGivingUpError(reason));
+  }
+
+  /** Drop the session bindings and deny what the bridge still holds. */
+  private retireApprovalBridge(reason: string): void {
+    for (const sub of this.approvalSubscriptions.values()) sub.unsubscribe();
+    this.approvalSubscriptions.clear();
+    this.approvalBridge?.expireAll(reason);
+    this.approvalBridge = null;
+  }
+
+  /** The live bot's `getUpdates` got an answer. */
+  private handlePollAnswered(
+    bot: BotInstance | null,
+    lastUpdateId: number | null,
+  ): void {
+    // Recorded whichever bot fetched it: grammy hands a batch to the
+    // handlers even when its poller was stopped in the meantime.
+    if (
+      lastUpdateId !== null &&
+      (this.lastUpdateId === null || lastUpdateId > this.lastUpdateId)
+    ) {
+      this.lastUpdateId = lastUpdateId;
+    }
+    if (bot !== null && this.bot === bot) this.lastPollAnsweredAt = Date.now();
+  }
+
+  /**
+   * The live bot's `getUpdates` failed. grammy retries it by itself every
+   * 3 s, which covers a blip; but past `POLL_STALL_MS` without an answer
+   * the connection is gone, and the channel says so instead of sitting
+   * `up`: the poller is abandoned and replaced on the reconnect backoff.
+   */
+  private handlePollFailed(bot: BotInstance | null, err: Error): void {
+    if (this.stopRequested || bot === null || this.bot !== bot) return;
+    const reason = scrubErrorMessage(err);
+    const silentMs = Date.now() - this.lastPollAnsweredAt;
+    if (silentMs < POLL_STALL_MS) {
+      this.deps.logger.debug("telegram: getUpdates failed, retrying", {
+        reason,
+      });
+      return;
+    }
+    this.deps.logger.warn("telegram: polling stalled, replacing the poller", {
+      reason,
+      silentMs,
+    });
+    this.abandonBot(bot);
+    this.losePoller("transient", `connection lost: ${reason}`, reason);
+  }
+
+  /** End a bot's polling without waiting on Telegram. */
+  private abandonBot(bot: BotInstance): void {
+    if (bot.abandon) {
+      bot.abandon();
+      return;
+    }
+    void bot.stop().catch(() => undefined);
   }
 
   /**
    * The polling loop ended. Anything other than a `stop()` we asked for
    * is a failure: the channel is no longer receiving updates, so it
    * must say so rather than sit at `up` looking healthy while every
-   * message goes unanswered -- and, unless Telegram said no retry can
-   * help (`isFatalTelegramError`), come back by itself on a backoff
+   * message goes unanswered -- and, unless Telegram rejected the token
+   * (`classifyTelegramFailure`), come back by itself on a backoff
    * instead of waiting for a process restart.
    *
    * Guarded on the bot identity so a late callback from a previous
@@ -458,30 +601,36 @@ export class TelegramChannel {
         ? "polling stopped unexpectedly"
         : scrubErrorMessage(err);
     this.deps.logger.warn("telegram: polling loop ended", { reason });
+    this.losePoller(
+      classifyTelegramFailure(err),
+      err === undefined ? reason : `polling stopped: ${reason}`,
+      reason,
+    );
+  }
+
+  /**
+   * The live poller is gone, whatever ended it. Give the lock back, then
+   * either give up or arm the retry. The approval bridge and its session
+   * bindings are kept for a retry -- `start()` rebinds them to the next
+   * bot, so a keyboard sent before the drop still works after it.
+   */
+  private losePoller(
+    kind: TelegramFailureKind,
+    cause: string,
+    reason: string,
+  ): void {
     this.bot = null;
     this.currentBotIdentity = null;
-    // Session approval bindings dispatch to this bot's bridge, but button
-    // clicks arrive through whichever bot is polling -- after a reconnect
-    // that is the next bridge, which would ignore them. Drop the bindings
-    // as `stop()` does; the next message in each chat re-binds. The old
-    // bridge is not cancelled: its timers still auto-deny what is
-    // pending, and `cancelAll()` would leave those turns waiting on a
-    // gate nothing resolves.
-    for (const sub of this.approvalSubscriptions.values()) sub.unsubscribe();
-    this.approvalSubscriptions.clear();
     try {
       this.lock.release();
     } catch {
       // best effort — a stale lock is reclaimed on the next acquire
     }
-    if (isFatalTelegramError(err)) {
-      this.reconnect.cancel();
-      this.transition("down", reason);
+    if (kind === "fatal") {
+      this.giveUp(reason);
       return;
     }
-    this.scheduleReconnect(
-      err === undefined ? reason : `polling stopped: ${reason}`,
-    );
+    this.scheduleReconnect(cause, kind);
   }
 
   /** Stop polling, abort in-flight turns, cancel pairing, release the lock. Idempotent. */
@@ -521,7 +670,7 @@ export class TelegramChannel {
     this.approvalBridge = null;
     if (this.bot) {
       try {
-        await this.bot.stop();
+        await this.stopPolling(this.bot);
       } catch (err) {
         this.deps.logger.warn("telegram: bot.stop() failed", {
           error: err instanceof Error ? err.message : String(err),
@@ -538,6 +687,34 @@ export class TelegramChannel {
       });
     }
     this.transition("disabled", null);
+  }
+
+  /**
+   * `bot.stop()`, bounded by `STOP_POLLING_TIMEOUT_MS`. Past it the bot
+   * is abandoned, which also aborts the offset confirmation still in
+   * flight -- left running, it could land after a restarted bot's first
+   * poll and terminate that one with a 409.
+   */
+  private async stopPolling(bot: BotInstance): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), STOP_POLLING_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    try {
+      const outcome = await Promise.race([
+        bot.stop().then(() => "stopped" as const),
+        timedOut,
+      ]);
+      if (outcome === "timeout") {
+        this.deps.logger.warn("telegram: bot.stop() timed out, abandoning", {
+          timeoutMs: STOP_POLLING_TIMEOUT_MS,
+        });
+        this.abandonBot(bot);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -605,7 +782,17 @@ export class TelegramChannel {
    * for a writer that wants the persistence too.
    */
   adoptTokenFromEnv(): void {
-    this.currentToken = resolveTokenFromDeps(this.deps);
+    this.replaceToken(resolveTokenFromDeps(this.deps));
+  }
+
+  /**
+   * Swap the live token. Update ids are per bot, so another bot's
+   * numbering says nothing about this one's: resuming after it could
+   * skip every message the new bot receives.
+   */
+  private replaceToken(token: string | null): void {
+    if (token !== this.currentToken) this.lastUpdateId = null;
+    this.currentToken = token;
   }
 
   /**
@@ -617,7 +804,7 @@ export class TelegramChannel {
    */
   async setToken(token: string | null): Promise<void> {
     this.settings.writeToken(token);
-    this.currentToken = token;
+    this.replaceToken(token);
     if (this.currentState === "up" || this.reconnect.pending()) {
       await this.restart();
     }

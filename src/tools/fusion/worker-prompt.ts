@@ -1,4 +1,7 @@
-import type { ConversationTurn } from "../../session/conversation-turn.js";
+import {
+  isStoppedTurnMarker,
+  type ConversationTurn,
+} from "../../session/conversation-turn.js";
 import {
   ORIGINAL_REQUEST_BEGIN_MARKER,
   ORIGINAL_REQUEST_END_MARKER,
@@ -72,21 +75,46 @@ function formatCount(n: number): string {
  * the last thing the operator said; a short follow-up is quoted together
  * with the message it follows up, because "continue" alone tells a
  * worker nothing about what is being continued.
+ *
+ * Except a message the user stopped (a stop marker after it): that
+ * request was withdrawn, so it is neither merged into a short message
+ * nor fallen back to. Merged, "how are you?" after a stopped "write 100
+ * names" reached every worker as ORIGINAL REQUEST with the stopped job
+ * in it, and the orchestrator delegated the stopped job again.
  */
 export function pickOriginalRequest(input: {
   current: string;
   earlierTurns: readonly ConversationTurn[];
 }): string | undefined {
-  const earlier = input.earlierTurns
-    .flatMap((turn) => (turn.kind === "user" ? [turn.text.trim()] : []))
-    .filter((text) => text.length > 0);
-  const previous = earlier[earlier.length - 1];
+  const previous = lastLiveRequest(input.earlierTurns);
   const current = input.current.trim();
   if (current.length === 0) return previous;
   if (current.length >= FOLLOW_UP_MAX_CHARS || previous === undefined) {
     return current;
   }
   return `${previous}\n\n${REQUEST_FOLLOW_UP_MARKER}\n${current}`;
+}
+
+/**
+ * The last non-empty thing the operator said before this turn, unless a
+ * stop marker follows it — then nothing: the user stopped that request.
+ */
+function lastLiveRequest(
+  turns: readonly ConversationTurn[],
+): string | undefined {
+  let stopped = false;
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const turn = turns[i];
+    if (isStoppedTurnMarker(turn)) {
+      stopped = true;
+      continue;
+    }
+    if (turn === undefined || turn.kind !== "user") continue;
+    const text = turn.text.trim();
+    if (text.length === 0) continue;
+    return stopped ? undefined : text;
+  }
+  return undefined;
 }
 
 function quoteOriginalRequest(request: string): string[] {

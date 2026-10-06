@@ -167,6 +167,7 @@ export function buildOsFsTrashTool(
           reason: `move ${absolutes.length} path(s) to Trash`,
           preview,
           affectedResources: absolutes,
+          targetPaths: absolutes,
           workingDir: ctx.workingDir,
           trustConfigPaths: options.trustConfigPaths,
         },

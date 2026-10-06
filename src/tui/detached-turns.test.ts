@@ -68,6 +68,18 @@ describe("TurnEventBuffer", () => {
     type: "user_message",
     text,
   });
+  const step = (stepIndex: number): AgentLoopEvent => ({
+    type: "step_started",
+    stepIndex,
+  });
+  const reply = (text: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: { type: "assistant_delta", text },
+  });
+  const thought = (stepIndex: number, text: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: { type: "reasoning_delta", stepIndex, text },
+  });
 
   it("records only sessions with a begun turn and snapshots in order", () => {
     const buffer = new TurnEventBuffer();
@@ -88,18 +100,79 @@ describe("TurnEventBuffer", () => {
     const buffer = new TurnEventBuffer();
     buffer.begin("s1");
     for (let i = 0; i < DEFAULT_RING_BUFFER_SIZE + 3; i += 1) {
-      buffer.record("s1", event(`e${i}`));
+      buffer.record("s1", step(i));
     }
     const snap = buffer.snapshot("s1");
     expect(snap?.events).toHaveLength(DEFAULT_RING_BUFFER_SIZE);
     expect(snap?.dropped).toBe(3);
     // Oldest gone, newest kept.
-    expect(snap?.events[0]).toEqual(event("e3"));
-    expect(snap?.events.at(-1)).toEqual(
-      event(`e${DEFAULT_RING_BUFFER_SIZE + 2}`),
-    );
+    expect(snap?.events[0]).toEqual(step(3));
+    expect(snap?.events.at(-1)).toEqual(step(DEFAULT_RING_BUFFER_SIZE + 2));
     // The gap the operator is told about names the loss.
     expect(formatReplayGapNotice(3)).toContain("3 events");
+  });
+
+  it("stores a streamed reply as one event, so it cannot crowd the turn out", () => {
+    // ATO-37: one event per token filled the ring with a single answer,
+    // and a switch-back mid-reply came back to a gap notice over half a
+    // sentence, the operator's own prompt gone.
+    const buffer = new TurnEventBuffer();
+    buffer.begin("s1");
+    buffer.record("s1", event("explain the build"));
+    buffer.record("s1", step(0));
+    for (let i = 0; i < DEFAULT_RING_BUFFER_SIZE * 4; i += 1) {
+      buffer.record("s1", reply("w "));
+    }
+    const snap = buffer.snapshot("s1");
+    expect(snap?.dropped).toBe(0);
+    expect(snap?.events).toEqual([
+      event("explain the build"),
+      step(0),
+      reply("w ".repeat(DEFAULT_RING_BUFFER_SIZE * 4)),
+    ]);
+  });
+
+  it("joins reasoning only within one step, and only adjacent pieces", () => {
+    const buffer = new TurnEventBuffer();
+    buffer.begin("s1");
+    buffer.record("s1", thought(0, "a"));
+    buffer.record("s1", thought(0, "b"));
+    buffer.record("s1", thought(1, "c"));
+    buffer.record("s1", reply("x"));
+    buffer.record("s1", thought(1, "d"));
+    buffer.record("s1", reply("y"));
+    buffer.record("s1", reply("z"));
+    expect(buffer.snapshot("s1")?.events).toEqual([
+      thought(0, "ab"),
+      thought(1, "c"),
+      reply("x"),
+      thought(1, "d"),
+      reply("yz"),
+    ]);
+  });
+
+  it("joins without rewriting the events the reducer was handed", () => {
+    const buffer = new TurnEventBuffer();
+    buffer.begin("s1");
+    const first = reply("a");
+    buffer.record("s1", first);
+    buffer.record("s1", reply("b"));
+    expect(first).toEqual(reply("a"));
+  });
+
+  it("keeps the turn's prompt when an overflow takes the head", () => {
+    const buffer = new TurnEventBuffer();
+    buffer.begin("s1");
+    buffer.record("s1", event("the prompt"));
+    for (let i = 0; i < DEFAULT_RING_BUFFER_SIZE + 2; i += 1) {
+      buffer.record("s1", step(i));
+    }
+    const snap = buffer.snapshot("s1");
+    expect(snap?.events).toHaveLength(DEFAULT_RING_BUFFER_SIZE);
+    expect(snap?.dropped).toBe(3);
+    expect(snap?.events[0]).toEqual(event("the prompt"));
+    // What went is the oldest of the rest.
+    expect(snap?.events[1]).toEqual(step(3));
   });
 
   it("begin restarts a session's log from empty", () => {

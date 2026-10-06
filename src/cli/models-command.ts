@@ -7,6 +7,7 @@ import {
   runLocalModelsPullEmbedding,
   runLocalModelsRemove,
   runLocalModelsStart,
+  runLocalModelsStartEmbedding,
   runLocalModelsStatus,
   runLocalModelsStop,
   runLocalModelsUpdate,
@@ -56,6 +57,7 @@ const HELP =
     "  list-embeddings               Show embedding catalog + disk presence + daemon health",
     "  pull-embedding <id>           Download an embedding GGUF (--background as for pull)",
     "  use-embedding <id>|--disable  Enable + select an embedding model (or turn off)",
+    "  start-embedding               Start the embedding daemon alone, beside a running chat one",
     "                                Note: 'start' brings both chat and embedding up;",
     "                                if the embedding daemon fails the chat one stays up.",
     "",
@@ -114,6 +116,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsPullEmbedding(args.slice(1));
       case "use-embedding":
         return runLocalModelsUseEmbedding(args[1]);
+      case "start-embedding":
+        return await runLocalModelsStartEmbedding();
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

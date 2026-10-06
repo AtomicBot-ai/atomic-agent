@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { stoppedTurnMarker } from "./conversation-turn.js";
 import { createEmptySessionState } from "./session-state.js";
 import type { SessionState } from "./session-state.js";
 import {
@@ -11,6 +12,7 @@ import {
   readSessionTitle,
   sanitizeSessionTitle,
   shouldNameSession,
+  stripTitleReasoning,
 } from "./session-title.js";
 
 function session(
@@ -64,6 +66,77 @@ describe("sanitizeSessionTitle", () => {
   });
 });
 
+describe("sanitizeSessionTitle on a thinking model", () => {
+  it("drops a closed think block and keeps the answer", () => {
+    // Stored live from a local Qwen 3.5 4B.
+    expect(
+      sanitizeSessionTitle(
+        "<think>\n\n</think>\n\nLighthouse Keeper's Secret Diary",
+      ),
+    ).toBe("Lighthouse Keeper's Secret Diary");
+    expect(
+      sanitizeSessionTitle(
+        "<think>The user wants a title.</think> Починить отмену",
+      ),
+    ).toBe("Починить отмену");
+  });
+
+  it("cuts up to a close whose open the template prefilled", () => {
+    expect(
+      sanitizeSessionTitle(
+        "Okay, the user asks about tabs.\n</think>\nFix tabs",
+      ),
+    ).toBe("Fix tabs");
+  });
+
+  it("answers null for reasoning that never closed", () => {
+    // The other title stored live: cut off by the token bound mid-thought.
+    expect(
+      sanitizeSessionTitle(
+        "<think> Thinking Process: 1. **Analyze the Request**: the user",
+      ),
+    ).toBeNull();
+  });
+
+  it("answers null for untagged reasoning prose", () => {
+    expect(
+      sanitizeSessionTitle("Thinking Process:\n1. Analyze the request"),
+    ).toBeNull();
+    expect(
+      sanitizeSessionTitle("**Thinking Process:** 1. Analyze the request"),
+    ).toBeNull();
+  });
+
+  it("drops Gemma's thought channel and stray control tokens", () => {
+    expect(
+      sanitizeSessionTitle(
+        "<|channel>thought\nhmm<channel|>Fix the chord<|im_end|>",
+      ),
+    ).toBe("Fix the chord");
+  });
+
+  it("strips markdown emphasis around the title", () => {
+    expect(sanitizeSessionTitle("**Fix the abort chord**")).toBe(
+      "Fix the abort chord",
+    );
+    expect(sanitizeSessionTitle("**Title:** Fix the abort chord")).toBe(
+      "Fix the abort chord",
+    );
+    expect(sanitizeSessionTitle("`Fix the abort chord`")).toBe(
+      "Fix the abort chord",
+    );
+  });
+
+  it("leaves a title that merely mentions thinking alone", () => {
+    expect(stripTitleReasoning("Thinking process for hiring")).toBe(
+      "Thinking process for hiring",
+    );
+    expect(sanitizeSessionTitle("Fix the abort chord")).toBe(
+      "Fix the abort chord",
+    );
+  });
+});
+
 describe("shouldNameSession", () => {
   it("waits for the first answered turn", () => {
     expect(shouldNameSession(session([ASKED]))).toBe(false);
@@ -80,6 +153,18 @@ describe("shouldNameSession", () => {
 
   it("has nothing to name a session nobody spoke to", () => {
     expect(shouldNameSession(session([]))).toBe(false);
+  });
+
+  it("does not count a stopped turn as answered", () => {
+    // Its stop marker is a reply row, but nothing in it answers.
+    const stopped = session([ASKED, stoppedTurnMarker(2)]);
+    expect(shouldNameSession(stopped)).toBe(false);
+    const answeredLater = session([
+      ...stopped.turns,
+      { ...ASKED, at: 3 },
+      { ...ANSWERED, at: 4 },
+    ]);
+    expect(shouldNameSession(answeredLater)).toBe(true);
   });
 });
 
@@ -118,6 +203,47 @@ describe("generateSessionTitle", () => {
     expect(onError).toHaveBeenCalledTimes(1);
   });
 
+  it("asks a llama-server link with thinking off", async () => {
+    const complete = vi.fn(async () => ({ content: "Fix the abort chord" }));
+    await generateSessionTitle(session([ASKED, ANSWERED]), {
+      complete,
+      slotId: () => 3,
+    });
+    const params = complete.mock.calls[0]?.[0] as unknown as {
+      prompt: string;
+      chat?: { system: string; user: string; enableThinking?: boolean };
+    };
+    expect(params.chat?.enableThinking).toBe(false);
+    // The raw text stays beside it for a server that cannot render.
+    expect(params.chat?.user).toBe(params.prompt);
+  });
+
+  it("sends the raw prompt alone when the operator turned templates off", async () => {
+    const complete = vi.fn(async () => ({ content: "Fix the abort chord" }));
+    await generateSessionTitle(session([ASKED, ANSWERED]), {
+      complete,
+      slotId: () => 3,
+      serverTemplate: false,
+    });
+    const params = complete.mock.calls[0]?.[0] as unknown as {
+      chat?: unknown;
+    };
+    expect(params.chat).toBeUndefined();
+  });
+
+  it("falls back to no title when the answer is all reasoning", async () => {
+    const onError = vi.fn();
+    const title = await generateSessionTitle(session([ASKED, ANSWERED]), {
+      complete: async () => ({
+        content: "<think> Thinking Process: 1. **Analyze the Request**",
+      }),
+      slotId: () => 0,
+      onError,
+    });
+    expect(title).toBeNull();
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
   it("answers null when the model says nothing usable", async () => {
     const title = await generateSessionTitle(session([ASKED, ANSWERED]), {
       complete: async () => ({ content: "   " }),
@@ -134,6 +260,28 @@ describe("readSessionTitle", () => {
     expect(readSessionTitle({ title: 42 })).toBeNull();
     expect(readSessionTitle({})).toBeNull();
     expect(readSessionTitle(undefined)).toBeNull();
+  });
+
+  it("cleans a title stored with the model's reasoning in it", () => {
+    // Stored before the namer stripped reasoning; existing chats must
+    // read right without a migration.
+    expect(
+      readSessionTitle({
+        title: "<think> </think> Lighthouse Keeper's Secret Dia…",
+      }),
+    ).toBe("Lighthouse Keeper's Secret Dia…");
+    expect(
+      readSessionTitle({
+        title: "<think> Thinking Process: 1. **Analyze the Requ…",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns a clean stored title untouched", () => {
+    // Not re-sanitized: a name the operator has seen must not change.
+    expect(readSessionTitle({ title: "Fix the chord." })).toBe(
+      "Fix the chord.",
+    );
   });
 });
 
