@@ -34,6 +34,23 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("writes the noted route onto the next turn_started only", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-route", emit, now });
+    const route = {
+      mode: "cloud" as const,
+      main: { providerId: "aimlapi", model: "anthropic/claude-sonnet-5" },
+      worker: null,
+    };
+    rec.noteTurnRoute(route);
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 } as AgentLoopEvent);
+    // A turn nobody noted a route for must not inherit the last one.
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 } as AgentLoopEvent);
+    expect(events[0]).toMatchObject({ type: "turn_started", route });
+    expect(events[1]).toMatchObject({ type: "turn_started", turnIndex: 1 });
+    expect(events[1]).not.toHaveProperty("route");
+  });
+
   it("records a profile clip against the current turn (issue #407)", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-clip", emit, now });
@@ -416,6 +433,42 @@ describe("createTraceRecorder", () => {
       kept: "os.fs.write",
       dropped: ["os.fs.write", "os.fs.write", "os.fs.edit", "reply"],
       reason: "approval-gated-batched",
+    });
+  });
+
+  it("records a batch run behind approval barriers with what never ran", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-barrier", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 } as AgentLoopEvent);
+    rec.onAgentEvent({ type: "step_started", stepIndex: 2 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "batch_approval_barriers",
+        stepIndex: 2,
+        originalSize: 3,
+        waves: 0,
+        barriers: 1,
+        retained: 1,
+        invalidated: 2,
+        stoppedBy: { tool: "os.fs.write", batchIndex: 0, cause: "not_approved" },
+        cancelled: false,
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "batch_approval_barriers",
+      seq: 2,
+      sessionId: "s-barrier",
+      ts: 1000,
+      turnIndex: 1,
+      stepIndex: 2,
+      originalSize: 3,
+      waves: 0,
+      barriers: 1,
+      retained: 1,
+      invalidated: 2,
+      stoppedBy: { tool: "os.fs.write", batchIndex: 0, cause: "not_approved" },
+      cancelled: false,
     });
   });
 

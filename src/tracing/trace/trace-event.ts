@@ -2,6 +2,7 @@ import type { AgentLoopReason } from "../../agent/agent-contract.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import type { MemorySubcallKind } from "../../memory/health/index.js";
+import type { SessionRoute } from "../../session/session-route.js";
 
 /**
  * Append-only trace event emitted by the runtime for postmortem analysis
@@ -29,6 +30,7 @@ export type TraceEvent =
   | TraceToolInvocation
   | TraceParseRetry
   | TraceBatchTrimmed
+  | TraceBatchApprovalBarriers
   | TraceLoopDetected
   | TraceTaskContinued
   | TraceProviderWaiting
@@ -73,6 +75,16 @@ export interface TraceTurnStarted extends TraceEventBase {
   type: "turn_started";
   turnIndex: number;
   userMessage?: string;
+  /**
+   * What this turn is served by, resolved from the live config at turn
+   * start (`resolveTurnRoute`): provider, model, run mode and fusion
+   * worker. `session_started` only carries the session's metadata as it
+   * stood when the file was opened, so after a model switch it names
+   * the previous turn's model; this is the per-turn answer. Absent on
+   * traces written before it existed and for turns run outside
+   * `executeTurn`.
+   */
+  route?: SessionRoute;
 }
 
 export interface TraceTurnFinished extends TraceEventBase {
@@ -212,6 +224,37 @@ export interface TraceBatchTrimmed extends TraceEventBase {
   /** Tools the turn's policy would have refused anyway; omitted when none. */
   refused?: string[];
   reason: "approval-gated-batched";
+}
+
+/**
+ * The model emitted several calls in one completion, approval-gated ones
+ * among them, and the runtime ran them behind approval barriers rather
+ * than keeping only the first gated call: each gated call alone, the
+ * calls after it only once it was approved and came back `ok`. The
+ * counts say how much of the emission ran; `stoppedBy` names the gated
+ * call that kept the rest from running.
+ */
+export interface TraceBatchApprovalBarriers extends TraceEventBase {
+  type: "batch_approval_barriers";
+  turnIndex: number;
+  stepIndex: number;
+  /** Calls the model emitted. Always >= 2. */
+  originalSize: number;
+  /** Runs of batchable calls that completed. */
+  waves: number;
+  /** Approval-gated calls that ran, each alone. */
+  barriers: number;
+  /** Calls that ran, with the payload the model emitted. */
+  retained: number;
+  /** Calls that never ran. */
+  invalidated: number;
+  /** The gated call that stopped the batch; omitted when none did. */
+  stoppedBy?: {
+    tool: string;
+    batchIndex: number;
+    cause: "not_approved" | "failed";
+  };
+  cancelled: boolean;
 }
 
 /**

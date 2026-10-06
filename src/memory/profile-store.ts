@@ -7,6 +7,12 @@ import type { AgentMetrics } from "../tracing/agent-metrics.js";
 
 import { applyMigrations } from "./memory-schema.js";
 import {
+  isNameGroundingStatus,
+  isNameProfileKey,
+  isProfileFactPromptVisible,
+  type NameGroundingStatus,
+} from "./profile-name-keys.js";
+import {
   assertProfileMaxEntries,
   ProfileEvictor,
   type ProfileEviction,
@@ -75,6 +81,24 @@ export interface ProfileFact {
    * `vote_score ≤ -profileFilterThreshold`.
    */
   voteScore: number;
+  /**
+   * ATO-199. For a name-like key (`isNameProfileKey`): whether the
+   * user's own messages carry this name — see `NameGroundingStatus`.
+   * `null` = not checked yet, and always `null` for any other key.
+   * Optional so hand-built facts (tests, fixtures) keep compiling; the
+   * store always fills it.
+   */
+  nameGrounding?: NameGroundingStatus | null;
+}
+
+/** An active name-like fact the startup check still has to look at. */
+export interface ProfileNameFactToCheck {
+  fact: ProfileFact;
+  /**
+   * When the fact was last checked (`ungrounded` rows), or `null` when
+   * it never was. A re-check only needs sessions written after it.
+   */
+  checkedAt: number | null;
 }
 
 export interface ProfileStoreOptions {
@@ -111,6 +135,14 @@ export interface ProfileSetOptions {
    * `SET full_name=Alex [supersedes=name]`.
    */
   supersedesKey?: string;
+  /**
+   * ATO-199. Grounding status of the written value, for a name-like key
+   * only (ignored for any other key). The caller that checked the value
+   * against the user's messages passes the verdict; omitted ⇒ the row
+   * lands unchecked and stays out of the prompt until the startup check
+   * looks at it.
+   */
+  nameGrounding?: NameGroundingStatus;
 }
 
 /**
@@ -143,6 +175,8 @@ interface ProfileRow {
   created_at: number;
   updated_at: number;
   vote_score: number;
+  name_grounding: string | null;
+  name_checked_at: number | null;
 }
 
 /**
@@ -170,6 +204,8 @@ export class ProfileStore {
   private readonly selectAllActiveStmt: Database.Statement;
   private readonly historyByKeyStmt: Database.Statement;
   private readonly deleteActiveStmt: Database.Statement;
+  private readonly markNameGroundingStmt: Database.Statement;
+  private readonly markUnconfirmedNameGroundingStmt: Database.Statement;
 
   constructor(options: ProfileStoreOptions) {
     // Before the handle opens, so a bad cap cannot leak a connection.
@@ -190,10 +226,12 @@ export class ProfileStore {
     this.insertStmt = this.db.prepare(
       `INSERT INTO profile_facts
          (key, value, pinned, keywords, valid_from, superseded_by,
-          supersedes, created_at, updated_at)
+          supersedes, created_at, updated_at, name_grounding,
+          name_checked_at)
        VALUES
          (@key, @value, @pinned, @keywords, @valid_from, NULL,
-          @supersedes, @created_at, @updated_at)`,
+          @supersedes, @created_at, @updated_at, @name_grounding,
+          @name_checked_at)`,
     );
     this.markSupersededStmt = this.db.prepare(
       `UPDATE profile_facts
@@ -219,21 +257,21 @@ export class ProfileStore {
     this.selectActiveByKeyStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
               superseded_by, supersedes, created_at, updated_at,
-              vote_score
+              vote_score, name_grounding, name_checked_at
          FROM profile_facts
         WHERE key = ? AND superseded_by IS NULL`,
     );
     this.selectActiveByIdStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
               superseded_by, supersedes, created_at, updated_at,
-              vote_score
+              vote_score, name_grounding, name_checked_at
          FROM profile_facts
         WHERE id = ?`,
     );
     this.selectAllActiveStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
               superseded_by, supersedes, created_at, updated_at,
-              vote_score
+              vote_score, name_grounding, name_checked_at
          FROM profile_facts
         WHERE superseded_by IS NULL
         ORDER BY key ASC`,
@@ -241,7 +279,7 @@ export class ProfileStore {
     this.historyByKeyStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
               superseded_by, supersedes, created_at, updated_at,
-              vote_score
+              vote_score, name_grounding, name_checked_at
          FROM profile_facts
         WHERE key = ?
         ORDER BY valid_from ASC, id ASC`,
@@ -249,6 +287,21 @@ export class ProfileStore {
     this.deleteActiveStmt = this.db.prepare(
       `DELETE FROM profile_facts
         WHERE key = ? AND superseded_by IS NULL`,
+    );
+    // Metadata only: `updated_at` is left alone — it orders eviction,
+    // and a check is not a write of the fact.
+    this.markNameGroundingStmt = this.db.prepare(
+      `UPDATE profile_facts
+          SET name_grounding = @status,
+              name_checked_at = @now
+        WHERE id = @id`,
+    );
+    this.markUnconfirmedNameGroundingStmt = this.db.prepare(
+      `UPDATE profile_facts
+          SET name_grounding = @status,
+              name_checked_at = @now
+        WHERE id = @id
+          AND (name_grounding IS NULL OR name_grounding = 'ungrounded')`,
     );
   }
 
@@ -282,6 +335,10 @@ export class ProfileStore {
     const supersedesKeyRaw = options.supersedesKey;
     const supersedesKey =
       supersedesKeyRaw !== undefined ? validateKey(supersedesKeyRaw) : null;
+    const nameGrounding =
+      isNameProfileKey(normalisedKey) && options.nameGrounding !== undefined
+        ? options.nameGrounding
+        : null;
 
     const txn = this.db.transaction(
       (): {
@@ -330,6 +387,8 @@ export class ProfileStore {
           supersedes: directParent ? directParent.id : null,
           created_at: now,
           updated_at: now,
+          name_grounding: nameGrounding,
+          name_checked_at: nameGrounding !== null ? now : null,
         }) as { lastInsertRowid: number | bigint };
         const newId = Number(insertResult.lastInsertRowid);
 
@@ -387,6 +446,7 @@ export class ProfileStore {
       supersedes,
       supersededBy: null,
       voteScore: 0,
+      nameGrounding,
     };
   }
 
@@ -437,6 +497,60 @@ export class ProfileStore {
   }
 
   /**
+   * ATO-199. The active facts the prompt may carry: `list()` without
+   * the name-like facts no check has vouched for (an invented name, or
+   * one not checked yet). They stay on disk and in `list()` — listings
+   * show them marked so the user can confirm or remove them — but the
+   * agent never addresses the user by them, and nothing downstream of
+   * the prompt (votes, reflection) treats them as known.
+   */
+  listForPrompt(): ProfileFact[] {
+    return this.list().filter(isProfileFactPromptVisible);
+  }
+
+  /**
+   * ATO-199. Active name-like facts the startup check has to look at:
+   * never checked, or checked and found `ungrounded` (re-checked against
+   * the sessions written since, in case the user has said it by now).
+   */
+  listNameFactsToCheck(): ProfileNameFactToCheck[] {
+    const rows = this.selectAllActiveStmt.all() as ProfileRow[];
+    const out: ProfileNameFactToCheck[] = [];
+    for (const row of rows) {
+      if (!isNameProfileKey(row.key)) continue;
+      const fact = rowToFact(row);
+      if (fact.nameGrounding === null) {
+        out.push({ fact, checkedAt: null });
+      } else if (fact.nameGrounding === "ungrounded") {
+        out.push({ fact, checkedAt: row.name_checked_at });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * ATO-199. Record a grounding verdict on one row. No-op (returns
+   * `false`) for a row that is gone or whose key is not name-like.
+   * `ifUnconfirmed` writes only over "not checked yet" or `ungrounded`:
+   * the startup check, whose walk yields, must not undo a confirmation
+   * `memory.profile.set` or reflection recorded while it ran.
+   */
+  markNameGrounding(
+    id: number,
+    status: NameGroundingStatus,
+    now: number = Date.now(),
+    options: { ifUnconfirmed?: boolean } = {},
+  ): boolean {
+    const row = this.selectActiveByIdStmt.get(id) as ProfileRow | undefined;
+    if (!row || !isNameProfileKey(row.key)) return false;
+    const stmt = options.ifUnconfirmed
+      ? this.markUnconfirmedNameGroundingStmt
+      : this.markNameGroundingStmt;
+    const result = stmt.run({ id, status, now }) as { changes: number };
+    return result.changes > 0;
+  }
+
+  /**
    * Memory-v2 phase 4. Walk the full bi-temporal chain for `key` in
    * temporal order (oldest first). Includes both superseded and
    * active rows. The active row (if any) is the last entry. Returns
@@ -481,6 +595,12 @@ function rowToFact(row: ProfileRow): ProfileFact {
     supersedes: row.supersedes,
     supersededBy: row.superseded_by,
     voteScore: row.vote_score ?? 0,
+    // Anything but a known verdict — a value some later build wrote, a
+    // non-name key — reads as unchecked.
+    nameGrounding:
+      isNameProfileKey(row.key) && isNameGroundingStatus(row.name_grounding)
+        ? row.name_grounding
+        : null,
   };
 }
 

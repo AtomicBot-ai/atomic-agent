@@ -50,16 +50,28 @@ function runnerFixture(runTurn: TaskRunnerRuntime["runTurn"] = async (session) =
 }
 
 describe("runtime task service phases", () => {
-  it("constructs durable stores even with tasks disabled and recovers old claims before a runner exists", () => {
+  it("constructs durable stores even with tasks disabled and recovers interrupted claims before a runner exists", () => {
     const old = new TaskStore({ dbFile: config.paths.tasksDbFile });
     const task = old.create({ userMessage: "orphan", origin: "cli", maxAttempts: 2 });
     old.markRunning(task.id, Date.now() - config.tasks.staleAfterMs - 1); old.close();
     config.tasks.enabled = false;
     stores = createRuntimeTaskStores({ config, logger });
     expect(stores.taskStore.get(task.id)?.status).toBe("pending");
-    expect(records).toMatchObject([{ message: "recovered stale running tasks on bootstrap", context: { count: 1, thresholdMs: config.tasks.staleAfterMs } }]);
+    expect(records).toMatchObject([{ message: "tasks left running by a stopped agent put back to pending", context: { count: 1, taskIds: task.id } }]);
     stores.webhookSessionStore.set("wake", "session-live");
     expect(JSON.parse(readFileSync(join(dir, "webhook-sessions.json"), "utf8"))).toEqual({ wake: "session-live" });
+  });
+
+  it("continues boot when interrupted-task recovery fails", () => {
+    vi.spyOn(TaskStore.prototype, "recoverInterrupted").mockImplementation(() => {
+      throw new Error("recovery busy");
+    });
+    stores = createRuntimeTaskStores({ config, logger });
+    expect(records).toMatchObject([{
+      message: "could not recover tasks left running; continuing",
+      context: { error: "recovery busy" },
+    }]);
+    expect(stores.taskStore.list()).toEqual([]);
   });
 
   it("does not log recovery when nothing was stale", () => {
@@ -105,7 +117,7 @@ describe("runtime task service phases", () => {
     expect(scheduler).not.toBeNull(); expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(200); expect(due).not.toHaveBeenCalled();
     scheduler?.start(); await vi.advanceTimersByTimeAsync(100);
-    expect(due).toHaveBeenCalledWith(expect.any(Number), 3);
+    expect(due).toHaveBeenCalledWith(expect.any(Number), 3, expect.any(AbortSignal));
     await scheduler?.stop(); expect(vi.getTimerCount()).toBe(0);
   });
 });

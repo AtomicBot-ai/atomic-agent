@@ -281,7 +281,7 @@ describe("os.web.search persistent cache (#256)", () => {
   });
 });
 
-describe("buildOsWebSearchTool keyless-provider warning", () => {
+describe("buildOsWebSearchTool missing-key warning", () => {
   it("warns once at construction, not once per search", async () => {
     // Per-search warnings would flood a long autonomous run; the operator
     // needs exactly one line telling them search is degraded (#179).
@@ -292,7 +292,7 @@ describe("buildOsWebSearchTool keyless-provider warning", () => {
       throw new Error("network disabled in test");
     }) as unknown as typeof RunCommandType;
     const tool = buildOsWebSearchTool({
-      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      config: makeConfig({ provider: "brave", fallback: ["duckduckgo"] }),
       env: {},
       warn: (message) => warnings.push(message),
       runCommand: failingRunCommand,
@@ -300,7 +300,7 @@ describe("buildOsWebSearchTool keyless-provider warning", () => {
     });
 
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("EXA_API_KEY");
+    expect(warnings[0]).toContain("BRAVE_SEARCH_API_KEY");
 
     await tool.run({ query: "a" }, makeCtx()).catch(() => undefined);
     await tool.run({ query: "b" }, makeCtx()).catch(() => undefined);
@@ -311,11 +311,105 @@ describe("buildOsWebSearchTool keyless-provider warning", () => {
   it("stays silent when the provider key is set", () => {
     const warnings: string[] = [];
     buildOsWebSearchTool({
-      config: makeConfig({ provider: "exa" }),
-      env: { EXA_API_KEY: "k" },
+      config: makeConfig({ provider: "brave" }),
+      env: { BRAVE_SEARCH_API_KEY: "k" },
       warn: (message) => warnings.push(message),
     });
 
     expect(warnings).toEqual([]);
+  });
+
+  it("stays silent for the shipped default, exa with no EXA_API_KEY (ATO-120)", () => {
+    const warnings: string[] = [];
+    buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(warnings).toEqual([]);
+  });
+});
+
+/**
+ * ATO-120, end to end through the tool. The Exa provider reads its key
+ * from `process.env`, so these stub it there rather than through `env`.
+ */
+describe("os.web.search with an Exa primary", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** Per-host body and status, recording every URL curl was pointed at. */
+  function makeRecordingRunCommand(
+    byHost: Record<string, { body: string; status: number }>,
+  ) {
+    const urls: string[] = [];
+    const run = (async (_cmd: string, args: string[]) => {
+      const url = args.at(-1) ?? "";
+      urls.push(url);
+      const host = matchHost(url, Object.keys(byHost));
+      const reply = host ? byHost[host]! : { body: "", status: 200 };
+      return {
+        command: "curl",
+        args,
+        exitCode: 0,
+        signal: null,
+        stdout: curlStdout(reply.body, reply.status),
+        stderr: "",
+        durationMs: 1,
+        timedOut: false,
+        truncated: false,
+      };
+    }) as unknown as typeof RunCommandType;
+    return { run, urls };
+  }
+
+  it("never calls Exa without a key and answers ok from DuckDuckGo", async () => {
+    vi.stubEnv("EXA_API_KEY", "");
+    const { run, urls } = makeRecordingRunCommand({
+      "exa.ai": { body: "Forbidden", status: 403 },
+      "duckduckgo.com": { body: RESULT_HTML, status: 200 },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: () => undefined,
+      runCommand: run,
+      lookup: publicLookup,
+    });
+
+    const result = await tool.run({ query: "keyless exa" }, makeCtx());
+
+    expect(result.status).toBe("ok");
+    expect(result.details.provider).toBe("duckduckgo");
+    expect(result.details.degraded).toBeUndefined();
+    expect(result.summary).toContain("Example Doc");
+    expect(urls.some((url) => url.includes("exa.ai"))).toBe(false);
+  });
+
+  it("answers ok when a keyed Exa fails and DuckDuckGo covers for it", async () => {
+    // The desktop drew "Exa returned HTTP 403" as a failed tool row even
+    // when the search went on to succeed. It is a note now, not the error.
+    vi.stubEnv("EXA_API_KEY", "k");
+    const { run, urls } = makeRecordingRunCommand({
+      "exa.ai": { body: "Forbidden", status: 403 },
+      "duckduckgo.com": { body: RESULT_HTML, status: 200 },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      runCommand: run,
+      lookup: publicLookup,
+    });
+
+    const result = await tool.run({ query: "keyed exa" }, makeCtx());
+
+    expect(urls.some((url) => url.includes("api.exa.ai"))).toBe(true);
+    expect(result.status).toBe("ok");
+    expect(result.details.provider).toBe("duckduckgo");
+    expect(result.details.degraded).toEqual([
+      "exa failed: Exa API returned HTTP 403",
+    ]);
+    expect(result.summary).toContain("Example Doc");
   });
 });

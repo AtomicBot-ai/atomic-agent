@@ -82,6 +82,17 @@ describe("compressToolResult", () => {
     expect(out.summary).toMatch(/key:/);
     expect(out.summary).toContain("AssertionError");
   });
+
+  it("head overflow (the default) still keeps the beginning", () => {
+    const out = compressToolResult(
+      { tool: "page", status: "ok", output: "A".repeat(300) + "Z".repeat(300) },
+      { maxSummaryLength: 200, maxTailLines: 100 },
+    );
+    expect(out.summary.startsWith("AAAA")).toBe(true);
+    expect(out.summary).not.toContain("Z");
+    expect(out.summary.endsWith("… [truncated]")).toBe(true);
+    expect(out.truncated).toBe(true);
+  });
 });
 
 describe("summariseLog", () => {

@@ -46,6 +46,17 @@ describe("runtime trace ownership and deferred event routing", () => {
     expect(fixture(null, true).traces.traceBus).not.toBeNull();
   });
 
+  it("starts a newly opened trace with current-turn metadata without mutating stored stamps", () => {
+    const { traces, events, session } = fixture();
+    const stored = { ...session("switched"), metadata: { llm: { providerId: "old", chatModel: "old-model" } } };
+    const headerMetadata = { llm: { providerId: "new", chatModel: "new-model" } };
+    traces.ensureRecorder(stored, headerMetadata);
+    const started = events.find((event) => event.type === "session_started");
+    expect(started?.type).toBe("session_started");
+    if (started?.type === "session_started") expect(started.metadata).toEqual(headerMetadata);
+    expect(stored.metadata.llm.providerId).toBe("old");
+  });
+
   it("tests the actual bounded LRU owner rather than an independently reimplemented map", () => {
     const { traces, session } = fixture();
     const oldest = traces.ensureRecorder(session("oldest"));

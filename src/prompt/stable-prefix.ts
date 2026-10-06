@@ -216,9 +216,13 @@ export const NATIVE_TOOLS_SYSTEM_PERSONA = [
  * mandate the transport split exists to remove (issue #285).
  */
 const RULES_SHARED_TAIL =
-  "Destructive or privileged tools may require user approval. If `### skills` lists a playbook that fits the user goal, call `skill.view` first unless that skill is already under `### loaded-skills`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use. Large trees: narrow with `os.fs.list` filters or `os.fs.glob` before reading content; do not use `os.fs.grep` with broad binary globs (e.g. every `*.pdf`) across huge folders—use tight globs then `os.fs.read_document` on candidates.";
+  "Destructive or privileged tools may require user approval. If the user declines a call, do not retry it or reach the same result another way (another tool, a shell command); tell them it was not done and ask what they want instead. If `### skills` lists a playbook that fits the user goal, call `skill.view` first unless that skill is already under `### loaded-skills`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use. Large trees: narrow with `os.fs.list` filters or `os.fs.glob` before reading content; do not use `os.fs.grep` with broad binary globs (e.g. every `*.pdf`) across huge folders—use tight globs then `os.fs.read_document` on candidates.";
 
-/** Byte-identical to the pre-#285 `### rules` line (KV-cache safe). */
+/**
+ * The grammar transport's `### rules` line: the pre-#285 line with the
+ * declined-call sentence ATO-225 added to the shared tail. Stable within
+ * a build, so the KV-cache prefix still holds across turns.
+ */
 const GRAMMAR_RULES_LINE = `One tool-call array per step (including \`skill.view\`); a solo action is a length-1 array. ${RULES_SHARED_TAIL}`;
 
 const NATIVE_TOOLS_RULES_LINE = `One batch of tool calls per step (including \`skill.view\`), all through the native function-calling interface — never written out as JSON text; a solo action is a single call. ${RULES_SHARED_TAIL}`;
@@ -233,6 +237,7 @@ const NATIVE_TOOLS_RULES_LINE = `One batch of tool calls per step (including \`s
  */
 export const WINDOWS_PLATFORM_HINT = [
   "Windows environment: `os.shell.run` uses a `cmd.exe` subshell. Prefer native Windows commands — `findstr` (not grep), `where` (not which), `type` (not cat), `dir` (not `ls -la`), `copy`/`move`/`ren`, `del`/`rmdir` semantics. Reference environment variables as `%VAR%` and use backslash `\\` path separators (e.g. `C:\\Users\\me\\file.txt`). Chain commands with `&&`, `||`, and pipe with `|`.",
+  "PowerShell cmdlets (`New-Item`, `Move-Item`, `Copy-Item`, `Get-ChildItem`, `Remove-Item`) do not exist in `cmd.exe` and fail as unrecognized commands — do not use them. Create a folder with `mkdir \"C:\\path\\Folder\"` and move files with `move \"C:\\path\\file.txt\" \"C:\\path\\Folder\"` (the folder must already exist); quote every path that contains spaces.",
   "Deletion still goes through `os.fs.trash`, never `del`/`rmdir`, unless the user explicitly demands a permanent shell delete.",
 ].join("\n");
 

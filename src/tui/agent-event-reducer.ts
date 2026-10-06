@@ -1109,6 +1109,19 @@ function reduceStepEvent(
         line: `  ~ ${event.originalSize} reads split into ${event.waveCount} waves of ≤ ${event.cap} (nothing dropped)`,
         color: "yellow",
       });
+    case "batch_approval_barriers":
+      // Issue #109: a batch with gated calls ran in order behind its
+      // approvals instead of being trimmed. Worth a line only when part
+      // of it never ran — otherwise every call already has its own row.
+      if (event.invalidated === 0) return state;
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: event.stoppedBy
+          ? `  ~ ${event.invalidated} of ${event.originalSize} calls not run: ${event.stoppedBy.tool} ${event.stoppedBy.cause === "not_approved" ? "was not approved" : "failed"}`
+          : `  ~ ${event.invalidated} of ${event.originalSize} calls not run (cancelled)`,
+        color: "yellow",
+      });
     case "prompt_built":
       // The feed still ignores the prompt text itself — it would drown
       // the log — but the token breakdown that comes with it is the only

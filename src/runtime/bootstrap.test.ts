@@ -350,7 +350,7 @@ describe("createAgentRuntime", () => {
           { url: "file:///etc/hosts" },
           ctx,
         ),
-      ).rejects.toThrow(/approval denied/);
+      ).rejects.toThrow(/The user declined/);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.tool).toBe("browser.navigate");
     } finally {
@@ -413,7 +413,7 @@ describe("createAgentRuntime", () => {
           { path: inHome, content: "must not land" },
           ctx,
         ),
-      ).rejects.toThrow(/approval denied/);
+      ).rejects.toThrow(/The user declined/);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.category).toBe("fs_write_home");
       expect(existsSync(inHome)).toBe(false);
@@ -470,7 +470,7 @@ describe("createAgentRuntime", () => {
           { path: configPath, content: '{"agent":{"approvalLevel":5}}' },
           ctx,
         ),
-      ).rejects.toThrow(/approval denied/);
+      ).rejects.toThrow(/The user declined/);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.category).toBe("trust_config");
     } finally {

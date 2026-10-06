@@ -21,6 +21,9 @@ import {
  * `shouldFallBackToCpuBackend` is the pure eligibility decision; the
  * callers (TUI orchestrator, CLI `models start`) own the messaging, the
  * `backendVariant: "cpu"` config persistence, and the single retry.
+ *
+ * Windows x64 only. Windows arm64 (ATO-252) has one build and it is the
+ * CPU one already: a fallback would re-download the same zip and loop.
  */
 export function shouldFallBackToCpuBackend(opts: {
   /** `readBackendVersion(dataDir)?.asset` — undefined on old installs. */
@@ -30,9 +33,12 @@ export function shouldFallBackToCpuBackend(opts: {
   /** The error `startDaemon` / `startChatAndEmbeddingDaemons` rejected with. */
   error: unknown;
   platform?: NodeJS.Platform;
+  arch?: string;
 }): boolean {
   const platform = opts.platform ?? process.platform;
+  const arch = opts.arch ?? process.arch;
   if (platform !== "win32") return false;
+  if (arch === "arm64") return false;
   // An operator who pinned a variant made a call — honour it, even when
   // that variant fails. `"cpu"` also lands here: falling back to what is
   // already installed would loop.

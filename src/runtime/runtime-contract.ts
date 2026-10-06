@@ -1,3 +1,4 @@
+import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import type { AtomicAgentConfig } from "../config/index.js";
 import type { LlmStreamParams } from "../agent/step/step-contract.js";
 import type { TurnController } from "./turn-controller.js";
@@ -446,6 +447,17 @@ export interface AgentRuntime {
    * it. See `src/session/fusion-worker-session.ts`.
    */
   createEphemeralSession(meta: FusionWorkerMeta): SessionState;
+  /**
+   * Build — never run, never persist — the prompt the next turn would
+   * open with, for a composer's context readout before any message is
+   * sent (the desktop's `POST /api/context-preview`). `sessionId` null
+   * means a fresh thread in this workspace: an unpersisted state with a
+   * throwaway id, so nothing lands in sessions.sqlite. An unknown id
+   * throws a `SessionNotFoundError`. Pure: no recall / memory-index
+   * prefetch runs, so those two sections are empty here and only appear
+   * once a real turn has built them.
+   */
+  previewPrompt(input: { sessionId: string | null; userMessage?: string }): BuiltPrompt;
   /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
   refreshSkills(): Promise<void>;
   /**

@@ -33,6 +33,7 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  isWindowsArm64,
   listLocalModels,
   listVulkanDevices,
   AUTO_UPDATE_RECHECK_MS,
@@ -56,7 +57,9 @@ import {
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
   startChatAndEmbeddingDaemons,
+  startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
+  WINDOWS_ARM64_NO_BACKEND_MESSAGE,
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadNotifyChannel,
@@ -524,6 +527,8 @@ export async function runLocalModelsStart(): Promise<number> {
     embCfg.modelId !== null &&
     isKnownEmbeddingModelId(embCfg.modelId);
   let embReady = false;
+  // Already up (`models start-embedding` ran it alone): left as it is, not a failed start.
+  let embRunningPid: number | null = null;
   if (embRequested) {
     const embModel = getEmbeddingModelDef(embCfg.modelId as never);
     embReady = isEmbeddingModelDownloaded(dataDir, embModel);
@@ -532,6 +537,9 @@ export async function runLocalModelsStart(): Promise<number> {
         `note: embedding model ${embCfg.modelId} not downloaded — skipping embedding daemon\n` +
           `      run 'atomic-agent models pull-embedding ${embCfg.modelId}' to enable hybrid recall.\n`,
       );
+    } else {
+      const emb = await getEmbeddingDaemonStatus(dataDir, embCfg.port);
+      if (emb.running) embRunningPid = emb.pid;
     }
   }
 
@@ -595,7 +603,7 @@ export async function runLocalModelsStart(): Promise<number> {
         // must not hand multi-GPU split args to the CPU backend.
         ...(multiGpu && dev !== "cpu" ? { tensorSplit } : {}),
       },
-      ...(embRequested && embReady
+      ...(embRequested && embReady && embRunningPid === null
         ? {
             embedding: {
               dataDir,
@@ -656,7 +664,11 @@ export async function runLocalModelsStart(): Promise<number> {
     process.stdout.write(
       `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${speedLine}\n`,
     );
-    if ("pid" in result.embedding) {
+    if (embRunningPid !== null) {
+      process.stdout.write(
+        `embedding: already running pid ${embRunningPid} on port ${embCfg.port} (${embCfg.modelId})\n`,
+      );
+    } else if ("pid" in result.embedding) {
       process.stdout.write(
         `embedding: started pid ${result.embedding.pid}, healthy on port ${embCfg.port} (${embCfg.modelId})\n`,
       );
@@ -675,6 +687,69 @@ export async function runLocalModelsStart(): Promise<number> {
     return 0;
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    return 1;
+  }
+}
+
+/**
+ * `models start-embedding` — the embedding daemon alone, beside a chat
+ * daemon that is already up. `start` brings both up together, and refuses
+ * as a whole once the chat daemon runs ("already running"), so a host that
+ * keeps the chat model running (the desktop app: a model found up at
+ * launch, a pick of the model already serving, an embedding model enabled
+ * or downloaded later) had no way to add the embedding side. The TUI does
+ * it in-process (LocalModelsOrchestrator.ensureEmbeddingPaired); this is
+ * the same pairing for a host that drives the CLI.
+ *
+ * Exit 0 when the daemon is up after it (started now, or already running)
+ * or the config does not ask for one (disabled, no model, not downloaded),
+ * each said in one `embedding:` line on stdout; exit 1 when the start
+ * failed. Never touches the chat daemon or the config.
+ */
+export async function runLocalModelsStartEmbedding(): Promise<number> {
+  const cfg = getConfig();
+  if (cfg.localModels.mode !== "managed") {
+    process.stderr.write("external mode — nothing to start\n");
+    return 1;
+  }
+  const emb = cfg.localModels.embeddings;
+  if (!emb.enabled) {
+    process.stdout.write("embedding: disabled\n");
+    return 0;
+  }
+  const modelId = emb.modelId;
+  if (!modelId || !isKnownEmbeddingModelId(modelId)) {
+    process.stdout.write("embedding: no model selected\n");
+    return 0;
+  }
+  const dataDir = cfg.paths.localModelsDataDir;
+  if (!isEmbeddingModelDownloaded(dataDir, getEmbeddingModelDef(modelId))) {
+    process.stdout.write(`embedding: ${modelId} not downloaded\n`);
+    return 0;
+  }
+  const now = await getEmbeddingDaemonStatus(dataDir, emb.port);
+  if (now.running) {
+    process.stdout.write(`embedding: already running pid ${now.pid} on port ${emb.port} (${modelId})\n`);
+    return 0;
+  }
+  // The chat daemon's device, as `start` resolves it, so both land on the same one.
+  const { binaryName } = resolvePlatformAsset();
+  const device = await resolveManagedDevice(
+    resolveServerBinPath(dataDir, binaryName),
+    cfg.localModels.managed.device,
+    { multiGpu: cfg.localModels.managed.tensorSplit.length > 0 },
+  );
+  try {
+    const { pid } = await startEmbeddingDaemon({
+      dataDir,
+      modelId,
+      port: emb.port,
+      ...(device ? { device } : {}),
+    });
+    process.stdout.write(`embedding: started pid ${pid}, healthy on port ${emb.port} (${modelId})\n`);
+    return 0;
+  } catch (e) {
+    process.stderr.write(`embedding: failed to start (${e instanceof Error ? e.message : String(e)})\n`);
     return 1;
   }
 }
@@ -1038,6 +1113,18 @@ export async function runLocalModelsUpdate(): Promise<number> {
     const { updateAvailable, latestTag, currentTag } =
       await checkForBackendUpdate(dataDir);
     if (!updateAvailable) {
+      // ATO-252: on Windows on ARM "no release for this platform" with
+      // nothing installed is not "unchanged": there is no engine to run
+      // local models at all yet. Fail with the sentence the desktop shows
+      // (it reads this stderr line), instead of a 0 it would take as done.
+      if (
+        latestTag === null &&
+        isWindowsArm64() &&
+        !isBackendDownloaded(dataDir)
+      ) {
+        process.stderr.write(`${WINDOWS_ARM64_NO_BACKEND_MESSAGE}\n`);
+        return 1;
+      }
       // `latestTag` is null when no scanned release ships this
       // platform's asset — nothing to compare against, so the install
       // on disk stands.

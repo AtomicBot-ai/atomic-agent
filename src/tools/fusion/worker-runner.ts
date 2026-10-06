@@ -19,12 +19,14 @@ import {
 } from "./worker-prompt.js";
 import {
   WorkerRunCollector,
-  WORKER_HINT_QUEUED,
-  WORKER_HINT_UNSERVED,
   WORKER_QUEUED_NOTE,
+  formatWaitMs,
+  queuedWorkerHint,
   unservedWorkerHint,
+  type SlotOccupancy,
   type WorkerTaskResult,
 } from "./worker-result.js";
+import type { StructuredLogger } from "../../tracing/index.js";
 import { getConfig } from "../../config/index.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
@@ -85,6 +87,92 @@ export function estimateWorkerTimeoutMs(input: {
 }
 
 /**
+ * How much of a local worker's time one answer may fill, and the least
+ * a reply cap sized that way goes down to (ATO-214).
+ *
+ * The reply cap is a token count (`completionMaxTokens`, 16,384 by
+ * default) and the worker's limit is a clock, and nothing tied the two
+ * together. At 3–4.3 tok/s, 16,384 tokens is about 64 minutes — more
+ * than the 45-minute budget — and that is how the worker in issue #490
+ * went: its first answer ran to 7–11k tokens, the clock cut it
+ * mid-generation, and the task came back with 0 steps and nothing that
+ * said why. Sized to 80% of the time left, an answer that long stops at
+ * the cap instead, with a fifth of the budget still free for the loop's
+ * truncation retry, which tells the model to keep its reasoning brief
+ * and emit the tool call. The floor keeps a slow measurement from
+ * shrinking the cap below one tool call with a short think.
+ */
+export const WORKER_REPLY_TIME_SHARE = 0.8;
+export const WORKER_REPLY_CAP_FLOOR_TOKENS = 1_024;
+
+/**
+ * Servers stop a token or two short of the cap they were sent; an
+ * answer this close to it spent it (`classifyTruncation` uses the same
+ * margin).
+ */
+const REPLY_CAP_SLACK_TOKENS = 16;
+
+/**
+ * A local worker's reply cap fitted to the time it has left, or
+ * `undefined` when the clock does not bind: no measured speed (a cloud
+ * leg, or nothing has completed on the local one yet), or a fitted cap
+ * at or above `capTokens`, the cap already in force — which then goes
+ * out exactly as before. `capTokens` `undefined` or `0` is "no cap".
+ */
+export function fitReplyCapToTime(input: {
+  tokensPerSecond: number | null | undefined;
+  remainingMs: number;
+  capTokens: number | undefined;
+}): number | undefined {
+  const { tokensPerSecond, capTokens } = input;
+  if (
+    tokensPerSecond === null ||
+    tokensPerSecond === undefined ||
+    !Number.isFinite(tokensPerSecond) ||
+    tokensPerSecond <= 0 ||
+    !Number.isFinite(input.remainingMs)
+  ) {
+    return undefined;
+  }
+  const fitted = Math.max(
+    WORKER_REPLY_CAP_FLOOR_TOKENS,
+    Math.floor(
+      tokensPerSecond *
+        (Math.max(0, input.remainingMs) / 1000) *
+        WORKER_REPLY_TIME_SHARE,
+    ),
+  );
+  const capped =
+    capTokens !== undefined && Number.isFinite(capTokens) && capTokens > 0;
+  return capped && fitted >= capTokens ? undefined : fitted;
+}
+
+/**
+ * What a worker row says when its first answer spent the time-fitted
+ * cap and no step completed after it (ATO-214). "0 steps" over a
+ * timeout read as a worker that had done nothing, when it had written
+ * thousands of tokens the clock had no room for; the remedy is a longer
+ * limit or a smaller task, not a retry of the same one.
+ */
+export function describeFirstAnswerCut(input: {
+  cutAtTokens: number;
+  capTokens: number;
+  tokensPerSecond: number;
+  timeoutMs: number;
+}): { reply: string; note: string; hint: string } {
+  const budget =
+    input.timeoutMs < 60_000
+      ? `${Math.max(0, Math.round(input.timeoutMs / 1000))} s`
+      : `${Math.round(input.timeoutMs / 60_000)} min`;
+  const cut = `the first answer was cut at ${input.cutAtTokens} tokens by the time limit`;
+  return {
+    reply: `${cut}, before any step completed`,
+    note: `${cut}: at the measured ${input.tokensPerSecond.toFixed(1)} tok/s a ${budget} limit leaves room for about ${input.capTokens} tokens per answer, and no step completed`,
+    hint: "the model's answers run longer than this machine can generate within the limit: give the task a longer timeoutMs, split it into smaller tasks, or lower the worker reasoning effort",
+  };
+}
+
+/**
  * How much of its own budget a worker may spend waiting for its first
  * token. A third: long enough that a busy two-slot server still serves
  * a queued worker rather than failing it, short enough that a worker
@@ -92,6 +180,36 @@ export function estimateWorkerTimeoutMs(input: {
  * unspent, so the orchestrator can re-plan inside the same turn.
  */
 export const WORKER_QUEUE_BUDGET_DIVISOR = 3;
+
+/**
+ * The least time a LOCAL worker is given, whatever the orchestrator
+ * asked for, and the least of it that may go on waiting for the first
+ * token (ATO-234).
+ *
+ * A cloud planner sized a task for a cloud model — `timeoutMs: 60000` —
+ * and the runner took it at its word: a 60 s budget, a third of it
+ * (20 s) for the first token, and a Qwen 3.5 4B worker reading its brief
+ * was aborted exactly 20 s after the operator approved the fan-out, both
+ * times, when a plain local reply on that machine took about 45 s. The
+ * planner's number is raised to the floor (and the row says so); both
+ * floors still stop at the configured values, so an operator who set a
+ * shorter `workerTimeoutMs` or `localModels.firstTokenTimeoutMs` keeps
+ * it. A cloud leg keeps the planner's number as before.
+ */
+export const LOCAL_WORKER_TASK_BUDGET_FLOOR_MS = 300_000;
+export const LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS = 120_000;
+
+/**
+ * How long the queue watchdog waits for `/slots` before it ends the
+ * worker anyway. The client's own poll is bounded tighter; this only
+ * keeps a probe that never settles from holding a dead worker open.
+ */
+export const QUEUE_SLOT_PROBE_TIMEOUT_MS = 5_000;
+
+/** The floor of a local worker's task budget, never above the configured one. */
+export function localTaskBudgetFloorMs(configuredMs: number): number {
+  return Math.min(LOCAL_WORKER_TASK_BUDGET_FLOOR_MS, configuredMs);
+}
 
 /**
  * Events that prove the server answered THIS worker, ending its queue
@@ -150,23 +268,26 @@ export function clampTaskBudget(
  * turn with no deadline of its own. A worker has one, and giving it a
  * first-token budget it cannot outlive is what let a queued worker burn
  * 45 minutes producing nothing.
+ *
+ * `floorMs` (a local worker's `LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS`) lifts
+ * a third that is too short to read a brief in, but never above the
+ * configured first-token wait or the worker's own budget.
  */
 export function resolveQueueBudgetMs(
   timeoutMs: number,
   firstTokenTimeoutMs?: number,
+  floorMs = 0,
 ): number {
   const configured =
     firstTokenTimeoutMs ?? getConfig().localModels.firstTokenTimeoutMs;
-  const share = Math.floor(timeoutMs / WORKER_QUEUE_BUDGET_DIVISOR);
-  const bounded = Math.min(
+  const usable =
     typeof configured === "number" &&
-      Number.isFinite(configured) &&
-      configured > 0
-      ? configured
-      : share,
-    share,
-  );
-  return Math.max(1, bounded);
+    Number.isFinite(configured) &&
+    configured > 0;
+  const share = Math.floor(timeoutMs / WORKER_QUEUE_BUDGET_DIVISOR);
+  const bounded = Math.min(usable ? configured : share, share);
+  const floor = Math.min(floorMs, usable ? configured : floorMs, timeoutMs);
+  return Math.max(1, bounded, floor);
 }
 
 /** Tools whose success counts as "the worker wrote something". */
@@ -297,7 +418,17 @@ export interface WorkerRunnerDeps {
   /** `runtime.createEphemeralSession` — in-memory, never persisted. */
   createEphemeralSession: (meta: FusionWorkerMeta) => SessionState;
   approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
-    Partial<Pick<ApprovalGate, "fanoutScopes">>;
+    Partial<
+      Pick<
+        ApprovalGate,
+        | "fanoutScopes"
+        | "followDeclined"
+        | "clearSessionGrants"
+        | "hasDeclinedUnder"
+        | "forgetDeclinedUnder"
+        | "wouldPrompt"
+      >
+    >;
   /**
    * Where a worker's declared inputs (the contract's `inputs`, F51) are
    * registered for its session so `os.fs.write` refuses to replace
@@ -307,6 +438,17 @@ export interface WorkerRunnerDeps {
   /** Progress into the PARENT session's frame. */
   emitEvent: (sessionId: string, event: AgentLoopEvent) => void;
   workingDir: string;
+  /**
+   * The local server's slot table at this moment (`GET /slots`, read by
+   * `readSlotOccupancy`), `null` when it gave no readable answer. Asked
+   * once, by a local worker's queue watchdog just before it ends the
+   * worker, so the hint on the row says what the server was doing rather
+   * than guessing from the worker count. Absent (tests, embedders, a
+   * cloud leg) nothing is probed and the hint says only what is known.
+   */
+  probeSlotOccupancy?: () => Promise<SlotOccupancy | null>;
+  /** Where a raised task budget is logged. Absent, it is only noted on the row. */
+  logger?: Pick<StructuredLogger, "info">;
 }
 
 export interface RunWorkerTasksOptions {
@@ -336,9 +478,21 @@ export interface RunWorkerTasksOptions {
    * has completed yet. Absent for a cloud leg, which keeps the ceiling.
    */
   localTokensPerSecond?: number | null;
+  /**
+   * The workers run on a local (slot-affine) leg. Turns on the local
+   * floors (`LOCAL_WORKER_TASK_BUDGET_FLOOR_MS`,
+   * `LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS`) and the slot probe. Explicit
+   * because `localTokensPerSecond` is `null` both on a cloud leg and on
+   * a local one nothing has been measured on yet.
+   */
+  localLeg?: boolean;
   /** `runMode.fusion.workerReasoning`, sent with every worker completion. */
   workerReasoning?: ReasoningEffort;
-  /** `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. */
+  /**
+   * `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. A
+   * measured local leg may send less: what fits the worker's time
+   * (`fitReplyCapToTime`).
+   */
   workerMaxOutputTokens?: number;
   /**
    * Directories these workers may write in without asking, as approved
@@ -514,6 +668,10 @@ async function runOneTask(
   if (writeScope.length > 0) {
     deps.approvals.fanoutScopes?.grant(session.id, writeScope);
   }
+  // A file the user declined on the orchestrator's turn stays declined
+  // for its workers: inside the scope or not, a write of it goes to the
+  // gate, which refuses it (`ApprovalGate.followDeclined`).
+  deps.approvals.followDeclined?.(session.id, options.parentSessionId);
   // The contract's inputs (F51), resolved as this worker's tools will
   // resolve them: `os.fs.write` on one is refused whatever the brief
   // says, with no `overwrite` exemption — the orchestrator redeclares.
@@ -536,13 +694,33 @@ async function runOneTask(
   // configured defaults, byte for byte as before.
   const stepBudget = clampTaskBudget(task.maxSteps, options.workerMaxSteps);
   const timeBudget = clampTaskBudget(task.timeoutMs, options.workerTimeoutMs);
+  // A local worker gets at least the local floor, however small a
+  // number the planner sized the task with (ATO-234).
+  const timeFloorMs =
+    options.localLeg === true
+      ? localTaskBudgetFloorMs(options.workerTimeoutMs)
+      : 0;
+  const timeRaised = timeBudget.value < timeFloorMs;
+  const taskTimeMs = Math.max(timeBudget.value, timeFloorMs);
   const budgetNotes: string[] = [];
   if (stepBudget.clamped) {
     budgetNotes.push(
       `maxSteps ${task.maxSteps} was clamped to ${stepBudget.value} (${WORKER_BUDGET_CEILING_FACTOR}x the configured ${options.workerMaxSteps})`,
     );
   }
-  if (timeBudget.clamped) {
+  if (timeRaised) {
+    budgetNotes.push(
+      `timeoutMs ${task.timeoutMs} was raised to ${taskTimeMs}, the least a local worker is given: a local model can spend a minute reading its brief before the first token`,
+    );
+    deps.logger?.info(
+      "fusion: raised a local worker's task budget to the floor",
+      {
+        taskId: task.id,
+        requestedMs: task.timeoutMs ?? null,
+        timeoutMs: taskTimeMs,
+      },
+    );
+  } else if (timeBudget.clamped) {
     budgetNotes.push(
       `timeoutMs ${task.timeoutMs} was clamped to ${timeBudget.value} (${WORKER_BUDGET_CEILING_FACTOR}x the configured ${options.workerTimeoutMs})`,
     );
@@ -555,7 +733,7 @@ async function runOneTask(
     briefChars: brief.length,
     declaredFiles,
     tokensPerSecond: options.localTokensPerSecond,
-    ceilingMs: timeBudget.value,
+    ceilingMs: taskTimeMs,
   });
 
   // The worker's own clock, kept apart from the operator's signal: when
@@ -590,13 +768,53 @@ async function runOneTask(
       ),
     );
   };
-  const queueBudgetMs = resolveQueueBudgetMs(timeoutMs);
+  const queueBudgetMs = resolveQueueBudgetMs(
+    timeoutMs,
+    undefined,
+    options.localLeg === true ? LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS : 0,
+  );
   let queuedOut = false;
   let servedAt: number | null = null;
   let wallTimer: ReturnType<typeof setTimeout> | undefined;
-  const queueTimer = setTimeout(() => {
+  // What the server's slot table said when the queue wait ran out:
+  // `undefined` while nothing has probed it (see `queuedWorkerHint`).
+  let occupancy: SlotOccupancy | null | undefined;
+  // Set once the turn has ended, so a probe still in flight then does
+  // not abort a signal nobody is listening to.
+  let settled = false;
+  const probe =
+    options.localLeg === true ? deps.probeSlotOccupancy : undefined;
+  const endQueueWait = (): void => {
     queuedOut = true;
     abortForTime();
+  };
+  const queueTimer = setTimeout(() => {
+    if (probe === undefined) {
+      endQueueWait();
+      return;
+    }
+    // Read the slot table BEFORE the abort: afterwards the server has
+    // dropped this worker's request and the table describes the wrong
+    // moment. Bounded, so a probe that never settles still ends the wait.
+    let probeTimer: ReturnType<typeof setTimeout> | undefined;
+    void Promise.race([
+      probe().catch(() => null),
+      new Promise<null>((resolve) => {
+        probeTimer = setTimeout(
+          () => resolve(null),
+          QUEUE_SLOT_PROBE_TIMEOUT_MS,
+        );
+        probeTimer.unref?.();
+      }),
+    ]).then((seen) => {
+      clearTimeout(probeTimer);
+      if (settled) return;
+      // The first token landed while the table was being read: the
+      // worker is served, and its wall timer is already running.
+      if (servedAt !== null) return;
+      occupancy = seen;
+      endQueueWait();
+    });
   }, queueBudgetMs);
   queueTimer.unref?.();
   /**
@@ -668,6 +886,25 @@ async function runOneTask(
   let queuedOutcome = false;
   let timedOutOutcome = false;
 
+  // ATO-214: on a measured local leg one answer has to fit the time the
+  // worker has. The wall clock starts at the first token, so when the
+  // first completion is answered the time left is all of `timeoutMs`;
+  // the cap is sized from that, rides as the turn's output ceiling, and
+  // only ever lowers the cap already in force. Later steps keep it —
+  // the loop takes one ceiling per turn — and a later step the clock
+  // cuts leaves steps behind it, which is not the failure this fixes.
+  const timeFittedCap = fitReplyCapToTime({
+    tokensPerSecond: options.localTokensPerSecond,
+    remainingMs: timeoutMs,
+    capTokens:
+      options.workerMaxOutputTokens ??
+      getConfig().localModels.completionMaxTokens,
+  });
+  const replyCap = timeFittedCap ?? options.workerMaxOutputTokens;
+  // How long the first answer ran when it spent the time-fitted cap
+  // before any step had completed; read once the turn is over.
+  let firstCutTokens: number | undefined;
+
   let result: WorkerTaskResult;
   try {
     const turn = await deps.runTurn(session, brief, {
@@ -680,9 +917,7 @@ async function runOneTask(
       ...(options.workerReasoning === undefined
         ? {}
         : { reasoningEffort: options.workerReasoning }),
-      ...(options.workerMaxOutputTokens === undefined
-        ? {}
-        : { maxOutputTokens: options.workerMaxOutputTokens }),
+      ...(replyCap === undefined ? {} : { maxOutputTokens: replyCap }),
       signal: AbortSignal.any([options.signal, timeLimit, handBack.signal]),
       eventHook: (event) => {
         // The first token — not `turn_started`, which fires before the
@@ -722,6 +957,23 @@ async function runOneTask(
           event.event.type === "llm_completed"
         ) {
           announceUsage(event.event.completion.timing?.promptTokens ?? 0);
+          // Counted rather than read off `finish_reason`: llama-server's
+          // own endpoint reports none, and the count is what says the
+          // cap, not the context window, was the wall.
+          const completion = event.event.completion;
+          const spent =
+            completion.usage?.completionTokens ??
+            completion.timing?.predictedTokens ??
+            0;
+          if (
+            timeFittedCap !== undefined &&
+            firstCutTokens === undefined &&
+            stepsFinished === 0 &&
+            spent > 0 &&
+            spent + REPLY_CAP_SLACK_TOKENS >= timeFittedCap
+          ) {
+            firstCutTokens = spent;
+          }
         }
         if (
           event.type === "llm_event" &&
@@ -783,12 +1035,16 @@ async function runOneTask(
         : { error: error instanceof Error ? error.message : String(error) }),
     });
   } finally {
+    settled = true;
     clearTimeout(queueTimer);
     if (wallTimer !== undefined) clearTimeout(wallTimer);
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
     deps.approvals.fanoutScopes?.clear(session.id);
+    // Its declines and the link to the parent's, with nothing else to
+    // drop: a worker never gets a grant of its own.
+    deps.approvals.clearSessionGrants?.(session.id);
     deps.declaredInputs?.clear(session.id);
   }
 
@@ -820,25 +1076,41 @@ async function runOneTask(
   // once, because both doors onto that silence ask the same question:
   // the queue watchdog below, and the transport failure after it.
   const ranAlone = options.maxWorkers <= 1 || options.tasks.length <= 1;
+  const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
 
-  // A worker that never got a slot is not a worker that failed, ran out
-  // of steps or was cancelled: it produced nothing because the machine
-  // had nothing to give it. Saying so is the whole row — and it is the
-  // fan-out's WIDTH that has to change, not the task or its budget, so
-  // the status carries that hint rather than a bigger-deadline one.
+  // A worker that never got a token is not a worker that failed, ran
+  // out of steps or was cancelled: it produced nothing because the
+  // server had not answered it yet. Why is the whole row — a full
+  // server, a dead one, or a model still reading — and only the slot
+  // table can tell those apart, so the hint is chosen from it
+  // (`queuedWorkerHint`), not from how many workers were running.
   if (queuedOutcome) {
     const { error: _dropped, ...rest } = result;
+    // Widened by hand: it is assigned inside the timer callback, which
+    // the compiler's flow analysis does not follow.
+    const table = occupancy as SlotOccupancy | null | undefined;
+    const seen =
+      table === undefined
+        ? ""
+        : table === null
+          ? " — the server's slot table could not be read"
+          : ` — the server reported ${table.busy} of ${table.total} slot${table.total === 1 ? "" : "s"} busy`;
     result = {
       ...rest,
       status: "queued",
       reply: WORKER_QUEUED_NOTE,
       stepCount: 0,
-      hint: ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_QUEUED,
+      hint: queuedWorkerHint({
+        ranAlone,
+        width,
+        occupancy: table,
+        waitMs: queueBudgetMs,
+      }),
       notes: [
         ...(result.notes ?? []),
         ranAlone
-          ? `no first token within ${Math.round(queueBudgetMs / 60_000)} min, and it was the only worker on the leg — nothing was occupying the server`
-          : `no first token within ${Math.round(queueBudgetMs / 60_000)} min of being sent, while its own budget was ${Math.round(timeoutMs / 60_000)} min — up to ${options.maxWorkers} workers were sharing the server`,
+          ? `no first token within ${formatWaitMs(queueBudgetMs)}, and it was the only worker on the leg${seen}`
+          : `no first token within ${formatWaitMs(queueBudgetMs)} of being sent, while its own budget was ${formatWaitMs(timeoutMs)} — up to ${width} workers were sharing the server${seen}`,
       ],
     };
   }
@@ -880,6 +1152,37 @@ async function runOneTask(
         ...(result.notes ?? []),
         `handed back early: declared files but wrote none by half the budget (${completed} steps completed, none a successful write)${stall === undefined ? "" : ` (stalled: ${stall})`} — re-brief with a narrower task or the exact content to write`,
       ],
+    };
+  }
+
+  // The first answer spent the time-fitted cap and nothing completed a
+  // step after it (ATO-214): say that, rather than leave a bare
+  // "0 steps" and "(the worker produced no reply)" over a worker that
+  // generated for most of its budget. Beside the error, never in place
+  // of it, and not on a worker the operator cancelled.
+  // Widened by hand: it is assigned inside the event hook, which the
+  // compiler's flow analysis does not follow.
+  const cutAt = firstCutTokens as number | undefined;
+  if (
+    cutAt !== undefined &&
+    timeFittedCap !== undefined &&
+    stepsFinished === 0 &&
+    result.stepCount === 0 &&
+    (result.status === "timeout" ||
+      result.status === "failed" ||
+      result.status === "max_steps")
+  ) {
+    const cut = describeFirstAnswerCut({
+      cutAtTokens: cutAt,
+      capTokens: timeFittedCap,
+      tokensPerSecond: options.localTokensPerSecond ?? 0,
+      timeoutMs,
+    });
+    result = {
+      ...result,
+      ...(result.reply.length === 0 ? { reply: cut.reply } : {}),
+      hint: result.hint ?? cut.hint,
+      notes: [cut.note, ...(result.notes ?? [])],
     };
   }
 

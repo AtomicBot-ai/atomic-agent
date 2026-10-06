@@ -93,7 +93,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const declaredInputs = new osTools.DeclaredInputsRegistry();
       const requests = new Map<string, string>(); const recent = vi.fn(() => []);
       const registration = vi.spyOn(osTools, "registerOsTools");
-      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, sessionStore: { listRecentWorkingDirs: recent },
+      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [] },
         resolveOriginalRequest: id => requests.get(id), declaredInputs, shellJobs, skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore });
       const wired = registration.mock.calls[0]?.[1]; if (!wired) throw new Error("OS tools not registered");
       expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
@@ -200,7 +200,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous, declaredInputs: new osTools.DeclaredInputsRegistry(),
       resolveOriginalRequest, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
       prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }) }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
     const wired = builder.mock.calls[0]?.[0]; const protectedReads = confinement.mock.calls[0]?.[1];
     if (!wired || !protectedReads) throw new Error("late tool phase missing");
     expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);

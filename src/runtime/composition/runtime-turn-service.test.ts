@@ -76,7 +76,7 @@ describe("runtime turn ownership recipes", () => {
       execution: {
         loop, turnController, steeringInbox,
         shellJobs: { endSession: id => { events.push(`shell-session:${id}`); return []; }, endTurn: () => { events.push("shell-turn"); return []; } },
-        slotManager: { sideCallSlotId: () => 7 }, llmComplete: async () => completion(),
+        slotManager: { sideCallSlotId: () => 7, release: id => { events.push(`slot-release:${id}`); } }, llmComplete: async () => completion(),
       },
       inference: { ...providers, fallbackChain: { standingOverrideFor: () => null } },
       traces: {
@@ -182,7 +182,7 @@ describe("runtime turn ownership recipes", () => {
     await fixture.service.executeTurn(worker, "brief");
     expect(fixture.loop.runTurn.mock.calls[0]?.[1]).toMatchObject({ ephemeral: true, userMessage: "brief" });
     expect(begin).not.toHaveBeenCalled();
-    expect(fixture.events).toEqual(["loop", `clear:${worker.id}`, `shell-session:${worker.id}`]);
+    expect(fixture.events).toEqual(["loop", `clear:${worker.id}`, `shell-session:${worker.id}`, `slot-release:${worker.id}`]);
     expect(fixture.rows.size).toBe(0);
     expect(fixture.turnRequests.size).toBe(0);
   });

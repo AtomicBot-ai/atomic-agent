@@ -34,6 +34,7 @@
     "verbatimModuleSyntax": false
   },
   "rootFiles": [
+    "src/agent/agent-contract.ts",
     "src/agent/agent-loop-cancel-race.test.ts",
     "src/agent/agent-loop-fusion-seams.test.ts",
     "src/agent/agent-loop-lesson-lifecycle.test.ts",
@@ -47,62 +48,107 @@
     "src/agent/agent-loop-segmentation.test.ts",
     "src/agent/agent-loop-steering.test.ts",
     "src/agent/agent-loop-stop-cause.test.ts",
+    "src/agent/agent-loop-stop-marker.test.ts",
     "src/agent/agent-loop.test.ts",
     "src/agent/agent-loop.ts",
     "src/agent/batch-executor.test.ts",
     "src/agent/batch-executor.ts",
     "src/agent/batch-summary-cap.test.ts",
     "src/agent/batch-summary-cap.ts",
-    "src/agent/claim-evidence.test.ts",
     "src/agent/claim-evidence.ts",
-    "src/agent/empty-completion-recovery.test.ts",
+    "src/agent/dispatch/batch-contract.ts",
+    "src/agent/dispatch/batch-gates.test.ts",
+    "src/agent/dispatch/batch-gates.ts",
+    "src/agent/dispatch/batch-scheduler.ts",
     "src/agent/empty-completion-recovery.ts",
     "src/agent/fusion-orchestrator-mode.test.ts",
     "src/agent/fusion-orchestrator-mode.ts",
     "src/agent/index.ts",
-    "src/agent/link-evidence.test.ts",
     "src/agent/link-evidence.ts",
     "src/agent/loop-detector.test.ts",
     "src/agent/loop-detector.ts",
     "src/agent/native-tool-call-execution-integrity.test.ts",
     "src/agent/parallel-tool-calls.integration.test.ts",
-    "src/agent/parse-failure-recovery.test.ts",
     "src/agent/parse-failure-recovery.ts",
-    "src/agent/plan-mode.test.ts",
     "src/agent/plan-mode.ts",
+    "src/agent/policies/claim-evidence.test.ts",
+    "src/agent/policies/claim-evidence.ts",
+    "src/agent/policies/fusion-orchestrator-mode.ts",
+    "src/agent/policies/link-evidence.test.ts",
+    "src/agent/policies/link-evidence.ts",
+    "src/agent/policies/plan-mode.test.ts",
+    "src/agent/policies/plan-mode.ts",
+    "src/agent/policies/step-tool-set.test.ts",
+    "src/agent/policies/step-tool-set.ts",
     "src/agent/profile-clip-warning.test.ts",
     "src/agent/profile-clip-warning.ts",
     "src/agent/profile-matrix.test.ts",
     "src/agent/progress-note-reply.executor.test.ts",
     "src/agent/progress-note-reply.test.ts",
     "src/agent/progress-note-reply.ts",
-    "src/agent/read-coverage.test.ts",
+    "src/agent/progress/loop-constants.ts",
+    "src/agent/progress/loop-contract.ts",
+    "src/agent/progress/loop-fingerprints.test.ts",
+    "src/agent/progress/loop-fingerprints.ts",
+    "src/agent/progress/loop-notices.test.ts",
+    "src/agent/progress/loop-notices.ts",
+    "src/agent/progress/read-coverage.test.ts",
+    "src/agent/progress/read-coverage.ts",
+    "src/agent/progress/test-command-key.test.ts",
+    "src/agent/progress/test-command-key.ts",
+    "src/agent/progress/wandering-spread.test.ts",
+    "src/agent/progress/wandering-spread.ts",
+    "src/agent/progress/workspace-fingerprint.test.ts",
+    "src/agent/progress/workspace-fingerprint.ts",
     "src/agent/read-coverage.ts",
     "src/agent/reply-attachments.test.ts",
     "src/agent/request-deadline.test.ts",
     "src/agent/request-deadline.ts",
     "src/agent/review-stall.test.ts",
     "src/agent/review-stall.ts",
-    "src/agent/size-rejection-recovery.test.ts",
     "src/agent/size-rejection-recovery.ts",
     "src/agent/steer-notice.test.ts",
     "src/agent/steer-notice.ts",
     "src/agent/step-events.ts",
     "src/agent/step-executor.test.ts",
     "src/agent/step-executor.ts",
-    "src/agent/step-tool-set.test.ts",
     "src/agent/step-tool-set.ts",
-    "src/agent/test-command-key.test.ts",
+    "src/agent/step/step-batch-lifecycle.test.ts",
+    "src/agent/step/step-batch-parsing.ts",
+    "src/agent/step/step-batch-policy.ts",
+    "src/agent/step/step-commit.ts",
+    "src/agent/step/step-contract.ts",
+    "src/agent/step/step-errors.ts",
+    "src/agent/step/step-evidence.ts",
+    "src/agent/step/step-inference.test.ts",
+    "src/agent/step/step-inference.ts",
+    "src/agent/step/step-parsing.ts",
+    "src/agent/step/step-reasoning.ts",
     "src/agent/test-command-key.ts",
     "src/agent/tool-name-resolution.test.ts",
     "src/agent/tool-name-resolution.ts",
     "src/agent/tool-resource-class.test.ts",
     "src/agent/tool-resource-class.ts",
-    "src/agent/truncation-recovery.test.ts",
     "src/agent/truncation-recovery.ts",
-    "src/agent/wandering-spread.test.ts",
+    "src/agent/turn/empty-completion-recovery.test.ts",
+    "src/agent/turn/empty-completion-recovery.ts",
+    "src/agent/turn/parse-failure-recovery.test.ts",
+    "src/agent/turn/parse-failure-recovery.ts",
+    "src/agent/turn/size-rejection-recovery.test.ts",
+    "src/agent/turn/size-rejection-recovery.ts",
+    "src/agent/turn/truncation-recovery.test.ts",
+    "src/agent/turn/truncation-recovery.ts",
+    "src/agent/turn/turn-control-timing.test.ts",
+    "src/agent/turn/turn-finalization.test.ts",
+    "src/agent/turn/turn-finalization.ts",
+    "src/agent/turn/turn-memory-context.test.ts",
+    "src/agent/turn/turn-memory-context.ts",
+    "src/agent/turn/turn-preparation.test.ts",
+    "src/agent/turn/turn-preparation.ts",
+    "src/agent/turn/turn-recovery.test.ts",
+    "src/agent/turn/turn-recovery.ts",
+    "src/agent/turn/turn-state.ts",
     "src/agent/wandering-spread.ts",
-    "src/agent/workspace-fingerprint.test.ts",
     "src/agent/workspace-fingerprint.ts",
     "src/analytics/analytics-client.test.ts",
     "src/analytics/analytics-client.ts",
@@ -137,7 +183,10 @@
     "src/approval/approval-level.ts",
     "src/approval/approval-router.test.ts",
     "src/approval/approval-router.ts",
+    "src/approval/coding-mode.ts",
+    "src/approval/dangerous-tool.test.ts",
     "src/approval/dangerous-tool.ts",
+    "src/approval/declined-in-turn.test.ts",
     "src/approval/fanout-scope.test.ts",
     "src/approval/fanout-scope.ts",
     "src/approval/index.ts",
@@ -411,13 +460,18 @@
     "src/http/openai-completions-cancel.ts",
     "src/http/openai-errors.ts",
     "src/http/openai-session-id.ts",
+    "src/http/provider-waiting-stream.test.ts",
     "src/http/request-context.ts",
     "src/http/route-approval.test.ts",
     "src/http/route-approval.ts",
     "src/http/route-capabilities.test.ts",
     "src/http/route-capabilities.ts",
+    "src/http/route-coding-mode.test.ts",
+    "src/http/route-coding-mode.ts",
     "src/http/route-config.test.ts",
     "src/http/route-config.ts",
+    "src/http/route-context-preview.test.ts",
+    "src/http/route-context-preview.ts",
     "src/http/route-health.test.ts",
     "src/http/route-health.ts",
     "src/http/route-mcp.test.ts",
@@ -433,6 +487,11 @@
     "src/http/route-webhooks.test.ts",
     "src/http/route-webhooks.ts",
     "src/http/session-status.test.ts",
+    "src/http/stream-cancel-frame.test.ts",
+    "src/http/stream-failure-frame.test.ts",
+    "src/http/stream-fusion-worker-frame.test.ts",
+    "src/http/stream-reply-frame.test.ts",
+    "src/http/stream-tool-result-frame.test.ts",
     "src/http/test-harness.ts",
     "src/http/undelivered-steers.test.ts",
     "src/http/undelivered-steers.ts",
@@ -533,6 +592,8 @@
     "src/integrations/telegram-integration.ts",
     "src/llm/describe-llama-health-failure.test.ts",
     "src/llm/describe-llama-health-failure.ts",
+    "src/llm/discard-response-body.test.ts",
+    "src/llm/discard-response-body.ts",
     "src/llm/errno-code.test.ts",
     "src/llm/errno-code.ts",
     "src/llm/fallback/describe-reason.test.ts",
@@ -540,6 +601,7 @@
     "src/llm/fallback/failed-attempts.test.ts",
     "src/llm/fallback/failed-attempts.ts",
     "src/llm/fallback/failed-links.ts",
+    "src/llm/fallback/fallback-billing.integration.test.ts",
     "src/llm/fallback/fallback-config.test.ts",
     "src/llm/fallback/fallback-config.ts",
     "src/llm/fallback/fallback-e2e.integration.test.ts",
@@ -723,6 +785,8 @@
     "src/llm/provider/subscription-cli/claude-cli-adapter.ts",
     "src/llm/provider/subscription-cli/claude-cli-models.ts",
     "src/llm/provider/subscription-cli/cli-adapter-descriptor.ts",
+    "src/llm/provider/subscription-cli/cli-child-env.test.ts",
+    "src/llm/provider/subscription-cli/cli-child-env.ts",
     "src/llm/provider/subscription-cli/codex-cli-adapter.test.ts",
     "src/llm/provider/subscription-cli/codex-cli-adapter.ts",
     "src/llm/provider/subscription-cli/host-environment.test.ts",
@@ -982,6 +1046,8 @@
     "src/memory/memory-store-v2.test.ts",
     "src/memory/memory-store.test.ts",
     "src/memory/memory-store.ts",
+    "src/memory/name-grounding.test.ts",
+    "src/memory/name-grounding.ts",
     "src/memory/notes-renderer.test.ts",
     "src/memory/notes-renderer.ts",
     "src/memory/obsidian-export.test.ts",
@@ -991,17 +1057,24 @@
     "src/memory/procedures/procedure-store.ts",
     "src/memory/procedures/procedures-renderer.ts",
     "src/memory/procedures/scorecard-7b.test.ts",
+    "src/memory/profile-duplicates.test.ts",
+    "src/memory/profile-duplicates.ts",
     "src/memory/profile-eviction.test.ts",
     "src/memory/profile-eviction.ts",
+    "src/memory/profile-name-keys.test.ts",
+    "src/memory/profile-name-keys.ts",
     "src/memory/profile-renderer.test.ts",
     "src/memory/profile-renderer.ts",
     "src/memory/profile-store-bitemporal.test.ts",
+    "src/memory/profile-store-name-grounding.test.ts",
     "src/memory/profile-store.test.ts",
     "src/memory/profile-store.ts",
     "src/memory/reflection-decorator-fire-safety.test.ts",
     "src/memory/reflection/index.ts",
     "src/memory/reflection/reflection-grammar.test.ts",
     "src/memory/reflection/reflection-grammar.ts",
+    "src/memory/reflection/reflection-grounding.test.ts",
+    "src/memory/reflection/reflection-grounding.ts",
     "src/memory/reflection/reflection-parser.test.ts",
     "src/memory/reflection/reflection-parser.ts",
     "src/memory/reflection/reflection-prompt.test.ts",
@@ -1092,11 +1165,14 @@
     "src/runtime/abortable-subcall.ts",
     "src/runtime/announce-memory-health.test.ts",
     "src/runtime/announce-memory-health.ts",
+    "src/runtime/bootstrap-composition-startup.test.ts",
+    "src/runtime/bootstrap-composition.test.ts",
     "src/runtime/bootstrap-deferred-session.test.ts",
     "src/runtime/bootstrap-fusion-seams.test.ts",
     "src/runtime/bootstrap-memory-health.test.ts",
     "src/runtime/bootstrap-queued-turn.test.ts",
     "src/runtime/bootstrap-session-retention.test.ts",
+    "src/runtime/bootstrap-task-lifecycle.test.ts",
     "src/runtime/bootstrap-turn-status.test.ts",
     "src/runtime/bootstrap-vote-trace.test.ts",
     "src/runtime/bootstrap.test.ts",
@@ -1104,6 +1180,34 @@
     "src/runtime/channel-status.ts",
     "src/runtime/cloud-response-format-strict.test.ts",
     "src/runtime/cloud-response-format.smoke.test.ts",
+    "src/runtime/composition/runtime-channels.test.ts",
+    "src/runtime/composition/runtime-channels.ts",
+    "src/runtime/composition/runtime-inference.test.ts",
+    "src/runtime/composition/runtime-inference.ts",
+    "src/runtime/composition/runtime-lifecycle.test.ts",
+    "src/runtime/composition/runtime-lifecycle.ts",
+    "src/runtime/composition/runtime-local-profile.test.ts",
+    "src/runtime/composition/runtime-local-profile.ts",
+    "src/runtime/composition/runtime-memory-services.test.ts",
+    "src/runtime/composition/runtime-memory-services.ts",
+    "src/runtime/composition/runtime-memory-stores.test.ts",
+    "src/runtime/composition/runtime-memory-stores.ts",
+    "src/runtime/composition/runtime-observability.test.ts",
+    "src/runtime/composition/runtime-observability.ts",
+    "src/runtime/composition/runtime-prompt-preview.test.ts",
+    "src/runtime/composition/runtime-prompt-preview.ts",
+    "src/runtime/composition/runtime-session-services.test.ts",
+    "src/runtime/composition/runtime-session-services.ts",
+    "src/runtime/composition/runtime-skills.test.ts",
+    "src/runtime/composition/runtime-skills.ts",
+    "src/runtime/composition/runtime-task-services.test.ts",
+    "src/runtime/composition/runtime-task-services.ts",
+    "src/runtime/composition/runtime-tool-catalog.test.ts",
+    "src/runtime/composition/runtime-tool-catalog.ts",
+    "src/runtime/composition/runtime-traces.test.ts",
+    "src/runtime/composition/runtime-traces.ts",
+    "src/runtime/composition/runtime-turn-service.test.ts",
+    "src/runtime/composition/runtime-turn-service.ts",
     "src/runtime/embedding-auth.test.ts",
     "src/runtime/fallback-chain-resolver.test.ts",
     "src/runtime/fallback-chain-resolver.ts",
@@ -1120,6 +1224,8 @@
     "src/runtime/llm-fallback-seam.ts",
     "src/runtime/llm-link-attempt.test.ts",
     "src/runtime/llm-link-attempt.ts",
+    "src/runtime/local-link-availability.test.ts",
+    "src/runtime/local-link-availability.ts",
     "src/runtime/local-probe-gating.test.ts",
     "src/runtime/recorder-eviction.test.ts",
     "src/runtime/resolve-model-pricing.test.ts",
@@ -1127,10 +1233,13 @@
     "src/runtime/ripgrep-resolver.test.ts",
     "src/runtime/ripgrep-resolver.ts",
     "src/runtime/route-change-note.test.ts",
+    "src/runtime/runtime-contract.ts",
     "src/runtime/self-invocation.test.ts",
     "src/runtime/self-invocation.ts",
+    "src/runtime/session-not-found-error.ts",
     "src/runtime/steering-inbox.test.ts",
     "src/runtime/steering-inbox.ts",
+    "src/runtime/tool-contract-composition.test.ts",
     "src/runtime/turn-controller.test.ts",
     "src/runtime/turn-controller.ts",
     "src/runtime/turns-in-flight.test.ts",
@@ -1174,6 +1283,7 @@
     "src/session/session-route.test.ts",
     "src/session/session-route.ts",
     "src/session/session-state.ts",
+    "src/session/session-store.chat-lines.test.ts",
     "src/session/session-store.summaries.test.ts",
     "src/session/session-store.test.ts",
     "src/session/session-store.ts",
@@ -1301,6 +1411,7 @@
     "src/tools/fusion/worker-prompt.test.ts",
     "src/tools/fusion/worker-prompt.ts",
     "src/tools/fusion/worker-queue-clock.test.ts",
+    "src/tools/fusion/worker-reply-cap.test.ts",
     "src/tools/fusion/worker-result.test.ts",
     "src/tools/fusion/worker-result.ts",
     "src/tools/fusion/worker-runner.test.ts",
@@ -1360,13 +1471,17 @@
     "src/tools/os/fs/fs-content-check.test.ts",
     "src/tools/os/fs/fs-content-check.ts",
     "src/tools/os/fs/fs-declared-inputs.ts",
+    "src/tools/os/fs/fs-diff-contract.ts",
     "src/tools/os/fs/fs-diff.test.ts",
     "src/tools/os/fs/fs-diff.ts",
+    "src/tools/os/fs/fs-edit-contract.ts",
     "src/tools/os/fs/fs-edit-diff.ts",
     "src/tools/os/fs/fs-edit.test.ts",
     "src/tools/os/fs/fs-edit.ts",
+    "src/tools/os/fs/fs-glob-contract.ts",
     "src/tools/os/fs/fs-glob.test.ts",
     "src/tools/os/fs/fs-glob.ts",
+    "src/tools/os/fs/fs-grep-contract.ts",
     "src/tools/os/fs/fs-grep.test.ts",
     "src/tools/os/fs/fs-grep.ts",
     "src/tools/os/fs/fs-hash-contract.test.ts",
@@ -1375,30 +1490,40 @@
     "src/tools/os/fs/fs-hash.ts",
     "src/tools/os/fs/fs-input-guard.test.ts",
     "src/tools/os/fs/fs-input-guard.ts",
+    "src/tools/os/fs/fs-list-contract.ts",
     "src/tools/os/fs/fs-list.test.ts",
     "src/tools/os/fs/fs-list.ts",
+    "src/tools/os/fs/fs-locate-project-contract.ts",
     "src/tools/os/fs/fs-locate-project-sources.test.ts",
     "src/tools/os/fs/fs-locate-project-sources.ts",
     "src/tools/os/fs/fs-locate-project-test-helpers.ts",
     "src/tools/os/fs/fs-locate-project.test.ts",
     "src/tools/os/fs/fs-locate-project.ts",
+    "src/tools/os/fs/fs-operation-contracts.test.ts",
     "src/tools/os/fs/fs-parse-check.test.ts",
     "src/tools/os/fs/fs-parse-check.ts",
+    "src/tools/os/fs/fs-patch-contract.ts",
     "src/tools/os/fs/fs-patch-preview.ts",
     "src/tools/os/fs/fs-patch.test.ts",
     "src/tools/os/fs/fs-patch.ts",
+    "src/tools/os/fs/fs-read-contract.ts",
+    "src/tools/os/fs/fs-read-contracts.test.ts",
     "src/tools/os/fs/fs-read-coverage.test.ts",
     "src/tools/os/fs/fs-read-coverage.ts",
     "src/tools/os/fs/fs-read.ts",
     "src/tools/os/fs/fs-replace-guard.test.ts",
     "src/tools/os/fs/fs-replace-guard.ts",
     "src/tools/os/fs/fs-require-approval.ts",
+    "src/tools/os/fs/fs-restore-contract.ts",
     "src/tools/os/fs/fs-restore-manifest.ts",
     "src/tools/os/fs/fs-restore-store.ts",
     "src/tools/os/fs/fs-restore.ts",
+    "src/tools/os/fs/fs-trash-contract.ts",
     "src/tools/os/fs/fs-trash.ts",
+    "src/tools/os/fs/fs-watch-contract.ts",
     "src/tools/os/fs/fs-watch.test.ts",
     "src/tools/os/fs/fs-watch.ts",
+    "src/tools/os/fs/fs-write-contract.ts",
     "src/tools/os/fs/fs-write-retarget.test.ts",
     "src/tools/os/fs/fs-write.ts",
     "src/tools/os/git/git-add.test.ts",
@@ -1486,11 +1611,15 @@
     "src/tools/os/shell-command-guard/rules-trusted/gog.ts",
     "src/tools/os/shell-command-guard/rules-trusted/ical-buddy.ts",
     "src/tools/os/shell-command-guard/shell-command-guard.test.ts",
+    "src/tools/os/shell-command-guard/shell-line-lexer.ts",
+    "src/tools/os/shell-command-guard/write-targets.test.ts",
+    "src/tools/os/shell-command-guard/write-targets.ts",
     "src/tools/os/shell/expand-shell-glob-args.test.ts",
     "src/tools/os/shell/expand-shell-glob-args.ts",
     "src/tools/os/shell/node-check-notice.test.ts",
     "src/tools/os/shell/node-check-notice.ts",
     "src/tools/os/shell/shell-detach.test.ts",
+    "src/tools/os/shell/shell-interpretation.test.ts",
     "src/tools/os/shell/shell-interpretation.ts",
     "src/tools/os/shell/shell-job-calls.ts",
     "src/tools/os/shell/shell-jobs.test.ts",
@@ -1541,6 +1670,8 @@
     "src/tools/os/web/http-request.ts",
     "src/tools/os/web/retry-after-header.test.ts",
     "src/tools/os/web/retry-after-header.ts",
+    "src/tools/os/web/run-curl.test.ts",
+    "src/tools/os/web/run-curl.ts",
     "src/tools/os/web/web-fetch-challenge.test.ts",
     "src/tools/os/web/web-fetch-challenge.ts",
     "src/tools/os/web/web-fetch-extract.test.ts",
@@ -1577,6 +1708,7 @@
     "src/tools/tasks/tasks-schedule.ts",
     "src/tools/tasks/tasks-show.test.ts",
     "src/tools/tasks/tasks-show.ts",
+    "src/tools/tool-contract-conformance.test.ts",
     "src/tools/tool-registry.ts",
     "src/tools/tool-roles.test.ts",
     "src/tools/tool-roles.ts",
@@ -1765,6 +1897,8 @@
     "src/tui/components/prompt-shell.test.tsx",
     "src/tui/components/prompt-shell.tsx",
     "src/tui/components/provider-outage-readout.tsx",
+    "src/tui/components/pull-bar-owner.test.tsx",
+    "src/tui/components/pull-bar-owner.ts",
     "src/tui/components/queued-messages.test.tsx",
     "src/tui/components/queued-messages.tsx",
     "src/tui/components/render-progress-bar.test.ts",
@@ -2444,7 +2578,7 @@
     "src/update/run-app-update.ts",
     "src/version.ts"
   ],
-  "testTsx": 105,
+  "testTsx": 106,
   "diagnostics": [
     {
       "path": "src/agent/agent-loop-fusion-seams.test.ts",
@@ -2491,7 +2625,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveReflect",
-      "line": 4443,
+      "line": 4488,
       "count": 1
     },
     {
@@ -2499,7 +2633,7 @@
       "code": 2558,
       "message": "Expected 0-1 type arguments, but got 2.",
       "anchor": "[], Promise<Record<string, unknown>>",
-      "line": 4195,
+      "line": 4240,
       "count": 2
     },
     {
@@ -2507,7 +2641,7 @@
       "code": 6133,
       "message": "'loop' is declared but its value is never read.",
       "anchor": "loop",
-      "line": 2159,
+      "line": 2204,
       "count": 1
     },
     {
@@ -2515,7 +2649,7 @@
       "code": 2322,
       "message": "Type '() => { delegations: number; }' is not assignable to type '() => FusionOrchestratorState'.   Property 'barrenDelegations' is missing in type '{ delegations: number; }' but required in type 'FusionOrchestratorState'.",
       "anchor": "fusionState",
-      "line": 1586,
+      "line": 1611,
       "count": 4
     },
     {
@@ -2587,7 +2721,7 @@
       "code": 18048,
       "message": "'params.messages' is possibly 'undefined'.",
       "anchor": "params.messages",
-      "line": 4898,
+      "line": 5391,
       "count": 1
     },
     {
@@ -2595,7 +2729,7 @@
       "code": 2345,
       "message": "Argument of type '{ approvalPosture?: StepApprovalPostureSource | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<...>; grammar: string; profile: PlainModelProfile; onEvent: (event: StepEvent) => number; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ approvalPosture?: StepApprovalPostureSource | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<...>; grammar: string; profile: PlainModelProfile; onEvent: (event: StepEvent) => number; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: orderLoggingRegistry(log), slotManager: new SlotManager(2), llmComplete: async () => mockCompletion(body), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (event) => events.push(event), ...(approvalPosture ? { approvalPosture } : {}), }",
-      "line": 1749,
+      "line": 1754,
       "count": 1
     },
     {
@@ -2603,7 +2737,7 @@
       "code": 2345,
       "message": "Argument of type '{ logger?: StructuredLogger | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ logger?: StructuredLogger | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: QWEN_THINK_PROFILE, ...(logger ? { logger } : {}), }",
-      "line": 2662,
+      "line": 3155,
       "count": 1
     },
     {
@@ -2611,7 +2745,7 @@
       "code": 2345,
       "message": "Argument of type '{ logger?: StructuredLogger | undefined; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 4 more ...; registry: ToolRegistry; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ logger?: StructuredLogger | undefined; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 4 more ...; registry: ToolRegistry; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...(options.linkEvidence === false ? {} : { linkEvidence: { noticed: () => noticed, markNoticed: () => { noticed = true; marks += 1; }, }, }), ...(options.claimEvidence === true ? { claimEvidence: { noticed: () => claimMarks > 0, markNoticed: () => { claimMarks += 1; }, }, } : {}), slotManager: new SlotManager(2), llmComplete: async () => ({ content: JSON.stringify([{ tool: \"reply\", args: { text: replyText } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, ...(options.logger ? { logger: options.logger } : {}), }",
-      "line": 5365,
+      "line": 5858,
       "count": 1
     },
     {
@@ -2619,7 +2753,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; isPlanMode?: (() => boolean) | undefined; isFusionOrchestrator?: (() => boolean) | undefined; fusionState?: (() => FusionOrchestratorState) | undefined; ... 24 more ...; approvalPosture?: StepApprovalPostureSource | undefined; }' is not assignable to parameter of type 'StepDependencies'.   Types of property 'toolTransport' are incompatible.     Type 'ToolCallTransport | undefined' is not assignable to type 'ToolCallTransport'.       Type 'undefined' is not assignable to type 'ToolCallTransport'.",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); return { content: JSON.stringify([ { tool: \"reply\", args: { text: \"done\" } }, ]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, ...depsExtra, }",
-      "line": 4443,
+      "line": 4936,
       "count": 1
     },
     {
@@ -2627,7 +2761,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; isPlanMode?: (() => boolean) | undefined; isFusionOrchestrator?: (() => boolean) | undefined; fusionState?: (() => FusionOrchestratorState) | undefined; ... 24 more ...; approvalPosture?: StepApprovalPostureSource | undefined; }' is not assignable to parameter of type 'StepDependencies'.   Types of property 'toolTransport' are incompatible.     Type 'ToolCallTransport | undefined' is not assignable to type 'ToolCallTransport'.       Type 'undefined' is not assignable to type 'ToolCallTransport'.",
       "anchor": "{ registry: makeRegistry(), slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); return { content: JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, ...depsExtra, }",
-      "line": 4673,
+      "line": 5166,
       "count": 1
     },
     {
@@ -2635,7 +2769,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: boolean; truncated: boolean; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: boolean; truncated: boolean; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "deps",
-      "line": 2551,
+      "line": 3044,
       "count": 2
     },
     {
@@ -2643,7 +2777,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 224,
+      "line": 229,
       "count": 1
     },
     {
@@ -2651,7 +2785,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if ( ev.type === \"tool_call_parsed\" || ev.type === \"tool_call_executed\" ) { events.push({ type: ev.type, batchIndex: ev.batchIndex, batchSize: ev.batchSize, }); } }, }",
-      "line": 1326,
+      "line": 1331,
       "count": 1
     },
     {
@@ -2659,7 +2793,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if (ev.type === \"batch_trimmed\" || ev.type === \"parse_retry\") { events.push({ type: ev.type, ...(ev.type === \"batch_trimmed\" ? { kept: ev.kept, reason: ev.reason } : { reason: ev.reason }), }); } }, }",
-      "line": 1206,
+      "line": 1211,
       "count": 1
     },
     {
@@ -2667,7 +2801,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: completionBody, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 113,
+      "line": 118,
       "count": 2
     },
     {
@@ -2675,7 +2809,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 5563,
+      "line": 6056,
       "count": 1
     },
     {
@@ -2683,7 +2817,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { const content = bodies[calls] ?? \"\"; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: content.length, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 3382,
+      "line": 3875,
       "count": 1
     },
     {
@@ -2691,7 +2825,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { llmCalls += 1; return { content: llmCalls > 1 && opts?.repairBody ? opts.repairBody : body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if ( ev.type === \"batch_wave_split\" || ev.type === \"parse_retry\" || ev.type === \"batch_trimmed\" ) { events.push(ev as { type: string; [k: string]: unknown }); } }, }",
-      "line": 1515,
+      "line": 1520,
       "count": 1
     },
     {
@@ -2699,7 +2833,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ readonly content: string; readonly reasoningContent: string; readonly stop: true; ... 4 more ...; readonly modelId: \"mock\"; }>; llmCompleteStream: () => AsyncGenerator<...>; grammar: string; profile: TaggedReasoningModelProfile; onCompl...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ readonly content: string; readonly reasoningContent: string; readonly stop: true; ... 4 more ...; readonly modelId: \"mock\"; }>; llmCompleteStream: () => AsyncGenerator<...>; grammar: string; profile: TaggedReasoningModelProfile; onCompl...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => finalCompletion, llmCompleteStream: async function* () { for (const chunk of args.chunks) yield chunk; return finalCompletion; }, grammar, profile: QWEN_THINK_PROFILE, onCompletion: (c) => { captured = c; }, }",
-      "line": 2339,
+      "line": 2832,
       "count": 1
     },
     {
@@ -2707,7 +2841,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { throw thrown; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 3323,
+      "line": 3816,
       "count": 1
     },
     {
@@ -2715,7 +2849,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; llmCompleteStream: () => AsyncGenerator<{ delta: string; reasoningDelta: string; done: false; }, { ...; }, void>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; llmCompleteStream: () => AsyncGenerator<{ delta: string; reasoningDelta: string; done: false; }, { ...; }, void>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { throw new Error(\"unary path not taken\"); }, llmCompleteStream: async function* () { try { yield { delta: \"one\", reasoningDelta: \"\", done: false }; yield { delta: \"two\", reasoningDelta: \"\", done: false }; return { content: \"onetwo\", reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; } finally { released = true; } }, grammar, profile: QWEN_THINK_PROFILE, onEvent: (event) => { if (event.type === \"reasoning_delta\") { threw = true; throw boom; } }, }",
-      "line": 2445,
+      "line": 2938,
       "count": 1
     },
     {
@@ -2723,7 +2857,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async ({ prompt }) => { prompts.push(prompt); const content = bodies[calls] ?? bodies[bodies.length - 1]!; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 1031,
+      "line": 1036,
       "count": 1
     },
     {
@@ -2731,7 +2865,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt, maxTokens }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt, maxTokens }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async ({ prompt, maxTokens }) => { prompts.push(prompt); maxTokensSeen.push(maxTokens); const content = bodies[calls] ?? bodies[bodies.length - 1]!; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: QWEN_THINK_PROFILE, }",
-      "line": 1105,
+      "line": 1110,
       "count": 1
     },
     {
@@ -2739,7 +2873,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "deps",
-      "line": 5859,
+      "line": 6352,
       "count": 3
     },
     {
@@ -2747,7 +2881,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: true; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: true; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "{ registry, slotManager, llmComplete: async (params: { slotId: number }) => { slots.push(params.slotId); return mockCompletion(replyBody, { slotId: 1 }); }, grammar, profile: PLAIN_INSTRUCT_PROFILE, supportsSlotAffinity: true, onEvent: (event: StepEvent) => { if (event.type === \"prompt_captured\") cacheReused.push(event.cacheReused); }, }",
-      "line": 5920,
+      "line": 6413,
       "count": 1
     },
     {
@@ -2755,7 +2889,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean; }) => Promise<...>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: false; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean | undefined; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: false; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "{ registry, slotManager, llmComplete: async (params: { slotId: number; cachePrompt?: boolean; }) => { seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt }); return mockCompletion(replyBody, { slotId: 5 }); }, grammar, profile: PLAIN_INSTRUCT_PROFILE, supportsSlotAffinity: false, }",
-      "line": 5958,
+      "line": 6451,
       "count": 1
     },
     {
@@ -2763,7 +2897,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean | undefined; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "deps",
-      "line": 5812,
+      "line": 6305,
       "count": 2
     },
     {
@@ -2771,7 +2905,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push({ ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }), ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }), ...(params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens }), }); return { content: JSON.stringify([ { tool: \"reply\", args: { text: \"ok\" } }, ]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 5623,
+      "line": 6116,
       "count": 1
     },
     {
@@ -2779,7 +2913,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); calls += 1; return { content: calls === 1 ? \"not json at all\" : JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 4594,
+      "line": 5087,
       "count": 1
     },
     {
@@ -2787,7 +2921,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: makeRegistry(), slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); const content = bodies[calls] ?? bodies[bodies.length - 1]!; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: QWEN_THINK_PROFILE, onEvent: (event) => { events.push(event); }, }",
-      "line": 6031,
+      "line": 6524,
       "count": 1
     },
     {
@@ -2795,7 +2929,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; toolTransport: \"grammar\"; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; ... 6 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile | TaggedReasoningModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; toolTransport: \"grammar\"; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; ... 6 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile | TaggedReasoningModelProfile; }' is missing the following properties from type 'StepDependencies': toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: registryWithReply(), slotManager: new SlotManager(2), toolTransport: \"grammar\", llmComplete: async (params) => { seen.push(params as unknown as Record<string, unknown>); return { content: JSON.stringify({ tool: \"reply\", args: { text: \"hi\" } }), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile, }",
-      "line": 5706,
+      "line": 6199,
       "count": 1
     },
     {
@@ -2803,7 +2937,7 @@
       "code": 2345,
       "message": "Argument of type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 6 more ...; registry: T...' is not assignable to parameter of type 'StepDependencies'.   Type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 6 more ...; registry: T...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...policy, ...(policy.isFusionOrchestrator ? { fusionState: () => ({ delegations: 0 }) } : {}), slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => events.push(ev), }",
-      "line": 4984,
+      "line": 5477,
       "count": 1
     },
     {
@@ -2811,7 +2945,7 @@
       "code": 2345,
       "message": "Argument of type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: P...' is not assignable to parameter of type 'StepDependencies'.   Type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: P...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...(options.claimEvidence === false ? {} : { claimEvidence: { noticed: () => noticed, markNoticed: () => { noticed = true; marks += 1; }, }, }), slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 5194,
+      "line": 5687,
       "count": 1
     },
     {
@@ -2819,7 +2953,7 @@
       "code": 2345,
       "message": "Argument of type '{ tool: string; args: Record<string, unknown>; }' is not assignable to parameter of type '{ tool: string; args: { path: string; content: string; }; }'.   Types of property 'args' are incompatible.     Type 'Record<string, unknown>' is missing the following properties from type '{ path: string; content: string; }': path, content",
       "anchor": "...reads(13)",
-      "line": 1634,
+      "line": 1639,
       "count": 1
     },
     {
@@ -2851,7 +2985,7 @@
       "code": 2304,
       "message": "Cannot find name 'EventListener'.",
       "anchor": "EventListener",
-      "line": 577,
+      "line": 579,
       "count": 2
     },
     {
@@ -2859,7 +2993,7 @@
       "code": 2552,
       "message": "Cannot find name 'AddEventListenerOptions'. Did you mean 'EventListenerOptions'?",
       "anchor": "AddEventListenerOptions",
-      "line": 578,
+      "line": 580,
       "count": 1
     },
     {
@@ -2947,7 +3081,7 @@
       "code": 2322,
       "message": "Type '(u: InboundCallbackUpdate) => void | Promise<void>' is not assignable to type '(u: unknown) => void | Promise<void>'.   Types of parameters 'u' and 'u' are incompatible.     Type 'unknown' is not assignable to type 'InboundCallbackUpdate'.",
       "anchor": "state.callbackHandler",
-      "line": 101,
+      "line": 119,
       "count": 1
     },
     {
@@ -2955,7 +3089,7 @@
       "code": 2322,
       "message": "Type '(u: InboundFileUpdate) => void | Promise<void>' is not assignable to type '(u: unknown) => void | Promise<void>'.   Types of parameters 'u' and 'u' are incompatible.     Type 'unknown' is not assignable to type 'InboundFileUpdate'.",
       "anchor": "state.fileHandler",
-      "line": 104,
+      "line": 122,
       "count": 1
     },
     {
@@ -2963,7 +3097,7 @@
       "code": 2322,
       "message": "Type '(u: InboundTextUpdate) => void | Promise<void>' is not assignable to type '(u: unknown) => void | Promise<void>'.   Types of parameters 'u' and 'u' are incompatible.     Type 'unknown' is not assignable to type 'InboundTextUpdate'.",
       "anchor": "state.textHandler",
-      "line": 98,
+      "line": 116,
       "count": 1
     },
     {
@@ -2971,15 +3105,15 @@
       "code": 2493,
       "message": "Tuple type '[]' of length '0' has no element at index '0'.",
       "anchor": "0",
-      "line": 1433,
-      "count": 2
+      "line": 1462,
+      "count": 1
     },
     {
       "path": "src/channels/telegram/telegram-channel.test.ts",
       "code": 2532,
       "message": "Object is possibly 'undefined'.",
       "anchor": "welcomes[0]",
-      "line": 920,
+      "line": 949,
       "count": 1
     },
     {
@@ -3019,7 +3153,7 @@
       "code": 2739,
       "message": "Type '{ pid: number; }' is missing the following properties from type 'DaemonStartResult': tokensPerSecond, contextSize, swaFull, prefixReuse",
       "anchor": "chat",
-      "line": 92,
+      "line": 105,
       "count": 1
     },
     {
@@ -3179,7 +3313,7 @@
       "code": 2339,
       "message": "Property 'delta' does not exist on type 'CompletionResult | StreamChunk'.   Property 'delta' does not exist on type 'CompletionResult'.",
       "anchor": "delta",
-      "line": 1635,
+      "line": 1738,
       "count": 2
     },
     {
@@ -3571,7 +3705,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveA",
-      "line": 462,
+      "line": 464,
       "count": 1
     },
     {
@@ -3579,7 +3713,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveB",
-      "line": 463,
+      "line": 465,
       "count": 2
     },
     {
@@ -3587,7 +3721,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveSecond",
-      "line": 414,
+      "line": 416,
       "count": 1
     },
     {
@@ -3635,7 +3769,7 @@
       "code": 2322,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: never[]; }[]' is not assignable to type 'readonly ProfileFact[]'.   Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: never[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "profileFacts",
-      "line": 1475,
+      "line": 1481,
       "count": 4
     },
     {
@@ -3643,7 +3777,7 @@
       "code": 2322,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: never[]; voteScore: number; }[]' is not assignable to type 'readonly ProfileFact[]'.   Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: never[]; voteScore: number; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy",
       "anchor": "profileFacts",
-      "line": 2380,
+      "line": 2386,
       "count": 1
     },
     {
@@ -3651,7 +3785,7 @@
       "code": 2322,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: string[]; }[]' is not assignable to type 'readonly ProfileFact[]'.   Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: string[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "profileFacts",
-      "line": 1635,
+      "line": 1641,
       "count": 4
     },
     {
@@ -3659,7 +3793,7 @@
       "code": 2353,
       "message": "Object literal may only specify known properties, and 'metadata' does not exist in type 'MemoryEntry'.",
       "anchor": "metadata",
-      "line": 1402,
+      "line": 1408,
       "count": 5
     },
     {
@@ -3675,7 +3809,7 @@
       "code": 2739,
       "message": "Type '{ id: number; preview: string; tags: never[]; updatedAt: number; }' is missing the following properties from type 'MemoryIndexEntry': workingDir, sessionId",
       "anchor": "{ id: 2, preview: \"p\", tags: [], updatedAt: 1 }",
-      "line": 1407,
+      "line": 1413,
       "count": 1
     },
     {
@@ -3683,7 +3817,7 @@
       "code": 2739,
       "message": "Type '{ id: number; preview: string; tags: never[]; updatedAt: number; }' is missing the following properties from type 'MemoryIndexEntry': workingDir, sessionId",
       "anchor": "{ id: 2, preview: \"pointer\", tags: [], updatedAt: 2 }",
-      "line": 1873,
+      "line": 1879,
       "count": 1
     },
     {
@@ -3691,7 +3825,7 @@
       "code": 2739,
       "message": "Type '{ id: number; preview: string; tags: string[]; updatedAt: number; }' is missing the following properties from type 'MemoryIndexEntry': workingDir, sessionId",
       "anchor": "{ id: 7, preview: \"older convention\", tags: [\"conv\"], updatedAt: 2 }",
-      "line": 1833,
+      "line": 1839,
       "count": 1
     },
     {
@@ -3699,7 +3833,7 @@
       "code": 2739,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: false; keywords: string[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "{ key: \"a_deploy\", value: \"x\".repeat(100), updatedAt: 1, pinned: false, keywords: [\"deploy\"], }",
-      "line": 1717,
+      "line": 1723,
       "count": 1
     },
     {
@@ -3707,7 +3841,7 @@
       "code": 2739,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: true; keywords: never[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "{ key: \"blob\", value: giantValue, updatedAt: 1, pinned: true, keywords: [], }",
-      "line": 1691,
+      "line": 1697,
       "count": 1
     },
     {
@@ -3715,7 +3849,7 @@
       "code": 2739,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: true; keywords: never[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "{ key: \"k\", value: \"v\", updatedAt: 1, pinned: true, keywords: [] }",
-      "line": 1430,
+      "line": 1436,
       "count": 1
     },
     {
@@ -3723,7 +3857,7 @@
       "code": 2739,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: true; keywords: never[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "{ key: \"language\", value: \"ru\", updatedAt: 1, pinned: true, keywords: [], }",
-      "line": 1560,
+      "line": 1566,
       "count": 2
     },
     {
@@ -3731,7 +3865,7 @@
       "code": 2739,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: true; keywords: never[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "{ key: \"name\", value: \"Alex\", updatedAt: 1, pinned: true, keywords: [], }",
-      "line": 1593,
+      "line": 1599,
       "count": 1
     },
     {
@@ -3739,7 +3873,7 @@
       "code": 2739,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: true; keywords: never[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "{ key: \"timezone\", value: \"Europe/Moscow\", updatedAt: 2, pinned: true, keywords: [], }",
-      "line": 1600,
+      "line": 1606,
       "count": 1
     },
     {
@@ -3747,7 +3881,7 @@
       "code": 2739,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: true; keywords: never[]; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy, voteScore",
       "anchor": "{ key: \"z_consent\", value: \"never share the owner's files without asking\", updatedAt: 1, pinned: true, keywords: [], }",
-      "line": 1724,
+      "line": 1730,
       "count": 1
     },
     {
@@ -3803,7 +3937,7 @@
       "code": 2322,
       "message": "Type '(params: LlmStreamParams) => Promise<{ content: string; timing: { promptTokens: number; predictedTokens: number; }; slotId: number; cacheReused: boolean; }>' is not assignable to type '(params: LlmStreamParams) => Promise<CompletionResult>'.   Type 'Promise<{ content: string; timing: { promptTokens: number; predictedTokens: number; }; slotId: number; cacheReused: boolean; }>' is not assignable to type 'Promise<CompletionResult>'.     Type '{ content: string; timing: { promptTokens: number; predictedTokens: number; }; slotId: number; cacheReused: boolean; }' is missing the following properties from type 'CompletionResult': reasoningContent, stop, truncated, cacheHitTokens, modelId",
       "anchor": "llamaComplete",
-      "line": 243,
+      "line": 248,
       "count": 1
     },
     {
@@ -3847,14 +3981,6 @@
       "count": 1
     },
     {
-      "path": "src/runtime/route-change-note.test.ts",
-      "code": 2322,
-      "message": "Type '(params: LlmStreamParams) => Promise<{ content: string; timing: { promptTokens: number; predictedTokens: number; }; slotId: number; cacheReused: boolean; }>' is not assignable to type '(params: LlmStreamParams) => Promise<CompletionResult>'.   Type 'Promise<{ content: string; timing: { promptTokens: number; predictedTokens: number; }; slotId: number; cacheReused: boolean; }>' is not assignable to type 'Promise<CompletionResult>'.     Type '{ content: string; timing: { promptTokens: number; predictedTokens: number; }; slotId: number; cacheReused: boolean; }' is missing the following properties from type 'CompletionResult': reasoningContent, stop, truncated, cacheHitTokens, modelId",
-      "anchor": "llamaComplete",
-      "line": 91,
-      "count": 2
-    },
-    {
       "path": "src/runtime/vision-follows-route.test.ts",
       "code": 2304,
       "message": "Cannot find name 'RequestInfo'.",
@@ -3879,38 +4005,6 @@
       "count": 8
     },
     {
-      "path": "src/scheduler/scheduler.test.ts",
-      "code": 2532,
-      "message": "Object is possibly 'undefined'.",
-      "anchor": "timers[0]",
-      "line": 68,
-      "count": 10
-    },
-    {
-      "path": "src/scheduler/scheduler.test.ts",
-      "code": 2558,
-      "message": "Expected 0-1 type arguments, but got 2.",
-      "anchor": "Parameters<SchedulerTaskRunner[\"runDue\"]>, ReturnType<SchedulerTaskRunner[\"runDue\"]>",
-      "line": 55,
-      "count": 6
-    },
-    {
-      "path": "src/session/conversation-turn.test.ts",
-      "code": 2345,
-      "message": "Argument of type 'ConversationTurn' is not assignable to parameter of type '{ kind: \"tool_result\"; tool: string; status: \"ok\" | \"error\"; summary: string; truncated?: boolean | undefined; approvals?: readonly ToolApprovalRecord[] | undefined; at: number; }'.   Type '{ kind: \"user\"; text: string; steered?: true | undefined; at: number; }' is missing the following properties from type '{ kind: \"tool_result\"; tool: string; status: \"ok\" | \"error\"; summary: string; truncated?: boolean | undefined; approvals?: readonly ToolApprovalRecord[] | undefined; at: number; }': tool, status, summary",
-      "anchor": "shell",
-      "line": 266,
-      "count": 1
-    },
-    {
-      "path": "src/session/conversation-turn.test.ts",
-      "code": 2345,
-      "message": "Argument of type 'ConversationTurn' is not assignable to parameter of type '{ kind: \"tool_result\"; tool: string; status: \"ok\" | \"error\"; summary: string; truncated?: boolean | undefined; approvals?: readonly ToolApprovalRecord[] | undefined; at: number; }'.   Type '{ kind: \"user\"; text: string; steered?: true | undefined; at: number; }' is missing the following properties from type '{ kind: \"tool_result\"; tool: string; status: \"ok\" | \"error\"; summary: string; truncated?: boolean | undefined; approvals?: readonly ToolApprovalRecord[] | undefined; at: number; }': tool, status, summary",
-      "anchor": "turn",
-      "line": 241,
-      "count": 2
-    },
-    {
       "path": "src/session/session-store.test.ts",
       "code": 2353,
       "message": "Object literal may only specify known properties, and 'metadata' does not exist in type 'MemoryEntry'.",
@@ -3931,7 +4025,7 @@
       "code": 2493,
       "message": "Tuple type '[]' of length '0' has no element at index '0'.",
       "anchor": "0",
-      "line": 96,
+      "line": 182,
       "count": 3
     },
     {
@@ -4087,14 +4181,6 @@
       "count": 1
     },
     {
-      "path": "src/tools/skill/skill-tools.test.ts",
-      "code": 2345,
-      "message": "Argument of type 'ConversationTurn' is not assignable to parameter of type '{ kind: \"tool_result\"; tool: string; status: \"ok\" | \"error\"; summary: string; truncated?: boolean | undefined; approvals?: readonly ToolApprovalRecord[] | undefined; at: number; }'.   Type '{ kind: \"user\"; text: string; steered?: true | undefined; at: number; }' is missing the following properties from type '{ kind: \"tool_result\"; tool: string; status: \"ok\" | \"error\"; summary: string; truncated?: boolean | undefined; approvals?: readonly ToolApprovalRecord[] | undefined; at: number; }': tool, status, summary",
-      "anchor": "toolResultTurn({ tool: result.tool, status: result.status, summary: result.summary, truncated: result.truncated, })",
-      "line": 191,
-      "count": 1
-    },
-    {
       "path": "src/tools/tasks/tasks-schedule.test.ts",
       "code": 2322,
       "message": "Type '\"idle\"' is not assignable to type 'SessionStatus'.",
@@ -4131,7 +4217,7 @@
       "code": 2741,
       "message": "Property 'details' is missing in type '{ tool: string; status: \"ok\"; summary: string; truncated: false; }' but required in type 'CompressedToolResult'.",
       "anchor": "result",
-      "line": 249,
+      "line": 266,
       "count": 1
     },
     {
@@ -4139,7 +4225,7 @@
       "code": 2339,
       "message": "Property 'window' does not exist on type 'ContextUsageState'.",
       "anchor": "window",
-      "line": 1894,
+      "line": 1934,
       "count": 1
     },
     {
@@ -4147,7 +4233,7 @@
       "code": 2353,
       "message": "Object literal may only specify known properties, and 'window' does not exist in type 'ContextUsageState'.",
       "anchor": "window",
-      "line": 1883,
+      "line": 1923,
       "count": 1
     },
     {
@@ -4921,129 +5007,9 @@
     {
       "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
       "code": 2322,
-      "message": "Type '{ llmPanel: { cloudModelFilterFocused: boolean; mode: \"cloud\"; localCursor: number; cloudCursor: number; externalCursor: number; fallbackCursor: number; syncModeToActiveRoute: boolean; ... 4 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 160,
-      "count": 2
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ llmPanel: { mode: \"cloud\"; cloudCursor: number; localCursor: number; externalCursor: number; fallbackCursor: number; syncModeToActiveRoute: boolean; stopLocalDaemonsPrompt: LlmStopLocalDaemonsPrompt | null; ... 4 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 84,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ llmPanel: { mode: \"cloud\"; localCursor: number; cloudCursor: number; externalCursor: number; fallbackCursor: number; syncModeToActiveRoute: boolean; stopLocalDaemonsPrompt: LlmStopLocalDaemonsPrompt | null; ... 4 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 142,
-      "count": 3
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ llmPanel: { mode: \"external\"; cloudCursor: number; localCursor: number; externalCursor: number; fallbackCursor: number; syncModeToActiveRoute: boolean; stopLocalDaemonsPrompt: LlmStopLocalDaemonsPrompt | null; ... 4 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLev...' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 632,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ llmPanel: { mode: \"local\"; localCursor: number; cloudCursor: number; externalCursor: number; fallbackCursor: number; syncModeToActiveRoute: boolean; stopLocalDaemonsPrompt: LlmStopLocalDaemonsPrompt | null; ... 4 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 276,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ llmPanel: { stopLocalDaemonsPrompt: { providerId: string; }; mode: LlmPanelMode; localCursor: number; cloudCursor: number; externalCursor: number; fallbackCursor: number; ... 5 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 246,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ localModelsPanel: { mode: \"detail\"; daemon: { running: boolean; healthy: boolean; loading: boolean; pid: number; port: number; }; rows: { id: string; def: LocalModelDef; downloaded: boolean; active: boolean; mmprojStatus: \"n/a\"; }[]; ... 20 more ...; notifyPrompt: LocalModelsNotifyPrompt | null; }; ... 90 more ......' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 793,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ localModelsPanel: { rows: { active: boolean; def: { supportsVision: boolean; id: LocalModelId; name: string; filename: string; huggingFaceUrl: string; fileSizeGb: number; ... 12 more ...; mmprojFileSizeGb?: number; }; mmprojStatus: \"missing\"; id: string; downloaded: boolean; }[]; ... 22 more ...; notifyPrompt: Loc...' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 347,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ providersPanel: { removeConfirm: { id: string; }; rows: ({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { ...; })[]; ... 9 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; ba...' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 536,
-      "count": 3
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ providersPanel: { rows: ({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { ...; })[]; ... 10 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 119,
-      "count": 2
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ providersPanel: { rows: ({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { ...; })[]; ... 10 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 313,
-      "count": 4
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ providersPanel: { wizard: { mode: \"add\"; providerId: null; kind: null; phase: \"pick_kind\"; cursor: number; apiKeyBuffer: string; baseUrlLine: string; chatModelLine: string; embeddingModelLine: string; ... 4 more ...; submitting: boolean; }; ... 10 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; base...' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 470,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ uiMode: \"debug\"; activeTab: \"llm\"; providersPanel: { rows: ({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { ...; })[]; ... 10 more ...; runMode: ResolvedRunMode | null; }; ... 88 more ......' is not assignable to type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 48,
-      "count": 6
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2322,
       "message": "Type '{ upArrow: boolean; downArrow: boolean; leftArrow: boolean; rightArrow: boolean; pageDown: boolean; pageUp: boolean; home?: boolean | undefined; end?: boolean | undefined; return: boolean; ... 11 more ...; eventType?: \"press\" | \"repeat\" | \"release\" | undefined; }' is not assignable to type 'Key'.   Types of property 'home' are incompatible.     Type 'boolean | undefined' is not assignable to type 'boolean'.       Type 'undefined' is not assignable to type 'boolean'.",
       "anchor": "return",
       "line": 14,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ localModelsPanel: { rows: { active: boolean; def: { supportsVision: boolean; id: LocalModelId; name: string; filename: string; huggingFaceUrl: string; fileSizeGb: number; ... 12 more ...; mmprojFileSizeGb?: number; }; mmprojStatus: \"missing\"; id: string; downloaded: boolean; }[]; ... 22 more ...; notifyPrompt: Loc...' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { id: string; kind: string; ... 5 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 375,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ providersPanel: { rows: ({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { ...; })[]; ... 10 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; } | { isActiveText: boolean; ... 6 more ...; chatModelOptions?: undefined; }' is not assignable to type 'ProviderRow'.         Type '{ isActiveText: boolean; id: string; kind: string; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; chatModelOptions: string[]; embeddingModel: string; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 519,
       "count": 1
     },
     {
@@ -5052,54 +5018,6 @@
       "message": "Property 'autoUpdate' is missing in type '{ currentTag: string; latestTag: string; updateAvailable: false; }' but required in type 'LocalModelsBackendInfo'.",
       "anchor": "backend",
       "line": 79,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-reducer.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ llmPanel: { mode: \"cloud\"; cloudCursor: number; localCursor: number; externalCursor: number; fallbackCursor: number; syncModeToActiveRoute: boolean; stopLocalDaemonsPrompt: LlmStopLocalDaemonsPrompt | null; ... 4 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 74,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-reducer.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ llmPanel: { mode: \"local\"; localCursor: number; cloudCursor: number; externalCursor: number; fallbackCursor: number; syncModeToActiveRoute: boolean; stopLocalDaemonsPrompt: LlmStopLocalDaemonsPrompt | null; ... 4 more ...; cloudModelPricing: ModelPricingFilter; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "cloudActive",
-      "line": 21,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-reducer.test.ts",
-      "code": 2739,
-      "message": "Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "providerRow(\"local-llama\", \"llama-server\", false)",
-      "line": 54,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-reducer.test.ts",
-      "code": 2739,
-      "message": "Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "providerRow(\"local-llama\", \"llama-server\", true)",
-      "line": 32,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-reducer.test.ts",
-      "code": 2739,
-      "message": "Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "providerRow(\"openrouter\", \"openrouter\", false)",
-      "line": 33,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-reducer.test.ts",
-      "code": 2739,
-      "message": "Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "providerRow(\"openrouter\", \"openrouter\", true)",
-      "line": 55,
       "count": 1
     },
     {
@@ -5116,62 +5034,6 @@
       "message": "Property 'subscriptionCli' is missing in type '{ id: string; kind: string; isActiveText: true; isActiveEmbedding: false; hasApiKey: true; baseUrl: null; chatModel: string; chatModelOptions: string[]; embeddingModel: null; }' but required in type 'ProviderRow'.",
       "anchor": "{ id: \"openrouter\", kind: \"openrouter\", isActiveText: true, isActiveEmbedding: false, hasApiKey: true, baseUrl: null, chatModel: \"qwen/qwen3.7-max\", chatModelOptions: [\"qwen/qwen3.7-max\"], embeddingModel: null, }",
       "line": 269,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ llmHealth: { status: \"healthy\"; model: string; lastCheckedAt: number | null; latencyMs: number | null; error: string | null; contextWindow: number | null; localConfigured: boolean; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; embeddingModel: null; }[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: string; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 135,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ localModelsPanel: { configMode: \"managed\"; activeModelId: LocalModelDef[\"id\"]; mode: LocalModelsPanelMode; rows: readonly LocalModelRow[]; ... 19 more ...; notifyPrompt: LocalModelsNotifyPrompt | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.runMode' are incompatible between these types.     Property 'workersPinned' is missing in type '{ stored: \"fusion\"; effective: \"fusion\"; orchestratorProviderId: string; orchestratorModel: null; workerProviderId: string; workerModel: null; workers: number; workerMaxSteps: number; workerTimeoutMs: number; primaryProviderId: string; degraded: null; }' but required in type 'ResolvedRunMode'.",
-      "anchor": "state",
-      "line": 180,
-      "count": 3
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ providersPanel: { rows: ({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; chatModelOptions?: undefined; } | { ...; })[]; ... 10 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '({ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; chatModelOptions?: undefined; } | { id: string; kind: string; ... 5 more ...; embeddingModel: string; })[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; chatModelOptions?: undefined; } | { id: string; kind: string; ... 5 more ...; embeddingModel: string; }' is not assignable to type 'ProviderRow'.         Type '{ id: string; kind: string; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; chatModelOptions?: undefined; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "state",
-      "line": 71,
-      "count": 4
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ providersPanel: { rows: { id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]; mode: ProvidersPanelMode; ... 9 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "stateWithPull(failed, false)",
-      "line": 410,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ providersPanel: { rows: { id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]; mode: ProvidersPanelMode; ... 9 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "stateWithPull(null, true)",
-      "line": 397,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ providersPanel: { rows: { id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]; mode: ProvidersPanelMode; ... 9 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "stateWithPull(other, false)",
-      "line": 422,
-      "count": 1
-    },
-    {
-      "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ providersPanel: { rows: { id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]; mode: ProvidersPanelMode; ... 9 more ...; runMode: ResolvedRunMode | null; }; ... 90 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to parameter of type 'TuiState'.   The types of 'providersPanel.rows' are incompatible between these types.     Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }[]' is not assignable to type 'readonly ProviderRow[]'.       Type '{ id: string; kind: \"llama-server\"; isActiveText: boolean; isActiveEmbedding: boolean; hasApiKey: boolean; chatModel: null; embeddingModel: null; }' is missing the following properties from type 'ProviderRow': baseUrl, subscriptionCli",
-      "anchor": "stateWithPull(pullFor(42), false)",
-      "line": 385,
       "count": 1
     },
     {
@@ -5219,7 +5081,7 @@
       "code": 6133,
       "message": "'dataDir' is declared but its value is never read.",
       "anchor": "dataDir",
-      "line": 85,
+      "line": 88,
       "count": 1
     },
     {
@@ -5941,14 +5803,6 @@
       "anchor": "entries",
       "line": 24,
       "count": 5
-    },
-    {
-      "path": "src/tui/skills/skills-key-bindings.test.ts",
-      "code": 2322,
-      "message": "Type '{ activeTab: \"chat\"; uiMode: \"debug\"; skillsPanel: { mode: SkillsPanelMode; rows: readonly SkillSummaryRow[]; cursor: number; ... 19 more ...; removeConfirm: SkillRemoveConfirmState | null; }; ... 88 more ...; baseApprovalLevel: ApprovalLevel; }' is not assignable to type 'TuiState'.   Types of property 'activeTab' are incompatible.     Type '\"chat\"' is not assignable to type 'TuiTab'.",
-      "anchor": "state",
-      "line": 91,
-      "count": 1
     },
     {
       "path": "src/tui/skills/skills-key-bindings.test.ts",

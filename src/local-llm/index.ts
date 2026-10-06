@@ -17,8 +17,10 @@ export {
 } from "./catalog/models-catalog.js";
 
 export {
+  isWindowsArm64,
   resolvePlatformAsset,
   UnsupportedPlatformError,
+  WINDOWS_ARM64_NO_BACKEND_MESSAGE,
   type PlatformAsset,
 } from "./backend/platform-assets.js";
 

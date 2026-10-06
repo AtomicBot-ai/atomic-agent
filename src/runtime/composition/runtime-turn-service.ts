@@ -65,7 +65,7 @@ export interface RuntimeTurnDependencies {
     turnController: Pick<TurnController, "enqueue">;
     steeringInbox: Pick<SteeringInbox, "push">;
     shellJobs: Pick<ShellJobRegistry, "endSession" | "endTurn">;
-    slotManager: Pick<SlotManager, "sideCallSlotId">;
+    slotManager: Pick<SlotManager, "sideCallSlotId" | "release">;
     llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   };
   inference: {
@@ -201,6 +201,7 @@ export function createRuntimeTurnService(
         // bare prompt with an empty `content`, so the title has to be
         // asked for the way every other sub-call asks.
         toolTransport: resolveActiveLlmSlice().transport,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
         onError: (err: unknown) =>
           logger.debug("session naming failed", {
             sessionId: state.id,
@@ -333,16 +334,11 @@ export function createRuntimeTurnService(
           traces.clearContextUsage(session.id);
           // A worker's turn is its whole life: nothing waits on its jobs.
           shellJobs.endSession(session.id);
+          // A throwaway worker must not keep its server slot pinned.
+          slotManager.release(session.id);
         }
       });
     }
-    ensureRecorder(session);
-    // Pin this session for the duration of the turn. Without it a burst of
-    // new sessions can push this one's recorder out mid-turn, after which
-    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
-    // remaining event of the turn and any tool call whose `pendingCalls`
-    // entry went with it is logged with empty args.
-    traces.pinSession(session.id);
     // Resolved before the turn runs, from the live config: the model the
     // operator chose for this turn is what the session should remember,
     // not whatever the config says by the time the turn finishes — and
@@ -385,6 +381,21 @@ export function createRuntimeTurnService(
         to: turnRoute,
       });
     }
+    // The session's trace records the model this turn runs on, not the
+    // one in the stored metadata: that is the previous turn's until the
+    // turn's save below, so after a switch the log named the old model.
+    const recorder = ensureRecorder(session, {
+      ...session.metadata,
+      [SESSION_LLM_METADATA_KEY]: llmStamp,
+      [SESSION_ROUTE_METADATA_KEY]: turnRoute,
+    });
+    recorder?.noteTurnRoute(turnRoute);
+    // Pin this session for the duration of the turn. Without it a burst of
+    // new sessions can push this one's recorder out mid-turn, after which
+    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
+    // remaining event of the turn and any tool call whose `pendingCalls`
+    // entry went with it is logged with empty args.
+    traces.pinSession(session.id);
     return turnContext.run({ sessionId: session.id }, async () => {
       // Registered before the mark and ended after the turn's end is
       // written, so `shutdown` waiting on it waits for the row to be right.

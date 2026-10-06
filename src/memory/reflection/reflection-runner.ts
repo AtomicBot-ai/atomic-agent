@@ -5,6 +5,10 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { NeighborEvolver } from "../evolution/neighbor-evolver.js";
 import { MemoryStore, MemoryValidationError } from "../memory-store.js";
 import { ProfileStore, ProfileValidationError } from "../profile-store.js";
+import {
+  isNameProfileKey,
+  type NameGroundingStatus,
+} from "../profile-name-keys.js";
 
 import { REFLECTION_GRAMMAR } from "./reflection-grammar.js";
 import { parseReflectionOutput } from "./reflection-parser.js";
@@ -13,6 +17,14 @@ import { buildCloudSubcallRequest } from "../../llm/provider/cloud-subcall.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 import { buildReflectionPrompt } from "./reflection-prompt.js";
+import {
+  filterUngroundedReflection,
+  isTrivialReflectionWindow,
+  nameGroundingIn,
+  type UngroundedReason,
+} from "./reflection-grounding.js";
+import { groundingTextsOf, type ChatLine } from "../name-grounding.js";
+import { findDuplicateFact } from "../profile-duplicates.js";
 
 export interface ReflectionInput {
   sessionId: string;
@@ -72,6 +84,15 @@ export interface ReflectionInput {
    * the runner trusts the agent loop to project consistently.
    */
   transcript?: readonly { user: string; assistant: string }[];
+  /**
+   * ATO-201. The whole session's texts that may vouch for a name
+   * (`groundingTextsOf` over the transcript): every user message so
+   * far, plus an assistant naming question the user answered "yes".
+   * Name evidence only — the one-off checks still read just the
+   * reflected window — so a note restating a name the user gave three
+   * turns ago ("I am Nadia…") is no longer dropped.
+   */
+  groundingTexts?: readonly string[];
 }
 
 /**
@@ -310,6 +331,22 @@ export function createReflectionRunner(
   };
 
   const runOne = async (input: ReflectionInput): Promise<void> => {
+    const userTexts = reflectedUserTexts(input);
+    // A window whose user side is only probes / echo commands / pings
+    // ("Reply exactly LOCAL_OK. Do not use tools.") has nothing durable
+    // to extract, and small models reliably invent something when asked
+    // anyway. Skip the call before touching `pending`, so a trivial
+    // turn never cancels a substantive reflection still in flight.
+    // Not in any-speaker mode: there the USER channel carries a
+    // third-party transcript, not the user's own instructions.
+    if (!deps.anySpeaker && isTrivialReflectionWindow(userTexts)) {
+      finish("none", {
+        sessionId: input.sessionId,
+        startedAt: now(),
+        reason: "trivial_window",
+      });
+      return;
+    }
     const previous = pending.get(input.sessionId);
     if (previous) {
       previous.abort();
@@ -340,6 +377,10 @@ export function createReflectionRunner(
         ...(input.transcript && input.transcript.length > 0
           ? { transcript: input.transcript }
           : {}),
+        // ATO-188. What the profile already says, so the model reuses a
+        // key instead of writing the same fact under a new one. Not in
+        // any-speaker mode, whose keys name third parties.
+        ...(deps.anySpeaker ? {} : { knownProfile: knownProfileOf(deps.profileStore) }),
       });
       const completion =
         deps.toolTransport === "native_tools"
@@ -378,15 +419,46 @@ export function createReflectionRunner(
         finish("none", { sessionId: input.sessionId, startedAt });
         return;
       }
+      // Deterministic grounding guard: drop identity claims the user
+      // never made, the assistant describing itself, and one-off
+      // instructions dressed up as preferences. See
+      // `reflection-grounding.ts` for the exact (narrow) rules.
+      //
+      // Grounding comes ONLY from the user's own words: this window,
+      // the rest of the session, a naming question they answered "yes",
+      // and names the profile holds as checked against their messages
+      // (ATO-201). A stored name no check vouched for is deliberately
+      // not a source: a name the old reflection once invented (field
+      // case: `name=Анна`, never typed in any session) would otherwise
+      // vouch for itself and get re-written on every turn.
+      const nameEvidence = reflectedNameEvidence(input, deps.profileStore);
+      const grounded = filterUngroundedReflection(parsed, {
+        userTexts,
+        nameEvidence,
+      });
+      // ATO-201: at info, so a dropped fact is visible in an ordinary
+      // log. Never the text: it is about the user (a name, a
+      // preference), and the logs carry no profile content — the kind,
+      // the reason and its length are enough to find it in a trace.
+      for (const item of grounded.dropped) {
+        deps.logger?.info("reflection.ungrounded_dropped", {
+          sessionId: input.sessionId,
+          kind: item.kind,
+          reason: item.reason,
+          detail: DROP_REASON_DETAIL[item.reason],
+          chars: item.text.length,
+        });
+      }
       const factsWritten = writeFacts(
-        parsed.facts,
+        grounded.facts,
         deps.profileStore,
         deps.maxFactsPerCall,
         input.sessionId,
         deps.logger,
+        [...userTexts, ...nameEvidence],
       );
       const notesWritten = writeNotes(
-        parsed.notes,
+        grounded.notes,
         deps.memoryStore,
         deps.maxNotesPerCall ?? 0,
         input.sessionId,
@@ -403,7 +475,13 @@ export function createReflectionRunner(
         input,
       );
       if (factsWritten === 0 && notesWritten === 0 && evolvesApplied === 0) {
-        finish("none", { sessionId: input.sessionId, startedAt });
+        finish("none", {
+          sessionId: input.sessionId,
+          startedAt,
+          ...(grounded.dropped.length > 0
+            ? { reason: `ungrounded_dropped=${grounded.dropped.length}` }
+            : {}),
+        });
         return;
       }
       finish("ok", {
@@ -460,6 +538,72 @@ export function createReflectionRunner(
 }
 
 /**
+ * ATO-188. The profile as the prompt shows it, for `### known profile`.
+ * `listForPrompt`, never `list`: a name no check vouched for must not
+ * be handed back to the model that may have invented it.
+ */
+function knownProfileOf(store: ProfileStore): { key: string; value: string }[] {
+  try {
+    return store.listForPrompt().map((f) => ({ key: f.key, value: f.value }));
+  } catch {
+    // A closed store costs only the hint, never the reflection.
+    return [];
+  }
+}
+
+/** One short line per drop reason, for the info log. */
+const DROP_REASON_DETAIL: Readonly<Record<UngroundedReason, string>> = {
+  ungrounded_identity: "names the user by a name the user never wrote",
+  assistant_persona: "describes the assistant, not the user",
+  one_off_payload: "repeats a one-off reply instruction",
+  one_off_tool_restriction: "turns a one-off 'no tools' into a preference",
+};
+
+/**
+ * ATO-201. What may vouch for a name besides the reflected window: the
+ * session's grounding texts from the agent loop, the window's own
+ * naming questions answered "yes", and names the profile holds as
+ * checked against the user's messages. Never a stored name no check
+ * vouched for — an invented one would vouch for itself.
+ */
+function reflectedNameEvidence(
+  input: ReflectionInput,
+  profileStore: ProfileStore,
+): string[] {
+  const out = [...(input.groundingTexts ?? [])];
+  if (input.transcript && input.transcript.length > 0) {
+    const lines: ChatLine[] = [];
+    for (const turn of input.transcript) {
+      lines.push({ kind: "user", text: turn.user });
+      lines.push({ kind: "assistant_reply", text: turn.assistant });
+    }
+    out.push(...groundingTextsOf(lines));
+  }
+  try {
+    for (const fact of profileStore.list()) {
+      if (isNameProfileKey(fact.key) && fact.nameGrounding === "grounded") {
+        out.push(fact.value);
+      }
+    }
+  } catch {
+    // A closed store costs only the evidence, never the reflection.
+  }
+  return out;
+}
+
+/**
+ * The user's own messages for the reflected window: every USER turn of
+ * the segmentation transcript when one is attached, otherwise the
+ * single trailing user message.
+ */
+function reflectedUserTexts(input: ReflectionInput): string[] {
+  if (input.transcript && input.transcript.length > 0) {
+    return input.transcript.map((turn) => turn.user);
+  }
+  return [input.userMessage];
+}
+
+/**
  * Upsert parsed SET facts into `ProfileStore`, skipping individual
  * validation errors so one bad key does not invalidate the rest of the
  * batch. Returns the number of facts successfully written.
@@ -481,6 +625,7 @@ function writeFacts(
   maxPerCall: number,
   sessionId: string,
   logger: StructuredLogger | undefined,
+  userTexts: readonly string[],
 ): number {
   const clamped = facts.slice(0, maxPerCall);
   let written = 0;
@@ -490,6 +635,41 @@ function writeFacts(
         pinned: fact.pinned,
         keywords: [...fact.keywords],
       };
+      // ATO-199. A name that got past the filter is stamped with the
+      // same verdict, so it reaches `### profile` without waiting for
+      // the startup check; a fail-open one says so.
+      const nameGrounding = isNameProfileKey(fact.key)
+        ? nameGroundingIn(fact.value, userTexts)
+        : undefined;
+      if (nameGrounding !== undefined) {
+        (opts as { nameGrounding?: NameGroundingStatus }).nameGrounding =
+          nameGrounding;
+      }
+      // ATO-188. The same fact again — under its key, or (without an
+      // explicit supersession) under another key that already says it —
+      // is not written: the agent's own `memory.profile.set` may have
+      // stored it this turn. Re-read per fact, so a repeat inside one
+      // completion is caught too.
+      const duplicate = findDuplicateFact(store.list(), fact.key, fact.value);
+      if (
+        duplicate !== null &&
+        (duplicate.kind === "same" || !fact.supersedes)
+      ) {
+        // A name the user has now written confirms the stored one —
+        // under its key, or the same name under another name key.
+        const confirmed =
+          (duplicate.kind === "same" || isNameProfileKey(duplicate.fact.key)) &&
+          nameGrounding === "grounded" &&
+          duplicate.fact.nameGrounding !== "grounded" &&
+          store.markNameGrounding(duplicate.fact.id, "grounded");
+        logger?.debug("reflection.duplicate_fact", {
+          sessionId,
+          kind: duplicate.kind,
+          ...(confirmed ? { confirmed: true } : {}),
+        });
+        if (confirmed) written += 1;
+        continue;
+      }
       if (typeof fact.supersedes === "string" && fact.supersedes.length > 0) {
         (opts as { supersedesKey?: string }).supersedesKey = fact.supersedes;
       }

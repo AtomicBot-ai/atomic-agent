@@ -18,6 +18,9 @@ vi.mock("../../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
+    resolveManagedDevice: vi.fn(async () => undefined),
+    listVulkanDevices: vi.fn(async () => []),
+    probeNvidiaVramMiB: vi.fn(async () => null),
     // Exercise the real orchestrator while keeping process creation outside
     // this unit test. The previous partial mock could spawn the stub binary.
     startChatAndEmbeddingDaemons: vi.fn<typeof actual.startChatAndEmbeddingDaemons>(),
@@ -240,6 +243,22 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValueOnce({
+      chat: {
+        pid: 4242,
+        tokensPerSecond: null,
+        contextSize: 0,
+        swaFull: {
+          enabled: false,
+          reason: "unit test",
+          estimate: null,
+          slidingLayers: 0,
+        },
+        prefixReuse: null,
+      },
+      embedding: { skipped: true },
+    });
+
     // With the check skipped there is nothing to bail on, so the start
     // proceeds past the point where `backendUsable: false` would stop it.
     await expect(
@@ -269,6 +288,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     await expect(orchestrator.startDaemon()).resolves.toBe(false);
 
     expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1);
+    expect(localLlm.startChatAndEmbeddingDaemons).not.toHaveBeenCalled();
   });
 
   // The key binding only proves an event fires; this proves the flag is

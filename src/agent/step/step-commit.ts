@@ -1,3 +1,5 @@
+import { readTurnIdentity } from "../progress/read-coverage.js";
+import type { ReadTurnIdentity } from "../../session/conversation-turn.js";
 import type { StepContext, StepDependencies, StepOutcome, StepTerminal } from "./step-contract.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt-types.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
@@ -80,12 +82,14 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
 
   // Per-failed-rare autoload, applied in batch-index order. Successful
   // rare calls feed `recordLoadedTool` via `details.toolLoaded` in
-  // `applyStateEffects` below.
+  // `applyStateEffects` below. A call held back behind an approval
+  // barrier never ran, so its error says nothing about its arguments.
   for (let i = 0; i < toolResults.length; i += 1) {
     const result = toolResults[i]!;
     const call = calls[i]!;
     if (
       result.status === "error" &&
+      result.details.notRun !== true &&
       getConfig().agent.autoExpandRareOnError &&
       isRareToolName(call.tool) &&
       !workSession.loadedTools.some((t) => t.name === call.tool)
@@ -324,6 +328,7 @@ export function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionSta
             summary: cappedSummary,
             ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
             ...(result.approvals ? { approvals: result.approvals } : {}),
+            ...readTurnField(result),
           }),
         );
       }
@@ -382,10 +387,26 @@ export function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionSta
         summary: cappedSummary,
         ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
         ...(result.approvals ? { approvals: result.approvals } : {}),
+        ...readTurnField(result),
       }),
     );
   }
   return next;
+}
+
+/**
+ * The `read` field of a result row: what an `os.fs.read` read, so the
+ * prompt can show a repeat of it as a pointer while the first read is in
+ * view (`findReadRepeats`). Taken from the result, so a row whose text
+ * a batch cap cut still names the whole read; a pointer is only drawn
+ * between rows whose stored texts match, so a cut row never stands for,
+ * or is stood for by, a different cut of the same lines.
+ */
+function readTurnField(result: CompressedToolResult): {
+  read?: ReadTurnIdentity;
+} {
+  const read = readTurnIdentity(result.tool, result);
+  return read !== null ? { read } : {};
 }
 
 

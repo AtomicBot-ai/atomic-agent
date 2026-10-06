@@ -117,6 +117,22 @@ describe("maybeAutoUpdateBackend", () => {
     expect(downloadBackend).toHaveBeenCalledTimes(1);
   });
 
+  it("stops an embedding daemon running alone before it replaces the binary", async () => {
+    vi.mocked(checkForBackendUpdate).mockResolvedValue({
+      updateAvailable: true,
+      latestTag: "turboquant-new",
+      currentTag: "turboquant-old",
+    });
+    // `models start-embedding` ran it without a chat daemon beside it.
+    vi.mocked(readRunningPid).mockImplementation((_dir, role) => (role === "embedding" ? 77 : null));
+    vi.mocked(stopChatAndEmbeddingDaemons).mockResolvedValue();
+    vi.mocked(downloadBackend).mockResolvedValue({ ok: true, tag: "turboquant-new" });
+
+    const result = await maybeAutoUpdateBackend("/tmp/data", { enabled: true });
+    expect(result.action).toBe("updated");
+    expect(stopChatAndEmbeddingDaemons).toHaveBeenCalledWith("/tmp/data");
+  });
+
   it("does not stop when nothing is running, then still downloads", async () => {
     vi.mocked(checkForBackendUpdate).mockResolvedValue({
       updateAvailable: true,
@@ -305,6 +321,26 @@ describe("maybeAutoUpdateBackend with recheckAfterMs (backlog 39)", () => {
     clock += 60_000;
     await start();
     expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("trusts a recent check for a Vulkan install standing in for a refused CUDA zip (ATO-244)", async () => {
+    // The wanted CUDA zip of this very release shipped without its
+    // runtime and was refused: asking GitHub again on every start would
+    // only find the same release, so the record stands as usual.
+    writeBackendVersion(dataDir, {
+      tag: INSTALLED,
+      downloadedAt: new Date(clock).toISOString(),
+      asset: "llama-turboquant-windows-x64-vulkan.zip",
+      refusedCudaAsset: {
+        asset: resolveDownloadAsset().assetName,
+        tag: INSTALLED,
+      },
+    });
+    nothingNewer();
+    await start();
+    clock += 60_000;
+    expect((await start()).action).toBe("recent");
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("holds off a failed check for fifteen minutes, not six hours", async () => {

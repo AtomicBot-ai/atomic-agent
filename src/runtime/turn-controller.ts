@@ -134,11 +134,17 @@ export class TurnController {
     });
     this.queues.set(sessionId, ownTurn);
 
+    // Whether this submission ever reached the front of the queue. The
+    // lock it holds is only ever "the turn ahead of me is over", so a
+    // submission that gave up while still waiting must not hand that
+    // lock on until the turn ahead of it really is over.
+    let reachedFront = false;
     try {
       // Wait for our turn while listening for the abort signal, so a
       // submission queued behind a long-running one can be cancelled
       // without ever calling `run()`.
       await waitOrAbort(previousSettled, signal);
+      reachedFront = true;
       if (eventHook) {
         this.currentHooks.set(sessionId, eventHook);
       }
@@ -153,14 +159,26 @@ export class TurnController {
       }
     } finally {
       // Always release the lock so the next waiter can proceed, even
-      // if `run()` threw or the signal aborted before it started.
-      release();
-      // Garbage-collect the queue entry when nothing else is waiting:
-      // the resolved promise we leave behind keeps the Map from
-      // growing unboundedly across throwaway sessions.
-      if (this.queues.get(sessionId) === ownTurn) {
-        this.queues.delete(sessionId);
-      }
+      // if `run()` threw or the signal aborted before it started — but
+      // a waiter that was cancelled in the queue releases only once its
+      // predecessor settles. Releasing at the moment of the abort let
+      // the submission queued behind it start while the turn ahead of
+      // both was still running: two `run()`s on one session, which is
+      // exactly what this class exists to rule out (and what
+      // `SlotManager` relies on).
+      const settle = (): void => {
+        release();
+        // Garbage-collect the queue entry when nothing else is waiting:
+        // the resolved promise we leave behind keeps the Map from
+        // growing unboundedly across throwaway sessions. Done with the
+        // release, so a new submission arriving while a cancelled waiter
+        // is still standing in for the running turn queues behind it.
+        if (this.queues.get(sessionId) === ownTurn) {
+          this.queues.delete(sessionId);
+        }
+      };
+      if (reachedFront) settle();
+      else void previousSettled.then(settle);
     }
   }
 

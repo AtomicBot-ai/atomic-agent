@@ -45,6 +45,9 @@ function makeConfig(
   };
 }
 
+/** An env with an Exa key, so the chain actually asks Exa (ATO-120). */
+const EXA_KEYED: NodeJS.ProcessEnv = { EXA_API_KEY: "k" };
+
 function makeOptions(): WebSearchProviderOptions {
   return {
     query: "q",
@@ -104,7 +107,7 @@ describe("runWebSearchWithFallback", () => {
       config: makeConfig({ provider: "searxng", fallback: ["brave", "exa"] }),
       deps: {},
       options: makeOptions(),
-      env: {},
+      env: EXA_KEYED,
     });
 
     expect(out.provider).toBe("exa");
@@ -124,10 +127,15 @@ describe("runWebSearchWithFallback", () => {
       config: makeConfig({ provider: "duckduckgo", fallback: ["exa"] }),
       deps: {},
       options: makeOptions(),
+      env: EXA_KEYED,
     });
 
     expect(out.provider).toBe("exa");
     expect(out.results).toEqual([RESULT]);
+    // The search succeeded; the blocked attempt is a note, not the error.
+    expect(out.degraded).toEqual([
+      "duckduckgo failed: duckduckgo rate-limited or returned a bot challenge",
+    ]);
   });
 
   it("advances on empty results, returning the last empty when all are empty", async () => {
@@ -141,6 +149,7 @@ describe("runWebSearchWithFallback", () => {
       config: makeConfig({ provider: "duckduckgo", fallback: ["exa"] }),
       deps: {},
       options: makeOptions(),
+      env: EXA_KEYED,
     });
 
     expect(out.results).toEqual([]);
@@ -164,6 +173,7 @@ describe("runWebSearchWithFallback", () => {
         config: makeConfig({ provider: "duckduckgo", fallback: ["exa"] }),
         deps: {},
         options: makeOptions(),
+        env: EXA_KEYED,
       }),
     ).rejects.toThrow("ddg blocked");
   });
@@ -242,6 +252,7 @@ describe("a provider under a standing rate limit", () => {
       config,
       deps: {},
       options: makeOptions(),
+      env: EXA_KEYED,
       cooldown,
       now: () => clock,
     });
@@ -256,6 +267,7 @@ describe("a provider under a standing rate limit", () => {
         config,
         deps: {},
         options: { ...makeOptions(), query: `q${i}` },
+        env: EXA_KEYED,
         cooldown,
         now: () => clock,
       });
@@ -275,6 +287,7 @@ describe("a provider under a standing rate limit", () => {
       config,
       deps: {},
       options: makeOptions(),
+      env: EXA_KEYED,
       cooldown,
       now: () => clock,
     });
@@ -283,6 +296,7 @@ describe("a provider under a standing rate limit", () => {
       config,
       deps: {},
       options: { ...makeOptions(), query: "later" },
+      env: EXA_KEYED,
       cooldown,
       now: () => clock,
     });
@@ -301,6 +315,7 @@ describe("a provider under a standing rate limit", () => {
       config,
       deps: {},
       options: makeOptions(),
+      env: EXA_KEYED,
       cooldown,
       now: () => T0,
     });
@@ -312,6 +327,7 @@ describe("a provider under a standing rate limit", () => {
       config,
       deps: {},
       options: { ...makeOptions(), query: "next" },
+      env: EXA_KEYED,
       cooldown,
       now: () => T0 + 20_000,
     });
@@ -333,6 +349,7 @@ describe("a provider under a standing rate limit", () => {
       config,
       deps: {},
       options: makeOptions(),
+      env: EXA_KEYED,
       cache,
       cooldown,
       now: () => T0,
@@ -343,6 +360,7 @@ describe("a provider under a standing rate limit", () => {
       config,
       deps: {},
       options: makeOptions(),
+      env: EXA_KEYED,
       cache,
       cooldown,
       now: () => T0,
@@ -370,10 +388,15 @@ describe("a provider under a standing rate limit", () => {
         config,
         deps: {},
         options: { ...makeOptions(), query: `q${i}` },
+        env: EXA_KEYED,
         cooldown,
         now: () => T0,
       });
-      expect(out.degraded).toEqual([]);
+      // Reported as a failure each time, never as "skipped": it was
+      // asked again on every query.
+      expect(out.degraded).toEqual([
+        "exa failed: exa rate-limited or returned a bot challenge",
+      ]);
     }
     expect(exa.search).toHaveBeenCalledTimes(3);
   });
@@ -386,8 +409,156 @@ describe("a provider under a standing rate limit", () => {
         config,
         deps: {},
         options: { ...makeOptions(), query: `q${i}` },
+        env: EXA_KEYED,
       });
     }
     expect(exa.search).toHaveBeenCalledTimes(3);
+  });
+});
+
+/**
+ * ATO-120. Exa's keyless tier answered 429 under load and then 403
+ * outright, and the shipped default (`provider: "exa"`, no key) sent it
+ * a request before every search. Without a key Exa is skipped, so the
+ * keyless chain serves the search and Exa's error can no longer become
+ * the tool's.
+ */
+describe("an Exa primary without a key", () => {
+  function exaAndDdg() {
+    const exa = stubProvider("exa", async () => {
+      throw new Error("Exa returned HTTP 403");
+    });
+    const ddg = stubProvider("duckduckgo", async () => [RESULT]);
+    const searxng = stubProvider("searxng", async () => [RESULT]);
+    vi.mocked(resolveProviderByName).mockImplementation((name) => {
+      if (name === "exa") return exa;
+      if (name === "duckduckgo") return ddg;
+      if (name === "searxng") return searxng;
+      throw new Error(`unexpected provider ${name}`);
+    });
+    return { exa, ddg, searxng };
+  }
+
+  it("is never asked: the shipped default goes straight to DuckDuckGo", async () => {
+    const { exa, ddg } = exaAndDdg();
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+    });
+
+    expect(out.provider).toBe("duckduckgo");
+    expect(out.results).toEqual([RESULT]);
+    // A supported setup, not a degradation: nothing to report.
+    expect(out.degraded).toEqual([]);
+    expect(exa.search).not.toHaveBeenCalled();
+    expect(ddg.search).toHaveBeenCalledOnce();
+  });
+
+  it("treats a whitespace-only key as no key", async () => {
+    const { exa } = exaAndDdg();
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: { EXA_API_KEY: "   " },
+    });
+
+    expect(out.provider).toBe("duckduckgo");
+    expect(exa.search).not.toHaveBeenCalled();
+  });
+
+  it("still searches when no fallback is configured, through DuckDuckGo", async () => {
+    // `fallback: []` used to mean "keyless Exa only". Skipping Exa must
+    // not turn that config into one that cannot search at all.
+    const { exa, ddg } = exaAndDdg();
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: [] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+    });
+
+    expect(out.provider).toBe("duckduckgo");
+    expect(exa.search).not.toHaveBeenCalled();
+    expect(ddg.search).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the configured fallback order, with DuckDuckGo appended last", async () => {
+    const { exa, searxng } = exaAndDdg();
+    searxng.search.mockImplementation(async () => {
+      throw new WebSearchBlockedError("searxng", "searxng blocked");
+    });
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({
+        provider: "exa",
+        fallback: ["searxng"],
+        searxng: { instanceUrl: "https://searx.example" },
+      }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+    });
+
+    expect(exa.search).not.toHaveBeenCalled();
+    expect(searxng.search).toHaveBeenCalledOnce();
+    expect(out.provider).toBe("duckduckgo");
+    expect(out.degraded).toEqual(["searxng failed: searxng blocked"]);
+  });
+
+  it("surfaces the keyless chain's own error, not Exa's, when everything fails", async () => {
+    const { exa, ddg } = exaAndDdg();
+    ddg.search.mockImplementation(async () => {
+      throw new WebSearchBlockedError("duckduckgo", "ddg blocked");
+    });
+
+    await expect(
+      runWebSearchWithFallback({
+        config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+        deps: {},
+        options: makeOptions(),
+        env: {},
+      }),
+    ).rejects.toThrow("ddg blocked");
+    expect(exa.search).not.toHaveBeenCalled();
+  });
+
+  it("stays first in the chain once the key is set", async () => {
+    const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => [RESULT]);
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: EXA_KEYED,
+    });
+
+    expect(out.provider).toBe("exa");
+    expect(exa.search).toHaveBeenCalledOnce();
+    expect(ddg.search).not.toHaveBeenCalled();
+  });
+
+  it("reports a keyed Exa failure as a note when DuckDuckGo answers", async () => {
+    // The desktop drew this as a red failed row even though the search
+    // went on to succeed. A covered failure is a note; the call is ok.
+    const { exa } = exaAndDdg();
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: EXA_KEYED,
+    });
+
+    expect(exa.search).toHaveBeenCalledOnce();
+    expect(out.provider).toBe("duckduckgo");
+    expect(out.results).toEqual([RESULT]);
+    expect(out.degraded).toEqual(["exa failed: Exa returned HTTP 403"]);
   });
 });

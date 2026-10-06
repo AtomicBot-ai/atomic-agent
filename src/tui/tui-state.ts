@@ -511,6 +511,15 @@ export interface TuiState {
    * overwrites, and any real edit to a recalled entry drops the stash.
    */
   inputHistoryDraft: string | null;
+  /**
+   * Drafts parked by thread. The composer is one buffer shared by every
+   * session, so a switch parks what was typed under the thread being
+   * left and hands back the target's own: a half-written steer for a
+   * running turn must not follow the operator into another thread and
+   * go out there as a new turn on a reflexive Enter. Empty drafts are
+   * not stored.
+   */
+  composerDrafts: Readonly<Record<string, string>>;
   /** Is the slash-command overlay currently visible below the editor? */
   slashPaletteOpen: boolean;
   /** Current slash prefix (characters typed after the leading `/`). */
@@ -884,6 +893,7 @@ export function createInitialTuiState(
     inputHistory: [],
     inputHistoryCursor: null,
     inputHistoryDraft: null,
+    composerDrafts: {},
     slashPaletteOpen: false,
     slashQuery: "",
     slashPaletteCursor: 0,

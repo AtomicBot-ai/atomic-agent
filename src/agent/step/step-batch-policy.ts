@@ -1,3 +1,6 @@
+import type { ApprovalBarrierStopCause } from "../step-events.js";
+import type { BatchCallInput } from "../dispatch/batch-contract.js";
+import { compressToolResult, type CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { StepContext, StepDependencies } from "./step-contract.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { FabricatedToolTranscript } from "../../llm/index.js";
@@ -6,7 +9,7 @@ import { completionFreeText } from "./step-reasoning.js";
 import type { ToolCallPayload, ToolCallBatch } from "../../llm/grammar/tool-call-grammar.js";
 import { closingReplyBatch, splitProgressNoteReply } from "../progress-note-reply.js";
 import type { BatchApprovalPosture } from "../tool-resource-class.js";
-import { resourceClassFor, gatedCallRunsUnattended, isBatchable } from "../tool-resource-class.js";
+import { resourceClassFor, gatedCallRunsUnattended, isBatchable, isSoloRegardlessOfApproval } from "../tool-resource-class.js";
 import { BatchValidationError } from "./step-errors.js";
 import { getConfig } from "../../config/index.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
@@ -38,6 +41,11 @@ export function createStepBatchPolicy(
   // after another in emitted order, because nobody would be asked to
   // approve any of them. See `batchRunsUnattended`.
   let runInOrder = false;
+
+  // Set when a batch holding approval-gated calls that would prompt runs
+  // behind approval barriers instead of being trimmed. See
+  // `batchRunsBehindBarriers`.
+  let runBehindBarriers = false;
 
   /**
    * Did this completion write tool calls and results out as text? Read
@@ -123,9 +131,51 @@ export function createStepBatchPolicy(
   };
 
   /**
+   * May `batch` run behind approval barriers (issue #109) instead of
+   * being trimmed to its first gated call? Then each gated call runs
+   * alone, after the calls ahead of it settled, and the calls behind it
+   * run only once it was approved and came back `ok` — with the payload
+   * the model emitted, not a re-generated one.
+   *
+   * Every call is checked before anything runs, so a batch never starts
+   * and then turns out to hold a call the runtime would not run. Not
+   * eligible, and trimmed as before:
+   *  - no approval posture wired (the documented "absent ⇒ trim");
+   *  - the forced final step, plan mode or a fusion orchestrator turn —
+   *    the trim's turn policy picks the survivor there, and a barrier
+   *    refused by a gate would only throw the calls behind it away;
+   *  - a `reply` / `finish` in the batch: a terminal is never replayed
+   *    behind a barrier (a `reply` batched with work was already taken
+   *    out as a progress note);
+   *  - a tool the registry does not hold, one with no resource class,
+   *    one that is solo for a reason other than approval
+   *    (`fusion.delegate`), or arguments its schema rejects.
+   * The caller has already sent an oversized batch to repair.
+   */
+  const batchRunsBehindBarriers = (batch: ToolCallBatch): boolean => {
+    if (!deps.approvalPosture) return false;
+    if (ctx.terminalOnly) return false;
+    const policy = turnPolicyForTrim(deps);
+    if (policy.refusedBy !== undefined || policy.preferTool !== undefined) {
+      return false;
+    }
+    return batch.calls.every((call) => {
+      const cls = resourceClassFor(call.tool);
+      if (cls === "approval_gated") {
+        if (isSoloRegardlessOfApproval(call.tool)) return false;
+      } else if (!isBatchable(cls)) {
+        return false;
+      }
+      if (!deps.registry.has(call.tool)) return false;
+      return callArgsSchemaValid(call, ctx.toolDescriptors);
+    });
+  };
+
+  /**
    * Inline helper: if a `BatchValidationError` is purely about
    * approval-gated tools batched together, either run the batch whole in
-   * emitted order (nobody would be prompted — `batchRunsUnattended`) or
+   * emitted order (nobody would be prompted — `batchRunsUnattended`),
+   * run it behind approval barriers (`batchRunsBehindBarriers`), or
    * trim it to the first approval-gated call (length-1), emit the
    * observability event, and capture the notice for the next step.
    * Returns the batch to execute paired with a fresh `ok: true` parse
@@ -186,6 +236,19 @@ export function createStepBatchPolicy(
     // through the LLM repair path (or the wave split below) instead.
     if (batch.calls.length > getConfig().agent.maxParallelToolCalls) {
       return null;
+    }
+    // Someone would be asked: run the batch behind approval barriers when
+    // every call checks out, so nothing the model emitted has to be
+    // emitted again — the next step reads the results, not a retry list.
+    if (batchRunsBehindBarriers(batch)) {
+      runBehindBarriers = true;
+      deps.logger?.info("approval-gated batch runs behind approval barriers", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        size: batch.calls.length,
+        tools: batch.calls.map((call) => call.tool),
+      });
+      return { ok: true, batch };
     }
     const trim = trimBatchToFirstApprovalGated(batch, turnPolicyForTrim(deps));
     if (trim === null) return null;
@@ -293,6 +356,7 @@ export function createStepBatchPolicy(
   return {
     fabricationOf, takeProgressNote, tryTrimApprovalGated, trySplitPureReadWaves,
     get runInOrder() { return runInOrder; },
+    get runBehindBarriers() { return runBehindBarriers; },
     get progressNote() { return progressNote; },
     get trimmedBatchNotice() { return trimmedBatchNotice; },
     get waveSplitNotice() { return waveSplitNotice; },
@@ -702,6 +766,267 @@ export async function executeCallsInOrder(
   return { results, cancelled, loopSignals };
 }
 
+
+/**
+ * What `executeWithApprovalBarriers` did with a batch, filled in as it
+ * runs — the step reads it for the `batch_approval_barriers` event, the
+ * metric and the next step's notice.
+ */
+export interface ApprovalBarrierReport {
+  /** Runs of batchable calls that completed. */
+  waves: number;
+  /** Approval-gated calls that ran, each alone. */
+  barriers: number;
+  /** Calls that ran, with the payload the model emitted. */
+  retained: number;
+  /** Calls that never ran, in batch-index order. */
+  invalidated: ToolCallPayload[];
+  /** The gated call that stopped the batch, or `null` when none did. */
+  stoppedBy: {
+    call: ToolCallPayload;
+    batchIndex: number;
+    cause: ApprovalBarrierStopCause;
+  } | null;
+  /** The turn was cancelled while the batch ran. */
+  cancelled: boolean;
+}
+
+export function emptyApprovalBarrierReport(): ApprovalBarrierReport {
+  return {
+    waves: 0,
+    barriers: 0,
+    retained: 0,
+    invalidated: [],
+    stoppedBy: null,
+    cancelled: false,
+  };
+}
+
+/**
+ * Cut a batch into the order it runs behind approval barriers: each
+ * approval-gated call is a segment of its own, and the batchable calls
+ * between two of them form one segment, in emitted order.
+ */
+export function approvalBarrierSegments(
+  inputs: readonly BatchCallInput[],
+): BatchCallInput[][] {
+  const segments: BatchCallInput[][] = [];
+  let run: BatchCallInput[] = [];
+  for (const input of inputs) {
+    if (input.resourceClass !== "approval_gated") {
+      run.push(input);
+      continue;
+    }
+    if (run.length > 0) segments.push(run);
+    run = [];
+    segments.push([input]);
+  }
+  if (run.length > 0) segments.push(run);
+  return segments;
+}
+
+/**
+ * Run a batch holding approval-gated calls that could prompt, behind
+ * approval barriers (issue #109). The trim used to keep the first gated
+ * call and drop the rest, so `[write, read it back]` cost a second
+ * inference to emit the read again — and with "ask first", one card per
+ * re-emitted call.
+ *
+ * Segments run in emitted order (`approvalBarrierSegments`). A run of
+ * batchable calls goes through `executeBatch` whole — class-aware
+ * concurrency, the same gates — and settles before the next segment
+ * starts. A gated call goes through its own length-1 `executeBatch`, so
+ * it asks exactly as a solo call does; a later gated call is a barrier
+ * of its own and asks its own question. Once a gated call is not
+ * approved or comes back with an error, nothing after it runs: each of
+ * those calls gets an error result naming the call that stopped it, and
+ * no question is put for them — a declined write is not asked about
+ * again through a call that was queued behind it. An abort marks every
+ * call not yet run as cancelled, as `executeBatch` does.
+ *
+ * Batch indices and `batchSize` are the emitted ones throughout, so the
+ * results, the events and the transcript line up with the calls.
+ */
+export async function executeWithApprovalBarriers(
+  inputs: ExecuteBatchArgs[0],
+  registry: ExecuteBatchArgs[1],
+  ctx: ExecuteBatchArgs[2],
+  report: ApprovalBarrierReport,
+): Promise<BatchOutcome> {
+  const batchSize = inputs.length;
+  const results: BatchOutcome["results"] = [];
+  const loopSignals: BatchOutcome["loopSignals"] = [];
+  let cancelled = false;
+  for (const segment of approvalBarrierSegments(inputs)) {
+    if (ctx.signal.aborted) cancelled = true;
+    const stop = report.stoppedBy;
+    if (cancelled || stop !== null) {
+      for (const input of segment) {
+        report.invalidated.push(input.call);
+        if (cancelled || stop === null) {
+          results.push({
+            batchIndex: input.batchIndex,
+            call: input.call,
+            resourceClass: input.resourceClass,
+            durationMs: 0,
+            cancelled: true,
+          });
+          continue;
+        }
+        const notRun = notRunBehindBarrierResult(input.call, stop, batchSize);
+        ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+        results.push({
+          batchIndex: input.batchIndex,
+          call: input.call,
+          resourceClass: input.resourceClass,
+          compressed: notRun,
+          durationMs: 0,
+          cancelled: false,
+        });
+        ctx.onCallFinished?.({
+          batchIndex: input.batchIndex,
+          batchSize,
+          result: notRun,
+          durationMs: 0,
+        });
+      }
+      continue;
+    }
+    // `executeBatch` keys its slots by `batchIndex`, so the segment runs
+    // under local indices and every callback and slot is mapped back.
+    const globalIndex = (local: number): number =>
+      segment[local]!.batchIndex;
+    const { onCallStarted, onCallFinished } = ctx;
+    const ran = await executeBatch(
+      segment.map((input, local) => ({ ...input, batchIndex: local })),
+      registry,
+      {
+        ...ctx,
+        ...(onCallStarted
+          ? {
+              onCallStarted: (info) =>
+                onCallStarted({
+                  batchIndex: globalIndex(info.batchIndex),
+                  batchSize,
+                }),
+            }
+          : {}),
+        ...(onCallFinished
+          ? {
+              onCallFinished: (info) =>
+                onCallFinished({
+                  ...info,
+                  batchIndex: globalIndex(info.batchIndex),
+                  batchSize,
+                }),
+            }
+          : {}),
+      },
+    );
+    loopSignals.push(...ran.loopSignals);
+    ran.results.forEach((slot, local) => {
+      results.push({ ...slot, batchIndex: globalIndex(local) });
+      if (slot.cancelled) report.invalidated.push(slot.call);
+      else report.retained += 1;
+    });
+    if (ran.cancelled) {
+      cancelled = true;
+      continue;
+    }
+    const first = segment[0]!;
+    if (first.resourceClass !== "approval_gated") {
+      report.waves += 1;
+      continue;
+    }
+    report.barriers += 1;
+    const result = ran.results[0]?.compressed;
+    if (result === undefined || result.status !== "ok") {
+      report.stoppedBy = {
+        call: first.call,
+        batchIndex: first.batchIndex,
+        cause: approvalBarrierStopCause(result),
+      };
+    }
+  }
+  report.cancelled = cancelled || ctx.signal.aborted;
+  return { results, cancelled: report.cancelled, loopSignals };
+}
+
+/**
+ * Why a gated call stopped its batch. Not approved when someone was
+ * asked and said no (the call's approval ledger holds a denial) or the
+ * gate refused it without asking (`ApprovalDeniedError`, an MCP tool's
+ * `approvalDenied`); anything else that did not come back `ok` failed.
+ */
+function approvalBarrierStopCause(
+  result: CompressedToolResult | undefined,
+): ApprovalBarrierStopCause {
+  if (result === undefined) return "failed";
+  if (result.approvals?.some((record) => record.verdict === "denied")) {
+    return "not_approved";
+  }
+  if (
+    result.details.errorName === "ApprovalDeniedError" ||
+    result.details.approvalDenied === true
+  ) {
+    return "not_approved";
+  }
+  return "failed";
+}
+
+/** What a stopped barrier did, as the rest of a sentence. */
+function approvalBarrierStopPhrase(cause: ApprovalBarrierStopCause): string {
+  return cause === "not_approved" ? "was not approved" : "failed";
+}
+
+/**
+ * The result a call queued behind a stopped barrier gets in place of
+ * running: an error naming the gated call that stopped it, so the
+ * transcript, the trace and the host each show why it did not run.
+ */
+function notRunBehindBarrierResult(
+  call: ToolCallPayload,
+  stop: NonNullable<ApprovalBarrierReport["stoppedBy"]>,
+  batchSize: number,
+): CompressedToolResult {
+  return compressToolResult({
+    tool: call.tool,
+    status: "error",
+    output: `not run: it came after \`${stop.call.tool}\` (call ${stop.batchIndex + 1} of ${batchSize}) in the same batch, and that call ${approvalBarrierStopPhrase(stop.cause)}`,
+    details: {
+      notRun: true,
+      blockedBy: stop.call.tool,
+      blockedByIndex: stop.batchIndex,
+      blockedCause: stop.cause,
+    },
+  });
+}
+
+/**
+ * Render the `### notice` text the model sees on the next step after a
+ * batch run behind approval barriers stopped early, or `null` when
+ * nothing was left unrun. It names the call that stopped the batch, why,
+ * and every call that never ran, so the model decides about each one
+ * instead of re-emitting the batch — and is told not to ask for a call
+ * that was not approved again on its own initiative.
+ */
+export function formatApprovalBarrierNotice(
+  report: ApprovalBarrierReport,
+  originalSize: number,
+): string | null {
+  const stop = report.stoppedBy;
+  if (stop === null || report.invalidated.length === 0) return null;
+  const names = report.invalidated.map((call) => `\`${call.tool}\``).join(", ");
+  const next =
+    stop.cause === "not_approved"
+      ? "Do not ask for the call that was not approved again unless the user asks for it; re-emit any of the others only if it still makes sense without it."
+      : "Read its error first; re-emit any of the others only if it still makes sense after that failure.";
+  return [
+    `Your previous emission contained ${originalSize} calls including approval-gated tools. The runtime ran them in order, each approval-gated call on its own, and stopped at \`${stop.call.tool}\` (call ${stop.batchIndex + 1} of ${originalSize}), which ${approvalBarrierStopPhrase(stop.cause)}.`,
+    `Not run: ${names} — they came after it and may depend on it.`,
+    next,
+  ].join(" ");
+}
 
 /**
  * The transcript counts a stream consumer cut the completion short over

@@ -4,10 +4,7 @@ import {
   awaitJobExit,
   startCommandJob,
 } from "../../../sandbox/command-job.js";
-import {
-  buildSubshellInvocation,
-  quoteCmdArg,
-} from "../../../sandbox/shell-invocation.js";
+import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
   type DangerousToolOptions,
@@ -18,7 +15,9 @@ import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
 import {
   basenameCommand,
   checkShellCommandGuard,
+  execWriteTargets,
   isGogCommand,
+  shellWriteTargets,
   type ShellGuardPolicy,
 } from "../shell-command-guard/index.js";
 import {
@@ -26,6 +25,7 @@ import {
   describeArgsShape,
   isOpaqueInterpreterShape,
   needsShellInterpretation,
+  resolveShellSpawn,
 } from "./shell-interpretation.js";
 import {
   classifyShellCall,
@@ -183,15 +183,44 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         });
       }
 
+      // For the subshell path we hand a single command line to the OS
+      // shell (`sh -c` / `cmd.exe /c`). When the model supplied separate
+      // argv tokens alongside a shell-bearing `cmd`, quote them on Windows
+      // so paths with spaces survive `cmd.exe` parsing. POSIX keeps the
+      // legacy raw join for byte-identical behaviour.
+      const subshellCommandLine =
+        execArgs.length > 0 && process.platform === "win32"
+          ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
+          : commandLine;
+      // The files the command would write, move or remove: after the
+      // user declined a write of one of them this turn, this is the same
+      // write by another route, and the gate refuses it unasked. Read
+      // from the line the shell will run, or from the argv a direct exec
+      // passes as it is — there a `>` in an argument is only text.
+      const targetPaths = useShell
+        ? shellWriteTargets(subshellCommandLine, cwd)
+        : execWriteTargets(cmd, execArgs, cwd);
+
       // A fan-out the operator authorised may also run commands, but
       // only in the directory they saw: `cwd` inside the scope, and the
       // guard's own hardline blocks still fire above this (a `block`
       // verdict never reaches here). The command line itself is free
       // text and cannot be scoped, so the directory is the whole of the
       // promise — which is why the fan-out prompt says "and run commands
-      // in" rather than something broader.
+      // in" rather than something broader. One exception: a command
+      // that would change a file the user declined this turn goes to the
+      // gate, which refuses it, rather than running on the fan-out's yes.
       const scopedByFanout =
-        options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ?? false;
+        (options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ??
+          false) &&
+        !(
+          options.approvals.hasDeclinedTarget?.({
+            sessionId: ctx.sessionId,
+            tool: "os.shell.run",
+            category: "shell",
+            targetPaths,
+          }) ?? false
+        );
       if (guardVerdict.action === "approval_required" && !scopedByFanout) {
         // Shape grant unit: the normalised binary the guard itself keyed
         // on (basename, lowercased), so `[a]` covers exactly the argv[0]
@@ -212,23 +241,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
             preview: commandLine,
             affectedResources: [cwd],
             ...(commandShape !== undefined ? { commandShape } : {}),
+            targetPaths,
           },
           ctx.signal,
         );
       }
 
-      // For the subshell path we hand a single command line to the OS
-      // shell (`sh -c` / `cmd.exe /c`). When the model supplied separate
-      // argv tokens alongside a shell-bearing `cmd`, quote them on Windows
-      // so paths with spaces survive `cmd.exe` parsing. POSIX keeps the
-      // legacy raw join for byte-identical behaviour.
-      const subshellCommandLine =
-        execArgs.length > 0 && process.platform === "win32"
-          ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
-          : commandLine;
-      const spawnSpec = useShell
-        ? buildSubshellInvocation(subshellCommandLine)
-        : { command: cmd, args: execArgs };
+      const spawnSpec = resolveShellSpawn(cmd, execArgs, useShell);
       const facts: ShellCommandFacts = {
         cmd,
         args: execArgs,
@@ -250,6 +269,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       const job = startCommandJob(spawnSpec.command, spawnSpec.args, {
         cwd,
         ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+        ...(spawnSpec.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: true }
+          : {}),
       });
       // A spawn failure (ENOENT) rejects here, as the runner's always did.
       const outcome = await job.waitFor(timeout.timeoutMs, ctx.signal);

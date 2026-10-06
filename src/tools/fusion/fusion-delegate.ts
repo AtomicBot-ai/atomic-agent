@@ -1,5 +1,8 @@
 import type { ApprovalGate } from "../../approval/approval-gate.js";
-import { requireApproval } from "../../approval/dangerous-tool.js";
+import {
+  ApprovalDeniedError,
+  requireApproval,
+} from "../../approval/dangerous-tool.js";
 import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -128,8 +131,9 @@ function error(
  * (`details.outcome`): `ok` while any task delivered anything — partial
  * results are the whole value of a fan-out, and an orchestrator handed
  * a bare error learns nothing about which parts survived — and `error`
- * only when every task failed or was cancelled. Per-task status lives
- * in the output and in `details.tasks` either way.
+ * when none did: every task failed, was cancelled, never got a first
+ * token, or ran out of time before its first step (`deliveredNothing`).
+ * Per-task status lives in the output and in `details.tasks` either way.
  *
  * **Width is the model's call.** `args.maxWorkers` is honoured as asked;
  * `llm.runMode.fusion.workers` only fills in for a call that named
@@ -287,13 +291,29 @@ export function buildFusionDelegateTool(
       // answer stands for the rest of the turn as long as later fan-outs
       // stay inside the directories it named; one reaching somewhere new
       // asks again.
+      //
+      // Except after the user declined a file in those directories this
+      // turn: the workers would write it unasked under the standing yes,
+      // so re-delegating a declined write is asked about again.
+      const declinedInScope =
+        deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
       const alreadyApproved =
-        deps.approvals.fanoutScopes?.turnGrantCovers(
+        !declinedInScope &&
+        (deps.approvals.fanoutScopes?.turnGrantCovers(
           ctx.sessionId,
           writeScope,
-        ) ?? false;
+        ) ??
+          false);
       try {
-        if (!alreadyApproved)
+        if (!alreadyApproved) {
+          // A yes from a person who was shown this fan-out is their newer
+          // answer for the files they declined in its directories; one
+          // the level gave is not, and those files stay declined.
+          const asksPerson =
+            declinedInScope &&
+            deps.approvalRequired &&
+            (deps.approvals.wouldPrompt?.(ctx.sessionId, "fusion_fanout") ??
+              false);
           await requireApproval(
             {
               approvals: deps.approvals as ApprovalGate,
@@ -309,8 +329,23 @@ export function buildFusionDelegateTool(
             },
             ctx.signal,
           );
+          if (asksPerson) {
+            deps.approvals.forgetDeclinedUnder?.(ctx.sessionId, writeScope);
+          }
+        }
         deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
       } catch (err) {
+        // The user's own no already says what happened and what to do,
+        // and so does a repeat of one they declined earlier in the turn.
+        if (
+          err instanceof ApprovalDeniedError &&
+          (err.byUser || err.declinedEarlier)
+        ) {
+          return error(err.message, {
+            reason: "fan-out-denied",
+            deniedByUser: true,
+          });
+        }
         return error(
           `the fan-out was not approved: ${err instanceof Error ? err.message : String(err)}`,
           { reason: "fan-out-denied" },
@@ -384,6 +419,7 @@ export function buildFusionDelegateTool(
             workerMaxSteps: mode.workerMaxSteps,
             workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond,
+            localLeg: Number.isFinite(poolSize),
             ...(mode.workerReasoning === undefined
               ? {}
               : { workerReasoning: mode.workerReasoning }),
@@ -479,6 +515,8 @@ export function buildFusionDelegateTool(
       // The call's own status is the tasks' summary: a fan-out where
       // every worker failed used to come back `ok`, and an orchestrator
       // reading only the status merged nothing as if it were something.
+      // Workers that were never served or timed out before a single step
+      // count as nothing delivered too (ATO-234).
       const outcome = delegateOutcome(results);
       // What the fan-out cost on the worker leg, when its model is priced
       // (a cloud leg with a catalogue entry); a local leg resolves to no

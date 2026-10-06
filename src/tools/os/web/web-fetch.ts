@@ -8,6 +8,7 @@ import type { AtomicAgentConfig, WebFetchConfig } from "../../../config/index.js
 import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
+import { explainCurlStderr, runCurl } from "./run-curl.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -419,7 +420,7 @@ async function curlOnce(
   const curlArgs = buildCurlArgs(url, pinnedIps, opts);
   let result: CommandResult;
   try {
-    result = await opts.runCommand("curl", curlArgs, {
+    result = await runCurl(opts.runCommand, curlArgs, {
       cwd: opts.cwd,
       // Outer guard sits just above curl's own `--max-time` so curl reports the
       // timeout itself (exit 28) instead of being killed by the runner.
@@ -549,7 +550,7 @@ function parseRetryAfterMs(headerJson: string): number | null {
 
 function formatCurlError(result: CommandResult): string {
   const stderr = result.stderr.trim();
-  if (stderr.length > 0) return stderr;
+  if (stderr.length > 0) return explainCurlStderr(stderr);
   if (result.timedOut) return "curl timed out";
   return `curl exited with code ${result.exitCode}`;
 }

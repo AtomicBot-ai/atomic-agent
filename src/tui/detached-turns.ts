@@ -104,6 +104,15 @@ export class DetachedTurns {
  * dropped and counted; the replay announces the gap instead of passing
  * the reconstruction off as whole, and the end-of-turn re-emit from the
  * saved session restores the authoritative transcript regardless.
+ *
+ * The cap counts events, and a streamed reply is one event per token:
+ * left as they arrive, the deltas of an ordinary answer filled the ring
+ * on their own and pushed the operator's prompt and the turn's first
+ * steps out of it, so a switch-back mid-reply came back to a gap notice
+ * over half a sentence. Adjacent deltas of one stream are therefore
+ * stored as one event — replaying the joined text paints exactly what
+ * replaying the pieces did — and the prompt, once it reaches the head
+ * of the log, is the one event an overflow never takes.
  */
 export class TurnEventBuffer {
   private readonly bySession = new Map<
@@ -120,8 +129,14 @@ export class TurnEventBuffer {
   record(sessionId: string, event: AgentLoopEvent): void {
     const log = this.bySession.get(sessionId);
     if (!log) return;
+    const last = log.events.length - 1;
+    const joined = joinStreamDeltas(log.events[last], event);
+    if (joined) {
+      log.events[last] = joined;
+      return;
+    }
     if (log.events.length >= DEFAULT_RING_BUFFER_SIZE) {
-      log.events.shift();
+      log.events.splice(log.events[0]?.type === "user_message" ? 1 : 0, 1);
       log.dropped += 1;
     }
     log.events.push(event);
@@ -140,6 +155,41 @@ export class TurnEventBuffer {
   end(sessionId: string): void {
     this.bySession.delete(sessionId);
   }
+}
+
+/**
+ * `next` folded into `last` when both are pieces of the same stream —
+ * the reply text, or one step's reasoning — else `null`. Built fresh:
+ * the recorded events are the ones the reducer was handed.
+ */
+function joinStreamDeltas(
+  last: AgentLoopEvent | undefined,
+  next: AgentLoopEvent,
+): AgentLoopEvent | null {
+  if (last?.type !== "llm_event" || next.type !== "llm_event") return null;
+  const a = last.event;
+  const b = next.event;
+  if (a.type === "assistant_delta" && b.type === "assistant_delta") {
+    return {
+      type: "llm_event",
+      event: { type: "assistant_delta", text: a.text + b.text },
+    };
+  }
+  if (
+    a.type === "reasoning_delta" &&
+    b.type === "reasoning_delta" &&
+    a.stepIndex === b.stepIndex
+  ) {
+    return {
+      type: "llm_event",
+      event: {
+        type: "reasoning_delta",
+        stepIndex: a.stepIndex,
+        text: a.text + b.text,
+      },
+    };
+  }
+  return null;
 }
 
 /** The switch-back replay lost its head to the ring cap. */

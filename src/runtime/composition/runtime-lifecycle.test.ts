@@ -22,7 +22,8 @@ function fixture(events: string[], schedulerStopped: Promise<void> = Promise.res
     profileStore: close("profile"), notesStore: close("notes"),
     lessonStore: close("lesson"), procedureStore: close("procedure"),
     taskStore: close("task"),
-    scheduler: { stop: () => { events.push("scheduler.stop"); return schedulerStopped; } },
+    taskRunner: { stop: async (grace) => { events.push(`tasks.stop:${grace}`); return 0; } },
+    scheduler: { stop: (grace) => { events.push(`scheduler.stop:${grace}`); return schedulerStopped; } },
     telegramChannelForShutdown: { stop: async () => { events.push("telegram.stop"); } },
     discordChannelForShutdown: { stop: async () => { events.push("discord.stop"); } },
     swarmForShutdown: { stopAll: async () => { events.push("swarm.stop"); } },
@@ -34,7 +35,7 @@ function fixture(events: string[], schedulerStopped: Promise<void> = Promise.res
 }
 
 const order = [
-  "release.standin", "scheduler.stop", "steering.clear", "shell.endAll",
+  "release.standin", "tasks.stop:1500", "scheduler.stop:1500", "steering.clear", "shell.endAll",
   "reflection.abort", "naming.abort", "telegram.stop", "discord.stop",
   "swarm.stop", "mcp.stop", "browser.stop", "turns.settle:1500",
   "release.final", "session.close", "profile.close", "lesson.close",
@@ -76,9 +77,9 @@ describe("runtime lifecycle ownership", () => {
     const lifecycle = createRuntimeLifecycle({ ...resources, notesStore: { close: () => { resources.notesStore.close(); storesClosed(); } } });
     const first = lifecycle.shutdown();
     await closed;
-    expect(events).toEqual(order.slice(0, 18));
+    expect(events).toEqual(order.slice(0, 19));
     await lifecycle.shutdown();
-    expect(events).toEqual(order.slice(0, 18));
+    expect(events).toEqual(order.slice(0, 19));
     release();
     await first;
     expect(events).toEqual(order);
@@ -99,4 +100,41 @@ describe("runtime lifecycle ownership", () => {
       "warn:telegram: shutdown failed", "warn:stopped turns still running at shutdown; recorded as interrupted",
     ]);
   });
+
+  it("waits for the bounded task stop before closing its store and reports unfinished runs", async () => {
+    const events: string[] = [];
+    const { resources } = fixture(events);
+    let stopped: (count: number) => void = () => {};
+    const taskRunsStopped = new Promise<number>((resolve) => { stopped = resolve; });
+    let closed: () => void = () => {};
+    const storesClosed = new Promise<void>((resolve) => { closed = resolve; });
+    const lifecycle = createRuntimeLifecycle({
+      ...resources,
+      taskRunner: { stop: (grace) => { events.push(`tasks.stop:${grace}`); return taskRunsStopped; } },
+      notesStore: { close: () => { resources.notesStore.close(); closed(); } },
+    });
+    const shutdown = lifecycle.shutdown();
+    await storesClosed;
+    expect(events).not.toContain("task.close");
+    stopped(2);
+    await shutdown;
+    expect(events).toContain("warn:task runs still going at shutdown; left for the next boot");
+    expect(events.indexOf("task.close")).toBeGreaterThan(events.indexOf("warn:task runs still going at shutdown; left for the next boot"));
+  });
+
+  it("warns for rejected task and scheduler stops while completing cleanup", async () => {
+    const events: string[] = [];
+    const { resources } = fixture(events);
+    const lifecycle = createRuntimeLifecycle({
+      ...resources,
+      taskRunner: { stop: async (grace) => { events.push(`tasks.stop:${grace}`); throw new Error("task stop failed"); } },
+      scheduler: { stop: async (grace) => { events.push(`scheduler.stop:${grace}`); throw new Error("scheduler stop failed"); } },
+    });
+    await lifecycle.shutdown();
+    expect(events.filter((event) => !event.startsWith("warn:"))).toEqual(order);
+    expect(events.filter((event) => event.startsWith("warn:"))).toEqual([
+      "warn:stopping task runs failed", "warn:scheduler stop failed",
+    ]);
+  });
+
 });

@@ -10,6 +10,7 @@ import type { ProfileStore } from "../../memory/profile-store.js";
 import type { MemoryStore } from "../../memory/memory-store.js";
 import type { LessonStore } from "../../memory/lessons/lesson-store.js";
 import type { ProcedureStore } from "../../memory/procedures/procedure-store.js";
+import type { TaskRunner } from "../../tasks/task-runner.js";
 import type { TaskStore } from "../../tasks/task-store.js";
 import type { Scheduler } from "../../scheduler/scheduler.js";
 import type { ConsolidatorJob } from "../../memory/consolidator/consolidator-job.js";
@@ -36,6 +37,7 @@ export interface RuntimeLifecycleResources {
   readonly procedureStore: Pick<ProcedureStore, "close">;
   // These handles are connected after this owner is constructed. Bootstrap supplies
   // getters so shutdown reads them at their original points, rather than capturing null.
+  readonly taskRunner: Pick<TaskRunner, "stop">;
   readonly scheduler: Pick<Scheduler, "stop"> | null;
   readonly telegramChannelForShutdown: Pick<TelegramChannel, "stop"> | null;
   readonly discordChannelForShutdown: Pick<DiscordChannel, "stop"> | null;
@@ -81,15 +83,23 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     // own end before the store closes (below), or that throws and ends
     // through `releaseTurn`, replaces it with what really happened.
     releaseTurnsInterrupted({ keepMarks: true });
-    // No scheduled turn may start on a runtime that is closing: the
-    // ticker stops here. The tick already running — and the task turn in
-    // it, which nothing stops — is waited for further down, where it
-    // always was.
-    const schedulerStopped = resources.scheduler?.stop().catch((err: unknown) => {
-      logger.warn("scheduler stop failed", {
-        error: err instanceof Error ? err.message : String(err),
+    // Stop task ingress and abort every running task while both stores remain
+    // open. This covers scheduler, run-on-create and explicit run requests.
+    const taskRunsStopped = resources.taskRunner
+      .stop(SHUTDOWN_TURN_GRACE_MS)
+      .catch((err: unknown) => {
+        logger.warn("stopping task runs failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return 0;
       });
-    });
+    const schedulerStopped = resources.scheduler
+      ?.stop(SHUTDOWN_TURN_GRACE_MS)
+      .catch((err: unknown) => {
+        logger.warn("scheduler stop failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     // Nothing will drain the inbox after this point; drop pending
     // steers so a message cannot resurface in a later process.
     steeringInbox.clearAll();
@@ -160,7 +170,7 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     // now. Closing the store under them is how a turn cancelled by a quit
     // used to lose its end: it saved a moment after `close`, and its row
     // kept what it held before the turn. Give them a moment first; a
-    // turn nobody stopped (a scheduled task) is not waited for.
+    // turn nobody stopped is not waited for. TaskRunner stopped owned tasks above.
     const stillEnding = await turnsInFlight.settleCancelled(
       SHUTDOWN_TURN_GRACE_MS,
     );
@@ -205,8 +215,15 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     } catch {
       // already closed
     }
-    // Stopped at the top; this waits out the tick that was running then.
+    // Both waits were bounded at the top. Runs that ignore cancellation stay
+    // owned by this process, for the next boot to recover once it is gone.
     await schedulerStopped;
+    const tasksStillRunning = await taskRunsStopped;
+    if (tasksStillRunning > 0) {
+      logger.warn("task runs still going at shutdown; left for the next boot", {
+        count: tasksStillRunning,
+      });
+    }
     if (resources.consolidatorJob) {
       try {
         await resources.consolidatorJob.stop();

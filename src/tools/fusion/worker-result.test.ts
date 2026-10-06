@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import {
   WORKER_HINT_CONTEXT,
+  WORKER_HINT_IDLE_SERVER,
   WORKER_HINT_QUEUED,
   WORKER_HINT_QUOTA,
   WORKER_HINT_SATURATED,
@@ -11,11 +12,16 @@ import {
   WorkerRunCollector,
   classifyWorkerStatus,
   delegateOutcome,
+  deliveredNothing,
   fanoutSpend,
   formatDelegateOutput,
+  formatWaitMs,
+  queuedWorkerHint,
+  readSlotOccupancy,
   resultCarriesApprovalRefusal,
   unservedWorkerHint,
   workerFailureHint,
+  workerHintNoFirstToken,
   type WorkerTaskResult,
 } from "./worker-result.js";
 import { FUSION_WORKER_APPROVAL_REFUSED } from "./worker-tool-policy.js";
@@ -361,6 +367,111 @@ describe("delegateOutcome", () => {
       expect(delegateOutcome([row({ status })])).toBe("partial");
       expect(delegateOutcome([row({ status }), row({ id: "t2", status: "failed" })])).toBe("partial");
     }
+  });
+
+  it("is all_failed when nothing came back — workers never served or out of time before a step (ATO-234)", () => {
+    // Two queued workers used to make the call `ok`: "Delegated 2 tasks ✓"
+    // over a fan-out that produced nothing at all.
+    expect(
+      delegateOutcome([
+        row({ status: "queued", stepCount: 0 }),
+        row({ id: "t2", status: "queued", stepCount: 0 }),
+      ]),
+    ).toBe("all_failed");
+    expect(
+      delegateOutcome([
+        row({ status: "timeout", stepCount: 0 }),
+        row({ id: "t2", status: "failed", stepCount: 0 }),
+      ]),
+    ).toBe("all_failed");
+    // A timeout that did take steps may have written something.
+    expect(delegateOutcome([row({ status: "timeout", stepCount: 3 })])).toBe("partial");
+    expect(
+      delegateOutcome([row({ status: "queued", stepCount: 0 }), row({ id: "t2", status: "no_changes" })]),
+    ).toBe("partial");
+  });
+});
+
+describe("deliveredNothing", () => {
+  it("counts failed, cancelled, queued and a zero-step timeout as nothing", () => {
+    for (const status of ["failed", "cancelled", "queued"] as const) {
+      expect(deliveredNothing(row({ status }))).toBe(true);
+    }
+    expect(deliveredNothing(row({ status: "timeout", stepCount: 0 }))).toBe(true);
+    expect(deliveredNothing(row({ status: "timeout", stepCount: 2 }))).toBe(false);
+    for (const status of ["ok", "no_changes", "max_steps", "needs_orchestrator"] as const) {
+      expect(deliveredNothing(row({ status }))).toBe(false);
+    }
+  });
+});
+
+describe("formatWaitMs", () => {
+  it("says seconds under a minute instead of rounding to 0 min", () => {
+    expect(formatWaitMs(20_000)).toBe("20 s");
+    expect(formatWaitMs(59_000)).toBe("59 s");
+    expect(formatWaitMs(120_000)).toBe("2 min");
+    expect(formatWaitMs(15 * 60_000)).toBe("15 min");
+  });
+});
+
+describe("readSlotOccupancy", () => {
+  it("counts the slots and the ones processing", () => {
+    expect(
+      readSlotOccupancy([
+        { id: 0, is_processing: true },
+        { id: 1, is_processing: false },
+      ]),
+    ).toEqual({ total: 2, busy: 1 });
+  });
+
+  it("is null for anything that is not a slot table", () => {
+    expect(readSlotOccupancy({ error: "not supported" })).toBeNull();
+    expect(readSlotOccupancy([])).toBeNull();
+    expect(readSlotOccupancy(null)).toBeNull();
+  });
+});
+
+describe("queuedWorkerHint", () => {
+  const WAIT = 120_000;
+  it("says 'no free slot' only when every slot was working and the fan-out was wider than the table", () => {
+    expect(
+      queuedWorkerHint({ ranAlone: false, width: 3, occupancy: { total: 2, busy: 2 }, waitMs: WAIT }),
+    ).toBe(WORKER_HINT_QUEUED);
+  });
+
+  it("does not say it for two workers on two busy slots — the ATO-234 case", () => {
+    const hint = queuedWorkerHint({ ranAlone: false, width: 2, occupancy: { total: 2, busy: 2 }, waitMs: WAIT });
+    expect(hint).not.toBe(WORKER_HINT_QUEUED);
+    expect(hint).toBe(workerHintNoFirstToken(WAIT));
+    expect(hint).toContain("within 2 min");
+  });
+
+  it("does not say it with a slot free", () => {
+    expect(
+      queuedWorkerHint({ ranAlone: false, width: 4, occupancy: { total: 2, busy: 1 }, waitMs: WAIT }),
+    ).toBe(workerHintNoFirstToken(WAIT));
+  });
+
+  it("points at the daemon when every slot was idle", () => {
+    expect(
+      queuedWorkerHint({ ranAlone: false, width: 2, occupancy: { total: 2, busy: 0 }, waitMs: WAIT }),
+    ).toBe(WORKER_HINT_IDLE_SERVER);
+    expect(
+      queuedWorkerHint({ ranAlone: true, width: 1, occupancy: { total: 2, busy: 0 }, waitMs: WAIT }),
+    ).toBe(WORKER_HINT_UNSERVED);
+  });
+
+  it("claims nothing from an unreadable table, and keeps the solo field answer when nothing probed", () => {
+    expect(queuedWorkerHint({ ranAlone: true, width: 1, occupancy: null, waitMs: WAIT })).toBe(
+      workerHintNoFirstToken(WAIT),
+    );
+    expect(queuedWorkerHint({ ranAlone: true, width: 1, occupancy: undefined, waitMs: WAIT })).toBe(
+      WORKER_HINT_UNSERVED,
+    );
+    expect(queuedWorkerHint({ ranAlone: false, width: 2, occupancy: undefined, waitMs: 20_000 })).toBe(
+      workerHintNoFirstToken(20_000),
+    );
+    expect(workerHintNoFirstToken(20_000)).toContain("within 20 s");
   });
 });
 

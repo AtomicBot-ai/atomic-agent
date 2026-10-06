@@ -1,3 +1,8 @@
+import {
+  ApprovalGate,
+  type ApprovalDecision,
+  type ApprovalRequest,
+} from "../../approval/approval-gate.js";
 import { FanoutScopeRegistry } from "../../approval/fanout-scope.js";
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -764,6 +769,39 @@ describe("fusion.delegate", () => {
     expect(result.summary).toContain("[t2] failed");
   });
 
+  it("is status:error when every worker was cut off before its first token (ATO-234)", async () => {
+    // Two local workers aborted before they said anything came back
+    // `partial` and therefore `ok`: the UI drew "Delegated 2 tasks ✓"
+    // and the planner read it as work to merge.
+    vi.useFakeTimers();
+    try {
+      const tool = buildFusionDelegateTool(
+        deps({
+          runTurn: (_session, _message, options) =>
+            new Promise<RunTurnResult>((resolve) => {
+              options.signal?.addEventListener("abort", () =>
+                resolve(turnResult({ reason: "cancelled", stepCount: 0 })),
+              );
+            }),
+          probeSlotOccupancy: async () => ({ total: 4, busy: 2 }),
+        }),
+      );
+      const pending = tool.run({ tasks: TASKS, maxWorkers: 2 }, ctx());
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      const result = await pending;
+      expect(result.status).toBe("error");
+      expect(result.details.outcome).toBe("all_failed");
+      const rows = result.details.tasks as WorkerTaskResult[];
+      expect(rows.map((r) => r.status)).toEqual(["queued", "queued"]);
+      // Two slots of four were free: not a full server.
+      for (const row of rows) {
+        expect(row.hint).not.toMatch(/had no free slot/);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("survives an aborted orchestrator turn without throwing, and reports it as every task cancelled", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -845,6 +883,140 @@ describe("fusion.delegate", () => {
     );
     expect(second.status).not.toBe("error");
     expect(asked).toHaveLength(1);
+  });
+
+  function deciding(decision: Record<string, unknown>): {
+    deps: FusionDelegateDeps;
+    turns: () => number;
+  } {
+    let turns = 0;
+    return {
+      deps: deps({
+        approvalRequired: true,
+        runTurn: async () => {
+          turns += 1;
+          return turnResult();
+        },
+        approvals: {
+          setSessionPolicy: () => {},
+          clearSessionPolicy: () => {},
+          fanoutScopes: new FanoutScopeRegistry(),
+          request: async () => decision,
+        } as unknown as FusionDelegateDeps["approvals"],
+      }),
+      turns: () => turns,
+    };
+  }
+  const writeTask = [
+    { id: "t1", title: "One", instructions: "Write /repo/src/a.js" },
+  ];
+
+  it("a fan-out the user declined tells the model it was their decision, and runs no worker", async () => {
+    const { deps: d, turns } = deciding({ approved: false });
+    const result = await buildFusionDelegateTool(d).run({ tasks: writeTask }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain(
+      "The user declined this fusion.delegate call (they pressed Deny)",
+    );
+    expect(result.summary).not.toContain("was not approved");
+    expect(result.details).toMatchObject({
+      reason: "fan-out-denied",
+      deniedByUser: true,
+    });
+    expect(turns()).toBe(0);
+  });
+
+  it("a fan-out refused with nobody's decision never says the user declined", async () => {
+    const { deps: d, turns } = deciding({
+      approved: false,
+      automatic: true,
+      reason: "nobody is there",
+    });
+    const result = await buildFusionDelegateTool(d).run({ tasks: writeTask }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("the fan-out was not approved");
+    expect(result.summary).toContain("refused without a decision from the user");
+    expect(result.summary).toContain("nobody is there");
+    expect(result.summary).not.toContain("declined");
+    expect(turns()).toBe(0);
+  });
+
+  /**
+   * ATO-225 by delegation: after the user pressed Deny on the
+   * orchestrator's own write of a file, the turn's standing yes to a
+   * fan-out into its directory would let the workers write it unasked.
+   */
+  function gateAnswering(): {
+    gate: ApprovalGate;
+    prompts: ApprovalRequest[];
+    answer: (next: Omit<ApprovalDecision, "approvalId">) => void;
+  } {
+    const prompts: ApprovalRequest[] = [];
+    let current: Omit<ApprovalDecision, "approvalId"> = { approved: true };
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 1,
+      emit: (req) => {
+        prompts.push(req);
+        const decision = current;
+        queueMicrotask(() =>
+          gate.resolve({ approvalId: req.approvalId, ...decision }),
+        );
+      },
+    });
+    return { gate, prompts, answer: (next) => (current = next) };
+  }
+  const denyOrchestratorWrite = async (gate: ApprovalGate) =>
+    gate.request({
+      sessionId: "s-parent",
+      tool: "os.fs.write",
+      category: "fs_write_workspace",
+      reason: "write /repo/src/a.js",
+      targetPaths: ["/repo/src/a.js"],
+    });
+
+  it("asks again before re-delegating into a directory where the user declined a file, and a no stays theirs", async () => {
+    const { gate, prompts, answer } = gateAnswering();
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    expect((await tool.run({ tasks: writeTask }, ctx())).status).not.toBe("error");
+    answer({ approved: false });
+    await denyOrchestratorWrite(gate);
+    expect(prompts).toHaveLength(2);
+
+    const redelegated = await tool.run({ tasks: writeTask }, ctx());
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]?.tool).toBe("fusion.delegate");
+    expect(redelegated.status).toBe("error");
+    expect(redelegated.details).toMatchObject({ deniedByUser: true });
+
+    // The same fan-out again is refused unasked, and still reads as the
+    // user's decision rather than "the fan-out was not approved".
+    const again = await tool.run({ tasks: writeTask }, ctx());
+    expect(prompts).toHaveLength(3);
+    expect(again.status).toBe("error");
+    expect(again.summary).toContain(
+      "fusion.delegate was not run: the user already declined this same call earlier in this turn, so it was not asked again.",
+    );
+    expect(again.summary).not.toContain("was not approved");
+    expect(again.details).toMatchObject({ deniedByUser: true });
+  });
+
+  it("a yes to the re-delegation, asked knowing, is the newer answer for the turn", async () => {
+    const { gate, prompts, answer } = gateAnswering();
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: writeTask }, ctx());
+    answer({ approved: false });
+    await denyOrchestratorWrite(gate);
+    answer({ approved: true });
+    expect((await tool.run({ tasks: writeTask }, ctx())).status).not.toBe("error");
+    expect(prompts).toHaveLength(3);
+    expect(gate.hasDeclinedUnder("s-parent", ["/repo/src"])).toBe(false);
+    // The review pass rides the standing yes again.
+    expect((await tool.run({ tasks: writeTask }, ctx())).status).not.toBe("error");
+    expect(prompts).toHaveLength(3);
   });
 
   describe("with a contract", () => {

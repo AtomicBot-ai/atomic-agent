@@ -25,6 +25,7 @@ describe("ApprovalGate session policy", () => {
     const decision = await gate.request(shellRequest("s-w-1"));
     expect(decision.approved).toBe(false);
     expect(decision.reason).toBe("no operator");
+    expect(decision.automatic).toBe(true);
     expect(emitted).toEqual([]);
     expect(gate.pendingCount()).toBe(0);
   });
@@ -111,7 +112,10 @@ describe("ApprovalGate session policy", () => {
       (err: unknown) =>
         err instanceof ApprovalDeniedError &&
         err.reason === "hand it back" &&
-        err.message.includes("hand it back"),
+        err.message.includes("hand it back") &&
+        // A worker's refusal is not the user's decision.
+        !err.byUser &&
+        !err.message.includes("declined"),
     );
   });
 });

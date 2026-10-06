@@ -59,7 +59,7 @@ SET has two flavours:
 
 Bi-temporal versioning:
 - Every SET preserves history automatically — re-writing the same key never erases the previous version. The earlier value is still available via the \`memory.profile.history\` tool.
-- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET full_name=Alex [supersedes=name]) marks both rows in a single write.
+- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET new_key=value [supersedes=old_key]) marks both rows in a single write.
 - The valid_from token must be the literal "now"; the runtime stamps the actual timestamp.
 
 NOTE types (pick exactly one per line):
@@ -75,10 +75,16 @@ Forbidden in every NOTE:
 
 Rules:
 - Only durable content explicitly stated by the user or that the user asked to remember.
+- Never invent identity details (name, nickname, role, age, location); record a name only if the USER typed it.
+- A one-off instruction for the current reply ("reply exactly X", "don't use tools for this", test or ping messages) is not a preference.
+- Never copy wording or example values from these instructions into the output.
+- Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
+- When unsure, output NONE.
 - Use SET for anything that looks like a stable attribute of the user. Prefer short snake_case keys (e.g. name, timezone, trip_lisbon_plan). Keep each SET value under 200 characters.
 - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
 - Use NOTE [type=X] for anything episodic, behavioural, knowledge-bearing, or skill-shaped that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional trailing tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
 - If a SET already captures the fact, do not also emit a NOTE repeating it.
+- A "### known profile" block, when present, lists facts already stored. Never emit a SET that repeats one of them, under its key or any other; to change one, reuse its exact key.
 - If there is nothing worth remembering, output exactly: NONE
 - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE [type=X] body" (optionally followed by a trailing tags marker).
 `;
@@ -161,16 +167,22 @@ SET has two flavours:
 
 Bi-temporal versioning:
 - Every SET preserves history automatically — re-writing the same key never erases the previous version. The earlier value is still available via the \`memory.profile.history\` tool.
-- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET full_name=Alex [supersedes=name]) marks both rows in a single write.
+- When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET new_key=value [supersedes=old_key]) marks both rows in a single write.
 - The valid_from token must be the literal "now"; the runtime stamps the actual timestamp.
 
 Rules:
 - Only durable content explicitly stated by the user or that the user asked to remember.
+- Never invent identity details (name, nickname, role, age, location); record a name only if the USER typed it.
+- A one-off instruction for the current reply ("reply exactly X", "don't use tools for this", test or ping messages) is not a preference.
+- Never copy wording or example values from these instructions into the output.
+- Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
+- When unsure, output NONE.
 - Skip trivia, chit-chat, weather, transient moods, facts about the AI itself.
 - Use SET for anything that looks like a stable attribute of the user. Prefer short snake_case keys (e.g. name, timezone, trip_lisbon_plan). Keep each SET value under 200 characters.
 - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
 - Use NOTE for anything episodic or narrative that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
 - If a SET already captures the fact, do not also emit a NOTE repeating it.
+- A "### known profile" block, when present, lists facts already stored. Never emit a SET that repeats one of them, under its key or any other; to change one, reuse its exact key.
 - If there is nothing worth remembering, output exactly: NONE
 - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE body".
 `;
@@ -208,7 +220,20 @@ export interface ReflectionPromptInput {
    * slot's KV cache stable.
    */
   transcript?: readonly { user: string; assistant: string }[];
+  /**
+   * ATO-188. The profile as the prompt shows it (`listForPrompt` — never
+   * a name no check vouched for), rendered into the tail as `### known
+   * profile` so the model reuses existing keys instead of writing the
+   * same fact a second time under a new one. Omitted or empty ⇒ no
+   * block, and the tail is byte-identical to before.
+   */
+  knownProfile?: readonly { key: string; value: string }[];
 }
+
+/** At most this many facts go into `### known profile`. */
+export const REFLECTION_KNOWN_PROFILE_MAX_FACTS = 40;
+/** Each value in `### known profile` is clipped to this many characters. */
+export const REFLECTION_KNOWN_PROFILE_VALUE_CAP = 80;
 
 /**
  * Build the full reflection prompt. The `stable prefix` is always
@@ -240,11 +265,14 @@ export function buildReflectionPrompt(input: ReflectionPromptInput): string {
   // `anySpeaker` wins over `typedNotes` — the any-speaker prefix
   // already enforces typed NOTEs, so the typed variant would be
   // redundant. Order: anySpeaker → typedNotes → default.
-  const prefix = input.anySpeaker
+  const stablePrefix = input.anySpeaker
     ? REFLECTION_STABLE_PREFIX_ANY_SPEAKER
     : input.typedNotes
       ? REFLECTION_STABLE_PREFIX_TYPED
       : REFLECTION_STABLE_PREFIX;
+  // The known profile opens the variable tail, so the stable prefix —
+  // and the reflection slot's KV cache over it — never moves.
+  const prefix = `${stablePrefix}${renderKnownProfile(input.knownProfile)}`;
   if (input.transcript && input.transcript.length > 0) {
     const blocks: string[] = [];
     for (let i = 0; i < input.transcript.length; i += 1) {
@@ -258,6 +286,22 @@ export function buildReflectionPrompt(input: ReflectionPromptInput): string {
   const user = clampMessage(input.userMessage);
   const assistant = clampMessage(input.assistantReply);
   return `${prefix}\nUSER: ${user}\nASSISTANT: ${assistant}\n\n### output\n`;
+}
+
+function renderKnownProfile(
+  facts: readonly { key: string; value: string }[] | undefined,
+): string {
+  if (!facts || facts.length === 0) return "";
+  const lines = facts
+    .slice(0, REFLECTION_KNOWN_PROFILE_MAX_FACTS)
+    .map((f) => `- ${f.key}=${clampValue(f.value)}`);
+  return `\n### known profile\n${lines.join("\n")}\n`;
+}
+
+function clampValue(raw: string): string {
+  const normalised = raw.replace(/\s+/g, " ").trim();
+  if (normalised.length <= REFLECTION_KNOWN_PROFILE_VALUE_CAP) return normalised;
+  return `${normalised.slice(0, REFLECTION_KNOWN_PROFILE_VALUE_CAP - 1)}…`;
 }
 
 function clampMessage(raw: string): string {

@@ -7,6 +7,7 @@ This area owns approval policy and routing. Read [AGENTS.md](AGENTS.md) before c
 
 ## Entry points
 
+- [coding-mode.ts](coding-mode.ts): shared default/plan/auto/bypass mapping and mode metadata; frontends adapt its policy to their controls.
 - [approval-gate.ts](approval-gate.ts)
 - [approval-router.ts](approval-router.ts)
 - [dangerous-tool.ts](dangerous-tool.ts)

@@ -27,6 +27,8 @@ export function turnsToMessages(
   let pendingAssistant: MutableAssistant | null = null;
   let toolCounter = 0;
   let lastAt = 0;
+  // The request a stop marker offers to re-run, as the live notice does.
+  let lastPrompt = "";
 
   const flushAssistant = (index: number): void => {
     if (!pendingAssistant) return;
@@ -42,6 +44,7 @@ export function turnsToMessages(
     switch (turn.kind) {
       case "user": {
         flushAssistant(i);
+        if (turn.steered !== true) lastPrompt = asText(turn.text);
         messages.push({
           id: `msg-user-${i}-${at}`,
           role: "user",
@@ -86,6 +89,20 @@ export function turnsToMessages(
         break;
       }
       case "assistant_reply": {
+        if (turn.stopped === true) {
+          // The stop marker is the model's note, not the agent's words:
+          // draw the notice the live chat drew when the stop happened,
+          // under whatever the turn did before it.
+          flushAssistant(i);
+          messages.push({
+            id: `msg-stop-${i}-${at}`,
+            role: "system",
+            text: "Agent stopped by user.",
+            ...(lastPrompt.length > 0 ? { retryText: lastPrompt } : {}),
+            timestamp: at,
+          });
+          break;
+        }
         if (!pendingAssistant) pendingAssistant = freshAssistant(at);
         pendingAssistant.text = asText(turn.text);
         pendingAssistant.timestamp = at;

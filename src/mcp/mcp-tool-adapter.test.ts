@@ -397,11 +397,46 @@ describe("approval gating", () => {
     );
     const result = await def.run({ key: "HKLM\\..." }, ctx);
     expect(result.status).toBe("error");
-    expect(result.summary).toContain("approval denied");
+    // The model is told the user said no, with their words, and not
+    // to retry: a bare "approval denied" read like a policy block.
+    expect(result.summary).toContain(
+      "The user declined this mcp.windows.registry_write call",
+    );
+    expect(result.summary).toContain("not an error or a policy block");
+    expect(result.summary).toContain("The user said: operator said no");
     expect(result.details).toMatchObject({
       server: "windows",
       rawName: "registry_write",
       approvalDenied: true,
+      deniedByUser: true,
+    });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("a repeat of a call the user declined earlier in the turn is stamped as their no", async () => {
+    const callTool = vi.fn(async () => ({ content: [] }));
+    const approvals = {
+      request: async () => ({
+        approvalId: "a-test",
+        approved: false,
+        reason: "this same call",
+        automatic: true,
+        declinedEarlier: true,
+      }),
+    } as unknown as ApprovalGate;
+    const def = createMcpToolDefinition(
+      metaOf("windows", "registry_write"),
+      fakeClient(callTool),
+      { trust: "approval_gated", dangerous: { approvals, approvalRequired: true } },
+    );
+    const result = await def.run({ key: "HKLM\\..." }, ctx);
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain(
+      "the user already declined this same call earlier in this turn",
+    );
+    expect(result.details).toMatchObject({
+      approvalDenied: true,
+      deniedByUser: true,
     });
     expect(callTool).not.toHaveBeenCalled();
   });

@@ -1,10 +1,43 @@
 import { describe, expect, it } from "vitest";
-import type { ConversationTurn } from "../../session/conversation-turn.js";
+import {
+  stoppedTurnMarker,
+  type ConversationTurn,
+} from "../../session/conversation-turn.js";
 import { turnsToMessages } from "./turns-to-messages.js";
 
 describe("turnsToMessages", () => {
   it("converts an empty turn list into an empty message list", () => {
     expect(turnsToMessages([])).toEqual([]);
+  });
+
+  it("draws a stop marker as the stop notice, not as the agent's reply", () => {
+    // ATO-233: the marker is the model's note that the request was
+    // stopped. A reopened chat shows what the live chat showed then.
+    const messages = turnsToMessages([
+      { kind: "user", text: "write a long story", at: 1 },
+      { kind: "assistant_tool_call", tool: "os.fs.read", args: {}, at: 2 },
+      {
+        kind: "tool_result",
+        tool: "os.fs.read",
+        status: "ok",
+        summary: "x",
+        at: 3,
+      },
+      stoppedTurnMarker(4),
+      { kind: "user", text: "how are you?", at: 5 },
+    ]);
+    expect(messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "system",
+      "user",
+    ]);
+    // The work done before the stop keeps its bubble, with no reply text.
+    expect(messages[1]).toMatchObject({ text: "", toolSteps: 1 });
+    expect(messages[2]).toMatchObject({
+      text: "Agent stopped by user.",
+      retryText: "write a long story",
+    });
   });
 
   it("carries reply attachments from the persisted turn onto the message", () => {

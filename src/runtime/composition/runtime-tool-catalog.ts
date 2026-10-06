@@ -24,8 +24,9 @@ import { resolveGithubToken } from "../../github/index.js";
 import { registerSkillTools } from "../../tools/skill/index.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
+import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
-import { buildFusionDelegateTool, type FusionDelegateDeps } from "../../tools/fusion/index.js";
+import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
 import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
@@ -56,14 +57,15 @@ export function registerRuntimeCoreTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
-  sessionStore: Pick<SessionStore, "listRecentWorkingDirs">;
+  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines">;
+  logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
   declaredInputs: DeclaredInputsRegistry;
   shellJobs: ShellJobRegistry;
   skillRegistry: SkillRegistry;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, declaredInputs,
-    shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore } = input;
+    shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger } = input;
 
   registerOsTools(toolRegistry, {
     ...dangerous,
@@ -111,6 +113,17 @@ export function registerRuntimeCoreTools(input: {
   registerGithubTools(toolRegistry, dangerous);
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
+  // Older stored names stay out of the prompt until checked against actual
+  // user messages. The background walk never deletes facts or blocks boot.
+  const nameGroundingSource = sessionGroundingSource(sessionStore);
+  if (config.memory.profile.enabled) {
+    void verifyProfileNameFacts({ store: profileStore, source: nameGroundingSource, logger })
+      .catch((err: unknown) => {
+        logger.warn("profile name check failed; unchecked names stay out of the prompt", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
   registerMemoryTools(toolRegistry, {
     profileStore,
     profileEnabled: config.memory.profile.enabled,
@@ -122,6 +135,7 @@ export function registerRuntimeCoreTools(input: {
     lessonsEnabled: config.memory.lessons.enabled,
     procedureStore,
     proceduresEnabled: config.memory.procedures.enabled,
+    nameGroundingSource,
   });
 }
 
@@ -397,7 +411,7 @@ export function registerRuntimeFusionAndReadScope(input: {
   emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
   resolveCurrentRunMode: FusionDelegateDeps["resolveRunMode"];
   providerRegistry: Pick<ProviderRegistry, "getProvider">;
-  llama: Pick<LlamaServerClient, "measuredTokensPerSecond">;
+  llama: Pick<LlamaServerClient, "measuredTokensPerSecond" | "fetchSlots">;
   approvals: ApprovalGate;
   dangerous: DangerousToolOptions;
   slotManager: FusionDelegateDeps["slotManager"];
@@ -438,6 +452,13 @@ export function registerRuntimeFusionAndReadScope(input: {
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
       localTokensPerSecond: () => llama.measuredTokensPerSecond(),
+      probeSlotOccupancy: async () => {
+        try {
+          return readSlotOccupancy(await llama.fetchSlots());
+        } catch {
+          return null;
+        }
+      },
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,

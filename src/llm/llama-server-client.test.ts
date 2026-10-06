@@ -1472,6 +1472,109 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       opened().close();
     });
 
+    // A slot the server never released: marked processing, the same task,
+    // counters that never move — while /health answers every time.
+    const frozen = (id: number) => ({
+      id,
+      id_task: 132072,
+      is_processing: true,
+      n_prompt_tokens_processed: 6119,
+      next_token: [{ n_decoded: 10353 }],
+    });
+
+    it("ends the wait as a stall when a processing slot's counters never move", async () => {
+      // Idle budget 60 s, first-token budget 30 min. Reading "processing"
+      // as progress whatever the counters did held this request for the
+      // whole 30 minutes behind a slot that was going nowhere.
+      vi.useFakeTimers();
+      const { client, healthPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: slotsJson([frozen(0), idle(1)]),
+      });
+      let settled = false;
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 1 })
+        .next()
+        .catch((err: unknown) => err)
+        .finally(() => {
+          settled = true;
+        });
+      // Polls at 15/30/45/60 s: the first answer is the baseline (15 s),
+      // and an idle budget has not yet passed since it.
+      await vi.advanceTimersByTimeAsync(70_000);
+      expect(settled).toBe(false);
+      expect(healthPolls()).toBeGreaterThan(0);
+      // The 75 s answer is a full idle budget of the same frozen table.
+      await vi.advanceTimersByTimeAsync(10_000);
+      const err = (await failure) as LlamaServerError;
+      expect(err).toBeInstanceOf(LlamaServerError);
+      expect(err.timedOut).toBe(true);
+      expect(err.message).toContain("no progress for 60000ms");
+      expect(err.message).toContain("never changed");
+    });
+
+    it("keeps waiting while a processing slot's prompt-eval counter moves", async () => {
+      // The companion: the same table shape, but the slot is working —
+      // `/slots` answers between batches, so its counter has moved by the
+      // next answer. Five idle budgets of that must not abort.
+      vi.useFakeTimers();
+      let tick = 0;
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: async () => {
+          tick += 1;
+          return new Response(
+            JSON.stringify([
+              { ...frozen(0), n_prompt_tokens_processed: 512 * tick, next_token: [{ n_decoded: 0 }] },
+              idle(1),
+            ]),
+            { status: 200 },
+          );
+        },
+      });
+      const first = client.completeStream({ prompt: "p", sessionId: "s", slotId: 1 }).next();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(tick).toBeGreaterThan(15);
+      opened().push('data: {"content":"x","stop":false}\n\n');
+      expect((await first).done).toBe(false);
+      opened().close();
+    });
+
+    it("sends one /slots poll per tick for every watch waiting on the same server", async () => {
+      // Two requests waiting for their first token on one client. Each
+      // used to send its own poll; the second now joins the first's.
+      vi.useFakeTimers();
+      const { client, slotsPolls, healthPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1_000));
+          return new Response(JSON.stringify([busy(0, 1), idle(1)]), { status: 200 });
+        },
+      });
+      const a = new AbortController();
+      const b = new AbortController();
+      const first = client
+        .completeStream({ prompt: "p", sessionId: "s1", slotId: 0, signal: a.signal })
+        .next()
+        .catch((err: unknown) => err);
+      const second = client
+        .completeStream({ prompt: "p", sessionId: "s2", slotId: 1, signal: b.signal })
+        .next()
+        .catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(15_500);
+      expect(slotsPolls()).toBe(1);
+      // /health is still asked by each watch: it is the liveness half.
+      expect(healthPolls()).toBe(2);
+      // Both watches rescheduled from 16 s, when the shared answer landed.
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(slotsPolls()).toBe(2);
+      expect(healthPolls()).toBe(4);
+      a.abort();
+      b.abort();
+      await first;
+      await second;
+    });
+
     it("falls back to the first-token timer when /slots itself hangs (the busy-server case)", async () => {
       // Measured: /slots does not answer while a slot evaluates a large
       // prompt. A poll that times out is no verdict; the first-token
@@ -2010,6 +2113,51 @@ describe("judgeSlotProgress", () => {
   it("has no verdict on a body that is not a slot table", () => {
     expect(judgeSlotProgress({ error: "no" }, 0, null).kind).toBe("unknown");
     expect(judgeSlotProgress("x", -1, null).kind).toBe("unknown");
+  });
+
+  it("reads a processing slot whose counters did not move as idle", () => {
+    const stuck = {
+      id: 0,
+      id_task: 5,
+      is_processing: true,
+      n_prompt_tokens_processed: 4096,
+      next_token: { n_decoded: 0 },
+    };
+    const first = judgeSlotProgress([stuck, idle(1)], 1, null);
+    // A first answer is a baseline, processing or not.
+    expect(first.kind).toBe("progress");
+    const again = judgeSlotProgress([stuck, idle(1)], 1, (first as { snapshot: string }).snapshot);
+    expect(again.kind).toBe("idle");
+    const moved = judgeSlotProgress(
+      [{ ...stuck, n_prompt_tokens_processed: 6144 }, idle(1)],
+      1,
+      (first as { snapshot: string }).snapshot,
+    );
+    expect(moved.kind).toBe("progress");
+  });
+
+  it("keeps a processing slot as progress on a build that reports no prompt-eval counter", () => {
+    // n_decoded alone stays 0 through a long prompt eval: frozen and
+    // working look the same, so the generous reading stands.
+    const evaluating = { id: 0, id_task: 5, is_processing: true, next_token: { n_decoded: 0 } };
+    const first = judgeSlotProgress([evaluating], 0, null);
+    const again = judgeSlotProgress([evaluating], 0, (first as { snapshot: string }).snapshot);
+    expect(again.kind).toBe("progress");
+  });
+
+  it("reads n_decoded whether next_token is an object or a one-element array", () => {
+    const asArray = (n: number) => ({
+      id: 0,
+      id_task: 5,
+      is_processing: true,
+      n_prompt_tokens_processed: 100,
+      next_token: [{ n_decoded: n }],
+    });
+    const first = judgeSlotProgress([asArray(1)], 0, null);
+    const decodedMore = judgeSlotProgress([asArray(2)], 0, (first as { snapshot: string }).snapshot);
+    expect(decodedMore.kind).toBe("progress");
+    const same = judgeSlotProgress([asArray(1)], 0, (first as { snapshot: string }).snapshot);
+    expect(same.kind).toBe("idle");
   });
 });
 

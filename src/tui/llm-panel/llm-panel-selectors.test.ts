@@ -3,7 +3,7 @@ import type {
   LocalModelDef,
   EmbeddingModelDef,
 } from "../../local-llm/index.js";
-import { createInitialTuiState } from "../tui-state.js";
+import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import {
   selectLlmActiveRouteSummary,
@@ -13,7 +13,7 @@ import {
 
 describe("llm-panel selectors", () => {
   it("renders local and cloud mode rows separately", () => {
-    const state = {
+    const state: TuiState = {
       ...createInitialTuiState(fakeSession()),
       providersPanel: {
         ...createInitialTuiState(fakeSession()).providersPanel,
@@ -24,6 +24,8 @@ describe("llm-panel selectors", () => {
             isActiveText: false,
             isActiveEmbedding: false,
             hasApiKey: false,
+            baseUrl: null,
+            subscriptionCli: null,
             chatModel: null,
             embeddingModel: null,
           },
@@ -33,6 +35,8 @@ describe("llm-panel selectors", () => {
             isActiveText: true,
             isActiveEmbedding: true,
             hasApiKey: true,
+            baseUrl: null,
+            subscriptionCli: null,
             chatModel: "qwen/qwen3.7-max",
             chatModelOptions: ["qwen/qwen3.7-max"],
             embeddingModel: "openai/text-embedding-3-small",
@@ -109,7 +113,7 @@ describe("llm-panel selectors", () => {
 
   it("uses cloud provider metadata for the prompt when cloud is active", () => {
     const base = createInitialTuiState(fakeSession());
-    const state = {
+    const state: TuiState = {
       ...base,
       llmHealth: {
         ...base.llmHealth,
@@ -125,6 +129,8 @@ describe("llm-panel selectors", () => {
             isActiveText: true,
             isActiveEmbedding: false,
             hasApiKey: true,
+            baseUrl: null,
+            subscriptionCli: null,
             chatModel: "openai/gpt-4o-mini",
             embeddingModel: null,
           },
@@ -140,7 +146,7 @@ describe("llm-panel selectors", () => {
 
   it("names both legs, orchestrator first, on an effective fusion", () => {
     const base = createInitialTuiState(fakeSession());
-    const state = {
+    const state: TuiState = {
       ...base,
       localModelsPanel: {
         ...base.localModelsPanel,
@@ -157,6 +163,7 @@ describe("llm-panel selectors", () => {
           workerProviderId: "local-llama",
           workerModel: null,
           workers: 2,
+          workersPinned: false,
           workerMaxSteps: 40,
           workerTimeoutMs: 600_000,
           primaryProviderId: "openrouter",
@@ -185,7 +192,7 @@ describe("llm-panel selectors", () => {
 
   it("labels each fusion leg from its own provider, not from a stale active row", () => {
     const base = createInitialTuiState(fakeSession());
-    const state = {
+    const state: TuiState = {
       ...base,
       localModelsPanel: {
         ...base.localModelsPanel,
@@ -202,6 +209,7 @@ describe("llm-panel selectors", () => {
           workerProviderId: "local-llama",
           workerModel: null,
           workers: 2,
+          workersPinned: false,
           workerMaxSteps: 40,
           workerTimeoutMs: 600_000,
           primaryProviderId: "openrouter",
@@ -245,7 +253,7 @@ describe("llm-panel selectors", () => {
 
   it("shows the picked catalog id, not the GGUF name, on managed local", () => {
     const base = createInitialTuiState(fakeSession());
-    const state = {
+    const state: TuiState = {
       ...base,
       // `/props` reports a file name; the catalog id is what the
       // operator picked. Catalog FIRST — deliberately the reverse of
@@ -267,7 +275,7 @@ describe("llm-panel selectors", () => {
 
   it("falls back to the probe's label while no catalog id is chosen", () => {
     const base = createInitialTuiState(fakeSession());
-    const state = {
+    const state: TuiState = {
       ...base,
       llmHealth: { ...base.llmHealth, model: "something-served.gguf" },
       localModelsPanel: {
@@ -284,7 +292,7 @@ describe("llm-panel selectors", () => {
 
   it("keeps the probe-first label and the llama.cpp word on external", () => {
     const base = createInitialTuiState(fakeSession());
-    const state = {
+    const state: TuiState = {
       ...base,
       llmHealth: { ...base.llmHealth, model: "their-server.gguf" },
       localModelsPanel: {
@@ -350,6 +358,8 @@ describe("local model rows during a pull", () => {
             isActiveText: false,
             isActiveEmbedding: false,
             hasApiKey: false,
+            baseUrl: null,
+            subscriptionCli: null,
             chatModel: null,
             embeddingModel: null,
           },
@@ -433,7 +443,7 @@ describe("local model rows during a pull", () => {
     // carries no `chatModel`, and the label used to fall through to the
     // provider id: `local-llama ⇄ anthropic/claude-opus-5`.
     const base = createInitialTuiState(fakeSession());
-    const state = {
+    const state: TuiState = {
       ...base,
       localModelsPanel: {
         ...base.localModelsPanel,
@@ -450,6 +460,7 @@ describe("local model rows during a pull", () => {
           workerProviderId: "openrouter",
           workerModel: null,
           workers: 2,
+          workersPinned: false,
           workerMaxSteps: 40,
           workerTimeoutMs: 600_000,
           primaryProviderId: "local-llama",

@@ -1,6 +1,6 @@
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
-import { isFinalReplyTurn } from "../../session/conversation-turn.js";
+import { isFinalReplyTurn, isStoppedTurnMarker } from "../../session/conversation-turn.js";
 
 export type TurnMemoryDependencies = Pick<
   AgentLoopDependencies,
@@ -142,7 +142,9 @@ function collectRecentUserAssistantTurns(
         continue;
       }
       rows.push({ role: "user", text: turn.text });
-    } else if (isFinalReplyTurn(turn)) {
+    } else if (isFinalReplyTurn(turn) && !isStoppedTurnMarker(turn)) {
+      // A stop marker is not something the agent said; the rewriter
+      // reads this list as the conversation.
       rows.push({ role: "assistant", text: turn.text });
     }
   }

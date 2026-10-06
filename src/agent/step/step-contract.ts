@@ -245,7 +245,9 @@ export interface StepDependencies {
    * approval-gated calls. When every gated call in the batch would run
    * without a prompt (see `gatedCallRunsUnattended`), the batch runs
    * one call after another in emitted order instead of being trimmed to
-   * its first gated call. Absent ⇒ today's trim. The `ApprovalGate`
+   * its first gated call. When one would prompt, an eligible batch runs
+   * behind approval barriers (`executeWithApprovalBarriers`) and the
+   * rest is trimmed as before. Absent ⇒ today's trim. The `ApprovalGate`
    * satisfies this shape: `{ getLevel: () => gate.getLevel(),
    * sessionGrants: (id) => gate.sessionGrants(id) }`.
    */
@@ -408,6 +410,9 @@ export interface StepOutcome {
    *    accepted and the notice says none of that text ran.
    *  - a `reply` batched with work tools was kept as a progress note
    *    (`progressNote`), once per turn.
+   *  - a batch run behind approval barriers stopped at a gated call that
+   *    was not approved or failed: the notice names that call and the
+   *    calls after it that never ran (`formatApprovalBarrierNotice`).
    * The name predates the later cases; the agent loop already routes it
    * to the next step, which is all any of them needs.
    */

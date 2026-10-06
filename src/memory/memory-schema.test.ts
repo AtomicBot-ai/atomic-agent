@@ -603,6 +603,59 @@ describe("applyMigrations", () => {
     expect(Number(version)).toBe(MEMORY_SCHEMA_VERSION);
   });
 
+  // ATO-199: the name-grounding columns are added in place, without a
+  // version bump, so an older binary sharing the state dir keeps opening
+  // the file.
+  it("adds the name-grounding columns to profile_facts without a version bump", () => {
+    applyMigrations(db);
+    const cols = db.prepare(`PRAGMA table_info(profile_facts)`).all() as Array<{
+      name: string;
+      type: string;
+      notnull: number;
+    }>;
+    const byName = new Map(cols.map((c) => [c.name, c]));
+    expect(byName.get("name_grounding")?.type.toUpperCase()).toBe("TEXT");
+    expect(byName.get("name_grounding")?.notnull).toBe(0);
+    expect(byName.get("name_checked_at")?.type.toUpperCase()).toBe("INTEGER");
+    const version = (
+      db.prepare("SELECT value FROM schema_meta WHERE key='version'").get() as {
+        value: string;
+      }
+    ).value;
+    expect(Number(version)).toBe(MEMORY_SCHEMA_VERSION);
+    // Idempotent, also on a file that already has them.
+    applyMigrations(db);
+    applyMigrations(db);
+  });
+
+  it("adds the name-grounding columns to a v10 file and keeps old-style inserts working", () => {
+    applyMigrations(db);
+    db.exec(`ALTER TABLE profile_facts DROP COLUMN name_grounding`);
+    db.exec(`ALTER TABLE profile_facts DROP COLUMN name_checked_at`);
+    // A row written by a binary that never names the columns.
+    db.prepare(
+      `INSERT INTO profile_facts
+         (key, value, pinned, keywords, valid_from, superseded_by, supersedes,
+          created_at, updated_at)
+       VALUES ('name', 'Анна', 1, NULL, 1, NULL, NULL, 1, 1)`,
+    ).run();
+    applyMigrations(db);
+    const row = db
+      .prepare(`SELECT value, name_grounding, name_checked_at FROM profile_facts`)
+      .get() as { value: string; name_grounding: string | null; name_checked_at: number | null };
+    expect(row).toEqual({ value: "Анна", name_grounding: null, name_checked_at: null });
+    db.prepare(
+      `INSERT INTO profile_facts
+         (key, value, pinned, keywords, valid_from, superseded_by, supersedes,
+          created_at, updated_at)
+       VALUES ('timezone', 'UTC', 1, NULL, 2, NULL, NULL, 2, 2)`,
+    ).run();
+    const count = db.prepare(`SELECT COUNT(*) AS c FROM profile_facts`).get() as {
+      c: number;
+    };
+    expect(count.c).toBe(2);
+  });
+
   it("refuses to downgrade from a newer version", () => {
     applyMigrations(db);
     db.prepare(

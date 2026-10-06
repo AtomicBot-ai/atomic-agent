@@ -1025,6 +1025,10 @@ export async function startDaemon(
       ...(process.platform === "win32" ? { windowsHide: true } : {}),
       env: buildDaemonEnv(apiKey),
     });
+    // A spawn that fails (EACCES, ENOENT) still emits `error` on a later tick;
+    // unheard, that is an uncaught exception that takes the agent down instead
+    // of the "spawn failed" below, which the caller reports in words.
+    child.once("error", () => {});
     child.unref();
     if (child.pid == null) {
       throw new Error("spawn failed: no pid");
@@ -1315,6 +1319,10 @@ export async function startEmbeddingDaemon(
       ...(process.platform === "win32" ? { windowsHide: true } : {}),
       env: buildDaemonEnv(apiKey),
     });
+    // A spawn that fails (EACCES, ENOENT) still emits `error` on a later tick;
+    // unheard, that is an uncaught exception that takes the agent down instead
+    // of the "spawn failed" below, which the caller reports in words.
+    child.once("error", () => {});
     child.unref();
     if (child.pid == null) {
       throw new Error("spawn failed: no pid");

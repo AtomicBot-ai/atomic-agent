@@ -5,6 +5,15 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
+import {
+  currentTurnOwnerProbe,
+  databaseIdentity,
+  isTurnOwnerGone,
+  parseTurnOwner,
+  serializeTurnOwner,
+  turnOwnerFor,
+  type TurnOwnerProbe,
+} from "../session/turn-owner.js";
 
 import { applyMigrations } from "./task-schema.js";
 import { parseScheduleRow, serializeScheduleValue } from "./task-schedule.js";
@@ -24,7 +33,24 @@ import {
 
 export interface TaskStoreOptions {
   dbFile: string;
+  /**
+   * The process and host a claim records as the run's owner, and that
+   * `recoverInterrupted` judges an owner against. Defaults to this
+   * process; tests pass their own.
+   */
+  ownerProbe?: TurnOwnerProbe;
 }
+
+/**
+ * What `markInterrupted` writes into `last_error` (category `cancelled`):
+ * the run was stopped before it could end — the agent quitting, or the
+ * turn stopped under it — and the task was put back rather than ended.
+ */
+export const TASK_INTERRUPTED_ERROR =
+  "interrupted: the run was stopped before it ended";
+
+/** `last_error` of a row the boot sweep took back from a process that is gone. */
+export const TASK_OWNER_GONE_ERROR = "interrupted: the agent running it stopped";
 
 export interface TaskCreateInput {
   /**
@@ -95,6 +121,12 @@ interface TaskRow {
   notify: string | null;
 }
 
+interface RunningRow {
+  id: string;
+  started_at: number | null;
+  run_owner: string | null;
+}
+
 const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
   "completed",
   "failed",
@@ -127,15 +159,30 @@ export class TaskStore {
   private readonly markRetryStmt: Database.Statement;
   private readonly markBlockedStmt: Database.Statement;
   private readonly markCancelledStmt: Database.Statement;
-  private readonly recoverStaleStmt: Database.Statement;
+  private readonly listRunningStmt: Database.Statement;
+  private readonly recoverRunningStmt: Database.Statement;
+  private readonly markInterruptedStmt: Database.Statement;
   private readonly requeueRecurringStmt: Database.Statement;
   private readonly assignSessionStmt: Database.Statement;
+  /**
+   * Why this database has no `run_owner` column — the open that should
+   * have added it could not (see `ensureRunOwnerColumn`) — or `null`.
+   * Claims then record no owner, and the boot sweep falls back to age.
+   */
+  readonly runOwnersUnavailable: string | null;
+  private readonly ownerProbe: TurnOwnerProbe;
+  /** The database file's real path, as owners record it. */
+  private readonly dbIdentity: string | undefined;
 
   constructor(options: TaskStoreOptions) {
     mkdirSync(dirname(options.dbFile), { recursive: true });
     this.db = new DatabaseCtor(options.dbFile);
     this.db.pragma("journal_mode = WAL");
     applyMigrations(this.db);
+    this.runOwnersUnavailable = ensureRunOwnerColumn(this.db);
+    const withOwners = this.runOwnersUnavailable === null;
+    this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
+    this.dbIdentity = databaseIdentity(options.dbFile);
 
     this.insertStmt = this.db.prepare(
       `INSERT INTO tasks (
@@ -174,6 +221,12 @@ export class TaskStore {
          ORDER BY scheduled_for ASC, created_at ASC
          LIMIT ?`,
     );
+    const claimOwner = withOwners ? ",\n              run_owner = @owner" : "";
+    // The claim names its owner in the same write, with the claim's own
+    // time as the owner's `at`: a row's owner speaks for the run only
+    // while `at` equals `started_at`. An older binary sharing the file
+    // claims without touching `run_owner`, so an owner left from an
+    // earlier claim never matches that run's `started_at`.
     this.markRunningStmt = this.db.prepare(
       `UPDATE tasks
           SET status = 'running',
@@ -181,7 +234,7 @@ export class TaskStore {
               started_at = @now,
               updated_at = @now,
               last_error = NULL,
-              last_error_cat = NULL
+              last_error_cat = NULL${claimOwner}
         WHERE id = @id AND status = 'pending'`,
     );
     this.markCompletedStmt = this.db.prepare(
@@ -227,14 +280,35 @@ export class TaskStore {
               updated_at = @now
         WHERE id = @id AND status IN ('pending', 'running')`,
     );
-    this.recoverStaleStmt = this.db.prepare(
+    this.listRunningStmt = this.db.prepare(
+      `SELECT id, started_at, ${withOwners ? "run_owner" : "NULL AS run_owner"}
+         FROM tasks WHERE status = 'running'`,
+    );
+    // Keyed on the claim the sweep judged (`started_at`), so a row
+    // claimed again in between is never taken back on the old verdict.
+    this.recoverRunningStmt = this.db.prepare(
       `UPDATE tasks
           SET status = 'pending',
               updated_at = @now,
               started_at = NULL,
-              last_error = COALESCE(last_error, 'recovered from stale running'),
+              last_error = COALESCE(last_error, @last_error),
               last_error_cat = COALESCE(last_error_cat, 'transport')
-        WHERE status = 'running' AND started_at IS NOT NULL AND started_at < @threshold`,
+        WHERE id = @id AND status = 'running' AND started_at IS @started_at`,
+    );
+    this.markInterruptedStmt = this.db.prepare(
+      `UPDATE tasks
+          SET status = 'pending',
+              attempts = CASE WHEN @scheduled_for IS NULL THEN attempts ELSE 0 END,
+              started_at = NULL,
+              scheduled_for = COALESCE(@scheduled_for, scheduled_for),
+              last_scheduled_at = CASE
+                WHEN @scheduled_for IS NULL THEN last_scheduled_at
+                ELSE @now
+              END,
+              updated_at = @now,
+              last_error = @last_error,
+              last_error_cat = 'cancelled'
+        WHERE id = @id AND status = 'running'`,
     );
     this.requeueRecurringStmt = this.db.prepare(
       `UPDATE tasks
@@ -358,7 +432,15 @@ export class TaskStore {
    * race.
    */
   markRunning(id: string, now: number = Date.now()): TaskRecord | null {
-    const result = this.markRunningStmt.run({ id, now }) as { changes: number };
+    const owner =
+      this.runOwnersUnavailable === null
+        ? serializeTurnOwner(
+            turnOwnerFor(this.ownerProbe, now, this.dbIdentity),
+          )
+        : null;
+    const result = this.markRunningStmt.run(
+      owner === null ? { id, now } : { id, now, owner },
+    ) as { changes: number };
     if (result.changes === 0) return null;
     return this.get(id);
   }
@@ -444,19 +526,104 @@ export class TaskStore {
   }
 
   /**
-   * Flip every `running` task whose `started_at` is older than `now -
-   * staleAfterMs` back to `pending`. Called once on bootstrap to handle
-   * the case where the host process crashed between `markRunning` and
-   * the terminal status update — without recovery these rows would sit
-   * in `running` forever. No background sweeper; recovery is a one-shot
-   * pass.
+   * Put a `running` task back to `pending` because its run was stopped
+   * before it could end, rather than ending it: the agent quitting under
+   * a scheduled turn, or that turn stopped from its chat. Nothing went
+   * wrong with the task itself, so it is neither cancelled nor failed.
+   *
+   *  - `nextScheduledFor: null` — a one-shot task, left due as it was, so
+   *    the next drain (the next start, when the agent is quitting) runs
+   *    it. The attempt it was on still counts, as it would have after a
+   *    crash.
+   *  - a time — a recurring task, rearmed for its next firing with the
+   *    per-firing bookkeeping reset, as `requeueRecurring` does after a
+   *    firing that completed. Only that one firing is lost; the schedule
+   *    goes on.
+   *
+   * Returns `null` when the row is no longer `running` — an operator
+   * cancelled it meanwhile, and that stands.
    */
-  recoverStale(staleAfterMs: number, now: number = Date.now()): number {
-    const threshold = now - staleAfterMs;
-    const result = this.recoverStaleStmt.run({ now, threshold }) as {
-      changes: number;
-    };
-    return result.changes;
+  markInterrupted(
+    id: string,
+    options: { nextScheduledFor: number | null },
+    now: number = Date.now(),
+  ): TaskRecord | null {
+    const result = this.markInterruptedStmt.run({
+      id,
+      now,
+      scheduled_for: options.nextScheduledFor,
+      last_error: TASK_INTERRUPTED_ERROR,
+    }) as { changes: number };
+    if (result.changes === 0) return null;
+    return this.get(id);
+  }
+
+  /**
+   * The boot sweep: put back to `pending` every `running` task whose run
+   * will never write its end, so the scheduler runs it again instead of
+   * the row saying "running" for ever (a desktop drew one such task as
+   * running, pulsing, for good).
+   *
+   * Judged by the run's owner, the way session turn marks are
+   * (`isTurnOwnerGone`): a claim records which process made it, and
+   * that process is gone when its pid is dead, belongs to a process that
+   * started at another moment, or the host has rebooted since; an owner
+   * written into another database file (a copy) is gone too, and one
+   * from another pid namespace is never judged. A live owner keeps its
+   * task, however long the run has taken — a second agent on the same
+   * state dir (`serve` beside a TUI) is still running it.
+   *
+   * Age was the only rule before owners existed, and it missed the case
+   * that mattered: an agent restarted seconds after it was stopped found
+   * its own task "fresh" and left it `running` for good. It remains the
+   * rule for a row whose owner says nothing about the run — claimed by a
+   * binary that records no owner, or on a database without the column —
+   * where `started_at` older than `staleAfterMs` is all there is to go on.
+   *
+   * Boot only, before this process has claimed a task: an owner carrying
+   * this process's pid then names an earlier process with that number
+   * (see `isTurnOwnerGone`). `isOwnerGone` is a test seam. One
+   * `BEGIN IMMEDIATE` transaction, since it reads and then writes. Returns
+   * the ids it put back.
+   */
+  recoverInterrupted(options: {
+    staleAfterMs: number;
+    now?: number;
+    isOwnerGone?: (owner: string) => boolean;
+  }): string[] {
+    const now = options.now ?? Date.now();
+    const probe = this.ownerProbe;
+    const db = this.dbIdentity;
+    const isOwnerGone =
+      options.isOwnerGone ??
+      ((owner: string) => isTurnOwnerGone(owner, probe, db));
+    const sweep = this.db.transaction((): string[] => {
+      const rows = this.listRunningStmt.all() as RunningRow[];
+      const recovered: string[] = [];
+      for (const row of rows) {
+        const owner = parseTurnOwner(row.run_owner);
+        const ownsThisRun =
+          owner !== null &&
+          row.started_at !== null &&
+          owner.at === row.started_at;
+        const gone = ownsThisRun
+          ? isOwnerGone(row.run_owner as string)
+          : row.started_at !== null &&
+            row.started_at < now - options.staleAfterMs;
+        if (!gone) continue;
+        const result = this.recoverRunningStmt.run({
+          id: row.id,
+          now,
+          started_at: row.started_at,
+          last_error: ownsThisRun
+            ? TASK_OWNER_GONE_ERROR
+            : "recovered from stale running",
+        }) as { changes: number };
+        if (result.changes > 0) recovered.push(row.id);
+      }
+      return recovered;
+    });
+    return sweep.immediate();
   }
 
   /**
@@ -525,6 +692,34 @@ export class TaskStore {
   private transitionError(id: string, to: TaskStatus): TaskStateError {
     const current = this.get(id);
     return new TaskStateError(current?.status ?? "cancelled", to, id);
+  }
+}
+
+/**
+ * Give `tasks` its `run_owner` column: the process that claimed the row
+ * for the run in progress (a `TurnOwner`, as JSON), which the boot sweep
+ * judges. Outside the numbered migrations on purpose — a binary that
+ * predates the column refuses a newer schema version, while an extra
+ * nullable column it never names leaves it working as before. Two
+ * processes can open the file at once; the one that loses the race to
+ * add it finds it there.
+ *
+ * Adding it takes the write lock, which an open may not get in time, or
+ * may not be allowed (a file this process may only read): the store then
+ * runs without owners and the next open tries again. Returns why the
+ * column is missing, or `null`.
+ */
+function ensureRunOwnerColumn(db: Database.Database): string | null {
+  try {
+    const columns = db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{
+      name: string;
+    }>;
+    if (columns.some((column) => column.name === "run_owner")) return null;
+    db.exec(`ALTER TABLE tasks ADD COLUMN run_owner TEXT`);
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return /duplicate column/i.test(message) ? null : message;
   }
 }
 

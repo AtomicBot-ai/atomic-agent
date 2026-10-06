@@ -236,6 +236,28 @@ export function withoutKeylessLinks(
   return keepLinks(resolved, (id) => !lacksKey(id), onSkip);
 }
 
+/**
+ * Drop fallback links that cannot serve a turn on this machine right now
+ * (`unavailable`) — in practice the auto-appended local link whose
+ * managed model was never downloaded.
+ *
+ * Seen on Windows: the primary (`claude`, not installed) failed, the
+ * chain fell over to `local-llama`, whose daemon cannot start without
+ * weights, and that link's refused connection is what the turn then
+ * waited on for five minutes as "no connection". A link like that is
+ * not a backstop, so it is skipped, the caller says so (`onSkip`), and
+ * it comes back the moment the model is on disk — the check runs on
+ * every resolve. The primary is always kept: its own failure is the
+ * message the user needs.
+ */
+export function withoutUnavailableLinks(
+  resolved: ResolvedFallbackChain,
+  unavailable: (id: string) => boolean,
+  onSkip?: (id: string) => void,
+): ResolvedFallbackChain {
+  return keepLinks(resolved, (id) => !unavailable(id), onSkip);
+}
+
 /** Keep the primary and every later link `keep` accepts. */
 function keepLinks(
   resolved: ResolvedFallbackChain,

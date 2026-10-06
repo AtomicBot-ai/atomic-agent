@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
-import { createInitialTuiState } from "../tui-state.js";
+import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import { handleLlmPanelKey } from "./llm-panel-key-bindings.js";
 import { selectLocalRows } from "./llm-panel-row-builders.js";
@@ -448,6 +448,8 @@ describe("handleLlmPanelKey", () => {
         wizard: {
           mode: "add" as const,
           providerId: null,
+          presetId: null,
+          pricingFilter: "all" as const,
           kind: null,
           phase: "pick_kind" as const,
           cursor: 0,
@@ -639,7 +641,7 @@ describe("handleLlmPanelKey: d removes a cloud provider", () => {
   });
 });
 
-function seededState() {
+function seededState(): TuiState {
   const base = createInitialTuiState(fakeSession());
   return {
     ...base,
@@ -654,6 +656,8 @@ function seededState() {
           isActiveText: false,
           isActiveEmbedding: false,
           hasApiKey: true,
+          baseUrl: null,
+          subscriptionCli: null,
           chatModel: "openai/gpt-4o-mini",
           chatModelOptions: ["openai/gpt-4o-mini"],
           embeddingModel: "openai/text-embedding-3-small",
@@ -664,6 +668,8 @@ function seededState() {
           isActiveText: true,
           isActiveEmbedding: false,
           hasApiKey: false,
+          baseUrl: null,
+          subscriptionCli: null,
           chatModel: "Qwen",
           embeddingModel: null,
         },

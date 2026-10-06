@@ -98,9 +98,11 @@ describe("DiscordApprovalBridge", () => {
   it("resolves as denied when the owner denies", async () => {
     const { bridge, approvals } = makeBridge();
     await bridge.handleInteraction(click("no", OWNER));
-    expect(approvals.resolve).toHaveBeenCalledWith(
-      expect.objectContaining({ approved: false }),
-    );
+    // No reason: the model would read it as the user's own words.
+    expect(approvals.resolve).toHaveBeenCalledWith({
+      approvalId: "ap-1",
+      approved: false,
+    });
   });
 
   it("ignores a click from anyone but the paired owner", async () => {

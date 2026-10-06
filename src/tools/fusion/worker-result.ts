@@ -91,18 +91,41 @@ export const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set([
 /**
  * How the call as a whole went, for `details.outcome` and the tool
  * result's own status: `all_ok` when every task is `ok`, `all_failed`
- * when every task is `failed` or `cancelled` — the one case the result
- * is `status: "error"` — and `partial` for everything in between.
+ * when no task brought anything back (`deliveredNothing`) — the one
+ * case the result is `status: "error"` — and `partial` for everything
+ * in between.
  */
 export type DelegateOutcome = "all_ok" | "partial" | "all_failed";
+
+/**
+ * A row with nothing in it for the orchestrator: failed, cancelled,
+ * never served (`queued`), or out of time before it finished a single
+ * step. A `timeout` that did take steps may have written files and
+ * keeps its place among the partial results.
+ *
+ * `queued` and a zero-step `timeout` used to count as partial, so a
+ * fan-out whose two workers were both cut off before their first token
+ * came back `ok` — the UI drew "Delegated 2 tasks ✓" and the
+ * orchestrator read the status as something to merge (ATO-234).
+ */
+export function deliveredNothing(result: WorkerTaskResult): boolean {
+  switch (result.status) {
+    case "failed":
+    case "cancelled":
+    case "queued":
+      return true;
+    case "timeout":
+      return result.stepCount === 0;
+    default:
+      return false;
+  }
+}
 
 export function delegateOutcome(
   results: readonly WorkerTaskResult[],
 ): DelegateOutcome {
   if (results.every((r) => r.status === "ok")) return "all_ok";
-  if (results.every((r) => r.status === "failed" || r.status === "cancelled")) {
-    return "all_failed";
-  }
+  if (results.every(deliveredNothing)) return "all_failed";
   return "partial";
 }
 
@@ -445,6 +468,97 @@ export const WORKER_HINT_QUEUED =
   "the local server had no free slot: run fewer workers at once, or split the fan-out into smaller waves";
 export const WORKER_HINT_UNSERVED =
   "this worker ran alone and still got no token, so the local server never answered it: check that the daemon is alive and restart it before re-delegating — a narrower fan-out will not help";
+/** `WORKER_HINT_UNSERVED` for a worker that had company: the server's own slot table showed nothing working. */
+export const WORKER_HINT_IDLE_SERVER =
+  "every slot of the local server was idle and this worker still got no token, so the server never answered it: check that the daemon is alive and restart it before re-delegating — a narrower fan-out will not help";
+
+/**
+ * The hint for a silent worker when nothing proves why it was silent.
+ * Says only what is known — the model had not started answering — and
+ * points at the budget first, because the usual cause on a local leg is
+ * a prompt still being read: a 4B model on a laptop can take tens of
+ * seconds over a long brief before its first token (ATO-234).
+ */
+export function workerHintNoFirstToken(waitMs: number): string {
+  return `the local model did not start answering within ${formatWaitMs(waitMs)}: it may still have been reading the brief, so give the task a longer timeoutMs (or a shorter brief) before narrowing the fan-out`;
+}
+
+/**
+ * A wait as a person reads it: seconds under a minute, whole minutes
+ * from there. Rounding everything to minutes reported a 20-second wait
+ * as "within 0 min".
+ */
+export function formatWaitMs(ms: number): string {
+  if (ms < 60_000) return `${Math.max(0, Math.round(ms / 1000))} s`;
+  return `${Math.round(ms / 60_000)} min`;
+}
+
+/** What llama-server's `GET /slots` said about its load at one moment. */
+export interface SlotOccupancy {
+  /** Slots in the table. */
+  total: number;
+  /** Slots marked `is_processing` — prompt evaluation included. */
+  busy: number;
+}
+
+/**
+ * Read a `/slots` body into a count, or `null` when it is not a slot
+ * table. Pure; the fetch is the caller's (`probeSlotOccupancy`).
+ */
+export function readSlotOccupancy(body: unknown): SlotOccupancy | null {
+  if (!Array.isArray(body)) return null;
+  let total = 0;
+  let busy = 0;
+  for (const raw of body) {
+    if (!raw || typeof raw !== "object") continue;
+    total += 1;
+    if ((raw as Record<string, unknown>).is_processing === true) busy += 1;
+  }
+  return total === 0 ? null : { total, busy };
+}
+
+/**
+ * The hint for a worker the queue watchdog ended, from what the server
+ * itself reported at that moment rather than from how many workers were
+ * running.
+ *
+ * Choosing by worker count told the planner "the local server had no
+ * free slot" for two workers on a two-slot server: nothing was queued,
+ * both were still reading their briefs when a 20-second first-token
+ * wait ran out, and the planner narrowed a fan-out that had never been
+ * too wide (ATO-234). So "no free slot" now needs the slot table to say
+ * every slot was working AND the fan-out to be wider than the table.
+ *
+ * `occupancy`: `undefined` when nothing probed the server (a cloud leg,
+ * an embedder without the probe), `null` when the probe got no readable
+ * answer — `/slots` is known to hang while a slot reads a large prompt,
+ * so that is no evidence of a dead server either.
+ */
+export function queuedWorkerHint(input: {
+  ranAlone: boolean;
+  /** How many workers this fan-out ran at once. */
+  width: number;
+  occupancy: SlotOccupancy | null | undefined;
+  /** The first-token wait that ran out. */
+  waitMs: number;
+}): string {
+  const { occupancy } = input;
+  if (occupancy === undefined) {
+    // No evidence either way. Alone, the field's answer stands: four
+    // solo workers once died this way on a daemon that logged nothing.
+    return input.ranAlone
+      ? WORKER_HINT_UNSERVED
+      : workerHintNoFirstToken(input.waitMs);
+  }
+  if (occupancy === null) return workerHintNoFirstToken(input.waitMs);
+  if (occupancy.busy === 0) {
+    return input.ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_IDLE_SERVER;
+  }
+  if (occupancy.busy >= occupancy.total && input.width > occupancy.total) {
+    return WORKER_HINT_QUEUED;
+  }
+  return workerHintNoFirstToken(input.waitMs);
+}
 
 export const WORKER_HINT_CONTEXT =
   "the local server ran out of context: use fewer workers at once or shorter briefs";

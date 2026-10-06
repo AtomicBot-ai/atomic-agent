@@ -184,6 +184,12 @@ describe("buildPrompt", () => {
     expect(windows.stablePrefix).toContain("Windows environment:");
     expect(windows.stablePrefix).toContain("findstr");
     expect(windows.stablePrefix).toContain("%VAR%");
+    // #602: models emit PowerShell cmdlets that cmd.exe cannot run, and
+    // fake folders with empty os.fs.write calls. Steer both explicitly.
+    expect(windows.stablePrefix).toContain("`New-Item`");
+    expect(windows.stablePrefix).toContain("`Move-Item`");
+    expect(windows.stablePrefix).toContain('mkdir "C:\\path\\Folder"');
+    expect(darwin.stablePrefix).not.toContain("New-Item");
     // The Windows hint changes the stable prefix deterministically by
     // platform — the two hashes differ but each is stable per platform.
     expect(windows.stablePrefix).not.toBe(darwin.stablePrefix);
@@ -2411,5 +2417,13 @@ describe("buildPrompt profile vote filter", () => {
   it("an explicit threshold of 0 disables the filter", () => {
     useConfig(3);
     expect(build(0).tail).toContain("- stale_rule: always answer in French");
+  });
+});
+
+describe("os.fs.write descriptor (#602)", () => {
+  it("tells the model the tool makes files, not folders", () => {
+    const write = DEFAULT_TOOL_DESCRIPTORS.find((d) => d.name === "os.fs.write");
+    expect(write?.summary).toContain("never a folder");
+    expect(write?.summary).toContain("`mkdir`");
   });
 });

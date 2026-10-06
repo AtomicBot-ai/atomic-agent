@@ -131,7 +131,11 @@ export function createRuntimeTraces(
    */
   const lastTurnContextUsage = new Map<string, ContextUsageState>();
 
-  const ensureRecorder = (session: SessionState): TraceRecorder | null => {
+  const ensureRecorder = (
+    session: SessionState,
+    /** Current turn stamps for a newly opened trace header. */
+    headerMetadata?: Record<string, unknown>,
+  ): TraceRecorder | null => {
     if (!traceBus) return null;
     const existing = touchRecorder(session.id);
     if (existing) return existing;
@@ -139,9 +143,10 @@ export function createRuntimeTraces(
       sessionId: session.id,
       emit: (event) => traceBus.emit(event),
     });
+    const metadata = headerMetadata ?? session.metadata;
     recorder.beginSession({
       workingDir: session.workingDir,
-      ...(session.metadata ? { metadata: session.metadata } : {}),
+      ...(metadata ? { metadata } : {}),
     });
     recorders.set(session.id, recorder);
     // Exempt the entry just created: the caller pins it only after this

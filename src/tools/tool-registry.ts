@@ -24,6 +24,15 @@ export interface ToolContext {
    */
   readRoots?: readonly string[];
   /**
+   * This session's texts that may vouch for a name the user gave —
+   * their own messages (`groundingTextsOf`, `src/memory/name-grounding.ts`),
+   * recomputed by the step from the transcript. `memory.profile.set`
+   * checks a name against them before writing one (ATO-200). Absent ⇒
+   * the step did not compute them; the tool then relies on the stored
+   * sessions alone.
+   */
+  userGroundingTexts?: readonly string[];
+  /**
    * The provider id this step's completions are pinned to
    * (`StepDependencies.providerId` — a fusion worker runs on the local
    * leg). Absent ⇒ the step runs on the active text provider. Read by

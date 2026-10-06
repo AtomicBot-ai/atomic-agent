@@ -1,4 +1,5 @@
 import type { HealthResult } from "./llama-server-health.js";
+import { discardResponseBody } from "./discard-response-body.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 
 /**
@@ -25,6 +26,9 @@ export async function verifyGuardedEndpoint(
       },
       signal: controller.signal,
     });
+    // The status is the whole answer; `/props` can carry a chat template
+    // of many kilobytes that would otherwise pin the connection.
+    discardResponseBody(response);
     if (response.status === 401 || response.status === 403) {
       return {
         ...passed,

@@ -32,6 +32,7 @@ describe("shouldFallBackToCpuBackend", () => {
     configuredVariant: "auto" as const,
     error: healthError,
     platform: "win32" as const,
+    arch: "x64",
   };
 
   it("falls back for a Vulkan install that never became healthy", () => {
@@ -66,6 +67,19 @@ describe("shouldFallBackToCpuBackend", () => {
     expect(shouldFallBackToCpuBackend({ ...eligible, platform: "linux" })).toBe(
       false,
     );
+  });
+
+  it("never falls back on Windows arm64: its one build is the CPU one (ATO-252)", () => {
+    expect(shouldFallBackToCpuBackend({ ...eligible, arch: "arm64" })).toBe(
+      false,
+    );
+    expect(
+      shouldFallBackToCpuBackend({
+        ...eligible,
+        arch: "arm64",
+        installedAsset: undefined,
+      }),
+    ).toBe(false);
   });
 
   it("honours an operator-pinned variant, including 'cpu' itself", () => {

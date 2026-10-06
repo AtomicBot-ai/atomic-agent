@@ -43,6 +43,9 @@ import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
+import { isLocalLinkWithoutModel } from "./local-link-availability.js";
+import { createRuntimePromptPreview } from "./composition/runtime-prompt-preview.js";
+export { SessionNotFoundError } from "./session-not-found-error.js";
 
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 
@@ -132,6 +135,7 @@ export async function createAgentRuntime(
     resolve: createFallbackChainResolver({
       readLlmConfig: () => resolveLlmConfig(getConfig()),
       builtProviderIds: () => builtProviderIds?.() ?? null,
+      linkUnavailable: (llm, id) => isLocalLinkWithoutModel(llm, id, getConfig()),
       logger,
     }),
     noticeSink: (notice) =>
@@ -271,7 +275,7 @@ export async function createAgentRuntime(
   // replace them (`fs-declared-inputs.ts`).
   const declaredInputs = new DeclaredInputsRegistry();
   registerRuntimeCoreTools({
-    config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest: (id) => turnRequests.get(id),
+    config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
   });
 
@@ -360,6 +364,7 @@ export async function createAgentRuntime(
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
     clearFanoutTurnGrant: (sessionId: string) =>
       approvals.fanoutScopes.clearTurnGrant(sessionId),
+    forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
     grammar: getGrammar(),
     llmComplete,
@@ -394,7 +399,7 @@ export async function createAgentRuntime(
     // lazy restore for a switch back to a local provider (issue #112).
     localBackend,
     ...(config.memory.profile.enabled
-      ? { profileFactsProvider: () => profileStore.list() }
+      ? { profileFactsProvider: () => profileStore.listForPrompt() }
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
     // v2.5 (Phase B). Sliding-window reflection
@@ -504,6 +509,7 @@ export async function createAgentRuntime(
     sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
     get scheduler() { return scheduler; },
+    get taskRunner() { return taskRunner; },
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },
     get discordChannelForShutdown() { return discordChannelForShutdown; },
     get swarmForShutdown() { return swarmForShutdown; },
@@ -522,6 +528,13 @@ export async function createAgentRuntime(
   );
 
   const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  const previewPrompt = createRuntimePromptPreview(config, {
+    workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
+    getSkillCatalog: skillCatalogState.getSkillCatalog,
+    getLiveProfile: connectedLocal.getLiveProfile,
+    resolveToolTransport: () => resolveActiveLlmSlice().transport,
+    resolveCatalogContextWindow,
+  });
 
   const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests },
@@ -584,6 +597,7 @@ export async function createAgentRuntime(
     createEphemeralSession,
     runTurn,
     executeTurn,
+    previewPrompt,
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,

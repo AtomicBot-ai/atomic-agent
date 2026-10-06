@@ -1,3 +1,4 @@
+import type { ReadTurnIdentity } from "../../session/conversation-turn.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import { parseReadCoverage } from "../../tools/os/fs/fs-read-coverage.js";
 
@@ -84,6 +85,31 @@ export function classifyReadResult(
     totalLines: detail.totalLines,
     numbered: detail.numbered,
     truncated: detail.truncated,
+  };
+}
+
+/**
+ * The identity a transcript row keeps for a successful `os.fs.read`
+ * (`ReadTurnIdentity`), or `null` for anything else.
+ *
+ * Built from the same observation the detector above consumes, so "the
+ * same read" means one thing on both sides: same canonical file, same
+ * content digest, same returned range, same rendering. A read that
+ * returned no lines gets no identity — there is nothing to point at, and
+ * its text is shorter than any pointer.
+ */
+export function readTurnIdentity(
+  tool: string,
+  result: CompressedToolResult,
+): ReadTurnIdentity | null {
+  const observation = classifyReadResult(tool, result);
+  if (observation === null || observation.span === null) return null;
+  return {
+    path: observation.path,
+    contentHash: observation.contentHash,
+    startLine: observation.span.start,
+    endLine: observation.span.end,
+    numbered: observation.numbered,
   };
 }
 

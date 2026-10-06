@@ -77,6 +77,7 @@ describe("download-file", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     globalThis.fetch = prevFetch;
     rmSync(dir, { recursive: true, force: true });
   });
@@ -815,6 +816,11 @@ describe("download-file", () => {
   });
 
   it("keeps the byte counter moving when chunks are smaller than one percent", async () => {
+    // Model elapsed time at the progress sampling seam. Stream pulls can
+    // prefetch while file writes lag under suite load, so wall-clock delays
+    // between pulls do not guarantee elapsed time between sampled chunks.
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 250));
     // A real GGUF pull: one percent of the declared total is far larger than
     // a single chunk, so tying updates to whole-percent changes leaves the
     // counter frozen for seconds. Here the transfer never even reaches 1%.
@@ -829,7 +835,6 @@ describe("download-file", () => {
           return;
         }
         emitted += 1;
-        await new Promise((resolve) => setTimeout(resolve, 250));
         controller.enqueue(Buffer.alloc(chunkSize));
       },
     });
@@ -868,6 +873,11 @@ describe("download-file", () => {
   });
 
   it("still reports progress when the server sends no content-length", async () => {
+    // Model elapsed time at the progress sampling seam. Stream pulls can
+    // prefetch while file writes lag under suite load, so wall-clock delays
+    // between pulls do not guarantee elapsed time between sampled chunks.
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 250));
     // total === 0 pins percent at 0 forever, which used to wedge the old
     // guard shut after the very first chunk.
     let emitted = 0;
@@ -878,7 +888,6 @@ describe("download-file", () => {
           return;
         }
         emitted += 1;
-        await new Promise((resolve) => setTimeout(resolve, 250));
         controller.enqueue(Buffer.alloc(1_000));
       },
     });

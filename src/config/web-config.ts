@@ -55,6 +55,12 @@ export interface WebFetchConfig {
 
 export interface WebSearchConfig {
   enabled: boolean;
+  /**
+   * Primary provider. The default `exa` is used only when its `apiKeyEnv`
+   * resolves to a key; without one it is skipped and the fallback chain
+   * serves every search, with `duckduckgo` appended when the chain lacks
+   * it. Existing configs need no rewrite for that (ATO-120).
+   */
   provider: WebSearchProviderName;
   maxResults: number;
   timeoutMs: number;
@@ -81,11 +87,13 @@ export interface WebSearchConfig {
   persistCache: boolean;
   /**
    * Ordered fallback providers tried (after the primary) when a search is
-   * blocked / empty / throws. Default `["duckduckgo"]` — the keyless Exa
-   * primary degrades to DuckDuckGo's keyless HTML endpoint. Both are
-   * config-free; `searxng` (needs `instanceUrl`) and `brave` (needs an API
-   * key) are skipped by the orchestrator until configured. Set to `[]` to
-   * disable fallback entirely. The primary is always deduped out of this list.
+   * blocked / empty / throws. Default `["duckduckgo"]` — DuckDuckGo's
+   * keyless HTML endpoint, which also takes over from an Exa primary that
+   * has no key. `searxng` (needs `instanceUrl`), `brave` and `exa` (need
+   * an API key) are skipped by the orchestrator until configured. Set to
+   * `[]` to disable fallback entirely (a keyless Exa primary still gets
+   * DuckDuckGo, see `provider`). The primary is always deduped out of
+   * this list.
    */
   fallback: WebSearchProviderName[];
   searxng: {
@@ -101,6 +109,26 @@ export interface WebSearchConfig {
   };
 }
 
+/**
+ * Declarative binding between an inbound webhook URL path and the task
+ * it materialises. Per-webhook config lets operators point external
+ * systems (e.g. a GitHub hook, a cron-like SaaS) at atomic-agent
+ * without writing code — the HTTP layer turns each hit into a task.
+ *
+ * `sessionMode` drives session continuity across repeated hits:
+ *  - `ephemeral`   — fresh ephemeral session per hit (default when no
+ *    schedule is set; matches CLI one-shot behaviour)
+ *  - `persistent`  — a single session created on the first hit and
+ *    reused forever; sessionId persisted in
+ *    `<stateDir>/webhook-sessions.json` keyed by webhook name
+ *  - `named`       — explicit `sessionId` supplied by the operator; no
+ *    persistence file, no auto-creation
+ *
+ * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
+ * against the parsed JSON request body. `secret`, when set, is
+ * matched against the `x-webhook-secret` request header in addition
+ * to the global API-key check.
+ */
 export function createWebSearchDefaults(): WebSearchConfig {
   return {
     enabled: true,

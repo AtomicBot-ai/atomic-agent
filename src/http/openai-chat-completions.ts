@@ -2,7 +2,16 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-contract.js";
+import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
+import {
+  classifyProviderWaitCause,
+  type ProviderWaitCause,
+  type ProviderWaitFailure,
+} from "../llm/reliability/provider-wait-cause.js";
+import { classifyFailure } from "../llm/reliability/index.js";
+import { readFailedAttempts } from "../llm/fallback/index.js";
+import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
   createEmptySessionState,
   type SessionState,
@@ -16,6 +25,7 @@ import {
   sendError,
   sendJson,
   getHeader,
+  SSE_HEARTBEAT_MS,
   type HandlerContext,
   type HttpHandler,
   type SseWriter,
@@ -194,10 +204,16 @@ async function handleStream(
   ctx: HandlerContext,
   env: TurnEnv,
 ): Promise<void> {
-  const sse = beginSse(res, {
-    [SESSION_ID_HEADER]: env.session.id,
-    [COMPLETION_ID_HEADER]: env.completionId,
-  });
+  // A turn can be silent for minutes (parked on an approval): the
+  // heartbeat keeps the client from dropping it (SSE_HEARTBEAT_MS).
+  const sse = beginSse(
+    res,
+    {
+      [SESSION_ID_HEADER]: env.session.id,
+      [COMPLETION_ID_HEADER]: env.completionId,
+    },
+    { heartbeatMs: SSE_HEARTBEAT_MS },
+  );
   const controller = new AbortController();
   ctx.completionRegistry.register({
     completionId: env.completionId,
@@ -314,10 +330,13 @@ async function handleStream(
  * Translate `AgentLoopEvent`s into SSE frames. Only the events that a
  * chat client can reasonably render are forwarded:
  *  - `tool_call_parsed` → `event: tool_progress` (extensions opt-in only)
+ *  - `tool_call_executed` → `event: tool_result` (extensions opt-in only),
+ *    the call's outcome the moment it lands, matched to its
+ *    `tool_progress` by `call_id`
  *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
- *    When the stream parser already emitted incremental deltas for the
- *    step we skip its `assistant_reply` to avoid duplicating the body in
- *    the client transcript.
+ *    A terminal `assistant_reply` whose text the same step already streamed
+ *    as deltas is skipped (no duplicate body); one that was never streamed
+ *    — a stop message, a non-streamed retry — is sent.
  *  - an `assistant_reply` flagged `progressNote` — a reply the model
  *    batched with work, kept while the turn went on — is never content:
  *    it goes out as `event: progress_note` (extensions opt-in only), so
@@ -331,20 +350,40 @@ async function handleStream(
  * Internal step/turn lifecycle events are intentionally suppressed to
  * keep the public stream OpenAI-clean.
  */
-function buildStreamEventHook(
+/* Exported for the test: a provider outage is otherwise only reachable by
+   making a real provider fail and then recover, which is minutes of backoff
+   to exercise twenty lines of mapping. */
+export function buildStreamEventHook(
   sse: SseWriter,
   env: TurnEnv,
 ): (event: AgentLoopEvent) => void {
-  let streamedAssistantDelta = false;
+  /* Reply text already streamed as deltas: `turnStreamed` for the whole
+     turn, `stepStreamed` since the current step began. A terminal
+     `assistant_reply` is skipped only when THIS step already streamed it.
+     A turn-wide flag used to skip every later reply once anything had
+     streamed, which dropped, live, every reply that never streams — the
+     max-steps stop message, the loop breaker's answer, a reply from a
+     non-streamed retry — and left the turn looking cut off at whatever
+     preamble had streamed last. */
+  let turnStreamed = false;
   let stepIndex = -1;
+  let stepStreamed = "";
+  const writeContent = (content: string): void => {
+    sse.writeEvent(
+      null,
+      buildStreamChunk({
+        completionId: env.completionId,
+        created: env.created,
+        model: env.request.model,
+        delta: { content },
+      }),
+    );
+  };
   return (event) => {
     if (sse.closed) return;
     if (event.type === "step_started") {
-      // Per step, not per turn: a turn can now carry more than one reply
-      // (a progress note, then the one that ends it), and deltas streamed
-      // for the note must not silence the final reply's chunk.
       stepIndex = event.stepIndex;
-      streamedAssistantDelta = false;
+      stepStreamed = "";
       return;
     }
     if (event.type === "llm_event") {
@@ -361,19 +400,38 @@ function buildStreamEventHook(
           session_id: env.session.id,
           tool: inner.call.tool,
           label,
+          // The key its `tool_result` comes back under (ATO-197).
+          call_id: toolCallId(stepIndex, inner.batchIndex),
+        });
+      } else if (inner.type === "tool_call_executed") {
+        /* ATO-197: one call ended. A host drew the call from its
+           `tool_progress` and had no word on it until the turn was over
+           and the session store described it, so a call that finished,
+           failed or was denied in a second spun for as long as the turn
+           ran — and after a Stop, for good. Extensions-only, like its
+           `tool_progress`. Tools do not carry call ids, so the id is this
+           completion's own: the step and the call's place in its batch,
+           the same pair the `tool_progress` it answers carries. */
+        if (!env.request.extensionsEnabled) return;
+        sse.writeEvent("tool_result", {
+          id: env.completionId,
+          object: "chat.completion.tool_result",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          call_id: toolCallId(stepIndex, inner.batchIndex),
+          tool: inner.result.tool,
+          status: toolResultStatus(inner.result),
+          ...(typeof inner.durationMs === "number" && Number.isFinite(inner.durationMs)
+            ? { duration_ms: Math.max(0, Math.round(inner.durationMs)) }
+            : {}),
+          summary: clipToolSummary(inner.result.summary),
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
-        streamedAssistantDelta = true;
-        sse.writeEvent(
-          null,
-          buildStreamChunk({
-            completionId: env.completionId,
-            created: env.created,
-            model: env.request.model,
-            delta: { content: inner.text },
-          }),
-        );
+        turnStreamed = true;
+        stepStreamed += inner.text;
+        writeContent(inner.text);
       } else if (inner.type === "reasoning_delta") {
         if (!env.request.extensionsEnabled) return;
         if (inner.text.length === 0) return;
@@ -398,20 +456,38 @@ function buildStreamEventHook(
             step_index: stepIndex,
             text: inner.text,
           });
+          // Deltas the note streamed must not be read as the start of
+          // the reply that ends the turn.
+          stepStreamed = "";
           return;
         }
-        if (streamedAssistantDelta) return;
-        sse.writeEvent(
-          null,
-          buildStreamChunk({
-            completionId: env.completionId,
-            created: env.created,
-            model: env.request.model,
-            delta: { content: inner.text },
-          }),
-        );
+        const streamed = stepStreamed;
+        stepStreamed = "";
+        const text = inner.text;
+        if (text.length === 0) return;
+        // Already on the wire in this step, whole: nothing to add.
+        if (streamed.length > 0 && (streamed.endsWith(text) || streamed.trimEnd() === text.trimEnd())) return;
+        // The step streamed the start of it (a retry finished what the
+        // stream began): send the rest, joined without a break.
+        if (streamed.length > 0 && text.startsWith(streamed)) {
+          writeContent(text.slice(streamed.length));
+          return;
+        }
+        // Never streamed: send it whole, set apart from any text this turn
+        // already showed so it does not run on from a preamble.
+        writeContent((turnStreamed ? "\n\n" : "") + text);
+        turnStreamed = true;
       } else if (inner.type === "step_error") {
-        emitStreamError(sse, env, inner.error.message, inner.category);
+        /* A host that holds the first error frame of a turn (the desktop)
+           has only this one: so it says a billing refusal (item 40) and
+           the links that failed before this one, as loop_failed does. */
+        const failedBefore = describeFailedLinks(inner.error);
+        emitStreamError(sse, env, inner.error.message, inner.category, {
+          ...billingCauseFrame(inner.error),
+          ...(failedBefore.length > 0
+            ? { fallback_failures: failedLinksFrame(failedBefore) }
+            : {}),
+        });
       }
       return;
     }
@@ -427,10 +503,221 @@ function buildStreamEventHook(
       }
       return;
     }
+    /* A parked turn, told to the host rather than kept inside the loop.
+       The TUI has shown a ticking outage readout since the outage work
+       landed; every other host saw nothing at all — no frames between the
+       last token and either a recovery or a failure minutes later, which
+       reads as a dead app and was reported as one. Extensions-only: an
+       OpenAI-compatible client has no idea what to do with it. */
+    if (event.type === "provider_waiting") {
+      if (env.request.extensionsEnabled) {
+        /* `reason` is the raw failure line and stays what older hosts
+           read. `cause` is the same failure as data, always
+           `{kind, status?}` (`waitCauseFrame`), and `provider_id` the link
+           the turn is waiting on: with a fallback chain often not the
+           provider the operator picked. Both optional, both absent when
+           the loop does not know. */
+        sse.writeEvent("provider_waiting", {
+          object: "atomic.provider_waiting",
+          session_id: env.session.id,
+          attempt: event.attempt,
+          waited_ms: event.waitedMs,
+          max_wait_ms: event.maxWaitMs,
+          next_retry_ms: event.nextRetryMs,
+          reason: event.reason,
+          ...(event.cause !== undefined
+            ? { cause: waitCauseFrame(event.cause) }
+            : {}),
+          ...(event.providerId !== undefined
+            ? { provider_id: event.providerId }
+            : {}),
+          /* Item 40: the links that failed before the one waited on, the
+             picked provider usually first, each with its cause. */
+          ...(event.fallbackFailures !== undefined &&
+          event.fallbackFailures.length > 0
+            ? { fallback_failures: failedLinksFrame(event.fallbackFailures) }
+            : {}),
+        });
+      }
+      return;
+    }
+    if (event.type === "provider_recovered") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("provider_recovered", {
+          object: "atomic.provider_recovered",
+          session_id: env.session.id,
+          waited_ms: event.waitedMs,
+        });
+      }
+      return;
+    }
+    /* One leg of a fusion fan-out. `fusion.delegate` emits these in the
+       PARENT session's frame (emitAgentLoopEventFor → TurnController.emit),
+       so they reach this hook for the whole minutes a fan-out holds the
+       turn — the TUI draws a live worker list and feed lines from them, and
+       an HTTP host had nothing at all: no frames between the delegate call
+       and the orchestrator's reply. Extensions-only, like every other
+       atomic frame. Absent fields stay absent: a model the runtime does not
+       know is not named here, for the reason the TUI line omits it. */
+    if (event.type === "fusion_worker") {
+      if (env.request.extensionsEnabled) {
+        // `phase: "usage"` carries how full the worker's context is, for
+        // the live row only (no feed line). Read through a cast so this
+        // compiles before and after the field joins the event type.
+        const contextTokens = (event as { contextTokens?: unknown }).contextTokens;
+        sse.writeEvent("fusion_worker", {
+          object: "atomic.fusion_worker",
+          session_id: env.session.id,
+          task_id: event.taskId,
+          title: event.title,
+          phase: event.phase,
+          role: event.role ?? "worker",
+          ...(event.model === undefined ? {} : { model: event.model }),
+          ...(event.tool === undefined ? {} : { tool: event.tool }),
+          // The orchestrator's own estimate, so a host can print elapsed
+          // beside it the way the TUI's live readout does. Advisory only.
+          ...(event.etaSeconds === undefined ? {} : { eta_seconds: event.etaSeconds }),
+          ...(event.stepCount === undefined ? {} : { step_count: event.stepCount }),
+          ...(event.durationMs === undefined ? {} : { duration_ms: event.durationMs }),
+          ...(event.summary === undefined ? {} : { summary: event.summary }),
+          ...(typeof contextTokens === "number" && Number.isFinite(contextTokens) && contextTokens > 0
+            ? { context_tokens: contextTokens }
+            : {}),
+        });
+      }
+      return;
+    }
     if (event.type === "loop_failed") {
-      emitStreamError(sse, env, event.error.message, event.category);
+      /* The thrown error is the chain's LAST link, kept untouched for
+         classification and the outage wait (runWithFallback). A host that
+         shows one sentence per failed turn is told about the FIRST recorded
+         link instead — the provider the operator picked, its refusal in its
+         own words and its own category — with every earlier link listed
+         beside it. A single-link failure is reported exactly as before.
+
+         Except a refusal for money (item 40): when that is the error that
+         ended the turn (the fallback the turn was running on said the
+         account is empty, runWithFallback's route refusal), it is the
+         story, told as the failed step's frame tells it, with the links
+         before it listed beside it. And a cancelled turn is reported as
+         cancelled: whatever the chain went through before the stop is not
+         why the turn ended (ATO-137). */
+      const ended = billingCauseFrame(event.error);
+      const first =
+        event.category === "cancelled" || ended.cause !== undefined
+          ? undefined
+          : readFailedAttempts(event.error)[0];
+      if (first) {
+        const primary = first.error;
+        const message = primary instanceof Error && primary.message.trim()
+          ? primary.message
+          : event.error.message;
+        emitStreamError(sse, env, message, classifyFailure(primary), {
+          ...billingCauseFrame(primary),
+          fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
+        });
+        return;
+      }
+      const failedBefore = event.category === "cancelled" ? [] : describeFailedLinks(event.error);
+      emitStreamError(sse, env, event.error.message, event.category, {
+        ...ended,
+        ...(failedBefore.length > 0
+          ? { fallback_failures: failedLinksFrame(failedBefore) }
+          : {}),
+      });
     }
   };
+}
+
+/**
+ * A tool call's id on the stream: the step and the call's place in its
+ * batch (`"3:0"`). Unique within one completion, which is all a host
+ * matching a `tool_result` to its `tool_progress` needs.
+ */
+function toolCallId(stepIndex: number, batchIndex: number): string {
+  return `${stepIndex}:${batchIndex}`;
+}
+
+/**
+ * How a call ended, as `tool_result` says it. `denied`: the operator (or
+ * the approval policy) refused it — an `ApprovalDeniedError` out of the
+ * tool, an MCP call stamped `approvalDenied`, or a prompted approval
+ * answered no. `cancelled`: it never ran because the turn was stopped.
+ * Anything else that is not `ok` is `error`, the loop guard's refusal
+ * included: that is the agent's own verdict, not the operator's.
+ */
+function toolResultStatus(
+  result: CompressedToolResult,
+): "ok" | "error" | "denied" | "cancelled" {
+  const details = result.details ?? {};
+  if (details.cancelled === true) return "cancelled";
+  if (result.status === "ok") return "ok";
+  if (
+    details.approvalDenied === true ||
+    details.errorName === "ApprovalDeniedError" ||
+    (result.approvals ?? []).some((a) => a.verdict === "denied")
+  ) {
+    return "denied";
+  }
+  return "error";
+}
+
+/** Longest `summary` a `tool_result` carries; the store keeps the whole one. */
+const TOOL_SUMMARY_MAX = 400;
+
+function clipToolSummary(summary: string): string {
+  const text = typeof summary === "string" ? summary : "";
+  return text.length > TOOL_SUMMARY_MAX ? `${text.slice(0, TOOL_SUMMARY_MAX - 1)}…` : text;
+}
+
+/**
+ * `cause` on an error frame, for a refusal because the account cannot
+ * pay only: `{kind: "billing", status}` (item 40). A host shows the
+ * agent's sentence as the failure ("… refused the request: you've run
+ * out of funds. Top up …") instead of "not answering". Every other
+ * failure's frame stays exactly what it was.
+ */
+function billingCauseFrame(
+  err: unknown,
+): { cause?: { kind: "billing"; status: number } } {
+  const cause = classifyProviderWaitCause(err);
+  return cause.kind === "billing"
+    ? { cause: { kind: "billing", status: cause.status } }
+    : {};
+}
+
+/**
+ * The failed links as frames carry them: `{providerId, reason}`, as
+ * before, plus the link's own `cause` (`{kind, status?}`) when it has a
+ * kind to say.
+ */
+function failedLinksFrame(
+  failures: readonly ProviderWaitFailure[],
+): Array<{
+  providerId: string;
+  reason: string;
+  cause?: ReturnType<typeof waitCauseFrame>;
+}> {
+  return failures.map((f) => ({
+    providerId: f.providerId,
+    reason: f.reason,
+    ...(f.cause.kind !== "unknown" ? { cause: waitCauseFrame(f.cause) } : {}),
+  }));
+}
+
+/**
+ * A wait cause as the `provider_waiting` frame carries it: `{kind}`, plus
+ * `status` only when it is a number. The event's `stream_error` may hold
+ * `status: null` (the provider reported no status); the frame leaves it
+ * out, so a host reads exactly one shape.
+ */
+function waitCauseFrame(cause: ProviderWaitCause): {
+  kind: ProviderWaitCause["kind"];
+  status?: number;
+} {
+  return "status" in cause && typeof cause.status === "number"
+    ? { kind: cause.kind, status: cause.status }
+    : { kind: cause.kind };
 }
 
 /**
@@ -446,11 +733,13 @@ function emitStreamError(
   env: TurnEnv,
   message: string,
   category?: LlmFailureCategory,
+  extra?: Record<string, unknown>,
 ): void {
   if (env.request.extensionsEnabled) {
     sse.writeEvent("error", {
       error: message,
       ...(category ? { category } : {}),
+      ...(extra ?? {}),
     });
     return;
   }

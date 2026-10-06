@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,9 @@ vi.mock("../local-llm/index.js", async () => {
     resolveManagedDevice: vi.fn(),
     startChatAndEmbeddingDaemons: vi.fn(),
     fallBackToCpuBackend: vi.fn(),
+    startEmbeddingDaemon: vi.fn(),
+    getEmbeddingDaemonStatus: vi.fn(),
+    isEmbeddingModelDownloaded: vi.fn(),
   };
 });
 
@@ -24,14 +27,24 @@ import {
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import * as localLlm from "../local-llm/index.js";
-import { resolveBackendDir } from "../local-llm/index.js";
+import {
+  resetLatestReleaseCache,
+  resolveBackendDir,
+  resolveServerBinPath,
+  WINDOWS_ARM64_NO_BACKEND_MESSAGE,
+} from "../local-llm/index.js";
 import { writeBackendVersion } from "../local-llm/backend/backend-version.js";
 import { DaemonHealthError } from "../local-llm/server/daemon-lifecycle.js";
 import {
   WINDOWS_BACKEND_ASSETS,
   setConfiguredBackendVariant,
 } from "../local-llm/backend/windows-backend-variant.js";
-import { runLocalModelsPull, runLocalModelsStart } from "./models-handlers.js";
+import {
+  runLocalModelsPull,
+  runLocalModelsStart,
+  runLocalModelsStartEmbedding,
+  runLocalModelsUpdate,
+} from "./models-handlers.js";
 
 const healthError = () =>
   new DaemonHealthError(
@@ -246,5 +259,167 @@ describe("runLocalModelsPull — projector failure after the weights", () => {
     expect(stderrChunks.join("")).toMatch(
       /note: projector download failed \(Download failed: HTTP 404 Not Found\) — qwen-3.5-4b is usable text-only; 'models pull --mmproj qwen-3.5-4b'/,
     );
+  });
+});
+
+/**
+ * `models start-embedding`: the embedding daemon alone, beside a chat
+ * daemon `start` would refuse to touch (the desktop's ATO-126).
+ */
+describe("runLocalModelsStartEmbedding", () => {
+  let stateDir: string;
+  let stdoutChunks: string[];
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-models-emb-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+    stdoutChunks = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    vi.mocked(localLlm.resolveManagedDevice).mockReset().mockResolvedValue(undefined);
+    vi.mocked(localLlm.startEmbeddingDaemon).mockReset().mockResolvedValue({ pid: 4243 });
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset().mockResolvedValue({
+      running: false, pid: null, port: 19092, healthy: false, loading: false,
+    });
+    vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReset().mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  function writeConfig(enabled: boolean): void {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        mode: "managed",
+        embeddings: {
+          ...USER_CONFIG_DEFAULTS.localModels.embeddings,
+          enabled,
+          modelId: "nomic-embed-text-v1.5",
+        },
+      },
+    });
+    resetConfigCache();
+  }
+
+  it("starts the embedding daemon alone on the configured port", async () => {
+    writeConfig(true);
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(localLlm.startEmbeddingDaemon).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(localLlm.startEmbeddingDaemon).mock.calls[0]![0]).toMatchObject({
+      modelId: "nomic-embed-text-v1.5",
+      port: 19092,
+    });
+    expect(stdoutChunks.join("")).toMatch(/^embedding: started pid 4243, healthy on port 19092/m);
+  });
+
+  it("starts nothing when it is already running, or not asked for", async () => {
+    writeConfig(true);
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockResolvedValue({
+      running: true, pid: 99, port: 19092, healthy: true, loading: false,
+    });
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/^embedding: already running pid 99/m);
+    writeConfig(false);
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/^embedding: disabled/m);
+    expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+  });
+
+  it("exits 1 when the start fails", async () => {
+    writeConfig(true);
+    vi.mocked(localLlm.startEmbeddingDaemon).mockRejectedValue(new Error("port 19092 is already served"));
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(1);
+  });
+});
+
+/**
+ * ATO-252: `models update` on Windows on ARM before any engine release
+ * carries the arm64 zip. With nothing installed it must fail with the
+ * sentence the desktop shows, not exit 0 as "unchanged".
+ */
+describe("runLocalModelsUpdate on Windows arm64 with no arm64 release", () => {
+  let stateDir: string;
+  let stdoutChunks: string[];
+  let stderrChunks: string[];
+  let previousFetch: typeof fetch;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-models-update-arm64-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
+    resetConfigCache();
+    resetLatestReleaseCache();
+    stdoutChunks = [];
+    stderrChunks = [];
+    previousFetch = globalThis.fetch;
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    // Releases exist, none with the arm64 zip.
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify([
+          {
+            tag_name: "turboquant-x64-only",
+            published_at: "2026-10-06T00:00:00Z",
+            assets: [
+              {
+                name: WINDOWS_BACKEND_ASSETS.vulkan,
+                browser_download_url: "https://example.com/win.zip",
+              },
+            ],
+          },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ) as typeof fetch;
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        mode: "managed",
+      },
+    });
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+    vi.restoreAllMocks();
+    resetLatestReleaseCache();
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+  });
+
+  it("fails with the plain Windows on ARM sentence when nothing is installed", async () => {
+    await expect(runLocalModelsUpdate()).resolves.toBe(1);
+    expect(stderrChunks.join("")).toContain(WINDOWS_ARM64_NO_BACKEND_MESSAGE);
+    expect(stdoutChunks.join("")).not.toMatch(/backend unchanged/);
+  });
+
+  it("keeps an installed arm64 backend as it is", async () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    mkdirSync(resolveBackendDir(dataDir), { recursive: true });
+    writeFileSync(resolveServerBinPath(dataDir, "llama-server.exe"), "x");
+
+    await expect(runLocalModelsUpdate()).resolves.toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/backend unchanged/);
   });
 });

@@ -21,11 +21,26 @@ export function createRuntimeTaskStores(args: {
   const webhookSessionStore = new WebhookSessionStore(
     resolve(config.paths.stateDir, WEBHOOK_SESSIONS_FILENAME),
   );
-  const recoveredStale = taskStore.recoverStale(config.tasks.staleAfterMs);
-  if (recoveredStale > 0) {
-    logger.info("recovered stale running tasks on bootstrap", {
-      count: recoveredStale,
-      thresholdMs: config.tasks.staleAfterMs,
+  if (taskStore.runOwnersUnavailable !== null) {
+    logger.warn("task runs will not record their process; boot recovery falls back to age", {
+      reason: taskStore.runOwnersUnavailable,
+    });
+  }
+  // Recover claims from a stopped process before a scheduler can see the queue;
+  // leave another live process's claims alone. A recovery failure cannot block boot.
+  try {
+    const recoveredTasks = taskStore.recoverInterrupted({
+      staleAfterMs: config.tasks.staleAfterMs,
+    });
+    if (recoveredTasks.length > 0) {
+      logger.info("tasks left running by a stopped agent put back to pending", {
+        count: recoveredTasks.length,
+        taskIds: recoveredTasks.join(","),
+      });
+    }
+  } catch (err) {
+    logger.warn("could not recover tasks left running; continuing", {
+      error: err instanceof Error ? err.message : String(err),
     });
   }
   return { taskStore, webhookSessionStore };

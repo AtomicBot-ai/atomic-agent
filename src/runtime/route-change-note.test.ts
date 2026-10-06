@@ -9,7 +9,9 @@ import {
   SESSION_ROUTE_METADATA_KEY,
   readSessionRoute,
 } from "../session/session-route.js";
+import { SESSION_LLM_METADATA_KEY } from "../session/session-llm.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
+import type { TraceEvent } from "../tracing/trace/trace-event.js";
 
 /**
  * Hand QA of an RC: turn on a text-only cloud model refused
@@ -92,9 +94,10 @@ describe("route change note", () => {
           prompts.push(params.prompt);
           return {
             content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
-            timing: { promptTokens: 10, predictedTokens: 5 },
+            timing: { promptTokens: 10, predictedTokens: 5, promptMs: 0, predictedMs: 0 },
             slotId: 0,
             cacheReused: false,
+            reasoningContent: "", stop: true, truncated: false, cacheHitTokens: 0, modelId: null,
           };
         },
       },
@@ -168,9 +171,10 @@ describe("route change note", () => {
           prompts.push(params.prompt);
           return {
             content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
-            timing: { promptTokens: 10, predictedTokens: 5 },
+            timing: { promptTokens: 10, predictedTokens: 5, promptMs: 0, predictedMs: 0 },
             slotId: 0,
             cacheReused: false,
+            reasoningContent: "", stop: true, truncated: false, cacheHitTokens: 0, modelId: null,
           };
         },
       },
@@ -196,6 +200,87 @@ describe("route change note", () => {
       );
     } finally {
       await runtime.shutdown();
+    }
+  });
+
+  // ATO-138: the session's trace named the model the session had last
+  // run on, not the one answering. `session_started` carried the stored
+  // metadata, which holds the previous turn's stamp and route until the
+  // turn's own save, and `turn_started` named no model at all.
+  it("records the model each turn runs on in the session trace", async () => {
+    const traced: TraceEvent[] = [];
+    const boot = () =>
+      createAgentRuntime({
+        workingDir,
+        approvalLevel: 5,
+        traceDefault: true,
+        handlers: { traceSinks: [(event) => traced.push(event)] },
+        overrides: {
+          browserBackend: backend,
+          skipLlamaHealthCheck: true,
+          llamaComplete: async () => ({
+            content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+            timing: { promptTokens: 10, predictedTokens: 5, promptMs: 0, predictedMs: 0 },
+            slotId: 0,
+            cacheReused: false,
+            reasoningContent: "", stop: true, truncated: false, cacheHitTokens: 0, modelId: null,
+          }),
+        },
+      });
+    let sessionId = "";
+    const turnModels = (): Array<string | null | undefined> =>
+      traced
+        .filter((e) => e.type === "turn_started" && e.sessionId === sessionId)
+        .map((e) => (e.type === "turn_started" ? e.route?.main.model : null));
+
+    const first = await boot();
+    try {
+      const session = first.createSession();
+      sessionId = session.id;
+      await first.runTurn(session, "hello", { maxSteps: 2 });
+      // A switch inside the same process: the open file's next turn says so.
+      writeConfig(AIML, "anthropic/claude-sonnet-5");
+      await first.runTurn(session, "again", { maxSteps: 2 });
+      expect(turnModels()).toEqual([
+        "deepseek/deepseek-v4-flash",
+        "anthropic/claude-sonnet-5",
+      ]);
+      expect(traced.find((e) => e.type === "turn_started")).toMatchObject({
+        route: { mode: "cloud", main: { providerId: AIML }, worker: null },
+      });
+    } finally {
+      await first.shutdown();
+    }
+
+    // Switched while nothing ran, then reopened by a fresh process: its
+    // recorder opens at turn start, and the header must not name the
+    // model the stored metadata still holds.
+    writeConfig(AIML, "deepseek/deepseek-v4-flash");
+    traced.length = 0;
+    const second = await boot();
+    try {
+      const stored = second.sessionStore.load(sessionId)!;
+      expect(readSessionRoute(stored.metadata)?.main.model).toBe(
+        "anthropic/claude-sonnet-5",
+      );
+      await second.runTurn(stored, "back", { maxSteps: 2 });
+
+      const header = traced.find(
+        (e) => e.type === "session_started" && e.sessionId === sessionId,
+      );
+      expect(header?.type).toBe("session_started");
+      const metadata =
+        header?.type === "session_started" ? header.metadata : undefined;
+      expect(metadata?.[SESSION_LLM_METADATA_KEY]).toEqual({
+        providerId: AIML,
+        chatModel: "deepseek/deepseek-v4-flash",
+      });
+      expect(readSessionRoute(metadata)?.main.model).toBe(
+        "deepseek/deepseek-v4-flash",
+      );
+      expect(turnModels()).toEqual(["deepseek/deepseek-v4-flash"]);
+    } finally {
+      await second.shutdown();
     }
   });
 });

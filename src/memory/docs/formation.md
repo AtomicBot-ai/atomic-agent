@@ -7,6 +7,8 @@ Owner: src/memory/
 
 Reflection forms bounded profile facts and notes from completed turn observations. Typed notes, segmented reflection and any-speaker extraction are optional and disabled by default. Query rewriting has a different default: it is enabled. Do not describe all v2.5 features as opt-in.
 
+Reflection skips probe-only and one-off instruction turns and rejects ungrounded user names, assistant identity and instruction-as-preference writes. [Grounding](../reflection/reflection-grounding.ts) checks actual user messages. At boot, [name verification](../name-grounding.ts) walks stored user messages without blocking startup; `ProfileStore.listForPrompt()` omits unchecked or ungrounded name-like facts while retaining their history.
+
 ProfileStore retains temporal history; note content is not rewritten by tag evolution. Link generation, neighbor evolution and vote curation operate through their stores and bounded runners. Consolidation distills durable lessons/procedures and manages lifecycle/deprecation; its timer has explicit shutdown ownership.
 
 Sub-runners must isolate errors, cancellation, provider/session identity and slots from the main turn. Credentials and other secrets must not become durable facts. Preserve dedup, utility eviction, capacity caps and leases; config controls the actual limits.

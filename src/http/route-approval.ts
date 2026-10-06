@@ -4,12 +4,14 @@ import {
   readJsonBody,
   sendError,
   sendJson,
+  SSE_HEARTBEAT_MS,
   type HttpHandler,
 } from "./request-context.js";
 
 interface ResolveBody {
   approvalId?: string;
   decision?: string;
+  /** On a deny, the user's own words; the model reads it as what they said. */
   reason?: string;
 }
 
@@ -51,6 +53,8 @@ export function createResolveApprovalHandler(): HttpHandler {
       ...(body.reason ? { reason: body.reason } : {}),
     });
     if (!resolved) {
+      // Not pending at the gate (its turn was aborted): not pending here either.
+      ctx.approvalBus.resolved(approvalId);
       sendError(res, 404, openaiError(`approvalId not pending: ${approvalId}`));
       return;
     }
@@ -71,10 +75,18 @@ function parseDecision(raw: unknown): boolean | null {
  * `GET /api/events` — SSE stream of approval requests. Replays
  * already-pending requests on connect so late subscribers never miss
  * a prompt, then keeps the connection open for fresh emissions.
+ *
+ * Only requests the gate still holds are replayed: one whose turn was
+ * aborted is gone from the gate but was still in the bus. The stream
+ * also carries a comment line now and then, so a client's idle timeout
+ * (undici: 300 s) does not drop it and replay on every reconnect.
  */
 export function createApprovalEventsHandler(): HttpHandler {
   return async (req, res, ctx) => {
-    const sse = beginSse(res);
+    const sse = beginSse(res, {}, { heartbeatMs: SSE_HEARTBEAT_MS });
+    ctx.approvalBus.prune((request) =>
+      ctx.runtime.approvals.isPending(request.approvalId),
+    );
     for (const pending of ctx.approvalBus.snapshot()) {
       sse.writeEvent("approval_request", pending);
     }

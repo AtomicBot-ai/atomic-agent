@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  REFLECTION_KNOWN_PROFILE_MAX_FACTS,
   REFLECTION_MESSAGE_CHAR_CAP,
   REFLECTION_STABLE_PREFIX,
   REFLECTION_STABLE_PREFIX_TYPED,
@@ -71,16 +72,22 @@ describe("buildReflectionPrompt", () => {
 
       Bi-temporal versioning:
       - Every SET preserves history automatically — re-writing the same key never erases the previous version. The earlier value is still available via the \`memory.profile.history\` tool.
-      - When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET full_name=Alex [supersedes=name]) marks both rows in a single write.
+      - When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET new_key=value [supersedes=old_key]) marks both rows in a single write.
       - The valid_from token must be the literal "now"; the runtime stamps the actual timestamp.
 
       Rules:
       - Only durable content explicitly stated by the user or that the user asked to remember.
+      - Never invent identity details (name, nickname, role, age, location); record a name only if the USER typed it.
+      - A one-off instruction for the current reply ("reply exactly X", "don't use tools for this", test or ping messages) is not a preference.
+      - Never copy wording or example values from these instructions into the output.
+      - Write NOTE bodies about the user in the third person ("The user prefers ..."), never as "I ..." or "you ...".
+      - When unsure, output NONE.
       - Skip trivia, chit-chat, weather, transient moods, facts about the AI itself.
       - Use SET for anything that looks like a stable attribute of the user. Prefer short snake_case keys (e.g. name, timezone, trip_lisbon_plan). Keep each SET value under 200 characters.
       - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
       - Use NOTE for anything episodic or narrative that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
       - If a SET already captures the fact, do not also emit a NOTE repeating it.
+      - A "### known profile" block, when present, lists facts already stored. Never emit a SET that repeats one of them, under its key or any other; to change one, reuse its exact key.
       - If there is nothing worth remembering, output exactly: NONE
       - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE body".
       "
@@ -130,6 +137,26 @@ describe("buildReflectionPrompt", () => {
     expect(REFLECTION_STABLE_PREFIX_TYPED).toContain(
       "NEVER use for events or behaviors",
     );
+  });
+
+  // B09: a small local model copied the prompt's own example name
+  // ("Alex") into a note and turned "Reply exactly LOCAL_OK. Do not use
+  // tools." into a lasting preference. The user-centric prefixes must
+  // carry no concrete person name and must spell out the grounding rules.
+  it("user-centric prefixes carry no example person name and state the grounding rules", () => {
+    for (const prefix of [REFLECTION_STABLE_PREFIX, REFLECTION_STABLE_PREFIX_TYPED]) {
+      expect(prefix).not.toMatch(/\bAlex\b/);
+      expect(prefix).toContain("Never invent identity details");
+      expect(prefix).toContain("A one-off instruction for the current reply");
+      expect(prefix).toContain("Never copy wording or example values");
+      expect(prefix).toContain("When unsure, output NONE.");
+      // The identity rule must not narrow general extraction: facts the
+      // user asked to remember (an assistant-found deploy command) and
+      // plain statements ("I prefer TypeScript") stay extractable.
+      expect(prefix).toContain("or that the user asked to remember");
+      expect(prefix).not.toContain("Use only what the USER wrote");
+      expect(prefix).not.toContain("Record a preference only when");
+    }
   });
 
   it("phase C: typed prefix is byte-stable across calls (KV-cache hygiene)", () => {
@@ -253,5 +280,46 @@ describe("buildReflectionPrompt", () => {
     const userLine = prompt.match(/USER: (.+)/)?.[1] ?? "";
     expect(userLine.length).toBeLessThanOrEqual(REFLECTION_MESSAGE_CHAR_CAP);
     expect(userLine.endsWith("…")).toBe(true);
+  });
+
+  // ATO-188: reflection wrote facts the profile already held, under new
+  // keys. It now sees the profile, after the stable prefix.
+  it("renders the known profile into the tail, never into the stable prefix", () => {
+    const prompt = buildReflectionPrompt({
+      userMessage: "keep it short",
+      assistantReply: "ok",
+      knownProfile: [
+        { key: "prefers_short_answers", value: "yes" },
+        { key: "timezone", value: "Europe/Lisbon" },
+      ],
+    });
+    expect(prompt.startsWith(REFLECTION_STABLE_PREFIX)).toBe(true);
+    const tail = prompt.slice(REFLECTION_STABLE_PREFIX.length);
+    expect(tail).toBe(
+      "\n### known profile\n- prefers_short_answers=yes\n- timezone=Europe/Lisbon\n" +
+        "\nUSER: keep it short\nASSISTANT: ok\n\n### output\n",
+    );
+    for (const prefix of [REFLECTION_STABLE_PREFIX, REFLECTION_STABLE_PREFIX_TYPED]) {
+      expect(prefix).toContain('A "### known profile" block');
+      expect(prefix).toContain("reuse its exact key");
+    }
+  });
+
+  it("leaves the tail byte-identical without a known profile, and caps a big one", () => {
+    const plain = buildReflectionPrompt({ userMessage: "x", assistantReply: "y" });
+    const empty = buildReflectionPrompt({ userMessage: "x", assistantReply: "y", knownProfile: [] });
+    expect(empty).toBe(plain);
+    // The stable prefix names the block in its rules; the tail never carries one.
+    expect(plain.slice(REFLECTION_STABLE_PREFIX.length)).not.toContain("### known profile");
+
+    const many = Array.from({ length: REFLECTION_KNOWN_PROFILE_MAX_FACTS + 5 }, (_, i) => ({
+      key: `k${i}`,
+      value: "v".repeat(200),
+    }));
+    const big = buildReflectionPrompt({ userMessage: "x", assistantReply: "y", knownProfile: many });
+    const lines = big.split("\n").filter((l) => l.startsWith("- k"));
+    expect(lines).toHaveLength(REFLECTION_KNOWN_PROFILE_MAX_FACTS);
+    expect(lines[0]!.endsWith("…")).toBe(true);
+    expect(lines[0]!.length).toBeLessThan(100);
   });
 });

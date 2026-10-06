@@ -95,6 +95,7 @@ export const METRIC_NAMES = {
   telegramApprovalsResolved: "agent.telegram.approvals_resolved",
   batchTrimmed: "agent.batch.trimmed",
   batchWaveSplit: "agent.batch.wave_split",
+  batchApprovalBarriers: "agent.batch.approval_barriers",
 } as const;
 
 export type MetricName = (typeof METRIC_NAMES)[keyof typeof METRIC_NAMES];
@@ -165,6 +166,25 @@ export interface BatchWaveSplitMetricSample {
   cap: number;
   /** Number of waves: ceil(originalSize / cap). */
   waveCount: number;
+}
+
+/**
+ * A batch holding approval-gated calls that ran behind approval barriers
+ * instead of being trimmed (issue #109). `retained` counts the calls that
+ * ran with the payload the model emitted, `invalidated` the ones a
+ * barrier that was not approved or failed (or a cancellation) kept from
+ * running — the share the trim used to drop outright.
+ */
+export interface BatchApprovalBarriersMetricSample {
+  sessionId: string;
+  /** Calls the model emitted. Always >= 2. */
+  originalSize: number;
+  /** Runs of batchable calls that completed. */
+  waves: number;
+  /** Approval-gated calls that ran, each alone. */
+  barriers: number;
+  retained: number;
+  invalidated: number;
 }
 
 /**
@@ -720,6 +740,22 @@ export class AgentMetrics {
       originalSize: String(sample.originalSize),
       cap: String(sample.cap),
       waveCount: String(sample.waveCount),
+    });
+  }
+
+  /**
+   * Record a batch run behind approval barriers (issue #109). Tagged by
+   * the counts so dashboards can tell a batch that ran whole from one a
+   * denial cut short, and how often a re-emission was saved.
+   */
+  recordBatchApprovalBarriers(sample: BatchApprovalBarriersMetricSample): void {
+    this.collector.counter(METRIC_NAMES.batchApprovalBarriers, 1, {
+      sessionId: sample.sessionId,
+      originalSize: String(sample.originalSize),
+      waves: String(sample.waves),
+      barriers: String(sample.barriers),
+      retained: String(sample.retained),
+      invalidated: String(sample.invalidated),
     });
   }
 

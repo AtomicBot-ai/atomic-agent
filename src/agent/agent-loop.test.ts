@@ -9,6 +9,7 @@ import { osFsReadTool } from "../tools/os/fs/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
+import { SubscriptionCliNotInstalledError } from "../llm/provider/subscription-cli/subscription-cli-errors.js";
 import {
   humanizeOpenAiHttpError,
   OpenAiHttpError,
@@ -1210,6 +1211,50 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("failed");
     expect(waits).toEqual([]);
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("does not wait for a CLI that is not installed, and says so", async () => {
+    // ATO-117: `claude` missing on Windows read as "no connection" for
+    // the whole five-minute wait. The step executor wraps the spawn's
+    // error as a status-less TransportError, the shape of an outage.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    const failures: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new SubscriptionCliNotInstalledError(
+          "claude",
+          "Install Claude Code and sign in, or choose another provider.",
+          "Claude Code",
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+        if (event.type === "loop_failed") failures.push(event.error.message);
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-no-claude", workingDir }),
+      {
+        userMessage: "hi",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(failures[0]).toContain(
+      "Claude Code isn't installed (the `claude` command was not found).",
+    );
   });
 
   it("waits out a 503, which is exactly the kind that fixes itself", async () => {

@@ -235,6 +235,9 @@ export async function executeBatch(
         signal: ctx.signal,
         ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
         ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
+        ...(ctx.userGroundingTexts !== undefined
+          ? { userGroundingTexts: ctx.userGroundingTexts }
+          : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
       });
     } catch (err) {

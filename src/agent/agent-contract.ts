@@ -54,6 +54,12 @@ export interface AgentLoopDependencies {
    * See `approval/fanout-scope.ts`: the answer is scoped to one job.
    */
   clearFanoutTurnGrant?: (sessionId: string) => void;
+  /**
+   * Forget the calls the user declined on this session (see
+   * `ApprovalGate.forgetDeclined`): the gate refuses a repeat of one
+   * for the rest of the turn, and a new turn or a steer is a new answer.
+   */
+  forgetDeclinedApprovals?: (sessionId: string) => void;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -165,7 +171,9 @@ export interface AgentLoopDependencies {
    * Invoked once per step to produce the current user-profile snapshot.
    * The resulting array is rendered into the `### profile` section of
    * the prompt tail. `undefined` suppresses the section entirely — wire
-   * this only when the memory fabric is enabled.
+   * this only when the memory fabric is enabled. Bootstrap wires
+   * `profileStore.listForPrompt()`, so a name the user never wrote
+   * (ATO-199) is not in it.
    */
   profileFactsProvider?: () => readonly ProfileFact[];
   /**

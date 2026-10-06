@@ -1,3 +1,4 @@
+import { chatLinesOf, groundingTextsOf } from "../../memory/name-grounding.js";
 import type {
   AgentLoopDependencies,
   AgentLoopReason,
@@ -9,7 +10,7 @@ import type {
 import type { LlmFailureCategory } from "../../llm/index.js";
 import type { SessionState } from "../../session/session-state.js";
 import { incrementTurnCount, recordTurn } from "../../session/session-state.js";
-import { assistantReplyTurn, isFinalReplyTurn } from "../../session/conversation-turn.js";
+import { assistantReplyTurn, isFinalReplyTurn, isStoppedTurnMarker, stoppedTurnMarker } from "../../session/conversation-turn.js";
 import type { ProfileFact } from "../../memory/profile-store.js";
 import { formatTurnFailedRecord } from "./parse-failure-recovery.js";
 import { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn-memory-context.js";
@@ -92,6 +93,7 @@ export function finalizeAgentTurn(
     surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
   } = context;
   if (reason === "cancelled") {
+    state = recordStopMarker(state, options);
     state = { ...state, status: "cancelled" };
     deps.onEvent?.({ type: "loop_completed", reason });
   } else if (reason === "max_steps") {
@@ -213,7 +215,7 @@ export function finalizeAgentTurn(
         // renderer surfaces them whenever they are pinned or pass
         // the contextual-keyword gate. Sourcing them here keeps the
         // decorator's hydration cheap.
-        // `profileFactsProvider` is a raw `profileStore.list()`.
+        // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
         // It is only ever an input to the fire-and-forget reflection
         // below, so a store failure here must not fail the turn the
         // user is waiting on — an empty allowlist just means the
@@ -280,6 +282,7 @@ export function finalizeAgentTurn(
             ...(segmentationActive && transcript.length > 0
               ? { transcript }
               : {}),
+            groundingTexts: groundingTextsOf(chatLinesOf(state.turns)),
           })
           .catch((err: unknown) => {
             deps.logger?.warn("reflection failed after dispatch", {
@@ -313,6 +316,7 @@ export function finalizeFailedAgentTurn(
     stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
   } = context;
   if (cancelled) {
+    state = recordStopMarker(state, options);
     state = { ...state, status: "cancelled" };
     deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
     state = incrementTurnCount(state);
@@ -421,9 +425,39 @@ function invokeLessonLifecycle(
   }
 }
 
+/**
+ * Close a turn the user stopped with the marker the next turn reads.
+ *
+ * Without it the stopped request stayed open in the transcript — a
+ * `user` row with nothing after it — and the next message was read as
+ * an addition to it rather than a request of its own (ATO-233). The row
+ * closes the macro-turn, so the packer, the boundaries and the request
+ * picker (`pickOriginalRequest`) treat the stopped task as over.
+ *
+ * Recorded only, never emitted as an `assistant_reply` event: every
+ * surface already draws its own stop line from `loop_completed` /
+ * `loop_failed`, the same reason the failed-turn record is not emitted.
+ * Not for an ephemeral turn: a fusion worker is stopped by its
+ * orchestrator or its own clock, not the user, and its session is
+ * thrown away. And not when the transcript already ends on a closed
+ * macro-turn — a turn started without a message and stopped before it
+ * recorded anything has no request of its own to mark, and a second
+ * marker after a first one would say the same thing twice.
+ */
+function recordStopMarker(
+  state: SessionState,
+  options: RunTurnOptions,
+): SessionState {
+  if (options.ephemeral) return state;
+  const last = state.turns[state.turns.length - 1];
+  if (last === undefined || isFinalReplyTurn(last)) return state;
+  return recordTurn(state, stoppedTurnMarker());
+}
+
 function findLastAssistantReply(state: SessionState): string | null {
   for (let i = state.turns.length - 1; i >= 0; i -= 1) {
     const turn = state.turns[i];
+    if (isStoppedTurnMarker(turn)) continue;
     if (isFinalReplyTurn(turn)) return turn.text;
   }
   return null;
@@ -461,6 +495,13 @@ function collectLastUserAssistantPairs(
       // correction alone. Join them in order instead.
       pendingUser =
         pendingUser === null ? turn.text : `${pendingUser}\n\n${turn.text}`;
+    } else if (isStoppedTurnMarker(turn)) {
+      // A request the user stopped got no answer and was withdrawn.
+      // The marker is not the agent's words, so it pairs with nothing,
+      // and the request is dropped rather than carried into the next
+      // pair, where it would be extracted as part of what the user
+      // asked for then.
+      pendingUser = null;
     } else if (isFinalReplyTurn(turn) && pendingUser !== null) {
       pairs.push({ user: pendingUser, assistant: turn.text });
       pendingUser = null;

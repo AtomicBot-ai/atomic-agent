@@ -149,6 +149,31 @@ describe("executeBatch", () => {
     expect(seen[2]).toBeUndefined();
   });
 
+  it("hands the step's user grounding texts to every call's tool context", async () => {
+    // ATO-200: `memory.profile.set` checks a name against the user's own
+    // messages, which the step computes once per batch.
+    const seen: (readonly string[] | undefined)[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "memory.profile.set",
+      description: "set",
+      readonly: false,
+      run: async (_args, toolCtx) => {
+        seen.push(toolCtx.userGroundingTexts);
+        return okResult("memory.profile.set");
+      },
+    });
+    const inputs = toBatchInputs([
+      { tool: "memory.profile.set", args: { key: "name", value: "Надя" } },
+    ]);
+    const ctrl = new AbortController();
+    await executeBatch(inputs, registry, {
+      ...ctx(ctrl.signal),
+      userGroundingTexts: ["Меня зовут Надя"],
+    });
+    expect(seen).toEqual([["Меня зовут Надя"]]);
+  });
+
   it("hands the step's provider pin to every call's tool context", async () => {
     // A fusion worker's step is pinned to the local leg; a tool that
     // calls a model itself (`vision.describe`) must see that pin.

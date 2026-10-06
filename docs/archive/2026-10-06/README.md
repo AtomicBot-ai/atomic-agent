@@ -19,3 +19,5 @@ These originals are preserved byte-for-byte. Their relative links retain their o
 - [agent-guide.md](agent-guide.md)
 
 [Checksums](originals.json); [current routes](../../../AGENTS.md); [migration map](../../agent-context-migration.md).
+
+Additional pre-integration snapshots from `origin/main` at `a8afe9638` preserve the upstream documentation while its current contracts are routed to subsystem owners: [agent guide](main-agent-guide.md), [memory guide](main-memory-guide.md). These are historical snapshots, not instructions to load.

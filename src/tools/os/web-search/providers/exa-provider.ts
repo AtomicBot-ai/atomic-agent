@@ -71,6 +71,8 @@ export function createExaProvider(
         return parseExaApiJson(response.body, options.maxResults);
       }
 
+      // Keyless MCP tier. The search chain no longer reaches it: without a
+      // key the orchestrator skips Exa (ATO-120). Kept for direct callers.
       const response = await searchHttp({
         url: config.endpoint,
         method: "POST",

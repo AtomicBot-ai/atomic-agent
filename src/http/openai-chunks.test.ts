@@ -4,6 +4,7 @@ import { createEmptySessionState } from "../session/session-state.js";
 import {
   assistantReplyTurn,
   assistantToolCallTurn,
+  stoppedTurnMarker,
   toolResultTurn,
   userTurn,
 } from "../session/conversation-turn.js";
@@ -51,6 +52,24 @@ describe("buildFinalAssistantPayload", () => {
     expect(payload).toEqual({
       message: { role: "assistant", content: "" },
       finish_reason: "length",
+    });
+  });
+
+  it("hands out neither the stop marker nor an earlier turn's reply for a stopped turn", () => {
+    const payload = buildFinalAssistantPayload(
+      result(
+        [
+          userTurn("hello", 1),
+          assistantReplyTurn("hi there", 2),
+          userTurn("write a long story", 3),
+          stoppedTurnMarker(4),
+        ],
+        "cancelled",
+      ),
+    );
+    expect(payload).toEqual({
+      message: { role: "assistant", content: "" },
+      finish_reason: "cancelled",
     });
   });
 });

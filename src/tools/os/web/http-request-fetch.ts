@@ -4,6 +4,7 @@ import {
 } from "../../../sandbox/command-runner.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
+import { explainCurlStderr, runCurl } from "./run-curl.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -299,7 +300,7 @@ async function sendGuardedRequestOnce(
 
     let result: CommandResult;
     try {
-      result = await runCommand("curl", curlArgs, {
+      result = await runCurl(runCommand, curlArgs, {
         cwd: opts.cwd,
         timeoutMs: args.timeoutMs + 2_000,
         signal: opts.signal,
@@ -492,7 +493,7 @@ export function parseCurlOutput(stdout: string): CurlParsedOutput {
 
 function formatCurlError(result: CommandResult): string {
   const stderr = result.stderr.trim();
-  if (stderr.length > 0) return stderr;
+  if (stderr.length > 0) return explainCurlStderr(stderr);
   if (result.timedOut) return "curl timed out";
   return `curl exited with code ${result.exitCode}`;
 }

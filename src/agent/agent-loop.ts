@@ -87,6 +87,9 @@ export class AgentLoop {
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
     this.deps.steeringInbox?.open(session.id);
+    // Like the fan-out grant: forgotten when a turn starts rather than
+    // when it ends, so an aborted turn cannot carry a no into the next.
+    this.deps.forgetDeclinedApprovals?.(session.id);
     try {
       return await this.runTurnInner(session, options);
     } finally {
@@ -251,6 +254,8 @@ export class AgentLoop {
         this.deps.onEvent?.({ type: "steer_applied", text, stepIndex: i });
       }
       if (steered.length > 0) {
+        // A new user instruction may request a call declined earlier.
+        this.deps.forgetDeclinedApprovals?.(state.id);
         turn.pendingNotice = composeSteerNotice(turn.pendingNotice, steered);
         this.deps.logger?.info("mid-turn steering applied", {
           sessionId: state.id,
@@ -324,7 +329,7 @@ export class AgentLoop {
           : durationCeilingMs - elapsedMs,
       );
       try {
-        // `profileFactsProvider` is a raw `profileStore.list()`.
+        // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
         // pinned facts regardless of the contextual gate, so this step
         // renders with no `### profile` section at all — but it is the

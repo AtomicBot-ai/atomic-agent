@@ -8,7 +8,7 @@ export interface BackendVersionInfo {
   downloadedAt: string;
   /**
    * Release asset actually installed. On Windows the same
-   * `llama-server.exe` ships in a Vulkan and two CUDA zips, so the
+   * `llama-server.exe` ships in a Vulkan, two CUDA and a CPU zip, so the
    * binary's presence alone cannot tell us which compute backend is on
    * disk. Recording it lets `checkForBackendUpdate` offer a re-download
    * when the machine now warrants a different variant (e.g. the NVIDIA
@@ -26,6 +26,18 @@ export interface BackendVersionInfo {
    * update.
    */
   releasedAt?: string;
+  /**
+   * ATO-244: the Windows CUDA zip this install was meant to be, refused
+   * because the release shipped it without its CUDA runtime (no
+   * `cudart64_*.dll` next to `ggml-cuda.dll`), and the release tag it
+   * came from. The Vulkan build was installed instead. While the newest
+   * release is still that tag, the variant-staleness check accepts the
+   * Vulkan install as the answer to "this machine wants that CUDA zip" —
+   * otherwise every start would download the broken zip again, refuse it
+   * again and reinstall Vulkan. A newer tag is an update anyway, and
+   * that update tries the CUDA zip afresh.
+   */
+  refusedCudaAsset?: { asset: string; tag: string };
 }
 
 export function readBackendVersion(dataDir: string): BackendVersionInfo | null {

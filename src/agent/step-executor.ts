@@ -1,4 +1,7 @@
-import { createStepBatchPolicy, executeCallsInOrder } from "./step/step-batch-policy.js";
+export type { ApprovalBarrierReport } from "./step/step-batch-policy.js";
+export { approvalBarrierSegments, emptyApprovalBarrierReport, formatApprovalBarrierNotice } from "./step/step-batch-policy.js";
+import { chatLinesOf, groundingTextsOf } from "../memory/name-grounding.js";
+import { createStepBatchPolicy, executeCallsInOrder, emptyApprovalBarrierReport, executeWithApprovalBarriers, formatApprovalBarrierNotice } from "./step/step-batch-policy.js";
 import { parseStepBatch, finishStepBatchRepair } from "./step/step-batch-parsing.js";
 import { prepareStepDispatch } from "./step/step-evidence.js";
 import { commitStepBatch } from "./step/step-commit.js";
@@ -31,7 +34,7 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 
 import { userNamedPaths } from "../tools/read-scope/index.js";
 
-export type { PromptCapturedTokens, StepEvent } from "./step-events.js";
+export type { ApprovalBarrierStopCause, PromptCapturedTokens, StepEvent } from "./step-events.js";
 
 /**
  * Executes exactly one agent step: builds the prompt, calls the LLM under
@@ -210,13 +213,32 @@ async function executeStepInner(
   // transcript every step so a path named mid-turn (steering) counts on
   // the next call, and nothing the model wrote ever widens it.
   const readRoots = userNamedPaths(ctx.session.turns);
-  const runBatch = policy.runInOrder ? executeCallsInOrder : executeBatch;
+  // What may vouch for a name `memory.profile.set` is asked to store
+  // (ATO-200): the user's own messages so far, re-read every step for the
+  // same reason, and never anything the model wrote.
+  const userGroundingTexts = groundingTextsOf(chatLinesOf(ctx.session.turns));
+  const barrierReport = policy.runBehindBarriers
+    ? emptyApprovalBarrierReport()
+    : null;
+  const runBatch: typeof executeBatch =
+    barrierReport !== null
+      ? (batchInputs, batchRegistry, batchCtx) =>
+          executeWithApprovalBarriers(
+            batchInputs,
+            batchRegistry,
+            batchCtx,
+            barrierReport,
+          )
+      : policy.runInOrder
+        ? executeCallsInOrder
+        : executeBatch;
   const batchOutcome = await runBatch(inputs, deps.registry, {
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(readRoots.length > 0 ? { readRoots } : {}),
+    userGroundingTexts,
     // A pinned step (fusion worker) runs its model-calling tools on the
     // same provider as its completions — `vision.describe` reads this.
     ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),
@@ -242,6 +264,7 @@ async function executeStepInner(
         result,
         batchIndex,
         batchSize,
+        durationMs,
       });
       deps.metrics?.recordTool({
         sessionId: ctx.session.id,
@@ -261,5 +284,54 @@ async function executeStepInner(
     },
   });
   const stepDurationMs = Date.now() - stepStartedAt;
+
+  // Reported once the barriers ran — what ran, what did not and why —
+  // and before a cancellation throws, so a cancelled batch is counted
+  // too. The notice reaches the model only when calls were left unrun.
+  if (barrierReport !== null) {
+    deps.onEvent?.({
+      type: "batch_approval_barriers",
+      stepIndex: ctx.stepIndex,
+      originalSize: calls.length,
+      waves: barrierReport.waves,
+      barriers: barrierReport.barriers,
+      retained: barrierReport.retained,
+      invalidated: barrierReport.invalidated.length,
+      ...(barrierReport.stoppedBy !== null
+        ? {
+            stoppedBy: {
+              tool: barrierReport.stoppedBy.call.tool,
+              batchIndex: barrierReport.stoppedBy.batchIndex,
+              cause: barrierReport.stoppedBy.cause,
+            },
+          }
+        : {}),
+      cancelled: barrierReport.cancelled,
+    });
+    deps.metrics?.recordBatchApprovalBarriers({
+      sessionId: ctx.session.id,
+      originalSize: calls.length,
+      waves: barrierReport.waves,
+      barriers: barrierReport.barriers,
+      retained: barrierReport.retained,
+      invalidated: barrierReport.invalidated.length,
+    });
+    deps.logger?.info("approval barriers ran", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      waves: barrierReport.waves,
+      barriers: barrierReport.barriers,
+      retained: barrierReport.retained,
+      invalidated: barrierReport.invalidated.map((call) => call.tool),
+      stoppedBy: barrierReport.stoppedBy?.call.tool ?? null,
+      cause: barrierReport.stoppedBy?.cause ?? null,
+      cancelled: barrierReport.cancelled,
+    });
+    const notice = formatApprovalBarrierNotice(barrierReport, calls.length);
+    if (notice !== null) {
+      policy.appendTrimNotice(notice);
+    }
+  }
+
   return commitStepBatch({ ctx, deps, prompt, completion, reasoning, admission, batchOutcome, stepDurationMs, progressNote, trimmedBatchNotice: policy.trimmedBatchNotice, waveSplitNotice: policy.waveSplitNotice });
 }

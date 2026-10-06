@@ -4,6 +4,7 @@ import {
   checkForBackendUpdate,
   downloadBackend,
   isBackendDownloaded,
+  isInstalledVariantStale,
 } from "./backend-installer.js";
 import { resolveBackendCheckFilePath } from "../backend-paths.js";
 import { readBackendVersion } from "./backend-version.js";
@@ -145,7 +146,8 @@ export async function checkForBackendUpdateForPanel(
  * this tag and asset, younger than its window (`AUTO_UPDATE_RETRY_MS` at
  * most when it failed), and the machine still wants the asset that is
  * installed — a variant change (an NVIDIA driver installed since) is an
- * update in itself, so that always asks.
+ * update in itself, so that always asks, and so does a Windows CUDA
+ * build that lost or never had its CUDA runtime (ATO-244).
  */
 function standingCheck(
   dataDir: string,
@@ -169,7 +171,12 @@ function standingCheck(
     } catch {
       return null;
     }
-    if (wanted !== installed.asset) return null;
+    // Same verdict as `checkForBackendUpdate`: a Vulkan install standing
+    // in for a refused CUDA zip of the release last seen still stands,
+    // and a CUDA build missing its runtime (ATO-244) never does.
+    if (isInstalledVariantStale(dataDir, installed, wanted, last.latestTag)) {
+      return null;
+    }
   }
   const window = last.ok
     ? recheckAfterMs
@@ -257,8 +264,11 @@ export async function maybeAutoUpdateBackend(
   // live pid. Stop both daemons first; the caller starts them after.
   // Skip the stop when another TUI/CLI session is live — killing their
   // model mid-chat is worse than sitting on an old tag until next solo start.
+  // The embedding daemon counts on its own: a host can run it alone (`models
+  // start-embedding`, which the desktop runs before the chat model starts),
+  // and its binary is the same one being replaced.
   try {
-    if (readRunningPid(dataDir) !== null) {
+    if (readRunningPid(dataDir) !== null || readRunningPid(dataDir, "embedding") !== null) {
       if (opts.keepDaemonRunning) {
         return { action: "deferred", reason: "daemon_live" };
       }

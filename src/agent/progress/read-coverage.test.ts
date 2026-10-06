@@ -11,8 +11,19 @@ import {
   describeCoverage,
   mergeRange,
   newlyCoveredCount,
+  readTurnIdentity,
   type LineRange,
 } from "./read-coverage.js";
+import {
+  assistantReplyTurn,
+  assistantToolCallTurn,
+  packConversation,
+  toolResultTurn,
+  userTurn,
+  type ConversationTurn,
+} from "../../session/conversation-turn.js";
+import { renderPackedConversation } from "../../prompt/build-prompt-world-conversation.js";
+import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import {
   formatReadRepeatNotice,
   READ_REPEAT_WARNING_THRESHOLD,
@@ -714,5 +725,188 @@ describe("read-coverage detection end to end", () => {
     expect(
       outcome.loopSignals.filter((s) => s.detector === "read_repeat"),
     ).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------- repeat pointers
+
+describe("readTurnIdentity", () => {
+  const detail = {
+    path: "/tmp/a.ts",
+    contentHash: "hash1",
+    startLine: 3,
+    endLine: 9,
+    totalLines: 40,
+    numbered: true,
+    truncated: false,
+  };
+
+  it("keeps the file version, range and rendering of a successful read", () => {
+    const result = compressToolResult({
+      tool: "os.fs.read",
+      status: "ok",
+      output: "body",
+      details: { [READ_COVERAGE_DETAIL_KEY]: detail },
+    });
+    expect(readTurnIdentity("os.fs.read", result)).toEqual({
+      path: "/tmp/a.ts",
+      contentHash: "hash1",
+      startLine: 3,
+      endLine: 9,
+      numbered: true,
+    });
+  });
+
+  it("gives no identity to an empty read, a failed read or another tool", () => {
+    const empty = compressToolResult({
+      tool: "os.fs.read",
+      status: "ok",
+      output: "",
+      details: {
+        [READ_COVERAGE_DETAIL_KEY]: { ...detail, startLine: 0, endLine: 0 },
+      },
+    });
+    const failed = compressToolResult({
+      tool: "os.fs.read",
+      status: "error",
+      output: "ENOENT",
+      details: { [READ_COVERAGE_DETAIL_KEY]: detail },
+    });
+    const grep = compressToolResult({
+      tool: "os.fs.grep",
+      status: "ok",
+      output: "body",
+      details: { [READ_COVERAGE_DETAIL_KEY]: detail },
+    });
+    expect(readTurnIdentity("os.fs.read", empty)).toBeNull();
+    expect(readTurnIdentity("os.fs.read", failed)).toBeNull();
+    expect(readTurnIdentity("os.fs.grep", grep)).toBeNull();
+  });
+});
+
+describe("a repeated read in the prompt, end to end", () => {
+  let dir: string;
+  const body = Array.from(
+    { length: 120 },
+    (_, i) => `line ${i + 1} ${"x".repeat(20)}`,
+  ).join("\n");
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "atomic-read-repeat-"));
+    await writeFile(join(dir, "src.ts"), `${body}\n`, "utf8");
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function read(
+    args: Record<string, unknown>,
+  ): Promise<CompressedToolResult> {
+    const outcome = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args }]),
+      readRegistry(),
+      batchCtx(dir, new ToolLoopTracker()),
+    );
+    const result = outcome.results[0]?.compressed;
+    expect(result?.status).toBe("ok");
+    return result!;
+  }
+
+  /** The call and result rows the step executor appends for one read. */
+  function rows(
+    args: Record<string, unknown>,
+    result: CompressedToolResult,
+  ): ConversationTurn[] {
+    const identity = readTurnIdentity("os.fs.read", result);
+    return [
+      assistantToolCallTurn({ tool: "os.fs.read", args }),
+      toolResultTurn({
+        tool: result.tool,
+        status: result.status,
+        summary: result.summary,
+        ...(identity !== null ? { read: identity } : {}),
+      }),
+    ];
+  }
+
+  function render(turns: ConversationTurn[]): string {
+    return renderPackedConversation({
+      visibleTurns: turns,
+      droppedSummary: null,
+    });
+  }
+
+  it("shows the second read of an unchanged range as a pointer to the first", async () => {
+    const args = { path: "src.ts", offset: 10, limit: 40 };
+    const first = await read(args);
+    const second = await read(args);
+    const rendered = render([
+      userTurn("look at src.ts"),
+      ...rows(args, first),
+      ...rows(args, second),
+    ]);
+    // The text is in the prompt once.
+    expect(rendered.split("line 10 ").length - 1).toBe(1);
+    expect(rendered).toContain(
+      "[unchanged since your earlier read: same 40 lines (10-49), identical text — see the os.fs.read result just above; not repeated here]",
+    );
+  });
+
+  it("reads in full again once the file changed, even at the same size", async () => {
+    const args = { path: "src.ts", offset: 10, limit: 40 };
+    const first = await read(args);
+    // Same byte length, one character different: mtime/size alone would
+    // call this unchanged.
+    await writeFile(
+      join(dir, "src.ts"),
+      `${body.replace("line 20 ", "line 2O ")}\n`,
+      "utf8",
+    );
+    const second = await read(args);
+    const rendered = render([
+      userTurn("look at src.ts"),
+      ...rows(args, first),
+      ...rows(args, second),
+    ]);
+    expect(rendered).not.toContain("[unchanged since your earlier read");
+    expect(rendered).toContain("line 2O ");
+  });
+
+  it("reads in full again for a different range or rendering", async () => {
+    const args = { path: "src.ts", offset: 10, limit: 40 };
+    const first = await read(args);
+    const shifted = { path: "src.ts", offset: 11, limit: 40 };
+    const numbered = { ...args, lineNumbers: true };
+    const rendered = render([
+      userTurn("look at src.ts"),
+      ...rows(args, first),
+      ...rows(shifted, await read(shifted)),
+      ...rows(numbered, await read(numbered)),
+    ]);
+    expect(rendered).not.toContain("[unchanged since your earlier read");
+  });
+
+  it("reads in full again when the packer cut the first read away", async () => {
+    const args = { path: "src.ts", offset: 10, limit: 40 };
+    const turns: ConversationTurn[] = [
+      userTurn("look at src.ts"),
+      ...rows(args, await read(args)),
+      assistantReplyTurn("seen it"),
+      userTurn("look again"),
+      ...rows(args, await read(args)),
+    ];
+    // In one prompt the second read is a pointer...
+    expect(render(turns)).toContain("[unchanged since your earlier read");
+    // ...but once history is held to the current task, the first read is
+    // gone and the second carries the text itself.
+    const packed = packConversation(turns, 100_000, {
+      maxPairs: 1,
+      lowWater: 1,
+    });
+    expect(packed.visibleTurns[0]).toEqual(turns[4]);
+    const rendered = renderPackedConversation(packed);
+    expect(rendered).not.toContain("[unchanged since your earlier read");
+    expect(rendered).toContain("line 10 ");
   });
 });

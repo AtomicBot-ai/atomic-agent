@@ -36,6 +36,8 @@ import {
   createRunTaskHandler,
 } from "./route-tasks.js";
 import { createWebhookHandler } from "./route-webhooks.js";
+import { createCodingModeHandlers } from "./route-coding-mode.js";
+import { createContextPreviewHandler } from "./route-context-preview.js";
 import {
   createRestartMcpServerHandler,
   createSetMcpServerEnabledHandler,
@@ -49,6 +51,10 @@ import {
  * and `/v1/models`.
  */
 export function buildRouteTable(): RouteDefinition[] {
+  // One closure for the GET and the POST: the coding mode is per-process
+  // state, and the live switches cannot be read back as the mode that
+  // set them (see route-coding-mode.ts `inferMode`).
+  const codingMode = createCodingModeHandlers();
   return [
     {
       method: "GET",
@@ -154,6 +160,12 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/events",
       handler: createApprovalEventsHandler(),
     },
+    // The two routes the desktop needs and the TUI does not: the coding-mode
+    // stance it projects onto the approval ladder, and the context figure it
+    // shows before the first message of a session.
+    { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
+    { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
+    { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },

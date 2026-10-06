@@ -214,8 +214,10 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "hi",
-      assistantReply: "hello",
+      // Not a bare greeting: that window is skipped as trivial before
+      // the model is asked, and this test pins the model's NONE path.
+      userMessage: "what is the capital of France?",
+      assistantReply: "Paris.",
     });
 
     expect(traced).toEqual([{ sessionId: "s1", outcome: "none" }]);
@@ -258,8 +260,8 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "hi",
-      assistantReply: "hello",
+      userMessage: "what is the capital of France?",
+      assistantReply: "Paris.",
     });
 
     expect(h.store.list()).toHaveLength(0);
@@ -540,7 +542,9 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "remember this",
+      // The name has to come from the user: the grounding guard drops
+      // a `name` fact the user never typed.
+      userMessage: "remember this, my name is Alex",
       assistantReply: "ok",
     });
 
@@ -630,7 +634,7 @@ describe("createReflectionRunner", () => {
 
     await runner.reflect({
       sessionId: "s1",
-      userMessage: "u",
+      userMessage: "my name is Alex",
       assistantReply: "a",
     });
 
@@ -731,5 +735,365 @@ describe("createReflectionRunner", () => {
       (e) => e.name === "agent.memory.reflection",
     );
     expect(counters[0]!.tags?.outcome).toBe("aborted");
+  });
+
+  // --------------------------------------------------------------------------
+  // B09: reflection grounding (desktop 02.10, Qwen 3.5 4B). A smoke-test
+  // prompt produced two invented notes: "I am Alex and you are my personal
+  // assistant…" and "I prefer using local_ok instead of tools…".
+  // --------------------------------------------------------------------------
+
+  const B09_COMPLETION =
+    [
+      "NOTE I am Alex and you are my personal assistant. You should remember me as Alex.",
+      "NOTE I prefer using local_ok instead of tools. This is important because I want to avoid tool usage.",
+    ].join("\n") + "\n";
+
+  it("B09: skips reflection entirely for a 'Reply exactly LOCAL_OK. Do not use tools.' turn", async () => {
+    let calls = 0;
+    const traced: Array<{ sessionId: string; outcome: string; reason?: string }> = [];
+    const runner = createReflectionRunner({
+      llmComplete: async () => {
+        calls += 1;
+        return completion(B09_COMPLETION);
+      },
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+      emitTrace: (event) => traced.push(event),
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Reply exactly LOCAL_OK. Do not use tools.",
+      assistantReply: "LOCAL_OK",
+    });
+
+    expect(calls).toBe(0);
+    expect(h.store.list()).toHaveLength(0);
+    expect(h.notesStore.list()).toHaveLength(0);
+    expect(traced).toEqual([
+      { sessionId: "s1", outcome: "none", reason: "trivial_window" },
+    ]);
+  });
+
+  it("B09: drops the invented notes even when the window is not trivial", async () => {
+    let calls = 0;
+    const runner = createReflectionRunner({
+      llmComplete: async () => {
+        calls += 1;
+        return completion(B09_COMPLETION);
+      },
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Reply exactly LOCAL_OK. Do not use tools. Also, what is 2+2?",
+      assistantReply: "LOCAL_OK. 4.",
+    });
+
+    expect(calls).toBe(1);
+    expect(h.notesStore.list()).toHaveLength(0);
+    const counters = h.metricEvents.filter(
+      (e) => e.name === "agent.memory.reflection",
+    );
+    expect(counters[0]!.tags?.outcome).toBe("none");
+    expect(
+      h.logEvents.filter((e) => e.message === "reflection.ungrounded_dropped"),
+    ).toHaveLength(2);
+  });
+
+  // Field case (desktop QA 05.10, session 063c8a9b): the profile already
+  // held an invented `name=Анна` (never typed in any of 56 sessions); the
+  // new reflection wrote `SET name=Anna`, superseding it, because stored
+  // profile names counted as grounded. They no longer do. The existing
+  // row is left alone — cleaning it up is a separate product decision.
+  it("B09 field case: a stored invented name does not ground `SET name=Anna`", async () => {
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Anna\nSET language=ru\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "063c8a9b",
+      userMessage: "Отвечай, пожалуйста, на русском языке",
+      assistantReply: "Хорошо, буду отвечать на русском.",
+    });
+
+    expect(h.store.get("name")?.value).toBe("Анна");
+    expect(h.store.history("name")).toHaveLength(1);
+    expect(h.store.get("language")?.value).toBe("ru");
+    expect(
+      h.logEvents.filter((e) => e.message === "reflection.ungrounded_dropped"),
+    ).toHaveLength(1);
+  });
+
+  it("B09: keeps a legit 'my name is Nadia' + 'remember I prefer TypeScript' session", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion(
+          "SET name=Nadia\nNOTE The user prefers TypeScript for new projects [tags=lang]\n",
+        ),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Remember that I prefer TypeScript for new projects.",
+      assistantReply: "Noted.",
+      transcript: [
+        { user: "My name is Nadia.", assistant: "Nice to meet you, Nadia!" },
+        {
+          user: "Remember that I prefer TypeScript for new projects.",
+          assistant: "Noted.",
+        },
+      ],
+    });
+
+    expect(h.store.list().map((f) => `${f.key}=${f.value}`)).toEqual([
+      "name=Nadia",
+    ]);
+    // ATO-199: stamped as checked, so it reaches `### profile` at once.
+    expect(h.store.get("name")?.nameGrounding).toBe("grounded");
+    expect(h.store.listForPrompt().map((f) => f.key)).toEqual(["name"]);
+    expect(h.notesStore.list().map((n) => n.content)).toEqual([
+      "The user prefers TypeScript for new projects",
+    ]);
+  });
+
+  it("B09: drops a name fact the user never typed but keeps the rest of the batch", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion("SET name=Alex\nSET timezone=Europe/Lisbon\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Please use Europe/Lisbon as my timezone",
+      assistantReply: "Done.",
+    });
+
+    expect(h.store.list().map((f) => `${f.key}=${f.value}`)).toEqual([
+      "timezone=Europe/Lisbon",
+    ]);
+  });
+
+  // ATO-201: a name the user only confirmed ("Тебя зовут Алекс?" — "да")
+  // is theirs; the window's own naming question vouches for it.
+  it("ATO-201: writes a name the user confirmed with a bare yes", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Alex\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "да",
+      assistantReply: "Отлично, запомню.",
+      transcript: [
+        { user: "привет", assistant: "Привет! Тебя зовут Алекс?" },
+        { user: "да", assistant: "Отлично, запомню." },
+      ],
+    });
+
+    expect(h.store.get("name")).toMatchObject({ value: "Alex", nameGrounding: "grounded" });
+  });
+
+  it("ATO-201: keeps a late-turn note naming the user from earlier in the session", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("NOTE I am Nadia and I moved to Lisbon\n"),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Я переехала в Лиссабон",
+      assistantReply: "Поздравляю!",
+      groundingTexts: ["Меня зовут Надя", "Я переехала в Лиссабон"],
+    });
+
+    expect(h.notesStore.list().map((n) => n.content)).toEqual([
+      "I am Nadia and I moved to Lisbon",
+    ]);
+  });
+
+  it("ATO-201: a checked profile name vouches for a note; an unchecked one does not", async () => {
+    h.store.set("first_name", "Надя", { nameGrounding: "grounded" });
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion("NOTE The user is Nadia and likes short answers\nNOTE The user is Anna and likes tea\n"),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Отвечай короче, и я люблю чай",
+      assistantReply: "Хорошо.",
+    });
+
+    expect(h.notesStore.list().map((n) => n.content)).toEqual([
+      "The user is Nadia and likes short answers",
+    ]);
+  });
+
+  it("ATO-201: logs a dropped item at info with a short reason and never its text", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Анна\nSET language=ru\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Отвечай на русском",
+      assistantReply: "Хорошо.",
+    });
+
+    const drops = h.logEvents.filter((e) => e.message === "reflection.ungrounded_dropped");
+    expect(drops).toHaveLength(1);
+    expect(drops[0]!.level).toBe("info");
+    expect(drops[0]!.context).toMatchObject({
+      kind: "fact",
+      reason: "ungrounded_identity",
+      detail: "names the user by a name the user never wrote",
+    });
+    expect(JSON.stringify(drops[0]!.context)).not.toContain("Анна");
+  });
+
+  // ATO-188: the agent's profile.set and reflection wrote the same fact
+  // twice, once under a new key.
+  it("ATO-188: shows reflection the profile and skips a fact it already holds", async () => {
+    h.store.set("name", "Надя", { nameGrounding: "grounded" });
+    h.store.set("nickname", "Аня", { nameGrounding: "ungrounded" });
+    h.store.set("prefers_short_answers", "yes");
+    const prompts: string[] = [];
+    const runner = createReflectionRunner({
+      llmComplete: async (params) => {
+        prompts.push(params.prompt);
+        return completion(
+          "SET name=Надя\nSET response_length_preference=short\nSET timezone=Europe/Lisbon\n",
+        );
+      },
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Меня зовут Надя, отвечай кратко, я в Лиссабоне (Europe/Lisbon)",
+      assistantReply: "Хорошо.",
+    });
+
+    // The known profile rides in the tail — never the unconfirmed name.
+    const tail = prompts[0]!.slice(REFLECTION_STABLE_PREFIX.length);
+    expect(tail).toContain("### known profile\n- name=Надя\n- prefers_short_answers=yes\n");
+    expect(tail).not.toContain("Аня");
+    expect(h.store.history("name")).toHaveLength(1);
+    expect(h.store.get("response_length_preference")).toBeNull();
+    expect(h.store.get("timezone")?.value).toBe("Europe/Lisbon");
+  });
+
+  it("ATO-188: a repeated name the user has now written confirms the stored one", async () => {
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Анна\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Вообще-то меня правда зовут Анна",
+      assistantReply: "Поняла, Анна.",
+    });
+
+    expect(h.store.history("name")).toHaveLength(1);
+    expect(h.store.get("name")?.nameGrounding).toBe("grounded");
+  });
+
+  it("ATO-188: the same name under another name key confirms the stored one", async () => {
+    h.store.set("name", "Анна");
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET first_name=Анна\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "Меня зовут Анна",
+      assistantReply: "Приятно познакомиться!",
+    });
+
+    expect(h.store.get("first_name")).toBeNull();
+    expect(h.store.get("name")?.nameGrounding).toBe("grounded");
   });
 });

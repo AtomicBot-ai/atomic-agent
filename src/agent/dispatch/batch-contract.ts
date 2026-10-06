@@ -93,6 +93,12 @@ export interface BatchExecutionContext {
    * transcript and handed to every call of the batch unchanged.
    */
   readRoots?: readonly string[];
+  /**
+   * The session's texts that may vouch for a user's name
+   * (`ToolContext.userGroundingTexts`). Computed by the step from the
+   * transcript and handed to every call of the batch unchanged.
+   */
+  userGroundingTexts?: readonly string[];
   /** The step's provider pin, handed to every call (`ToolContext.providerId`). */
   providerId?: string;
   /**
