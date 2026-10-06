@@ -33,6 +33,7 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  isWindowsArm64,
   listLocalModels,
   listVulkanDevices,
   AUTO_UPDATE_RECHECK_MS,
@@ -58,6 +59,7 @@ import {
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
+  WINDOWS_ARM64_NO_BACKEND_MESSAGE,
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadNotifyChannel,
@@ -1111,6 +1113,18 @@ export async function runLocalModelsUpdate(): Promise<number> {
     const { updateAvailable, latestTag, currentTag } =
       await checkForBackendUpdate(dataDir);
     if (!updateAvailable) {
+      // ATO-252: on Windows on ARM "no release for this platform" with
+      // nothing installed is not "unchanged": there is no engine to run
+      // local models at all yet. Fail with the sentence the desktop shows
+      // (it reads this stderr line), instead of a 0 it would take as done.
+      if (
+        latestTag === null &&
+        isWindowsArm64() &&
+        !isBackendDownloaded(dataDir)
+      ) {
+        process.stderr.write(`${WINDOWS_ARM64_NO_BACKEND_MESSAGE}\n`);
+        return 1;
+      }
       // `latestTag` is null when no scanned release ships this
       // platform's asset — nothing to compare against, so the install
       // on disk stands.

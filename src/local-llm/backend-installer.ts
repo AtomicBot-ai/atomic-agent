@@ -11,12 +11,21 @@ import { downloadFile, type DownloadFileOptions } from "./download-file.js";
 import {
   readBackendVersion,
   writeBackendVersionAt,
+  type BackendVersionInfo,
 } from "./backend-version.js";
 import {
+  isWindowsArm64,
   resolvePlatformAsset,
   UnsupportedPlatformError,
+  WINDOWS_ARM64_NO_BACKEND_MESSAGE,
 } from "./platform-assets.js";
-import { resolveDownloadAsset } from "./windows-backend-variant.js";
+import {
+  getConfiguredBackendVariant,
+  isIncompleteWindowsCudaBackend,
+  isWindowsCudaBackendAsset,
+  resolveDownloadAsset,
+  WINDOWS_BACKEND_ASSETS,
+} from "./windows-backend-variant.js";
 
 const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant-nightly";
 
@@ -186,15 +195,6 @@ export async function checkForBackendUpdate(dataDir: string): Promise<{
 }> {
   const current = readBackendVersion(dataDir);
   const release = await fetchLatestRelease();
-  // A variant mismatch counts as an update even at the same tag: a
-  // Windows box that installed the Vulkan build before its NVIDIA driver
-  // was present would otherwise keep running Vulkan (and offloading to
-  // whatever device Vulkan enumerates) forever. This is a property of
-  // the local machine, not of release ordering, so it is checked before
-  // (and independently of) the recency comparison.
-  const variantStale =
-    current?.asset !== undefined &&
-    current.asset !== resolveDownloadAsset().assetName;
   if (release === null) {
     // Nothing resolvable to update *to* — keep whatever is installed.
     return {
@@ -203,11 +203,77 @@ export async function checkForBackendUpdate(dataDir: string): Promise<{
       currentTag: current?.tag ?? null,
     };
   }
+  // A variant mismatch counts as an update even at the same tag: a
+  // Windows box that installed the Vulkan build before its NVIDIA driver
+  // was present would otherwise keep running Vulkan (and offloading to
+  // whatever device Vulkan enumerates) forever. This is a property of
+  // the local machine, not of release ordering, so it is checked
+  // independently of the recency comparison.
+  const variantStale = isInstalledVariantStale(
+    dataDir,
+    current,
+    resolveDownloadAsset().assetName,
+    release.tag,
+  );
   return {
     updateAvailable: variantStale || isNewerRelease(current, release),
     latestTag: release.tag,
     currentTag: current?.tag ?? null,
   };
+}
+
+/**
+ * Does the build on disk fail to be what this machine wants (`wanted`,
+ * from `resolveDownloadAsset`)? Shared by `checkForBackendUpdate` and the
+ * start path's trust in a recent check (`ensure-latest-backend.ts`), so
+ * both see the same verdict.
+ *
+ * - Another asset than `wanted` is stale — except a Vulkan install that
+ *   stands in for a `wanted` CUDA zip refused from release `latestTag`
+ *   (`refusedCudaAsset`): that zip is still broken, so re-downloading it
+ *   would only be refused again. `latestTag` null (no answer from GitHub)
+ *   keeps the stand-in.
+ * - ATO-244: the right asset is still stale when it is a Windows CUDA
+ *   build missing its CUDA runtime (`isIncompleteWindowsCudaBackend`) —
+ *   it runs on the CPU, silently. The re-download either repairs a
+ *   damaged copy or, when the zip itself lacks the runtime, lands on
+ *   Vulkan (`downloadBackend`).
+ * - An install predating the `asset` field is never stale here.
+ */
+export function isInstalledVariantStale(
+  dataDir: string,
+  installed: BackendVersionInfo | null,
+  wanted: string,
+  latestTag: string | null,
+): boolean {
+  if (installed?.asset === undefined) return false;
+  if (installed.asset !== wanted) {
+    const refused = installed.refusedCudaAsset;
+    const standsIn =
+      refused !== undefined &&
+      refused.asset === wanted &&
+      (latestTag === null || latestTag === refused.tag);
+    return !standsIn;
+  }
+  return (
+    guardsCudaRuntime(wanted) &&
+    isIncompleteWindowsCudaBackend(resolveBackendDir(dataDir))
+  );
+}
+
+/**
+ * Whether the CUDA-runtime guard applies to `assetName`: a Windows CUDA
+ * build picked by detection. An operator who pinned a CUDA variant made
+ * the call — typically because the CUDA Toolkit on their PATH supplies
+ * the runtime the zip lacks — so a pin is installed and kept as is, the
+ * same respect the CPU fallback gives pins (`cpu-backend-fallback.ts`).
+ */
+function guardsCudaRuntime(assetName: string): boolean {
+  return (
+    process.platform === "win32" &&
+    getConfiguredBackendVariant() === "auto" &&
+    isWindowsCudaBackendAsset(assetName)
+  );
 }
 
 /**
@@ -247,23 +313,28 @@ export function isBackendDownloaded(dataDir: string): boolean {
   }
 }
 
+type DownloadBackendOptions = Pick<
+  DownloadFileOptions,
+  | "onProgress"
+  | "onRetry"
+  | "signal"
+  | "maxRetries"
+  | "retryDelayMs"
+  | "giveUpAfterMs"
+>;
+
 export async function downloadBackend(
   dataDir: string,
-  opts?: Pick<
-    DownloadFileOptions,
-    | "onProgress"
-    | "onRetry"
-    | "signal"
-    | "maxRetries"
-    | "retryDelayMs"
-    | "giveUpAfterMs"
-  >,
+  opts?: DownloadBackendOptions,
 ): Promise<{ ok: true; tag: string }> {
   const { assetName, binaryName } = resolveDownloadAsset();
   // Always hit GitHub for an actual install so we don't grab a stale
   // tag from the snapshot cache.
   const release = await fetchLatestRelease({ force: true });
   if (release === null) {
+    // ATO-252: the Windows on ARM app ships before (or without) an arm64
+    // engine build. Say that in words instead of an asset name.
+    if (isWindowsArm64()) throw new Error(WINDOWS_ARM64_NO_BACKEND_MESSAGE);
     throw new Error(
       `No release found containing asset ${assetName} (scanned ${RELEASES_PER_PAGE} releases)`,
     );
@@ -294,13 +365,35 @@ export async function downloadBackend(
   mkdirSync(stagingDir, { recursive: true });
 
   try {
-    const archivePath = join(stagingDir, assetName);
-    await downloadFile(asset.browser_download_url, archivePath, {
-      ...opts,
-      userAgent: "atomic-agent/local-llm-backend-download",
-    });
+    await stageAsset(asset, stagingDir, binaryName, opts);
 
-    await extractBackendArchive(archivePath, stagingDir, binaryName);
+    // ATO-244: a Windows CUDA zip without its CUDA runtime would install
+    // fine and then run every model on the CPU. Refuse it and install
+    // the release's Vulkan build instead, recording the refusal so the
+    // variant-staleness check does not pull the same broken zip again
+    // on the next start (`isInstalledVariantStale`).
+    let installedAsset = assetName;
+    let refusedCudaAsset: BackendVersionInfo["refusedCudaAsset"];
+    if (
+      guardsCudaRuntime(assetName) &&
+      isIncompleteWindowsCudaBackend(stagingDir)
+    ) {
+      const vulkan = release.assets.find(
+        (a) => a.name === WINDOWS_BACKEND_ASSETS.vulkan,
+      );
+      if (!vulkan) {
+        throw new Error(
+          `${assetName} in ${release.tag} ships without its CUDA runtime ` +
+            `(no cudart64_*.dll next to ggml-cuda.dll) and the release has no ` +
+            `${WINDOWS_BACKEND_ASSETS.vulkan} to use instead`,
+        );
+      }
+      rmDirQuiet(stagingDir);
+      mkdirSync(stagingDir, { recursive: true });
+      await stageAsset(vulkan, stagingDir, binaryName, opts);
+      installedAsset = vulkan.name;
+      refusedCudaAsset = { asset: assetName, tag: release.tag };
+    }
 
     // The version record lives inside `backend/`, so it is staged with
     // the rest of the tree and rides in on the swap. It therefore never
@@ -309,8 +402,9 @@ export async function downloadBackend(
     writeBackendVersionAt(stagingDir, {
       tag: release.tag,
       downloadedAt: new Date().toISOString(),
-      asset: assetName,
+      asset: installedAsset,
       ...(release.releasedAt ? { releasedAt: release.releasedAt } : {}),
+      ...(refusedCudaAsset ? { refusedCudaAsset } : {}),
     });
 
     swapInStagedBackend(backendDir, stagingDir, retiredDir);
@@ -321,6 +415,21 @@ export async function downloadBackend(
   }
 
   return { ok: true, tag: release.tag };
+}
+
+/** Download `asset` into `stagingDir` and unpack it there. */
+async function stageAsset(
+  asset: ReleaseAsset,
+  stagingDir: string,
+  binaryName: string,
+  opts: DownloadBackendOptions | undefined,
+): Promise<void> {
+  const archivePath = join(stagingDir, asset.name);
+  await downloadFile(asset.browser_download_url, archivePath, {
+    ...opts,
+    userAgent: "atomic-agent/local-llm-backend-download",
+  });
+  await extractBackendArchive(archivePath, stagingDir, binaryName);
 }
 
 export { UnsupportedPlatformError };

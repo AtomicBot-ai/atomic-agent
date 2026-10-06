@@ -323,6 +323,26 @@ describe("maybeAutoUpdateBackend with recheckAfterMs (backlog 39)", () => {
     expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
   });
 
+  it("trusts a recent check for a Vulkan install standing in for a refused CUDA zip (ATO-244)", async () => {
+    // The wanted CUDA zip of this very release shipped without its
+    // runtime and was refused: asking GitHub again on every start would
+    // only find the same release, so the record stands as usual.
+    writeBackendVersion(dataDir, {
+      tag: INSTALLED,
+      downloadedAt: new Date(clock).toISOString(),
+      asset: "llama-turboquant-windows-x64-vulkan.zip",
+      refusedCudaAsset: {
+        asset: resolveDownloadAsset().assetName,
+        tag: INSTALLED,
+      },
+    });
+    nothingNewer();
+    await start();
+    clock += 60_000;
+    expect((await start()).action).toBe("recent");
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(1);
+  });
+
   it("holds off a failed check for fifteen minutes, not six hours", async () => {
     vi.mocked(checkForBackendUpdate).mockRejectedValue(new Error("fetch failed"));
     expect(await start()).toEqual({ action: "check_failed", error: "fetch failed" });

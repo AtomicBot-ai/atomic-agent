@@ -1497,8 +1497,11 @@ export interface UserManagedLocalLlmConfig {
    * Windows-only — every other platform, Linux arm64 included,
    * publishes a single asset, so there is nothing for the preference to
    * choose between and it is ignored there.
-   *   - `"auto"` (default) — probe `nvidia-smi` and pick the newest CUDA
-   *     build the driver can run, else Vulkan.
+   *   - `"auto"` (default) — probe `nvidia-smi`: the cuda-12.4 build for
+   *     a driver reporting CUDA >= 12.4, Vulkan for Blackwell cards
+   *     (12.4 has no code for them), older drivers and no NVIDIA GPU.
+   *     Never cuda-13.3 while that zip ships without its CUDA runtime
+   *     (ATO-244, see `selectWindowsBackendAsset`).
    *   - `"cpu"` — the CPU-only build. For machines whose Vulkan stack
    *     cannot load a model at all (iGPU-only boxes); also written back
    *     automatically when a GPU build fails to serve (see
@@ -1506,7 +1509,8 @@ export interface UserManagedLocalLlmConfig {
    *     only disables offload — the broken compute backend would still
    *     be baked into the binary.
    *   - `"vulkan"` / `"cuda-12.4"` / `"cuda-13.3"` — pin that build
-   *     (and undo an automatic CPU fallback after a driver fix).
+   *     (and undo an automatic CPU fallback after a driver fix). A pinned
+   *     `"cuda-13.3"` needs the CUDA Toolkit's runtime on the PATH.
    * Added in config v47; older files transparently get `"auto"`.
    */
   backendVariant: BackendVariantPreference;

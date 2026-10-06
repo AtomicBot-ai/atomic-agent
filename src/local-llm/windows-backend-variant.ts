@@ -1,10 +1,15 @@
 import { execSync } from "node:child_process";
+import { readdirSync } from "node:fs";
 
 import {
   assertLinuxArm64Glibc,
   detectGlibcVersion,
 } from "./linux-arm64-backend-variant.js";
-import { resolvePlatformAsset, type PlatformAsset } from "./platform-assets.js";
+import {
+  resolvePlatformAsset,
+  WINDOWS_ARM64_BACKEND_ASSET,
+  type PlatformAsset,
+} from "./platform-assets.js";
 
 /**
  * The turboquant repo ships four Windows x64 backend builds. The binary
@@ -27,9 +32,10 @@ export const WINDOWS_BACKEND_ASSETS = {
 /**
  * Operator-facing values for `localModels.managed.backendVariant`.
  * `"auto"` keeps the nvidia-smi driven detection; the rest pin one of
- * the Windows zips outright (no probe). Meaningful on win32 only —
- * macOS, Linux x64 and Linux arm64 each publish a single asset, so the
- * preference has nothing to choose between and is ignored there.
+ * the Windows zips outright (no probe). Meaningful on win32 x64 only —
+ * macOS, Linux x64, Linux arm64 and Windows arm64 each publish a single
+ * asset, so the preference has nothing to choose between and is ignored
+ * there.
  */
 export const BACKEND_VARIANT_PREFERENCES = [
   "auto",
@@ -84,12 +90,47 @@ export function getConfiguredBackendVariant(): BackendVariantPreference {
 export function isWindowsGpuBackendAsset(
   assetName: string | undefined,
 ): boolean {
+  // ATO-252: the arm64 build is CPU only; there is nothing to fall back from.
+  if (assetName === WINDOWS_ARM64_BACKEND_ASSET) return false;
   if (assetName === undefined) return true;
   return (
     assetName === WINDOWS_BACKEND_ASSETS.vulkan ||
     assetName === WINDOWS_BACKEND_ASSETS.cuda124 ||
     assetName === WINDOWS_BACKEND_ASSETS.cuda133
   );
+}
+
+/** True for either Windows CUDA build. */
+export function isWindowsCudaBackendAsset(
+  assetName: string | undefined,
+): boolean {
+  return (
+    assetName === WINDOWS_BACKEND_ASSETS.cuda124 ||
+    assetName === WINDOWS_BACKEND_ASSETS.cuda133
+  );
+}
+
+/**
+ * ATO-244: is `dir` a Windows CUDA build that cannot load on a machine
+ * without the CUDA Toolkit? `ggml-cuda.dll` links against the CUDA
+ * runtime, and a build is only self-contained when a `cudart64_*.dll`
+ * sits next to it. Without one the DLL fails to load silently,
+ * llama-server reports `Available devices: (none)` and the model runs
+ * on the CPU — the cuda-13.3 zip of turboquant-6df272c shipped exactly
+ * like that. A dir
+ * with no `ggml-cuda.dll` (Vulkan, CPU, not installed) is never
+ * "incomplete". File names are compared case-insensitively, as Windows
+ * resolves them.
+ */
+export function isIncompleteWindowsCudaBackend(dir: string): boolean {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir).map((e) => e.toLowerCase());
+  } catch {
+    return false;
+  }
+  if (!entries.includes("ggml-cuda.dll")) return false;
+  return !entries.some((e) => /^cudart64_\d+\.dll$/.test(e));
 }
 
 export interface CudaVersion {
@@ -126,21 +167,82 @@ function isAtLeast(v: CudaVersion, major: number, minor: number): boolean {
   return v.major > major || (v.major === major && v.minor >= minor);
 }
 
+/** A GPU's CUDA compute capability, e.g. `8.6` for an RTX 3080 Ti. */
+export interface ComputeCapability {
+  major: number;
+  minor: number;
+}
+
+/**
+ * Parse `nvidia-smi --query-gpu=compute_cap --format=csv,noheader`: one
+ * `major.minor` line per GPU. Returns the highest capability listed, or
+ * null when no line parses (no GPU, a driver too old to know the field,
+ * which prints `[N/A]` or an error instead).
+ */
+export function parseComputeCapabilities(
+  output: string,
+): ComputeCapability | null {
+  let best: ComputeCapability | null = null;
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\.(\d+)$/);
+    if (!match) continue;
+    const cc = { major: Number(match[1]), minor: Number(match[2]) };
+    if (
+      best === null ||
+      cc.major > best.major ||
+      (cc.major === best.major && cc.minor > best.minor)
+    ) {
+      best = cc;
+    }
+  }
+  return best;
+}
+
+/**
+ * Lowest compute capability the cuda-12.4 build has no code for. The
+ * 12.4 toolkit stops at sm_90 (Hopper); every Blackwell part — sm_100
+ * datacenter, sm_120 RTX 50-series — postdates it, so the build either
+ * JITs from PTX or falls off the GPU there.
+ */
+const FIRST_CC_BEYOND_CUDA_12_4 = 10;
+
 /**
  * Pure selection of the Windows backend zip from a detected driver CUDA
- * version. Picks the newest CUDA build the driver can run, otherwise
- * Vulkan. `null` (no NVIDIA driver / unparseable) always yields Vulkan.
+ * version and the highest GPU compute capability. `null` CUDA (no NVIDIA
+ * driver / unparseable) always yields Vulkan; an unknown capability is
+ * treated as pre-Blackwell.
+ *
+ * ATO-244: the cuda-13.3 zip is never picked by detection. As of release
+ * turboquant-6df272c it ships `ggml-cuda.dll` without the CUDA runtime it
+ * links against (no `cudart64_13.dll`, `cublas64_13.dll`,
+ * `cublasLt64_13.dll`), while the cuda-12.4 zip carries its own
+ * `cudart64_12` / `cublas64_12` / `cublasLt64_12`. On a machine without
+ * the CUDA Toolkit, ggml-cuda.dll therefore fails to load silently,
+ * llama-server lists no devices and the model runs on the CPU — every
+ * current NVIDIA driver (r580+, CUDA 13.x) used to land there. The 12.4
+ * build is the right pick for any driver reporting CUDA >= 12.4: newer
+ * drivers run older CUDA runtimes, and 12.4 has native code for Ampere,
+ * Ada and Hopper. Blackwell is the exception — 12.4 has no sm_100/sm_120
+ * code — so those cards get Vulkan rather than the runtime-less 13.3 zip.
+ * Once the 13.3 zip ships its runtime DLLs (check the release assets for
+ * `cudart64_13.dll`), drivers >= 13.0 — and Blackwell above all — can go
+ * back to it; `isIncompleteWindowsCudaBackend` and the installer's
+ * refusal of a runtime-less CUDA zip are the safety net if that regresses.
+ * Operators with the toolkit installed can still pin `"cuda-13.3"`.
  */
-export function selectWindowsBackendAsset(cuda: CudaVersion | null): string {
+export function selectWindowsBackendAsset(
+  cuda: CudaVersion | null,
+  computeCapability: ComputeCapability | null = null,
+): string {
   if (cuda === null) return WINDOWS_BACKEND_ASSETS.vulkan;
-  // Threshold is the driver's CUDA *major*, not the build's exact minor:
-  // CUDA minor-version compatibility lets a 13.3-built binary run on any
-  // 13.x driver. Gating on >= 13.3 sent 13.0 drivers to the 12.4 build,
-  // which has no sm_120 (Blackwell) code at all — that toolkit predates
-  // the arch, so RTX 50-series had to JIT from PTX or fall off the GPU.
-  if (isAtLeast(cuda, 13, 0)) return WINDOWS_BACKEND_ASSETS.cuda133;
-  if (isAtLeast(cuda, 12, 4)) return WINDOWS_BACKEND_ASSETS.cuda124;
-  return WINDOWS_BACKEND_ASSETS.vulkan;
+  if (!isAtLeast(cuda, 12, 4)) return WINDOWS_BACKEND_ASSETS.vulkan;
+  if (
+    computeCapability !== null &&
+    computeCapability.major >= FIRST_CC_BEYOND_CUDA_12_4
+  ) {
+    return WINDOWS_BACKEND_ASSETS.vulkan;
+  }
+  return WINDOWS_BACKEND_ASSETS.cuda124;
 }
 
 /**
@@ -162,13 +264,36 @@ export function detectDriverCudaVersion(): CudaVersion | null {
   }
 }
 
+/**
+ * Run `nvidia-smi --query-gpu=compute_cap` and return the highest GPU
+ * compute capability, or null when the query fails (tool missing, a
+ * driver too old for the field). Separate from the cache for the same
+ * reason as `detectDriverCudaVersion`.
+ */
+export function detectGpuComputeCapability(): ComputeCapability | null {
+  try {
+    const out = execSync(
+      "nvidia-smi --query-gpu=compute_cap --format=csv,noheader",
+      {
+        timeout: 4000,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).toString();
+    return parseComputeCapabilities(out);
+  } catch {
+    return null;
+  }
+}
+
 let cachedWindowsAsset: string | null = null;
 
 /**
  * Detect the best Windows backend asset for this machine, caching the
  * result process-wide. Hardware does not change during a run, so we
- * probe `nvidia-smi` at most once; the hot path (`isBackendDownloaded`
- * poll) never triggers a probe because it only needs `binaryName`.
+ * probe `nvidia-smi` at most once per query; the hot path
+ * (`isBackendDownloaded` poll) never triggers a probe because it only
+ * needs `binaryName`.
  * A non-`auto` configured variant bypasses both the probe and the
  * cache — the preference can change mid-process (config edit, CPU
  * fallback), so it must never be shadowed by a stale detection result.
@@ -178,7 +303,14 @@ export function detectWindowsBackendAsset(): string {
     return ASSET_BY_VARIANT_PREFERENCE[configuredBackendVariant];
   }
   if (cachedWindowsAsset !== null) return cachedWindowsAsset;
-  cachedWindowsAsset = selectWindowsBackendAsset(detectDriverCudaVersion());
+  const cuda = detectDriverCudaVersion();
+  // The capability only matters once a CUDA build is in play, so a box
+  // without a usable driver pays for one probe, not two.
+  const computeCapability =
+    cuda !== null && isAtLeast(cuda, 12, 4)
+      ? detectGpuComputeCapability()
+      : null;
+  cachedWindowsAsset = selectWindowsBackendAsset(cuda, computeCapability);
   return cachedWindowsAsset;
 }
 
@@ -191,8 +323,13 @@ export function resetWindowsBackendAssetCache(): void {
  * Resolve the platform asset for an actual download. Identical to
  * `resolvePlatformAsset` everywhere but Windows, where it swaps the
  * default Vulkan `assetName` for the CUDA build when a compatible
- * NVIDIA driver is present. `binaryName` is unchanged within a
- * platform, so install paths and `isBackendDownloaded` stay stable.
+ * NVIDIA driver is present (see `selectWindowsBackendAsset`).
+ * `binaryName` is unchanged within a platform, so install paths and
+ * `isBackendDownloaded` stay stable.
+ *
+ * Windows arm64 (ATO-252) keeps `resolvePlatformAsset`'s single CPU
+ * asset too: the x64 zips the probe chooses between cannot run there,
+ * so neither detection nor a configured `backendVariant` applies.
  *
  * Linux arm64 keeps `resolvePlatformAsset`'s single asset — there is
  * only one published arm64 build — but refuses a host whose glibc
@@ -212,6 +349,7 @@ export function resolveDownloadAsset(
     );
     return base;
   }
+  if (base.platform === "win32" && base.arch === "arm64") return base;
   if (base.platform !== "win32") return base;
   return { ...base, assetName: detectWindowsBackendAsset() };
 }
