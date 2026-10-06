@@ -7,6 +7,7 @@ import type {
 import type { LessonIndexEntry } from "../../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../../memory/profile-store.js";
+import { isProfileFactPromptVisible } from "../../memory/profile-name-keys.js";
 import type { VoteEventRow } from "../../memory/voting/vote-store.js";
 import type { MemorySummaryRow } from "./memory-panel-state.js";
 
@@ -20,6 +21,12 @@ export function toProfileSummaryRows(
     secondary: truncate(f.value, 56),
     meta: [
       f.pinned ? "pinned" : "contextual",
+      // ATO-199: a name no user message vouches for is kept, not used.
+      isProfileFactPromptVisible(f)
+        ? null
+        : f.nameGrounding === "ungrounded"
+          ? "unconfirmed name"
+          : "name not checked yet",
       f.voteScore !== 0 ? `vote ${formatVote(f.voteScore)}` : null,
     ]
       .filter(Boolean)

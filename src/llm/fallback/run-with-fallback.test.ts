@@ -11,6 +11,7 @@ import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import { GrammarError } from "../reliability/llm-failures.js";
+import { SubscriptionCliNotInstalledError } from "../provider/subscription-cli/subscription-cli-errors.js";
 import {
   classifyFailure,
   isNetworkError,
@@ -258,6 +259,27 @@ describe("runWithFallback", () => {
         return id;
       });
       expect(seen).toEqual(["backup"]);
+    });
+  });
+
+  describe("an exhausted chain whose primary is a CLI that is not installed", () => {
+    it("throws the missing CLI, not the local link's refused connection", async () => {
+      // ATO-117, on Windows: `claude` was missing, the chain fell over to
+      // a local server with no model, and the turn waited out that
+      // link's outage as "no connection".
+      const chain = makeChain(["claude-cli", "local-llama"]);
+      const missing = new SubscriptionCliNotInstalledError(
+        "claude",
+        "Install Claude Code and sign in, or choose another provider.",
+        "Claude Code",
+      );
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "claude-cli") throw missing;
+          throw new TypeError("fetch failed");
+        }),
+      ).rejects.toBe(missing);
+      expect(readFailingLink(missing)).toBe("claude-cli");
     });
   });
 

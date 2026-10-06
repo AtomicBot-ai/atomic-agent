@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
 
@@ -88,9 +88,12 @@ describe("/api/tasks", () => {
       origin: "http",
       maxAttempts: 1,
     });
+    // Through the runner, which also stops the turn of a running task.
+    const cancel = vi.spyOn(harness.runtime.taskRunner, "cancel");
     const first = await fetch(`${harness.baseUrl}/api/tasks/${created.id}`, {
       method: "DELETE",
     });
+    expect(cancel).toHaveBeenCalledWith(created.id);
     expect(first.status).toBe(200);
     const firstBody = (await first.json()) as TaskJson;
     expect(firstBody.status).toBe("cancelled");

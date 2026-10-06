@@ -455,7 +455,9 @@ export async function runAgentCommand(args: string[]): Promise<number> {
           runtime.approvals.resolve({
             approvalId: request.approvalId,
             approved: answer.approved,
-            reason: answer.approved ? "cli-approved" : "cli-denied",
+            // No reason on a deny: it would reach the model as the
+            // user's own words (see `ApprovalDecision.reason`).
+            ...(answer.approved ? { reason: "cli-approved" } : {}),
             ...(answer.grant ? { grant: answer.grant } : {}),
           });
         });

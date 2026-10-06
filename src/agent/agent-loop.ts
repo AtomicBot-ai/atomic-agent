@@ -43,6 +43,7 @@ import {
 import { readFailingLink } from "../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import { readErrnoCode } from "../llm/errno-code.js";
+import { isSubscriptionCliSetupError } from "../llm/provider/subscription-cli/subscription-cli-errors.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
   classifyProviderWaitCause,
@@ -63,7 +64,9 @@ import { incrementTurnCount, recordTurn } from "../session/session-state.js";
 import {
   assistantReplyTurn,
   isFinalReplyTurn,
+  isStoppedTurnMarker,
   steeredUserTurn,
+  stoppedTurnMarker,
   userTurn,
 } from "../session/conversation-turn.js";
 import {
@@ -80,6 +83,7 @@ import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
+import { chatLinesOf, groundingTextsOf } from "../memory/name-grounding.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import type { MemoryHealthWarning } from "../memory/health/index.js";
 import { executeStep } from "./step-executor.js";
@@ -162,6 +166,12 @@ export interface AgentLoopDependencies {
    * See `approval/fanout-scope.ts`: the answer is scoped to one job.
    */
   clearFanoutTurnGrant?: (sessionId: string) => void;
+  /**
+   * Forget the calls the user declined on this session (see
+   * `ApprovalGate.forgetDeclined`): the gate refuses a repeat of one
+   * for the rest of the turn, and a new turn or a steer is a new answer.
+   */
+  forgetDeclinedApprovals?: (sessionId: string) => void;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -273,7 +283,9 @@ export interface AgentLoopDependencies {
    * Invoked once per step to produce the current user-profile snapshot.
    * The resulting array is rendered into the `### profile` section of
    * the prompt tail. `undefined` suppresses the section entirely — wire
-   * this only when the memory fabric is enabled.
+   * this only when the memory fabric is enabled. Bootstrap wires
+   * `profileStore.listForPrompt()`, so a name the user never wrote
+   * (ATO-199) is not in it.
    */
   profileFactsProvider?: () => readonly ProfileFact[];
   /**
@@ -507,6 +519,12 @@ export interface SteeringChannel {
  * expiring — see {@link isOwnLlamaDeadlineExpiry}.
  */
 function isWaitableOutage(err: unknown): boolean {
+  // A vendor CLI that is not installed or is signed out. The step
+  // executor wraps it as a status-less `TransportError`, which reads as
+  // "no answer at all" below, so it has to be named before that split:
+  // a Windows user without `claude` read "no connection" for the whole
+  // five-minute wait instead of being told to install it (ATO-117).
+  if (isSubscriptionCliSetupError(err)) return false;
   // Our own clock ran out. Never evidence about the provider, so it is
   // decided before the status split rather than inside it: the shape
   // arrives as `status === null`, which is otherwise the strongest
@@ -1171,6 +1189,9 @@ export class AgentLoop {
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
     this.deps.steeringInbox?.open(session.id);
+    // Like the fan-out grant: forgotten when a turn starts rather than
+    // when it ends, so an aborted turn cannot carry a no into the next.
+    this.deps.forgetDeclinedApprovals?.(session.id);
     try {
       return await this.runTurnInner(session, options);
     } finally {
@@ -1615,6 +1636,9 @@ export class AgentLoop {
         this.deps.onEvent?.({ type: "steer_applied", text, stepIndex: i });
       }
       if (steered.length > 0) {
+        // The user spoke again: a call they declined earlier in the turn
+        // may be what they are now asking for, so it asks again.
+        this.deps.forgetDeclinedApprovals?.(state.id);
         pendingNotice = composeSteerNotice(pendingNotice, steered);
         this.deps.logger?.info("mid-turn steering applied", {
           sessionId: state.id,
@@ -1688,7 +1712,7 @@ export class AgentLoop {
           : durationCeilingMs - elapsedMs,
       );
       try {
-        // `profileFactsProvider` is a raw `profileStore.list()`.
+        // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
         // pinned facts regardless of the contextual gate, so this step
         // renders with no `### profile` section at all — but it is the
@@ -2691,6 +2715,7 @@ export class AgentLoop {
           category,
         });
         if (cancelled) {
+          state = recordStopMarker(state, options);
           state = { ...state, status: "cancelled" };
           this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
           state = incrementTurnCount(state);
@@ -2771,6 +2796,7 @@ export class AgentLoop {
     }
 
     if (reason === "cancelled") {
+      state = recordStopMarker(state, options);
       state = { ...state, status: "cancelled" };
       this.deps.onEvent?.({ type: "loop_completed", reason });
     } else if (reason === "max_steps") {
@@ -2892,7 +2918,7 @@ export class AgentLoop {
           // renderer surfaces them whenever they are pinned or pass
           // the contextual-keyword gate. Sourcing them here keeps the
           // decorator's hydration cheap.
-          // `profileFactsProvider` is a raw `profileStore.list()`.
+          // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
           // It is only ever an input to the fire-and-forget reflection
           // below, so a store failure here must not fail the turn the
           // user is waiting on — an empty allowlist just means the
@@ -2959,6 +2985,10 @@ export class AgentLoop {
               ...(segmentationActive && transcript.length > 0
                 ? { transcript }
                 : {}),
+              // ATO-201. What may vouch for a name besides the window:
+              // the session's user messages, and a naming question the
+              // user answered "yes".
+              groundingTexts: groundingTextsOf(chatLinesOf(state.turns)),
             })
             .catch((err: unknown) => {
               this.deps.logger?.warn("reflection failed after dispatch", {
@@ -3029,9 +3059,39 @@ function invokeLessonLifecycle(
   }
 }
 
+/**
+ * Close a turn the user stopped with the marker the next turn reads.
+ *
+ * Without it the stopped request stayed open in the transcript — a
+ * `user` row with nothing after it — and the next message was read as
+ * an addition to it rather than a request of its own (ATO-233). The row
+ * closes the macro-turn, so the packer, the boundaries and the request
+ * picker (`pickOriginalRequest`) treat the stopped task as over.
+ *
+ * Recorded only, never emitted as an `assistant_reply` event: every
+ * surface already draws its own stop line from `loop_completed` /
+ * `loop_failed`, the same reason the failed-turn record is not emitted.
+ * Not for an ephemeral turn: a fusion worker is stopped by its
+ * orchestrator or its own clock, not the user, and its session is
+ * thrown away. And not when the transcript already ends on a closed
+ * macro-turn — a turn started without a message and stopped before it
+ * recorded anything has no request of its own to mark, and a second
+ * marker after a first one would say the same thing twice.
+ */
+function recordStopMarker(
+  state: SessionState,
+  options: RunTurnOptions,
+): SessionState {
+  if (options.ephemeral) return state;
+  const last = state.turns[state.turns.length - 1];
+  if (last === undefined || isFinalReplyTurn(last)) return state;
+  return recordTurn(state, stoppedTurnMarker());
+}
+
 function findLastAssistantReply(state: SessionState): string | null {
   for (let i = state.turns.length - 1; i >= 0; i -= 1) {
     const turn = state.turns[i];
+    if (isStoppedTurnMarker(turn)) continue;
     if (isFinalReplyTurn(turn)) return turn.text;
   }
   return null;
@@ -3154,6 +3214,13 @@ function collectLastUserAssistantPairs(
       // correction alone. Join them in order instead.
       pendingUser =
         pendingUser === null ? turn.text : `${pendingUser}\n\n${turn.text}`;
+    } else if (isStoppedTurnMarker(turn)) {
+      // A request the user stopped got no answer and was withdrawn.
+      // The marker is not the agent's words, so it pairs with nothing,
+      // and the request is dropped rather than carried into the next
+      // pair, where it would be extracted as part of what the user
+      // asked for then.
+      pendingUser = null;
     } else if (isFinalReplyTurn(turn) && pendingUser !== null) {
       pairs.push({ user: pendingUser, assistant: turn.text });
       pendingUser = null;
@@ -3186,7 +3253,9 @@ function collectRecentUserAssistantTurns(
         continue;
       }
       rows.push({ role: "user", text: turn.text });
-    } else if (isFinalReplyTurn(turn)) {
+    } else if (isFinalReplyTurn(turn) && !isStoppedTurnMarker(turn)) {
+      // A stop marker is not something the agent said; the rewriter
+      // reads this list as the conversation.
       rows.push({ role: "assistant", text: turn.text });
     }
   }

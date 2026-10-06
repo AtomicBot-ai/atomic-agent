@@ -18,6 +18,17 @@ vi.mock("../../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
+    // Never the real ones either: the backend in these tests is an empty
+    // stub file, and spawning it fails with EACCES from an 'error' event
+    // nobody listens for — an unhandled error that fails the run, unless
+    // something already holds the managed port and the start bails before
+    // the spawn. A start that gets this far is all a test here needs.
+    resolveManagedDevice: vi.fn(async () => undefined),
+    listVulkanDevices: vi.fn(async () => []),
+    probeNvidiaVramMiB: vi.fn(async () => null),
+    startChatAndEmbeddingDaemons: vi.fn(async () => {
+      throw new Error("no llama-server in unit tests");
+    }),
   };
 });
 
@@ -54,6 +65,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.stopEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockReset();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockClear();
   });
 
   afterEach(() => {
@@ -221,11 +233,19 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValueOnce({
+      chat: { pid: 4242 },
+      embedding: { skipped: true },
+    });
+
     // With the check skipped there is nothing to bail on, so the start
     // proceeds past the point where `backendUsable: false` would stop it.
-    await orchestrator.startDaemon({ backendAlreadyChecked: true });
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true }),
+    ).resolves.toBe(true);
 
     expect(localLlm.maybeAutoUpdateBackend).not.toHaveBeenCalled();
+    expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledTimes(1);
   });
 
   it("still checks when startDaemon is invoked without the flag", async () => {
@@ -247,6 +267,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     await expect(orchestrator.startDaemon()).resolves.toBe(false);
 
     expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1);
+    expect(localLlm.startChatAndEmbeddingDaemons).not.toHaveBeenCalled();
   });
 
   // The key binding only proves an event fires; this proves the flag is

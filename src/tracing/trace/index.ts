@@ -7,6 +7,7 @@ export type {
   TraceLoopDetected,
   TraceParseRetry,
   TraceBatchTrimmed,
+  TraceBatchApprovalBarriers,
   TracePromptCaptured,
   TracePromptTokens,
   TraceProfileClipped,

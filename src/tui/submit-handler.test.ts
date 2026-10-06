@@ -684,3 +684,54 @@ describe("slash commands that only an orchestrator can carry out", () => {
     },
   );
 });
+
+describe("Enter in the session picker", () => {
+  function pickerState(): TuiState {
+    return {
+      ...createInitialTuiState(fakeSession()),
+      inputValue: "draft for s1",
+      sessionPickerOpen: true,
+      sessionPickerCursor: 0,
+      sessionPickerList: [
+        {
+          sessionId: "s2",
+          workingDir: "/tmp",
+          turnCount: 1,
+          stepCount: 1,
+          updatedAt: 0,
+          preview: "other thread",
+          pinned: false,
+        },
+      ],
+    };
+  }
+
+  it("switches without clearing the buffer the switch just handed over", () => {
+    // ATO-37: the switch parks the left thread's draft and restores the
+    // target's; a clear after it threw the target's draft away for good.
+    const onSessionSwitchRequested = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "draft for s1",
+      pickerState(),
+      (a) => dispatched.push(a),
+      stubCallbacks({ onSessionSwitchRequested }),
+    );
+    expect(onSessionSwitchRequested).toHaveBeenCalledWith("s2");
+    expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
+  });
+
+  it("still closes and clears when there is nothing to switch to", () => {
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "draft for s1",
+      { ...pickerState(), sessionPickerList: [] },
+      (a) => dispatched.push(a),
+      stubCallbacks(),
+    );
+    expect(dispatched.map((a) => a.type)).toEqual([
+      "session_picker_closed",
+      "input_changed",
+    ]);
+  });
+});

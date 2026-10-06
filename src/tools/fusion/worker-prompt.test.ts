@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assistantReplyTurn,
+  stoppedTurnMarker,
   userTurn,
 } from "../../session/conversation-turn.js";
 import { parseDelegateArgs } from "./delegate-args.js";
@@ -249,6 +250,40 @@ describe("pickOriginalRequest", () => {
         earlierTurns: [userTurn("first"), userTurn("second")],
       }),
     ).toBe("second");
+  });
+
+  it("does not merge a short message with a request the user stopped", () => {
+    // ATO-233: "how are you?" after a stopped job reached every worker
+    // with the stopped job quoted as the ORIGINAL REQUEST.
+    expect(
+      pickOriginalRequest({
+        current: "how are you?",
+        earlierTurns: [userTurn(LONG), stoppedTurnMarker()],
+      }),
+    ).toBe("how are you?");
+  });
+
+  it("does not fall back to a request the user stopped", () => {
+    expect(
+      pickOriginalRequest({
+        current: "",
+        earlierTurns: [userTurn("names100"), stoppedTurnMarker()],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("still quotes a request answered after an earlier stop", () => {
+    const picked = pickOriginalRequest({
+      current: "continue",
+      earlierTurns: [
+        userTurn("the stopped one"),
+        stoppedTurnMarker(),
+        userTurn(LONG),
+        assistantReplyTurn("ran out of steps, say continue"),
+      ],
+    });
+    expect(picked).toContain(LONG.trim());
+    expect(picked).not.toContain("the stopped one");
   });
 
   it("returns the short message alone when nothing came before it, and nothing when there is nothing", () => {

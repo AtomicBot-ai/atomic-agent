@@ -80,8 +80,11 @@ export {
   WorkerRunCollector,
   classifyWorkerStatus,
   delegateOutcome,
+  deliveredNothing,
   describeWaves,
   formatDelegateOutput,
+  queuedWorkerHint,
+  readSlotOccupancy,
   resultCarriesApprovalRefusal,
   workerFailureHint,
   FILE_WRITING_TOOLS,
@@ -97,6 +100,7 @@ export type {
   WorkerStopCause,
   WorkerTaskResult,
   WorkerTaskStatus,
+  SlotOccupancy,
   WorkerToolStats,
 } from "./worker-result.js";
 export {

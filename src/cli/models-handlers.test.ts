@@ -14,6 +14,9 @@ vi.mock("../local-llm/index.js", async () => {
     resolveManagedDevice: vi.fn(),
     startChatAndEmbeddingDaemons: vi.fn(),
     fallBackToCpuBackend: vi.fn(),
+    startEmbeddingDaemon: vi.fn(),
+    getEmbeddingDaemonStatus: vi.fn(),
+    isEmbeddingModelDownloaded: vi.fn(),
   };
 });
 
@@ -31,7 +34,11 @@ import {
   WINDOWS_BACKEND_ASSETS,
   setConfiguredBackendVariant,
 } from "../local-llm/windows-backend-variant.js";
-import { runLocalModelsPull, runLocalModelsStart } from "./models-handlers.js";
+import {
+  runLocalModelsPull,
+  runLocalModelsStart,
+  runLocalModelsStartEmbedding,
+} from "./models-handlers.js";
 
 const healthError = () =>
   new DaemonHealthError(
@@ -246,5 +253,85 @@ describe("runLocalModelsPull — projector failure after the weights", () => {
     expect(stderrChunks.join("")).toMatch(
       /note: projector download failed \(Download failed: HTTP 404 Not Found\) — qwen-3.5-4b is usable text-only; 'models pull --mmproj qwen-3.5-4b'/,
     );
+  });
+});
+
+/**
+ * `models start-embedding`: the embedding daemon alone, beside a chat
+ * daemon `start` would refuse to touch (the desktop's ATO-126).
+ */
+describe("runLocalModelsStartEmbedding", () => {
+  let stateDir: string;
+  let stdoutChunks: string[];
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-models-emb-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+    stdoutChunks = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    vi.mocked(localLlm.resolveManagedDevice).mockReset().mockResolvedValue(undefined);
+    vi.mocked(localLlm.startEmbeddingDaemon).mockReset().mockResolvedValue({ pid: 4243 });
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset().mockResolvedValue({
+      running: false, pid: null, port: 19092, healthy: false, loading: false,
+    });
+    vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReset().mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  function writeConfig(enabled: boolean): void {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        mode: "managed",
+        embeddings: {
+          ...USER_CONFIG_DEFAULTS.localModels.embeddings,
+          enabled,
+          modelId: "nomic-embed-text-v1.5",
+        },
+      },
+    });
+    resetConfigCache();
+  }
+
+  it("starts the embedding daemon alone on the configured port", async () => {
+    writeConfig(true);
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(localLlm.startEmbeddingDaemon).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(localLlm.startEmbeddingDaemon).mock.calls[0]![0]).toMatchObject({
+      modelId: "nomic-embed-text-v1.5",
+      port: 19092,
+    });
+    expect(stdoutChunks.join("")).toMatch(/^embedding: started pid 4243, healthy on port 19092/m);
+  });
+
+  it("starts nothing when it is already running, or not asked for", async () => {
+    writeConfig(true);
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockResolvedValue({
+      running: true, pid: 99, port: 19092, healthy: true, loading: false,
+    });
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/^embedding: already running pid 99/m);
+    writeConfig(false);
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/^embedding: disabled/m);
+    expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+  });
+
+  it("exits 1 when the start fails", async () => {
+    writeConfig(true);
+    vi.mocked(localLlm.startEmbeddingDaemon).mockRejectedValue(new Error("port 19092 is already served"));
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(1);
   });
 });

@@ -3,6 +3,7 @@ import type { StepEvent } from "../../agent/step-executor.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
+import type { SessionRoute } from "../../session/session-route.js";
 
 // The module, not the fallback barrel: it has no imports of its own, so
 // tracing does not pull the provider clients in behind it.
@@ -87,6 +88,13 @@ export interface TraceRecorder {
   beginSession(info: TraceRecorderBeginInfo): void;
   /** Transform and forward one `AgentLoopEvent` to the sink. */
   onAgentEvent(event: AgentLoopEvent): void;
+  /**
+   * The route the next turn runs on, resolved by `executeTurn` before the
+   * loop starts. Held like the user message and written onto that turn's
+   * `turn_started`, then dropped, so a turn that did not note one never
+   * inherits the previous turn's.
+   */
+  noteTurnRoute(route: SessionRoute): void;
   /**
    * Memory-v2 phase 7a. Emit a `vote_applied` trace event. Called
    * from the reflection-slot `VoteRunner` after a vote landed in
@@ -198,6 +206,7 @@ export function createTraceRecorder(
   let currentTurnIndex = 0;
   let currentStepIndex: number | null = null;
   let pendingUserMessage: string | null = null;
+  let pendingRoute: SessionRoute | null = null;
   // For a batched step, multiple `tool_call_parsed` events may arrive
   // before any `tool_call_executed`. We keep the parsed calls keyed by
   // their `batchIndex` so the executed callback can pair them
@@ -342,6 +351,25 @@ export function createTraceRecorder(
           reason: inner.reason,
         });
         return;
+      case "batch_approval_barriers":
+        push({
+          type: "batch_approval_barriers",
+          seq: nextSeq(),
+          sessionId,
+          ts: now(),
+          turnIndex: currentTurnIndex,
+          stepIndex: inner.stepIndex,
+          originalSize: inner.originalSize,
+          waves: inner.waves,
+          barriers: inner.barriers,
+          retained: inner.retained,
+          invalidated: inner.invalidated,
+          ...(inner.stoppedBy !== undefined
+            ? { stoppedBy: { ...inner.stoppedBy } }
+            : {}),
+          cancelled: inner.cancelled,
+        });
+        return;
       case "step_error": {
         const codeField = causeCodeOf(inner.error, inner.category);
         lastStepError = {
@@ -476,6 +504,9 @@ export function createTraceRecorder(
         ...(info.metadata !== undefined ? { metadata: info.metadata } : {}),
       });
     },
+    noteTurnRoute(route) {
+      pendingRoute = route;
+    },
     onAgentEvent(event) {
       switch (event.type) {
         case "user_message":
@@ -493,8 +524,10 @@ export function createTraceRecorder(
             ...(pendingUserMessage !== null
               ? { userMessage: pendingUserMessage }
               : {}),
+            ...(pendingRoute !== null ? { route: pendingRoute } : {}),
           });
           pendingUserMessage = null;
+          pendingRoute = null;
           return;
         case "turn_finished":
           push({

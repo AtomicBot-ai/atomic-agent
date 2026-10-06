@@ -1,4 +1,8 @@
-export { TaskStore } from "./task-store.js";
+export {
+  TASK_INTERRUPTED_ERROR,
+  TASK_OWNER_GONE_ERROR,
+  TaskStore,
+} from "./task-store.js";
 export type {
   TaskCreateInput,
   TaskFailureInput,

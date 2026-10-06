@@ -451,3 +451,134 @@ describe("ChatOrchestrator new/switch session while a turn is running", () => {
     expect(replayed).toHaveLength(1);
   });
 });
+
+/**
+ * ATO-37: switching threads while the agent is answering. The contract:
+ * the switch is allowed, the turn keeps running in the background, and
+ * on return the thread is whole and the stream carries on — and a turn
+ * the operator stopped is not reported as still working.
+ */
+describe("ChatOrchestrator switching while the agent is answering", () => {
+  function switchCount(actions: readonly TuiAction[]): number {
+    return actions.filter((a) => a.type === "session_switched").length;
+  }
+
+  it("brings a long streamed reply back whole, prompt first, with no gap", () => {
+    const h = makeHarness();
+    h.orchestrator.sendMessage("explain the build");
+    const sid = h.turns[0]?.sessionId ?? "";
+    h.bus.emitAgentEvent(
+      { type: "user_message", text: "explain the build" },
+      sid,
+    );
+    h.bus.emitAgentEvent({ type: "step_started", stepIndex: 0 }, sid);
+    // Far more tokens than the replay ring holds events.
+    for (let i = 0; i < 2000; i += 1) {
+      h.bus.emitAgentEvent(
+        { type: "llm_event", event: { type: "assistant_delta", text: "w " } },
+        sid,
+      );
+    }
+
+    h.orchestrator.switchSession("s-b");
+    h.orchestrator.switchSession(sid);
+
+    const after = actionsAfterLastSwitch(h.actions);
+    expect(
+      warnTexts(after).some((t) => t.includes("re-attached mid-turn")),
+    ).toBe(false);
+    const replayed = after.filter(
+      (a): a is Extract<TuiAction, { type: "agent_event" }> =>
+        a.type === "agent_event" && a.sessionId === sid,
+    );
+    expect(replayed.map((a) => a.event)).toEqual([
+      { type: "user_message", text: "explain the build" },
+      { type: "step_started", stepIndex: 0 },
+      {
+        type: "llm_event",
+        event: { type: "assistant_delta", text: "w ".repeat(2000) },
+      },
+    ]);
+  });
+
+  it("does not repaint a re-attached thread when its turn ends, if the replay was whole", async () => {
+    // The repaint resets the feed, the run status and the rail cursor:
+    // the screen jumped under the operator at the end of every turn they
+    // had switched back into.
+    const h = makeHarness();
+    h.orchestrator.sendMessage("work");
+    const sid = h.turns[0]?.sessionId ?? "";
+    h.bus.emitAgentEvent({ type: "user_message", text: "work" }, sid);
+    h.orchestrator.switchSession("s-b");
+    h.orchestrator.switchSession(sid);
+    const before = switchCount(h.actions);
+
+    h.turns[0]?.resolve();
+    await settle();
+
+    expect(switchCount(h.actions)).toBe(before);
+  });
+
+  it("still repaints from the saved session when the replay lost the turn's head", async () => {
+    const h = makeHarness();
+    h.orchestrator.sendMessage("work");
+    const sid = h.turns[0]?.sessionId ?? "";
+    // Distinct structural events, which nothing can join: more of them
+    // than the ring holds.
+    for (let i = 0; i < 600; i += 1) {
+      h.bus.emitAgentEvent({ type: "step_started", stepIndex: i }, sid);
+    }
+    h.orchestrator.switchSession("s-b");
+    h.orchestrator.switchSession(sid);
+    expect(
+      warnTexts(actionsAfterLastSwitch(h.actions)).some((t) =>
+        t.includes("re-attached mid-turn"),
+      ),
+    ).toBe(true);
+    const before = switchCount(h.actions);
+
+    h.turns[0]?.resolve();
+    await settle();
+
+    expect(switchCount(h.actions)).toBe(before + 1);
+    expect(lastSwitch(h.actions)?.sessionId).toBe(sid);
+  });
+
+  it("does not report a turn stopped before the switch as still working, or as finished", async () => {
+    const { orchestrator, actions, turns } = makeHarness();
+    orchestrator.sendMessage("wrong task");
+    orchestrator.abortCurrentTurn();
+    expect(turns[0]?.signal.aborted).toBe(true);
+
+    // Switched away before the cancel came back.
+    orchestrator.switchSession("s-b");
+    expect(
+      warnTexts(actions).some((t) => t.includes("continues in the background")),
+    ).toBe(false);
+
+    turns[0]?.resolve({ reason: "cancelled" });
+    await settle();
+    expect(
+      warnTexts(actions).some((t) => t.includes("background turn finished")),
+    ).toBe(false);
+    // Nothing of the stopped thread drains into the one on screen.
+    expect(turns).toHaveLength(1);
+  });
+
+  it("keeps the per-session FIFO: a re-attached thread drains its own queue after its turn", async () => {
+    const h = makeHarness();
+    h.orchestrator.sendMessage("first");
+    const sid = h.turns[0]?.sessionId ?? "";
+    h.orchestrator.switchSession("s-b");
+    h.orchestrator.switchSession(sid);
+
+    // Back on the thread with its turn still running: Enter parks.
+    h.orchestrator.sendMessage("second");
+    expect(h.turns).toHaveLength(1);
+
+    h.turns[0]?.resolve();
+    await settle();
+    expect(h.turns).toHaveLength(2);
+    expect(h.turns[1]).toMatchObject({ text: "second", sessionId: sid });
+  });
+});

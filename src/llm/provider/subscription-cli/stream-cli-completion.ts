@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { isBrokenPipe } from "../../../sandbox/index.js";
 import { killProcessTree } from "../../../sandbox/kill-process-tree.js";
+import { cliChildEnv } from "./cli-child-env.js";
 import { hostPlatform } from "./host-environment.js";
 import type { CliRunOptions } from "./run-cli-completion.js";
 import {
@@ -42,7 +43,8 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
   try {
     child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
-      env: process.env,
+      // See `runCliCommand`: never the agent's own provider keys.
+      env: cliChildEnv(options.stripEnv),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       // `hostPlatform()`, not `process.platform`: the same seam the shim
@@ -64,6 +66,7 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
       throw new SubscriptionCliNotInstalledError(
         options.binary,
         options.installHint,
+        options.productName,
       );
     }
     throw err;
@@ -131,6 +134,7 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
           ? new SubscriptionCliNotInstalledError(
               options.binary,
               options.installHint,
+              options.productName,
             )
           : err,
       );

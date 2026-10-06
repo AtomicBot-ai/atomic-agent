@@ -11,7 +11,7 @@ import type { RunTurnResult } from "../agent/agent-loop.js";
 import { TaskRunner } from "./task-runner.js";
 import type { TaskRunnerRuntime } from "./task-runner.js";
 import type { TaskReport } from "./task-report.js";
-import { TaskStore } from "./task-store.js";
+import { TASK_INTERRUPTED_ERROR, TaskStore } from "./task-store.js";
 
 interface RuntimeCall {
   sessionId: string;
@@ -851,6 +851,244 @@ describe("TaskRunner", () => {
       // let the fire-and-forget rejection settle (it is caught + logged)
       await new Promise((resolve) => setImmediate(resolve));
       expect(store.get(t.id)?.status).toBe("completed");
+    });
+  });
+
+  describe("stopping a run (ATO-174)", () => {
+    /**
+     * A turn that waits on a model server which does not answer: only
+     * its signal ends it (with the signal's reason, as an aborted request
+     * does) — unless `ignoreSignal`, for a turn stuck in work that does
+     * not listen, which only `release()` ends.
+     */
+    function waitingRuntime(opts: { ignoreSignal?: boolean } = {}): {
+      runtime: TaskRunnerRuntime;
+      entered: () => number;
+      signals: AbortSignal[];
+      release: () => void;
+    } {
+      const signals: AbortSignal[] = [];
+      const releases: Array<() => void> = [];
+      const runtime: TaskRunnerRuntime = {
+        runTurn: (sess, _msg, options) => {
+          const signal = options?.signal;
+          if (signal) signals.push(signal);
+          return new Promise<RunTurnResult>((resolve, reject) => {
+            releases.push(() =>
+              resolve({ session: sess, reason: "reply", stepCount: 1 }),
+            );
+            if (opts.ignoreSignal || !signal) return;
+            const stop = (): void =>
+              reject(
+                signal.reason ?? new DOMException("aborted", "AbortError"),
+              );
+            if (signal.aborted) stop();
+            else signal.addEventListener("abort", stop, { once: true });
+          });
+        },
+      };
+      return {
+        runtime,
+        entered: () => signals.length,
+        signals,
+        release: () => {
+          for (const release of releases.splice(0)) release();
+        },
+      };
+    }
+
+    function makeRunner(runtime: TaskRunnerRuntime): TaskRunner {
+      return new TaskRunner({
+        store,
+        runtime,
+        sessionLoader: fakeSessionLoader(session),
+        defaultMaxSteps: 5,
+        backoff: { initialMs: 1, maxMs: 10 },
+        enabled: true,
+        runOnCreate: false,
+        sleep: async () => undefined,
+      });
+    }
+
+    function recurringTask(): string {
+      return store.create({
+        sessionId: session.id,
+        userMessage: "hello every 5m",
+        origin: "cli",
+        maxAttempts: 3,
+        schedule: { kind: "interval", everyMs: 300_000 },
+        scheduledFor: Date.now() - 1,
+      }).id;
+    }
+
+    function oneShotTask(): string {
+      return store.create({
+        sessionId: session.id,
+        userMessage: "once",
+        origin: "cli",
+        maxAttempts: 3,
+      }).id;
+    }
+
+    async function until(check: () => boolean): Promise<void> {
+      for (let i = 0; i < 200 && !check(); i += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(check()).toBe(true);
+    }
+
+    it("cancel() aborts the turn of a running task and leaves it cancelled", async () => {
+      const turn = waitingRuntime();
+      const runner = makeRunner(turn.runtime);
+      const id = oneShotTask();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+      expect(store.get(id)?.status).toBe("running");
+
+      expect(runner.cancel(id)?.status).toBe("cancelled");
+      expect(turn.signals[0]?.aborted).toBe(true);
+      const after = await running;
+      expect(after?.status).toBe("cancelled");
+      expect(store.get(id)?.status).toBe("cancelled");
+    });
+
+    it("cancel() on a running recurring task does not rearm it", async () => {
+      const turn = waitingRuntime();
+      const runner = makeRunner(turn.runtime);
+      const id = recurringTask();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+      runner.cancel(id);
+      expect((await running)?.status).toBe("cancelled");
+      expect(store.get(id)?.status).toBe("cancelled");
+    });
+
+    it("cancel() on a task that is not running answers as the store does", () => {
+      const runner = makeRunner(waitingRuntime().runtime);
+      const id = oneShotTask();
+      expect(runner.cancel(id)?.status).toBe("cancelled");
+      expect(runner.cancel(id)?.status).toBe("cancelled");
+      expect(runner.cancel("t-missing")).toBeNull();
+    });
+
+    it("a turn that ends after its task was cancelled from elsewhere does not overwrite the cancel", async () => {
+      const turn = waitingRuntime({ ignoreSignal: true });
+      const runner = makeRunner(turn.runtime);
+      const id = recurringTask();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+      // The CLI's `task cancel`, from another process: the row only.
+      store.cancel(id);
+      turn.release();
+      expect((await running)?.status).toBe("cancelled");
+      expect(store.get(id)?.status).toBe("cancelled");
+    });
+
+    it("stop() aborts a recurring task's turn and rearms it for its next firing", async () => {
+      const turn = waitingRuntime();
+      const runner = makeRunner(turn.runtime);
+      const id = recurringTask();
+      const before = Date.now();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+
+      expect(await runner.stop(1_000)).toBe(0);
+      const after = await running;
+      expect(after).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        sessionId: session.id,
+        lastError: TASK_INTERRUPTED_ERROR,
+        lastErrorCategory: "cancelled",
+      });
+      // Its next firing, not straight away.
+      expect(after?.scheduledFor).toBeGreaterThanOrEqual(before + 300_000);
+    });
+
+    it("stop() leaves an interrupted one-shot task due, and claims nothing more", async () => {
+      const turn = waitingRuntime();
+      const runner = makeRunner(turn.runtime);
+      const id = oneShotTask();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+
+      await runner.stop(1_000);
+      expect(await running).toMatchObject({
+        status: "pending",
+        attempts: 1,
+        scheduledFor: null,
+        lastErrorCategory: "cancelled",
+      });
+      expect(await runner.runOne(id)).toBeNull();
+      expect(await runner.drainPending()).toMatchObject({ drained: 0 });
+      expect(turn.entered()).toBe(1);
+      expect(store.get(id)?.status).toBe("pending");
+    });
+
+    it("stop() gives up after its grace on a turn that ignores its signal", async () => {
+      const turn = waitingRuntime({ ignoreSignal: true });
+      const runner = makeRunner(turn.runtime);
+      const id = oneShotTask();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+
+      expect(await runner.stop(10)).toBe(1);
+      expect(store.get(id)?.status).toBe("running");
+      // Let it end, so the test leaves nothing behind.
+      turn.release();
+      await running;
+    });
+
+    it("an aborted drain puts its one-shot task back and stops there", async () => {
+      const turn = waitingRuntime();
+      const runner = makeRunner(turn.runtime);
+      const first = oneShotTask();
+      const second = oneShotTask();
+      const controller = new AbortController();
+      const drained = runner.drainPending({ signal: controller.signal });
+      await until(() => turn.entered() === 1);
+
+      controller.abort();
+      expect(await drained).toMatchObject({ drained: 1, cancelled: 1 });
+      expect(store.get(first)?.status).toBe("pending");
+      expect(store.get(first)?.lastErrorCategory).toBe("cancelled");
+      expect(store.get(second)?.status).toBe("pending");
+      expect(turn.entered()).toBe(1);
+    });
+
+    it("a recurring task whose own turn was stopped is rearmed, not cancelled for good", async () => {
+      const { runtime } = fakeRuntime({
+        scripts: [
+          () => {
+            throw new CancelledError();
+          },
+        ],
+      });
+      const runner = makeRunner(runtime);
+      const id = recurringTask();
+      const after = await runner.runOne(id);
+      expect(after?.status).toBe("pending");
+      expect(after?.scheduledFor).toBeGreaterThan(Date.now());
+    });
+
+    it("an abort that surfaces as another error still ends the run as stopped", async () => {
+      const runtime: TaskRunnerRuntime = {
+        runTurn: (_sess, _msg, options) =>
+          new Promise<RunTurnResult>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("socket hang up")),
+              { once: true },
+            );
+          }),
+      };
+      const runner = makeRunner(runtime);
+      const id = oneShotTask();
+      const running = runner.runOne(id);
+      await new Promise((resolve) => setImmediate(resolve));
+      await runner.stop(1_000);
+      expect((await running)?.status).toBe("pending");
+      expect(store.get(id)?.lastErrorCategory).toBe("cancelled");
     });
   });
 });

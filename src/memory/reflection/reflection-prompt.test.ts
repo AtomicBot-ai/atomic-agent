@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  REFLECTION_KNOWN_PROFILE_MAX_FACTS,
   REFLECTION_MESSAGE_CHAR_CAP,
   REFLECTION_STABLE_PREFIX,
   REFLECTION_STABLE_PREFIX_TYPED,
@@ -86,6 +87,7 @@ describe("buildReflectionPrompt", () => {
       - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
       - Use NOTE for anything episodic or narrative that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
       - If a SET already captures the fact, do not also emit a NOTE repeating it.
+      - A "### known profile" block, when present, lists facts already stored. Never emit a SET that repeats one of them, under its key or any other; to change one, reuse its exact key.
       - If there is nothing worth remembering, output exactly: NONE
       - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE body".
       "
@@ -278,5 +280,46 @@ describe("buildReflectionPrompt", () => {
     const userLine = prompt.match(/USER: (.+)/)?.[1] ?? "";
     expect(userLine.length).toBeLessThanOrEqual(REFLECTION_MESSAGE_CHAR_CAP);
     expect(userLine.endsWith("…")).toBe(true);
+  });
+
+  // ATO-188: reflection wrote facts the profile already held, under new
+  // keys. It now sees the profile, after the stable prefix.
+  it("renders the known profile into the tail, never into the stable prefix", () => {
+    const prompt = buildReflectionPrompt({
+      userMessage: "keep it short",
+      assistantReply: "ok",
+      knownProfile: [
+        { key: "prefers_short_answers", value: "yes" },
+        { key: "timezone", value: "Europe/Lisbon" },
+      ],
+    });
+    expect(prompt.startsWith(REFLECTION_STABLE_PREFIX)).toBe(true);
+    const tail = prompt.slice(REFLECTION_STABLE_PREFIX.length);
+    expect(tail).toBe(
+      "\n### known profile\n- prefers_short_answers=yes\n- timezone=Europe/Lisbon\n" +
+        "\nUSER: keep it short\nASSISTANT: ok\n\n### output\n",
+    );
+    for (const prefix of [REFLECTION_STABLE_PREFIX, REFLECTION_STABLE_PREFIX_TYPED]) {
+      expect(prefix).toContain('A "### known profile" block');
+      expect(prefix).toContain("reuse its exact key");
+    }
+  });
+
+  it("leaves the tail byte-identical without a known profile, and caps a big one", () => {
+    const plain = buildReflectionPrompt({ userMessage: "x", assistantReply: "y" });
+    const empty = buildReflectionPrompt({ userMessage: "x", assistantReply: "y", knownProfile: [] });
+    expect(empty).toBe(plain);
+    // The stable prefix names the block in its rules; the tail never carries one.
+    expect(plain.slice(REFLECTION_STABLE_PREFIX.length)).not.toContain("### known profile");
+
+    const many = Array.from({ length: REFLECTION_KNOWN_PROFILE_MAX_FACTS + 5 }, (_, i) => ({
+      key: `k${i}`,
+      value: "v".repeat(200),
+    }));
+    const big = buildReflectionPrompt({ userMessage: "x", assistantReply: "y", knownProfile: many });
+    const lines = big.split("\n").filter((l) => l.startsWith("- k"));
+    expect(lines).toHaveLength(REFLECTION_KNOWN_PROFILE_MAX_FACTS);
+    expect(lines[0]!.endsWith("…")).toBe(true);
+    expect(lines[0]!.length).toBeLessThan(100);
   });
 });

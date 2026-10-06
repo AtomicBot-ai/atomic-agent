@@ -353,6 +353,12 @@ describe("POST /v1/chat/completions (streaming)", () => {
       expect(text).toMatch(/event: session_id\n/);
       expect(text).toMatch(/event: tool_progress\n/);
       expect(text).toMatch(/"tool":"browser\.read_aria"/);
+      // ATO-197: the call's outcome follows it, under the call_id its tool_progress carried.
+      expect(text).toMatch(/event: tool_result\n/);
+      const started = /"object":"chat\.completion\.tool_progress"[^\n]*"call_id":"([^"]+)"/.exec(text);
+      const ended = /"object":"chat\.completion\.tool_result"[^\n]*"call_id":"([^"]+)"/.exec(text);
+      expect(started?.[1]).toBeDefined();
+      expect(ended?.[1]).toBe(started?.[1]);
       expect(text).toMatch(/"content":"after one tool"/);
       expect(text).toMatch(/event: usage\n/);
       expect(text).toMatch(/data: \[DONE\]/);
@@ -375,6 +381,8 @@ describe("POST /v1/chat/completions (streaming)", () => {
       const text = await readAllText(response);
       expect(text).not.toMatch(/event: session_id\n/);
       expect(text).not.toMatch(/event: tool_progress\n/);
+      expect(text).not.toMatch(/event: tool_result\n/);
+      expect(text).not.toMatch(/chat\.completion\.tool_result/);
       expect(text).not.toMatch(/event: usage\n/);
       expect(text).not.toMatch(/chat\.completion\.session/);
       expect(text).toMatch(/"content":"after one tool"/);

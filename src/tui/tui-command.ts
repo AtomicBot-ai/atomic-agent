@@ -454,7 +454,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           runtime.approvals.resolve({
             approvalId,
             approved,
-            reason: approved ? "tui-approved" : "tui-denied",
+            // No reason on a deny: it would reach the model as the
+            // user's own words (see `ApprovalDecision.reason`).
+            ...(approved ? { reason: "tui-approved" } : {}),
             ...(grant ? { grant } : {}),
           });
         },

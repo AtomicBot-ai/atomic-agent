@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { runCliCommand, type CliRunOptions } from "./run-cli-completion.js";
 import { SubscriptionCliAuthError } from "./subscription-cli-errors.js";
@@ -59,5 +59,30 @@ describe("runCliCommand with an undrained prompt", () => {
     `;
     const out = await runCliCommand(options(script, { input: BIG_PROMPT }));
     expect(out.stdout).toBe(String(BIG_PROMPT.length));
+  });
+});
+
+describe("runCliCommand environment", () => {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = saved;
+  });
+
+  const script = `process.stdout.write(String(process.env.ANTHROPIC_API_KEY) + "|" + String(process.env.PATH !== undefined))`;
+
+  it("keeps the agent's API key away from the CLI", async () => {
+    // `claude` takes this key over the user's subscription (ATO-176).
+    process.env.ANTHROPIC_API_KEY = "sk-ant-agent";
+    const out = await runCliCommand(
+      options(script, { stripEnv: ["ANTHROPIC_API_KEY"] }),
+    );
+    expect(out.stdout).toBe("undefined|true");
+  });
+
+  it("inherits the environment whole when nothing is stripped", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-agent";
+    const out = await runCliCommand(options(script));
+    expect(out.stdout).toBe("sk-ant-agent|true");
   });
 });

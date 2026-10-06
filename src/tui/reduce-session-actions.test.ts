@@ -235,3 +235,113 @@ describe("agent_event session filter", () => {
     }
   });
 });
+
+/**
+ * ATO-37: switching threads while the agent is answering. The composer
+ * and the abort chord are one surface shared by every thread, and what
+ * they held belonged to the thread being left.
+ */
+describe("session_switched and the composer", () => {
+  const switchTo = (sessionId: string, running = false) =>
+    ({
+      type: "session_switched",
+      sessionId,
+      workingDir: "/w",
+      messages: [],
+      ...(running ? { running: true } : {}),
+    }) as const;
+  const typed = (value: string) => ({ type: "input_changed", value }) as const;
+
+  it("parks the draft with its thread and hands it back on return", () => {
+    const base = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: "s-a" },
+      typed("half-written steer for a"),
+    ]);
+    // The steer meant for A's running turn must not go out in B as a
+    // brand-new turn on a reflexive Enter.
+    const inB = reduceTuiState(base, switchTo("s-b"));
+    expect(inB.inputValue).toBe("");
+    const backInA = reduceTuiState(
+      reduceTuiState(inB, typed("note for b")),
+      switchTo("s-a", true),
+    );
+    expect(backInA.inputValue).toBe("half-written steer for a");
+    const backInB = reduceTuiState(backInA, switchTo("s-b"));
+    expect(backInB.inputValue).toBe("note for b");
+  });
+
+  it("parks the operator's draft, not the history entry being recalled", () => {
+    const recalling = {
+      ...apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: "s-a" },
+      ]),
+      inputValue: "an old prompt from history",
+      inputHistoryCursor: 0,
+      inputHistoryDraft: "what I was typing",
+    };
+    const away = reduceTuiState(recalling, switchTo("s-b"));
+    expect(away.inputHistoryCursor).toBeNull();
+    expect(away.inputHistoryDraft).toBeNull();
+    expect(reduceTuiState(away, switchTo("s-a")).inputValue).toBe(
+      "what I was typing",
+    );
+  });
+
+  it("leaves the buffer alone when the thread on screen is re-emitted", () => {
+    // The end-of-turn repaint after a lossy re-attach is a
+    // `session_switched` onto the same id; the operator may be typing.
+    const base = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: "s-a" },
+      typed("still typing"),
+    ]);
+    expect(reduceTuiState(base, switchTo("s-a")).inputValue).toBe(
+      "still typing",
+    );
+  });
+
+  it("carries a draft typed before any thread existed instead of losing it", () => {
+    const base = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      typed("first words"),
+    );
+    expect(reduceTuiState(base, switchTo("s-b")).inputValue).toBe(
+      "first words",
+    );
+  });
+
+  it("does not carry an armed abort into the thread switched to", () => {
+    // Esc in A arms; the `1` that confirms it must not be the first
+    // character typed into a re-attached B and stop B's turn.
+    const armed = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: "s-a" },
+      { type: "abort_armed" },
+    ]);
+    expect(armed.abortArmed).toBe(true);
+    expect(reduceTuiState(armed, switchTo("s-b", true)).abortArmed).toBe(false);
+  });
+
+  it("does not carry a stop in flight into the thread switched to", () => {
+    // A's cancel lands off screen (filtered by session), so nothing
+    // would ever clear the flag — and B's next real failure would read
+    // as "stopped by user".
+    const stopping = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: "s-a" },
+      { type: "abort_requested" },
+    ]);
+    expect(stopping.aborting).toBe(true);
+    const inB = reduceTuiState(stopping, switchTo("s-b", true));
+    expect(inB.aborting).toBe(false);
+    const failed = reduceTuiState(inB, {
+      type: "agent_event",
+      sessionId: "s-b",
+      event: {
+        type: "loop_failed",
+        error: new Error("provider returned 500"),
+        category: "transport",
+      },
+    });
+    expect(
+      failed.messages.some((m) => m.text === "Agent stopped by user."),
+    ).toBe(false);
+  });
+});

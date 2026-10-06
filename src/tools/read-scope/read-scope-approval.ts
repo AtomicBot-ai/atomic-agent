@@ -8,7 +8,11 @@ import {
 } from "../../approval/dangerous-tool.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { ToolContext } from "../tool-registry.js";
-import { sessionReadRefusal, sessionReadRoots } from "./read-scope.js";
+import {
+  sessionReadDeclined,
+  sessionReadRefusal,
+  sessionReadRoots,
+} from "./read-scope.js";
 
 /**
  * A read outside the scope is a QUESTION, not a refusal.
@@ -21,9 +25,10 @@ import { sessionReadRefusal, sessionReadRoots } from "./read-scope.js";
  * is remembered: a `y` widens the session's roots to the directory it
  * named (`ReadScopeGrants` on the gate), so one question covers the
  * reads that follow under it; `[s]` grants the whole category, which is
- * "read anywhere this session". A `n` is the refusal the model would
- * have got before: one line naming the path, the working directory and
- * the way out. Level 5 / `--no-approval` never asks, like every other
+ * "read anywhere this session". A `n` tells the model the user declined,
+ * like any other denied call; a prompt that ended with nobody's answer
+ * is the refusal the model would have got before: one line naming the
+ * path, the working directory and the way out. Level 5 / `--no-approval` never asks, like every other
  * category pinned there. Fusion workers never reach this module — their
  * check refuses first, because nobody is at the other end of a worker's
  * prompt.
@@ -161,7 +166,12 @@ export class ReadOutsideApprover {
         );
       } catch (err) {
         if (err instanceof ApprovalDeniedError) {
-          return sessionReadRefusal(tool, path, ctx, roots);
+          // A repeat the gate refused because the user already said no
+          // keeps the gate's words: the scope sentence would invite the
+          // model to ask for the very path the user just declined.
+          return err.byUser || err.declinedEarlier
+            ? sessionReadDeclined(tool, path, roots, err.message)
+            : sessionReadRefusal(tool, path, ctx, roots);
         }
         throw err;
       }

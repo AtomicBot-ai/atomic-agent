@@ -68,7 +68,7 @@ describe("os.git.checkout", () => {
     });
     await expect(
       tool.run({ branch: "feat/x", create: true }, makeCtx(repo)),
-    ).rejects.toThrow(/approval denied/);
+    ).rejects.toThrow(/The user declined/);
     const head = await runGitRaw(repo, ["symbolic-ref", "--short", "HEAD"]);
     expect(head.stdout.trim()).toBe("main");
     const branches = await runGitRaw(repo, ["branch", "--list", "feat/x"]);

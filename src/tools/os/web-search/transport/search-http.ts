@@ -9,6 +9,7 @@ import {
   type HostLookup,
 } from "../../web-fetch-ssrf-guard.js";
 import { CurlUnavailableError, isCurlMissingError } from "../../ensure-curl.js";
+import { explainCurlStderr, runCurl } from "../../run-curl.js";
 import {
   computeRetryDelayMs,
   DEFAULT_SEARCH_RETRY_POLICY,
@@ -133,7 +134,7 @@ async function sendOnce(
     });
     let result: CommandResult;
     try {
-      result = await runCommand("curl", curlArgs, {
+      result = await runCurl(runCommand, curlArgs, {
         cwd: request.cwd,
         timeoutMs: request.timeoutMs + 2_000,
         signal: request.signal,
@@ -271,7 +272,7 @@ export function parseCurlMeta(stdout: string): Omit<CurlResponse, "truncated"> {
 
 function formatCurlError(result: CommandResult): string {
   const stderr = result.stderr.trim();
-  if (stderr.length > 0) return stderr;
+  if (stderr.length > 0) return explainCurlStderr(stderr);
   if (result.timedOut) return "curl timed out";
   return `curl exited with code ${result.exitCode}`;
 }

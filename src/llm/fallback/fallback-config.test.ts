@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveFallbackChain,
   withoutKeylessLinks,
+  withoutUnavailableLinks,
   withoutUnbuiltLinks,
   DEFAULT_FALLBACK_TIMING,
 } from "./fallback-config.js";
@@ -300,5 +301,28 @@ describe("withoutKeylessLinks", () => {
       withoutKeylessLinks(input, (id) => id === "dashscope", (id) => skipped.push(id)),
     ).toBe(input);
     expect(skipped).toEqual([]);
+  });
+});
+
+describe("withoutUnavailableLinks", () => {
+  const timing = DEFAULT_FALLBACK_TIMING;
+  it("skips a local link with no model on disk, and reports it", () => {
+    // ATO-117: claude-cli (not installed) fell over to this link and the
+    // turn waited out its refused connection.
+    const skipped: string[] = [];
+    const out = withoutUnavailableLinks(
+      { chain: ["claude-cli", "local-llama"], timing },
+      (id) => id === "local-llama",
+      (id) => skipped.push(id),
+    );
+    expect(out.chain).toEqual(["claude-cli"]);
+    expect(skipped).toEqual(["local-llama"]);
+  });
+
+  it("keeps the primary even when it cannot serve", () => {
+    const input = { chain: ["local-llama", "openrouter"], timing };
+    expect(withoutUnavailableLinks(input, (id) => id === "local-llama")).toBe(
+      input,
+    );
   });
 });

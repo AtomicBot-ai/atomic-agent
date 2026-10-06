@@ -7,6 +7,7 @@ export {
 export {
   resolveFallbackChain,
   withoutKeylessLinks,
+  withoutUnavailableLinks,
   withoutUnbuiltLinks,
   DEFAULT_FALLBACK_TIMING,
   type FallbackTiming,

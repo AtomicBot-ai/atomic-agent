@@ -48,6 +48,12 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
       return `${head} workingDir=${event.workingDir}`;
     case "turn_started":
       return `${head} turn=${event.turnIndex}${
+        event.route
+          ? ` mode=${event.route.mode} model=${event.route.main.providerId}/${
+              event.route.main.model ?? "?"
+            }`
+          : ""
+      }${
         event.userMessage ? ` user=${truncate(event.userMessage, 80, raw)}` : ""
       }`;
     case "turn_finished":

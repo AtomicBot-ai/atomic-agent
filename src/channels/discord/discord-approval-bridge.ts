@@ -120,7 +120,8 @@ export class DiscordApprovalBridge {
     const settled = this.deps.approvals.resolve({
       approvalId: approvalId ?? "",
       approved,
-      reason: approved ? "approved from Discord" : "denied from Discord",
+      // A button carries no words of the user's, so a deny has no reason.
+      ...(approved ? { reason: "approved from Discord" } : {}),
     });
     this.pending.delete(approvalId ?? "");
     await this.ack(

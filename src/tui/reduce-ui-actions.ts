@@ -439,6 +439,14 @@ export function reduceUiAction(
       // answer another thread's question.
       return {
         ...state,
+        ...swapComposerDraft(state, action.sessionId),
+        // Both belong to the turn on the thread being left. An armed Esc
+        // carried over made the first `1` typed into a re-attached
+        // thread abort ITS turn, and an `aborting` whose `loop_failed`
+        // now lands off screen (filtered by session) never cleared, so
+        // the next genuine failure here read as "stopped by user".
+        abortArmed: false,
+        aborting: false,
         session: {
           ...state.session,
           sessionId: action.sessionId,
@@ -490,6 +498,69 @@ export function reduceUiAction(
     default:
       return null;
   }
+}
+
+type ComposerSlice = Pick<
+  TuiState,
+  | "inputValue"
+  | "inputHistoryCursor"
+  | "inputHistoryDraft"
+  | "composerDrafts"
+  | "slashPaletteOpen"
+  | "slashQuery"
+  | "slashPaletteCursor"
+>;
+
+/**
+ * The composer half of a session switch: park the draft typed for the
+ * thread being left, and hand back the one the target was left with.
+ *
+ * A switch onto the thread already on screen (the end-of-turn resync
+ * after a re-attach) is not a switch for the composer, and leaves the
+ * buffer alone. A thread that was never minted (`sessionId` still
+ * `null`, nothing sent yet) has no slot to park into — its draft goes
+ * along rather than being lost, unless the target has one of its own.
+ */
+function swapComposerDraft(
+  state: TuiState,
+  targetId: string,
+): ComposerSlice {
+  const leftId = state.session.sessionId;
+  if (leftId === targetId) {
+    return {
+      inputValue: state.inputValue,
+      inputHistoryCursor: state.inputHistoryCursor,
+      inputHistoryDraft: state.inputHistoryDraft,
+      composerDrafts: state.composerDrafts,
+      slashPaletteOpen: state.slashPaletteOpen,
+      slashQuery: state.slashQuery,
+      slashPaletteCursor: state.slashPaletteCursor,
+    };
+  }
+  // Mid history recall the editor shows an old entry; the operator's
+  // own words are the parked `inputHistoryDraft`.
+  const typed =
+    state.inputHistoryCursor === null
+      ? state.inputValue
+      : (state.inputHistoryDraft ?? "");
+  const drafts: Record<string, string> = { ...state.composerDrafts };
+  if (leftId !== null) {
+    if (typed.length > 0) drafts[leftId] = typed;
+    else delete drafts[leftId];
+  }
+  const own = drafts[targetId];
+  delete drafts[targetId];
+  return {
+    inputValue: own ?? (leftId === null ? typed : ""),
+    inputHistoryCursor: null,
+    inputHistoryDraft: null,
+    composerDrafts: drafts,
+    // The palette was filtering the buffer that just left; over the
+    // target's draft it would offer completions for text not there.
+    slashPaletteOpen: false,
+    slashQuery: "",
+    slashPaletteCursor: 0,
+  };
 }
 
 function navigateInputHistory(state: TuiState, delta: 1 | -1): TuiState {

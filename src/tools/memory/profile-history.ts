@@ -4,6 +4,7 @@ import {
   ProfileValidationError,
   type ProfileFact,
 } from "../../memory/profile-store.js";
+import { nameGroundingMarker } from "../../memory/profile-name-keys.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 export interface ProfileHistoryToolOptions {
@@ -87,7 +88,12 @@ function renderHistoryLine(row: ProfileFact): string {
   const active = row.supersededBy === null;
   const marker = active ? "*" : " ";
   const timestamp = new Date(row.validFrom).toISOString();
-  const tail = active ? " (active)" : ` → #${row.supersededBy}`;
+  // Only the active row is ever checked (ATO-199); a superseded name
+  // carries no verdict worth showing.
+  const grounding = active ? nameGroundingMarker(row) : null;
+  const tail = active
+    ? ` (active${grounding !== null ? `; ${grounding}` : ""})`
+    : ` → #${row.supersededBy}`;
   return `${marker} [#${row.id}] ${timestamp}: ${truncate(row.value)}${tail}`;
 }
 

@@ -122,6 +122,24 @@ describe("GET /health", () => {
     // number: the sweep reads a missing one as "busy", never as "idle".
     expect(body.busyTurns).toBe(0);
   });
+
+  it("leaves the llama probe out for ?llama=0 and still counts the turns", async () => {
+    harness = await startTestHarness({
+      localModelsUrl: `http://127.0.0.1:${await closedPort()}`,
+    });
+
+    const res = await fetch(`${harness.baseUrl}/health?llama=0`);
+    const body = (await res.json()) as {
+      status: string;
+      busyTurns?: number;
+      llama: { reachable: boolean | null };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("ok");
+    expect(body.llama.reachable).toBeNull();
+    expect(body.busyTurns).toBe(0);
+  });
 });
 
 describe("isLoopback", () => {
