@@ -52,8 +52,16 @@ permissions:
 
 jobs:
   smoke:
-    name: smoke (win32-x64)
-    runs-on: windows-latest
+    name: smoke (${{ matrix.slug }})
+    # ATO-252: Windows on ARM too, on the native windows-11-arm runner, so the
+    # arm64 app is actually launched somewhere (desktop.yml only packs it).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { slug: win32-x64, os: windows-latest, node_arch: x64 }
+          - { slug: win32-arm64, os: windows-11-arm, node_arch: arm64 }
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     defaults:
       run:
@@ -74,6 +82,7 @@ jobs:
           # Same pin as desktop.yml and release.yml: the SEA needs Node >= 25.7.
           node-version: "25.7"
           check-latest: true
+          architecture: ${{ matrix.node_arch }}
 
       # ---- agent bundle (as desktop.yml's Windows job, minus signing) --------
       - name: Install dependencies
@@ -91,12 +100,12 @@ jobs:
       - name: Build Node SEA binary
         run: npm run bundle:build-binary
 
-      # Stages bundle/win32-x64/atomic-agent.exe with its native modules,
+      # Stages bundle/<slug>/atomic-agent.exe with its native modules,
       # exactly what the packaged app carries in resources/agent. The smoke
       # supervises this .exe (a .cmd shim around `node dist/cli/index.js`
       # cannot be spawned without a shell on Windows).
       - name: Package bundle
-        run: npx tsx scripts/package-bundle.ts win32-x64
+        run: npx tsx scripts/package-bundle.ts ${{ matrix.slug }}
 
       # ---- desktop app ------------------------------------------------------
       - name: Install desktop dependencies
@@ -127,7 +136,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-smoke-windows-${{ github.run_number }}
+          name: desktop-smoke-${{ matrix.slug }}-${{ github.run_number }}
           path: ${{ runner.temp }}/desktop-smoke/artifacts/
           if-no-files-found: warn
           retention-days: 14
