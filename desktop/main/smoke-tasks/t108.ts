@@ -297,7 +297,7 @@ async function recoveredLine(js: Js, check: Check): Promise<void> {
       UNVERIFIED = []; PLAN.startedMode = null;
       onChatEvent({turnId, kind: 'provider_recovered', payload: {object: 'atomic.provider_recovered', waited_ms: 23000}});
       const recovered = ours();
-      // A named error frame waits for its stream's `done` (B5), as the agent sends them.
+      // A named error frame waits for its stream's done frame (B5), as the agent sends them.
       onChatEvent({turnId, kind: 'error', error: 'smoke t108: a late failure', payload: {}});
       onChatEvent({turnId, kind: 'done'});
       const failed = ours();
