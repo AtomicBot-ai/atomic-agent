@@ -1,6 +1,7 @@
 import { LlamaServerError } from "../llama-server-client.js";
 import {
   isCreditExhausted,
+  isModerationRefusal,
   OpenAiHttpError,
 } from "../provider/openai/openai-http.js";
 import { CREDENTIAL_WORDING } from "../provider/openai/parse-provider-error-body.js";
@@ -55,6 +56,39 @@ export function isCredentialRejection(err: unknown): boolean {
  */
 export function isBillingRefusal(err: unknown): boolean {
   return err instanceof OpenAiHttpError && !err.timedOut && isCreditExhausted(err);
+}
+
+/**
+ * Which reading the fallover notice gives this failure, judged on the
+ * error rather than on its reason text: "billing" (top up), "auth" (fix
+ * the key) or "other" (the chain's probe will see it clear).
+ *
+ * The notice used to classify `describeReason`'s text alone, and that
+ * text is the raw body cut to 180 characters. Gemini's per-minute 429
+ * and OpenAI's `insufficient_quota` 429 both open "You exceeded your
+ * current quota, please check your plan and billing details", and the
+ * part that tells them apart (Gemini's "retry in 41s", OpenAI's code)
+ * comes after the cut, so a rate limit was read as an empty account. An
+ * OpenRouter 403 for input its moderation flagged read as a bad key.
+ * The error still has the whole body: billing is the chain's own rule
+ * (`isBillingRefusal`), and a 401 or 403 is the key's unless the
+ * provider said its moderation refused the input, the same line the
+ * chat sentence draws (`humanizeOpenAiHttpError`). Undefined for errors
+ * that are not a cloud provider's answer, which keep the text reading.
+ */
+export function falloverCause(
+  err: unknown,
+): "billing" | "auth" | "other" | undefined {
+  if (!(err instanceof OpenAiHttpError)) return undefined;
+  if (isBillingRefusal(err)) return "billing";
+  if (
+    !err.timedOut &&
+    (err.status === 401 || err.status === 403) &&
+    !isModerationRefusal(err)
+  ) {
+    return "auth";
+  }
+  return "other";
 }
 
 /**

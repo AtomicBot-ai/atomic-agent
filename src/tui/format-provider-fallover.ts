@@ -13,13 +13,17 @@
  * Recovery stays a feed line: going back to the provider the operator
  * chose restores what they already expect, and a chat bubble for it
  * would be noise.
+ *
+ * `cause` is the runtime's reading of the error itself, when it had one:
+ * the reason text is cut to one short line and can read a rate limit as
+ * billing. Without it the text is classified as before.
  */
 export function formatProviderFalloverNotice(
   from: string,
   to: string,
   reason: string,
+  cause: FalloverCause = classifyFalloverReason(reason),
 ): string {
-  const cause = classifyFalloverReason(reason);
   return [
     `Switched from ${from} to ${to}: ${reason}`,
     cause === "billing"
@@ -40,11 +44,25 @@ export type FalloverCause = "billing" | "auth" | "other";
  * out of room; a 401/403 means the key is wrong. Everything else — a
  * timeout, a 5xx, a rate limit — is transient by nature and the chain's
  * own recovery probe is the right answer to it.
+ *
+ * Two readings the words alone got wrong. A quota per minute is a rate
+ * limit even when it says "check your plan and billing details"
+ * (Gemini's free tier): a rate window or a "retry in" outweighs money
+ * words, unless an explicit billing code (OpenAI's `insufficient_quota`)
+ * says otherwise. And a 403 for input the provider's moderation flagged
+ * (OpenRouter) is a refusal of the request, not of the key. The text is
+ * cut short, so the runtime's reading of the error itself, when it has
+ * one, is passed in instead (`falloverCause`).
  */
 export function classifyFalloverReason(reason: string): FalloverCause {
   const text = reason.toLowerCase();
-  if (/\b402\b|credit|quota|insufficient|billing|payment/.test(text))
+  const rateWindow =
+    /per[ -]?(?:second|minute|hour)\b|\b(?:rpm|tpm)\b|rate[ _-]?limit|too many requests|\b(?:retry|try again) (?:in|after)\b/.test(
+      text,
+    ) && !/insufficient_quota|credit_balance_exhausted|insufficient_credits/.test(text);
+  if (!rateWindow && /\b402\b|credit|quota|insufficient|billing|payment/.test(text))
     return "billing";
+  if (/\bmoderation\b|\bflagged\b/.test(text)) return "other";
   if (/\b401\b|\b403\b|unauthor|forbidden|invalid api key|api key/.test(text))
     return "auth";
   return "other";

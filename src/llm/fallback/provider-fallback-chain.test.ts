@@ -45,6 +45,8 @@ describe("ProviderFallbackChain", () => {
     expect(chain.activeOverride).toBe("backup");
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ direction: "away", to: "backup" });
+    // The notice carries the failure's kind, read off the error itself.
+    expect(notices[0]!.cause).toBe("other");
   });
 
   it("arms the primary cooldown only once the non-immediate threshold is reached", () => {

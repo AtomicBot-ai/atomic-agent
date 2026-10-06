@@ -1,6 +1,7 @@
 import { describeReason } from "./describe-reason.js";
 import type { FailedAttempt } from "./failed-attempts.js";
 import type { ResolvedFallbackChain } from "./fallback-config.js";
+import { falloverCause } from "./link-failure-kind.js";
 import {
   logFallbackAdvance,
   type FallbackLogger,
@@ -22,6 +23,12 @@ export interface ProviderSwitchNotice {
   from: string;
   to: string;
   reason: string;
+  /**
+   * What the failure behind an "away" was, read off the error itself
+   * (`falloverCause`), when it is a cloud provider's answer. The reason
+   * text is cut short and can read a rate limit as billing; this cannot.
+   */
+  cause?: "billing" | "auth" | "other";
 }
 
 /** What `pickProvider` decided for the turn about to run. */
@@ -274,11 +281,13 @@ export class ProviderFallbackChain {
     }
     if (!p.announcedOverride) {
       p.announcedOverride = true;
+      const cause = falloverCause(err);
       this.emit({
         direction: "away",
         from: fromId,
         to: toId,
         reason: describeReason(err),
+        ...(cause !== undefined ? { cause } : {}),
       });
     }
   }

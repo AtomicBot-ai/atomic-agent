@@ -89,6 +89,13 @@ export const CREDENTIAL_WORDING =
   /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token)\b/i;
 
 /**
+ * A provider's words for input its moderation refused: OpenRouter's 403
+ * "<model> requires moderation on OpenRouter. Your input was flagged for
+ * …". The request was refused, not the key.
+ */
+export const MODERATION_WORDING = /\b(?:moderation|flagged)\b/i;
+
+/**
  * A rate limit in so many words. On a 429 it outweighs any wording about
  * money ("Too many requests. Please top up your account to increase your
  * rate limits.", "Out of credits for this minute"): such a 429 is a

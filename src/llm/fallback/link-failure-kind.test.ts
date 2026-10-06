@@ -9,6 +9,7 @@ import {
 import { ModelError, TransportError } from "../reliability/llm-failures.js";
 import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import {
+  falloverCause,
   isBillingRefusal,
   isCliSetupRefusal,
   isCredentialRejection,
@@ -232,5 +233,54 @@ describe("isCliSetupRefusal", () => {
   it("is not an outage or a cloud refusal", () => {
     expect(isCliSetupRefusal(new TypeError("fetch failed"))).toBe(false);
     expect(isCliSetupRefusal(http(401))).toBe(false);
+  });
+});
+
+describe("falloverCause", () => {
+  it("reads Gemini's per-minute 429 as transient, though it talks quota and billing", () => {
+    const gemini = JSON.stringify([
+      {
+        error: {
+          code: 429,
+          message:
+            "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 10, model: gemini-2.5-flash\nPlease retry in 41.6s.",
+          status: "RESOURCE_EXHAUSTED",
+        },
+      },
+    ]);
+    expect(falloverCause(withBody(429, gemini, "gemini"))).toBe("other");
+  });
+
+  it("reads OpenAI's insufficient_quota 429 as billing", () => {
+    const openai = JSON.stringify({
+      error: {
+        message:
+          "You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.",
+        type: "insufficient_quota",
+        param: null,
+        code: "insufficient_quota",
+      },
+    });
+    expect(falloverCause(withBody(429, openai, "openai"))).toBe("billing");
+    expect(falloverCause(withBody(403, OUT_OF_FUNDS))).toBe("billing");
+  });
+
+  it("reads a moderation 403 as the request's refusal, a plain 401/403 as the key's", () => {
+    const flagged = JSON.stringify({
+      error: {
+        code: 403,
+        message:
+          'openai/gpt-4o requires moderation on OpenRouter. Your input was flagged for "harassment"',
+        metadata: { reasons: ["harassment"], flagged_input: "...", provider_name: "OpenAI", model_slug: "openai/gpt-4o" },
+      },
+    });
+    expect(falloverCause(withBody(403, flagged, "openrouter"))).toBe("other");
+    expect(falloverCause(http(401))).toBe("auth");
+    expect(falloverCause(withBody(403, JSON.stringify({ error: { message: "Invalid API key" } })))).toBe("auth");
+  });
+
+  it("leaves anything that is not a cloud provider's answer to the text", () => {
+    expect(falloverCause(new TypeError("fetch failed"))).toBeUndefined();
+    expect(falloverCause(new LlamaServerError("boom", 503, "http://l"))).toBeUndefined();
   });
 });
