@@ -576,6 +576,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             from: event.from,
             to: event.to,
             reason: event.reason,
+            ...(event.cause !== undefined ? { cause: event.cause } : {}),
           },
         },
       };
@@ -589,6 +590,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
                 event.from,
                 event.to,
                 event.reason,
+                event.cause,
               ),
             })
           : withSwitch,
