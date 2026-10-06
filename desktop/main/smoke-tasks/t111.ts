@@ -370,8 +370,12 @@ export async function checks111(js: Js, check: Check): Promise<void> {
     // ATO-183 — chat A idle on screen; a steer it refused (its turn just ended) runs at once as its next turn.
     await js<boolean>(STAGE_IDLE);
     const markChat = agent.chats.length;
+    // The bench's own route (a local model it may not have downloaded) is not
+    // what this checks: the start-of-turn gate is held open for the steer.
     const idle = await js<{ queued: string[]; busy: boolean; systems: string[] }>(`(async () => {
-      await steerOrQueueRun(${q(LATE)}, null, {sid: ${q(A)}, key: ${q(A)}});
+      const gateWas = localTurnGate;
+      localTurnGate = () => ({kind: 'run'});
+      try { await steerOrQueueRun(${q(LATE)}, null, {sid: ${q(A)}, key: ${q(A)}}); } finally { localTurnGate = gateWas; }
       return {queued: S.queued.slice(), busy: !!S.busy, systems: S.log.filter((m) => m.k === 'system').map((m) => String(m.text || ''))};
     })()`);
     for (let i = 0; i < 20 && agent.chats.length === markChat; i++) await wait(100);
