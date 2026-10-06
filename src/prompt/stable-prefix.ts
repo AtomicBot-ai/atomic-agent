@@ -237,6 +237,7 @@ const NATIVE_TOOLS_RULES_LINE = `One batch of tool calls per step (including \`s
  */
 export const WINDOWS_PLATFORM_HINT = [
   "Windows environment: `os.shell.run` uses a `cmd.exe` subshell. Prefer native Windows commands — `findstr` (not grep), `where` (not which), `type` (not cat), `dir` (not `ls -la`), `copy`/`move`/`ren`, `del`/`rmdir` semantics. Reference environment variables as `%VAR%` and use backslash `\\` path separators (e.g. `C:\\Users\\me\\file.txt`). Chain commands with `&&`, `||`, and pipe with `|`.",
+  "PowerShell cmdlets (`New-Item`, `Move-Item`, `Copy-Item`, `Get-ChildItem`, `Remove-Item`) do not exist in `cmd.exe` and fail as unrecognized commands — do not use them. Create a folder with `mkdir \"C:\\path\\Folder\"` and move files with `move \"C:\\path\\file.txt\" \"C:\\path\\Folder\"` (the folder must already exist); quote every path that contains spaces.",
   "Deletion still goes through `os.fs.trash`, never `del`/`rmdir`, unless the user explicitly demands a permanent shell delete.",
 ].join("\n");
 
