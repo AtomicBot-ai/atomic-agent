@@ -20,6 +20,7 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "smoke": "npm run build && electron . --smoke",
+    "smoke:ci": "node scripts/smoke-ci.mjs",
     "scenarios": "npm run build && node test/scenarios/run-all.mjs",
     "drive:onboarding": "npm run build && node test/onboarding-mouse.mjs",
     "drive:selector": "npm run build && node test/drive-selector.mjs",
