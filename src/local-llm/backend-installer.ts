@@ -14,8 +14,10 @@ import {
   type BackendVersionInfo,
 } from "./backend-version.js";
 import {
+  isWindowsArm64,
   resolvePlatformAsset,
   UnsupportedPlatformError,
+  WINDOWS_ARM64_NO_BACKEND_MESSAGE,
 } from "./platform-assets.js";
 import {
   getConfiguredBackendVariant,
@@ -330,6 +332,9 @@ export async function downloadBackend(
   // tag from the snapshot cache.
   const release = await fetchLatestRelease({ force: true });
   if (release === null) {
+    // ATO-252: the Windows on ARM app ships before (or without) an arm64
+    // engine build. Say that in words instead of an asset name.
+    if (isWindowsArm64()) throw new Error(WINDOWS_ARM64_NO_BACKEND_MESSAGE);
     throw new Error(
       `No release found containing asset ${assetName} (scanned ${RELEASES_PER_PAGE} releases)`,
     );

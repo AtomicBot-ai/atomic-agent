@@ -955,3 +955,120 @@ describe("Windows CUDA runtime guard (ATO-244)", () => {
     expect(execSyncMock).not.toHaveBeenCalled();
   });
 });
+
+// ATO-252: Windows on ARM installs its one CPU build, whatever the GPU
+// probe or a configured variant would say on x64, and says in words that
+// local models are not available yet when no release carries it.
+describe("downloadBackend on Windows arm64", () => {
+  let dir: string;
+  let prevFetch: typeof fetch;
+  let platformSpy: { mockRestore: () => void };
+  let archSpy: { mockRestore: () => void };
+  const ARM64_ASSET = "llama-turboquant-windows-arm64-cpu.zip";
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "local-llm-win-arm64-"));
+    prevFetch = globalThis.fetch;
+    resetLatestReleaseCache();
+    resetWindowsBackendAssetCache();
+    setConfiguredBackendVariant("auto");
+    execSyncMock.mockReset();
+    execSyncMock.mockImplementation(() => {
+      throw new Error("nvidia-smi: not found");
+    });
+    platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
+  });
+
+  afterEach(() => {
+    globalThis.fetch = prevFetch;
+    resetLatestReleaseCache();
+    resetWindowsBackendAssetCache();
+    setConfiguredBackendVariant("auto");
+    platformSpy.mockRestore();
+    archSpy.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** One release carrying `assets` (name → archive). */
+  function serve(assets: Record<string, Buffer>, downloaded: string[] = []): void {
+    globalThis.fetch = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes("/releases")) {
+        return new Response(
+          JSON.stringify([
+            {
+              tag_name: "turboquant-arm64-1",
+              published_at: "2026-10-06T00:00:00Z",
+              assets: Object.keys(assets).map((name) => ({
+                name,
+                browser_download_url: `https://example.com/${name}`,
+              })),
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      const name = u.slice(u.lastIndexOf("/") + 1);
+      const buf = assets[name];
+      if (!buf) return new Response("not found", { status: 404 });
+      downloaded.push(name);
+      return new Response(buf, {
+        status: 200,
+        headers: { "content-length": String(buf.length) },
+      });
+    }) as typeof fetch;
+  }
+
+  async function nestedZip(): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file("build/bin/llama-server.exe", Buffer.from("fake llama-server"));
+    zip.file("build/bin/ggml-cpu.dll", Buffer.from("fake ggml-cpu"));
+    return zip.generateAsync({ type: "nodebuffer" });
+  }
+
+  it("installs the arm64 CPU zip, flattened from build/bin", async () => {
+    const downloaded: string[] = [];
+    const zip = await nestedZip();
+    serve(
+      { [ARM64_ASSET]: zip, [WINDOWS_BACKEND_ASSETS.vulkan]: zip },
+      downloaded,
+    );
+
+    await downloadBackend(dir);
+
+    expect(downloaded).toEqual([ARM64_ASSET]);
+    expect(readBackendVersion(dir)?.asset).toBe(ARM64_ASSET);
+    expect(isBackendDownloaded(dir)).toBe(true);
+    expect(existsSync(resolveServerBinPath(dir, "llama-server.exe"))).toBe(true);
+    // The x64 GPU probe has nothing to choose on arm64.
+    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a configured backendVariant", async () => {
+    setConfiguredBackendVariant("cuda-12.4");
+    const downloaded: string[] = [];
+    serve({ [ARM64_ASSET]: await nestedZip() }, downloaded);
+
+    await downloadBackend(dir);
+
+    expect(downloaded).toEqual([ARM64_ASSET]);
+  });
+
+  it("says local models are not available yet when no release has the arm64 zip", async () => {
+    serve({ [WINDOWS_BACKEND_ASSETS.vulkan]: await nestedZip() });
+
+    await expect(downloadBackend(dir)).rejects.toThrow(
+      "Local models are not available yet for Windows on ARM. Use a cloud model instead.",
+    );
+    expect(isBackendDownloaded(dir)).toBe(false);
+  });
+
+  it("finds no update to install rather than an x64 build", async () => {
+    serve({ [WINDOWS_BACKEND_ASSETS.vulkan]: await nestedZip() });
+
+    const check = await checkForBackendUpdate(dir);
+    expect(check.updateAvailable).toBe(false);
+    expect(check.latestTag).toBeNull();
+  });
+});

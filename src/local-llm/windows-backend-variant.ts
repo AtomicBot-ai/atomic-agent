@@ -5,7 +5,11 @@ import {
   assertLinuxArm64Glibc,
   detectGlibcVersion,
 } from "./linux-arm64-backend-variant.js";
-import { resolvePlatformAsset, type PlatformAsset } from "./platform-assets.js";
+import {
+  resolvePlatformAsset,
+  WINDOWS_ARM64_BACKEND_ASSET,
+  type PlatformAsset,
+} from "./platform-assets.js";
 
 /**
  * The turboquant repo ships four Windows x64 backend builds. The binary
@@ -28,9 +32,10 @@ export const WINDOWS_BACKEND_ASSETS = {
 /**
  * Operator-facing values for `localModels.managed.backendVariant`.
  * `"auto"` keeps the nvidia-smi driven detection; the rest pin one of
- * the Windows zips outright (no probe). Meaningful on win32 only —
- * macOS, Linux x64 and Linux arm64 each publish a single asset, so the
- * preference has nothing to choose between and is ignored there.
+ * the Windows zips outright (no probe). Meaningful on win32 x64 only —
+ * macOS, Linux x64, Linux arm64 and Windows arm64 each publish a single
+ * asset, so the preference has nothing to choose between and is ignored
+ * there.
  */
 export const BACKEND_VARIANT_PREFERENCES = [
   "auto",
@@ -85,6 +90,8 @@ export function getConfiguredBackendVariant(): BackendVariantPreference {
 export function isWindowsGpuBackendAsset(
   assetName: string | undefined,
 ): boolean {
+  // ATO-252: the arm64 build is CPU only; there is nothing to fall back from.
+  if (assetName === WINDOWS_ARM64_BACKEND_ASSET) return false;
   if (assetName === undefined) return true;
   return (
     assetName === WINDOWS_BACKEND_ASSETS.vulkan ||
@@ -320,6 +327,10 @@ export function resetWindowsBackendAssetCache(): void {
  * `binaryName` is unchanged within a platform, so install paths and
  * `isBackendDownloaded` stay stable.
  *
+ * Windows arm64 (ATO-252) keeps `resolvePlatformAsset`'s single CPU
+ * asset too: the x64 zips the probe chooses between cannot run there,
+ * so neither detection nor a configured `backendVariant` applies.
+ *
  * Linux arm64 keeps `resolvePlatformAsset`'s single asset — there is
  * only one published arm64 build — but refuses a host whose glibc
  * cannot load it (`UnsupportedGlibcError`), because that refusal must
@@ -338,6 +349,7 @@ export function resolveDownloadAsset(
     );
     return base;
   }
+  if (base.platform === "win32" && base.arch === "arm64") return base;
   if (base.platform !== "win32") return base;
   return { ...base, assetName: detectWindowsBackendAsset() };
 }
