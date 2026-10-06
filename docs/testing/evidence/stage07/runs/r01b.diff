@@ -1,0 +1,114 @@
+--- src/prompt/build-prompt-types.ts (seeded before)
++++ src/prompt/build-prompt-types.ts (agent after)
+@@ -54,7 +54,8 @@
+   toolRole?: ToolRole;
+   /**
+    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
+-   * `CURRENT DATE:` line in the variable tail just before `### respond`.
++   * `CURRENT DATE:` line in the variable tail before the optional notice
++   * section and `### respond`.
+    * Lives in the tail, not the stable prefix, so it never affects
+    * KV-cache reuse. When omitted the line is not rendered.
+    */
+--- src/prompt/build-prompt.test.ts (seeded before)
++++ src/prompt/build-prompt.test.ts (agent after)
+@@ -218,7 +218,7 @@
+     );
+     // The date must live in the tail, NOT the stable prefix (KV-cache).
+     expect(stablePrefix).not.toContain("CURRENT DATE:");
+-    // It must sit immediately before the respond anchor.
++    // Without a notice, it sits immediately before the respond anchor.
+     const dateIdx = text.indexOf("CURRENT DATE:");
+     const respondIdx = text.indexOf("### respond");
+     expect(dateIdx).toBeGreaterThan(0);
+@@ -948,6 +948,41 @@
+     expect(withoutNotice.tail).not.toContain("### notice");
+   });
+ 
++  it.each([
++    ["plain", PLAIN_INSTRUCT_PROFILE],
++    ["Qwen", QWEN_THINK_PROFILE],
++    ["Gemma", GEMMA4_THINK_PROFILE],
++  ] as const)("keeps notice immediately before respond for %s", (_, profile) => {
++    const input = {
++      session: mkSession(),
++      toolDescriptors: TOOLS,
++      capabilities: CAPS,
++      skillCatalog: SKILLS,
++      profile,
++    };
++    const original = buildPrompt(input);
++    for (const currentDate of [undefined, "2026-10-06"]) {
++      for (const transientNotice of [undefined, "", "Change strategy now."]) {
++        const prompt = buildPrompt({ ...input, currentDate, transientNotice });
++        const sections = [
++          ...(currentDate
++            ? [`CURRENT DATE: ${currentDate} — this is today. Use it for any time-relative reasoning; never assume an earlier year.`, ""]
++            : []),
++          ...(transientNotice ? ["### notice", transientNotice, ""] : []),
++          "### respond",
++        ].join("\n");
++        // All other bytes, including the profile's generation framing,
++        // match the build without either optional input.
++        expect(prompt.tail).toBe(original.tail.replace("### respond", sections));
++        expect(prompt.messages.tail).toBe(
++          original.messages.tail.replace("### respond", sections),
++        );
++        expect(prompt.stablePrefix).toBe(original.stablePrefix);
++        expect(prompt.messages.system).toBe(original.messages.system);
++      }
++    }
++  });
++
+   it("still truncates the session section when facts+skills overflow", () => {
+     const bigSkill = "a".repeat(20_000);
+     const prompt = buildPrompt({
+@@ -2169,8 +2204,8 @@
+             tail.slice(tail.indexOf("### task-policy")),
+           ]
+         : [
+-            tail.slice(0, tail.indexOf("### notice")),
+-            tail.slice(tail.indexOf("### notice")),
++            tail.slice(0, tail.indexOf("CURRENT DATE:")),
++            tail.slice(tail.indexOf("CURRENT DATE:")),
+           ];
+     expect(prompt.tail.startsWith(before)).toBe(true);
+     expect(prompt.tail.endsWith(after)).toBe(true);
+--- src/prompt/build-prompt.ts (seeded before)
++++ src/prompt/build-prompt.ts (agent after)
+@@ -406,9 +406,6 @@
+   }
+   if (taskPolicy !== null) {
+     tailAfter.push(`### task-policy`, taskPolicy.body, ``);
+-  }
+-  if (input.transientNotice && input.transientNotice.length > 0) {
+-    tailAfter.push(`### notice`, input.transientNotice, ``);
+   }
+   // Current date lives in the variable tail (not the stable prefix) so it
+   // sits close to the generation point where the model actually attends to
+@@ -420,6 +417,11 @@
+       `CURRENT DATE: ${input.currentDate} — this is today. Use it for any time-relative reasoning; never assume an earlier year.`,
+       ``,
+     );
++  }
++  // Keep a transient nudge as the last substantive section, immediately
++  // before the respond anchor; the date must not become notice content.
++  if (input.transientNotice && input.transientNotice.length > 0) {
++    tailAfter.push(`### notice`, input.transientNotice, ``);
+   }
+   // Static 2-line emit anchor right before the (optional) reasoning prefill.
+   // Kept out of the stable prefix so it sits as close as possible to the
+--- src/prompt/docs/assembly.md (seeded before)
++++ src/prompt/docs/assembly.md (agent after)
+@@ -14,8 +14,9 @@
+ 1. Optional memory-index, session-facts, recalled; world.
+ 2. Optional request when the original user request was packed out of view.
+ 3. Conversation.
+-4. Optional route, profile, lessons, procedures, loaded-skills, loaded-tools, task-policy, notice.
+-5. Respond anchor and profile-specific generation framing.
++4. Optional route, profile, lessons, procedures, loaded-skills, loaded-tools, task-policy.
++5. Optional current-date line, then notice as the last substantive section.
++6. Respond anchor and profile-specific generation framing.
+ 
+ Empty optional sections are omitted. Notice composition and structured messages share this contract. Sections changed by a step follow conversation; moving them above it can invalidate already read transcript context. The turn's memory snapshot is fetched before stepping.
+ 

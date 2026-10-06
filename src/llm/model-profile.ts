@@ -187,7 +187,7 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
   allowThinkPrelude: true,
   // Gemma 4 only reasons when `<|think|>` sits inside a real `<|turn>system>`
   // block and the prompt ends at `<|turn>model\n` (no channel prefill); the
-  // model then opens its own `<|channel>thought` block. See AGENTS.md.
+  // model then opens its own `<|channel>thought` block. See README.md.
   reasoningEmittedByModel: true,
   turnFraming: {
     systemOpen: "<|turn>system\n",

@@ -2,7 +2,7 @@ import type {
   MemoryContext,
   MemoryContextProvider,
   MemoryContextProviderInput,
-} from "../agent/agent-loop.js";
+} from "../agent/agent-contract.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { LinkStore } from "./links/link-store.js";
 import type {

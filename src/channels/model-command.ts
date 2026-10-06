@@ -60,7 +60,7 @@ import {
   restoreProviderDefaultChatModelInConfig,
   setActiveTextProviderInConfig,
   setProviderDefaultChatModelInConfig,
-} from "../tui/persist-llm-provider.js";
+} from "../config/llm-provider-commands.js";
 
 /** What a channel hands `/model` about the chat it arrived in. */
 export interface ModelCommandChat {

@@ -1,5 +1,5 @@
 import { LOCAL_PROVIDER_KIND } from "../../config/llm-run-mode-config.js";
-import type { LocalLegRole } from "../../local-llm/worker-slots.js";
+import type { LocalLegRole } from "../../local-llm/server/worker-slots.js";
 import type { ResolvedLlmConfig } from "../provider/registry/provider-types.js";
 import type { ResolvedRunMode } from "./resolve-run-mode.js";
 

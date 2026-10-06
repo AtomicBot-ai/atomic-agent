@@ -1,0 +1,42 @@
+{
+  "PROMPT.md": [
+    "src/prompt/README.md",
+    "src/prompt/docs/assembly.md"
+  ],
+  "MEMORY.md": [
+    "src/memory/README.md",
+    "src/memory/docs/retrieval.md",
+    "src/memory/docs/formation.md"
+  ],
+  "MEMORY_GUIDE.md": [
+    "docs/user/memory.md"
+  ],
+  "TUI.md": [
+    "docs/user/tui.md",
+    "src/tui/README.md"
+  ],
+  "SKILLS.md": [
+    "src/skills/docs/skill-format.md"
+  ],
+  "BUNDLING.md": [
+    "scripts/docs/bundling.md"
+  ],
+  "EVOLUTION.md": [
+    "docs/archive/2026-10-06/EVOLUTION.md"
+  ],
+  "MEMORY_FABRIC_V2.md": [
+    "docs/archive/2026-10-06/MEMORY_FABRIC_V2.md",
+    "src/memory/README.md"
+  ],
+  "MEMORY_FABRIC_V2.5.md": [
+    "docs/archive/2026-10-06/MEMORY_FABRIC_V2.5.md",
+    "src/memory/README.md"
+  ],
+  "TESTING.md": [
+    "docs/archive/2026-10-06/TESTING.md",
+    "docs/development.md"
+  ],
+  "INTENT_FABRIC_V1.md": [
+    "docs/proposals/intent-fabric-v1.md"
+  ]
+}

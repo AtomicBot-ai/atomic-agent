@@ -11,7 +11,7 @@ import {
   THEMES,
   type TuiTheme,
 } from "../theme/theme.js";
-import { renderPickList } from "./wizard-pick-list.js";
+import { renderPickList } from "../providers/wizard-pick-list.js";
 
 /**
  * These are pure-render tests — no `MouseProvider`, so the row targets

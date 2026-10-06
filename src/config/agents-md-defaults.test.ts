@@ -5,10 +5,10 @@ import { ENV_DEFAULTS, USER_CONFIG_DEFAULTS } from "./config-schema.js";
 
 /**
  * The prose docs quote the shipped default of most config keys inline —
- * `` `some.key` (default `value`) `` in AGENTS.md, one row per key in
- * `MEMORY_FABRIC_V2.md` §10, `` Default `value` `` in config-schema.ts's
- * own JSDoc. Those numbers are the ones a reader reasons with, and
- * nothing kept them honest: a whole class of them had drifted from the
+ * `` `some.key` (default `value`) `` in docs/user-defaults.md and
+ * docs/operational-defaults.md, `` Default `value` `` in the composing
+ * schema and its domain owners' JSDoc. Those numbers are the ones a reader
+ * reasons with, and nothing kept them honest: a whole class of them had drifted from the
  * code, some by two orders of magnitude
  * (`memory.voting.eventLogMaxRows` documented as 2000, shipped 50_000).
  *
@@ -26,9 +26,28 @@ import { ENV_DEFAULTS, USER_CONFIG_DEFAULTS } from "./config-schema.js";
  * coverage.
  */
 const ROOT = new URL("../../", import.meta.url);
-const AGENTS_MD = fileURLToPath(new URL("AGENTS.md", ROOT));
-const MEMORY_FABRIC_MD = fileURLToPath(new URL("MEMORY_FABRIC_V2.md", ROOT));
-const CONFIG_SCHEMA_TS = fileURLToPath(new URL("src/config/config-schema.ts", ROOT));
+const USER_DEFAULTS_MD = fileURLToPath(
+  new URL("src/config/docs/user-defaults.md", ROOT),
+);
+const OPERATIONAL_DEFAULTS_MD = fileURLToPath(
+  new URL("src/config/docs/operational-defaults.md", ROOT),
+);
+const DOCUMENTED_SCHEMA_SOURCES = [
+  { file: "src/config/config-schema.ts", label: "config-schema.ts" },
+  { file: "src/config/agent-execution-config.ts", label: "agent-execution-config.ts" },
+  { file: "src/config/web-config.ts", label: "web-config.ts" },
+  { file: "src/config/memory/memory-types.ts", label: "memory/memory-types.ts" },
+  { file: "src/config/local-models/local-models-types.ts", label: "local-models/local-models-types.ts" },
+  { file: "src/config/tui-config.ts", label: "tui-config.ts" },
+  { file: "src/config/channel-config.ts", label: "channel-config.ts" },
+  { file: "src/config/integration-config.ts", label: "integration-config.ts" },
+  { file: "src/config/agent/agent-types.ts", label: "agent/agent-types.ts" },
+  { file: "src/config/http-config.ts", label: "http-config.ts" },
+  { file: "src/config/tool-config.ts", label: "tool-config.ts" },
+  { file: "src/config/skills-config.ts", label: "skills-config.ts" },
+  { file: "src/config/session-retention-config.ts", label: "session-retention-config.ts" },
+  { file: "src/config/tracing-config.ts", label: "tracing-config.ts" },
+];
 
 /**
  * The claim forms the markdown docs actually use. Each captures `key`
@@ -38,21 +57,19 @@ const CONFIG_SCHEMA_TS = fileURLToPath(new URL("src/config/config-schema.ts", RO
  *
  *   1. `` `key` (default `value`) ``      — the dominant form
  *   2. `` `key` (default value) ``        — same, value not backticked
- *   3. `` `key` — default `value` ``      — the §"Configuration (agent.*)" list
+ *   3. `` `key` — default `value` ``      — prose default lists
  *   4. `` `key` (1..8, default value …) `` — a range or note before the default
- *   5. `` | `key` | `value` | `` …        — the MEMORY_FABRIC_V2.md §10 table
+ *   5. `` | `key` | `value` | `` …        — legacy table spelling
  *
  * A bare `` `key=value` `` is deliberately **not** a form. In these docs
  * that spelling overwhelmingly means "when set to value", not "the
- * default is value" (AGENTS.md says `memory.links.enabled=true` in one
+ * default is value" (README.md says `memory.links.enabled=true` in one
  * place and `memory.links.enabled=false` in another, describing two
  * different situations). Claims that need covering are written in one of
  * the five forms above instead.
  *
  * `` (proposed default `x`) `` is deliberately **not** a form either:
- * `MEMORY_FABRIC_V2.md` §6 is the original design proposal and says what
- * was *proposed*, which is a claim about that document's own history,
- * not about what ships.
+ * archived proposals describe intentions, not necessarily what ships.
  */
 const CLAIM_FORMS: readonly RegExp[] = [
   /`([A-Za-z0-9_.]+)`\s+\(default\s+`([^`]*)`/g,
@@ -70,7 +87,7 @@ const CLAIM_FORMS: readonly RegExp[] = [
  */
 const UNRESOLVED_ALLOWLIST: readonly string[] = [
   // `LinkStore.expand`'s own parameter default (50), not a config key —
-  // AGENTS.md names the runtime-config default (12) in the same breath.
+  // The archived guide also named the runtime-config default (12).
   "maxExpanded",
   // `ProviderFallbackChain` timing, `DEFAULT_FALLBACK_TIMING` in
   // src/llm/fallback/fallback-config.ts — not a user-config key.
@@ -200,7 +217,7 @@ function collectMarkdown(file: string, label: string): Claim[] {
 }
 
 /**
- * config-schema.ts documents the same defaults a third time, in the
+ * The schema and its explicit domain owners document the same defaults in the
  * JSDoc above each config block, and those comments drifted exactly like
  * the markdown did (eleven sites said ``Default `false` `` / "Default
  * disabled" for switches that ship `true`).
@@ -241,8 +258,8 @@ function resolveBySuffix(suffix: string): string | undefined {
   return hits?.length === 1 ? hits[0] : undefined;
 }
 
-function collectSchemaJsdoc(): Claim[] {
-  const lines = readFileSync(CONFIG_SCHEMA_TS, "utf8").split("\n");
+function collectSchemaJsdoc(file: string, label: string): Claim[] {
+  const lines = readFileSync(file, "utf8").split("\n");
   const claims: Claim[] = [];
   let index = 0;
   while (index < lines.length) {
@@ -282,7 +299,7 @@ function collectSchemaJsdoc(): Claim[] {
       const path = resolveBySuffix(`${owner}.${key}`);
       if (path === undefined) return;
       claims.push({
-        where: `config-schema.ts:${lineOf[at] ?? start + 1}`,
+        where: `${label}:${lineOf[at] ?? start + 1}`,
         key: path,
         documented,
       });
@@ -326,9 +343,13 @@ function judge(claims: readonly Claim[]): {
 }
 
 const markdownClaims = (): Claim[] => [
-  ...collectMarkdown(AGENTS_MD, "AGENTS.md"),
-  ...collectMarkdown(MEMORY_FABRIC_MD, "MEMORY_FABRIC_V2.md"),
+  ...collectMarkdown(USER_DEFAULTS_MD, "user-defaults.md"),
+  ...collectMarkdown(OPERATIONAL_DEFAULTS_MD, "operational-defaults.md"),
 ];
+
+const schemaClaims = (): Claim[] => DOCUMENTED_SCHEMA_SOURCES.flatMap(({ file, label }) =>
+  collectSchemaJsdoc(fileURLToPath(new URL(file, ROOT)), label),
+);
 
 describe("documented config defaults", () => {
   it("match the shipped defaults tables", () => {
@@ -337,8 +358,8 @@ describe("documented config defaults", () => {
     expect(checked).toBeGreaterThanOrEqual(MIN_CHECKED_MARKDOWN);
   });
 
-  it("match the JSDoc in config-schema.ts", () => {
-    const { mismatches, checked } = judge(collectSchemaJsdoc());
+  it("match the JSDoc in the composing schema and domain owners", () => {
+    const { mismatches, checked } = judge(schemaClaims());
     expect(mismatches).toEqual([]);
     expect(checked).toBeGreaterThanOrEqual(MIN_CHECKED_SCHEMA);
   });

@@ -1,0 +1,71 @@
+{
+  "actions": 25,
+  "returnedOutputBytes": 118653,
+  "observedSourceBytes": 111637,
+  "uniqueVersionedSourceBytes": 110513,
+  "repeatedSourceBytes": 1124,
+  "uniqueInstructionBytes": 52684,
+  "uniqueCodeBytes": 42820,
+  "uniqueOtherBytes": 15009,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+      "uniqueBytes": 52684
+    },
+    {
+      "path": "README.md",
+      "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+      "uniqueBytes": 9797
+    },
+    {
+      "path": "src/local-llm/download-resume.ts",
+      "hash": "38b17baa75f57d3633cbe9c8373d7543137c4faee8b086a83d3dbe8e2286efcc",
+      "uniqueBytes": 3421
+    },
+    {
+      "path": "src/local-llm/download-attempt.ts",
+      "hash": "21ad71e3d690c935852b84cf93c252fa7c98f85f922c2924cd73ad30ca4785ad",
+      "uniqueBytes": 4665
+    },
+    {
+      "path": "src/local-llm/download-partial.ts",
+      "hash": "8ac371a3a27d481ae2b5cb11036dbf37b06ee66831c78e971dc4fbeff4f073f0",
+      "uniqueBytes": 6660
+    },
+    {
+      "path": "src/local-llm/download-partial.test.ts",
+      "hash": "4a7c70746f13cfa247959a61830f8b675c30bd2487e1f0dd1c9b9152cd8d7187",
+      "uniqueBytes": 4696
+    },
+    {
+      "path": "src/local-llm/download-attempt.test.ts",
+      "hash": "d996c98e7c20d6869ec8b51ce67a87eaf319200337bcbdb4e8505464d57c3f06",
+      "uniqueBytes": 3694
+    },
+    {
+      "path": "package.json",
+      "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+      "uniqueBytes": 5212
+    },
+    {
+      "path": "src/local-llm/download-file.test.ts",
+      "hash": "0ab27f2079f823a4e92533a42382b1268de3ddfd5e845c9c2dca2341720307b5",
+      "uniqueBytes": 10171
+    },
+    {
+      "path": "src/local-llm/download-file-parallel.test.ts",
+      "hash": "605820531e25ac45758648ce113dc775583ec109f945a15ea5cf31bf9870015c",
+      "uniqueBytes": 6123
+    },
+    {
+      "path": "src/local-llm/download-resume.test.ts",
+      "hash": "e555b025314f934003bc51da4ca777825a312ddfbae352e27b14bb4af7cb7fd0",
+      "uniqueBytes": 3390
+    }
+  ],
+  "changedFiles": [
+    "src/local-llm/download-resume.test.ts",
+    "src/local-llm/download-resume.ts"
+  ]
+}

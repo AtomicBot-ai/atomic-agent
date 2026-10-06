@@ -4,7 +4,7 @@
  * One required field — the API key — because that is genuinely the
  * whole setup: everything past it (which apps, which OAuth, which
  * tools) is negotiated inside the session at the moment the operator
- * asks for something. See AGENTS.md §"Composio".
+ * asks for something. See ../composio/README.md.
  */
 
 import {

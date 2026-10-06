@@ -12,8 +12,8 @@ import {
 } from "./config-file.js";
 import { parseUserConfigFile } from "./config-schema.js";
 import { getConfig, resetConfigCache } from "./config-cache.js";
-import { setCustomLocalModels } from "../local-llm/models-catalog.js";
-import type { LocalModelDef } from "../local-llm/models-catalog.js";
+import { setCustomLocalModels } from "../local-llm/catalog/models-catalog.js";
+import type { LocalModelDef } from "../local-llm/catalog/models-catalog.js";
 
 function writeCustomModels(defs: readonly LocalModelDef[]): void {
   const path = getConfig().paths.userConfigFile;

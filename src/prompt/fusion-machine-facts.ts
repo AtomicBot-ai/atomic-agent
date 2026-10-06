@@ -1,7 +1,7 @@
 /**
  * The machine facts the `### fusion` block states.
  *
- * The orchestrator now sizes its own fan-out (see AGENTS.md §"Run modes"),
+ * The orchestrator now sizes its own fan-out (see ../llm/run-mode/README.md),
  * and a model asked to choose a number over hardware it cannot see will
  * either pick the same timid two every time or ask for eight against a
  * one-slot server. So the prefix carries the facts that actually decide
@@ -34,7 +34,7 @@ import { LOCAL_PROVIDER_KIND } from "../config/llm-run-mode-config.js";
 import {
   resolveWorkerSlots,
   workerSlotFootprint,
-} from "../local-llm/worker-slots.js";
+} from "../local-llm/server/worker-slots.js";
 
 /** Where fusion's workers run. */
 export type FusionWorkerLeg = "local" | "cloud";

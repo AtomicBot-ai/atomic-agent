@@ -20,6 +20,7 @@ function metaOf(
     qualifiedName: `mcp.${server}.${rawName}`,
     description: "",
     inputSchema: { type: "object" },
+    resourceClass: "approval_gated",
     ...overrides,
   };
 }

@@ -2,7 +2,7 @@
  * The list of integrations the hub renders.
  *
  * A plain function rather than a module-level singleton, per
- * AGENTS.md §"Layout rules" ("no global singletons — `getConfig()` is
+ * README.md ("no global singletons — `getConfig()` is
  * the only exception"). Adding an integration is one line here plus a
  * descriptor file.
  */

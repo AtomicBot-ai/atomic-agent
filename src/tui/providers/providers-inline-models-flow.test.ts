@@ -43,9 +43,9 @@ vi.mock("../../config/index.js", async (importOriginal) => {
 
 // Provider switching persists the choice; tests must not write the real
 // user config, so the persistence layer mutates the mocked config only.
-vi.mock("../persist-llm-provider.js", async (importOriginal) => {
+vi.mock("../../config/llm-provider-commands.js", async (importOriginal) => {
   const original =
-    await importOriginal<typeof import("../persist-llm-provider.js")>();
+    await importOriginal<typeof import("../../config/llm-provider-commands.js")>();
   return {
     ...original,
     setActiveTextProviderInConfig: (id: string) => {

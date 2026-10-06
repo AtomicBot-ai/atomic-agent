@@ -3,10 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildOsFsEditTool } from "../tools/os/fs-edit.js";
-import { buildOsFsTrashTool } from "../tools/os/fs-trash.js";
-import { buildOsFsWriteTool } from "../tools/os/fs-write.js";
-import { buildOsShellTool } from "../tools/os/shell.js";
+import { buildOsFsEditTool } from "../tools/os/fs/fs-edit.js";
+import { buildOsFsTrashTool } from "../tools/os/fs/fs-trash.js";
+import { buildOsFsWriteTool } from "../tools/os/fs/fs-write.js";
+import { buildOsShellTool } from "../tools/os/shell/shell.js";
 import type { ToolContext } from "../tools/tool-registry.js";
 import {
   ApprovalGate,

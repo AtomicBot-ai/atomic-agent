@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
 import { resetConfigCache } from "../config/index.js";
-import { workerSlotFootprint } from "../local-llm/worker-slots.js";
+import { workerSlotFootprint } from "../local-llm/server/worker-slots.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { buildPrompt } from "./build-prompt.js";
 import {

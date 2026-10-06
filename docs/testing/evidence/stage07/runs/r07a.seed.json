@@ -1,0 +1,71 @@
+{
+  "snapshot": "/tmp/atomic-stage07-original",
+  "dest": "/tmp/atomic-stage07-benchmark/runs/original-07",
+  "task": 7,
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "goldenPath": null,
+  "seed": {
+    "task": 7,
+    "kind": "seeded-regression",
+    "patches": [
+      {
+        "file": "src/agent/batch-executor.ts",
+        "start": 19292,
+        "end": 19310,
+        "line": 499,
+        "old": "ctx.signal.aborted",
+        "new": "false",
+        "anchor": "serial admission cancellation guard"
+      },
+      {
+        "file": "src/agent/batch-executor.ts",
+        "start": 23164,
+        "end": 23182,
+        "line": 596,
+        "old": "ctx.signal.aborted",
+        "new": "false",
+        "anchor": "serial admission cancellation guard"
+      }
+    ],
+    "beforeSha256": "072423f490cf0051d875d430fb755681bd234c9658369fa0cc79eeb8ba5479b3",
+    "afterSha256": "c169413af16619451dbca175d6182eeb477632399b665302d04432cb9a3ba3fa"
+  },
+  "unseeded": {
+    "exit": 0,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 7,
+      "pass": true,
+      "assertions": 9,
+      "observed": [
+        "index alignment true",
+        "abort prevents next serial and terminal",
+        "started call result kept",
+        "remaining cancelled",
+        "batch cancelled",
+        "index alignment false",
+        "ordinary error keeps siblings/terminal",
+        "ordinary error materialized",
+        "ordinary error not cancellation"
+      ]
+    },
+    "stdout": "{\"task\":7,\"pass\":true,\"assertions\":9,\"observed\":[\"index alignment true\",\"abort prevents next serial and terminal\",\"started call result kept\",\"remaining cancelled\",\"batch cancelled\",\"index alignment false\",\"ordinary error keeps siblings/terminal\",\"ordinary error materialized\",\"ordinary error not cancellation\"]}\n"
+  },
+  "seeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 7,
+      "pass": false,
+      "assertions": 1,
+      "error": {
+        "name": "AssertionError",
+        "message": "abort prevents next serial and terminal\n+ actual - expected\n\n  [\n    'first',\n+   'second'\n  ]\n",
+        "stack": "AssertionError [ERR_ASSERTION]: abort prevents next serial and terminal\n+ actual - expected\n\n  [\n    'first',\n+   'second'\n  ]\n\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\n    at Object.check7 (/private/tmp/atomic-stage07-benchmark/check.mjs:55:1094)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":7,\"pass\":false,\"assertions\":1,\"error\":{\"name\":\"AssertionError\",\"message\":\"abort prevents next serial and terminal\\n+ actual - expected\\n\\n  [\\n    'first',\\n+   'second'\\n  ]\\n\",\"stack\":\"AssertionError [ERR_ASSERTION]: abort prevents next serial and terminal\\n+ actual - expected\\n\\n  [\\n    'first',\\n+   'second'\\n  ]\\n\\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\\n    at Object.check7 (/private/tmp/atomic-stage07-benchmark/check.mjs:55:1094)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  }
+}

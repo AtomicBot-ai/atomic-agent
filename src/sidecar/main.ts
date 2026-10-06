@@ -10,7 +10,7 @@ import { resolveLlmConfig } from "../llm/provider/registry/provider-registry.js"
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type {
   ApprovalResponsePayload,
   CancelPayload,

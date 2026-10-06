@@ -1,5 +1,5 @@
 import { getConfig } from "../config/index.js";
-import { contextUsageFromPrompt } from "../tui/context-usage-from-prompt.js";
+import { contextUsageFromPrompt } from "../session/context-usage.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { effectiveReplyReserve } from "../prompt/token-budget.js";
 import { openaiError } from "./openai-errors.js";

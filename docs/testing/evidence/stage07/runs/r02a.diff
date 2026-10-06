@@ -1,0 +1,409 @@
+--- grammars/tool-call.gbnf (seeded before)
++++ grammars/tool-call.gbnf (agent after)
+@@ -7,7 +7,7 @@
+ tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
+ tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | fusion-tool | verify-tool | mcp-native-tool | mcp-server-tool | "\"reply\"" | "\"finish\""
+ browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
+-os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
++os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.exists" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
+ discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""
+ memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.store" | "notes.recall" | "notes.forget" | "lessons.recall" | "procedures.recall" ) "\""
+ tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
+--- src/agent/README.md (seeded before)
++++ src/agent/README.md (agent after)
+@@ -25,7 +25,7 @@
+ 
+ Session state and dependencies are passed explicitly. Root orchestration retains the original await points: synchronous parse and recovery must not yield before dispatch, retry or steering closure. Read the mechanism documents before changing these decisions.
+ 
+-The 13 core filesystem taxonomy entries select their unchanged classes from [import-free operation contracts](../tools/os/fs/docs/contracts.md). The taxonomy still owns classification lookup and batching policy; it does not import execution/registry or infer role permissions from readonly metadata. Other tools retain their explicit existing entries. [Global conformance](../tools/tool-contract-conformance.test.ts) checks canonical classes and unknown-name behavior alongside actual registrations.
++The 14 core filesystem taxonomy entries select their classes from [import-free operation contracts](../tools/os/fs/docs/contracts.md). The taxonomy still owns classification lookup and batching policy; it does not import execution/registry or infer role permissions from readonly metadata. Other tools retain their explicit existing entries. [Global conformance](../tools/tool-contract-conformance.test.ts) checks canonical classes and unknown-name behavior alongside actual registrations.
+ 
+ ## Task-specific reading
+ 
+--- src/agent/tool-resource-class.ts (seeded before)
++++ src/agent/tool-resource-class.ts (agent after)
+@@ -55,6 +55,7 @@
+  * explicit class.
+  */
+ import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
++import { OS_FS_EXISTS_CONTRACT } from "../tools/os/fs/fs-exists-contract.js";
+ import {
+   isAutoApprovedAt,
+   isGrantableCategory,
+@@ -94,6 +95,7 @@
+   [OS_FS_LOCATE_PROJECT_CONTRACT.name]: OS_FS_LOCATE_PROJECT_CONTRACT.resourceClass,
+   [OS_FS_GREP_CONTRACT.name]: OS_FS_GREP_CONTRACT.resourceClass,
+   [OS_FS_HASH_CONTRACT.name]: OS_FS_HASH_CONTRACT.resourceClass,
++  [OS_FS_EXISTS_CONTRACT.name]: OS_FS_EXISTS_CONTRACT.resourceClass,
+   [OS_FS_DIFF_CONTRACT.name]: OS_FS_DIFF_CONTRACT.resourceClass,
+   [OS_FS_WATCH_CONTRACT.name]: OS_FS_WATCH_CONTRACT.resourceClass,
+   "os.fs.archive.list": "pure_read",
+--- src/prompt/README.md (seeded before)
++++ src/prompt/README.md (agent after)
+@@ -16,7 +16,7 @@
+ 
+ build-prompt composes the bounded model context from explicit session inputs. stable-prefix owns cache-sensitive catalog bytes; token-budget and conversation-pack own allocation and retained transcript cuts. Provider profiles determine framing, and tool descriptors supply catalog contracts. Assembly does not own durable session or memory stores.
+ 
+-The 13 core filesystem entries in descriptor-A and the default JSON schema map consume explicit projections from [import-free operation contracts](../tools/os/fs/docs/contracts.md). Catalog positions, args text and serialized schema order stay unchanged. Rendering does not import execution or own its argument semantics. [Global conformance](../tools/tool-contract-conformance.test.ts) checks the actual catalog, including narrowly frozen [existing Git duplicates](../../docs/proposals/tool-catalog-deduplication.md); other families retain their existing owners.
++The 14 core filesystem entries in descriptor-A and the default JSON schema map consume explicit projections from [import-free operation contracts](../tools/os/fs/docs/contracts.md). Existing catalog positions, args text and serialized schema order stay unchanged. Rendering does not import execution or own its argument semantics. [Global conformance](../tools/tool-contract-conformance.test.ts) checks the actual catalog, including narrowly frozen [existing Git duplicates](../../docs/proposals/tool-catalog-deduplication.md); other families retain their existing owners.
+ 
+ ## Task-specific reading
+ 
+--- src/prompt/default-tool-args-schemas.ts (seeded before)
++++ src/prompt/default-tool-args-schemas.ts (agent after)
+@@ -42,6 +42,7 @@
+  */
+ 
+ import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
++import { OS_FS_EXISTS_CONTRACT } from "../tools/os/fs/fs-exists-contract.js";
+ import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
+ import type { ToolDescriptor } from "./stable-prefix.js";
+ import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
+@@ -224,6 +225,7 @@
+     ),
+   ],
+   [OS_FS_HASH_CONTRACT.name, OS_FS_HASH_CONTRACT.argsJsonSchema],
++  [OS_FS_EXISTS_CONTRACT.name, OS_FS_EXISTS_CONTRACT.argsJsonSchema],
+   [OS_FS_DIFF_CONTRACT.name, OS_FS_DIFF_CONTRACT.argsJsonSchema],
+   [OS_FS_PATCH_CONTRACT.name, OS_FS_PATCH_CONTRACT.argsJsonSchema],
+   [OS_FS_WATCH_CONTRACT.name, OS_FS_WATCH_CONTRACT.argsJsonSchema],
+--- src/prompt/default-tool-descriptors-a.ts (seeded before)
++++ src/prompt/default-tool-descriptors-a.ts (agent after)
+@@ -11,6 +11,7 @@
+ import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+ import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
+ import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
++import { OS_FS_EXISTS_CONTRACT } from "../tools/os/fs/fs-exists-contract.js";
+ import type { ToolDescriptor } from "./stable-prefix.js";
+ 
+ /** First half of `DEFAULT_TOOL_DESCRIPTORS` (order is load-bearing). */
+@@ -316,4 +317,5 @@
+       '{"url":"https://docs.example.com/guide","extractMode":"text","maxChars":20000}',
+     ],
+   },
++  OS_FS_EXISTS_CONTRACT.descriptor,
+ ];
+--- src/tools/README.md (seeded before)
++++ src/tools/README.md (agent after)
+@@ -16,7 +16,7 @@
+ 
+ ToolRegistry owns registered definitions and invocation; role predicates and discovery determine offered schemas. OS/browser/memory/conversation tool families implement operations using explicit ToolContext dependencies. Agent dispatch owns approval, batching and progress guards; prompt owns descriptors and LLM adapters own wire schemas. A catalog change crosses these boundaries.
+ 
+-[Core filesystem contracts](os/fs/docs/contracts.md) group 13 operations' metadata and pure argument semantics. [Global conformance](tool-contract-conformance.test.ts) inspects actual static registrations before replacement and catalog/schema/class surfaces; [runtime composition tests](../runtime/tool-contract-composition.test.ts) pin feature gates and read-scope decoration. See [contracts](docs/contracts.md) for validation limits and existing catalog debt.
++[Core filesystem contracts](os/fs/docs/contracts.md) group 14 operations' metadata and pure argument semantics. [Global conformance](tool-contract-conformance.test.ts) inspects actual static registrations before replacement and catalog/schema/class surfaces; [runtime composition tests](../runtime/tool-contract-composition.test.ts) pin feature gates and read-scope decoration. See [contracts](docs/contracts.md) for validation limits and existing catalog debt.
+ 
+ ## Task-specific reading
+ 
+--- src/tools/docs/contracts.md (seeded before)
++++ src/tools/docs/contracts.md (agent after)
+@@ -7,9 +7,9 @@
+ 
+ ToolRegistry owns explicit definitions and invocation. A new tool must be registered, described in the prompt catalog, assigned an argsJsonSchema and resource class, and validated by its runtime parser. Text and JSON schemas remain distinct representations; a canonical owner groups their shipped values without inventing a schema generator.
+ 
+-[The 13 core filesystem contracts](../os/fs/docs/contracts.md) own descriptor, wire schema, definition metadata and class without imports. Pure parsers share those owners; IO/path-policy validation stays in execution. Consumers select projections explicitly, preserving serialized order and text. [Global conformance](../tool-contract-conformance.test.ts) joins real static registrations before Map replacement with descriptor/schema/class inventories. It proves canonical agreement for these 13 tools, and presence/format plus actual taxonomy lookup for the other built-ins. Independent fixtures detect missing, orphan, duplicate and changed canonical facets; there is no catalog-wide generator.
++[The 14 core filesystem contracts](../os/fs/docs/contracts.md) own descriptor, wire schema, definition metadata and class without imports. Pure parsers share those owners; IO/path-policy validation stays in execution. Consumers select projections explicitly, preserving serialized order and text. [Global conformance](../tool-contract-conformance.test.ts) joins real static registrations before Map replacement with descriptor/schema/class inventories. It proves canonical agreement for these 14 tools, and presence/format plus actual taxonomy lookup for the other built-ins. Independent fixtures detect missing, orphan, duplicate and changed canonical facets; there is no catalog-wide generator.
+ 
+-The catalog currently has 88 entries for 85 names. Three pre-existing Git descriptor duplicates are frozen by exact positions and full ordered fingerprints in that test. New, changed or removed exceptions fail. [Their separate behavioral follow-up](../../../docs/proposals/tool-catalog-deduplication.md) explains why removing them would change prompt bytes and discovery. Static registrations have no duplicate exemption. ToolRegistry replacement remains intentional for read-scope decoration and dynamic MCP lifecycle, each tested separately.
++The catalog currently has 89 entries for 86 names. Three pre-existing Git descriptor duplicates are frozen by exact positions and full ordered fingerprints in that test. New, changed or removed exceptions fail. [Their separate behavioral follow-up](../../../docs/proposals/tool-catalog-deduplication.md) explains why removing them would change prompt bytes and discovery. Static registrations have no duplicate exemption. ToolRegistry replacement remains intentional for read-scope decoration and dynamic MCP lifecycle, each tested separately.
+ 
+ Both reply and finish have static descriptors and schemas. The native adapter supplies terminal wire overrides and may include them beyond a role's visible catalog. Conditional registration (browser/memory/tasks/vision), descriptor-only availability (web/email/GitHub/fusion), four static MCP meta tools and server-qualified external schemas have explicit owners in the conformance tests. Do not infer roles or batching permission from readonly metadata.
+ 
+--- src/tools/os/fs/README.md (seeded before)
++++ src/tools/os/fs/README.md (agent after)
+@@ -7,7 +7,7 @@
+ 
+ ## Operations and entry points
+ 
+-- Read and discover: [read](fs-read.ts), [list](fs-list.ts), [glob](fs-glob.ts), [grep](fs-grep.ts), [hash](fs-hash.ts), [diff](fs-diff.ts) and [watch](fs-watch.ts). The [read-coverage contract](fs-read-coverage.ts) is shared with the agent's repeated-read detector: resolved identity, visible content digest and actual line coverage belong to the result, rather than being reconstructed from requested arguments.
++- Read and discover: [read](fs-read.ts), [list](fs-list.ts), [glob](fs-glob.ts), [grep](fs-grep.ts), [hash](fs-hash.ts), [exists](fs-exists.ts), [diff](fs-diff.ts) and [watch](fs-watch.ts). Exists uses stat only, follows symlinks and reports ENOENT as successful false/null; other IO errors propagate. Its path is required and non-empty, relative to workingDir with home expansion, and checked by the read-scope wrapper. The [read-coverage contract](fs-read-coverage.ts) is shared with the agent's repeated-read detector: resolved identity, visible content digest and actual line coverage belong to the result, rather than being reconstructed from requested arguments.
+ - Mutate and recover: [write](fs-write.ts), [edit](fs-edit.ts), [patch](fs-patch.ts), [trash](fs-trash.ts) and [restore](fs-restore.ts). Edit diff and patch preview helpers keep rendering/dry-run reporting beside the operation. Restore copies precede qualifying replacements; advisory parse/content warnings do not invent an atomic rollback.
+ - Locate a project: [location](fs-locate-project.ts) and [known sources](fs-locate-project-sources.ts) search the working directory and ancestors, recent session directories and direct children of configured project roots. Ambiguity remains an ambiguity; the operation does not crawl the whole disk. [Project test helpers](fs-locate-project-test-helpers.ts) are fixtures, not a runtime API.
+ 
+@@ -15,9 +15,9 @@
+ 
+ ## Core operation contracts
+ 
+-Each of the 13 operations above has an import-free `fs-*-contract.ts` owner for definition metadata, descriptor, JSON schema and resource class. Execution, prompt and taxonomy select explicit projections at their existing positions. Role admissions, read targets and approval policy remain separate. [The contract guide](docs/contracts.md) maps pure parsers and the intentional contextual validation boundaries; adding an import to any contract fails the dependency check.
++Each of the 14 operations above has an import-free `fs-*-contract.ts` owner for definition metadata, descriptor, JSON schema and resource class. Execution, prompt and taxonomy select explicit projections at their existing positions. Role admissions, read targets and approval policy remain separate. [The contract guide](docs/contracts.md) maps pure parsers and the intentional contextual validation boundaries; adding an import to any contract fails the dependency check.
+ 
+-The advertised wire schema does not replace runtime validation. For example, hash accepts null defaults and uppercase algorithms while encoding remains case-sensitive. [The global conformance test](../../tool-contract-conformance.test.ts) checks real registrations before registry Map replacement, all 13 canonical projections and independent negative fixtures. [The runtime test](../../../runtime/tool-contract-composition.test.ts) distinguishes optional registration from metadata-preserving read-scope decoration. Archive and document-reader contracts remain separate owners.
++The advertised wire schema does not replace runtime validation. For example, hash accepts null defaults and uppercase algorithms while encoding remains case-sensitive. [The global conformance test](../../tool-contract-conformance.test.ts) checks real registrations before registry Map replacement, all 14 canonical projections and independent negative fixtures. [The runtime test](../../../runtime/tool-contract-composition.test.ts) distinguishes optional registration from metadata-preserving read-scope decoration. Archive and document-reader contracts remain separate owners.
+ 
+ ## Guards, state and resources
+ 
+--- src/tools/os/fs/docs/contracts.md (seeded before)
++++ src/tools/os/fs/docs/contracts.md (agent after)
+@@ -5,9 +5,9 @@
+ 
+ ## Responsibility and consumers
+ 
+-The 13 operations read/list/glob/grep/hash/diff/watch/write/edit/patch/trash/restore/locate_project each have an adjacent import-free `fs-*-contract.ts`. These own name, description, readonly, resourceClass, descriptor and argsJsonSchema. Execution selects definition metadata; prompt descriptor-A/schema map and agent taxonomy select their projections explicitly. Preserve positions, property/required/enum order, optional tier omission and exact model-facing strings. There is no generated registry or aggregate barrel.
++The 14 operations read/list/glob/grep/hash/exists/diff/watch/write/edit/patch/trash/restore/locate_project each have an adjacent import-free `fs-*-contract.ts`. These own name, description, readonly, resourceClass, descriptor and argsJsonSchema. Execution selects definition metadata; prompt descriptor-A/schema map and agent taxonomy select their projections explicitly. Preserve positions, property/required/enum order, optional tier omission and exact model-facing strings. There is no generated registry or aggregate barrel.
+ 
+-[Hash](../fs-hash-contract.ts) was the prototype; the other twelve follow its shape. Archive and document extraction have separate execution/backend owners and are outside this canonical family. [OS composition](../../README.md) remains the sole registration recipe.
++[Hash](../fs-hash-contract.ts) was the prototype; the other operations follow its shape. [Exists](../fs-exists-contract.ts) owns the non-empty path parser; execution uses stat without content reads and only translates ENOENT into false/null. Archive and document extraction have separate execution/backend owners and are outside this canonical family. [OS composition](../../README.md) remains the sole registration recipe.
+ 
+ ## Runtime argument boundaries
+ 
+@@ -25,6 +25,6 @@
+ 
+ Run `npx vitest run src/tools/os/fs src/tools/tool-contract-conformance.test.ts src/runtime/tool-contract-composition.test.ts` with disposable fixtures. Include existing agent batching/read-coverage, roles/discovery, prompt and native-wire seam tests for interface changes. Run lint, test type debt gate, imports and docs checks. The dependency checker rejects all imports from any filesystem contract, including type-only, bare package and dynamic imports.
+ 
+-[Global conformance](../../../tool-contract-conformance.test.ts) records real static definitions before ToolRegistry's Map can hide duplicate registration, inventories the private schema map via test-only TypeScript AST and compares the 13 canonical projections. Negative fixtures mutate each facet independently. Other static families get presence/format and taxonomy checks, not a claim of canonical semantic agreement. [Runtime composition](../../../../runtime/tool-contract-composition.test.ts) separates native registration from read-scope replacements and checks feature switches. MCP external schema/replacement/resolver teardown is tested independently.
++[Global conformance](../../../tool-contract-conformance.test.ts) records real static definitions before ToolRegistry's Map can hide duplicate registration, inventories the private schema map via test-only TypeScript AST and compares the 14 canonical projections. Negative fixtures mutate each facet independently. Other static families get presence/format and taxonomy checks, not a claim of canonical semantic agreement. [Runtime composition](../../../../runtime/tool-contract-composition.test.ts) separates native registration from read-scope replacements and checks feature switches. MCP external schema/replacement/resolver teardown is tested independently.
+ 
+ The three existing Git descriptor duplicates are narrowly frozen; [follow-up](../../../../../docs/proposals/tool-catalog-deduplication.md) describes the behavioral fix. Unit checks establish neither native trash behavior on every platform nor model-quality/performance gains. [Stage 05 acceptance](../../../../../docs/testing/stage-05-validation.md) records baseline comparisons and remaining debt.
+--- src/tools/os/fs/fs-exists-contract.ts (seeded before)
++++ src/tools/os/fs/fs-exists-contract.ts (agent after)
+@@ -0,0 +1,28 @@
++const NAME = "os.fs.exists";
++
++export const OS_FS_EXISTS_CONTRACT = {
++  name: NAME,
++  description: "Check whether a path exists and report file, dir or other without reading its contents. Read-only; follows symlinks.",
++  readonly: true,
++  resourceClass: "pure_read",
++  descriptor: {
++    name: NAME,
++    summary: "Check path existence and kind (file/dir/other/null). Read-only; follows symlinks.",
++    argsSchema: "{ path: string /* non-empty */ }",
++    tier: "rare",
++  },
++  argsJsonSchema: {
++    type: "object",
++    properties: { path: { type: "string", minLength: 1 } },
++    required: ["path"],
++    additionalProperties: false,
++  },
++} as const;
++
++export function parseExistsArgs(rawArgs: Record<string, unknown>): { path: string } {
++  const path = rawArgs.path;
++  if (typeof path !== "string" || path.length === 0) {
++    throw new Error("os.fs.exists: `path` must be a non-empty string");
++  }
++  return { path };
++}
+--- src/tools/os/fs/fs-exists.test.ts (seeded before)
++++ src/tools/os/fs/fs-exists.test.ts (agent after)
+@@ -0,0 +1,93 @@
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { execFile } from "node:child_process";
++import { promisify } from "node:util";
++import { ApprovalGate } from "../../../approval/approval-gate.js";
++import { resourceClassFor } from "../../../agent/tool-resource-class.js";
++import { USER_CONFIG_DEFAULTS } from "../../../config/config-schema.js";
++import { buildGrammarForTools, grammarToolNames } from "../../../llm/grammar/build-grammar.js";
++import { parseToolCalls } from "../../../llm/grammar/tool-call-grammar.js";
++import { descriptorsToOpenAiTools } from "../../../llm/provider/openai/openai-tool-call-adapter.js";
++import { getDefaultArgsJsonSchema } from "../../../prompt/default-tool-args-schemas.js";
++import { DEFAULT_TOOL_DESCRIPTORS } from "../../../prompt/tool-descriptors.js";
++import { FUSION_WORKER_ID_PREFIX } from "../../../session/fusion-worker-session.js";
++import { confineReads } from "../../read-scope/confine-reads.js";
++import { ToolRegistry, type ToolContext } from "../../tool-registry.js";
++import { descriptorsForRole } from "../../tool-roles.js";
++import { registerOsTools } from "../index.js";
++import { OS_FS_EXISTS_CONTRACT, parseExistsArgs } from "./fs-exists-contract.js";
++import { osFsExistsTool } from "./fs-exists.js";
++
++describe("os.fs.exists", () => {
++  let dir: string;
++  const context = (): ToolContext => ({ workingDir: dir, sessionId: "test", stepIndex: 0, signal: new AbortController().signal });
++  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "atomic-exists-")); });
++  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
++
++  it("checks real relative files, directories and missing paths", async () => {
++    await writeFile(join(dir, "file"), "contents stay unread");
++    for (const [path, exists, kind] of [["file", true, "file"], [".", true, "dir"], ["missing", false, null]] as const) {
++      const result = await osFsExistsTool.run({ path }, context());
++      expect(result.status).toBe("ok");
++      expect(result.details).toMatchObject({ exists, kind });
++    }
++    expect((await osFsExistsTool.run({ path: "file" }, context())).details.path).toBe(join(dir, "file"));
++  });
++
++  it("follows symlinks, treating a dangling target as missing", async () => {
++    await writeFile(join(dir, "file"), "x");
++    await symlink("file", join(dir, "link"));
++    await symlink("missing", join(dir, "dangling"));
++    expect((await osFsExistsTool.run({ path: "link" }, context())).details.kind).toBe("file");
++    expect((await osFsExistsTool.run({ path: "dangling" }, context())).details).toMatchObject({ exists: false, kind: null });
++  });
++
++  it.skipIf(process.platform === "win32")("reports other for a real FIFO", async () => {
++    const path = join(dir, "fifo");
++    await promisify(execFile)("mkfifo", [path]);
++    expect((await osFsExistsTool.run({ path }, context())).details).toMatchObject({ exists: true, kind: "other" });
++  });
++
++  it.each([undefined, null, "", 1, false, [], {}])("rejects invalid path %j", async (path) => {
++    expect(() => parseExistsArgs({ path })).toThrow(/non-empty string/);
++    await expect(osFsExistsTool.run({ path }, context())).rejects.toThrow(/non-empty string/);
++  });
++
++  it("preserves errors other than ENOENT", async () => {
++    await writeFile(join(dir, "file"), "x");
++    await expect(osFsExistsTool.run({ path: "file/child" }, context())).rejects.toMatchObject({ code: "ENOTDIR" });
++  });
++
++  it("connects registration, catalog, native schema, class and grammar for each role", async () => {
++    const registry = new ToolRegistry();
++    registerOsTools(registry, { approvals: new ApprovalGate({ emit: () => { throw new Error("unexpected approval"); } }), approvalRequired: false, config: USER_CONFIG_DEFAULTS, listRecentSessionDirs: () => [] });
++    expect(registry.get("os.fs.exists")).toBe(osFsExistsTool);
++    expect(osFsExistsTool.readonly).toBe(true);
++    expect(resourceClassFor("os.fs.exists")).toBe("pure_read");
++    expect(getDefaultArgsJsonSchema("os.fs.exists")).toEqual(OS_FS_EXISTS_CONTRACT.argsJsonSchema);
++    const descriptor = DEFAULT_TOOL_DESCRIPTORS.filter((d) => d.name === "os.fs.exists");
++    expect(descriptor).toHaveLength(1);
++    expect(descriptor[0]).toEqual({ ...OS_FS_EXISTS_CONTRACT.descriptor, argsJsonSchema: OS_FS_EXISTS_CONTRACT.argsJsonSchema });
++    const native = descriptorsToOpenAiTools(descriptor).find((tool) => (tool.function as { name: string }).name === "os__fs__exists");
++    expect(native?.function).toMatchObject({ parameters: { properties: { path: { type: "string", minLength: 1 } }, required: ["path"], additionalProperties: false } });
++    const base = await readFile(join(process.cwd(), "grammars/tool-call.gbnf"), "utf8");
++    expect(base.match(/^os-tool ::= .*$/m)?.[0]).toContain('"fs.exists"');
++    for (const role of ["builder", "orchestrator", "full"] as const) {
++      const offered = descriptorsForRole(role, DEFAULT_TOOL_DESCRIPTORS, new Set());
++      expect(grammarToolNames(buildGrammarForTools(base, offered.map((d) => d.name)))).toContain("os.fs.exists");
++    }
++    expect(parseToolCalls('[{"tool":"os.fs.exists","args":{"path":"file"}}]').calls[0]).toMatchObject({ tool: "os.fs.exists", args: { path: "file" } });
++  });
++
++  it("runs through the read-scope wrapper and refuses an outside worker path", async () => {
++    await writeFile(join(dir, "file"), "x");
++    const registry = new ToolRegistry();
++    registry.register(osFsExistsTool);
++    expect(confineReads(registry, { grantedDirs: () => [] })).toEqual(["os.fs.exists"]);
++    const ctx = { ...context(), sessionId: `${FUSION_WORKER_ID_PREFIX}exists` };
++    expect((await registry.invoke("os.fs.exists", { path: "file" }, ctx)).details).toMatchObject({ exists: true, kind: "file" });
++    expect((await registry.invoke("os.fs.exists", { path: "../outside-missing" }, ctx)).status).toBe("error");
++  });
++});
+--- src/tools/os/fs/fs-exists.ts (seeded before)
++++ src/tools/os/fs/fs-exists.ts (agent after)
+@@ -0,0 +1,30 @@
++import { stat } from "node:fs/promises";
++import { compressToolResult } from "../../../compressor/result-compressor.js";
++import type { ToolDefinition } from "../../tool-registry.js";
++import { resolveUserPath } from "../expand-home.js";
++import { OS_FS_EXISTS_CONTRACT, parseExistsArgs } from "./fs-exists-contract.js";
++
++export const osFsExistsTool: ToolDefinition = {
++  name: OS_FS_EXISTS_CONTRACT.name,
++  description: OS_FS_EXISTS_CONTRACT.description,
++  readonly: OS_FS_EXISTS_CONTRACT.readonly,
++  async run(rawArgs, ctx) {
++    const args = parseExistsArgs(rawArgs);
++    const path = resolveUserPath(args.path, ctx.workingDir);
++    let kind: "file" | "dir" | "other" | null;
++    try {
++      const info = await stat(path);
++      kind = info.isFile() ? "file" : info.isDirectory() ? "dir" : "other";
++    } catch (error) {
++      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
++      kind = null;
++    }
++    const exists = kind !== null;
++    return compressToolResult({
++      tool: OS_FS_EXISTS_CONTRACT.name,
++      status: "ok",
++      output: `${path}: exists=${exists}, kind=${kind}`,
++      details: { path, exists, kind },
++    });
++  },
++};
+--- src/tools/os/index.ts (seeded before)
++++ src/tools/os/index.ts (agent after)
+@@ -28,6 +28,7 @@
+ import { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
+ import { osNotifyTool } from "./notify.js";
+ import { osFsHashTool } from "./fs/fs-hash.js";
++import { osFsExistsTool } from "./fs/fs-exists.js";
+ import { osFsDiffTool } from "./fs/fs-diff.js";
+ import { buildOsFsPatchTool } from "./fs/fs-patch.js";
+ import { buildOsFsRestoreTool } from "./fs/fs-restore.js";
+@@ -80,6 +81,7 @@
+ export { osNotifyTool } from "./notify.js";
+ export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
+ export { osFsHashTool } from "./fs/fs-hash.js";
++export { osFsExistsTool } from "./fs/fs-exists.js";
+ export { osFsDiffTool } from "./fs/fs-diff.js";
+ export { buildOsFsPatchTool } from "./fs/fs-patch.js";
+ export { buildOsFsRestoreTool } from "./fs/fs-restore.js";
+@@ -272,6 +274,7 @@
+     }),
+   );
+   registry.register(osFsHashTool);
++  registry.register(osFsExistsTool);
+   registry.register(osFsDiffTool);
+   registry.register(buildOsFsPatchTool(fsMutation));
+   registry.register(buildOsFsRestoreTool(fsMutation));
+--- src/tools/os/os-tools.test.ts (seeded before)
++++ src/tools/os/os-tools.test.ts (agent after)
+@@ -588,6 +588,7 @@
+         "os.fs.archive.read_entry",
+         "os.fs.diff",
+         "os.fs.edit",
++        "os.fs.exists",
+         "os.fs.glob",
+         "os.fs.grep",
+         "os.fs.hash",
+--- src/tools/read-scope/read-scope-targets.ts (seeded before)
++++ src/tools/read-scope/read-scope-targets.ts (agent after)
+@@ -27,6 +27,7 @@
+   ["os.fs.read", pathArg],
+   ["os.fs.list", pathArg],
+   ["os.fs.hash", pathArg],
++  ["os.fs.exists", pathArg],
+   ["os.fs.watch", pathArg],
+   ["os.fs.read_document", pathArg],
+   ["os.fs.archive.list", pathArg],
+--- src/tools/tool-contract-conformance.test.ts (seeded before)
++++ src/tools/tool-contract-conformance.test.ts (agent after)
+@@ -52,6 +52,7 @@
+ import { OS_FS_GLOB_CONTRACT } from "./os/fs/fs-glob-contract.js";
+ import { OS_FS_GREP_CONTRACT } from "./os/fs/fs-grep-contract.js";
+ import { OS_FS_HASH_CONTRACT } from "./os/fs/fs-hash-contract.js";
++import { OS_FS_EXISTS_CONTRACT } from "./os/fs/fs-exists-contract.js";
+ import { OS_FS_DIFF_CONTRACT } from "./os/fs/fs-diff-contract.js";
+ import { OS_FS_WATCH_CONTRACT } from "./os/fs/fs-watch-contract.js";
+ import { OS_FS_WRITE_CONTRACT } from "./os/fs/fs-write-contract.js";
+@@ -67,6 +68,7 @@
+   OS_FS_GLOB_CONTRACT,
+   OS_FS_GREP_CONTRACT,
+   OS_FS_HASH_CONTRACT,
++  OS_FS_EXISTS_CONTRACT,
+   OS_FS_DIFF_CONTRACT,
+   OS_FS_WATCH_CONTRACT,
+   OS_FS_WRITE_CONTRACT,
+@@ -220,7 +222,7 @@
+   for (const definition of catalog.registrations) {
+     if (definition.description.length === 0) errors.push(`empty description: ${definition.name}`);
+   }
+-  // Canonical semantic oracle is deliberately bounded to the 13 filesystem contracts.
++  // Canonical semantic oracle is deliberately bounded to the filesystem contracts.
+   // Other built-ins have no canonical owner yet: presence/formats do not prove their semantics.
+   for (const contract of CORE_CONTRACTS) {
+     const definition = catalog.registrations.find((item) => item.name === contract.name);
+@@ -319,8 +321,8 @@
+       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
+       expect(resourceClassFor(name)).toBe("terminal");
+     }
+-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(88);
+-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(85);
++    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(89);
++    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(86);
+     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
+       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
+       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
+--- src/tools/tool-roles.ts (seeded before)
++++ src/tools/tool-roles.ts (agent after)
+@@ -48,6 +48,7 @@
+   "os.fs.glob",
+   "os.fs.grep",
+   "os.fs.hash",
++  "os.fs.exists",
+   "os.fs.diff",
+   "os.fs.watch",
+   "os.fs.locate_project",

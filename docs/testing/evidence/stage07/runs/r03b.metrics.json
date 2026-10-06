@@ -1,0 +1,110 @@
+{
+  "actions": 22,
+  "returnedOutputBytes": 85453,
+  "observedSourceBytes": 84037,
+  "uniqueVersionedSourceBytes": 82306,
+  "repeatedSourceBytes": 1731,
+  "uniqueInstructionBytes": 8740,
+  "uniqueCodeBytes": 32995,
+  "uniqueOtherBytes": 40571,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+      "uniqueBytes": 6714
+    },
+    {
+      "path": "README.md",
+      "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+      "uniqueBytes": 7487
+    },
+    {
+      "path": "src/config/README.md",
+      "hash": "c85fbd53355d590842b368563b4d2ef18086ce2890356a1277ae5528c4dfcdfa",
+      "uniqueBytes": 7178
+    },
+    {
+      "path": "src/config/AGENTS.md",
+      "hash": "9ef5c52bed9f12aad44501b84754d2db316367eeb30cfa20e61b8a8c77568a62",
+      "uniqueBytes": 1088
+    },
+    {
+      "path": "src/config/config-file.test.ts",
+      "hash": "de74721040481a300bf5b531f8141951b77200a7685b871dd89494e89b915bd4",
+      "uniqueBytes": 2365
+    },
+    {
+      "path": "src/config/agent/agent-config.test.ts",
+      "hash": "8825d9b3d4f5337a9064f24851e108a79ee3db1bc5e4bbbaa345bddb1063e415",
+      "uniqueBytes": 5194
+    },
+    {
+      "path": "src/config/agent/agent-parser.ts",
+      "hash": "1766f82d11c855329025e317ef6849f892957a9dc5a24068c6e95123384368e2",
+      "uniqueBytes": 6018
+    },
+    {
+      "path": "src/config/agent/agent-types.ts",
+      "hash": "2776351d6d117ec57b8fe798553f54def86800a3724302f8968c314cfb455496",
+      "uniqueBytes": 62
+    },
+    {
+      "path": "src/config/config-schema.test.ts",
+      "hash": "48535e932580045b3f424412f77f556374daaeb88335eaa8ea075a82011ba00e",
+      "uniqueBytes": 5844
+    },
+    {
+      "path": "src/config/config-schema.ts",
+      "hash": "244617f0172392f8c6ee90f0447ac9e3a16a448e4719fac4e7186a5b990d66ba",
+      "uniqueBytes": 7271
+    },
+    {
+      "path": "src/config/agent/README.md",
+      "hash": "16378d5d9bc5c4b5cf35b17b9a35fec8a36191f89eed68dfdc249e520394e102",
+      "uniqueBytes": 1316
+    },
+    {
+      "path": "src/config/docs/compatibility.md",
+      "hash": "e4e1849b8f06c94823d760bb930b47c334aa24af6f34a2807c40ef2c29b372c9",
+      "uniqueBytes": 13037
+    },
+    {
+      "path": "src/approval/AGENTS.md",
+      "hash": "ea91e0b0d46943015fbec838b77d67766696b066a4db258e88915b59b30844f1",
+      "uniqueBytes": 938
+    },
+    {
+      "path": "src/approval/README.md",
+      "hash": "e3b931353d4a11cd889d212c21443499b757b70b07ab80acda435815f9e13d0f",
+      "uniqueBytes": 1028
+    },
+    {
+      "path": "src/config/docs/execution-resource.md",
+      "hash": "05f1cb275cc2eb1f3102ec1666144267cb9c44967c94649c49513bf552aacd16",
+      "uniqueBytes": 4538
+    },
+    {
+      "path": "package.json",
+      "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+      "uniqueBytes": 5987
+    },
+    {
+      "path": "src/config/agent/agent-defaults.ts",
+      "hash": "7cbf2567b69fb494dcde20b6a6acd1c178c8e35b0763cf27e5585c86165ddb9d",
+      "uniqueBytes": 845
+    },
+    {
+      "path": "src/config/config-primitives.ts",
+      "hash": "88b3c4b3cceba8f4f7d083c202355ad5728484d0680387099b44947c16cdde04",
+      "uniqueBytes": 5026
+    },
+    {
+      "path": "src/config/agent/agent-parser.ts",
+      "hash": "10410e96cd25bf224f01dc6235e06cf0e082add9b0b9f0e5a8f68ebb13898187",
+      "uniqueBytes": 370
+    }
+  ],
+  "changedFiles": [
+    "src/config/agent/agent-parser.ts"
+  ]
+}

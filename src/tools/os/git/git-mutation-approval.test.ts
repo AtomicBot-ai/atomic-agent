@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApprovalRequest } from "../../../approval/approval-gate.js";
 import type { ToolDefinition } from "../../tool-registry.js";
-import type { FsDangerousToolOptions } from "../fs-require-approval.js";
+import type { FsDangerousToolOptions } from "../fs/fs-require-approval.js";
 import { buildOsGitAddTool } from "./git-add.js";
 import { buildOsGitCheckoutTool } from "./git-checkout.js";
 import { buildOsGitCommitTool } from "./git-commit.js";

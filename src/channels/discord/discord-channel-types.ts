@@ -7,7 +7,7 @@
  * state machine; a client library would add a large transitive tree to
  * a project that ships a single-file SEA binary, for code we would
  * still have to wrap. Same reasoning as the Composio integration
- * declining `@composio/core` (see AGENTS.md §"Composio").
+ * declining `@composio/core` (see ../../composio/README.md).
  */
 
 /** Env var holding the bot token. Never stored in `config.json`. */

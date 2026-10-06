@@ -112,7 +112,7 @@ describe("skillCommand", () => {
     writeSkill(globalSkillsDir, "alpha");
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      skills: { disabled: ["alpha"] },
+      skills: { ...USER_CONFIG_DEFAULTS.skills, disabled: ["alpha"] },
     });
     resetConfigCache();
 
@@ -137,7 +137,7 @@ describe("skillCommand", () => {
     writeSkill(globalSkillsDir, "alpha");
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      skills: { disabled: ["alpha"] },
+      skills: { ...USER_CONFIG_DEFAULTS.skills, disabled: ["alpha"] },
     });
     resetConfigCache();
     const code = await skillCommand(["disable", "alpha"]);
@@ -169,7 +169,7 @@ describe("skillCommand", () => {
   it("list emits a [missing] row for disabled skills that are not installed", async () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      skills: { disabled: ["ghost-skill"] },
+      skills: { ...USER_CONFIG_DEFAULTS.skills, disabled: ["ghost-skill"] },
     });
     resetConfigCache();
     const code = await skillCommand(["list"]);
@@ -182,7 +182,7 @@ describe("skillCommand", () => {
     writeSkill(globalSkillsDir, "alpha");
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      skills: { disabled: ["alpha", "beta"] },
+      skills: { ...USER_CONFIG_DEFAULTS.skills, disabled: ["alpha", "beta"] },
     });
     resetConfigCache();
 
@@ -272,6 +272,7 @@ describe("skillCommand", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
       skills: {
+        ...USER_CONFIG_DEFAULTS.skills,
         taps: ["owner/repo"],
         clawhub: { ...USER_CONFIG_DEFAULTS.skills.clawhub, enabled: false },
       },

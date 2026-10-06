@@ -18,17 +18,12 @@ vi.mock("../../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
-    // Never the real ones either: the backend in these tests is an empty
-    // stub file, and spawning it fails with EACCES from an 'error' event
-    // nobody listens for — an unhandled error that fails the run, unless
-    // something already holds the managed port and the start bails before
-    // the spawn. A start that gets this far is all a test here needs.
     resolveManagedDevice: vi.fn(async () => undefined),
     listVulkanDevices: vi.fn(async () => []),
     probeNvidiaVramMiB: vi.fn(async () => null),
-    startChatAndEmbeddingDaemons: vi.fn(async () => {
-      throw new Error("no llama-server in unit tests");
-    }),
+    // Exercise the real orchestrator while keeping process creation outside
+    // this unit test. The previous partial mock could spawn the stub binary.
+    startChatAndEmbeddingDaemons: vi.fn<typeof actual.startChatAndEmbeddingDaemons>(),
   };
 });
 
@@ -39,7 +34,7 @@ import {
   resolveModelFilePath,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
@@ -65,7 +60,22 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.stopEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockReset();
-    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockClear();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockReset();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValue({
+      chat: {
+        pid: 12345,
+        tokensPerSecond: null,
+        contextSize: 0,
+        swaFull: {
+          enabled: false,
+          reason: "unit test",
+          estimate: null,
+          slidingLayers: 0,
+        },
+        prefixReuse: null,
+      },
+      embedding: { skipped: true },
+    });
   });
 
   afterEach(() => {
@@ -234,7 +244,18 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValueOnce({
-      chat: { pid: 4242 },
+      chat: {
+        pid: 4242,
+        tokensPerSecond: null,
+        contextSize: 0,
+        swaFull: {
+          enabled: false,
+          reason: "unit test",
+          estimate: null,
+          slidingLayers: 0,
+        },
+        prefixReuse: null,
+      },
       embedding: { skipped: true },
     });
 
@@ -245,7 +266,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     ).resolves.toBe(true);
 
     expect(localLlm.maybeAutoUpdateBackend).not.toHaveBeenCalled();
-    expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledTimes(1);
+    expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledOnce();
   });
 
   it("still checks when startDaemon is invoked without the flag", async () => {

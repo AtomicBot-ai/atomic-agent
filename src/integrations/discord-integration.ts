@@ -38,7 +38,7 @@ export const discordIntegration: IntegrationDescriptor = {
   docsUrl: "https://discord.com/developers/applications",
   // Live since the hub stopped relying on `restart()`: the token is
   // resolved at start(), the kill switch and the owner have their own
-  // live mutators. See AGENTS.md §"Integrations hub".
+  // live mutators. See README.md.
   appliesLive: true,
   setupSteps: [
     "Open discord.com/developers/applications → New Application, give it a name.",

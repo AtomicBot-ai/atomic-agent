@@ -7,7 +7,7 @@
  * agent loop — but always on `slotId: -1` so the request never
  * collides with the main agent slot or the reflection slot.
  *
- * Locked invariants (AGENTS.md §"MCP client"):
+ * Locked invariants (docs/client.md):
  *   1. Sampling **always** uses `slotId: -1`. The main agent slot
  *      and the reflection slot are off-limits to MCP traffic.
  *   2. The handler is fire-safe — every error is folded into a
@@ -63,7 +63,7 @@ export function createMcpSamplingHandler(
     const result = await deps.llamaServerClient.complete({
       prompt,
       // INVARIANT 1: -1 means "no slot reuse". Never the main agent
-      // slot, never the reflection slot. See AGENTS.md.
+      // slot, never the reflection slot. See README.md.
       slotId: -1,
       cachePrompt: false,
       maxTokens,

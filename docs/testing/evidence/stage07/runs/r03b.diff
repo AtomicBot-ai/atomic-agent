@@ -1,0 +1,11 @@
+--- src/config/agent/agent-parser.ts (seeded before)
++++ src/config/agent/agent-parser.ts (agent after)
+@@ -78,7 +78,7 @@
+     return parseApprovalLevel(rawLevel, "agent.approvalLevel");
+   }
+   if (rawLegacyRequired !== undefined && rawLegacyRequired !== null) {
+-    return parseBool(rawLegacyRequired, "agent.approvalRequired") ? 1 : 1;
++    return parseBool(rawLegacyRequired, "agent.approvalRequired") ? 1 : 5;
+   }
+   return readDefaults().approvalLevel;
+ }

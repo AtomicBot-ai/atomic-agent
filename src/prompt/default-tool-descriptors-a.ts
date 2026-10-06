@@ -1,3 +1,16 @@
+import { OS_FS_READ_CONTRACT } from "../tools/os/fs/fs-read-contract.js";
+import { OS_FS_LIST_CONTRACT } from "../tools/os/fs/fs-list-contract.js";
+import { OS_FS_GLOB_CONTRACT } from "../tools/os/fs/fs-glob-contract.js";
+import { OS_FS_GREP_CONTRACT } from "../tools/os/fs/fs-grep-contract.js";
+import { OS_FS_DIFF_CONTRACT } from "../tools/os/fs/fs-diff-contract.js";
+import { OS_FS_WATCH_CONTRACT } from "../tools/os/fs/fs-watch-contract.js";
+import { OS_FS_WRITE_CONTRACT } from "../tools/os/fs/fs-write-contract.js";
+import { OS_FS_EDIT_CONTRACT } from "../tools/os/fs/fs-edit-contract.js";
+import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
+import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
+import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
+import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 
 /** First half of `DEFAULT_TOOL_DESCRIPTORS` (order is load-bearing). */
@@ -47,67 +60,15 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema:
       "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
   },
-  {
-    name: "os.fs.read",
-    summary:
-      "Read a UTF-8 file — the default for source code and text files; use offset/limit for ranges, lineNumbers for 'LINE|'.",
-    argsSchema:
-      "{ path: string, maxBytes?: number, offset?: number /* 1-based; neg=from end */, limit?: number, lineNumbers?: boolean }",
-  },
-  {
-    name: "os.fs.write",
-    summary:
-      "Write or append to a file (may require approval). It always makes a file, never a folder — create an empty folder with the shell (`mkdir`), not an empty write. The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.",
-    argsSchema: `{ path: string, content: string, mode?: "replace" | "append", overwrite?: boolean /* only when the user asked for that named file to be replaced */ }`,
-  },
-  {
-    name: "os.fs.restore",
-    summary:
-      "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory, by this session or another — the result of that call said it was saved (may require approval).",
-    argsSchema: "{ path: string }",
-    tier: "rare",
-  },
-  {
-    name: "os.fs.trash",
-    summary:
-      "When the user asks to delete, remove, erase, or trash files or directories: move them to the system Trash / Recycle Bin via absolute paths in paths (may require approval). Prefer this over os.shell.run rm.",
-    argsSchema: "{ paths: string[] }",
-  },
-  {
-    name: "os.fs.list",
-    summary:
-      'Non-recursive directory listing (default maxEntries=200). Header shows full totals—when matched/total is much larger than shown, narrow with extensions (e.g. ["pdf"]), pattern (glob-like *foo*), or sort (name|size|mtime); recurse with os.fs.glob. Do not treat the visible slice as the whole tree.',
-    argsSchema:
-      '{ path: string, pattern?: string, kind?: "file" | "dir", extensions?: string[], sort?: "name" | "size" | "mtime", maxEntries?: number }',
-  },
-  {
-    name: "os.fs.glob",
-    summary:
-      "Recursive path match under cwd or path (prefer cwd; default: session working directory). For large trees use tight patterns (e.g. **/*CV*.pdf, **/*resume*.pdf), sensible limit, sortByMtime when freshness matters; pass nocase=true to match regardless of case (covers CV/cv/Cv in one pass). Walk traverses the whole tree (minus ignore) before sorting and slicing to limit, so limit reliably gives you the best matches. Default ignore covers common caches (.cache, Library, node_modules, .cargo, __pycache__, etc.)—override with explicit ignore if you need to look there.",
-    argsSchema:
-      "{ pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean, nocase?: boolean }",
-  },
-  {
-    name: "os.fs.locate_project",
-    summary:
-      "Resolve a project directory from a short folder-name segment the user mentioned (raylib finds .../_raylib). Pass only that segment or a pasted absolute path as name, never the whole sentence. Searches the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.",
-    argsSchema: "{ name: string, limit?: number }",
-    examples: ['{"name":"raylib"}', '{"name":"tasks-board"}'],
-  },
-  {
-    name: "os.fs.grep",
-    summary:
-      "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.",
-    argsSchema:
-      "{ pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }",
-  },
-  {
-    name: "os.fs.edit",
-    summary:
-      "Surgical string replace; oldString must be unique unless replaceAll (may require approval).",
-    argsSchema:
-      "{ path: string, oldString: string, newString: string, replaceAll?: boolean }",
-  },
+  OS_FS_READ_CONTRACT.descriptor,
+  OS_FS_WRITE_CONTRACT.descriptor,
+  OS_FS_RESTORE_CONTRACT.descriptor,
+  OS_FS_TRASH_CONTRACT.descriptor,
+  OS_FS_LIST_CONTRACT.descriptor,
+  OS_FS_GLOB_CONTRACT.descriptor,
+  OS_FS_LOCATE_PROJECT_CONTRACT.descriptor,
+  OS_FS_GREP_CONTRACT.descriptor,
+  OS_FS_EDIT_CONTRACT.descriptor,
   {
     // Models reach for read_document on `.py` / `.ts` source files, hit the
     // unsupported-extension error and burn a step guessing `format`. The
@@ -146,34 +107,10 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
       "{ path: string, destDir: string, overwrite?: boolean, followSymlinks?: boolean, include?: string[], limits?: { maxTotalBytes?: number, maxEntryBytes?: number, maxEntries?: number }, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
     tier: "rare",
   },
-  {
-    name: "os.fs.hash",
-    summary: "File digest (md5, sha1, sha256, sha512). Read-only, streams.",
-    argsSchema: `{ path: string, algorithm?: "md5" | "sha1" | "sha256" | "sha512", encoding?: "hex" | "base64" }`,
-    tier: "rare",
-  },
-  {
-    name: "os.fs.diff",
-    summary: "Unified diff: files and/or inline strings. Read-only.",
-    argsSchema:
-      "{ aPath?: string, aText?: string, aLabel?: string, bPath?: string, bText?: string, bLabel?: string, context?: number, ignoreWhitespace?: boolean }",
-    tier: "rare",
-  },
-  {
-    name: "os.fs.patch",
-    summary:
-      "Preview (default) or apply a unified-diff patch (apply=true may require approval).",
-    argsSchema:
-      "{ patch?: string, patchPath?: string, apply?: boolean, rootDir?: string, fuzzFactor?: number, stripComponents?: number }",
-    tier: "rare",
-  },
-  {
-    name: "os.fs.watch",
-    summary: "One-shot file/dir watch up to timeoutMs. Read-only.",
-    argsSchema:
-      "{ path: string, timeoutMs?: number, recursive?: boolean, events?: ('add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir')[], ignoreInitial?: boolean, maxEvents?: number, stopAfterFirst?: boolean }",
-    tier: "rare",
-  },
+  OS_FS_HASH_CONTRACT.descriptor,
+  OS_FS_DIFF_CONTRACT.descriptor,
+  OS_FS_PATCH_CONTRACT.descriptor,
+  OS_FS_WATCH_CONTRACT.descriptor,
   {
     name: "os.git.status",
     summary: "Working tree status (porcelain) and current branch. Read-only.",

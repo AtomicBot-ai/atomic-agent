@@ -1,0 +1,65 @@
+{
+  "snapshot": "/tmp/atomic-stage07-final-v2",
+  "dest": "/tmp/atomic-stage07-benchmark/runs/final-04",
+  "task": 4,
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "goldenPath": null,
+  "seed": {
+    "task": 4,
+    "kind": "seeded-regression",
+    "patches": [
+      {
+        "file": "src/tui/mcp/mcp-reducer.ts",
+        "start": 1122,
+        "end": 1127,
+        "line": 38,
+        "old": "false",
+        "new": "true",
+        "anchor": "mcp refresh failure loading"
+      }
+    ],
+    "beforeSha256": "6e3dc92f921d9ee94c55df139c7095194802e5667e35c17b50061b999de475de",
+    "afterSha256": "3c1eb790bcd32d0d3e55e0a3174eaf4dc30bc67124599aa17384e569e4f030b8"
+  },
+  "unseeded": {
+    "exit": 0,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 4,
+      "pass": true,
+      "assertions": 12,
+      "observed": [
+        "refresh starts",
+        "failure stops loading",
+        "failure message",
+        "failed keeps rows",
+        "failed keeps cursor",
+        "failed keeps detail",
+        "failed keeps mode",
+        "failed keeps detailRowKey",
+        "failed keeps detailTab",
+        "failed keeps detailCursor",
+        "retry starts",
+        "retry clears error"
+      ]
+    },
+    "stdout": "{\"task\":4,\"pass\":true,\"assertions\":12,\"observed\":[\"refresh starts\",\"failure stops loading\",\"failure message\",\"failed keeps rows\",\"failed keeps cursor\",\"failed keeps detail\",\"failed keeps mode\",\"failed keeps detailRowKey\",\"failed keeps detailTab\",\"failed keeps detailCursor\",\"retry starts\",\"retry clears error\"]}\n"
+  },
+  "seeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 4,
+      "pass": false,
+      "assertions": 1,
+      "error": {
+        "name": "AssertionError",
+        "message": "failure stops loading\n\ntrue !== false\n",
+        "stack": "AssertionError [ERR_ASSERTION]: failure stops loading\n\ntrue !== false\n\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\n    at Object.check4 (/private/tmp/atomic-stage07-benchmark/check.mjs:48:855)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":4,\"pass\":false,\"assertions\":1,\"error\":{\"name\":\"AssertionError\",\"message\":\"failure stops loading\\n\\ntrue !== false\\n\",\"stack\":\"AssertionError [ERR_ASSERTION]: failure stops loading\\n\\ntrue !== false\\n\\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\\n    at Object.check4 (/private/tmp/atomic-stage07-benchmark/check.mjs:48:855)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  }
+}

@@ -33,7 +33,7 @@ import {
   resolveModelFilePath,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { persistEmbeddingHybridRecall } from "../persist-embedding-hybrid-recall.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";

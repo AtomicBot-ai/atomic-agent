@@ -4,8 +4,7 @@
  * The hub is the *whole* setup surface for the channel: token, owner,
  * kill switch, pairing and restart. The channel used to own a Manage
  * tab of its own; keeping both meant two places to configure one thing
- * and an operator having to know which. See AGENTS.md §"Integrations
- * hub".
+ * and an operator having to know which. See README.md.
  */
 
 import { TELEGRAM_BOT_TOKEN_KEY } from "../channels/telegram/index.js";

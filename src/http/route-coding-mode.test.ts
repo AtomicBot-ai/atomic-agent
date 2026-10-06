@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { USER_CONFIG_DEFAULTS, resetConfigCache } from "../config/index.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
-import { resolveCodingMode, type CodingMode } from "../tui/coding-mode.js";
+import { resolveCodingMode, type CodingMode } from "../approval/coding-mode.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
 interface ModeJson {

@@ -2,7 +2,7 @@ import {
   formatBytes,
   formatNumber,
   type ReplacedFileDetails,
-} from "../os/fs-replace-guard.js";
+} from "../os/fs/fs-replace-guard.js";
 
 /**
  * A pre-existing file a worker's write / edit / patch replaced or

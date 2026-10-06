@@ -1,4 +1,4 @@
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 
 /**
  * Where the turn submission originated. Used for observability and as

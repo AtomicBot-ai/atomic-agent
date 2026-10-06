@@ -12,7 +12,7 @@ import {
 } from "../../llm/run-mode/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { LocalModelsOrchestrator } from "../local-models/local-models-orchestrator.js";
-import { wrapLlmConfigError } from "../persist-llm-provider.js";
+import { wrapLlmConfigError } from "../../config/llm-provider-commands.js";
 import {
   setFusionWorkersInConfig,
   setRunModeInConfig,

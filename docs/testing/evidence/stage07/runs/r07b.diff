@@ -1,0 +1,112 @@
+--- src/agent/batch-executor.test.ts (seeded before)
++++ src/agent/batch-executor.test.ts (agent after)
+@@ -54,6 +54,12 @@
+ 
+ function okResult(name: string, summary = "ok"): CompressedToolResult {
+   return compressToolResult({ tool: name, status: "ok", output: summary });
++}
++
++function deferred<T>() {
++  let resolve!: (value: T) => void;
++  const promise = new Promise<T>((done) => { resolve = done; });
++  return { promise, resolve };
+ }
+ 
+ /**
+@@ -1081,6 +1087,69 @@
+     expect(out.results[1]!.cancelled).toBe(true);
+     expect(out.results[2]!.cancelled).toBe(true);
+   });
++
++  it.each(["ok", "error"] as const)(
++    "retains started %s results after abort, skips serial siblings and the tail terminal",
++    async (status) => {
++      const ctrl = new AbortController();
++      const firstStarted = deferred<void>();
++      const readStarted = deferred<void>();
++      const first = deferred<CompressedToolResult>();
++      const read = deferred<CompressedToolResult>();
++      const invocations: string[] = [];
++      const started: number[] = [];
++      const finished: number[] = [];
++      const registry = buildRegistry({
++        "browser.click": async (args): Promise<CompressedToolResult> => {
++          invocations.push(`click:${args.ref}`);
++          firstStarted.resolve();
++          return first.promise;
++        },
++        "os.fs.read": async (): Promise<CompressedToolResult> => {
++          invocations.push("read");
++          readStarted.resolve();
++          return read.promise;
++        },
++        reply: async (): Promise<CompressedToolResult> => {
++          invocations.push("reply");
++          return okResult("reply");
++        },
++      });
++      const inputs = toBatchInputs([
++        { tool: "browser.click", args: { ref: "first" } },
++        { tool: "os.fs.read", args: { path: "a" } },
++        { tool: "browser.click", args: { ref: "second" } },
++        { tool: "browser.click", args: { ref: "third" } },
++        { tool: "reply", args: { text: "done" } },
++      ]);
++      const pending = executeBatch(inputs, registry, {
++        ...ctx(ctrl.signal),
++        onCallStarted: ({ batchIndex }) => started.push(batchIndex),
++        onCallFinished: ({ batchIndex }) => finished.push(batchIndex),
++      });
++      await Promise.all([firstStarted.promise, readStarted.promise]);
++      expect(invocations).toEqual(["click:first", "read"]);
++      ctrl.abort();
++      const firstResult = compressToolResult({
++        tool: "browser.click", status, output: "first result",
++      });
++      const readResult = okResult("os.fs.read", "already started read");
++      first.resolve(firstResult);
++      read.resolve(readResult);
++      const out = await pending;
++
++      expect(invocations).toEqual(["click:first", "read"]);
++      expect(started).toEqual([0, 1]);
++      expect(finished.sort()).toEqual([0, 1]);
++      expect(out.cancelled).toBe(true);
++      expect(out.results.map((result) => result.batchIndex)).toEqual([0, 1, 2, 3, 4]);
++      expect(out.results.map((result) => result.call)).toEqual(inputs.map((input) => input.call));
++      expect(out.results[0]!.compressed).toBe(firstResult);
++      expect(out.results[1]!.compressed).toBe(readResult);
++      expect(out.results.map((result) => result.cancelled)).toEqual([false, false, true, true, true]);
++      expect(out.results.slice(2).every((result) => result.compressed === undefined)).toBe(true);
++    },
++  );
+ });
+ 
+ describe("executeBatch — skill.view short-circuit", () => {
+--- src/agent/dispatch/batch-scheduler.ts (seeded before)
++++ src/agent/dispatch/batch-scheduler.ts (agent after)
+@@ -277,7 +277,7 @@
+   };
+ 
+   const invokeOne = async (input: BatchCallInput): Promise<void> => {
+-    if (false) {
++    if (ctx.signal.aborted) {
+       slots[input.batchIndex] = {
+         ...slots[input.batchIndex]!,
+         cancelled: true,
+@@ -374,7 +374,7 @@
+     groupTasks.push(
+       (async (): Promise<void> => {
+         for (const call of calls) {
+-          if (false) {
++          if (ctx.signal.aborted) {
+             slots[call.batchIndex] = {
+               ...slots[call.batchIndex]!,
+               cancelled: true,
+@@ -459,4 +459,4 @@
+     call,
+     resourceClass: resourceClassFor(call.tool),
+   }));
+-}
+\ No newline at end of file
++}

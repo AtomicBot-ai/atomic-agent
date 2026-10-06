@@ -90,6 +90,8 @@ function providerRow(id: string, kind: string, isActiveText: boolean) {
     isActiveText,
     isActiveEmbedding: false,
     hasApiKey: kind !== "llama-server",
+    baseUrl: null,
+    subscriptionCli: null,
     chatModel: null,
     embeddingModel: null,
   };

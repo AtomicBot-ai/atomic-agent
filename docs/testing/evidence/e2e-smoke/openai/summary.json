@@ -1,0 +1,50 @@
+{
+  "passed": true,
+  "node": "v25.7.0",
+  "provider": "openai-compatible local mock",
+  "transport": "native_tools",
+  "actualDist": true,
+  "mainCompletions": 2,
+  "splitSseArguments": true,
+  "nativeAssistantToolHistory": true,
+  "nativeToolResultHistory": true,
+  "cliFinalReply": "SMOKE-OPENAI-NATIVE-8352",
+  "metrics": {
+    "found": true,
+    "stepCount": 2,
+    "totalPromptTokens": 14040,
+    "totalPredictedTokens": 24,
+    "cacheHits": 0,
+    "parseRetries": 0,
+    "loopDetected": 0,
+    "toolErrorCount": 0,
+    "batchCount": 0,
+    "maxBatchSize": 1,
+    "toolInvocations": [
+      {
+        "tool": "os.fs.read",
+        "status": "ok"
+      },
+      {
+        "tool": "reply",
+        "status": "ok"
+      }
+    ],
+    "failureCategory": null,
+    "failureMessage": null
+  },
+  "requests": [
+    {
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "model": "smoke-native",
+      "tools": 63
+    },
+    {
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "model": "smoke-native",
+      "tools": 63
+    }
+  ]
+}

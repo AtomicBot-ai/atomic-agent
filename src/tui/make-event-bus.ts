@@ -1,4 +1,4 @@
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";

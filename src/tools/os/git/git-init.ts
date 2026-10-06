@@ -2,7 +2,7 @@ import { realpath, stat } from "node:fs/promises";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { resolveUserPath } from "../expand-home.js";
-import type { FsDangerousToolOptions } from "../fs-require-approval.js";
+import type { FsDangerousToolOptions } from "../fs/fs-require-approval.js";
 import { buildGitErrorResult, describeGitFailure } from "./git-error-result.js";
 import {
   formatGitCommandLine,

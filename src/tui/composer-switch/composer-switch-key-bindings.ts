@@ -1,6 +1,6 @@
 import type { Key } from "ink";
 
-import { isPrintableFilterInput } from "../llm-panel/llm-panel-modal-key-bindings.js";
+import { isPrintableFilterInput } from "../input/printable-filter-input.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { selectComposerBackend } from "./composer-backend-selectors.js";

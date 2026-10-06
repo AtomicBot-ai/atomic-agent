@@ -23,7 +23,7 @@ import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { createFallbackCompleter } from "../../runtime/llm-fallback-seam.js";
 import { createTraceRecorder } from "../../tracing/trace/trace-recorder.js";
 import type { TraceEvent } from "../../tracing/trace/trace-event.js";
-import { formatAgentErrorForChat } from "../../tui/format-agent-error-for-chat.js";
+import { formatAgentErrorForChat } from "../../tui/chat/format-agent-error-for-chat.js";
 import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { describeFailedAttempts } from "./failed-attempts.js";
 import { ProviderFallbackChain } from "./provider-fallback-chain.js";

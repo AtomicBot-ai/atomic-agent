@@ -1,0 +1,3 @@
+# Preserve captured terminal output, patch fixtures and archived documents verbatim.
+docs/testing/evidence/** -whitespace
+docs/archive/** -whitespace

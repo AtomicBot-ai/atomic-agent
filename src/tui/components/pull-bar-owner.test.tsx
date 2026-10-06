@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   EMBEDDING_MODELS_CATALOG,
   LOCAL_MODELS_CATALOG,
-} from "../../local-llm/models-catalog.js";
+} from "../../local-llm/catalog/models-catalog.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import {
@@ -14,8 +14,8 @@ import {
   type TuiState,
   type TuiTab,
 } from "../tui-state.js";
-import { LlmPanel } from "./llm-panel.js";
-import { LocalModelsPanel } from "./local-models-panel.js";
+import { LlmPanel } from "../llm-panel/llm-panel.js";
+import { LocalModelsPanel } from "../local-models/local-models-panel.js";
 import { pullBarOnScreen } from "./pull-bar-owner.js";
 import { StatusBar } from "./status-bar.js";
 

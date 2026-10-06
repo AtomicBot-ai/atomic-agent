@@ -5,7 +5,7 @@ import { convertMarkdownToTelegramHtml } from "./markdown-to-html.js";
  * messages. `plain` is the legacy behaviour (no parse_mode header,
  * raw text); `html` converts the source text from markdown into
  * Telegram's HTML subset and sends with `parse_mode: "HTML"`. The
- * MarkdownV2 path is intentionally absent — see AGENTS.md
+ * MarkdownV2 path is intentionally absent — see ../README.md
  * §"Telegram remote-control channel" for the rationale.
  */
 export type TelegramParseMode = "plain" | "html";
@@ -96,7 +96,7 @@ export interface OutboundSendOptions {
    * sent with `parse_mode: "HTML"`. On HTTP 400 ("can't parse
    * entities") we transparently retry the same chunk as plain text
    * so a formatter bug never silently swallows the operator's
-   * reply. See AGENTS.md §"Telegram remote-control channel".
+   * reply. See ../docs/adapters.md.
    */
   parseMode?: TelegramParseMode;
   /**
@@ -139,7 +139,7 @@ const RETRY_AFTER_MAX_SECONDS = 30;
  * when needed. On HTTP 429 honour `retry_after` once; if the retry also
  * 429s, drop the chunk with a warn-level log and continue with the
  * next one. On HTTP 400 in formatted mode (`parseMode: "html"`),
- * retry the same chunk once as plain text — see AGENTS.md
+ * retry the same chunk once as plain text — see ../README.md
  * §"Telegram remote-control channel" for the invariant. Errors that
  * are neither 429 nor a parse-related 400 are logged and skipped —
  * the goal is "best-effort delivery of as many chunks as possible"

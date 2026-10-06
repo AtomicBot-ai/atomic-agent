@@ -187,15 +187,14 @@ describe("skill tools", () => {
    * show the most generous case still holds.
    */
   function rendered(result: CompressedToolResult): string {
-    return renderToolResultBody(
-      toolResultTurn({
-        tool: result.tool,
-        status: result.status,
-        summary: result.summary,
-        truncated: result.truncated,
-      }),
-      { inCurrentMacroTurn: true },
-    );
+    const turn = toolResultTurn({
+      tool: result.tool,
+      status: result.status,
+      summary: result.summary,
+      truncated: result.truncated,
+    });
+    if (turn.kind !== "tool_result") throw new Error("expected a skill tool result");
+    return renderToolResultBody(turn, { inCurrentMacroTurn: true });
   }
 
   /** The header, wherever the compressor's `key: …` line puts it. */

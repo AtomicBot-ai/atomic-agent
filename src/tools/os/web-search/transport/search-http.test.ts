@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { searchHttp } from "./search-http.js";
 import type { runCommand as RunCommandType } from "../../../../sandbox/command-runner.js";
-import type { HostLookup } from "../../web-fetch-ssrf-guard.js";
+import type { HostLookup } from "../../web/web-fetch-ssrf-guard.js";
 
 const publicLookup: HostLookup = async () => [
   { address: "93.184.216.34", family: 4 },

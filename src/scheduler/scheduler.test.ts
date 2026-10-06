@@ -51,10 +51,7 @@ describe("Scheduler", () => {
   it("calls runDue with now() and batch on each tick", async () => {
     const { clock, timers, nowMs } = createFakeClock();
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockResolvedValue({ ...emptyOutcome(), drained: 2, completed: 2 });
     const scheduler = new Scheduler({
       taskRunner: { runDue },
@@ -65,7 +62,7 @@ describe("Scheduler", () => {
 
     scheduler.start();
     expect(timers).toHaveLength(1);
-    expect(timers[0].ms).toBe(5_000);
+    expect(timers[0]!.ms).toBe(5_000);
 
     await scheduler.tickOnce();
     expect(runDue).toHaveBeenCalledTimes(1);
@@ -91,10 +88,7 @@ describe("Scheduler", () => {
     const { clock, timers } = createFakeClock();
     let resolveFirst!: (value: DrainOutcome) => void;
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockImplementationOnce(
         () =>
           new Promise<DrainOutcome>((resolve) => {
@@ -110,16 +104,16 @@ describe("Scheduler", () => {
     });
 
     scheduler.start();
-    timers[0].handler();
-    timers[0].handler();
-    timers[0].handler();
+    timers[0]!.handler();
+    timers[0]!.handler();
+    timers[0]!.handler();
 
     expect(runDue).toHaveBeenCalledTimes(1);
 
     resolveFirst({ ...emptyOutcome(), drained: 1, completed: 1 });
     await new Promise((r) => setImmediate(r));
 
-    timers[0].handler();
+    timers[0]!.handler();
     await vi.waitFor(() => expect(runDue).toHaveBeenCalledTimes(2));
 
     await scheduler.stop();
@@ -128,10 +122,7 @@ describe("Scheduler", () => {
   it("swallows tick errors and keeps the interval alive", async () => {
     const { clock, timers } = createFakeClock();
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValue({ ...emptyOutcome(), drained: 1, completed: 1 });
     const warn = vi.fn();
@@ -155,7 +146,7 @@ describe("Scheduler", () => {
       "scheduler tick failed",
       expect.objectContaining({ error: "boom" }),
     );
-    expect(timers[0].cleared).toBe(false);
+    expect(timers[0]!.cleared).toBe(false);
 
     await scheduler.tickOnce();
     expect(runDue).toHaveBeenCalledTimes(2);
@@ -167,10 +158,7 @@ describe("Scheduler", () => {
     const { clock, timers } = createFakeClock();
     let resolveTick!: (value: DrainOutcome) => void;
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockImplementation(
         () =>
           new Promise<DrainOutcome>((resolve) => {
@@ -185,12 +173,12 @@ describe("Scheduler", () => {
     });
 
     scheduler.start();
-    timers[0].handler();
+    timers[0]!.handler();
     expect(runDue).toHaveBeenCalledTimes(1);
-    expect(timers[0].cleared).toBe(false);
+    expect(timers[0]!.cleared).toBe(false);
 
     const stopPromise = scheduler.stop();
-    expect(timers[0].cleared).toBe(true);
+    expect(timers[0]!.cleared).toBe(true);
 
     let stopped = false;
     void stopPromise.then(() => {
@@ -208,10 +196,7 @@ describe("Scheduler", () => {
   it("stop aborts the in-flight tick's signal, so its task turn is stopped rather than waited out", async () => {
     const { clock, timers } = createFakeClock();
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockImplementation(
         (_now, _limit, signal) =>
           new Promise<DrainOutcome>((resolve) => {
@@ -231,7 +216,7 @@ describe("Scheduler", () => {
     });
 
     scheduler.start();
-    timers[0].handler();
+    timers[0]!.handler();
     const signal = runDue.mock.calls[0]?.[2];
     expect(signal?.aborted).toBe(false);
 
@@ -243,10 +228,7 @@ describe("Scheduler", () => {
     const { clock, timers } = createFakeClock();
     let resolveTick!: (value: DrainOutcome) => void;
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockImplementation(
         () =>
           new Promise<DrainOutcome>((resolve) => {
@@ -261,9 +243,9 @@ describe("Scheduler", () => {
     });
 
     scheduler.start();
-    timers[0].handler();
+    timers[0]!.handler();
     await scheduler.stop(10);
-    expect(timers[0].cleared).toBe(true);
+    expect(timers[0]!.cleared).toBe(true);
 
     // Let the abandoned tick finish, so the test leaves nothing running.
     resolveTick(emptyOutcome());
@@ -272,10 +254,7 @@ describe("Scheduler", () => {
   it("start is a no-op after stop", async () => {
     const { clock, timers } = createFakeClock();
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockResolvedValue(emptyOutcome());
     const scheduler = new Scheduler({
       taskRunner: { runDue },
@@ -288,16 +267,13 @@ describe("Scheduler", () => {
     await scheduler.stop();
     scheduler.start();
     expect(timers).toHaveLength(1);
-    expect(timers[0].cleared).toBe(true);
+    expect(timers[0]!.cleared).toBe(true);
   });
 
   it("tickOnce runs a single drain regardless of the interval", async () => {
     const { clock } = createFakeClock();
     const runDue = vi
-      .fn<
-        Parameters<SchedulerTaskRunner["runDue"]>,
-        ReturnType<SchedulerTaskRunner["runDue"]>
-      >()
+      .fn<SchedulerTaskRunner["runDue"]>()
       .mockResolvedValue({ ...emptyOutcome(), drained: 3, completed: 3 });
     const scheduler = new Scheduler({
       taskRunner: { runDue },

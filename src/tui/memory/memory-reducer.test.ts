@@ -1,14 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
-import { reduceMemoryAction } from "./memory-reducer.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "../tui-state.js";
+import { reduceMemoryAction as reduceMemoryActionRaw } from "./memory-reducer.js";
+import type { TuiAction } from "../tui-action.js";
+import { fakeSession } from "../test-fixtures.js";
 import { createInitialMemoryPanelState } from "./memory-panel-state.js";
 
-const session: TuiSessionInfo = {
+// Keep the original reducer function, with actual action payload checking in fixtures.
+const reduceMemoryAction: (state: TuiState, action: TuiAction) => TuiState | null =
+  reduceMemoryActionRaw;
+
+const session: TuiSessionInfo = fakeSession({
   sessionId: "s1",
   workingDir: "/tmp",
   llamaUrl: "http://127.0.0.1:8080",
   skillCount: 0,
-};
+});
 
 function baseState() {
   return createInitialTuiState(session);
@@ -57,7 +67,7 @@ describe("reduceMemoryAction", () => {
   });
 
   it("cycles channel and resets detail", () => {
-    let state = {
+    let state: TuiState = {
       ...baseState(),
       memoryPanel: {
         ...createInitialMemoryPanelState(),

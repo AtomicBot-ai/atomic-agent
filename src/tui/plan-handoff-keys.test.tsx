@@ -2,7 +2,7 @@ import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 
 import { PLAN_CHORDS, handleAppKey } from "./app-key-bindings.js";
-import type { CodingMode } from "./coding-mode.js";
+import type { CodingMode } from "./coding-mode/coding-mode.js";
 import { makeTuiEventBus, TuiApp, type TuiAppCallbacks } from "./tui-app.js";
 import {
   createInitialTuiState,

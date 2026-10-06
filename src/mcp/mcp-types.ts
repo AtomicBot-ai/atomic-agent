@@ -6,7 +6,7 @@
  * through the existing `ToolRegistry`. The agent itself never
  * exposes an MCP server interface.
  *
- * Locked invariant (see AGENTS.md §"MCP client"): the
+ * Locked invariant (see docs/client.md): the
  * `@modelcontextprotocol/sdk` package is imported from a single
  * file — `src/mcp/mcp-client.ts`. Everything else operates on the
  * neutral shapes defined here.

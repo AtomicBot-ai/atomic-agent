@@ -1,5 +1,5 @@
 import type { StructuredLogger } from "../tracing/structured-logger.js";
-import { readModelPrefixReuse } from "../local-llm/gguf-metadata.js";
+import { readModelPrefixReuse } from "../local-llm/catalog/gguf-metadata.js";
 import { buildGrammar } from "./grammar/build-grammar.js";
 import type { LlamaServerClient } from "./llama-server-client.js";
 import {

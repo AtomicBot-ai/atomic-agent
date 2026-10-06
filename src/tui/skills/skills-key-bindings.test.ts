@@ -87,7 +87,7 @@ function makeCtx(panel: Partial<SkillsPanelState> = {}) {
 describe("handleSkillsTabKey — hub mode", () => {
   it("ignores keys when not on the skills tab in debug mode", () => {
     const ctx = makeCtx();
-    const state = { ...ctx.state, activeTab: "chat" as const };
+    const state = { ...ctx.state, activeTab: "memory" as const };
     expect(handleSkillsTabKey("i", emptyKey(), { ...ctx, state })).toBe(false);
   });
 

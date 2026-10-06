@@ -1,6 +1,6 @@
 import type { Key } from "ink";
-import { PICK_WINDOW } from "../components/wizard-pick-list.js";
-import { isPrintableFilterInput } from "../llm-panel/llm-panel-modal-key-bindings.js";
+import { PICK_WINDOW } from "../components/pick-list-geometry.js";
+import { isPrintableFilterInput } from "../input/printable-filter-input.js";
 import { clampCursor, isListPhase } from "./providers-wizard-phases.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 

@@ -1,5 +1,5 @@
 /**
- * "Report an issue on GitHub" — `/report`. See AGENTS.md §"Issue reports".
+ * "Report an issue on GitHub" — `/report`. See README.md.
  */
 
 export {

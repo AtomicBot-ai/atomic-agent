@@ -1,6 +1,6 @@
 import { classifyFailure } from "../llm/reliability/index.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
-import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
+import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-contract.js";
 import type { SessionState } from "../session/index.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";

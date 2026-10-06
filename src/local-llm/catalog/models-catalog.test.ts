@@ -1,0 +1,181 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  detectModelProfile,
+  PLAIN_INSTRUCT_PROFILE,
+} from "../../llm/model-profile.js";
+import { MUSE_PROPS } from "../../llm/model-profile.fixtures.js";
+import {
+  DEFAULT_EMBEDDING_MODEL_ID,
+  DEFAULT_LLAMACPP_MODEL_ID,
+  EMBEDDING_MODELS_CATALOG,
+  getEmbeddingModelDef,
+  getLocalModelDef,
+  isKnownEmbeddingModelId,
+  LOCAL_MODELS_CATALOG,
+} from "./models-catalog.js";
+
+describe("models-catalog", () => {
+  it("has exactly 13 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(13);
+    const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
+    expect(ids.size).toBe(13);
+  });
+
+  it("defaults to qwen-3.5-4b", () => {
+    expect(DEFAULT_LLAMACPP_MODEL_ID).toBe("qwen-3.5-4b");
+  });
+
+  // The bundled Qwen 3.5 override was a Qwen2.5-style ChatML template with
+  // no `<think>` / `enable_thinking` markers. Because `--chat-template-file`
+  // is what `/props.chat_template` reports back, it demoted the profile to
+  // `plain-instruct` and deadlocked the grammar. See chat-templates.test.ts.
+  //
+  // Catalog-wide rather than per-id: any entry that grows an override is
+  // exposed to the same failure mode, so adding one has to be a deliberate
+  // act that edits this test (and states why the override keeps every
+  // reasoning marker `detectModelProfile` keys on) — not a silent field.
+  it("ships no chat template override on any catalog entry", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      expect(
+        def.chatTemplateAsset,
+        `${def.id} must not override its chat template`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("throws on unknown id", () => {
+    expect(() =>
+      getLocalModelDef(
+        "not-a-model" as import("./models-catalog.js").LocalModelId,
+      ),
+    ).toThrow(/unknown local model id/);
+  });
+
+  it("ships mmproj URL for every vision-capable catalog entry", () => {
+    const visionModels = LOCAL_MODELS_CATALOG.filter((m) => m.supportsVision);
+    expect(visionModels.length).toBeGreaterThan(0);
+    for (const def of visionModels) {
+      expect(def.mmprojUrl).toMatch(/^https:\/\//);
+      expect(def.mmprojFilename).toMatch(/\.gguf$/);
+      expect(typeof def.mmprojFileSizeGb).toBe("number");
+    }
+  });
+
+  it("omits mmproj fields on text-only catalog entries", () => {
+    const textOnly = LOCAL_MODELS_CATALOG.filter((m) => !m.supportsVision);
+    expect(textOnly.map((m) => m.id)).toEqual(["nemotron-3.5-30b-a3b"]);
+    for (const def of textOnly) {
+      expect(def.mmprojUrl).toBeUndefined();
+      expect(def.mmprojFilename).toBeUndefined();
+      expect(def.mmprojFileSizeGb).toBeUndefined();
+    }
+  });
+
+  // Interim contract for Muse Glimmer. The catalog advertises multimodal
+  // (real: mmproj ships below) but NOT a native tool format, because there
+  // is none wired: the daemon passes `model.id` as the llama-server alias,
+  // and `muse-glimmer-30b` matches no alias hint in `selectBaseProfile`, so
+  // `/props` resolves to `plain-instruct` and tool calls run on the generic
+  // GBNF array grammar. This test is the tripwire: the day someone wires a
+  // native ATEM/Harmony profile, it fails and forces the description to be
+  // updated in the same commit instead of drifting into an over-promise.
+  it("resolves Muse Glimmer to plain-instruct, and says so in its description", () => {
+    expect(detectModelProfile(MUSE_PROPS)).toEqual(PLAIN_INSTRUCT_PROFILE);
+
+    const muse = getLocalModelDef("muse-glimmer-30b");
+    expect(muse.supportsVision).toBe(true);
+    expect(muse.description).not.toMatch(/atem|harmony/i);
+    expect(muse.description).toMatch(/generic tool calling/i);
+  });
+
+  // The reduced-refusal entry is deliberately last: the Manage panel
+  // draws the catalog in array order and the onboarding picker pins
+  // uncensored entries to the bottom, so the safe defaults always come
+  // first. The tag is what both surfaces show next to it.
+  it("keeps the uncensored entry last, tagged, and marked uncensored", () => {
+    const last = LOCAL_MODELS_CATALOG.at(-1);
+    expect(last?.id).toBe("qwen-3.8-27b-uncensored");
+    expect(last?.uncensored).toBe(true);
+    expect(last?.tag).toBe("Use at your own risk");
+    // noMTP on purpose: the fused quants carry an inline MTP head the
+    // daemon has no --model-draft wiring for; noMTP is plain GGUF.
+    expect(last?.filename).toBe("Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf");
+    // The repo renamed its projector to the conventional `mmproj-`
+    // prefix; the previous `…-vision-f16.gguf` URL answers 404 and
+    // stranded a fully downloaded model.
+    expect(last?.supportsVision).toBe(true);
+    expect(last?.mmprojFilename).toBe("mmproj-Qwen3.8-27B-Uncensored-F16.gguf");
+  });
+
+  // Every uncensored entry must carry a warning tag — the onboarding row
+  // surfaces exactly that string, and a tagless uncensored entry would
+  // reach the first-run screen with no caution at all.
+  it("ships a warning tag on every uncensored entry", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (def.uncensored !== true) continue;
+      expect(def.tag, `${def.id} must warn the operator`).toBeTruthy();
+    }
+  });
+
+  // The installer saves the projector under `mmprojFilename` and the
+  // daemon loads it from there; a filename that drifts from what the
+  // URL actually serves would download one file and look for another.
+  it("names each projector file exactly as its URL serves it", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (!def.mmprojUrl) continue;
+      const served = def.mmprojUrl.slice(def.mmprojUrl.lastIndexOf("/") + 1);
+      expect(def.mmprojFilename, `${def.id} projector filename`).toBe(served);
+    }
+  });
+
+  it("ensures mmproj URL points at the same HF repo as the GGUF weights", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (!def.mmprojUrl) continue;
+      const repo = (url: string) =>
+        url.replace(/^https:\/\/huggingface\.co\//, "").split("/resolve/")[0];
+      expect(repo(def.mmprojUrl)).toBe(repo(def.huggingFaceUrl));
+    }
+  });
+});
+
+describe("models-catalog (embedding)", () => {
+  it("has unique embedding ids and at least one multilingual entry", () => {
+    const ids = new Set(EMBEDDING_MODELS_CATALOG.map((m) => m.id));
+    expect(ids.size).toBe(EMBEDDING_MODELS_CATALOG.length);
+    expect(EMBEDDING_MODELS_CATALOG.length).toBeGreaterThanOrEqual(2);
+    // bge-m3 is the load-bearing multilingual entry — Russian-speaking
+    // operators rely on it. Pin its presence by id so it can't be
+    // silently dropped during catalog edits.
+    expect(ids.has("bge-m3")).toBe(true);
+  });
+
+  it("validates every embedding entry's invariants", () => {
+    const validPoolings = new Set(["mean", "last", "cls", "rank"]);
+    for (const def of EMBEDDING_MODELS_CATALOG) {
+      expect(def.id).toBeTruthy();
+      expect(def.huggingFaceUrl).toMatch(/^https:\/\/huggingface\.co\//);
+      expect(def.huggingFaceUrl.endsWith(def.filename)).toBe(true);
+      expect(def.dim).toBeGreaterThan(0);
+      expect(validPoolings.has(def.pooling)).toBe(true);
+      expect(def.fileSizeGb).toBeGreaterThan(0);
+      expect(def.minRamGb).toBeGreaterThan(0);
+      expect(def.recommendedRamGb).toBeGreaterThanOrEqual(def.minRamGb);
+    }
+  });
+
+  it("default embedding model id resolves to a real catalog entry", () => {
+    expect(isKnownEmbeddingModelId(DEFAULT_EMBEDDING_MODEL_ID)).toBe(true);
+    expect(getEmbeddingModelDef(DEFAULT_EMBEDDING_MODEL_ID).id).toBe(
+      DEFAULT_EMBEDDING_MODEL_ID,
+    );
+  });
+
+  it("getEmbeddingModelDef throws on unknown ids", () => {
+    expect(() =>
+      getEmbeddingModelDef(
+        "not-an-embedding" as import("./models-catalog.js").EmbeddingModelId,
+      ),
+    ).toThrow(/unknown embedding model id/);
+  });
+});

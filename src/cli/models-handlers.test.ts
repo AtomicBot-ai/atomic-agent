@@ -33,12 +33,12 @@ import {
   resolveServerBinPath,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
 } from "../local-llm/index.js";
-import { writeBackendVersion } from "../local-llm/backend-version.js";
-import { DaemonHealthError } from "../local-llm/daemon-lifecycle.js";
+import { writeBackendVersion } from "../local-llm/backend/backend-version.js";
+import { DaemonHealthError } from "../local-llm/server/daemon-lifecycle.js";
 import {
   WINDOWS_BACKEND_ASSETS,
   setConfiguredBackendVariant,
-} from "../local-llm/windows-backend-variant.js";
+} from "../local-llm/backend/windows-backend-variant.js";
 import {
   runLocalModelsPull,
   runLocalModelsStart,

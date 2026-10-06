@@ -21,9 +21,11 @@ function defaultResult(content = "answer"): CompletionResult {
     stop: true,
     truncated: false,
     timing: {
+      promptMs: 0,
+      predictedMs: 0,
       promptTokens: 5,
       predictedTokens: 3,
-    } as CompletionResult["timing"],
+    },
     cacheHitTokens: 0,
     slotId: -1,
     modelId: "test-model",
@@ -32,7 +34,7 @@ function defaultResult(content = "answer"): CompletionResult {
 
 describe("createMcpSamplingHandler", () => {
   it("INVARIANT 1 — always uses slotId: -1 and disables cache_prompt", async () => {
-    const spy = vi.fn(async () => defaultResult());
+    const spy = vi.fn(async (_req: CompletionRequest) => defaultResult());
     const handler = createMcpSamplingHandler({
       llamaServerClient: makeFakeLlama(spy),
       server: "github",
@@ -40,6 +42,7 @@ describe("createMcpSamplingHandler", () => {
     const ctrl = new AbortController();
     await handler(
       {
+        maxTokens: 512,
         messages: [{ role: "user", content: { type: "text", text: "hi" } }],
       },
       ctrl.signal,
@@ -51,7 +54,7 @@ describe("createMcpSamplingHandler", () => {
   });
 
   it("flattens system prompt + multi-turn messages into a single prompt", async () => {
-    const spy = vi.fn(async () => defaultResult());
+    const spy = vi.fn(async (_req: CompletionRequest) => defaultResult());
     const handler = createMcpSamplingHandler({
       llamaServerClient: makeFakeLlama(spy),
       server: "*",
@@ -59,6 +62,7 @@ describe("createMcpSamplingHandler", () => {
     await handler(
       {
         systemPrompt: "be terse",
+        maxTokens: 512,
         messages: [
           { role: "user", content: { type: "text", text: "ping" } },
           { role: "assistant", content: { type: "text", text: "pong" } },
@@ -76,7 +80,7 @@ describe("createMcpSamplingHandler", () => {
   });
 
   it("clamps maxTokens to the documented ceiling (4096) and respects the default", async () => {
-    const spy = vi.fn(async () => defaultResult());
+    const spy = vi.fn(async (_req: CompletionRequest) => defaultResult());
     const handler = createMcpSamplingHandler({
       llamaServerClient: makeFakeLlama(spy),
       server: "*",
@@ -92,14 +96,14 @@ describe("createMcpSamplingHandler", () => {
 
     spy.mockClear();
     await handler(
-      { messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
+      { maxTokens: 0, messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
       new AbortController().signal,
     );
     expect(spy.mock.calls[0]![0].maxTokens).toBe(512);
   });
 
   it("forwards temperature when provided and defaults to 0.7", async () => {
-    const spy = vi.fn(async () => defaultResult());
+    const spy = vi.fn(async (_req: CompletionRequest) => defaultResult());
     const handler = createMcpSamplingHandler({
       llamaServerClient: makeFakeLlama(spy),
       server: "*",
@@ -107,6 +111,7 @@ describe("createMcpSamplingHandler", () => {
     await handler(
       {
         temperature: 0.2,
+        maxTokens: 512,
         messages: [{ role: "user", content: { type: "text", text: "hi" } }],
       },
       new AbortController().signal,
@@ -115,14 +120,28 @@ describe("createMcpSamplingHandler", () => {
 
     spy.mockClear();
     await handler(
-      { messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
+      { maxTokens: 512, messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
       new AbortController().signal,
     );
     expect(spy.mock.calls[0]![0].temperature).toBe(0.7);
   });
 
+  it("retains the fallback for malformed input missing SDK-required maxTokens", async () => {
+    const spy = vi.fn(async (_req: CompletionRequest) => defaultResult());
+    const handler = createMcpSamplingHandler({
+      llamaServerClient: makeFakeLlama(spy),
+      server: "*",
+    });
+    // Exercise invalid wire input without declaring it a valid SDK request.
+    await Reflect.apply(handler, undefined, [
+      { messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
+      new AbortController().signal,
+    ]);
+    expect(spy.mock.calls[0]![0].maxTokens).toBe(512);
+  });
+
   it("throws when the signal is already aborted (does not call LLM)", async () => {
-    const spy = vi.fn(async () => defaultResult());
+    const spy = vi.fn(async (_req: CompletionRequest) => defaultResult());
     const handler = createMcpSamplingHandler({
       llamaServerClient: makeFakeLlama(spy),
       server: "*",
@@ -131,7 +150,7 @@ describe("createMcpSamplingHandler", () => {
     ctrl.abort();
     await expect(
       handler(
-        { messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
+        { maxTokens: 512, messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
         ctrl.signal,
       ),
     ).rejects.toThrow(/aborted/i);
@@ -146,7 +165,7 @@ describe("createMcpSamplingHandler", () => {
       server: "*",
     });
     const result = await handler(
-      { messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
+      { maxTokens: 512, messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
       new AbortController().signal,
     );
     expect(result.role).toBe("assistant");

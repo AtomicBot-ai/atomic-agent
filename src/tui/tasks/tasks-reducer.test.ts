@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
-import { reduceTasksAction } from "./tasks-reducer.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "../tui-state.js";
+import { reduceTasksAction as reduceTasksActionRaw } from "./tasks-reducer.js";
+import type { TuiAction } from "../tui-action.js";
+import { fakeSession } from "../test-fixtures.js";
 import type { TaskSummaryRow } from "./tasks-panel-state.js";
 
-const SESSION: TuiSessionInfo = {
+// Keep the original reducer function, with actual action payload checking in fixtures.
+const reduceTasksAction: (state: TuiState, action: TuiAction) => TuiState | null =
+  reduceTasksActionRaw;
+
+const SESSION: TuiSessionInfo = fakeSession({
   sessionId: null,
   workingDir: "/tmp",
   llamaUrl: "http://localhost",
@@ -12,7 +22,7 @@ const SESSION: TuiSessionInfo = {
   approvalLevel: 5,
   maxSteps: 10,
   skillCount: 0,
-};
+});
 
 const ROW: TaskSummaryRow = {
   id: "t-1",

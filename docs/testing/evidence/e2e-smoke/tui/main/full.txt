@@ -1,0 +1,250 @@
+web.search: provider "exa" is configured but EXA_API_KEY is not set; running on the keyless tier — expect HTTP 429 and silent degradation to duckduckgo. Set EXA_API_KEY for search-heavy autonomous work.
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  What are you working on today?                          send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ custom · llama.cpp                                        default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  What are you working on today?                          send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Inspect a file, run a search, draft a fix…              send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                                            ########++
+    ▗█░                 «                                  #########++
+   █████░ atomic-agent                                    ##########++
+     █▘░  v0.6.6                                       #############++
+                                                  #############################+
+                                                  #############################++
+                                                  #############################++
+   SESSIONS         + new                           +++++++++#############+++++++
+   (no sessions yet)                                         ##########+++++
+                                                             #########+++
+   TASKS 0 running  + new                                    ########+++
+   (no active tasks)                                         #######+++
+                                                               +++++++
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                                       • /model                  change the chat model
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │ ▸ /help  list available slash commands                             │
+                              ╰────────────────────────────────────────────────────────────────────╯
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ /help                                                    send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+    ☰ Menu            esc    ╰────────────────────────────────────────────────────────────────────╯
+                              [↑↓] select  ·  [tab/enter] accept  ·  [esc] close
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                │ ·   /mouse — mouse support on/off/status (off restores the       │
+    ▗█░                 «       │ terminal's drag-to-select)                                       │
+   █████░ atomic-agent          │ ·   /context — show where this session's context window went     │
+     █▘░  v0.6.6                │ ·   /sidebar — hide or show the session rail (the rail's « does  │
+                                │ the same)                                                        │
+                                │ ·   /swarm — open the Swarm tab — every Telegram / Discord bot   │
+                                │ on this runtime; add more bots, each with its own token, owner   │
+   SESSIONS         + new       │ and role                                                         │
+   (no sessions yet)            │ ·   /report — file a GitHub issue with your logs attached — you  │
+                                │ choose how much leaves this machine                              │
+   TASKS 0 running  + new       │ ·   /runmode — where the chat runs: `/runmode` opens the switch  │
+   (no active tasks)            │ · `/runmode local|cloud|fusion` sets one · `/runmode status`     │
+                                │ ·   /onboarding (aliases: /setup) — run first-time setup again   │
+                                │ from the start — keeps your providers, keys, sessions and memory │
+                                │ ·   /uninstall — remove atomic-agent and all of its data from    │
+                                │ this machine — permanent, no undo                                │
+                                ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Inspect a file, run a search, draft a fix…              send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                │ ·   /context — show where this session's context window went     │
+    ▗█░                 «       │ ·   /sidebar — hide or show the session rail (the rail's « does  │
+   █████░ atomic-agent          │ the same)                                                        │
+     █▘░  v0.6.6                │ ·   /swarm — open the Swarm tab — every Telegram / Discord bot   │
+                                │ on this runtime; add more bots, each with its own token, owner   │
+                                │ and role                                                         │
+                                │ ·   /report — file a GitHub issue with your logs attached — you  │
+   SESSIONS         + new       │ choose how much leaves this machine                              │
+   (no sessions yet)            │ ·   /runmode — where the chat runs: `/runmode` opens the switch  │
+                                │ · `/runmode local|cloud|fusion` sets one · `/runmode status`     │
+   TASKS 0 running  + new       │ ·   /onboarding (aliases: /setup) — run first-time setup again   │
+   (no active tasks)            │ from the start — keeps your providers, keys, sessions and memory │
+                                │ ·   /uninstall — remove atomic-agent and all of its data from    │
+                                │ this machine — permanent, no undo                                │
+                                ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │ ▸ /quit  exit atomic-agent                                         │
+                              ╰────────────────────────────────────────────────────────────────────╯
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ /quit                                                    send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+    ☰ Menu            esc    ╰────────────────────────────────────────────────────────────────────╯
+                              [↑↓] select  ·  [tab/enter] accept  ·  [esc] close
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                │ ·   /swarm — open the Swarm tab — every Telegram / Discord bot   │
+    ▗█░                 «       │ on this runtime; add more bots, each with its own token, owner   │
+   █████░ atomic-agent          │ and role                                                         │
+     █▘░  v0.6.6                │ ·   /report — file a GitHub issue with your logs attached — you  │
+                                │ choose how much leaves this machine                              │
+                                │ ·   /runmode — where the chat runs: `/runmode` opens the switch  │
+                                │ · `/runmode local|cloud|fusion` sets one · `/runmode status`     │
+   SESSIONS         + new       │ ·   /onboarding (aliases: /setup) — run first-time setup again   │
+   (no sessions yet)            │ from the start — keeps your providers, keys, sessions and memory │
+                                │ ·   /uninstall — remove atomic-agent and all of its data from    │
+   TASKS 0 running  + new       │ this machine — permanent, no undo                                │
+   (no active tasks)            ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                                ╭──────────────────────────────────────────────────────────────────╮
+                                │ · exiting                                                        │
+                                ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ Inspect a file, run a search, draft a fix…               send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                │ ·   /swarm — open the Swarm tab — every Telegram / Discord bot   │
+    ▗█░                 «       │ on this runtime; add more bots, each with its own token, owner   │
+   █████░ atomic-agent          │ and role                                                         │
+     █▘░  v0.6.6                │ ·   /report — file a GitHub issue with your logs attached — you  │
+                                │ choose how much leaves this machine                              │
+                                │ ·   /runmode — where the chat runs: `/runmode` opens the switch  │
+                                │ · `/runmode local|cloud|fusion` sets one · `/runmode status`     │
+   SESSIONS         + new       │ ·   /onboarding (aliases: /setup) — run first-time setup again   │
+   (no sessions yet)            │ from the start — keeps your providers, keys, sessions and memory │
+                                │ ·   /uninstall — remove atomic-agent and all of its data from    │
+   TASKS 0 running  + new       │ this machine — permanent, no undo                                │
+   (no active tasks)            ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                                ╭──────────────────────────────────────────────────────────────────╮
+                                │ · exiting                                                        │
+                                ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ Inspect a file, run a search, draft a fix…               send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit

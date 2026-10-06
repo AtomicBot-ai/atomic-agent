@@ -1,0 +1,11 @@
+--- src/config/config-schema.ts (seeded before)
++++ src/config/config-schema.ts (agent after)
+@@ -3953,7 +3953,7 @@
+     return parseApprovalLevel(rawLevel, "agent.approvalLevel");
+   }
+   if (rawLegacyRequired !== undefined && rawLegacyRequired !== null) {
+-    return parseBool(rawLegacyRequired, "agent.approvalRequired") ? 1 : 1;
++    return parseBool(rawLegacyRequired, "agent.approvalRequired") ? 1 : 5;
+   }
+   return USER_CONFIG_DEFAULTS.agent.approvalLevel;
+ }

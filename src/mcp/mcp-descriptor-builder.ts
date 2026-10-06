@@ -4,8 +4,7 @@
  * Every MCP tool is rendered as **tier: "frequent"** — the full
  * `argsSchema` lands in `# common (full)` of `### tools` so the model
  * sees the signature on the very first call, without an intervening
- * `tool.view`. This is a deliberate trade-off (see AGENTS.md §"MCP
- * client" invariant 5): we pay a one-time bump in stable-prefix
+ * `tool.view`. This is a deliberate trade-off (see README.md invariant 5): we pay a one-time bump in stable-prefix
  * tokens proportional to the connected MCP catalog in exchange for
  * the model actually being able to *call* MCP tools without an
  * extra round-trip. The earlier `rare`-tier rendering surfaced only

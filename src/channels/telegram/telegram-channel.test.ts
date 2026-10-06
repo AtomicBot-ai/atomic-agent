@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ApprovalRequest } from "../../approval/approval-gate.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { USER_CONFIG_DEFAULTS } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -1479,12 +1480,13 @@ describe("TelegramChannel per-chat approval bindings", () => {
   });
 
   /** An approval the agent asks for in session `sessionId`. */
-  function approvalRequest(approvalId: string, sessionId = "s-1") {
+  function approvalRequest(approvalId: string, sessionId = "s-1"): ApprovalRequest {
     return {
       approvalId,
       sessionId,
       tool: "os.shell.run",
-      category: "shell" as const,
+      category: "shell",
+      reason: "run git push",
       preview: "git push",
     };
   }
@@ -1506,7 +1508,7 @@ describe("TelegramChannel per-chat approval bindings", () => {
     // ignored and the turn auto-denied eight minutes later.
     const { factory, state } = makeBotFactory();
     const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
-    const setHandler = vi.fn(() => {
+    const setHandler = vi.fn<AgentRuntime["setApprovalHandlerForSession"]>(() => {
       const u = vi.fn();
       unsubscribes.push(u);
       return u;
@@ -1530,9 +1532,8 @@ describe("TelegramChannel per-chat approval bindings", () => {
     };
     await state.textHandler!(dm);
     expect(setHandler).toHaveBeenCalledTimes(1);
-    const route = setHandler.mock.calls[0]![1] as unknown as (
-      request: ReturnType<typeof approvalRequest>,
-    ) => void;
+    const route = setHandler.mock.calls[0]?.[1];
+    if (route === undefined) throw new Error("expected the session approval route");
     route(approvalRequest("a-1"));
     await new Promise((r) => setImmediate(r));
     expect(state.sendMessageCalls.at(-1)?.text).toContain(
@@ -1564,7 +1565,7 @@ describe("TelegramChannel per-chat approval bindings", () => {
     // eight-minute timer would only hold the turn.
     const { factory, state } = makeBotFactory();
     const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
-    const setHandler = vi.fn(() => {
+    const setHandler = vi.fn<AgentRuntime["setApprovalHandlerForSession"]>(() => {
       const u = vi.fn();
       unsubscribes.push(u);
       return u;
@@ -1586,9 +1587,8 @@ describe("TelegramChannel per-chat approval bindings", () => {
       text: "hi",
       message_id: 1,
     });
-    const route = setHandler.mock.calls[0]![1] as unknown as (
-      request: ReturnType<typeof approvalRequest>,
-    ) => void;
+    const route = setHandler.mock.calls[0]?.[1];
+    if (route === undefined) throw new Error("expected the session approval route");
     route(approvalRequest("a-1"));
     await new Promise((r) => setImmediate(r));
 

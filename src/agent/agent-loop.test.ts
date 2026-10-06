@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AgentLoop } from "./agent-loop.js";
 import type { AgentLoopEvent } from "./agent-loop.js";
 import { buildDefaultToolRegistry } from "../tools/index.js";
-import { osFsReadTool } from "../tools/os/fs-read.js";
+import { osFsReadTool } from "../tools/os/fs/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";

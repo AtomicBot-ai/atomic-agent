@@ -22,7 +22,7 @@ import { VoteStore, VoteValidationError } from "./vote-store.js";
  *
  * Architectural notes:
  *   - Lives on the **shared** reflection slot per the scope
- *     decision for this phase (see AGENTS.md Phase 7a). KV-cache
+ *     decision for this phase (see ../README.md Phase 7a). KV-cache
  *     impact is mitigated by keeping the micro-prompt small and
  *     emitting at most one vote sub-call per turn.
  *   - Same per-session in-flight semantics as

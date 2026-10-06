@@ -1,6 +1,6 @@
 /**
  * Swarm tab — every bot on this runtime, with add / edit / pair / remove
- * for the extra units. See AGENTS.md §"Swarm".
+ * for the extra units. See ../../channels/docs/adapters.md.
  */
 
 export { SwarmOrchestrator } from "./swarm-orchestrator.js";

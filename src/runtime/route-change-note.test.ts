@@ -94,9 +94,10 @@ describe("route change note", () => {
           prompts.push(params.prompt);
           return {
             content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
-            timing: { promptTokens: 10, predictedTokens: 5 },
+            timing: { promptTokens: 10, predictedTokens: 5, promptMs: 0, predictedMs: 0 },
             slotId: 0,
             cacheReused: false,
+            reasoningContent: "", stop: true, truncated: false, cacheHitTokens: 0, modelId: null,
           };
         },
       },
@@ -170,9 +171,10 @@ describe("route change note", () => {
           prompts.push(params.prompt);
           return {
             content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
-            timing: { promptTokens: 10, predictedTokens: 5 },
+            timing: { promptTokens: 10, predictedTokens: 5, promptMs: 0, predictedMs: 0 },
             slotId: 0,
             cacheReused: false,
+            reasoningContent: "", stop: true, truncated: false, cacheHitTokens: 0, modelId: null,
           };
         },
       },
@@ -218,9 +220,10 @@ describe("route change note", () => {
           skipLlamaHealthCheck: true,
           llamaComplete: async () => ({
             content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
-            timing: { promptTokens: 10, predictedTokens: 5 },
+            timing: { promptTokens: 10, predictedTokens: 5, promptMs: 0, predictedMs: 0 },
             slotId: 0,
             cacheReused: false,
+            reasoningContent: "", stop: true, truncated: false, cacheHitTokens: 0, modelId: null,
           }),
         },
       });

@@ -1,6 +1,6 @@
 import { getConfig } from "../../../config/index.js";
 import { checkLlamaServer } from "../../llama-server-health.js";
-import { apiKeyForUrl } from "../../../local-llm/managed-api-key.js";
+import { apiKeyForUrl } from "../../../local-llm/server/managed-api-key.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type {

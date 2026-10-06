@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { formatSubcallHealthWarning } from "../memory/health/index.js";
 import { reduceTuiState } from "./agent-event-reducer.js";
-import { ChatLog } from "./components/chat-log.js";
+import { ChatLog } from "./chat/chat-log.js";
 import { fakeSession } from "./test-fixtures.js";
 import { createInitialTuiState } from "./tui-state.js";
 import type { TuiAction } from "./tui-action.js";

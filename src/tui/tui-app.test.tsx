@@ -351,7 +351,7 @@ describe("TuiApp (smoke)", () => {
     // ink-testing-library reports no rows, so the panel falls back to the
     // 80x24 surface and picks its COMPACT header — `RouteCard` ("Active
     // chat route") is dropped on purpose at that budget. The full/compact
-    // decision is covered directly in `components/llm-panel.test.tsx`,
+    // decision is covered directly in `llm-panel/llm-panel.test.tsx`,
     // which drives `maxRows`; here we assert the two-mode body that every
     // budget keeps.
     expect(text).toContain("Local text models");

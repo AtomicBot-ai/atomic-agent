@@ -4,10 +4,10 @@ import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
-import { EventFeed } from "../event-feed.js";
-import { LogsTab } from "../logs-tab.js";
-import { ReasoningTab } from "../reasoning-tab.js";
-import { WorldPanel } from "../world-panel.js";
+import { EventFeed } from "../observe/event-feed.js";
+import { LogsTab } from "../observe/logs-tab.js";
+import { ReasoningTab } from "../observe/reasoning-tab.js";
+import { WorldPanel } from "../observe/world-panel.js";
 import {
   getCurrentSection,
   MANAGE_TABS,
@@ -17,18 +17,18 @@ import {
 import { theme } from "../theme/theme.js";
 import type { TuiState, TuiTab } from "../tui-state.js";
 import { DebugDiagnosticsLine } from "./debug-diagnostics-line.js";
-import { LocalLlmLogsPanel } from "./local-llm-logs-panel.js";
-import { LocalModelsPanel } from "./local-models-panel.js";
-import { LlmPanel } from "./llm-panel.js";
-import { TasksPanel } from "./tasks-panel.js";
-import { SkillsPanel } from "./skills-panel.js";
-import { McpPanel } from "./mcp-panel.js";
-import { MemoryPanel } from "./memory-panel.js";
-import { ImportPanel } from "./import-panel.js";
+import { LocalLlmLogsPanel } from "../local-models/local-llm-logs-panel.js";
+import { LocalModelsPanel } from "../local-models/local-models-panel.js";
+import { LlmPanel } from "../llm-panel/llm-panel.js";
+import { TasksPanel } from "../tasks/tasks-panel.js";
+import { SkillsPanel } from "../skills/skills-panel.js";
+import { McpPanel } from "../mcp/mcp-panel.js";
+import { MemoryPanel } from "../memory/memory-panel.js";
+import { ImportPanel } from "../import/import-panel.js";
 import { PrivacyPanel } from "../privacy/components/privacy-panel.js";
 import { IntegrationsPanel } from "../integrations/components/integrations-panel.js";
 import { SwarmPanel } from "../swarm/components/swarm-panel.js";
-import { ProvidersPanel } from "./providers-panel.js";
+import { ProvidersPanel } from "../providers/providers-panel.js";
 
 interface DebugPaneProps {
   state: TuiState;

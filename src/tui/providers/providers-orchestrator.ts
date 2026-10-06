@@ -18,7 +18,7 @@ import {
   LlmRemoveActiveProviderError,
   removeLlmProvider,
   wrapLlmConfigError,
-} from "../persist-llm-provider.js";
+} from "../../config/llm-provider-commands.js";
 import {
   getCachedAimlapiChatPicks,
   refreshAimlapiChatCatalogFromApi,

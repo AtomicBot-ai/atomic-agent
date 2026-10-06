@@ -1,0 +1,57 @@
+{
+  "node": "v25.7.0",
+  "positiveCasesPassed": 11,
+  "initialHarness": {
+    "passed": 8,
+    "total": 13,
+    "failed": 5
+  },
+  "correctedToolSelection": {
+    "passed": 3,
+    "total": 3,
+    "notes": "Temporary stub uses os.fs.edit; original assertions unchanged except additional batch-size assertion."
+  },
+  "baseline": {
+    "git": "cce6262c",
+    "failed": 5,
+    "total": 5,
+    "notes": "All same failures/guard messages as current build; not reorganization regressions."
+  },
+  "negativeGuardAssertions": [
+    {
+      "caseId": "http-get-status",
+      "sameGuardBeforeAfter": true,
+      "sameExpectationsBeforeAfter": true,
+      "guard": "private/internal address"
+    },
+    {
+      "caseId": "http-post-echo",
+      "sameGuardBeforeAfter": true,
+      "sameExpectationsBeforeAfter": true,
+      "guard": "private/internal address"
+    },
+    {
+      "caseId": "coding-fix-cart-total",
+      "sameGuardBeforeAfter": true,
+      "sameExpectationsBeforeAfter": true,
+      "guard": "is an input the request names"
+    },
+    {
+      "caseId": "debug-fix-slugify",
+      "sameGuardBeforeAfter": true,
+      "sameExpectationsBeforeAfter": true,
+      "guard": "is an input the request names"
+    },
+    {
+      "caseId": "coding-wire-shared-tax-rate",
+      "sameGuardBeforeAfter": true,
+      "sameExpectationsBeforeAfter": true,
+      "guard": "is an input the request names"
+    }
+  ],
+  "cloudJudge": "never imported/created",
+  "envFile": "never loaded",
+  "maxObservedBatchSize": 2,
+  "noProductEdits": true,
+  "remaining": "No real model quality, no successful HTTP os.http.request path due mandatory SSRF guard for isolated local mock."
+}

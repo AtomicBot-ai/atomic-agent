@@ -1,0 +1,194 @@
+--- src/llm/provider/model-vision.test.ts (seeded before)
++++ src/llm/provider/model-vision.test.ts (agent after)
+@@ -30,6 +30,28 @@
+ });
+ 
+ describe("resolveCloudModelVision", () => {
++  it.each([
++    { modelVision: false, providerVision: true, expected: false },
++    { modelVision: true, providerVision: false, expected: true },
++    { modelVision: false, providerVision: false, expected: false },
++    { modelVision: true, providerVision: true, expected: true },
++    { modelVision: undefined, providerVision: false, expected: false },
++    { modelVision: undefined, providerVision: true, expected: true },
++  ])("resolves model=$modelVision before provider=$providerVision", ({ modelVision, providerVision, expected }) => {
++    const entry = aimlapi("custom-model", {
++      supportsVision: providerVision,
++      userModels: [{
++        id: "custom-model",
++        kind: "chat",
++        ...(modelVision !== undefined ? { supportsVision: modelVision } : {}),
++      }],
++    });
++    expect(resolveCloudModelVision(entry, "custom-model")).toEqual({
++      vision: expected,
++      visionSource: modelVision === undefined ? "config.provider" : "config.userModels",
++    });
++  });
++
+   it("reads the catalogue per model: text-only and vision rows on one provider", () => {
+     expect(
+       resolveCloudModelVision(aimlapi("deepseek/deepseek-v4-flash"), "deepseek/deepseek-v4-flash"),
+--- src/llm/provider/model-vision.ts (seeded before)
++++ src/llm/provider/model-vision.ts (agent after)
+@@ -48,7 +48,7 @@
+ ): ModelVisionVerdict {
+   const row = entry.userModels?.find((model) => model.id === modelId);
+   if (row?.supportsVision !== undefined) {
+-    return { vision: row.supportsVision || entry.supportsVision || false, visionSource: "config.userModels" };
++    return { vision: row.supportsVision, visionSource: "config.userModels" };
+   }
+   if (entry.supportsVision !== undefined) {
+     return { vision: entry.supportsVision, visionSource: "config.provider" };
+--- src/runtime/vision-model-overrides.test.ts (seeded before)
++++ src/runtime/vision-model-overrides.test.ts (agent after)
+@@ -0,0 +1,87 @@
++import { describe, expect, it } from "vitest";
++
++import { getConfig, type AtomicAgentConfig } from "../config/index.js";
++import { ProviderRegistry } from "../llm/provider/registry/provider-registry.js";
++import { resolveVisionProvider, visionRouteAvailable } from "./vision-route.js";
++
++const logger = {
++  debug: () => {},
++  info: () => {},
++  warn: () => {},
++  error: () => {},
++} as never;
++
++function configuration(model: string, supportsVision = true): AtomicAgentConfig {
++  return {
++    ...getConfig(),
++    llm: {
++      activeTextProvider: "custom",
++      activeEmbeddingProvider: "custom",
++      toolTransport: "auto",
++      providers: [
++        {
++          id: "custom",
++          kind: "openai-compatible",
++          baseUrl: "https://custom.invalid",
++          defaultChatModel: model,
++          supportsVision,
++          userModels: [
++            { id: "text", kind: "chat", supportsVision: false },
++            { id: "vision", kind: "chat", supportsVision: true },
++            { id: "default", kind: "chat" },
++          ],
++        },
++        {
++          id: "other",
++          kind: "openai-compatible",
++          baseUrl: "https://other.invalid",
++          defaultChatModel: "text",
++          supportsVision: false,
++        },
++      ],
++    },
++  };
++}
++
++async function build(config: AtomicAgentConfig) {
++  return ProviderRegistry.fromConfig(config, {
++    config,
++    llamaClient: {} as never,
++    getProfile: () => ({}) as never,
++    logger,
++  });
++}
++
++describe("model vision overrides on the serving route", () => {
++  it.each([
++    ["text", true, false],
++    ["vision", false, true],
++    ["default", true, true],
++    ["default", false, false],
++  ] as const)("resolves %s with provider default %s to %s", async (model, providerVision, expected) => {
++    const registry = await build(configuration(model, providerVision));
++    expect(resolveVisionProvider(registry, undefined)?.capabilities.vision).toBe(expected);
++    expect(visionRouteAvailable({
++      registry,
++      isLlamaServer: () => false,
++      fusionWorkerProviderId: () => null,
++    })).toBe(expected);
++  });
++
++  it("reads the rebuilt model and switched provider on the next lookup", async () => {
++    const registry = await build(configuration("text"));
++    expect(resolveVisionProvider(registry, undefined)?.capabilities.vision).toBe(false);
++    for (const model of ["vision", "default", "text"] as const) {
++      const config = configuration(model);
++      await registry.replaceProviderFromConfig("custom", config, { config, logger });
++      expect(resolveVisionProvider(registry, undefined)?.capabilities.vision).toBe(model !== "text");
++    }
++    const config = configuration("vision");
++    await registry.replaceProviderFromConfig("custom", config, { config, logger });
++    await registry.setActive("other");
++    expect(resolveVisionProvider(registry, undefined)?.capabilities.vision).toBe(false);
++    expect(resolveVisionProvider(registry, "custom")?.capabilities.vision).toBe(true);
++    await registry.setActive("custom");
++    expect(resolveVisionProvider(registry, undefined)?.capabilities.vision).toBe(true);
++  });
++});
+--- src/runtime/vision-per-model.test.ts (seeded before)
++++ src/runtime/vision-per-model.test.ts (agent after)
+@@ -199,7 +199,59 @@
+ 
+   const offersVision = (runtime: Runtime): boolean =>
+     runtime.toolDescriptors.some((d) => d.name === "vision.describe");
++
++  it("keeps explicit model overrides on the live serving route across model and provider switches", async () => {
++    const configured = (model: string, active = "custom") => llm(active, [
++      {
++        ...CUSTOM_PROVIDER,
++        defaultChatModel: model,
++        supportsVision: true,
++        userModels: [
++          { id: "no-images", kind: "chat", supportsVision: false },
++          { id: "images", kind: "chat", supportsVision: true },
++          { id: "default-images", kind: "chat" },
++        ],
++      },
++      aimlapi(TEXT_ONLY_MODEL, {
++        supportsVision: false,
++        userModels: [{ id: TEXT_ONLY_MODEL, kind: "chat", supportsVision: true }],
++      }),
++    ]) as NonNullable<UserConfigFile["llm"]>;
++    writeConfig({ llm: configured("no-images") });
++    const runtime = await boot();
++    try {
++      expect(offersVision(runtime)).toBe(false);
++      const refused = await describeShot(runtime);
++      expect(refused.status).toBe("error");
++      expect(refused.details).toMatchObject({ visionSource: "config.userModels" });
++      expect(traffic.visionCalls).toHaveLength(0);
++
++      for (const model of ["images", "default-images", "no-images"]) {
++        writeConfig({ llm: configured(model) });
++        await runtime.reloadLlmProvider("custom");
++        expect(offersVision(runtime)).toBe(model !== "no-images");
++        expect((await describeShot(runtime)).status).toBe(model === "no-images" ? "error" : "ok");
++      }
++      expect(traffic.visionCalls).toHaveLength(2);
++      expect(traffic.visionCalls.every((url) => url.includes(CUSTOM))).toBe(true);
+ 
++      await runtime.providerRegistry.setActive("aimlapi");
++      writeConfig({ llm: configured("no-images", "aimlapi") });
++      expect(offersVision(runtime)).toBe(true);
++      expect((await describeShot(runtime)).status).toBe("ok");
++      expect(traffic.visionCalls).toHaveLength(3);
++      expect(traffic.visionCalls[2]).toContain(AIML);
++
++      await runtime.providerRegistry.setActive("custom");
++      writeConfig({ llm: configured("no-images") });
++      expect(offersVision(runtime)).toBe(false);
++      expect((await describeShot(runtime)).status).toBe("error");
++      expect(traffic.visionCalls).toHaveLength(3);
++    } finally {
++      await runtime.shutdown();
++    }
++  });
++
+   it("a text-only cloud model is not offered vision, and a direct call is refused by model and provider with no request", async () => {
+     writeConfig({ llm: llm("aimlapi") });
+     const runtime = await boot();

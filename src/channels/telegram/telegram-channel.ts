@@ -906,7 +906,7 @@ export class TelegramChannel {
    * invariant every bot relies on to DM its users.
    *
    * Always plain text: a task report is channel infrastructure (see
-   * AGENTS.md §"Telegram remote-control channel"), and its error
+   * ../docs/adapters.md), and its error
    * excerpts may contain `<`/`&` that must never meet the HTML parser.
    * Never throws — every failure mode is a `TaskReportDelivery` value,
    * and per-chunk send errors are already swallowed by `sendOutbound`.

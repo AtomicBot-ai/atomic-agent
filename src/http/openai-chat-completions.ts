@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
+import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-contract.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
 import {

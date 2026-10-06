@@ -1,4 +1,4 @@
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { describeFailedAttempts } from "../llm/fallback/index.js";
 import {
   contextUsageFromPrompt,
@@ -8,7 +8,7 @@ import {
   formatBackgroundApprovalNotice,
   formatBackgroundProviderWaitNotice,
 } from "./detached-turns.js";
-import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
+import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import {
   formatProviderGaveUpLine,
@@ -66,7 +66,7 @@ import {
   isIssueReportAction,
   reduceIssueReport,
 } from "./issue-report/index.js";
-import { withReportHint } from "./format-agent-error-for-chat.js";
+import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 

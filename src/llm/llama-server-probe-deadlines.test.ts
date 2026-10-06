@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { probeLlamaHealth } from "../local-llm/daemon-lifecycle.js";
+import { probeLlamaHealth } from "../local-llm/server/daemon-lifecycle.js";
 import { LlmHealthPoller } from "../tui/llm-health/llm-health-poller.js";
 import type { TuiAction } from "../tui/tui-action.js";
 import { buildGrammar } from "./grammar/build-grammar.js";

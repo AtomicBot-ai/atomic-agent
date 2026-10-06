@@ -79,7 +79,7 @@ export function createGetSessionHandler(): HttpHandler {
  * already running on that session.
  *
  * This is NOT a way to send a message: it never starts a turn and never
- * queues behind one (see §"Mid-turn steering" in AGENTS.md). When no
+ * queues behind one (see ../runtime/docs/lifecycle.md). When no
  * running turn will pick the message up there is nothing to steer, and
  * the caller is told so with `409` rather than having the message
  * silently disappear — the correct follow-up is

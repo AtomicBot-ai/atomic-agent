@@ -10,7 +10,7 @@ import {
   type TasksPanelState,
   type TaskSummaryRow,
 } from "./tasks-panel-state.js";
-import { focusAfter } from "../components/tasks-create-form.js";
+import { focusAfter } from "./tasks-create-form.js";
 import { validateCreateForm } from "./tasks-form-validator.js";
 import { selectVisibleTaskRows } from "./tasks-filter.js";
 

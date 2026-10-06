@@ -3,7 +3,7 @@ import { resolveUserPath } from "../expand-home.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
-} from "../fs-require-approval.js";
+} from "../fs/fs-require-approval.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { DEFAULT_EXTRACT_LIMITS, type ExtractLimits } from "./archive-types.js";
 import {

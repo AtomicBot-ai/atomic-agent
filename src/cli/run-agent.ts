@@ -14,7 +14,7 @@ import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
   canGrantCategory,
   canGrantShape,

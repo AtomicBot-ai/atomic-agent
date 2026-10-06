@@ -1,0 +1,38 @@
+{
+  "before": {
+    "order": [
+      "open",
+      "turn_started",
+      "step_started",
+      "llm_event",
+      "llm_event",
+      "llm_event",
+      "final-guard",
+      "llm_event",
+      "loop_completed",
+      "turn_finished",
+      "close",
+      "queued-from-final-guard",
+      "close"
+    ],
+    "reason": "max_steps"
+  },
+  "after": {
+    "order": [
+      "open",
+      "turn_started",
+      "step_started",
+      "llm_event",
+      "llm_event",
+      "llm_event",
+      "final-guard",
+      "llm_event",
+      "loop_completed",
+      "turn_finished",
+      "close",
+      "queued-from-final-guard",
+      "close"
+    ],
+    "reason": "max_steps"
+  }
+}

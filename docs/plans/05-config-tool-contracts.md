@@ -1,0 +1,43 @@
+# Этап 05: схемы конфигурации и контракты инструментов
+
+Status: verified
+Owner: repository maintainers
+
+[Общий маршрут](project-reorganization.md). Этап завершён после блоков 05a–05l; [итоговая приёмка](../testing/stage-05-validation.md), [последний блок](05l-filesystem-contracts.md). Config root 6055→1521 строк, 13 core FS contracts, global conformance с явными ограничениями, public API/defaults/migrations/prompt bytes сохранены. Конечная база: 848 explicit test diagnostics, 0 cycles/exceptions, 1059 suites / 12792 passed / 4 existing skips. Три прежних Git descriptor duplicates закреплены узким ledger и [отдельным behavioral follow-up](../proposals/tool-catalog-deduplication.md). Остальные tool families не объявлены полностью каноническими. Подробные планы и acceptance 05a–05k сохранены; дополнительные 05m/05n не нужны.
+
+## Контекст и цель
+
+На старте этапа config-schema.ts — 6055 строк: публичные user/runtime types, defaults, scalar validators, migrations и доменные parsers собраны вместе. При этом llm-config/llm-run-mode/custom-models/subcall-timeout уже имеют самостоятельных владельцев. Tool contracts распределены между descriptor text, default-tool-args-schemas (882 строки), runtime parsing, registry/resource classes и role predicates; совместимость этих представлений проверяется частично, но общего источника для всех ещё нет.
+
+Цель — уменьшить объём контекста и ручное дублирование, сохранив пользовательский JSON/config migrations, публичные imports, prompt bytes и runtime dispatch. Начать с замкнутого scalar validation owner, затем уточнять доменные parser/type/default/migration области. Канонический контракт инструмента вводить небольшим проверяемым prototype, а не одновременно переписывать весь каталог.
+
+## 05a: scalar validation — подробный первый срез
+
+Перед кодом читать config/AGENTS и README/compatibility, действующие config-schema/load-config/validation-error и focused tests. Повторить actual consumers/exports/call graph и existing diagnostics. Snapshots src/debt/protected/package и primitive/default outputs обязательны до extraction.
+
+Предлагаемый leaf — config/config-primitives.ts. Перенести coerceIntLike/coerceFloatLike и parsePositiveInt/parseBoundedPositiveInt/parseNonNegativeInt/parseNonNegativeBoundedInt/parseUnitInterval/parseHalfOpenUnitInterval/parseBool/parseBoolOrNull/parseNonEmptyString с прежними bodies. Для используемых в исходном parser coercers нужен намеренный внутренний export; root публичная поверхность не расширяется. Leaf импортирует существующий config-validation-error напрямую и не импортирует config-schema или root config/index. Не создавать копии error class, чтобы instanceof и error identity сохранились.
+
+config-schema импортирует primitives для своей сборки и сохраняет прежние публичные exports. Это намеренный compatibility composition API, а не сеть старых файлов-переадресаторов. Existing consumers не обязаны мигрировать одновременно; новые internal consumers используют actual owner. В первом срезе не переносить версия-зависимые memory/parallel/auto-update helpers, USER_CONFIG_VERSION/defaults/UserConfigFile/AtomicAgentConfig или parseUserConfigFile: иначе extraction одновременно изменит migration ownership.
+
+Проверить exact bodies, export list, error field/messages, string numeric coercion (JSON-compatible number syntax, unsafe integers, blank/trailing garbage), bounds/zero/null/bool aliases и distinction строгого file parser от env clamp. Существующие config/default/migration/load tests использовать первыми; недостающие behavioral checks добавить только для обнаруженного существенного пробела, без зеркалирования всех functions. Fixtures исправлять отдельно с reduce только resolved cases, без cast/allowance/options/capture.
+
+Focused config schema/parse/load/default snapshots плюс cross-owner CLI/TUI tests по фактическим consumers; lint/types/imports/docs/self-tests/quarantine/diff и full test:ci. Add narrow dependency negative fixture для primitive leaf → composing schema только если leaf действительно замкнут и existing graph подтверждён. Source/API/default/config version/prompt/registry/protected hashes сохранены. После evidence 05a verified, уточнить следующий detailed slice.
+
+## Исходный маршрут последующих срезов — выполнен в согласованных границах
+
+Read-only аудит фактических зависимостей выбрал session-rail как первый замкнутый domain owner: тип и два parsers зависят только от ConfigValidationError. Полные localModels/TUI/agent blocks пока остаются planned: их defaults/version helpers требуют отдельной сборки. Для tool prototype кандидат — os.fs.hash: dependency-free contract leaf может обслуживать descriptor/schema/runtime/classification, сохраняя более широкие runtime null/uppercase-algorithm semantics. Это выбор для будущей specification, не выполненный перенос. Нельзя импортировать execution module из schema: уже есть ToolRegistry → coerce-tool-args → default-tool-args-schemas.
+
+1. **Доменные config blocks.** По actual type/parse/default/migration dependencies выделять local-models, agent/session budgets, memory, channels/integrations, tools/web/approval, TUI/notifications/tracing. UserConfigFile и AtomicAgentConfig сохраняют прежние shape/optional properties; сборка root parser/defaults остаётся явной. Не переносить massive interfaces механически в файлы с циклическими runtime defaults, не копировать constants. Распределять по владельцу поведения, не по одинаковому числу строк.
+2. **Миграции.** USER_CONFIG_VERSION=74 и SUPPORTED_INPUT_VERSIONS на момент плана — shipped contract, не разрешение bump. Сохранить missing/null/zero distinctions, migration ordering, pre-version rollout defaults, absent versus explicit operator choices и exact field errors. Перенос branch/version helper отдельно от изменения политики; data-driven migration table не является обязательной целью и не должна менять accepted old files. Existing version matrix/default snapshots прежде всего; подробный план определяется после parser owners.
+3. **Prototype tool contract.** Выбрать одну небольшую filesystem family после фактического сравнения text/schema/runtime parser/registry/class/roles. Канонический metadata owner размещается по actual DAG; prompt rendering не становится владельцем filesystem execution и tools не импортируют prompt implementation ради args. Сначала обеспечить одно проверяемое место для общих args shape/JSON schema и classification metadata, сохраняя argsSchema text literal byte-for-byte и custom runtime guards. Не считать JSON schema полной заменой approval/input/read-scope/conditional semantics и не генерировать новое prompt wording попутно.
+4. **Расширение контрактов.** После prototype сверить descriptors/registered tools, JSON schemas, parser inputs, resource classes, tier/discovery и role offered names; закрепить missing/duplicate/unknown inconsistency detection. Политики роли остаются явными, MCP dynamic schemas/strict nullable conversion/rare tools и terminal semantics не обязаны вписываться в единый factory. Расширять family за family, сохраняя intentional exceptions с owner/reason; не превращать первый prototype в rewrite всех инструментов.
+
+Пользователь разрешил parallel work: disjoint config/helper и contract research могут идти одновременно после точных write sets. Один integrator владеет shared exports/default assembly/catalog/type ledger/prompt baselines и общей приёмкой; пересекающиеся schema edits выполняются последовательно. Параллельность не заменяет specification или full integration checks.
+
+## Приёмка и границы
+
+Config entry/leaf owners доступны через локальные guides без чтения всей schema. Публичный user/runtime config shape/default/env precedence, accepted version migrations/error semantics и persisted JSON неизменны. Для migrated tool families descriptor/schema/parser/classification согласованы и новые missing/duplicate cases не проходят gate; custom security/domain guards и dynamic third-party contracts сохранены. Stable prefix/catalog order/args text/profile grammar bytes не изменены без отдельного осознанного behavioral change.
+
+Нет новых type allowances/runtime SCC/ownership exceptions; matching unit/seam tests и full CI-equivalent проходят. .pr-review-56/EVIDENCE_ROUTER_MODEL.md/package/dependencies сохраняются. В этот этап не входят runtime bootstrap/public runtime contract refactor, agent-loop разделение, monorepo или полное устранение type debt. После всей приёмки 05 verified подготовить только следующий план 06 о сборке runtime.
+
+Результат и фактическая граница приёмки изложены в evidence: semantic conformance для canonical13, presence/format для других built-ins. Следующий [единый план06](06-runtime-composition.md) specified только после полной приёмки05.

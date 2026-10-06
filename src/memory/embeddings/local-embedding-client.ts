@@ -1,5 +1,5 @@
 import { getConfig } from "../../config/index.js";
-import { resolveEmbeddingApiKey } from "../../local-llm/managed-api-key.js";
+import { resolveEmbeddingApiKey } from "../../local-llm/server/managed-api-key.js";
 import { LlamaEmbeddingClient } from "./embedding-client.js";
 
 /**
