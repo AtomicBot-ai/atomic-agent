@@ -663,15 +663,20 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       JSON.stringify(r),
     );
     // Same spot in the recording: the marks were small, and a white disc glared in the dark theme.
-    const b = await js<Record<string, unknown>>(`(() => {
+    // ATO-251: each theme is read on the frame after the flip, as the app reads it; the
+    // same-tick read is kept in the detail (it came back one theme behind on Windows).
+    const b = await js<Record<string, unknown>>(`(async () => {
       const probe = document.createElement('span'); probe.className = 'logo';
       probe.innerHTML = '<img src="logos/google.svg" alt="">'; document.body.appendChild(probe);
       const root = document.documentElement, had = root.getAttribute('data-theme');
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
       try {
-        root.setAttribute('data-theme', 'light'); const light = getComputedStyle(probe).backgroundColor;
-        root.setAttribute('data-theme', 'dark'); const dark = getComputedStyle(probe).backgroundColor;
+        root.setAttribute('data-theme', 'light'); const lightNow = getComputedStyle(probe).backgroundColor;
+        await frame(); const light = getComputedStyle(probe).backgroundColor;
+        root.setAttribute('data-theme', 'dark'); const darkNow = getComputedStyle(probe).backgroundColor;
+        await frame(); const dark = getComputedStyle(probe).backgroundColor;
         const share = parseFloat(getComputedStyle(probe.querySelector('img')).width) / parseFloat(getComputedStyle(probe).width);
-        return {light, dark, share: Math.round(share * 100) / 100};
+        return {light, dark, share: Math.round(share * 100) / 100, lightNow, darkNow};
       } finally {
         if (had == null) root.removeAttribute('data-theme'); else root.setAttribute('data-theme', had);
         probe.remove();

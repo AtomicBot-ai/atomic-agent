@@ -1,0 +1,133 @@
+# Desktop smoke on Windows: build the agent and the desktop app the way
+# desktop.yml's Windows job does (without signing or packaging an installer),
+# then run the desktop's own smoke suite against them on a GitHub-hosted
+# Windows runner. Every other check runs on macOS, and Windows-only bugs
+# (cmd quoting, path separators, process trees, packaging) slipped through.
+#
+# How to start it and read it: desktop/docs/smoke-windows-ci.md.
+#
+# No secrets are used or needed: the run starts from an empty agent state
+# dir, with no provider and no key. The runner has no GPU and no local model,
+# so checks that need a real model turn, a configured provider, or a POSIX
+# shell stand-in cannot pass here; they are listed, each with its reason, in
+# desktop/test/smoke-known-failures-windows-ci.txt and do not fail the job.
+# Any other FAIL does.
+#
+# THIS REPOSITORY IS PUBLIC, AND SO ARE THIS JOB'S LOG AND ITS ARTIFACTS.
+# They must never contain a key. The smoke uses no real keys (a few checks
+# type obvious fake ones), only *.log files are collected from the state dir
+# (never config.json, .env or the sqlite stores), and smoke-ci.mjs blanks
+# anything shaped like a provider key on the way out as a second safeguard.
+# Never add a secret to this workflow.
+
+name: Desktop smoke (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: "full (the whole suite), all (every release-fix task), fusion, or task ids like 108,111"
+        required: false
+        default: "all"
+        type: string
+      ref:
+        description: "Branch, tag or SHA to test (empty = the ref this run was started from)"
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches:
+      - rel/xp-build
+    paths:
+      - "desktop/**"
+      - "src/**"
+      - ".github/workflows/desktop-smoke-windows.yml"
+
+concurrency:
+  group: desktop-smoke-windows-${{ github.event.pull_request.number || github.ref }}-${{ inputs.tasks || 'all' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (win32-x64)
+    runs-on: windows-latest
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Never let electron-builder or anything else look for a signing identity.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Same pin as desktop.yml and release.yml: the SEA needs Node >= 25.7.
+          node-version: "25.7"
+          check-latest: true
+
+      # ---- agent bundle (as desktop.yml's Windows job, minus signing) --------
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Bundle CLI for SEA
+        run: npm run bundle:sea
+
+      - name: Fetch runtime assets (ripgrep for host)
+        run: npm run bundle:fetch-assets
+
+      - name: Build Node SEA binary
+        run: npm run bundle:build-binary
+
+      # Stages bundle/win32-x64/atomic-agent.exe with its native modules,
+      # exactly what the packaged app carries in resources/agent. The smoke
+      # supervises this .exe (a .cmd shim around `node dist/cli/index.js`
+      # cannot be spawned without a shell on Windows).
+      - name: Package bundle
+        run: npx tsx scripts/package-bundle.ts win32-x64
+
+      # ---- desktop app ------------------------------------------------------
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: npm run build
+
+      # ---- the smoke ----------------------------------------------------------
+      # The task list comes in through env, never pasted into the script, and
+      # smoke-ci.mjs accepts only full / all / fusion / a list of task ids.
+      - name: Run the desktop smoke
+        env:
+          SMOKE_TASKS: ${{ inputs.tasks || 'all' }}
+          # `runner` is not readable in a job-level env, hence here and below.
+          SMOKE_OUT: ${{ runner.temp }}/desktop-smoke
+        run: |
+          node desktop/scripts/smoke-ci.mjs \
+            --tasks "$SMOKE_TASKS" \
+            --known-failures desktop/test/smoke-known-failures-windows-ci.txt \
+            --out "$SMOKE_OUT"
+
+      # Public artifact (see the note at the top): the smoke log, summary.json,
+      # the agent's *.log files, the closing screenshot and crash dumps only.
+      - name: Upload smoke log and agent logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-windows-${{ github.run_number }}
+          path: ${{ runner.temp }}/desktop-smoke/artifacts/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,57 @@
+# Checks that cannot pass on a GitHub-hosted windows-latest runner (no GPU,
+# no local model, empty state dir, no provider or key, no /bin/sh).
+# Read by desktop/scripts/smoke-ci.mjs (see desktop/docs/smoke-windows-ci.md).
+# An entry matches a FAIL whose name equals it or starts with it + " — ";
+# an entry ending in * matches by prefix. A real Windows bug never goes here.
+#
+# FIRST DRAFT from reading the code, not from a run. After the first real run,
+# add what fails for the runner's limits and remove entries that never fire.
+
+# SH: the harness writes a "#!/bin/sh" stand-in agent and points
+# ATOMIC_AGENT_BIN at it (smoke-tasks/t11.ts:474). Windows cannot run it.
+T11:*
+# SH: Settings' llama.cpp update vs model starts, /bin/sh stand-in (smoke-tasks/t18f.ts:157).
+T18 U*
+# SH: quit and model-server revival use /bin/sh stand-ins (smoke-tasks/t30.ts:167, :248).
+T30:*
+T31:*
+# SH: restart/stop of the agent drives a /bin/sh wrapper (smoke-tasks/t41.ts:137).
+T41:*
+# SH: the key checks after t44.ts:163 run through a /bin/sh shim; the first two
+# (file modes, tmp cleanup) do run on Windows and stay off this list.
+T44: a key typed in the window*
+T44: the config write reaches the agent on stdin*
+T44: re-keying replaces the key*
+T44: a key turned down for a provider*
+T44: with no key typed, the key check*
+# A task that throws or hangs on the stand-in reports this instead of its checks.
+T11: its checks ran to the end*
+T18: its checks ran to the end*
+T30: its checks ran to the end*
+T41: its checks ran to the end*
+T44: its checks ran to the end*
+
+# From reading the code (06.10): stand-ins written as #!/bin/sh scripts, or a
+# llama-server stand-in that is a macOS arm64 asset. Windows cannot run them.
+T34*
+T39: models start asks llama-server --list-devices once*
+T39: a model's first start measures its speed*
+T39: the next start of that model on the same llama.cpp*
+T39: after a llama.cpp update the speed is measured again*
+T42*
+T43 B:*
+
+# SH: 41b drives the same /bin/sh atag wrapper as the rest of T41 (smoke-tasks/t41.ts:136).
+T41 (41b):*
+# FRESH: the runner starts on an empty state dir (FIRSTRUN.fresh all run). The relaunch checks
+# call obBootGate(FIRSTRUN), which on a fresh state forgets the resume reminder and opens setup
+# (renderer.js:13878-13880). Not a resume bug. Remove once the tests pass {fresh:false} or CI seeds.
+T18 R1:*
+T18 R1 projector:*
+T18 S5:*
+T18 S3:*
+T18 D3:*
+T18 D4:*
+T18 D5:*
+T18-F2: leaving that setup drops the entry it never finished*
+T18-F5: a projector Cancel pressed while main still reads models status*

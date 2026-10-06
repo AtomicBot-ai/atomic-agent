@@ -5849,7 +5849,8 @@ function act(a) {
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
                            try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
-                           syncWindowGround(); syncChromeTheme(); render(); return; }
+                           // ATO-251: read again once the new theme has painted.
+                           syncChromeTheme(); syncWindowGround(); render(); syncWindowGroundSoon(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
   // Item 27: a new chat whose first turn has not been stored yet has nothing to delete; say so rather than nothing.
@@ -7594,11 +7595,16 @@ function syncWindowGround() {
   WINDOW_GROUND.sent = hex;
   Promise.resolve(BR.windowGround(hex)).catch(() => { /* the window keeps the ground it had */ });
 }
+/* ATO-251: the ground again once a theme change has painted, in case
+   anything still eases the page's background (styles.css reduced motion). */
+function syncWindowGroundSoon() {
+  requestAnimationFrame(() => requestAnimationFrame(() => syncWindowGround()));
+}
 render();
 syncWindowGround();
 if (window.matchMedia) {
   const osDark = window.matchMedia('(prefers-color-scheme: dark)');
-  if (osDark.addEventListener) osDark.addEventListener('change', () => syncWindowGround());
+  if (osDark.addEventListener) osDark.addEventListener('change', () => { syncWindowGround(); syncWindowGroundSoon(); });
 }
 setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
 /* r5 item 2: below 1000px the sidebar collapses to the same 52px rail with no
@@ -11346,6 +11352,8 @@ function dlCardPublish(px, chat) {
     // A conversation held at its newest message stays there, now clear of the card.
     const sc = document.getElementById('scroller');
     if (sc && S.stick) sc.scrollTop = sc.scrollHeight;
+    // ATO-251: and again once the new room has painted.
+    if (sc && S.stick) requestAnimationFrame(() => { if (S.stick) sc.scrollTop = sc.scrollHeight; });
   }
   const v = Math.max(0, Math.round(px));
   if (v === DLC.offset) return;

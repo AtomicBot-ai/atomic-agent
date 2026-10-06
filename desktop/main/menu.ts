@@ -61,8 +61,6 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
         sep,
         item("Open Workspace…", "workspace:choose", "Shift+CommandOrControl+O"),
         sep,
-        sep,
-        ...(mac ? [] : [item("Run Setup Again…", "onboarding"), sep]),
         { role: "close" },
         ...(mac ? [] : [{ role: "quit", label: "Exit" } as MenuItemConstructorOptions]),
       ],
