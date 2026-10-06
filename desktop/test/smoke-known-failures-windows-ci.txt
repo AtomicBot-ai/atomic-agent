@@ -1,0 +1,36 @@
+# Checks that cannot pass on a GitHub-hosted windows-latest runner (no GPU,
+# no local model, empty state dir, no provider or key, no /bin/sh).
+# Read by desktop/scripts/smoke-ci.mjs (see desktop/docs/smoke-windows-ci.md).
+# An entry matches a FAIL whose name equals it or starts with it + " — ";
+# an entry ending in * matches by prefix. A real Windows bug never goes here.
+#
+# FIRST DRAFT from reading the code, not from a run. After the first real run,
+# add what fails for the runner's limits and remove entries that never fire.
+
+# SH: the harness writes a "#!/bin/sh" stand-in agent and points
+# ATOMIC_AGENT_BIN at it (smoke-tasks/t11.ts:474). Windows cannot run it.
+T11:*
+# SH: Settings' llama.cpp update vs model starts, /bin/sh stand-in (smoke-tasks/t18f.ts:157).
+T18 U*
+# SH: quit and model-server revival use /bin/sh stand-ins (smoke-tasks/t30.ts:167, :248).
+T30:*
+T31:*
+# SH: restart/stop of the agent drives a /bin/sh wrapper (smoke-tasks/t41.ts:137).
+T41:*
+# SH: the key checks after t44.ts:163 run through a /bin/sh shim; the first two
+# (file modes, tmp cleanup) do run on Windows and stay off this list.
+T44: a key typed in the window*
+T44: the config write reaches the agent on stdin*
+T44: re-keying replaces the key*
+T44: a key turned down for a provider*
+T44: with no key typed, the key check*
+T44: Settings › Models reads the .env names again*
+T44: the key screen says where the key is kept*
+T44: Settings › Models marks a key held outside the entry*
+T44: Next with the key field blank*
+# A task that throws or hangs on the stand-in reports this instead of its checks.
+T11: its checks ran to the end*
+T18: its checks ran to the end*
+T30: its checks ran to the end*
+T41: its checks ran to the end*
+T44: its checks ran to the end*
