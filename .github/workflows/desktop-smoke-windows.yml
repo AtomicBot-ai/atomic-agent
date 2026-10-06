@@ -28,7 +28,7 @@ on:
       tasks:
         description: "full (the whole suite), all (every release-fix task), fusion, or task ids like 108,111"
         required: false
-        default: "full"
+        default: "all"
         type: string
       ref:
         description: "Branch, tag or SHA to test (empty = the ref this run was started from)"
@@ -44,7 +44,7 @@ on:
       - ".github/workflows/desktop-smoke-windows.yml"
 
 concurrency:
-  group: desktop-smoke-windows-${{ github.event.pull_request.number || github.ref }}-${{ inputs.tasks || 'full' }}
+  group: desktop-smoke-windows-${{ github.event.pull_request.number || github.ref }}-${{ inputs.tasks || 'all' }}
   cancel-in-progress: true
 
 permissions:
@@ -112,7 +112,7 @@ jobs:
       # smoke-ci.mjs accepts only full / all / fusion / a list of task ids.
       - name: Run the desktop smoke
         env:
-          SMOKE_TASKS: ${{ inputs.tasks || 'full' }}
+          SMOKE_TASKS: ${{ inputs.tasks || 'all' }}
           # `runner` is not readable in a job-level env, hence here and below.
           SMOKE_OUT: ${{ runner.temp }}/desktop-smoke
         run: |

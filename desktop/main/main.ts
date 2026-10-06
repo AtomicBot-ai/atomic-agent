@@ -3695,6 +3695,14 @@ async function voiceTest(
   // rather than asserting it in prose. Compared at the end of the sub-suite.
   const agentCfgBefore = JSON.stringify((await configGet()).config);
   try {
+    // Windows and Linux draw no mic button (platform.ts voiceSupported), and
+    // every step below clicks it: without this return the lane threw and the
+    // whole --smoke run stopped there, with every lane after it unrun.
+    if (!voiceSupported(process.platform)) {
+      const none = await js<Mic>("window.__voiceMic()");
+      check("no mic button where voice is not supported", !none.present, `platform=${process.platform}`);
+      return;
+    }
     // --- the button ------------------------------------------------------
     const mic = await js<Mic>("window.__voiceMic()");
     const order = mic.order.split("|");

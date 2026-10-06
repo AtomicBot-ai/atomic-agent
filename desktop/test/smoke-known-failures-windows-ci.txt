@@ -34,3 +34,13 @@ T18: its checks ran to the end*
 T30: its checks ran to the end*
 T41: its checks ran to the end*
 T44: its checks ran to the end*
+
+# From reading the code (06.10): stand-ins written as #!/bin/sh scripts, or a
+# llama-server stand-in that is a macOS arm64 asset. Windows cannot run them.
+T34*
+T39: models start asks llama-server --list-devices once*
+T39: a model's first start measures its speed*
+T39: the next start of that model on the same llama.cpp*
+T39: after a llama.cpp update the speed is measured again*
+T42*
+T43 B:*
