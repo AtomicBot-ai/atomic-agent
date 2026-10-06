@@ -92,8 +92,13 @@ export const CREDENTIAL_WORDING =
  * A provider's words for input its moderation refused: OpenRouter's 403
  * "<model> requires moderation on OpenRouter. Your input was flagged for
  * …". The request was refused, not the key.
+ *
+ * "Moderation", or the input itself flagged; never a bare "flagged":
+ * "Your account has been flagged for suspicious activity" is the
+ * account's problem and must not be explained away as a content filter.
  */
-export const MODERATION_WORDING = /\b(?:moderation|flagged)\b/i;
+export const MODERATION_WORDING =
+  /\b(?:moderation|(?:input|content|prompt|request|message) (?:was |has been |is )?flagged|flagged (?:input|content|prompt))\b/i;
 
 /**
  * A rate limit in so many words. On a 429 it outweighs any wording about

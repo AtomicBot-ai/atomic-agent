@@ -120,6 +120,28 @@ describe("classifyFalloverReason", () => {
     ).toBe("other");
   });
 
+  it("keeps a top-up instruction billing: a retry without a delay is not a cooldown", () => {
+    expect(
+      classifyFalloverReason(
+        'openai provider 402: {"error":{"message":"Insufficient credits. Please try again after topping up."}}',
+      ),
+    ).toBe("billing");
+    expect(
+      classifyFalloverReason("openai provider 429: Insufficient credits. Please try again after topping up."),
+    ).toBe("billing");
+    expect(
+      classifyFalloverReason("openai provider 429: Quota exceeded. Please retry after 30 seconds."),
+    ).toBe("other");
+  });
+
+  it("does not read an account flagged for abuse as moderation", () => {
+    expect(
+      classifyFalloverReason(
+        'openai provider 403: {"error":{"message":"Your account has been flagged for suspicious activity and suspended."}}',
+      ),
+    ).toBe("auth");
+  });
+
   it("still reads a plain 401 or 403 as a key refusal", () => {
     expect(classifyFalloverReason("openai provider 401: ")).toBe("auth");
     expect(classifyFalloverReason("openai provider 403: ")).toBe("auth");
@@ -167,6 +189,34 @@ describe("the fallover notice for the errors the chain actually sees", () => {
       expect(falloverCause(err)).toBe("auth");
       expect(notice(err)).toContain(".env");
     }
+  });
+
+  /* An empty account also answers 400, which the chain's billing rule
+     does not read: the cause must stay undefined so the text decides,
+     not override it with "other". */
+  it.each([
+    [
+      "anthropic",
+      '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}',
+    ],
+    [
+      "openai",
+      '{"error":{"message":"Billing hard limit has been reached","type":"invalid_request_error","param":null,"code":"billing_hard_limit_reached"}}',
+    ],
+  ])("still tells the operator to top up for %s's empty-account 400", (label, body) => {
+    const err = providerError(400, body, label);
+    expect(falloverCause(err)).toBeUndefined();
+    expect(notice(err)).toMatch(/top it up/);
+  });
+
+  it("does not explain away an account flagged for abuse as moderation", () => {
+    const err = providerError(
+      403,
+      '{"error":{"message":"Your account has been flagged for suspicious activity and suspended."}}',
+      "openrouter",
+    );
+    expect(falloverCause(err)).toBe("auth");
+    expect(notice(err)).toContain(".env");
   });
 
   it("falls back to the text for an error the runtime cannot read", () => {

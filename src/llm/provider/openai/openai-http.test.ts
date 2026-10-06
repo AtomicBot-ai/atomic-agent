@@ -974,6 +974,19 @@ describe("humanizeOpenAiHttpError", () => {
       expect(humanizeOpenAiHttpError(mk(403))).toContain("rejected the API key (403)");
     });
 
+    it("does not call an account flagged for abuse a moderation refusal", () => {
+      const body = JSON.stringify({
+        error: { message: "Your account has been flagged for suspicious activity and suspended." },
+      });
+      const said = humanizeOpenAiHttpError(
+        new OpenAiHttpError(`openai provider 403: ${body}`, 403, "https://openrouter.ai/api/v1/chat/completions", false, null, "openrouter", undefined, {
+          body: parseProviderErrorBody(body),
+        }),
+      );
+      expect(said).toContain("rejected the API key (403)");
+      expect(said).not.toContain("moderation");
+    });
+
     it("keeps Gemini's per-minute 429 a rate limit, billing words and all", () => {
       const body = JSON.stringify([
         {

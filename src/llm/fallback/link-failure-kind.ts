@@ -73,22 +73,30 @@ export function isBillingRefusal(err: unknown): boolean {
  * The error still has the whole body: billing is the chain's own rule
  * (`isBillingRefusal`), and a 401 or 403 is the key's unless the
  * provider said its moderation refused the input, the same line the
- * chat sentence draws (`humanizeOpenAiHttpError`). Undefined for errors
- * that are not a cloud provider's answer, which keep the text reading.
+ * chat sentence draws (`humanizeOpenAiHttpError`).
+ *
+ * "Other" only where the error says so for certain: no answer, a
+ * timeout, a 5xx, 408, a 429 that is not billing, a 404, a moderation
+ * 403. Anything else is undefined and the text decides, as it did:
+ * an empty account also answers 400 (Anthropic's "Your credit balance
+ * is too low", OpenAI's `billing_hard_limit_reached`), and the chain's
+ * billing rule does not read a 400. Undefined too for errors that are
+ * not a cloud provider's answer.
  */
 export function falloverCause(
   err: unknown,
 ): "billing" | "auth" | "other" | undefined {
   if (!(err instanceof OpenAiHttpError)) return undefined;
   if (isBillingRefusal(err)) return "billing";
-  if (
-    !err.timedOut &&
-    (err.status === 401 || err.status === 403) &&
-    !isModerationRefusal(err)
-  ) {
-    return "auth";
+  const { status } = err;
+  if (err.timedOut || status === null) return "other";
+  if (status === 401 || status === 403) {
+    return isModerationRefusal(err) ? "other" : "auth";
   }
-  return "other";
+  if (status >= 500 || status === 408 || status === 429 || status === 404) {
+    return "other";
+  }
+  return undefined;
 }
 
 /**

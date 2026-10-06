@@ -279,6 +279,47 @@ describe("falloverCause", () => {
     expect(falloverCause(withBody(403, JSON.stringify({ error: { message: "Invalid API key" } })))).toBe("auth");
   });
 
+  it("leaves an empty account's 400 to the text instead of calling it transient", () => {
+    const anthropic = JSON.stringify({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      },
+    });
+    const openai = JSON.stringify({
+      error: {
+        message: "Billing hard limit has been reached",
+        type: "invalid_request_error",
+        param: null,
+        code: "billing_hard_limit_reached",
+      },
+    });
+    expect(falloverCause(withBody(400, anthropic, "anthropic"))).toBeUndefined();
+    expect(falloverCause(withBody(400, openai, "openai"))).toBeUndefined();
+  });
+
+  it("is sure only where the error says so", () => {
+    expect(falloverCause(http(null))).toBe("other");
+    expect(falloverCause(http(503))).toBe("other");
+    expect(falloverCause(http(429))).toBe("other");
+    expect(falloverCause(http(404))).toBe("other");
+    expect(falloverCause(http(400, "x", true))).toBe("other");
+    expect(falloverCause(http(422))).toBeUndefined();
+  });
+
+  it("does not read an account flagged for abuse, or any 401, as moderation", () => {
+    const flaggedAccount = JSON.stringify({
+      error: { message: "Your account has been flagged for suspicious activity and suspended." },
+    });
+    expect(falloverCause(withBody(403, flaggedAccount, "openrouter"))).toBe("auth");
+    const flaggedInput = JSON.stringify({
+      error: { message: "Your chosen model requires moderation and your input was flagged" },
+    });
+    expect(falloverCause(withBody(401, flaggedInput, "openrouter"))).toBe("auth");
+  });
+
   it("leaves anything that is not a cloud provider's answer to the text", () => {
     expect(falloverCause(new TypeError("fetch failed"))).toBeUndefined();
     expect(falloverCause(new LlamaServerError("boom", 503, "http://l"))).toBeUndefined();

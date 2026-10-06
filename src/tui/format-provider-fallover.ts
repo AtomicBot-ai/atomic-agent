@@ -47,22 +47,29 @@ export type FalloverCause = "billing" | "auth" | "other";
  *
  * Two readings the words alone got wrong. A quota per minute is a rate
  * limit even when it says "check your plan and billing details"
- * (Gemini's free tier): a rate window or a "retry in" outweighs money
- * words, unless an explicit billing code (OpenAI's `insufficient_quota`)
- * says otherwise. And a 403 for input the provider's moderation flagged
- * (OpenRouter) is a refusal of the request, not of the key. The text is
+ * (Gemini's free tier): a rate window or a "retry in <n>" outweighs
+ * money words ("try again after topping up" is not a cooldown), unless
+ * an explicit billing code (OpenAI's `insufficient_quota`) says
+ * otherwise. And a 403 for input the provider's moderation flagged
+ * (OpenRouter) is a refusal of the request, not of the key; an account
+ * "flagged for suspicious activity" is not moderation. The text is
  * cut short, so the runtime's reading of the error itself, when it has
  * one, is passed in instead (`falloverCause`).
  */
 export function classifyFalloverReason(reason: string): FalloverCause {
   const text = reason.toLowerCase();
   const rateWindow =
-    /per[ -]?(?:second|minute|hour)\b|\b(?:rpm|tpm)\b|rate[ _-]?limit|too many requests|\b(?:retry|try again) (?:in|after)\b/.test(
+    /per[ -]?(?:second|minute|hour)\b|\b(?:rpm|tpm)\b|rate[ _-]?limit|too many requests|\b(?:retry|try again) (?:in|after) \d/.test(
       text,
     ) && !/insufficient_quota|credit_balance_exhausted|insufficient_credits/.test(text);
   if (!rateWindow && /\b402\b|credit|quota|insufficient|billing|payment/.test(text))
     return "billing";
-  if (/\bmoderation\b|\bflagged\b/.test(text)) return "other";
+  if (
+    /\bmoderation\b|\b(?:input|content|prompt|request|message) (?:was |has been |is )?flagged|\bflagged (?:input|content|prompt)\b/.test(
+      text,
+    )
+  )
+    return "other";
   if (/\b401\b|\b403\b|unauthor|forbidden|invalid api key|api key/.test(text))
     return "auth";
   return "other";

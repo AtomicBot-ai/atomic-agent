@@ -256,9 +256,11 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
 
 /**
  * A 403 whose provider says its moderation refused the input, and says
- * nothing about the key: a plain 403 is still read as the key's.
+ * nothing about the key: a plain 403 is still read as the key's, and a
+ * 401 is never a moderation refusal.
  */
 export function isModerationRefusal(err: OpenAiHttpError): boolean {
+  if (err.status !== 403) return false;
   const text = `${err.body?.text ?? ""}\n${err.message}`;
   return MODERATION_WORDING.test(text) && !CREDENTIAL_WORDING.test(text);
 }
