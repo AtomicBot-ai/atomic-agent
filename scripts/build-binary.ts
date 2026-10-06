@@ -2,7 +2,7 @@
  * Builds a Node SEA (Single Executable Application) binary for the
  * current host platform. Cross-compilation is not supported by SEA —
  * CI runs this on each target runner (darwin-arm64, darwin-x64,
- * linux-x64, linux-arm64, win32-x64) and we stitch the results in
+ * linux-x64, linux-arm64, win32-x64, win32-arm64) and we stitch the results in
  * `package-bundle.ts`. The embedded entry is the bundled CLI (`dist-sea/cli.mjs`).
  *
  * Usage:

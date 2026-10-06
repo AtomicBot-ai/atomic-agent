@@ -15,14 +15,16 @@
 #   is ad-hoc signed by afterPack, same as a local `npm run dist`.
 # - Windows, with the DigiCert KeyLocker secrets: the agent binaries are
 #   signed before they are bundled and electron-builder signs the app exe, the
-#   installer and the uninstaller through desktop/scripts/win-sign.cjs.
+#   installer and the uninstaller through desktop/scripts/win-sign.cjs. Both
+#   Windows jobs (win32-x64, win32-arm64) sign the same way.
 #
 # App updates (ATO-229): the repository variable ATAG_UPDATE_FEED_URL, when
 # set, goes into the build (desktop/electron-builder.cjs) and electron-builder
 # also writes the update files (stable-mac.yml + the mac zip, stable.yml,
 # blockmaps); they are uploaded with the installers. Uploading them to the
 # feed is a separate release step, not done here (desktop/README.md
-# "App updates").
+# "App updates"). Each Windows job writes its own stable.yml; the feed needs
+# the two merged into one (desktop/scripts/merge-update-yml.mjs, ATO-252).
 
 name: Desktop packages
 
@@ -80,6 +82,12 @@ jobs:
           # the Select Xcode 26 step picks.
           - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          # ATO-252: Windows on ARM. Built natively on windows-11-arm (SEA and
+          # better-sqlite3 cannot be cross-built), with an arm64 Node so the SEA
+          # embeds an arm64 node.exe; an x64 Node here (emulated) would make an
+          # x64 agent inside an arm64 app. The first run on this runner: the
+          # build and especially the signing steps are not yet proven there.
+          - { slug: win32-arm64, os: windows-11-arm, node_arch: arm64, builder: "--win --arm64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
           - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
     runs-on: ${{ matrix.os }}
@@ -103,10 +111,10 @@ jobs:
       # Developer ID; Windows: the publisherName in electron-builder.cjs). An
       # unsigned build with a feed would offer updates it can never install.
       - name: A build with an update feed must be signed
-        if: (matrix.slug == 'darwin-arm64' || matrix.slug == 'win32-x64') && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        if: (matrix.slug == 'darwin-arm64' || startsWith(matrix.slug, 'win32-')) && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
         run: |
           if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" != "true" ]] \
-            || [[ "${{ matrix.slug }}" == "win32-x64" && "$HAS_WIN_SIGNING" != "true" ]]; then
+            || [[ "${{ matrix.slug }}" == win32-* && "$HAS_WIN_SIGNING" != "true" ]]; then
             echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
             exit 1
           fi
@@ -123,6 +131,8 @@ jobs:
           # `"mainFormat": "module"`.
           node-version: "25.7"
           check-latest: true
+          # Empty (every job but win32-arm64) = the runner's own arch.
+          architecture: ${{ matrix.node_arch }}
 
       # ---- agent bundle (mirrors release.yml) --------------------------------
       - name: Install dependencies
@@ -145,12 +155,20 @@ jobs:
       # ---- Windows code signing (DigiCert KeyLocker) --------------------------
       # Same setup as release.yml. Without the secrets these steps are skipped
       # and the installer comes out unsigned (SmartScreen will warn).
+      # win32-arm64 (ATO-252) runs the same x64 tools on purpose: DigiCert ships
+      # smctl and its KSP as an x64 MSI only, and Windows 11 on ARM runs x64
+      # programs under emulation. signtool stays the x64 one too: an arm64
+      # signtool cannot load the x64 KSP. Signing an arm64 file with x64
+      # signtool is fine (Authenticode does not care about the file's arch).
+      # Unverified: this is the first run on windows-11-arm, so the MSI
+      # install, `smctl windows certsync` and the x64 signtool lookup there
+      # are not yet proven.
       - name: Unsigned Windows build
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING != 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING != 'true'
         run: echo "::warning::DigiCert secrets are missing; the Windows installer is unsigned."
 
       - name: Setup DigiCert KeyLocker (Windows)
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
@@ -170,7 +188,7 @@ jobs:
           echo "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Verify DigiCert KeyLocker setup (Windows)
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
@@ -179,7 +197,7 @@ jobs:
         run: smctl healthcheck
 
       - name: Sync certificates to Windows Store (Windows)
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
@@ -188,7 +206,7 @@ jobs:
         run: smctl windows certsync
 
       - name: Setup Windows SDK signtool (Windows)
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         run: |
           $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
@@ -210,7 +228,7 @@ jobs:
       # resources/agent. Authenticode signatures live inside the file, so both
       # copies keep them. electron-builder only signs what it builds itself.
       - name: Sign agent binaries (Windows)
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
@@ -219,8 +237,8 @@ jobs:
           SM_HOST: https://clientauth.one.digicert.com
         run: |
           $ErrorActionPreference = "Stop"
-          $targets = @((Get-Item "bundle\win32-x64\atomic-agent.exe").FullName)
-          $rg = "assets\ripgrep\win32-x64\rg.exe"
+          $targets = @((Get-Item "bundle\${{ matrix.slug }}\atomic-agent.exe").FullName)
+          $rg = "assets\ripgrep\${{ matrix.slug }}\rg.exe"
           if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
           $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
           foreach ($f in $sqlite) { $targets += $f.FullName }
@@ -316,9 +334,9 @@ jobs:
       - name: Package desktop app
         working-directory: desktop
         env:
-          SM_API_KEY: ${{ matrix.slug == 'win32-x64' && secrets.SM_API_KEY || '' }}
-          SM_CLIENT_CERT_PASSWORD: ${{ matrix.slug == 'win32-x64' && secrets.SM_CLIENT_CERT_PASSWORD || '' }}
-          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ matrix.slug == 'win32-x64' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH || '' }}
+          SM_API_KEY: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_API_KEY || '' }}
+          SM_CLIENT_CERT_PASSWORD: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_CLIENT_CERT_PASSWORD || '' }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH || '' }}
           SM_HOST: https://clientauth.one.digicert.com
           CSC_LINK: ${{ matrix.slug == 'darwin-arm64' && secrets.MACOS_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.slug == 'darwin-arm64' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
@@ -387,12 +405,15 @@ jobs:
           xcrun stapler validate "$dmg"
 
       - name: Verify Windows signatures
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         run: |
+          # electron-builder names the unpacked dir by arch: win-unpacked (x64),
+          # win-arm64-unpacked (arm64).
+          $unpacked = if ("${{ matrix.slug }}" -eq "win32-arm64") { "win-arm64-unpacked" } else { "win-unpacked" }
           $files = @(Get-ChildItem "desktop\release\*.exe") +
-            @(Get-Item "desktop\release\win-unpacked\Atomic Agent.exe") +
-            @(Get-Item "desktop\release\win-unpacked\resources\agent\atomic-agent.exe")
+            @(Get-Item "desktop\release\$unpacked\Atomic Agent.exe") +
+            @(Get-Item "desktop\release\$unpacked\resources\agent\atomic-agent.exe")
           foreach ($f in $files) {
             Write-Host "Verifying: $($f.FullName)"
             signtool verify /pa "$($f.FullName)"
@@ -404,7 +425,7 @@ jobs:
       # app-update.yml). A name that is not the certificate's CN would make
       # every update fail, so the build fails here instead.
       - name: Check the installer's signer against publisherName (Windows)
-        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         run: |
           $expected = @(node -e "const n=require('./desktop/electron-builder.cjs').win.signtoolOptions.publisherName; console.log([].concat(n).join('\n'))")

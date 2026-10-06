@@ -9,7 +9,9 @@
  * The agent comes from `../bundle/<slug>` at the repo root, where the
  * release pipeline stages it (`npm run bundle:package <slug>`). The slugs are
  * the release matrix ones from .github/workflows/release.yml and
- * scripts/bundle-targets.ts: darwin-arm64, win32-x64, linux-x64, linux-arm64.
+ * scripts/bundle-targets.ts: darwin-arm64, win32-x64, win32-arm64, linux-x64,
+ * linux-arm64. win32-arm64 is built by the desktop workflow only
+ * (.github/workflows/desktop.yml); the terminal CLI release does not ship it.
  *
  * Why step 3 exists. electron-builder with `mac.identity: null` does not sign
  * at all, so the bundle keeps the signature Electron shipped with, and
@@ -45,7 +47,13 @@ const BUNDLE_ROOT = join(HERE, "..", "..", "bundle");
 const ARCH_NAMES = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal" };
 
 /** The agent release targets the desktop app can ship with. */
-const SUPPORTED = new Set(["darwin-arm64", "win32-x64", "linux-x64", "linux-arm64"]);
+const SUPPORTED = new Set([
+  "darwin-arm64",
+  "win32-x64",
+  "win32-arm64",
+  "linux-x64",
+  "linux-arm64",
+]);
 
 function targetOf(context) {
   const platform = context.electronPlatformName; // darwin | win32 | linux | mas
@@ -66,7 +74,7 @@ function resourcesDir(context, platform) {
   if (platform === "darwin") {
     return join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, "Contents", "Resources");
   }
-  return join(context.appOutDir, "resources"); // win-unpacked/, linux-unpacked/, linux-arm64-unpacked/
+  return join(context.appOutDir, "resources"); // win-unpacked/, win-arm64-unpacked/, linux-unpacked/, linux-arm64-unpacked/
 }
 
 /**

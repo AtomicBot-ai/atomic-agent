@@ -25,6 +25,7 @@ const RUNNER_OS: Record<string, string> = {
   "linux-x64": "ubuntu-22.04",
   "linux-arm64": "ubuntu-24.04-arm",
   "win32-x64": "windows-2022",
+  "win32-arm64": "windows-11-arm",
 };
 
 function buildMatrix(): MatrixEntry[] {

@@ -10,6 +10,9 @@
  *
  * Pin the ripgrep version + per-target archive URL here. Update the
  * `RIPGREP_VERSION` constant when refreshing to a new release.
+ * `win32-arm64` is pinned separately (`RIPGREP_WIN32_ARM64_VERSION`):
+ * 14.1.1 ships no `aarch64-pc-windows-msvc` build, 15.x does. The other
+ * targets stay on 14.1.1 so their tested binaries do not change.
  *
  * Usage:
  *   npx tsx scripts/fetch-assets.ts           # fetch for current host
@@ -34,17 +37,34 @@ import {
 // downstream path op. `fileURLToPath` returns a native `C:\...` path.
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const RIPGREP_VERSION = "14.1.1";
-const RIPGREP_BASE_URL = `https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}`;
+const RIPGREP_WIN32_ARM64_VERSION = "15.1.0";
+
+function ripgrepBaseUrl(version: string): string {
+  return `https://github.com/BurntSushi/ripgrep/releases/download/${version}`;
+}
 
 interface RipgrepAsset {
+  /** ripgrep release the archive comes from. */
+  version: string;
   archive: string;
   /** Path to `rg[.exe]` inside the extracted archive. */
   innerPath: string;
   format: "tar.gz" | "zip";
 }
 
+function ripgrepVersionFor(target: BundleTarget): string {
+  return target.slug === "win32-arm64" ? RIPGREP_WIN32_ARM64_VERSION : RIPGREP_VERSION;
+}
+
 function ripgrepAssetFor(target: BundleTarget): RipgrepAsset {
-  const v = RIPGREP_VERSION;
+  const version = ripgrepVersionFor(target);
+  return { version, ...ripgrepArchiveFor(target, version) };
+}
+
+function ripgrepArchiveFor(
+  target: BundleTarget,
+  v: string,
+): Omit<RipgrepAsset, "version"> {
   switch (target.slug) {
     case "darwin-arm64":
       return {
@@ -74,6 +94,12 @@ function ripgrepAssetFor(target: BundleTarget): RipgrepAsset {
       return {
         archive: `ripgrep-${v}-x86_64-pc-windows-msvc.zip`,
         innerPath: `ripgrep-${v}-x86_64-pc-windows-msvc/rg.exe`,
+        format: "zip",
+      };
+    case "win32-arm64":
+      return {
+        archive: `ripgrep-${v}-aarch64-pc-windows-msvc.zip`,
+        innerPath: `ripgrep-${v}-aarch64-pc-windows-msvc/rg.exe`,
         format: "zip",
       };
     default:
@@ -168,13 +194,15 @@ async function fetchRipgrepForTarget(
     return;
   }
 
-  stdout.write(`fetch-assets: ${target.slug} → ${binaryName} (fetching)\n`);
+  stdout.write(
+    `fetch-assets: ${target.slug} → ${binaryName} (fetching ripgrep ${asset.version})\n`,
+  );
   const tmpDir = join(ROOT, "assets", "ripgrep", `.tmp-${target.slug}`);
   await rm(tmpDir, { recursive: true, force: true });
   await mkdir(tmpDir, { recursive: true });
 
   const archivePath = join(tmpDir, asset.archive);
-  await downloadFile(`${RIPGREP_BASE_URL}/${asset.archive}`, archivePath);
+  await downloadFile(`${ripgrepBaseUrl(asset.version)}/${asset.archive}`, archivePath);
 
   if (asset.format === "tar.gz") {
     await extractTarGz(archivePath, tmpDir);
@@ -207,7 +235,7 @@ async function main(): Promise<number> {
   const opts = parseArgs(argv.slice(2));
   const targets = opts.all ? BUNDLE_TARGETS : [currentTarget()];
   stdout.write(
-    `fetch-assets: ripgrep ${RIPGREP_VERSION} for ${targets.length} target(s)\n`,
+    `fetch-assets: ripgrep ${RIPGREP_VERSION} (win32-arm64: ${RIPGREP_WIN32_ARM64_VERSION}) for ${targets.length} target(s)\n`,
   );
   for (const target of targets) {
     await fetchRipgrepForTarget(target, opts);

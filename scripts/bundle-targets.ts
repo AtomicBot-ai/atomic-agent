@@ -50,6 +50,13 @@ export const BUNDLE_TARGETS: readonly BundleTarget[] = [
     executableName: "atomic-agent.exe",
     archiveExt: "zip",
   },
+  {
+    platform: "win32",
+    arch: "arm64",
+    slug: "win32-arm64",
+    executableName: "atomic-agent.exe",
+    archiveExt: "zip",
+  },
 ];
 
 export function currentTarget(): BundleTarget {

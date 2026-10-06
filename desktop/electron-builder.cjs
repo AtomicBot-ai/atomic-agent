@@ -137,12 +137,15 @@ const config = {
   },
   "win": {
     "icon": "build/icon.ico",
+    /* ATO-252: no `arch` here on purpose. The CLI flag decides (`--win --x64`
+       or `--win --arm64`), one arch per job. Pinning x64 here and passing
+       `--arm64` would make one combined x64+arm64 installer, and afterPack
+       has only the job's own agent bundle to copy. The arch in the file
+       name keeps the two installers apart (`...-x64.exe`, `...-arm64.exe`)
+       and is what electron-updater matches on (see README, update feed). */
     "target": [
       {
-        "target": "nsis",
-        "arch": [
-          "x64"
-        ]
+        "target": "nsis"
       }
     ],
     "artifactName": "Atomic-Agent-Setup-${version}-${arch}.${ext}",
