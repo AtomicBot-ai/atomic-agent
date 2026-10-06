@@ -9,6 +9,8 @@
 
 import { join } from "node:path";
 
+import { app } from "electron";
+
 import { validateEvent, type Props } from "./validate.js";
 import { daysSince, DesktopFlagsStore, resolveInstallId, seedDesktopFlags, sharedIdPath } from "./identity.js";
 import {
@@ -152,11 +154,29 @@ function setEnabled(on: boolean): void {
   }
 }
 
+/* ATO-252: an x64 build on a Windows on ARM PC (or a Mac under Rosetta)
+   runs translated and its `arch` says x64. This says the hardware is ARM,
+   so the people still on the x64 build of an ARM machine can be counted.
+   Read once: it cannot change while the app runs. `app` is absent where
+   this module runs in plain Node (the unit tests), which reads as false. */
+let arm64Translation: boolean | null = null;
+function runningUnderArm64Translation(): boolean {
+  if (arm64Translation === null) {
+    try {
+      arm64Translation = app?.runningUnderARM64Translation === true;
+    } catch {
+      arm64Translation = false;
+    }
+  }
+  return arm64Translation;
+}
+
 export function globalProps(): Props {
   return {
     surface: "desktop",
     platform: process.platform,
     arch: process.arch,
+    arm64_translation: runningUnderArm64Translation(),
     desktop_version: desktopVersion(),
     install_channel: installChannelFor(process.platform, process.env),
     ...(S.runMode ? { run_mode: S.runMode } : {}),

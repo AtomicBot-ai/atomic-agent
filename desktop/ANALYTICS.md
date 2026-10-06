@@ -54,8 +54,12 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 
 ## Global properties (every event)
 
-`surface: desktop`, `platform`, `arch`, `desktop_version`, `install_channel`,
-`run_mode` (`local` / `cloud` / `fusion`, when known). The transport adds
+`surface: desktop`, `platform`, `arch`, `arm64_translation`, `desktop_version`,
+`install_channel`, `run_mode` (`local` / `cloud` / `fusion`, when known).
+`arm64_translation` is `true` when an x64 build runs translated on ARM
+hardware (Windows on ARM emulation, or Rosetta on a Mac): `arch` then says
+`x64`, and this is how ARM machines still on the x64 build are counted
+(ATO-252). The transport adds
 `$ip: 0.0.0.0`, `$geoip_disable: true`, `$lib: atomic-agent-desktop`.
 
 ## Event catalogue
