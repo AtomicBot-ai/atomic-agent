@@ -91,10 +91,13 @@ function detector(check: Check): void {
     unset: cpuOnlyWorthSaying(GPU_THEN_CPU, undefined),
     chosenCpu: cpuOnlyWorthSaying(GPU_THEN_CPU, "cpu"),
     gpuRun: cpuOnlyWorthSaying(CPU_THEN_GPU, "auto"),
+    // ATO-252: Windows on ARM has only the CPU build; nothing to point at.
+    onlyCpuBuild: cpuOnlyWorthSaying(GPU_THEN_CPU, "auto", true),
   };
   check(
-    "T113 (ATO-244): a CPU run is worth a word unless the CPU build was picked on purpose (backendVariant cpu)",
-    worth.auto === true && worth.unset === true && worth.chosenCpu === false && worth.gpuRun === false,
+    "T113 (ATO-244): a CPU run is worth a word unless the CPU build was picked on purpose (backendVariant cpu) or is the only one (Windows on ARM)",
+    worth.auto === true && worth.unset === true && worth.chosenCpu === false && worth.gpuRun === false
+      && worth.onlyCpuBuild === false,
     show(worth),
   );
   const line = cpuOnlyLogLine("qwen-3.5-9b");

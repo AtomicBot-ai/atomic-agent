@@ -8,7 +8,10 @@ const execSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
 import { LINUX_ARM64_BACKEND_ASSET } from "./linux-arm64-backend-variant.js";
-import { UnsupportedGlibcError } from "./platform-assets.js";
+import {
+  UnsupportedGlibcError,
+  WINDOWS_ARM64_BACKEND_ASSET,
+} from "./platform-assets.js";
 import {
   WINDOWS_BACKEND_ASSETS,
   isIncompleteWindowsCudaBackend,
@@ -251,6 +254,10 @@ describe("isWindowsGpuBackendAsset", () => {
     expect(isWindowsGpuBackendAsset(WINDOWS_BACKEND_ASSETS.cpu)).toBe(false);
   });
 
+  it("rejects the Windows arm64 build (CPU only, ATO-252)", () => {
+    expect(isWindowsGpuBackendAsset(WINDOWS_ARM64_BACKEND_ASSET)).toBe(false);
+  });
+
   it("treats a pre-`asset`-field install as a GPU build", () => {
     // The CPU zip was not downloadable before the field existed, so an
     // undefined asset on win32 can only be one of the GPU builds.
@@ -434,5 +441,25 @@ describe("resolveDownloadAsset", () => {
     expect(resolveDownloadAsset("linux", "x64").assetName).toBe(
       "llama-turboquant-linux-x64-vulkan.zip",
     );
+  });
+
+  // ATO-252: the x64 zips the probe and the variants choose between cannot
+  // run on Windows arm64; its one CPU build is the answer every time.
+  it("keeps the arm64 CPU build on Windows arm64, with no nvidia-smi probe", () => {
+    execSyncMock.mockReturnValue(Buffer.from(NVIDIA_SMI_HEADER));
+    const asset = resolveDownloadAsset("win32", "arm64");
+    expect(asset.assetName).toBe(WINDOWS_ARM64_BACKEND_ASSET);
+    expect(asset.binaryName).toBe("llama-server.exe");
+    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores every configured variant on Windows arm64", () => {
+    for (const v of ["cpu", "vulkan", "cuda-12.4", "cuda-13.3"] as const) {
+      setConfiguredBackendVariant(v);
+      expect(resolveDownloadAsset("win32", "arm64").assetName).toBe(
+        WINDOWS_ARM64_BACKEND_ASSET,
+      );
+    }
+    expect(execSyncMock).not.toHaveBeenCalled();
   });
 });

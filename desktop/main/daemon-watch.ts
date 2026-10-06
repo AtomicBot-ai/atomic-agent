@@ -380,7 +380,9 @@ function lookForCpuOnly(): void {
   try {
     const cfg = readConfig();
     const managed = cfg?.localModels?.managed;
-    const cpuOnly = cpuOnlyWorthSaying(serverLogTail(cfg), managed?.backendVariant);
+    // ATO-252: on Windows on ARM the agent's one engine build is CPU only.
+    const onlyCpuBuild = process.platform === "win32" && process.arch === "arm64";
+    const cpuOnly = cpuOnlyWorthSaying(serverLogTail(cfg), managed?.backendVariant, onlyCpuBuild);
     const was = cpu.cpuOnly;
     cpu = { kind: "cpu_only", cpuOnly, seq: cpu.seq + 1, modelId: managed?.modelId ?? null };
     if (cpuOnly) host.say(cpuOnlyLogLine(cpu.modelId), "warn");

@@ -25,7 +25,8 @@
  * On macOS the Metal build never prints the line. A CPU-only build picked on
  * purpose (`localModels.managed.backendVariant: "cpu"`) prints it every
  * time, and the person already knows: that is the caller's to leave out
- * (cpuOnlyWorthSaying).
+ * (cpuOnlyWorthSaying). So does Windows on ARM (ATO-252), whose one engine
+ * build is the CPU one: there is no GPU build to point the person at.
  */
 
 /** The lines every managed launch writes before the server's own output. */
@@ -55,10 +56,11 @@ export function ranOnCpu(logText: string): boolean {
 
 /**
  * Whether a CPU-only run is worth a word to the person: not when the CPU
- * build is what they asked for (`backendVariant: "cpu"`).
+ * build is what they asked for (`backendVariant: "cpu"`), nor when it is
+ * the only build there is (`onlyCpuBuild`: Windows on ARM).
  */
-export function cpuOnlyWorthSaying(logText: string, backendVariant: unknown): boolean {
-  return backendVariant !== "cpu" && ranOnCpu(logText);
+export function cpuOnlyWorthSaying(logText: string, backendVariant: unknown, onlyCpuBuild = false): boolean {
+  return !onlyCpuBuild && backendVariant !== "cpu" && ranOnCpu(logText);
 }
 
 /**

@@ -3838,6 +3838,15 @@ export function managedDataDirNow(): string {
   }
 }
 
+/* ATO-252: the agent's own sentence for a Windows on ARM machine no engine
+   release serves yet (src/local-llm/platform-assets.ts
+   WINDOWS_ARM64_NO_BACKEND_MESSAGE). The setup screen shows it in place of
+   "exited with code 1", which says nothing a person can act on. */
+const NO_LOCAL_MODELS_HERE = /^Local models are not available yet for Windows on ARM\..*$/m;
+export function noLocalModelsHere(stderr: string): string | null {
+  return stderr.match(NO_LOCAL_MODELS_HERE)?.[0].trim() ?? null;
+}
+
 export function modelsUpdateStream(
   onLine: (line: string) => void,
   limits: { firstProgressMs?: number; stallMs?: number } = {},
@@ -3902,7 +3911,7 @@ export function modelsUpdateStream(
     };
     child.on("exit", (code) => {
       if (code === 0) return finish({ ok: true, stdout, stderr });
-      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: `models update exited with code ${code ?? "null"}` });
+      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? `models update exited with code ${code ?? "null"}` });
       const keptBackend = kept();
       finish({ ok: false, stdout, stderr, error: updateTimedOutError(timedOut, keptBackend) }, keptBackend);
     });
