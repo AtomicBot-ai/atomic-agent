@@ -706,6 +706,39 @@ The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entr
 </details>
 
 <details>
+<summary><b>Proxy for cloud providers</b> (<code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code>)</summary>
+
+Cloud model and search traffic honours `HTTP_PROXY` / `HTTPS_PROXY` from the environment — no extra flags are needed. Set the variables in the same shell you launch Atomic from; they do not persist between sessions.
+
+**bash / zsh:**
+```bash
+export HTTP_PROXY=http://user:pass@proxy.example.com:8080
+export HTTPS_PROXY=http://user:pass@proxy.example.com:8080
+export NO_PROXY=localhost,127.0.0.1,::1
+```
+
+**cmd:**
+```bat
+set HTTP_PROXY=http://user:pass@proxy.example.com:8080
+set HTTPS_PROXY=http://user:pass@proxy.example.com:8080
+set NO_PROXY=localhost,127.0.0.1,::1
+```
+
+**PowerShell:**
+```powershell
+$env:HTTP_PROXY = "http://user:pass@proxy.example.com:8080"
+$env:HTTPS_PROXY = "http://user:pass@proxy.example.com:8080"
+$env:NO_PROXY    = "localhost,127.0.0.1,::1"
+```
+
+Notes:
+
+- Only **HTTP/HTTPS** proxies are supported. A `socks5://` proxy URL is not understood, and requests fail with `fetch failed`.
+- `NO_PROXY` keeps local endpoints (e.g. a local `llama-server` on `127.0.0.1:8080`) off the proxy.
+- Web search shells out to `curl`, which reads the same `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` variables on its own.
+</details>
+
+<details>
 <summary><b>Claude Code / OpenAI Codex subscriptions</b> (no API key)</summary>
 
 Drives a vendor CLI you are already signed into, so a flat-rate subscription can power the agent with no API key and no per-token billing. Two are supported: `claude` (Claude Code) and `codex` (OpenAI Codex).
