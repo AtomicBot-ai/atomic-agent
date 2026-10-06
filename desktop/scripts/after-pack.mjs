@@ -3,7 +3,8 @@
  * before any installer (DMG, NSIS, AppImage, deb) is made from it:
  *
  *   1. copy the matching agent bundle into <resources>/agent  (every target)
- *   2. prove the copy can open its own database                (host == target)
+ *   2. prove the copy can open its own database                (host == target;
+ *      win32-arm64 packed on x64 is probed in CI's agent-win32-arm64 job)
  *   3. ad-hoc sign the .app under its own identifier            (macOS only)
  *
  * The agent comes from `../bundle/<slug>` at the repo root, where the
@@ -128,12 +129,32 @@ function copyAgent(context, target) {
  * is wrong. A broken agent fails the BUILD now instead of the user.
  *
  * The probe can only run where the binary can: the host has to BE the
- * target. Each CI job builds on its own platform, so there it always runs;
- * a local cross-pack (say a Linux AppImage from a Mac) says it skipped.
+ * target. A local cross-pack (say a Linux AppImage from a Mac) says it
+ * skipped. In CI every target is packed on its own platform and the probe
+ * runs, with one exception (ATO-252): win32-arm64 is packed and signed on an
+ * x64 Windows runner, because DigiCert's x64-only signing tools hang under
+ * emulation on Windows on ARM. That bundle was built and probed natively by
+ * the desktop workflow's agent-win32-arm64 job, so the skip is allowed for
+ * exactly that pair; any other skip in CI fails the build.
  */
 function probeDatabase(agentBin, target) {
+  const host = `${process.platform}-${process.arch}`;
   if (process.platform !== target.platform || process.arch !== target.arch) {
-    console.log(`agent database probe: skipped (host ${process.platform}-${process.arch} cannot run ${target.slug})`);
+    if (host === "win32-x64" && target.slug === "win32-arm64") {
+      console.log(
+        `agent database probe: skipped (host ${host} cannot run ${target.slug}); `
+        + "in CI it ran on Windows on ARM in the agent-win32-arm64 job "
+        + "(.github/workflows/desktop.yml), against this same bundle",
+      );
+      return;
+    }
+    if (process.env.CI) {
+      throw new Error(
+        `agent database probe: host ${host} cannot run ${target.slug}, and in CI every target `
+        + "but win32-arm64 must be packed on its own platform so the bundled agent is probed.",
+      );
+    }
+    console.log(`agent database probe: skipped (host ${host} cannot run ${target.slug})`);
     return;
   }
   const probeDir = mkdtempSync(join(tmpdir(), "atag-agent-abi-"));

@@ -1333,6 +1333,14 @@ swapped arguments. An x64 app running under emulation on an ARM64 PC keeps
 updating to the x64 installer (its `process.arch` is `x64`); moving it to
 arm64 takes a manual install of the arm64 one.
 
+The arm64 installer is signed on an x64 runner (`.github/workflows/desktop.yml`):
+DigiCert's signing tools are x64 only and `signtool sign` hangs under
+emulation on Windows on ARM. The `agent-win32-arm64` job builds the agent
+bundle natively on `windows-11-arm` and proves it runs there (including the
+database probe afterPack would run); `package-win32-arm64` signs that bundle
+and packs the app with `electron-builder --win --arm64` on `windows-2022`,
+where afterPack skips the probe because x64 cannot run the arm64 agent.
+
 Windows uses the NSIS installer silently and starts the app again after it.
 The app accepts an installer only when its signer's CN is in
 `win.signtoolOptions.publisherName` (electron-builder.cjs, written into

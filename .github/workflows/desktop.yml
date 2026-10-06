@@ -15,16 +15,31 @@
 #   is ad-hoc signed by afterPack, same as a local `npm run dist`.
 # - Windows, with the DigiCert KeyLocker secrets: the agent binaries are
 #   signed before they are bundled and electron-builder signs the app exe, the
-#   installer and the uninstaller through desktop/scripts/win-sign.cjs. Both
-#   Windows jobs (win32-x64, win32-arm64) sign the same way.
+#   installer and the uninstaller through desktop/scripts/win-sign.cjs.
+#
+# Windows on ARM (ATO-252) is the one exception to "each job builds on its own
+# platform", and it is split in two jobs:
+# - agent-win32-arm64 (windows-11-arm) builds the agent bundle natively with
+#   an arm64 Node (the SEA and better-sqlite3 cannot be cross-built), proves
+#   the arm64 binaries are arm64 and that the agent starts and opens its
+#   database there, and uploads bundle/win32-arm64 UNSIGNED. It signs nothing:
+#   DigiCert ships smctl and its KSP for x64 only, and the x64 signtool under
+#   emulation hangs forever on `signtool sign` (run 37470241594).
+# - package-win32-arm64 (windows-2022, x64) downloads that bundle, signs its
+#   binaries exactly like win32-x64 does, and runs `electron-builder --win
+#   --arm64` with the same signing hook. Authenticode does not care about the
+#   file's arch, and the Electron arm64 app is only packed here, not run.
+#   afterPack cannot run the arm64 agent on an x64 host, so its database
+#   probe is skipped there; it ran in agent-win32-arm64 instead.
 #
 # App updates (ATO-229): the repository variable ATAG_UPDATE_FEED_URL, when
 # set, goes into the build (desktop/electron-builder.cjs) and electron-builder
 # also writes the update files (stable-mac.yml + the mac zip, stable.yml,
 # blockmaps); they are uploaded with the installers. Uploading them to the
 # feed is a separate release step, not done here (desktop/README.md
-# "App updates"). Each Windows job writes its own stable.yml; the feed needs
-# the two merged into one (desktop/scripts/merge-update-yml.mjs, ATO-252).
+# "App updates"). Each Windows job (package win32-x64, package-win32-arm64)
+# writes its own stable.yml; the feed needs the two merged into one
+# (desktop/scripts/merge-update-yml.mjs, ATO-252).
 
 name: Desktop packages
 
@@ -82,12 +97,8 @@ jobs:
           # the Select Xcode 26 step picks.
           - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
-          # ATO-252: Windows on ARM. Built natively on windows-11-arm (SEA and
-          # better-sqlite3 cannot be cross-built), with an arm64 Node so the SEA
-          # embeds an arm64 node.exe; an x64 Node here (emulated) would make an
-          # x64 agent inside an arm64 app. The first run on this runner: the
-          # build and especially the signing steps are not yet proven there.
-          - { slug: win32-arm64, os: windows-11-arm, node_arch: arm64, builder: "--win --arm64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          # win32-arm64 is not a row here: it is built by agent-win32-arm64 and
+          # package-win32-arm64 below (see the header).
           - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
           - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
     runs-on: ${{ matrix.os }}
@@ -131,8 +142,6 @@ jobs:
           # `"mainFormat": "module"`.
           node-version: "25.7"
           check-latest: true
-          # Empty (every job but win32-arm64) = the runner's own arch.
-          architecture: ${{ matrix.node_arch }}
 
       # ---- agent bundle (mirrors release.yml) --------------------------------
       - name: Install dependencies
@@ -155,14 +164,7 @@ jobs:
       # ---- Windows code signing (DigiCert KeyLocker) --------------------------
       # Same setup as release.yml. Without the secrets these steps are skipped
       # and the installer comes out unsigned (SmartScreen will warn).
-      # win32-arm64 (ATO-252) runs the same x64 tools on purpose: DigiCert ships
-      # smctl and its KSP as an x64 MSI only, and Windows 11 on ARM runs x64
-      # programs under emulation. signtool stays the x64 one too: an arm64
-      # signtool cannot load the x64 KSP. Signing an arm64 file with x64
-      # signtool is fine (Authenticode does not care about the file's arch).
-      # Unverified: this is the first run on windows-11-arm, so the MSI
-      # install, `smctl windows certsync` and the x64 signtool lookup there
-      # are not yet proven.
+      # package-win32-arm64 below repeats these steps; keep the two in step.
       - name: Unsigned Windows build
         if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING != 'true'
         run: echo "::warning::DigiCert secrets are missing; the Windows installer is unsigned."
@@ -408,12 +410,10 @@ jobs:
         if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         run: |
-          # electron-builder names the unpacked dir by arch: win-unpacked (x64),
-          # win-arm64-unpacked (arm64).
-          $unpacked = if ("${{ matrix.slug }}" -eq "win32-arm64") { "win-arm64-unpacked" } else { "win-unpacked" }
+          # win32-x64 only here; package-win32-arm64 checks win-arm64-unpacked.
           $files = @(Get-ChildItem "desktop\release\*.exe") +
-            @(Get-Item "desktop\release\$unpacked\Atomic Agent.exe") +
-            @(Get-Item "desktop\release\$unpacked\resources\agent\atomic-agent.exe")
+            @(Get-Item "desktop\release\win-unpacked\Atomic Agent.exe") +
+            @(Get-Item "desktop\release\win-unpacked\resources\agent\atomic-agent.exe")
           foreach ($f in $files) {
             Write-Host "Verifying: $($f.FullName)"
             signtool verify /pa "$($f.FullName)"
@@ -457,5 +457,349 @@ jobs:
         with:
           name: desktop-${{ matrix.slug }}
           path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---- Windows on ARM, part 1: the agent bundle, built natively (ATO-252) ----
+  # Everything that has to be arm64 is built here, with an arm64 Node so the
+  # SEA embeds an arm64 node.exe and npm ci fetches/builds an arm64
+  # better-sqlite3. "Package bundle" also runs here: it copies better-sqlite3
+  # from THIS node_modules, and on the x64 packaging runner it would copy an
+  # x64 .node. Nothing is signed on this runner (see the header).
+  agent-win32-arm64:
+    name: agent (win32-arm64)
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      HAS_WIN_SIGNING: ${{ secrets.SM_API_KEY != '' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH != '' }}
+    steps:
+      # Same gate as package-win32-arm64, here too so a run that cannot be
+      # signed fails before it spends the ARM build.
+      - name: A build with an update feed must be signed
+        if: inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != ''
+        run: |
+          if [[ "$HAS_WIN_SIGNING" != "true" ]]; then
+            echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js (arm64)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+          # An x64 Node here (emulated) would make an x64 agent inside an arm64 app.
+          architecture: arm64
+
+      # ---- agent bundle (mirrors release.yml and the package job) -------------
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Bundle CLI for SEA
+        run: npm run bundle:sea
+
+      - name: Fetch runtime assets (ripgrep for host)
+        run: npm run bundle:fetch-assets
+
+      - name: Build Node SEA binary
+        run: npm run bundle:build-binary
+
+      - name: Package bundle
+        run: npx tsx scripts/package-bundle.ts win32-arm64
+
+      # The PE header's Machine field: 0xAA64 is ARM64, 0x8664 is x64. Catches
+      # an emulated x64 Node or an x64 prebuilt slipping into the arm64 app.
+      - name: Check the bundle's binaries are arm64
+        run: |
+          set -euo pipefail
+          files=(bundle/win32-arm64/atomic-agent.exe bundle/win32-arm64/node_modules/better-sqlite3/build/Release/better_sqlite3.node)
+          if [[ -f bundle/win32-arm64/vendor/rg.exe ]]; then
+            files+=(bundle/win32-arm64/vendor/rg.exe)
+          else
+            echo "::warning::bundle/win32-arm64/vendor/rg.exe is missing; os.fs.grep needs a system ripgrep on Windows on ARM."
+          fi
+          node -e '
+            const fs = require("node:fs");
+            let bad = 0;
+            for (const f of process.argv.slice(1)) {
+              const b = fs.readFileSync(f);
+              const machine = b.readUInt16LE(b.readUInt32LE(0x3c) + 4);
+              console.log(`${f}: machine=0x${machine.toString(16)}`);
+              if (machine !== 0xaa64) { console.log(`::error::${f} is not an arm64 binary`); bad = 1; }
+            }
+            process.exit(bad);
+          ' "${files[@]}"
+
+      # The arm64 agent can only run here: afterPack on the x64 packaging
+      # runner cannot run it, so this is the same probe afterPack runs on every
+      # other target (desktop/scripts/after-pack.mjs, probeDatabase): `task
+      # list` on a throwaway state dir opens sqlite and exits 0, or exits 1
+      # naming NODE_MODULE_VERSION when better-sqlite3 does not match the SEA's
+      # Node. It runs from bundle/win32-arm64, the exact tree that is uploaded.
+      - name: Smoke the arm64 agent (version + database probe)
+        timeout-minutes: 5
+        run: |
+          set -uo pipefail
+          exe=bundle/win32-arm64/atomic-agent.exe
+          "$exe" --version || { echo "::error::the arm64 agent does not start (--version failed)"; exit 1; }
+          state="$RUNNER_TEMP/atag-agent-abi"
+          rm -rf "$state" && mkdir -p "$state"
+          ATOMIC_AGENT_STATE_DIR="$state" "$exe" task list > "$RUNNER_TEMP/agent-probe.log" 2>&1
+          rc=$?
+          cat "$RUNNER_TEMP/agent-probe.log"
+          if [[ $rc -ne 0 ]]; then
+            if grep -q NODE_MODULE_VERSION "$RUNNER_TEMP/agent-probe.log"; then
+              echo "::error::better-sqlite3 was built for a different Node than the SEA embeds."
+            fi
+            echo "::error::the bundled arm64 agent cannot open its own database (task list exited $rc)."
+            exit 1
+          fi
+
+      # The whole staged bundle, unsigned: package-win32-arm64 signs it and
+      # afterPack copies it into resources/agent. Hidden files are kept so the
+      # tree arrives exactly as package-bundle laid it out.
+      - name: Upload the unsigned agent bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-win32-arm64-unsigned
+          path: bundle/win32-arm64/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  # ---- Windows on ARM, part 2: sign and package on x64 (ATO-252) ------------
+  # The steps mirror the win32-x64 row of the package job; keep the two in step.
+  # Only the agent bundle is arm64, and it comes from agent-win32-arm64. The
+  # root `npm ci`/build is not needed here: the desktop app builds from
+  # desktop/ alone and afterPack only reads ../bundle/win32-arm64.
+  package-win32-arm64:
+    name: package (win32-arm64)
+    needs: agent-win32-arm64
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      HAS_WIN_SIGNING: ${{ secrets.SM_API_KEY != '' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH != '' }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: A build with an update feed must be signed
+        if: inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != ''
+        run: |
+          if [[ "$HAS_WIN_SIGNING" != "true" ]]; then
+            echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Download the arm64 agent bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-win32-arm64-unsigned
+          path: bundle/win32-arm64
+
+      - name: Check the downloaded bundle
+        run: |
+          set -euo pipefail
+          test -f bundle/win32-arm64/atomic-agent.exe
+          test -f bundle/win32-arm64/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+          ls -la bundle/win32-arm64
+
+      # ---- Windows code signing (DigiCert KeyLocker), as in the package job ---
+      - name: Unsigned Windows build
+        if: env.HAS_WIN_SIGNING != 'true'
+        run: echo "::warning::DigiCert secrets are missing; the Windows installer is unsigned."
+
+      - name: Setup DigiCert KeyLocker (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          $headers = @{ "x-api-key" = $env:SM_API_KEY }
+          $smctlUrl = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
+          Invoke-WebRequest -Uri $smctlUrl -Headers $headers -OutFile smtools.msi
+          Start-Process msiexec.exe -ArgumentList "/i", "smtools.msi", "/quiet", "/norestart" -Wait
+
+          $smctlPath = "C:\Program Files\DigiCert\DigiCert One Signing Manager Tools"
+          echo "$smctlPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          $certBytes = [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64)
+          $certPath = "$env:RUNNER_TEMP\digicert_client_cert.p12"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          echo "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify DigiCert KeyLocker setup (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl healthcheck
+
+      - name: Sync certificates to Windows Store (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl windows certsync
+
+      - name: Setup Windows SDK signtool (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\*" } |
+            Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*', '$1') } -Descending |
+            Select-Object -First 1
+
+          if ($signtoolPath) {
+            $signtoolDir = $signtoolPath.DirectoryName
+            Write-Host "Found signtool at: $signtoolDir"
+            echo "$signtoolDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            Write-Error "signtool.exe not found in Windows SDK"
+            exit 1
+          }
+
+      # The same three binaries the win32-x64 row signs (the agent, ripgrep,
+      # better-sqlite3), but signed where they already sit in the staged
+      # bundle: package-bundle ran on the ARM runner. afterPack copies the
+      # bundle into resources/agent; the signatures live inside the files.
+      - name: Sign agent binaries (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @((Get-Item "bundle\win32-arm64\atomic-agent.exe").FullName)
+          $rg = "bundle\win32-arm64\vendor\rg.exe"
+          if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
+          $sqlite = Get-ChildItem -Path "bundle\win32-arm64\node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
+          foreach ($f in $sqlite) { $targets += $f.FullName }
+
+          # signtool is a native command: check $LASTEXITCODE, a failure does
+          # not trip $ErrorActionPreference.
+          foreach ($t in $targets) {
+            Write-Host "Signing: $t"
+            signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool sign failed for $t"; exit 1 }
+            signtool verify /pa "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $t"; exit 1 }
+          }
+      # ---- end Windows code signing -------------------------------------------
+
+      # ---- desktop app ------------------------------------------------------
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: npm run build
+
+      - name: Set the app version for this build (version_override)
+        if: inputs.version_override != ''
+        working-directory: desktop
+        shell: bash
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION_OVERRIDE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version_override must look like 0.0.90 (got: $VERSION_OVERRIDE)"
+            exit 1
+          fi
+          npm pkg set version="$VERSION_OVERRIDE"
+          node -p "'app version for this build: ' + require('./package.json').version"
+
+      # afterPack copies ../bundle/win32-arm64 into resources/agent. It cannot
+      # run the arm64 agent on this x64 runner and says so; the same probe ran
+      # in agent-win32-arm64. electron-builder signs the app exe, the
+      # installer and the uninstaller through desktop/scripts/win-sign.cjs.
+      - name: Package desktop app
+        working-directory: desktop
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+          ATAG_UPDATE_FEED_URL: ${{ inputs.feed_url || vars.ATAG_UPDATE_FEED_URL }}
+          ATAG_UPDATE_CHANNEL: ${{ inputs.channel || vars.ATAG_UPDATE_CHANNEL || 'stable' }}
+          ATAG_BUILD_RUN: ${{ github.run_number }}
+          ATAG_BUILD_RUN_ID: ${{ github.run_id }}
+        run: npx electron-builder --win --arm64 --publish never
+
+      - name: Verify Windows signatures
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem "desktop\release\*.exe") +
+            @(Get-Item "desktop\release\win-arm64-unpacked\Atomic Agent.exe") +
+            @(Get-Item "desktop\release\win-arm64-unpacked\resources\agent\atomic-agent.exe")
+          foreach ($f in $files) {
+            Write-Host "Verifying: $($f.FullName)"
+            signtool verify /pa "$($f.FullName)"
+            if ($LASTEXITCODE -ne 0) { Write-Error "not signed: $($f.FullName)"; exit 1 }
+          }
+
+      - name: Check the installer's signer against publisherName (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $expected = @(node -e "const n=require('./desktop/electron-builder.cjs').win.signtoolOptions.publisherName; console.log([].concat(n).join('\n'))")
+          foreach ($f in Get-ChildItem "desktop\release\*.exe") {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            $subject = $sig.SignerCertificate.Subject
+            Write-Host "$($f.Name): status=$($sig.Status) subject=$subject"
+            if ($sig.Status -ne 'Valid') { Write-Error "signature not valid: $($f.Name)"; exit 1 }
+            $cn = ([regex]::Match($subject, '(?:^|,\s*)CN=("[^"]*"|[^,]*)')).Groups[1].Value.Trim('"')
+            if ($expected -notcontains $cn) { Write-Error "signer CN '$cn' is not in publisherName ($($expected -join ' | '))"; exit 1 }
+          }
+
+      - name: List packages
+        run: ls -la desktop/release
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-win32-arm64
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.blockmap
+            desktop/release/*.yml
+            !desktop/release/builder-*.yml
           if-no-files-found: error
           retention-days: 14
