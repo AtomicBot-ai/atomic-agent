@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execSyncMock = vi.hoisted(() => vi.fn());
@@ -7,7 +11,10 @@ import { LINUX_ARM64_BACKEND_ASSET } from "./linux-arm64-backend-variant.js";
 import { UnsupportedGlibcError } from "./platform-assets.js";
 import {
   WINDOWS_BACKEND_ASSETS,
+  isIncompleteWindowsCudaBackend,
+  isWindowsCudaBackendAsset,
   isWindowsGpuBackendAsset,
+  parseComputeCapabilities,
   parseDriverCudaVersion,
   resetWindowsBackendAssetCache,
   resolveDownloadAsset,
@@ -21,6 +28,34 @@ Mon Jul  6 17:00:00 2026
 | NVIDIA-SMI 552.22       Driver Version: 552.22       CUDA Version: 12.6     |
 |-------------------------------+----------------------+----------------------+
 `;
+
+/** The ATO-244 reporter's header: RTX 3080 Ti on driver 591.44. */
+const NVIDIA_SMI_HEADER_13_1 = `
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 591.44                 Driver Version: 591.44         CUDA Version: 13.1     |
++-----------------------------------------+------------------------+----------------------+
+`;
+
+const COMPUTE_CAP_QUERY =
+  "nvidia-smi --query-gpu=compute_cap --format=csv,noheader";
+
+/**
+ * Stub `nvidia-smi`: the bare call prints `header`, the compute-capability
+ * query prints `computeCap` (or fails when it is null, as on a driver too
+ * old for the field).
+ */
+function stubNvidiaSmi(header: string, computeCap: string | null): void {
+  execSyncMock.mockImplementation((cmd: string) => {
+    if (cmd === COMPUTE_CAP_QUERY) {
+      if (computeCap === null) {
+        throw new Error('Field "compute_cap" is not a valid field to query.');
+      }
+      return Buffer.from(computeCap);
+    }
+    if (cmd === "nvidia-smi") return Buffer.from(header);
+    throw new Error(`unexpected command: ${cmd}`);
+  });
+}
 
 describe("parseDriverCudaVersion", () => {
   it("extracts major.minor from nvidia-smi header", () => {
@@ -59,20 +94,48 @@ describe("selectWindowsBackendAsset", () => {
     expect(selectWindowsBackendAsset(null)).toBe(WINDOWS_BACKEND_ASSETS.vulkan);
   });
 
-  it("picks cuda-13.3 for any 13.x driver (minor-version compatibility)", () => {
-    // Blackwell (sm_120) exists only in the 13.3 build; a 13.0 driver
-    // runs it fine, so it must not be sent to the 12.4 build.
-    expect(selectWindowsBackendAsset({ major: 13, minor: 0 })).toBe(
-      WINDOWS_BACKEND_ASSETS.cuda133,
-    );
-    expect(selectWindowsBackendAsset({ major: 13, minor: 3 })).toBe(
-      WINDOWS_BACKEND_ASSETS.cuda133,
-    );
-    expect(selectWindowsBackendAsset({ major: 13, minor: 5 })).toBe(
-      WINDOWS_BACKEND_ASSETS.cuda133,
-    );
+  it("never picks the cuda-13.3 zip — it ships without its CUDA runtime (ATO-244)", () => {
+    // turboquant-6df272c's cuda-13.3 zip has no cudart64_13 / cublas64_13
+    // / cublasLt64_13, so on a box without the CUDA Toolkit it loaded no
+    // GPU and ran on the CPU. A 13.x driver runs the 12.4 build fine.
+    for (const minor of [0, 1, 3, 5]) {
+      expect(selectWindowsBackendAsset({ major: 13, minor })).toBe(
+        WINDOWS_BACKEND_ASSETS.cuda124,
+      );
+    }
     expect(selectWindowsBackendAsset({ major: 14, minor: 0 })).toBe(
-      WINDOWS_BACKEND_ASSETS.cuda133,
+      WINDOWS_BACKEND_ASSETS.cuda124,
+    );
+  });
+
+  it("driver 13.1 + Ampere (cc 8.6) → cuda-12.4", () => {
+    expect(
+      selectWindowsBackendAsset({ major: 13, minor: 1 }, { major: 8, minor: 6 }),
+    ).toBe(WINDOWS_BACKEND_ASSETS.cuda124);
+  });
+
+  it("keeps Ada and Hopper on cuda-12.4 — the 12.4 toolkit has their code", () => {
+    expect(
+      selectWindowsBackendAsset({ major: 13, minor: 1 }, { major: 8, minor: 9 }),
+    ).toBe(WINDOWS_BACKEND_ASSETS.cuda124);
+    expect(
+      selectWindowsBackendAsset({ major: 13, minor: 1 }, { major: 9, minor: 0 }),
+    ).toBe(WINDOWS_BACKEND_ASSETS.cuda124);
+  });
+
+  it("driver 13.1 + Blackwell (cc 12.0, RTX 50-series) → Vulkan", () => {
+    // The 12.4 toolkit predates sm_120, and the 13.3 zip lacks its runtime.
+    expect(
+      selectWindowsBackendAsset({ major: 13, minor: 1 }, { major: 12, minor: 0 }),
+    ).toBe(WINDOWS_BACKEND_ASSETS.vulkan);
+    expect(
+      selectWindowsBackendAsset({ major: 13, minor: 0 }, { major: 10, minor: 0 }),
+    ).toBe(WINDOWS_BACKEND_ASSETS.vulkan);
+  });
+
+  it("driver 12.4 + unknown compute capability → cuda-12.4", () => {
+    expect(selectWindowsBackendAsset({ major: 12, minor: 4 }, null)).toBe(
+      WINDOWS_BACKEND_ASSETS.cuda124,
     );
   });
 
@@ -89,9 +152,91 @@ describe("selectWindowsBackendAsset", () => {
     expect(selectWindowsBackendAsset({ major: 12, minor: 3 })).toBe(
       WINDOWS_BACKEND_ASSETS.vulkan,
     );
+    expect(
+      selectWindowsBackendAsset({ major: 12, minor: 2 }, { major: 8, minor: 6 }),
+    ).toBe(WINDOWS_BACKEND_ASSETS.vulkan);
     expect(selectWindowsBackendAsset({ major: 11, minor: 8 })).toBe(
       WINDOWS_BACKEND_ASSETS.vulkan,
     );
+  });
+});
+
+describe("parseComputeCapabilities", () => {
+  it("reads one GPU", () => {
+    expect(parseComputeCapabilities("8.6\n")).toEqual({ major: 8, minor: 6 });
+  });
+
+  it("takes the highest of several GPUs (CRLF tolerated)", () => {
+    expect(parseComputeCapabilities("8.6\r\n12.0\r\n7.5\r\n")).toEqual({
+      major: 12,
+      minor: 0,
+    });
+    expect(parseComputeCapabilities("8.9\n8.6\n")).toEqual({
+      major: 8,
+      minor: 9,
+    });
+  });
+
+  it("returns null when nothing parses", () => {
+    expect(parseComputeCapabilities("")).toBeNull();
+    expect(parseComputeCapabilities("[N/A]\n")).toBeNull();
+    expect(parseComputeCapabilities(NVIDIA_SMI_HEADER)).toBeNull();
+  });
+});
+
+describe("isIncompleteWindowsCudaBackend", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "win-cuda-backend-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const files = (...names: string[]) => {
+    for (const n of names) writeFileSync(join(dir, n), "x");
+  };
+
+  it("flags a CUDA build with ggml-cuda.dll but no cudart64_*.dll (cuda-13.3 of turboquant-6df272c)", () => {
+    files("llama-server.exe", "ggml.dll", "ggml-base.dll", "ggml-cuda.dll");
+    expect(isIncompleteWindowsCudaBackend(dir)).toBe(true);
+  });
+
+  it("accepts a CUDA build that ships its runtime (cuda-12.4)", () => {
+    files(
+      "llama-server.exe",
+      "ggml-cuda.dll",
+      "cudart64_12.dll",
+      "cublas64_12.dll",
+      "cublasLt64_12.dll",
+    );
+    expect(isIncompleteWindowsCudaBackend(dir)).toBe(false);
+  });
+
+  it("compares names case-insensitively, as Windows does", () => {
+    files("llama-server.exe", "GGML-CUDA.DLL", "CudaRT64_12.dll");
+    expect(isIncompleteWindowsCudaBackend(dir)).toBe(false);
+  });
+
+  it("never flags a build without ggml-cuda.dll (Vulkan, CPU)", () => {
+    files("llama-server.exe", "ggml-vulkan.dll");
+    expect(isIncompleteWindowsCudaBackend(dir)).toBe(false);
+  });
+
+  it("never flags a dir that does not exist", () => {
+    expect(isIncompleteWindowsCudaBackend(join(dir, "missing"))).toBe(false);
+  });
+});
+
+describe("isWindowsCudaBackendAsset", () => {
+  it("is true for the two CUDA zips only", () => {
+    expect(isWindowsCudaBackendAsset(WINDOWS_BACKEND_ASSETS.cuda124)).toBe(true);
+    expect(isWindowsCudaBackendAsset(WINDOWS_BACKEND_ASSETS.cuda133)).toBe(true);
+    expect(isWindowsCudaBackendAsset(WINDOWS_BACKEND_ASSETS.vulkan)).toBe(false);
+    expect(isWindowsCudaBackendAsset(WINDOWS_BACKEND_ASSETS.cpu)).toBe(false);
+    expect(isWindowsCudaBackendAsset(undefined)).toBe(false);
   });
 });
 
@@ -151,11 +296,58 @@ describe("resolveDownloadAsset", () => {
     );
   });
 
-  it("probes nvidia-smi at most once (process-wide cache)", () => {
-    execSyncMock.mockReturnValue(Buffer.from(NVIDIA_SMI_HEADER));
+  it("probes nvidia-smi at most once per query (process-wide cache)", () => {
+    stubNvidiaSmi(NVIDIA_SMI_HEADER, "8.6\n");
     resolveDownloadAsset("win32", "x64");
     resolveDownloadAsset("win32", "x64");
     resolveDownloadAsset("win32", "x64");
+    // The driver header once, the compute capability once.
+    expect(execSyncMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("driver 13.1 + RTX 3080 Ti (cc 8.6) → cuda-12.4 (the ATO-244 machine)", () => {
+    stubNvidiaSmi(NVIDIA_SMI_HEADER_13_1, "8.6\n");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.cuda124,
+    );
+    expect(execSyncMock).toHaveBeenCalledWith(
+      COMPUTE_CAP_QUERY,
+      expect.anything(),
+    );
+  });
+
+  it("driver 13.1 + RTX 50-series (cc 12.0) → Vulkan", () => {
+    stubNvidiaSmi(NVIDIA_SMI_HEADER_13_1, "12.0\n");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.vulkan,
+    );
+  });
+
+  it("a mixed box goes by its newest GPU", () => {
+    stubNvidiaSmi(NVIDIA_SMI_HEADER_13_1, "8.6\n12.0\n");
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.vulkan,
+    );
+  });
+
+  it("driver 12.4 + a failing compute-capability query → cuda-12.4", () => {
+    stubNvidiaSmi(
+      "| NVIDIA-SMI 551.23   Driver Version: 551.23   CUDA Version: 12.4 |",
+      null,
+    );
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.cuda124,
+    );
+  });
+
+  it("driver 12.2 → Vulkan, without asking for the compute capability", () => {
+    stubNvidiaSmi(
+      "| NVIDIA-SMI 537.13   Driver Version: 537.13   CUDA Version: 12.2 |",
+      "8.6\n",
+    );
+    expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
+      WINDOWS_BACKEND_ASSETS.vulkan,
+    );
     expect(execSyncMock).toHaveBeenCalledTimes(1);
   });
 
