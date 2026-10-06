@@ -309,7 +309,8 @@ describe("buildReflectionPrompt", () => {
     const plain = buildReflectionPrompt({ userMessage: "x", assistantReply: "y" });
     const empty = buildReflectionPrompt({ userMessage: "x", assistantReply: "y", knownProfile: [] });
     expect(empty).toBe(plain);
-    expect(plain).not.toContain("### known profile");
+    // The stable prefix names the block in its rules; the tail never carries one.
+    expect(plain.slice(REFLECTION_STABLE_PREFIX.length)).not.toContain("### known profile");
 
     const many = Array.from({ length: REFLECTION_KNOWN_PROFILE_MAX_FACTS + 5 }, (_, i) => ({
       key: `k${i}`,
