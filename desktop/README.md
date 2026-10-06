@@ -1293,7 +1293,7 @@ the update files into `desktop/release/`. Everything a release uploads to
 | Platform | Files |
 |---|---|
 | macOS | `stable-mac.yml`, `Atomic Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. |
-| Windows | `stable.yml`, `Atomic-Agent-Setup-<version>-x64.exe`; its `.blockmap` is optional. |
+| Windows | `stable.yml` (merged, below), `Atomic-Agent-Setup-<version>-x64.exe` and `Atomic-Agent-Setup-<version>-arm64.exe`; their `.blockmap`s are optional. |
 
 Linux is not updated from inside the app yet (the updater is off there and
 Settings says so); AppImage and deb users take new versions from the
@@ -1310,6 +1310,28 @@ list builds both. The update must be signed with the same Developer ID as
 the running app, or Squirrel refuses it: an ad-hoc signed local `npm run dist`
 cannot update itself. The desktop workflow refuses to build with a feed
 without the signing secrets.
+
+Windows has one `stable.yml` for both arches (ATO-252). electron-updater
+reads that one file on x64 and on ARM64 and installs the `.exe` in its
+`files` whose name contains the app's own `process.arch` (`-x64.exe` or
+`-arm64.exe`), else the first `.exe` listed. The x64 and the arm64 job each
+write a `stable.yml` that names only their own installer, so the two are
+merged into one before upload; uploading both as they are would keep the
+last one, and with only the arm64 file listed an x64 app would install the
+arm64 installer:
+
+```bash
+cd desktop
+node scripts/merge-update-yml.mjs \
+  <desktop-win32-x64>/stable.yml <desktop-win32-arm64>/stable.yml stable.yml
+```
+
+The merged file lists both installers, keeps the legacy top-level
+`path`/`sha512` on x64 (the build every existing Windows install has) and
+takes the later `releaseDate`. It refuses two different versions and
+swapped arguments. An x64 app running under emulation on an ARM64 PC keeps
+updating to the x64 installer (its `process.arch` is `x64`); moving it to
+arm64 takes a manual install of the arm64 one.
 
 Windows uses the NSIS installer silently and starts the app again after it.
 The app accepts an installer only when its signer's CN is in
@@ -1334,7 +1356,9 @@ which the terminal installers read. Each desktop release replaces its files
 gh release upload desktop-latest \
   "Atomic Agent-<version>-arm64-mac.zip" "Atomic Agent-<version>-arm64-mac.zip.blockmap" \
   "Atomic-Agent-Setup-<version>-x64.exe" "Atomic-Agent-Setup-<version>-x64.exe.blockmap" \
+  "Atomic-Agent-Setup-<version>-arm64.exe" "Atomic-Agent-Setup-<version>-arm64.exe.blockmap" \
   --repo AtomicBot-ai/atomic-agent --clobber
+# stable.yml here is the MERGED one (merge-update-yml.mjs above), never a single job's.
 gh release upload desktop-latest stable-mac.yml stable.yml --repo AtomicBot-ai/atomic-agent --clobber
 ```
 
