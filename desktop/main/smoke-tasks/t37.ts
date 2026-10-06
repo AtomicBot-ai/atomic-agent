@@ -65,7 +65,7 @@ function hoverFills(css: string): string[] {
 
 export async function checks37(js: Js, check: Check): Promise<void> {
   const fills = hoverFills(rendererCss());
-  const r = await js<Record<string, any>>(`(() => {
+  const r = await js<Record<string, any>>(`(async () => {
     const host = document.createElement('div');
     host.className = 'llm-pane';
     host.style.cssText = 'position:fixed;left:-10000px;top:0;width:720px';
@@ -96,6 +96,8 @@ export async function checks37(js: Js, check: Check): Promise<void> {
       const themes = {};
       for (const theme of ['light', 'dark']) {
         root.setAttribute('data-theme', theme);
+        // ATO-251: read on the frame after the flip (a same-tick read came back one theme behind on Windows).
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
         const cs = getComputedStyle(els.inUse);
         const rowCs = getComputedStyle(pick('[data-llm-row="local-text:smoke-t37-inuse"]'));
         themes[theme] = {text: els.inUse.textContent, bg: cs.backgroundColor, shadow: cs.boxShadow, color: cs.color, success: getComputedStyle(probe).color,

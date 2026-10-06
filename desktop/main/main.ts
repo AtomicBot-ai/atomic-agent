@@ -1873,6 +1873,8 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:openExternal", (_event, url: unknown) => {
     if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
   });
+  // ATO-251: the last ground each window was handed, for the chrome theme handler below.
+  const WINDOW_GROUNDS = new WeakMap<BrowserWindow, string>();
   // 13: the window's own background is what shows wherever the page has not
   // painted yet — a frame between layers, the strip a resize uncovers. It was
   // a fixed near-black, a dark flash on the light theme; the renderer hands
@@ -1882,6 +1884,7 @@ function wireIpc(client: AgentClient): void {
     const target = BrowserWindow.fromWebContents(event.sender);
     if (!target) return { ok: false, error: "no window" };
     target.setBackgroundColor(color);
+    WINDOW_GROUNDS.set(target, color);
     return { ok: true };
   });
 
@@ -2274,6 +2277,9 @@ function wireIpc(client: AgentClient): void {
     if (!w || w.isDestroyed()) return { ok: false };
     try {
       w.setTitleBarOverlay({ ...titleBarOverlayColors(dark === true), height: TOOLBAR_HEIGHT });
+      // ATO-251: put the page's ground back in case the overlay repaint took it.
+      const ground = WINDOW_GROUNDS.get(w);
+      if (ground) w.setBackgroundColor(ground);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
