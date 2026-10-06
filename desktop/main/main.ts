@@ -2405,10 +2405,11 @@ function wireIpc(client: AgentClient): void {
   client.on("chat", (event) => onAgentFrame(event));
   hostDaemonWatch({
     notify: (notice) => send("app:daemonWatch", notice),
-    say: (line) => {
+    say: (line, said) => {
       console.error(line);
       // ATO-121: "the app is stopping the model server…" is INFO, a failed restart ERROR (agent-output lineLevel).
-      const level = lineLevel(line);
+      // ATO-244: a line that names its own level (the model running on the CPU, WARN) keeps it.
+      const level = said ?? lineLevel(line);
       send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
       appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
     },

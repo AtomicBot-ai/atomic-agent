@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
+import type { AgentLogLevel } from "./agent-output.js";
 import {
   bringUpAtLaunch,
   bringUpInFlight,
@@ -11,6 +12,7 @@ import {
   runModeWantsDaemon,
   stopsMark,
 } from "./backend-switch.js";
+import { cpuOnlyLogLine, cpuOnlyWorthSaying, type CpuOnlyNotice } from "./cpu-only.js";
 import {
   DaemonSupervisor,
   type DaemonLook,
@@ -45,6 +47,8 @@ interface WatchConfig extends RunModeConfig {
       dataDirOverride?: string | null;
       autoRestart?: boolean;
       parallel?: number | string;
+      /** ATO-244: "cpu" is the CPU build picked on purpose (src/local-llm/windows-backend-variant.ts). */
+      backendVariant?: string;
     };
   };
   /* The run-mode block, with the provider entries' own urls: `providers` is
@@ -144,8 +148,10 @@ function describeFault(): string | null {
 
 /** What main hands in: where notices go, and what else counts as busy (the llama.cpp update). */
 export interface DaemonWatchHost {
-  notify: (notice: SupervisorNotice) => void;
-  say: (line: string) => void;
+  /** The supervisor's notices, and ATO-244's word on a model running on the CPU (cpu-only.ts). */
+  notify: (notice: SupervisorNotice | CpuOnlyNotice) => void;
+  /** A line for agent.log and Diagnostics; `level` when its shape would not say it (agent-output lineLevel). */
+  say: (line: string, level?: AgentLogLevel) => void;
   /** A llama.cpp update running: it stops the server and replaces its binary. */
   busy: () => boolean;
 }
@@ -280,9 +286,11 @@ export const daemonWatch = new DaemonSupervisor(deps);
 onDaemonLifecycle((e) => {
   if (e === "started") {
     daemonWatch.noteStarted();
+    lookForCpuOnly();
     return;
   }
   daemonWatch.noteStopped();
+  forgetCpuOnly();
   const cfg = readConfig();
   const route = cfg?.llm?.activeTextProvider ?? "local-llama";
   const mode = cfg?.llm?.runMode?.mode;
@@ -333,7 +341,61 @@ export async function pairEmbeddingsBeforeServe(limitMs = 20_000): Promise<void>
   if (r?.line) host.say(`[desktop] ${r.line}`);
 }
 
-/** For the window (a reopened one asks) and the smoke. */
-export function daemonWatchState(): SupervisorState {
-  return daemonWatch.state();
+/* ---------------------------------------------------------------
+   ATO-244 — a model server that found no usable GPU and runs on the CPU.
+   Read from llama-server.log at each start the app makes, and at a start
+   that finds the server already up (daemonFoundUp): by then llama.cpp has
+   long printed its device lines. Only the current run's lines count
+   (cpu-only.ts currentRunLines). The window hears it on the supervisor's
+   channel (app:daemonWatch, via host.notify), and a reopened one asks
+   daemonWatchState. A start's restart by the supervisor is a start too.
+   --------------------------------------------------------------- */
+
+/** How much of the log's end is read: the launch lines and llama.cpp's first ones, after a start, with room to spare. */
+const CPU_LOG_TAIL = 256 * 1024;
+
+let cpu: CpuOnlyNotice = { kind: "cpu_only", cpuOnly: false, seq: 0, modelId: null };
+
+/** The end of `<managed data dir>/llama-server.log`, or "" when there is none. */
+function serverLogTail(cfg: WatchConfig | null): string {
+  try {
+    const file = join(managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null), "llama-server.log");
+    const size = statSync(file).size;
+    const from = Math.max(0, size - CPU_LOG_TAIL);
+    const fd = openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(size - from);
+      readSync(fd, buf, 0, buf.length, from);
+      return buf.toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+/** A start the app made or found: what this run of the server says about its GPU, once. */
+function lookForCpuOnly(): void {
+  try {
+    const cfg = readConfig();
+    const managed = cfg?.localModels?.managed;
+    const cpuOnly = cpuOnlyWorthSaying(serverLogTail(cfg), managed?.backendVariant);
+    const was = cpu.cpuOnly;
+    cpu = { kind: "cpu_only", cpuOnly, seq: cpu.seq + 1, modelId: managed?.modelId ?? null };
+    if (cpuOnly) host.say(cpuOnlyLogLine(cpu.modelId), "warn");
+    if (cpuOnly || was) host.notify(cpu);
+  } catch { /* a word about the GPU never fails a start */ }
+}
+
+/** A stop on purpose: the server it was about is going. */
+function forgetCpuOnly(): void {
+  if (!cpu.cpuOnly) return;
+  cpu = { ...cpu, cpuOnly: false };
+  host.notify(cpu);
+}
+
+/** For the window (a reopened one asks) and the smoke: the supervisor's state, and ATO-244's word on the CPU. */
+export function daemonWatchState(): SupervisorState & { cpu: CpuOnlyNotice } {
+  return { ...daemonWatch.state(), cpu };
 }

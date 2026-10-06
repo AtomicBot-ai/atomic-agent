@@ -876,6 +876,11 @@ let WAIT_TICK = 0;
    (daemon-supervisor.ts): its last notice while an incident is open —
    `restarting`, `restart_failed` or `gave_up` — else null. */
 let DWATCH = null;
+/* ATO-244: main's word that the managed model server found no usable GPU and
+   runs on the processor (main/cpu-only.ts), for the start `seq` names. Said
+   once per start: on the app line as it arrives, and as the composer's strip
+   while the route is the local model, until dismissed or the next start. */
+const CPUW = {on: false, seq: 0, modelId: null, said: 0, dismissed: 0};
 
 let BUILD = null;
 /* Provider ids whose key was saved without ever being checked. Read from
@@ -3253,6 +3258,9 @@ function composer() {
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
       + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
+    // ATO-244: the model runs on the processor; last, under every strip that carries a decision or a failure.
+    : cpuNoticeShown()
+    ? cpuNoticeHTML()
     /* r2 (DMG feedback): the "Ready · <last thing that changed>" strip is
        no longer drawn under the transcript — it read as noise. APPSTATUS is
        still kept (and logged) for diagnostics; only the strip is gone. The
@@ -5798,6 +5806,9 @@ function act(a) {
   // ATO-134: the held switch's two ways out (swxHoldIfBusy).
   if (a === 'swx:holdnow') { if (SWX.hold) SWX.hold.end('now'); return; }
   if (a === 'swx:holdcancel') { if (SWX.hold) SWX.hold.end('cancel'); return; }
+  // ATO-244: the CPU strip's two ways out; either holds until the next model start.
+  if (a === 'cpu:dismiss') { CPUW.dismissed = CPUW.seq; render(); return; }
+  if (a === 'cpu:cloud') { CPUW.dismissed = CPUW.seq; render(); selChooseBackend('cloud'); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -7212,6 +7223,8 @@ function dwatchWords(wait) {
 /** A notice from main's supervisor: kept while its incident is open, and said once on the app line. */
 function dwatchApply(n) {
   if (!n || typeof n.kind !== 'string') return;
+  // ATO-244: the CPU notice shares the channel and is not an incident: it never clears DWATCH.
+  if (n.kind === 'cpu_only') { cpuApply(n); return; }
   DWATCH = n.kind === 'restarting' || n.kind === 'restart_failed' || n.kind === 'gave_up' || n.kind === 'restarted' ? n : null;
   if (n.kind === 'restarting') appSay('The local model server stopped — starting it again', 'caution');
   else if (n.kind === 'restarted') appSay('The local model server is back');
@@ -7219,6 +7232,35 @@ function dwatchApply(n) {
   else if (n.kind === 'gave_up') appSay('The local model server stopped ' + (n.deaths || 3) + ' times within a minute of starting — automatic restarts are off until you start it again', 'caution');
   render();
   if (llmVisible()) llmRepaint();
+}
+/* ATO-244: a 3080 Ti box ran the model on the CPU, silently, and its person
+   watched "Working…" for three and a half minutes before going back to the
+   cloud. Main reads llama-server.log after each start (current run only) and
+   sends {kind:'cpu_only', cpuOnly, seq, modelId}; a CPU build picked on
+   purpose (backendVariant "cpu") is never sent as cpuOnly. */
+const CPU_TITLE = 'This model is running on the processor';
+const CPU_BODY = 'Your graphics card is not being used, so replies will be slow: the first one can take several minutes. Switch to a cloud model, or pick a smaller local model.';
+function cpuApply(n) {
+  if (!n || n.kind !== 'cpu_only') return;
+  CPUW.on = n.cpuOnly === true;
+  CPUW.seq = Number(n.seq) || 0;
+  CPUW.modelId = n.modelId || null;
+  if (CPUW.on && CPUW.said !== CPUW.seq) {
+    CPUW.said = CPUW.seq;
+    appSay('The local model is running on the processor, not the graphics card: replies will be slow', 'caution');
+  }
+  render();
+}
+/** The strip is up: main said CPU for this start, the route is the local model, and it was not dismissed. */
+function cpuNoticeShown() {
+  return CPUW.on && CPUW.dismissed !== CPUW.seq && selBackend() === 'local';
+}
+function cpuNoticeHTML() {
+  return '<div class="statusstrip cpuonly" role="status">'
+    + '<span class="ss-ic warn">' + ic('cpu') + '</span>'
+    + '<span class="ss-text"><b class="ss-title">' + esc(CPU_TITLE) + '</b>' + esc(CPU_BODY) + '</span>'
+    + '<button class="btn btn-g xs" data-act="cpu:cloud">Use a cloud model</button>'
+    + '<button class="iconbtn sm" data-act="cpu:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
 }
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
@@ -9601,7 +9643,10 @@ if (BR) {
   if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
-  if (BR.daemonWatch) BR.daemonWatch().then((st) => { if (st && st.incident) dwatchApply(st.incident); }).catch(() => {});
+  if (BR.daemonWatch) BR.daemonWatch().then((st) => {
+    if (st && st.incident) dwatchApply(st.incident);
+    if (st && st.cpu) cpuApply(st.cpu);   // ATO-244: a window opened after the start hears it too
+  }).catch(() => {});
   BR.status().then(applyStatus);
 
   // Stop routes to the real turn, and the workspace chip opens a picker.

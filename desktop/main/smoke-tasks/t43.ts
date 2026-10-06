@@ -420,7 +420,8 @@ async function wiring(js: Js, check: Check): Promise<void> {
     await write(wanted(true));
     // The notices are collected here and not sent on: the window's own words are C's.
     const prev = hostDaemonWatch({ notify: () => {}, say: () => {}, busy: () => false });
-    hostDaemonWatch({ ...prev, notify: (n) => { notices.push(n); } });
+    // ATO-244's word on a model running on the CPU shares the channel; it is not the supervisor's.
+    hostDaemonWatch({ ...prev, notify: (n) => { if (n.kind !== "cpu_only") notices.push(n); } });
     undoHost = () => { hostDaemonWatch(prev); };
 
     // B1-B2: Settings' Start, the server killed by hand, and the app brings it back.

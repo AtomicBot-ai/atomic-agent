@@ -37,6 +37,11 @@
 .statusstrip .ss-jump:hover{color:var(--blue-deep)}
 .statusstrip .ss-jump svg{width:13px;height:13px}
 .statusstrip .ss-jump[hidden]{display:none} /* ATO-187: the card is in view */
+/* ATO-244: the model runs on the processor. A title and two sentences, so
+   the text wraps instead of being cut, and takes the room the grow would. */
+.statusstrip.cpuonly{padding:4px 8px}
+.statusstrip.cpuonly .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}
+.statusstrip.cpuonly .ss-title{display:block;font-weight:500;color:var(--ink)}
 .ss-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 1.6s var(--ease) infinite}
 @media (prefers-reduced-motion:reduce){.ss-dot{animation:none}}
 
