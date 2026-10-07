@@ -13,7 +13,7 @@ The actual flat assembly in `build-prompt.ts` is:
 
 1. Optional memory-index, session-facts, recalled; world.
 2. Optional request when the original user request was packed out of view.
-3. Conversation.
+3. Optional context summary, then fresh conversation.
 4. Optional route, profile, lessons, procedures, loaded-skills, loaded-tools, task-policy, notice.
 5. Respond anchor and profile-specific generation framing.
 
@@ -32,3 +32,5 @@ Read the implementation for exact defaults; historical ~2.5k targets are not a u
 - [Assembly](../build-prompt.ts), [stable prefix](../stable-prefix.ts), [budget](../token-budget.ts).
 - [Assembly tests](../build-prompt.test.ts), [auto cap](../conversation-cap-auto.test.ts), [profile invariants](../../llm/profile-invariants.test.ts).
 - [Model framing](../../llm/docs/profiles.md), [tool contracts](../../tools/docs/contracts.md).
+
+The pure [compaction planner](../plan-compaction.ts) measures history before mechanical packing. [The session projection](../../session/session-compaction.ts) feeds flat/native prompts and preview from one checkpoint and suffix, retaining covered task/user requests verbatim. Summary tokens are counted separately. Model calls and persistence belong to [runtime compaction](../../runtime/docs/compaction.md), never to prompt assembly or preview.

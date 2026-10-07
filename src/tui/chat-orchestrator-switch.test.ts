@@ -43,12 +43,16 @@ interface TurnHandle {
 function makeHarness(
   opts: {
     busySessions?: readonly string[];
+    maintenanceSessions?: readonly string[];
     /** Real gate (or richer stub) for approval-lifecycle tests. */
     approvals?: ApprovalGate;
   } = {},
 ) {
   const turns: TurnHandle[] = [];
   const stored = [session("s-a"), session("s-b")];
+  for (const state of stored) {
+    if (opts.busySessions?.includes(state.id) && !opts.maintenanceSessions?.includes(state.id)) state.status = "running";
+  }
   let created = 0;
   const denyPendingForSession = vi.fn(() => 0);
   const clearSessionGrants = vi.fn();
@@ -315,6 +319,12 @@ describe("ChatOrchestrator new/switch session while a turn is running", () => {
     const { orchestrator, actions } = makeHarness({ busySessions: ["s-b"] });
     orchestrator.switchSession("s-b");
     expect(lastSwitch(actions)?.running).toBe(true);
+  });
+
+  it("does not treat a maintenance-only FIFO lock as an agent turn", () => {
+    const { orchestrator, actions } = makeHarness({ busySessions: ["s-b"], maintenanceSessions: ["s-b"] });
+    orchestrator.switchSession("s-b");
+    expect(lastSwitch(actions)?.running).toBe(false);
   });
 
   it("quit aborts detached turns too", () => {

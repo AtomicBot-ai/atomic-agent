@@ -1,3 +1,4 @@
+import { projectSessionConversation } from "../session/session-compaction.js";
 import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
@@ -313,19 +314,24 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // re-pack below must cut under the same low-water mark and from the
   // same remembered start, or the two packs could disagree about where
   // the transcript begins.
+  const projection = projectSessionConversation(input.session);
+  const contextSummary = projection.summary;
+  const compactionTokens = contextSummary ? estimateTokens(contextSummary) : 0;
+  const suffixCap = Math.max(1, conversationCapEffective - compactionTokens);
   const packOptions = {
+    ...(projection.checkpoint ? { pinCurrentTask: false } : {}),
     maxPairs: conversationMaxPairs,
     lowWater: conversationLowWater,
-    ...(input.session.macroTurnStarts
-      ? { macroTurnStarts: input.session.macroTurnStarts }
+    ...(projection.macroTurnStarts
+      ? { macroTurnStarts: projection.macroTurnStarts }
       : {}),
-    ...(input.session.conversationPackStart
-      ? { packStart: input.session.conversationPackStart }
+    ...(projection.packStart
+      ? { packStart: projection.packStart }
       : {}),
   };
   let packed = packConversation(
-    input.session.turns,
-    conversationCapEffective,
+    projection.turns,
+    suffixCap,
     packOptions,
   );
   // The operator's request, pinned only once the packer has dropped the
@@ -335,15 +341,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // decision cannot flip.
   const request = input.originalRequest?.trim() ?? "";
   const requestSection =
-    request.length > 0 && !requestInView(request, packed.visibleTurns)
+    request.length > 0 && !contextSummary?.includes(request) && !requestInView(request, packed.visibleTurns)
       ? renderRequestSection(request)
       : null;
   if (requestSection !== null) {
     const requestTokens = estimateTokens(requestSection);
-    if (requestTokens < conversationCapEffective) {
+    if (requestTokens < suffixCap) {
       packed = packConversation(
-        input.session.turns,
-        conversationCapEffective - requestTokens,
+        projection.turns,
+        suffixCap - requestTokens,
         packOptions,
       );
     }
@@ -384,7 +390,10 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (requestSection !== null) {
     tailBefore.push(`### request`, requestSection, ``);
   }
-  const conversationParts = [`### conversation`, conversation, ``];
+  const conversationParts = [
+    ...(contextSummary ? ["### context-summary", contextSummary, ""] : []),
+    `### conversation`, conversation, ``,
+  ];
   const tailAfter: string[] = [];
   if (input.routeNote && input.routeNote.length > 0) {
     tailAfter.push(`### route`, input.routeNote, ``);
@@ -433,6 +442,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // suppressed for it anyway — `suppressReasoningPrefill`).
   const messages: PromptMessages = {
     system: stablePrefix,
+    ...(contextSummary ? { contextSummary } : {}),
     droppedSummary: packed.droppedSummary,
     turns: packedConversationTurns(packed),
     tail: [...tailBefore, ...tailAfter].join("\n"),
@@ -514,13 +524,14 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       recalled: recalledTokens,
       memoryIndex: memoryIndexTokens,
       taskPolicy: taskPolicyTokens,
+      ...(compactionTokens ? { compaction: compactionTokens } : {}),
       total:
         budgetResult.perSection.total +
         loadedToolsTokens +
         profileTokens +
         recalledTokens +
         memoryIndexTokens +
-        taskPolicyTokens,
+        taskPolicyTokens + compactionTokens,
     },
     limits,
     truncated:
@@ -544,10 +555,19 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     droppedPairs: packed.droppedPairs,
     conversationPairsCap: conversationMaxPairs,
     conversationBoundBy: packed.boundBy,
-    conversationPackStart: packed.packStart,
+    conversationPackStart: packed.packStart
+      ? { ...packed.packStart, index: packed.packStart.index + projection.offset }
+      : null,
+    compactionBudget: {
+      cap: Math.max(0, conversationCapEffective - taskPolicyTokens - estimateTokens([
+        input.transientNotice, input.routeNote, input.currentDate, requestSection,
+      ].filter(Boolean).join("\n"))),
+      activeTokens: compactionTokens + estimateTokens(renderPackedConversation({ visibleTurns: projection.turns, droppedSummary: null })),
+      activePairs: pairTokenCosts(projection.turns, projection.macroTurnStarts).length,
+    },
     pairCosts: pairTokenCosts(
-      input.session.turns,
-      input.session.macroTurnStarts,
+      projection.turns,
+      projection.macroTurnStarts,
     ),
   };
 }

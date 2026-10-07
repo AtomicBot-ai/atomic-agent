@@ -25,7 +25,7 @@ import type { StepEvent } from "../step-events.js";
 import type { StreamParser, StreamParseEvent } from "../../llm/grammar/stream-parser.js";
 import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
-export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
+export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
   // Whether this step's local prompt goes through the model's own chat
   // template. The template supplies the turn markers and the reasoning
   // prelude, so the prompt is built framing-free, like a chat-transport
@@ -121,6 +121,11 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       : {}),
     ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
   };
+  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors };
+}
+
+export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
+  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors } = prepareStepPrompt(ctx, deps);
   const prompt = buildPrompt(promptInput);
   // A grammar (llama-server) fallback link behind a native-tools primary
   // still needs the legacy prefill-carrying prompt shape — its template

@@ -73,6 +73,12 @@ export async function bootstrapSidecar(): Promise<{
     (sessionId: string): ((event: AgentLoopEvent) => void) =>
     (event) => {
       switch (event.type) {
+        case "compaction_started":
+        case "compaction_progress":
+        case "compaction_completed":
+        case "compaction_failed":
+          protocol.emitEvent(event.type, event);
+          break;
         case "step_started":
           protocol.emitEvent("step_started", {
             sessionId,
@@ -325,7 +331,8 @@ export async function bootstrapSidecar(): Promise<{
           );
         }
         const { maxSteps } = request.payload;
-        return runtime.executeTurn(active.session, request.payload.text, {
+        const latest = runtime.sessionStore.load(sessionId) ?? active.session;
+        return runtime.executeTurn(latest, request.payload.text, {
           // Only a client-supplied `maxSteps` becomes a ceiling. Filling
           // in `agent.maxSteps` (the leg length) made every task stop at
           // the first leg instead of running to `agent.task.maxSteps`.
@@ -382,19 +389,32 @@ export async function bootstrapSidecar(): Promise<{
   router.register<CancelPayload, { cancelled: boolean }>(
     "cancel",
     (request) => {
-      if (!active || active.session.id !== request.payload.sessionId) {
-        return { cancelled: false };
-      }
+      if (!active) return { cancelled: false };
+      const compacting = active.runtime.cancelSessionCompaction(request.payload.sessionId);
+      if (active.session.id !== request.payload.sessionId) return { cancelled: compacting };
       active.controller.abort();
       return { cancelled: true };
     },
   );
 
+  router.register<GetSessionPayload, Awaited<ReturnType<AgentRuntime["compactSession"]>>>("compact_session", async (request) => {
+    if (!active) throw new Error("no active runtime — call start_session first");
+    const id = request.payload.sessionId;
+    if (typeof id !== "string" || !id) throw new Error("sessionId is required");
+    return active.runtime.compactSession(id);
+  });
+  router.register<GetSessionPayload, ReturnType<AgentRuntime["getSessionCompaction"]>>("get_compaction", (request) => {
+    if (!active) throw new Error("no active runtime — call start_session first");
+    const id = request.payload.sessionId;
+    if (typeof id !== "string" || !id) throw new Error("sessionId is required");
+    return active.runtime.getSessionCompaction(id);
+  });
+
   router.register<GetSessionPayload, SessionState | null>(
     "get_session",
     (request) => {
       if (active?.session.id === request.payload.sessionId)
-        return active.session;
+        return active.runtime.sessionStore.load(request.payload.sessionId) ?? active.session;
       // Fall back to sqlite if we have a runtime to ask.
       if (active)
         return active.runtime.sessionStore.load(request.payload.sessionId);

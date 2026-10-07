@@ -48,11 +48,12 @@ describe("agent configuration ownership", () => {
     expect(first).toEqual(USER_CONFIG_DEFAULTS.agent);
     expect(Object.keys(first)).toEqual([
       "tokenBudget", "maxSteps", "providerWait", "task", "toolTimeoutMs",
-      "readScope", "approvalLevel", "conversationMaxTokens", "conversationMaxPairs",
+      "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
     ]);
     expect(first.providerWait).not.toBe(second.providerWait);
     expect(first.task).not.toBe(second.task);
+    expect(first.compaction).not.toBe(second.compaction);
     first.providerWait.maxWaitMs = 1;
     first.task.maxSteps = 1;
     expect(second.providerWait.maxWaitMs).toBe(300_000);
@@ -94,7 +95,7 @@ describe("agent configuration ownership", () => {
     });
     expect(events).toEqual([
       "raw-wait", "read-defaults", "default-wait",
-      "raw-task", "read-defaults", "default-task",
+      "raw-task", "read-defaults", "default-task", "read-defaults",
     ]);
     expect(parsed.providerWait).toEqual({ enabled: false, maxWaitMs: 1 });
     expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false });
@@ -171,7 +172,7 @@ describe("agent configuration ownership", () => {
       expect(root.providerWait).toBe(USER_CONFIG_DEFAULTS.agent.providerWait);
       expect(Object.keys(direct)).toEqual([
         "tokenBudget", "maxSteps", "providerWait", "nameSessions", "task", "toolTimeoutMs",
-        "readScope", "approvalLevel", "conversationMaxTokens", "conversationMaxPairs",
+        "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
         "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
       ]);
     } finally {

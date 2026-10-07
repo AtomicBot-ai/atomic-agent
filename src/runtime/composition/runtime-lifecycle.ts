@@ -22,6 +22,7 @@ import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import type { SentryClient } from "../../error-reporting/sentry-client.js";
 
 export interface RuntimeLifecycleResources {
+  readonly compaction?: { shutdown(): void };
   readonly sessionStore: Pick<SessionStore, "releaseOwnTurns" | "close">;
   readonly logger: Pick<StructuredLogger, "warn">;
   readonly steeringInbox: Pick<SteeringInbox, "clearAll">;
@@ -76,6 +77,7 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
+    resources.compaction?.shutdown();
     // Say now, while the store is certainly open, that the turns still
     // running were interrupted: a stop that turns into a kill partway
     // through this teardown — the desktop gives it 4 s — still leaves

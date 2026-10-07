@@ -40,6 +40,8 @@ import type { ContextUsageState } from "../session/context-usage.js";
  */
 export type TuiAction =
   | { type: "runtime_info"; line: string }
+  | { type: "compaction_requested"; sessionId: string }
+  | { type: "compaction_request_settled"; sessionId: string; busy: boolean }
   /** Append a local system message directly into the chat transcript. */
   | {
       type: "system_message";

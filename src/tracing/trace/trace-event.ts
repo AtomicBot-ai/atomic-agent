@@ -1,3 +1,4 @@
+import type { CompactionEvent } from "../../agent/compaction-control.js";
 import type { AgentLoopReason } from "../../agent/agent-contract.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
@@ -19,7 +20,10 @@ import type { SessionRoute } from "../../session/session-route.js";
  *   The sink writes payloads verbatim; consumers must treat traces as
  *   sensitive local artefacts.
  */
+export type TraceCompaction = CompactionEvent & TraceEventBase;
+
 export type TraceEvent =
+  | TraceCompaction
   | TraceSessionStarted
   | TraceTurnStarted
   | TraceTurnFinished

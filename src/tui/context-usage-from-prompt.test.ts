@@ -4,6 +4,8 @@ import { contextUsageFromPrompt } from "./context-usage-from-prompt.js";
 
 function builtPrompt(overrides: Partial<BuiltPrompt> = {}): BuiltPrompt {
   return {
+    messages: { system: "", droppedSummary: null, turns: [], tail: "" },
+    conversationPackStart: null,
     text: "",
     stablePrefix: "",
     tail: "",

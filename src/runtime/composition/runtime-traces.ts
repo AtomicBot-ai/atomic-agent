@@ -210,6 +210,9 @@ export function createRuntimeTraces(
         // onto the session before the post-turn save. Mirrors the TUI's own
         // reduction: the `prompt_built` estimate, refined by the provider's
         // real tokenizer count when the completion reports one.
+        if (event.type === "compaction_completed" && event.contextUsage) {
+          lastTurnContextUsage.set(ctx.sessionId, event.contextUsage);
+        }
         if (event.type === "llm_event") {
           const step = event.event;
           if (step.type === "prompt_built") {

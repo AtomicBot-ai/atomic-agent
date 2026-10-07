@@ -29,3 +29,5 @@ Read docs/lifecycle.md before changing ownership, shutdown or steering; ../llm/d
 ## Validation
 
 `npx vitest run src/runtime`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
+
+Context compaction is owned by [context-compaction.ts](context-compaction.ts) and [its bounded subcall runner](context-compaction-runner.ts). Read the [compaction contract](docs/compaction.md) for control requests, checkpoints, budgets and cancellation.

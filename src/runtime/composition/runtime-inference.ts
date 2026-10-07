@@ -95,11 +95,11 @@ export async function connectRuntimeProviders(
    * is only a last-resort fallback — it names the prompt profile, not the
    * model, so it must never be the primary source.
    */
-  const resolveActiveModelName = (): string => {
+  const resolveActiveModelName = (providerId?: string): string => {
     const liveConfig = getConfig();
     const resolved = resolveLlmConfig(liveConfig);
     const entry = resolved.providers.find(
-      (p) => p.id === resolved.activeTextProvider,
+      (p) => p.id === (providerId ?? resolved.activeTextProvider),
     );
     return (
       entry?.defaultChatModel ??
@@ -180,17 +180,17 @@ export function createRuntimeModelContext(
    * towards what the server demonstrated — see `LearnedContextWindows`.
    */
   const observedContextWindows = new LearnedContextWindows();
-  const activeModelKey = (): string =>
-    `${resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName()}`;
+  const activeModelKey = (providerId?: string): string =>
+    `${providerId ?? resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName(providerId)}`;
   const observeContextWindow = (contextWindow: number): void => {
     observedContextWindows.observe(activeModelKey(), contextWindow);
   };
   const raiseContextWindowTo = (tokens: number): void => {
     observedContextWindows.raise(activeModelKey(), tokens);
   };
-  const resolveCatalogContextWindow = (): number | null => {
-    const observed = observedContextWindows.get(activeModelKey());
-    const model = resolveModelPricing(resolveActiveModelName());
+  const resolveCatalogContextWindow = (providerId?: string): number | null => {
+    const observed = observedContextWindows.get(activeModelKey(providerId));
+    const model = resolveModelPricing(resolveActiveModelName(providerId), providerId);
     const catalogued =
       !model || model.source === "default" || model.contextWindow <= 0
         ? null

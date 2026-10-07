@@ -25,6 +25,7 @@ export interface SlashDispatchResult {
   readonly actions: readonly TuiAction[];
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
+  readonly compactionVerb?: "run" | "show";
   /** When true the editor buffer should be cleared after dispatch. */
   readonly clearBuffer: boolean;
   /** When true the caller should invoke `onAbort`. */
@@ -240,6 +241,10 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], { triggerOnboardingRerun: true });
     case "debug":
       return pureActions([{ type: "ui_mode_toggled" }]);
+    case "compact":
+      return parsed.args === "" || parsed.args === "show"
+        ? pureActions([], { compactionVerb: parsed.args === "show" ? "show" : "run" })
+        : pureActions([], { systemMessage: "Usage: /compact [show]" });
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
     case "chat":

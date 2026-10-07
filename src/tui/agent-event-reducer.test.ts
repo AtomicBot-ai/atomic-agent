@@ -2321,3 +2321,77 @@ describe("a parked turn in the chat", () => {
     expect(systemTexts(owner)[0]).toContain("The model is not answering");
   });
 });
+
+it("keeps compaction notices scoped to the visible session after switching chats", () => {
+  const state = createInitialTuiState(fakeSession({ sessionId: "visible" }));
+  const event = { type: "compaction_completed" as const, sessionId: "background", result: { status: "compacted" as const, reason: "manual" as const, tokensBefore: 1000, tokensAfter: 400 }, usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 }, calls: 1 };
+  expect(reduceTuiState(state, { type: "agent_event", sessionId: "background", event })).toBe(state);
+  const visible = reduceTuiState(state, { type: "agent_event", sessionId: "visible", event: { ...event, sessionId: "visible" } });
+  expect(JSON.stringify(visible.messages)).toContain("1000 → ~400");
+});
+
+describe("context compaction activity", () => {
+  const started = (sessionId: string): TuiAction => ({ type: "agent_event", sessionId,
+    event: { type: "compaction_started", sessionId, reason: "manual", tokensBefore: 10100 },
+  });
+  it("tracks a queued request without starting an agent turn and clears a noop", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const queued = reduceTuiState(initial, { type: "compaction_requested", sessionId: "s1" });
+    expect(queued.contextCompactions.s1?.phase).toBe("queued");
+    expect(queued.status).toBe(initial.status);
+    const end = reduceTuiState(queued, { type: "compaction_request_settled", sessionId: "s1", busy: false });
+    expect(end.contextCompactions).toEqual({});
+  });
+  it("does not mark an idle compaction cancellation as an aborted agent turn", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const active = reduceTuiState(initial, started("s1"));
+    const cancelled = reduceTuiState(active, { type: "abort_requested" });
+    expect(cancelled.status).toBe(initial.status);
+    expect(cancelled.aborting).toBe(false);
+  });
+  it("retains background activity across switches without mixing transcripts", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const background = reduceTuiState(initial, started("s2"));
+    expect(background.messages).toEqual(initial.messages);
+    expect(background.status).toBe(initial.status);
+    expect(background.contextCompactions.s2).toMatchObject({ phase: "running", tokensBefore: 10100 });
+    const switched = reduceTuiState(background, { type: "session_switched", sessionId: "s2", workingDir: "/tmp", messages: [] });
+    expect(switched.contextCompactions.s2?.phase).toBe("running");
+  });
+  it("tracks background chunk progress without adding chat messages or resetting its clock", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const state = reduceTuiState(initial, started("s2"));
+    const next = reduceTuiState(state, { type: "agent_event", event: { type: "compaction_progress", sessionId: "s2",
+      chunk: 2, chunks: 7, completedChunks: 1, sourceTokens: 55300,
+    } });
+    expect(next.messages).toEqual(initial.messages);
+    expect(next.contextCompactions.s2?.sinceTs).toBe(state.contextCompactions.s2?.sinceTs);
+    expect(next.contextCompactions.s2?.progress).toEqual({ chunk: 2, chunks: 7, completedChunks: 1, sourceTokens: 55300 });
+    expect(next.status).toBe(initial.status);
+  });
+  it.each(["failed", "cancelled"] as const)("clears the indicator on %s without changing turn status", (status) => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const state = reduceTuiState(initial, started("s1"));
+    const end = reduceTuiState(state, { type: "agent_event", event: { type: "compaction_failed", sessionId: "s1",
+      result: { status, reason: "manual", message: "test failure" }, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0,
+    } });
+    expect(end.contextCompactions).toEqual({});
+    expect(end.status).toBe(initial.status);
+    expect(JSON.stringify(end.messages)).toContain(status === "failed" ? "test failure" : "cancelled");
+  });
+  it("does not clear an automatic operation when a manual request returns busy", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const state = reduceTuiState(initial, started("s1"));
+    expect(reduceTuiState(state, { type: "compaction_request_settled", sessionId: "s1", busy: true })).toBe(state);
+  });
+  it("clears background activity when it finishes off screen", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const state = reduceTuiState(initial, started("s2"));
+    const end = reduceTuiState(state, { type: "agent_event", event: { type: "compaction_completed", sessionId: "s2",
+      result: { status: "compacted", reason: "manual", tokensBefore: 10100, tokensAfter: 6000 },
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 }, calls: 1,
+    } });
+    expect(end.contextCompactions).toEqual({});
+    expect(end.messages).toEqual(initial.messages);
+  });
+});

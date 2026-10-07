@@ -56,6 +56,54 @@ describe("ThinkingIndicator", () => {
     expect(text).toMatch(/thinking · \d+s/);
   });
 
+  it("shows compaction and its own elapsed time while the agent is idle", () => {
+    const state = makeState({ status: "idle", runStartedAt: null,
+      contextCompactions: { abc: { phase: "running", sinceTs: Date.now() - 12_000, tokensBefore: 10100 } },
+    });
+    const app = render(<ThinkingIndicator state={state} />);
+    expect(strip(app.lastFrame() ?? "")).toMatch(/compacting context · 10.1k tokens · 12s/);
+    app.unmount();
+  });
+
+  it("prioritizes compaction over the previous step's streamed reply", () => {
+    const state = makeState({ streamingAssistantText: "previous step", contextCompactions: {
+      abc: { phase: "running", sinceTs: Date.now(), tokensBefore: 10000 },
+    } });
+    const app = render(<ThinkingIndicator state={state} />);
+    expect(strip(app.lastFrame() ?? "")).toContain("compacting context");
+    expect(strip(app.lastFrame() ?? "")).not.toContain("writing reply");
+    app.unmount();
+  });
+  it("shows completed source chunks and their source size independently of the prompt estimate", () => {
+    const state = makeState({ status: "idle", runStartedAt: null, contextCompactions: {
+      abc: { phase: "running", sinceTs: Date.now() - 12_000, tokensBefore: 7587,
+        progress: { chunk: 2, chunks: 7, completedChunks: 1, sourceTokens: 55300 } },
+    } });
+    const app = render(<ThinkingIndicator state={state} />);
+    expect(strip(app.lastFrame() ?? "")).toContain("compacting context · part 2/7 · 12s");
+    expect(strip(app.lastFrame() ?? "")).toContain("1/7 parts done · ~55.3k source tokens");
+    expect(strip(app.lastFrame() ?? "")).not.toContain("7.6k");
+    app.unmount();
+  });
+
+  it("keeps the current step visible while a request waits at the boundary", () => {
+    const state = makeState({ contextCompactions: { abc: { phase: "queued", sinceTs: Date.now() } } });
+    const app = render(<ThinkingIndicator state={state} />);
+    expect(strip(app.lastFrame() ?? "")).toContain("thinking");
+    expect(strip(app.lastFrame() ?? "")).toContain("context compaction waiting for the current step");
+    expect(strip(app.lastFrame() ?? "")).not.toContain("compacting context");
+    app.unmount();
+  });
+
+  it("does not show a background chat's compaction", () => {
+    const state = makeState({ status: "idle", contextCompactions: {
+      other: { phase: "running", sinceTs: Date.now(), tokensBefore: 10000 },
+    } });
+    const app = render(<ThinkingIndicator state={state} />);
+    expect(strip(app.lastFrame() ?? "").trim()).toBe("");
+    app.unmount();
+  });
+
   it("shows the active tool name + identifying arg when a tool is in flight", () => {
     const state = makeState({
       streamingToolCalls: [

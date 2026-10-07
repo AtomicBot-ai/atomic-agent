@@ -143,7 +143,7 @@ for (const owner of ['tui-config', 'channel-config', 'integration-config']) {
   }, clean);
 }
 
-for (const owner of ['agent/agent-types', 'agent/agent-defaults', 'agent/agent-parser', 'http-config', 'tool-config', 'skills-config', 'session-retention-config', 'tracing-config']) {
+for (const owner of ['agent/agent-types', 'agent/agent-defaults', 'agent/agent-parser', 'agent/compaction-config', 'http-config', 'tool-config', 'skills-config', 'session-retention-config', 'tracing-config']) {
   const up = owner.startsWith('agent/') ? '../' : './';
   fixture(`${owner} cannot import composing schema`, { [`src/config/${owner}.ts`]: `import "${up}config-schema.js";`, 'src/config/config-schema.ts': '' }, rejects(/resource config depends outside concrete configuration owners/));
   fixture(`${owner} cannot import root API types`, { [`src/config/${owner}.ts`]: `import type { A } from "${up}index.js";`, 'src/config/index.ts': 'export type A = string;' }, rejects(/resource config depends outside concrete configuration owners.*type-only/));

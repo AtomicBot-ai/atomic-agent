@@ -11,6 +11,8 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 ChatMessage, pending output, tool expansion, turn marks and active-session attribution remain in [TuiState](../tui-state.ts) and [agent-event-reducer](../agent-event-reducer.ts). [ChatOrchestrator](../chat-orchestrator.ts) is the whole TUI runtime/session coordinator despite its name: switching, replay, detached turns, approvals, cancellation and feature orchestrators remain there. [TuiApp](../tui-app.tsx) composes chat with editor, panels and menus. Do not move runtime resources into bubbles.
 
+[thinking-indicator.tsx](thinking-indicator.tsx) also renders queued/running context compaction independently of the agent's turn status. A running summary shows its own elapsed time, current/planned part, completed parts and estimated raw source size (separate from rendered history tokens); progress within a model call is not guessed. Per-session activity survives switching chats and is removed on completion, failure, cancellation or a request that needs no reduction.
+
 Plan handoff composes [coding mode](../coding-mode/README.md); shared logo and its types stay in [components](../components/README.md). Links/copy use shared mouse/clipboard services. Preserve one rendered terminal reply, tool-result ordering, worker attribution, finalisation, retries and narrow-terminal splash fitting.
 
 ## Checks and limits

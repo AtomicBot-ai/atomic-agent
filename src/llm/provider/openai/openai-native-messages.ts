@@ -42,6 +42,9 @@ export function buildNativeMessages(
   options: NativeMessageOptions,
 ): OpenAiChatMessage[] {
   const out: OpenAiChatMessage[] = [{ role: "system", content: prompt.system }];
+  if (prompt.contextSummary) {
+    out.push({ role: "user", content: prompt.contextSummary });
+  }
   if (prompt.droppedSummary) {
     out.push({ role: "user", content: prompt.droppedSummary });
   }

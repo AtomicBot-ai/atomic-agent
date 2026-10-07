@@ -429,6 +429,10 @@ export const MENU: readonly MenuNode[] = [
     },
   },
   {
+    kind: "action", id: "session.compact", label: "Compact context", group: "session",
+    slash: { name: "compact", description: "summarize older context; show displays the saved summary", rank: 44 },
+  },
+  {
     kind: "action",
     id: "session.context",
     label: "Context window",

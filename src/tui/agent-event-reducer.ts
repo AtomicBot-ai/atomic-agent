@@ -72,6 +72,13 @@ import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
 export type { TuiAction } from "./tui-action.js";
 
+function clearContextCompaction(state: TuiState, sessionId: string): TuiState {
+  if (!state.contextCompactions[sessionId]) return state;
+  const contextCompactions = { ...state.contextCompactions };
+  delete contextCompactions[sessionId];
+  return { ...state, contextCompactions };
+}
+
 export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   // First in the chain, and only ever claims an action while the
   // first-run flow is open. Several actions belong to two owners then —
@@ -124,6 +131,15 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {
+    case "compaction_requested":
+      return state.contextCompactions[action.sessionId] ? state : {
+        ...state,
+        contextCompactions: { ...state.contextCompactions, [action.sessionId]: { phase: "queued", sinceTs: Date.now() } },
+        chatScrollOffset: 0,
+      };
+    case "compaction_request_settled":
+      return action.busy && state.contextCompactions[action.sessionId]?.phase === "running"
+        ? state : clearContextCompaction(state, action.sessionId);
     case "runtime_info":
       return appendFeed(state, {
         kind: "runtime_info",
@@ -163,7 +179,27 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         session: { ...state.session, approvalLevel: action.approvalLevel },
       };
-    case "agent_event":
+    case "agent_event": {
+      // Remember maintenance on background chats without painting their notices
+      // into this transcript. Switching back then restores the live indicator.
+      if (action.event.type === "compaction_started") {
+        state = { ...state, contextCompactions: { ...state.contextCompactions,
+          [action.event.sessionId]: { phase: "running", sinceTs: Date.now(), tokensBefore: action.event.tokensBefore },
+        }, ...(action.event.sessionId === state.session.sessionId ? { chatScrollOffset: 0 } : {}) };
+      } else if (action.event.type === "compaction_progress") {
+        const { sessionId, chunk, chunks, completedChunks, sourceTokens } = action.event;
+        state = { ...state, contextCompactions: { ...state.contextCompactions,
+          [sessionId]: { ...state.contextCompactions[sessionId], phase: "running",
+            sinceTs: state.contextCompactions[sessionId]?.sinceTs ?? Date.now(),
+            progress: { chunk, chunks, completedChunks, sourceTokens } },
+        } };
+      } else if (action.event.type === "compaction_completed" || action.event.type === "compaction_failed") {
+        state = clearContextCompaction(state, action.event.sessionId);
+      }
+      const sessionId = action.sessionId ?? (
+        action.event.type === "compaction_started" || action.event.type === "compaction_progress" || action.event.type === "compaction_completed" || action.event.type === "compaction_failed"
+          ? action.event.sessionId : undefined
+      );
       // Events from a turn running on a *different* session — one the
       // operator backgrounded by switching away, or a scheduler /
       // Telegram / HTTP turn — must not paint into the transcript on
@@ -171,8 +207,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       // composer). An untagged event was emitted outside a turn frame
       // (global notices) and passes through as before.
       if (
-        action.sessionId !== undefined &&
-        action.sessionId !== state.session.sessionId
+        sessionId !== undefined &&
+        sessionId !== state.session.sessionId
       ) {
         // …except for a pointer when that turn parks on its provider:
         // the notice itself lands in its own thread (the switch-back
@@ -185,12 +221,13 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
           return appendChatMessage(state, {
             role: "system",
             variant: "warn",
-            text: formatBackgroundProviderWaitNotice(action.sessionId),
+            text: formatBackgroundProviderWaitNotice(sessionId),
           });
         }
         return state;
       }
       return reduceAgentEvent(state, action.event);
+    }
     case "session_delete_requested":
       return {
         ...state,
@@ -287,8 +324,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         };
       }
       return { ...state, activeTab: action.tab };
-    case "abort_requested":
-      return { ...state, aborting: true, abortArmed: false };
+    case "abort_requested": {
+      const maintenanceOnly = Boolean(state.contextCompactions[state.session.sessionId ?? ""])
+        && state.status !== "running" && state.status !== "awaiting_approval";
+      return { ...state, aborting: !maintenanceOnly, abortArmed: false };
+    }
     case "abort_armed":
       return state.abortArmed ? state : { ...state, abortArmed: true };
     case "abort_disarmed":
@@ -871,6 +911,19 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         stepIndex: event.stepIndex,
         line: `» the model returned an empty reply — trying again (${event.attempt}/${event.budget})`,
         color: "yellow",
+      });
+    case "compaction_started":
+      return appendChatMessage(state, { role: "system", text: `Compacting context (active history: ~${event.tokensBefore} tokens)…` });
+    case "compaction_progress":
+      return state;
+    case "compaction_completed":
+      return appendChatMessage({ ...state, ...(event.contextUsage ? { contextUsage: event.contextUsage } : {}) }, {
+        role: "system", text: `Context compacted: ~${event.result.tokensBefore} → ~${event.result.tokensAfter} tokens. Summary usage: ${event.usage.totalTokens} tokens (${event.calls} calls)${event.result.costUsd !== undefined ? `, ~$${event.result.costUsd.toFixed(4)}` : ""}.`,
+      });
+    case "compaction_failed":
+      return appendChatMessage(state, { role: "system", text: event.result.status === "cancelled"
+        ? "Context compaction cancelled."
+        : `Context compaction failed: ${(event.result.message ?? "unknown error").replace(/[.!?]+$/, "")}. Existing context retained; history trimming remains available.`,
       });
     case "profile_clipped": {
       // Issue #407: the clip used to show only as a `[truncated]` inside

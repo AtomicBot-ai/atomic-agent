@@ -1,3 +1,4 @@
+import type { CompactionConfig } from "./compaction-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
 
@@ -73,6 +74,7 @@ export interface RuntimeAgentConfig {
    * number here, and the context panel says so when that ceiling —
    * rather than the window — is what holds the transcript down.
    */
+  compaction: CompactionConfig;
   conversationMaxTokens: number;
   /**
    * Macro-turns of history the prompt carries — one per task you sent,
@@ -208,6 +210,7 @@ export interface UserAgentConfig {
    * migration (see `resolveApprovalLevel`) and never written back.
    */
   approvalLevel: ApprovalLevel;
+  compaction: CompactionConfig;
   conversationMaxTokens: number;
   /**
    * How many macro-turns of history the prompt carries — one "pair"

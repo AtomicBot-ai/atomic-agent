@@ -14,6 +14,8 @@ export type HostRequestType =
   | "cancel"
   | "approval_response"
   | "get_session"
+  | "compact_session"
+  | "get_compaction"
   | "skill_install"
   | "skill_uninstall"
   | "skill_list"
@@ -21,6 +23,10 @@ export type HostRequestType =
   | "ping";
 
 export type SidecarEventType =
+  | "compaction_started"
+  | "compaction_progress"
+  | "compaction_completed"
+  | "compaction_failed"
   | "session_started"
   | "step_started"
   | "step_finished"
@@ -321,3 +327,7 @@ export function isSidecarEvent(msg: SidecarMessage): msg is SidecarEvent {
 export function isSidecarResponse(msg: SidecarMessage): msg is SidecarResponse {
   return msg.kind === "response";
 }
+
+/** Context maintenance controls; neither creates a user turn. */
+export interface CompactSessionPayload { sessionId: string }
+export interface GetCompactionPayload { sessionId: string }

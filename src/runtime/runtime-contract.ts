@@ -1,3 +1,4 @@
+import type { CompactionResult, SessionCompaction } from "../session/session-compaction.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import type { AtomicAgentConfig } from "../config/index.js";
 import type { LlmStreamParams } from "../agent/step/step-contract.js";
@@ -447,6 +448,10 @@ export interface AgentRuntime {
    * it. See `src/session/fusion-worker-session.ts`.
    */
   createEphemeralSession(meta: FusionWorkerMeta): SessionState;
+  /** Maintain context without creating a turn or a transcript message. */
+  compactSession(sessionId: string, options?: { signal?: AbortSignal }): Promise<CompactionResult>;
+  getSessionCompaction(sessionId: string): SessionCompaction | null;
+  cancelSessionCompaction(sessionId: string): boolean;
   /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is

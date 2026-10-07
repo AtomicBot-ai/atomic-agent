@@ -1,3 +1,4 @@
+import { createSessionCompactionHandler } from "./route-compaction.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
@@ -83,6 +84,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/capabilities",
       handler: createCapabilitiesHandler(),
     },
+    { method: "POST", path: "/api/sessions/{id}/compact", handler: createSessionCompactionHandler(true) },
+    { method: "GET", path: "/api/sessions/{id}/compaction", handler: createSessionCompactionHandler(false) },
     { method: "GET", path: "/api/config", handler: createGetConfigHandler() },
     {
       method: "PATCH",

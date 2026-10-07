@@ -68,4 +68,22 @@ describe("pure next-turn prompt preview", () => {
     expect(built.text).not.toContain("first.tool");
     expect(built.text.endsWith("<think>")).toBe(false);
   });
+
+  it("uses the session route's window instead of an unrelated local profile", () => {
+    const session = recordTurn(createEmptySessionState({ id: "cloud-session", workingDir: dir }), userTurn("continue"));
+    const resolveToolTransport = vi.fn((): ToolCallTransport => "native_tools");
+    const resolveCatalogContextWindow = vi.fn(() => 32000);
+    const profileWindowApplies = vi.fn(() => false);
+    const preview = createRuntimePromptPreview(getConfig(), {
+      workingDir: dir, sessionStore: { load: () => session }, profileStore: { listForPrompt: () => [] },
+      capabilities: { platform: "darwin", arch: "arm64", browserChannel: "chrome", workingDir: dir, hasClipboard: false, hasWmctrl: false, hasNotifications: false },
+      effectiveToolDescriptors: () => [], getSkillCatalog: () => [],
+      getLiveProfile: () => ({ ...QWEN_THINK_PROFILE, contextWindow: 4096 }),
+      resolveToolTransport, resolveCatalogContextWindow, profileWindowApplies,
+    });
+    expect(preview({ sessionId: session.id }).contextWindow).toBe(32000);
+    expect(resolveToolTransport).toHaveBeenCalledWith(session.id);
+    expect(resolveCatalogContextWindow).toHaveBeenCalledWith(session.id);
+    expect(profileWindowApplies).toHaveBeenCalledWith(session.id);
+  });
 });

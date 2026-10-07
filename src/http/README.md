@@ -24,3 +24,5 @@ Read README.md and ../runtime/docs/lifecycle.md for session/stream/steering chan
 ## Validation
 
 `npx vitest run src/http`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
+
+[Compaction routes](route-compaction.ts) expose `POST /api/sessions/{id}/compact` and `GET /api/sessions/{id}/compaction`. The POST waits for runtime completion and cancels only its operation on disconnect. See [the shared contract](../runtime/docs/compaction.md).

@@ -26,6 +26,15 @@ function strip(value: string): string {
 }
 
 describe("ChatLog", () => {
+  it("shows an idle chat's live compaction instead of the splash", () => {
+    const state = { ...createInitialTuiState(BASE_SESSION), contextCompactions: {
+      abc: { phase: "running" as const, sinceTs: Date.now(), tokensBefore: 10000 },
+    } };
+    const app = render(<ChatLog state={state} />);
+    expect(strip(app.lastFrame() ?? "")).toContain("compacting context");
+    expect(strip(app.lastFrame() ?? "")).not.toContain("/help");
+    app.unmount();
+  });
   it("renders the splash banner when no messages and no streaming", () => {
     const state = createInitialTuiState(BASE_SESSION);
     const { lastFrame } = render(<ChatLog state={state} />);
