@@ -494,6 +494,8 @@ export function handleAppKey(
     if (state.status === "running" || state.status === "awaiting_approval") {
       callbacks.onAbort();
       dispatch({ type: "abort_requested" });
+    } else if (state.contextCompactions[state.session.sessionId ?? ""]) {
+      callbacks.onAbort();
     }
     return true;
   }
@@ -524,9 +526,11 @@ export function handleAppKey(
   // `disabled` while a turn runs, which switches its `useInput` off and
   // makes the abort branch over there unreachable. Overlays that own Esc
   // themselves keep it; a pending approval already returned above.
+  // Between turns Esc can cancel context maintenance without arming an
+  // agent-turn abort: no completed steps are being discarded then.
   if (
     key.escape &&
-    state.status === "running" &&
+    (state.status === "running" || Boolean(state.contextCompactions[state.session.sessionId ?? ""])) &&
     !state.slashPaletteOpen &&
     !state.themePickerOpen &&
     !state.sessionPickerOpen &&
@@ -544,6 +548,10 @@ export function handleAppKey(
     // offset there would just make Esc look dead.
     if (state.uiMode === "chat" && state.chatScrollOffset > 0) {
       dispatch({ type: "chat_scroll_reset" });
+      return true;
+    }
+    if (state.status !== "running") {
+      callbacks.onAbort();
       return true;
     }
     // Esc arms; `1` below confirms. Aborting a turn throws away every

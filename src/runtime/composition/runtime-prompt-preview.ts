@@ -3,7 +3,7 @@ import type { AtomicAgentConfig } from "../../config/index.js";
 import { createEmptySessionState, recordTurn, userTurn, type SessionState } from "../../session/index.js";
 import type { SessionStore } from "../../session/session-store.js";
 import { buildPrompt } from "../../prompt/build-prompt.js";
-import type { BuiltPrompt } from "../../prompt/build-prompt-types.js";
+import type { BuildPromptInput, BuiltPrompt } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
 import type { CapabilitiesSummary, SkillCatalogEntry, ToolDescriptor } from "../../prompt/stable-prefix.js";
 import type { ModelProfile } from "../../llm/model-profile.js";
@@ -19,13 +19,14 @@ export interface RuntimePromptPreviewDependencies {
   effectiveToolDescriptors(): readonly ToolDescriptor[];
   getSkillCatalog(): readonly SkillCatalogEntry[];
   getLiveProfile(): ModelProfile;
-  resolveToolTransport(): ToolCallTransport;
-  resolveCatalogContextWindow(): number | null;
+  resolveToolTransport(sessionId?: string): ToolCallTransport;
+  resolveCatalogContextWindow(sessionId?: string): number | null;
+  profileWindowApplies?(sessionId?: string): boolean;
 }
 
 /** Build the next prompt without running memory prefetch, inference or persistence. */
 export function createRuntimePromptPreview(config: AtomicAgentConfig, deps: RuntimePromptPreviewDependencies) {
-  const { workingDir, sessionStore, profileStore, capabilities } = deps;
+  const { workingDir, sessionStore } = deps;
   return (input: {
     sessionId: string | null;
     userMessage?: string;
@@ -52,27 +53,32 @@ export function createRuntimePromptPreview(config: AtomicAgentConfig, deps: Runt
     if (input.userMessage !== undefined && input.userMessage.length > 0) {
       session = recordTurn(session, userTurn(input.userMessage));
     }
-    const transport = deps.resolveToolTransport();
-    return buildPrompt({
+    return buildPrompt(buildRuntimePromptInput(config, deps, session, input.userMessage));
+  };
+
+}
+
+export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: RuntimePromptPreviewDependencies, session: SessionState, userMessage?: string): BuildPromptInput {
+    const transport = deps.resolveToolTransport(session.id);
+    return {
       session,
       // Called, not read: main made the descriptors late-bound so a live MCP
       // add/remove is visible without a restart. The preview wants the same
       // catalogue the next real turn would get.
       toolDescriptors: deps.effectiveToolDescriptors(),
-      capabilities,
+      capabilities: deps.capabilities,
       skillCatalog: deps.getSkillCatalog(),
       currentDate: formatCurrentDate(new Date()),
       profile: deps.getLiveProfile(),
       toolTransport: transport,
       suppressReasoningPrefill: transport === "native_tools",
-      contextWindow: deps.resolveCatalogContextWindow(),
+      contextWindow: deps.resolveCatalogContextWindow(session.id),
+      ...(deps.profileWindowApplies ? { profileWindowApplies: deps.profileWindowApplies(session.id) } : {}),
       ...(config.memory.profile.enabled
-        ? { profileFacts: profileStore.listForPrompt() }
+        ? { profileFacts: deps.profileStore.listForPrompt() }
         : {}),
-      ...(input.userMessage !== undefined
-        ? { userMessage: input.userMessage }
+      ...(userMessage !== undefined
+        ? { userMessage }
         : {}),
-    });
-  };
-
+    };
 }

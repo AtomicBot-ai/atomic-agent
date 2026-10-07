@@ -4,6 +4,15 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../../local-llm/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../local-llm/index.js")>("../../local-llm/index.js");
+  return {
+    ...actual,
+    // The pid fixture represents this model, regardless of a real server on its port.
+    fetchServedModelIds: vi.fn(async () => ["qwen-3.5-4b"]),
+  };
+});
+
 import {
   getUserConfigPath,
   writeUserConfigFileSync,

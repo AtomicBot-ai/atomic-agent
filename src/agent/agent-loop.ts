@@ -1,3 +1,8 @@
+import { readContextLengthFromRejection } from "../llm/reliability/request-size-rejection.js";
+import { prepareStepPrompt } from "./step/step-inference.js";
+import type { StepContext, StepDependencies } from "./step/step-contract.js";
+import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
+import { contextCompactionRejection } from "./turn/compaction-recovery.js";
 import { createTurnLoopState } from "./turn/turn-state.js";
 import { recoverTurnStep, abortableSleep } from "./turn/turn-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
@@ -87,12 +92,14 @@ export class AgentLoop {
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
     this.deps.steeringInbox?.open(session.id);
+    this.deps.compaction?.open(session.id, options.signal);
     // Like the fan-out grant: forgotten when a turn starts rather than
     // when it ends, so an aborted turn cannot carry a no into the next.
     this.deps.forgetDeclinedApprovals?.(session.id);
     try {
       return await this.runTurnInner(session, options);
     } finally {
+      this.deps.compaction?.close(session.id);
       // Every ordinary exit already closed the window through
       // `flushSteering` — a `return` expression is evaluated before
       // this block runs, so `undelivered` is unaffected and this call
@@ -125,6 +132,7 @@ export class AgentLoop {
     const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes } = policies;
     let { fusionState, reviewStall } = policies;
     const turn = createTurnLoopState();
+    let overflowCompactionAttempted = false;
     const { legSteps, stepCeiling, durationCeilingMs, taskStartedAt } =
       prepareTurnBudgets(options);
     // Provider-outage parking. A transport failure means "this link is
@@ -328,6 +336,7 @@ export class AgentLoop {
             )
           : durationCeilingMs - elapsedMs,
       );
+      let compactionInput: BuildPromptInput | undefined;
       try {
         // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
@@ -352,8 +361,7 @@ export class AgentLoop {
           PLAIN_INSTRUCT_PROFILE;
         const activeGrammar =
           this.deps.profileManager?.getGrammar() ?? this.deps.grammar;
-        const outcome = await executeStep(
-          {
+        const stepContext: StepContext = {
             session: state,
             toolDescriptors: visibleToolDescriptors(),
             capabilities: this.deps.capabilities,
@@ -400,8 +408,8 @@ export class AgentLoop {
             ...(options.maxOutputTokens !== undefined
               ? { maxOutputTokens: options.maxOutputTokens }
               : {}),
-          },
-          {
+          };
+        const stepDeps: StepDependencies = {
             registry: this.deps.registry,
             ...(this.deps.isPlanMode
               ? { isPlanMode: this.deps.isPlanMode }
@@ -427,8 +435,8 @@ export class AgentLoop {
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
-            ...(this.deps.contextWindow
-              ? { contextWindow: this.deps.contextWindow() }
+            ...(pinnedSlice?.contextWindow !== undefined || this.deps.contextWindow
+              ? { contextWindow: pinnedSlice?.contextWindow !== undefined ? pinnedSlice.contextWindow : this.deps.contextWindow?.() ?? null }
               : {}),
             // The `/props` profile describes the local llama-server. It
             // is the right window only when this step is routed there:
@@ -493,8 +501,37 @@ export class AgentLoop {
             ...(this.deps.metrics ? { metrics: this.deps.metrics } : {}),
             ...(this.deps.logger ? { logger: this.deps.logger } : {}),
             tracker: loopTracker,
-          },
-        );
+          };
+        if (this.deps.compaction) {
+          compactionInput = prepareStepPrompt(stepContext, stepDeps).promptInput;
+          let maintenance = this.deps.compaction.beforeStep(compactionInput, {
+            signal: requestDeadline.signal,
+            ...(options.providerId ? { providerId: options.providerId } : {}),
+            ...(options.ephemeral ? { ephemeral: true } : {}),
+          });
+          while (maintenance) {
+            state = await maintenance;
+            // Messages arriving during summarization join this inference, not the next one.
+            const late = this.deps.steeringInbox?.drain(state.id) ?? [];
+            for (const text of late) {
+              state = recordTurn(state, steeredUserTurn(text));
+              this.deps.onEvent?.({ type: "steer_applied", text, stepIndex: i });
+            }
+            if (late.length) {
+              this.deps.forgetDeclinedApprovals?.(state.id);
+              stepContext.transientNotice = composeSteerNotice(stepContext.transientNotice, late);
+            }
+            stepContext.session = state;
+            if (!late.length) break;
+            compactionInput = prepareStepPrompt(stepContext, stepDeps).promptInput;
+            maintenance = this.deps.compaction.beforeStep(compactionInput, {
+              signal: requestDeadline.signal,
+              ...(options.providerId ? { providerId: options.providerId } : {}),
+              ...(options.ephemeral ? { ephemeral: true } : {}),
+            });
+          }
+        }
+        const outcome = await executeStep(stepContext, stepDeps);
         requestDeadline.dispose();
         const durationMs = Date.now() - started;
         if (turn.awaitingRecovery) {
@@ -810,6 +847,31 @@ export class AgentLoop {
         recordSurfacedProcedures(state);
         recordSurfacedNotes(state);
       } catch (err) {
+        // A refused inference has executed no tools. Spend at most one compaction
+        // retry, before recovery emits a terminal failure or touches step counters.
+        const sizeRejection = contextCompactionRejection(err);
+        if (sizeRejection !== null &&
+            !requestDeadline.signal.aborted && !overflowCompactionAttempted &&
+            this.deps.compaction && compactionInput) {
+          overflowCompactionAttempted = true;
+          const observed = readContextLengthFromRejection(sizeRejection);
+          if (observed) this.deps.onContextWindowObserved?.(observed);
+          const before = state.compaction;
+          state = await (this.deps.compaction.beforeStep({ ...compactionInput, session: state,
+            ...(observed ? { contextWindow: observed, profileWindowApplies: false } : {}),
+          }, {
+            signal: requestDeadline.signal, requested: "overflow",
+            ...(options.providerId ? { providerId: options.providerId } : {}),
+            ...(options.ephemeral ? { ephemeral: true } : {}),
+          }) ?? Promise.resolve(state));
+          if (state.compaction !== before) {
+            requestDeadline.dispose();
+            turn.sizeRepackRetry = { stepIndex: i };
+            turn.pendingNotice = noticeForThisStep;
+            i -= 1;
+            continue;
+          }
+        }
         const decision = recoverTurnStep(err, {
           state, options, stepIndex: i, finalizationStep, noticeForThisStep,
           effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,

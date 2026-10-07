@@ -243,6 +243,7 @@ export function runSlashCommand(
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
+  if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {

@@ -472,6 +472,13 @@ export interface TuiState {
   metrics: RollingMetrics;
   /** Live context-window occupancy, driving the composer's context chip. */
   contextUsage: ContextUsageState;
+  /** Transient maintenance activity, retained per chat across session switches. */
+  contextCompactions: Readonly<Record<string, {
+    phase: "queued" | "running";
+    sinceTs: number;
+    tokensBefore?: number;
+    progress?: { chunk: number; chunks: number; completedChunks: number; sourceTokens: number };
+  }>>;
   logs: LogRecord[];
   /** Top-level UI mode (chat vs debug). */
   uiMode: TuiUiMode;
@@ -882,6 +889,7 @@ export function createInitialTuiState(
       toolsError: 0,
     },
     contextUsage: EMPTY_CONTEXT_USAGE,
+    contextCompactions: {},
     logs: [],
     uiMode: layout?.uiMode ?? "chat",
     onboarding: layout?.onboarding ?? null,

@@ -1,3 +1,4 @@
+import { parseCompactionConfig } from "./compaction-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { ReadScope, UserAgentConfig } from "./agent-types.js";
 import { ConfigValidationError } from "../config-validation-error.js";
@@ -125,6 +126,7 @@ export function parseAgentConfig(
     // Non-negative rather than positive: `0` is the "auto" sentinel
     // (`CONVERSATION_CAP_AUTO`), not a request for a zero-token
     // transcript.
+    compaction: parseCompactionConfig(agent.compaction, readDefaults().compaction),
     conversationMaxTokens: parseNonNegativeInt(
       agent.conversationMaxTokens ??
         readDefaults().conversationMaxTokens,

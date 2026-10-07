@@ -1,3 +1,4 @@
+import type { ContextCompactionControl, CompactionEvent } from "./compaction-control.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
@@ -26,6 +27,7 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
 export interface AgentLoopDependencies {
+  compaction?: ContextCompactionControl;
   registry: ToolRegistry;
   /**
    * Plan mode, read per call. A getter rather than a boolean so a mode
@@ -277,6 +279,7 @@ export interface ReflectionSegmentationConfig {
  * for the pinned one instead. See `AgentLoopDependencies.resolveLlmSlice`.
  */
 export interface ResolvedTurnLlmSlice {
+  contextWindow?: number | null;
   toolTransport: ToolCallTransport;
   toolCallAdapter: ToolCallAdapter | null;
   supportsSlotAffinity: boolean;
@@ -488,6 +491,7 @@ export type AgentLoopReason =
   "reply" | "finish" | "max_steps" | "cancelled" | "failed";
 
 export type AgentLoopEvent =
+  | CompactionEvent
   | { type: "user_message"; text: string }
   /**
    * A message the user sent mid-turn was folded into the prompt for

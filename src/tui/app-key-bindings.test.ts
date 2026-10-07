@@ -62,6 +62,31 @@ function stubSession(): TuiSessionInfo {
 }
 
 describe("handleAppKey", () => {
+  it.each([
+    { phase: "queued", escape: false },
+    { phase: "running", escape: false },
+    { phase: "queued", escape: true },
+    { phase: "running", escape: true },
+  ] as const)("cancels idle compaction with keyboard (phase: $phase, Escape: $escape)", ({ phase, escape }) => {
+    const state = createInitialTuiState(stubSession());
+    state.contextCompactions = { "s-x": { phase, sinceTs: Date.now() } };
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const onQuit = vi.fn();
+    const handled = handleAppKey(escape ? "" : "c", emptyKey({ escape, ctrl: !escape }), {
+      state, dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit },
+      ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false,
+      menuLeaderArmed: false, setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(), activateComposerSwitch: vi.fn(),
+    });
+    expect(handled).toBe(true);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(onQuit).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_requested" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_armed" });
+  });
+
   it("returns false when no binding matches", () => {
     const state = createInitialTuiState(stubSession());
     const handled = handleAppKey("z", emptyKey(), {

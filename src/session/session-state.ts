@@ -1,3 +1,4 @@
+import type { SessionCompaction } from "./session-compaction.js";
 import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
@@ -128,6 +129,10 @@ export interface SessionState {
    * the session because the daemon's KV cache outlives the process.
    */
   conversationPackStart?: ConversationPackStart;
+  /** Semantic checkpoint; the full transcript remains unchanged. */
+  compaction?: SessionCompaction;
+  /** Last load discarded an invalid checkpoint; surfaced by runtime, never sent to the model. */
+  compactionWarning?: string;
   /** Full conversation transcript in chronological order. */
   turns: ConversationTurn[];
   createdAt: number;

@@ -536,3 +536,14 @@ describe("dispatchSlashCommand", () => {
     );
   });
 });
+
+describe("context compaction commands", () => {
+  it("routes compact and show without forwarding a user message", () => {
+    expect(dispatchSlashCommand("/compact")).toMatchObject({ compactionVerb: "run", forwardAsMessage: false });
+    expect(dispatchSlashCommand("/compact show")).toMatchObject({ compactionVerb: "show", forwardAsMessage: false });
+    expect(dispatchSlashCommand("/compact anything").systemMessage).toBe("Usage: /compact [show]");
+    expect(dispatchSlashCommand("/compound").compactionVerb).toBeUndefined();
+    expect(dispatchSlashCommand("/help").systemMessage).toContain("/compact —");
+    expect(dispatchSlashCommand("/help").systemMessage).not.toContain("/compound");
+  });
+});

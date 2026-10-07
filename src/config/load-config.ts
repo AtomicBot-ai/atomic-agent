@@ -243,6 +243,7 @@ export function loadConfig(): AtomicAgentConfig {
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
+      compaction: user.agent.compaction,
       conversationMaxTokens: user.agent.conversationMaxTokens,
       conversationMaxPairs: user.agent.conversationMaxPairs,
       nameSessions: user.agent.nameSessions,

@@ -235,6 +235,10 @@ const V0_2_2_SLASH_COMMANDS = [
     aliases: ["setup"],
   },
   {
+    name: "compact",
+    description: "summarize older context; show displays the saved summary",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",

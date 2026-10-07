@@ -216,6 +216,7 @@ export class ChatOrchestrator {
   /** Latest release version captured by `checkForUpdate`, used by `runUpdate`. */
   private pendingUpdateVersion: string | null = null;
   private readonly queue: string[] = [];
+  private readonly pendingCompactions = new Set<string>();
   /**
    * Messages refused since the queue last had room, so a burst reads as
    * one escalating counter instead of N identical lines. Reset by the
@@ -891,11 +892,11 @@ export class ChatOrchestrator {
     // as if the operator had never left.
     const resumed = this.detachedTurns.take(sessionId);
     if (resumed) this.currentController = resumed;
-    // `isBusy` additionally catches turns from other origins (a
-    // scheduled task, Telegram, HTTP) so the composer offers steer
-    // instead of pretending the thread is idle.
+    // The FIFO also owns between-turn maintenance. Only a persisted turn
+    // mark or a reattached controller makes this an agent turn; otherwise
+    // compaction would leave a fake running turn after its own events end.
     const running =
-      resumed !== null || this.runtime.turnController.isBusy(sessionId);
+      resumed !== null || (this.runtime.turnController.isBusy(sessionId) && loaded.status === "running");
     this.bus.emit({
       type: "session_switched",
       sessionId: loaded.id,
@@ -1614,6 +1615,36 @@ export class ChatOrchestrator {
     return ids.slice(0, DEBUG_BUNDLE_TRACE_LIMIT);
   }
 
+  async compactContext(verb: "run" | "show"): Promise<void> {
+    const id = this.session?.id;
+    if (!id) { this.notify("No conversation to compact yet."); return; }
+    if (verb === "show") {
+      try { this.notify(this.runtime.getSessionCompaction(id)?.summary ?? "No saved context summary yet."); }
+      catch (error) { this.notify(`Cannot read context summary: ${error instanceof Error ? error.message : String(error)}`); }
+      return;
+    }
+    if (this.pendingCompactions.has(id)) {
+      this.notify("Context compaction is already pending or running.");
+      return;
+    }
+    this.pendingCompactions.add(id);
+    this.bus.emit({ type: "compaction_requested", sessionId: id });
+    let busy = false;
+    try {
+      const result = await this.runtime.compactSession(id);
+      busy = result.status === "busy";
+      // The loop owns its live state. Never install a saved snapshot here.
+      if (this.session?.id === id && result.status !== "compacted" && result.status !== "failed" && result.status !== "cancelled") {
+        this.notify(result.status === "busy" ? "Context compaction is already pending or running." : result.message ?? "No useful context reduction available.");
+      }
+    } catch (error) {
+      if (this.session?.id === id) this.notify(`Context compaction failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.pendingCompactions.delete(id);
+      this.bus.emit({ type: "compaction_request_settled", sessionId: id, busy });
+    }
+  }
+
   /**
    * Esc / Ctrl+C / `/abort` — stop the agent, not merely this turn.
    *
@@ -1627,6 +1658,7 @@ export class ChatOrchestrator {
    * N of them silently is worse than one line in the transcript.
    */
   abortCurrentTurn(): void {
+    if (this.session) this.runtime.cancelSessionCompaction?.(this.session.id);
     const dropped = [...this.queue];
     if (dropped.length > 0) {
       this.queue.length = 0;

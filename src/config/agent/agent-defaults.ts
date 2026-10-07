@@ -1,3 +1,4 @@
+import { createCompactionDefaults } from "./compaction-config.js";
 import type { UserAgentConfig } from "./agent-types.js";
 import { createProviderWaitDefaults, createAgentTaskDefaults } from "../agent-execution-config.js";
 
@@ -12,6 +13,7 @@ export function createAgentDefaults(): UserAgentConfig {
     approvalLevel: 1,
     // `0` = let the model's context window decide (CONVERSATION_CAP_AUTO);
     // the fixed 32K fallback applies only when no window is known.
+    compaction: createCompactionDefaults(),
     conversationMaxTokens: 0,
     conversationMaxPairs: 200,
     nameSessions: true,

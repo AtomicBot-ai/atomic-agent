@@ -21,6 +21,8 @@ export type {
   CancelPayload,
   ApprovalResponsePayload,
   GetSessionPayload,
+  CompactSessionPayload,
+  GetCompactionPayload,
   SkillInstallPayload,
   SkillUninstallPayload,
   ApprovalRequestPayload,

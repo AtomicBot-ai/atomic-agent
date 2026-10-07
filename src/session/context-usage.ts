@@ -113,6 +113,7 @@ const SECTIONS: readonly {
 }[] = [
   { key: "stablePrefix", label: "prompt scaffold" },
   { key: "conversation", label: CONVERSATION_SECTION_LABEL },
+  { key: "compaction", label: "context summary" },
   { key: "recalled", label: "recalled memory" },
   { key: "memoryIndex", label: "memory index" },
   { key: "worldSnapshot", label: "world snapshot" },
@@ -133,7 +134,7 @@ const SECTIONS: readonly {
 export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
   const sections: ContextUsageSection[] = [];
   for (const { key, label } of SECTIONS) {
-    const tokens = prompt.tokens[key];
+    const tokens = prompt.tokens[key] ?? 0;
     if (tokens > 0) sections.push({ label, tokens });
   }
   return {

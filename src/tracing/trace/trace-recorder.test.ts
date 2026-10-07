@@ -18,6 +18,12 @@ function collector(): {
 
 describe("createTraceRecorder", () => {
   const now = (): number => 1000;
+  it("records compaction progress without starting an inference step or turn", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-compact", emit, now });
+    rec.onAgentEvent({ type: "compaction_progress", sessionId: "s-compact", chunk: 2, chunks: 5, completedChunks: 1, sourceTokens: 50000 });
+    expect(events).toEqual([{ type: "compaction_progress", sessionId: "s-compact", chunk: 2, chunks: 5, completedChunks: 1, sourceTokens: 50000, seq: 0, ts: 1000 }]);
+  });
 
   it("emits session_started with monotonic seq starting at 0", () => {
     const { events, emit } = collector();

@@ -16,6 +16,8 @@ vi.mock("../local-llm/index.js", async () => {
     listVulkanDevices: vi.fn(),
     probeNvidiaVramMiB: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
+    // Server lifecycle is scripted here; never reclaim the operator's live port.
+    reclaimManagedPort: vi.fn(async () => ({ kind: "free" })),
   };
 });
 

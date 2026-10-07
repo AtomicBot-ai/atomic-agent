@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { useEffect, useState, type ReactElement } from "react";
 import { useSpinner } from "../hooks/use-spinner.js";
+import { formatTokens } from "../components/format-tokens.js";
 import {
   fanoutExpectation,
   formatElapsed,
@@ -26,26 +27,46 @@ interface ThinkingIndicatorProps {
  *      the turn finalises so the spinner does not flicker on every
  *      delta.
  *
- * Always shows elapsed turn time so the operator can eyeball whether
- * something is stuck. Self-cleans when `state.status` flips out of
- * `running` (renders `null`).
+ * Context compaction has its own clock and can run between turns. Its
+ * live phase takes precedence over stale tool/reply text; a queued request
+ * stays visible alongside the current step until the safe boundary.
  */
 export function ThinkingIndicator({
   state,
 }: ThinkingIndicatorProps): ReactElement | null {
   const running = state.status === "running";
-  const spinner = useSpinner(running);
-  const elapsed = useElapsedSinceStart(state.runStartedAt, running);
-  if (!running) return null;
+  const compaction = state.contextCompactions[state.session.sessionId ?? ""];
+  const compacting = compaction?.phase === "running";
+  const active = running || Boolean(compaction);
+  const spinner = useSpinner(active);
+  const elapsed = useElapsedSinceStart(
+    compacting ? compaction.sinceTs : state.runStartedAt ?? compaction?.sinceTs ?? null,
+    active,
+  );
+  if (!active) return null;
   const phase = derivePhase(state);
   const elapsedLabel = formatElapsed(elapsed);
-  const label = formatPhase(phase, elapsedLabel);
+  const label = compacting
+    ? compaction.progress
+      ? `compacting context · part ${compaction.progress.chunk}/${compaction.progress.chunks} · ${elapsedLabel}`
+      : `compacting context · ${formatTokens(compaction.tokensBefore ?? 0)} tokens · ${elapsedLabel}`
+    : running
+      ? formatPhase(phase, elapsedLabel)
+      : `context compaction queued · ${elapsedLabel}`;
   return (
     <Box marginLeft={3} marginTop={1} flexDirection="column">
       <Box>
         <Text color={theme.colors.assistant}>{spinner} </Text>
         <Text color={theme.colors.muted}>{label}</Text>
       </Box>
+      {compacting && compaction.progress ? (
+        <Text color={theme.colors.muted}>
+          {compaction.progress.completedChunks}/{compaction.progress.chunks} parts done · ~{formatTokens(compaction.progress.sourceTokens)} source tokens
+        </Text>
+      ) : null}
+      {compaction?.phase === "queued" ? (
+        <Text color={theme.colors.muted}>context compaction waiting for the current step</Text>
+      ) : null}
       {/*
         A fusion fan-out holds this turn for minutes with nothing of the
         orchestrator's own to show. Without this the operator watching
@@ -56,7 +77,7 @@ export function ThinkingIndicator({
       {/* One measurement for the whole readout, from the legs of this
           fan-out that have already finished. */}
       {((measured) =>
-        state.fusionLiveWorkers.map((worker) => (
+        (compacting ? [] : state.fusionLiveWorkers).map((worker) => (
           <Box key={worker.taskId} marginLeft={2}>
             <Text
               color={worker.done ? theme.colors.muted : theme.colors.warnStrong}

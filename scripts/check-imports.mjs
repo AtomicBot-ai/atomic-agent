@@ -40,9 +40,10 @@ const sharedViews = new Set([
 sharedViews.add('src/tui/row-window.ts');
 
 const resourceConfigOwners = {
-  'src/config/agent/agent-types.ts': ['src/approval/approval-level.ts', 'src/config/agent-execution-config.ts'],
-  'src/config/agent/agent-defaults.ts': ['src/config/agent/agent-types.ts', 'src/config/agent-execution-config.ts'],
-  'src/config/agent/agent-parser.ts': ['src/config/agent/agent-types.ts', 'src/approval/approval-level.ts', 'src/config/agent-execution-config.ts', 'src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
+  'src/config/agent/agent-types.ts': ['src/approval/approval-level.ts', 'src/config/agent-execution-config.ts', 'src/config/agent/compaction-config.ts'],
+  'src/config/agent/agent-defaults.ts': ['src/config/agent/agent-types.ts', 'src/config/agent-execution-config.ts', 'src/config/agent/compaction-config.ts'],
+  'src/config/agent/compaction-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
+  'src/config/agent/agent-parser.ts': ['src/config/agent/compaction-config.ts', 'src/config/agent/agent-types.ts', 'src/approval/approval-level.ts', 'src/config/agent-execution-config.ts', 'src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
   ...Object.fromEntries(['http-config', 'tool-config', 'skills-config'].map(owner => [`src/config/${owner}.ts`, ['src/config/config-primitives.ts', 'src/config/config-values.ts', 'src/config/config-validation-error.ts']])),
   ...Object.fromEntries(['session-retention-config', 'tracing-config'].map(owner => [`src/config/${owner}.ts`, ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts']])),
 };

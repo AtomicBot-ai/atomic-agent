@@ -36,3 +36,5 @@ Read docs/batching.md for dispatch, docs/recovery.md for failures/progress, and 
 `npx vitest run src/agent`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
 
 [Stage 07 acceptance](../../docs/testing/stage-07-validation.md) records extraction/API evidence, callback-order tests and the paired development case study. Its observed source output is not total model context or a performance guarantee.
+
+The injected [compaction control](compaction-control.ts) runs at a safe boundary before inference, after completed batches. The loop supplies the same pure prompt input as step inference, then drains late steering. Runtime owns subcalls and persistence; see [context compaction](../runtime/docs/compaction.md).

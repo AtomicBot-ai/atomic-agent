@@ -121,3 +121,5 @@ export {
   shouldNameSession,
   type SessionTitleDeps,
 } from "./session-title.js";
+
+export type { SessionCompaction, CompactionResult, CompactionReason } from "./session-compaction.js";

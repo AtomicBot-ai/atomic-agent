@@ -83,7 +83,7 @@ export function ChatLog({
     state.streamingToolCalls.length > 0 ||
     state.streamingToolCards.length > 0 ||
     state.reasoning.length > 0;
-  const showIndicator = state.status === "running";
+  const showIndicator = state.status === "running" || Boolean(state.contextCompactions[state.session.sessionId ?? ""]);
   // Messages sent into the running turn that the loop has not read yet.
   // They go where anything new goes — after everything the turn has
   // said so far, and ahead of the spinner, which stays pinned to the

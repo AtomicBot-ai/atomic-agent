@@ -1,3 +1,4 @@
+import { validSessionCompaction } from "./session-compaction.js";
 import type { SessionState } from "./session-state.js";
 
 /**
@@ -15,7 +16,7 @@ export function normalizeSessionState(raw: unknown): SessionState {
     throw new TypeError("session payload is not an object");
   }
   const s = raw as SessionState;
-  return {
+  const normalized: SessionState = {
     ...s,
     knownFacts: s.knownFacts ?? [],
     latestResult: s.latestResult ?? null,
@@ -28,4 +29,9 @@ export function normalizeSessionState(raw: unknown): SessionState {
     metadata: s.metadata ?? {},
     lastError: s.lastError ?? null,
   };
+  if (normalized.compaction && !validSessionCompaction(normalized)) {
+    delete normalized.compaction;
+    normalized.compactionWarning = "Ignored an invalid context compaction checkpoint.";
+  }
+  return normalized;
 }

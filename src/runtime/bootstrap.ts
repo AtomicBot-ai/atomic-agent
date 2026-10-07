@@ -1,3 +1,6 @@
+import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
+import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
+import { createContextCompaction } from "./context-compaction.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
@@ -44,7 +47,7 @@ import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
-import { createRuntimePromptPreview } from "./composition/runtime-prompt-preview.js";
+import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
 
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
@@ -339,6 +342,47 @@ export async function createAgentRuntime(
     slotManager, llmComplete, toolTransport: bootstrapLlmSlice.transport, logger, metrics, touchRecorder, memoryHealth,
   });
 
+  const promptPreviewDeps = {
+    workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
+    getSkillCatalog: skillCatalogState.getSkillCatalog,
+    getLiveProfile: connectedLocal.getLiveProfile,
+    resolveToolTransport: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).transport,
+    profileWindowApplies: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).isLlamaServer,
+    resolveCatalogContextWindow: (id?: string) => resolveCatalogContextWindow(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined),
+  };
+  const compaction = createContextCompaction({
+    config: () => getConfig().agent.compaction,
+    sessionStore, turnController, complete: llmComplete,
+    promptInput: (state) => buildRuntimePromptInput(getConfig(), promptPreviewDeps, state),
+    route: (id, pin) => {
+      const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
+      const slice = resolveActiveLlmSlice(providerId);
+      return {
+        providerId, transport: slice.transport,
+        contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
+        serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
+      };
+    },
+    sideCallSlotId: () => slotManager.sideCallSlotId(),
+    costOf: (result, providerId) => {
+      const pricing = resolveModelPricing(result.modelId, providerId)?.pricing;
+      return pricing && result.usage ? estimateUsageCostUsd(result.usage, pricing) : undefined;
+    },
+    persist: (state, inTurn) => {
+      const existed = sessionStore.load(state.id) !== null;
+      sessionStore.save(state);
+      // A deferred TUI session may get its first row at this checkpoint.
+      if (inTurn && !existed) sessionStore.beginTurn(state.id);
+    },
+    warn: (sessionId, message) => logger.warn(message, { sessionId }),
+    emit: (event) => {
+      if (event.type === "compaction_failed" && event.result.status === "failed") {
+        logger.warn("context compaction failed; continuing with history trimming", { sessionId: event.sessionId, reason: event.result.message });
+      }
+      emitAgentLoopEventFor(event.sessionId, event);
+    },
+  });
+
   // Plan mode. Session state, deliberately not config: it is a stance
   // for the next few turns, not a setting, and a "look but do not touch"
   // that survived a restart would be a mystery rather than a memory.
@@ -348,6 +392,7 @@ export async function createAgentRuntime(
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
   const loopDeps = {
+    compaction: compaction.control,
     registry: toolRegistry,
     // A getter, so `runtime.setPlanMode` is observed by the next tool
     // call rather than by the next process. Same reason the approval
@@ -386,6 +431,7 @@ export async function createAgentRuntime(
     resolveLlmSlice: (providerId: string) => {
       const slice = resolveActiveLlmSlice(providerId);
       return {
+        contextWindow: resolveCatalogContextWindow(providerId),
         toolTransport: slice.transport,
         toolCallAdapter: slice.adapter,
         supportsSlotAffinity: slice.slotAffinity,
@@ -506,7 +552,7 @@ export async function createAgentRuntime(
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
   const lifecycle = createRuntimeLifecycle({
-    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight,
+    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
     get scheduler() { return scheduler; },
     get taskRunner() { return taskRunner; },
@@ -528,13 +574,7 @@ export async function createAgentRuntime(
   );
 
   const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
-  const previewPrompt = createRuntimePromptPreview(config, {
-    workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
-    getSkillCatalog: skillCatalogState.getSkillCatalog,
-    getLiveProfile: connectedLocal.getLiveProfile,
-    resolveToolTransport: () => resolveActiveLlmSlice().transport,
-    resolveCatalogContextWindow,
-  });
+  const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests },
@@ -598,6 +638,9 @@ export async function createAgentRuntime(
     runTurn,
     executeTurn,
     previewPrompt,
+    compactSession: compaction.compactSession,
+    getSessionCompaction: compaction.getSessionCompaction,
+    cancelSessionCompaction: compaction.cancelSessionCompaction,
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,

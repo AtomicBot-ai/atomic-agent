@@ -286,6 +286,7 @@ export interface TuiAppCallbacks {
   onSessionPinToggled?(sessionId: string): void;
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
+  onCompactionRequested?(verb: "run" | "show"): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
@@ -1584,13 +1585,13 @@ export function TuiApp({
   /**
    * The composer's stop chip. Exactly the pair of calls the Esc branch
    * in `handleAppKey` makes — one abort path, whichever way it was
-   * asked for. The chip only renders while `status === "running"`, so
-   * unlike Esc there is no precedence ladder to walk first.
+   * asked for. Maintenance can run between turns: stopping it must not
+   * mark an idle chat as an aborted turn.
    */
   const onStopRun = useCallback(() => {
     callbacks.onAbort();
-    dispatch({ type: "abort_requested" });
-  }, [callbacks]);
+    if (state.status === "running" || state.status === "awaiting_approval") dispatch({ type: "abort_requested" });
+  }, [callbacks, state.status]);
 
   const onEditorChange = useCallback(
     (next: string) => {
@@ -2437,7 +2438,7 @@ export function TuiApp({
                         contextSlot={promptContextSlot}
                         modeSlot={promptModeSlot}
                         fit={metaBarFit}
-                        running={state.status === "running"}
+                        running={state.status === "running" || Boolean(state.contextCompactions[state.session.sessionId ?? ""])}
                         onStop={onStopRun}
                         focus={editorFocus}
                         disabled={!canTypeMessage(state)}

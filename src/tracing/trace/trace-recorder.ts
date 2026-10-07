@@ -509,6 +509,12 @@ export function createTraceRecorder(
     },
     onAgentEvent(event) {
       switch (event.type) {
+        case "compaction_started":
+        case "compaction_progress":
+        case "compaction_completed":
+        case "compaction_failed":
+          push({ ...event, sessionId, seq: nextSeq(), ts: now() });
+          return;
         case "user_message":
           pendingUserMessage = event.text;
           return;
