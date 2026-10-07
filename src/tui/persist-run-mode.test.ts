@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -180,6 +180,30 @@ describe("setRunModeInConfig", () => {
         orchestratorModel: "gpt-pinned",
         workerProvider: "local-llama",
         workerModel: "qwen-pinned",
+      });
+    });
+
+    it("keeps a model pin on a leg that was never pinned to a provider", () => {
+      const stored = file();
+      (stored.llm as { runMode: unknown }).runMode = {
+        mode: "fusion",
+        fusion: { orchestratorModel: "hand-o", workerModel: "hand-w" },
+      };
+      writeFileSync(getUserConfigPath(stateDir), JSON.stringify(stored));
+      resetConfigCache();
+      setRunModeInConfig({
+        mode: "fusion",
+        activeTextProvider: "openrouter",
+        fusion: {
+          orchestratorProvider: "openrouter",
+          workerProvider: "local-llama",
+        },
+      });
+      expect(getConfig().llm?.runMode?.fusion).toEqual({
+        orchestratorProvider: "openrouter",
+        orchestratorModel: "hand-o",
+        workerProvider: "local-llama",
+        workerModel: "hand-w",
       });
     });
 
