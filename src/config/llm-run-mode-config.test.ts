@@ -202,6 +202,40 @@ describe("scrubRunModeProviderPins", () => {
       fusion: { orchestratorProvider: "openrouter", workers: 3 },
     });
   });
+
+  it("drops a leg's model pin together with its provider pin", () => {
+    const block = {
+      mode: "fusion" as const,
+      fusion: {
+        orchestratorProvider: "openrouter",
+        orchestratorModel: "anthropic/claude-sonnet-4.5",
+        workerProvider: "local-llama",
+        workerModel: "qwen-3.5-4b",
+      },
+    };
+    expect(scrubRunModeProviderPins(block, "openrouter")).toEqual({
+      mode: "fusion",
+      fusion: { workerProvider: "local-llama", workerModel: "qwen-3.5-4b" },
+    });
+    expect(scrubRunModeProviderPins(block, "local-llama")).toEqual({
+      mode: "fusion",
+      fusion: {
+        orchestratorProvider: "openrouter",
+        orchestratorModel: "anthropic/claude-sonnet-4.5",
+      },
+    });
+  });
+
+  it("keeps a model pin whose leg was never pinned to a provider", () => {
+    const block = {
+      mode: "fusion" as const,
+      fusion: { workerProvider: "local-llama", orchestratorModel: "gpt-5" },
+    };
+    expect(scrubRunModeProviderPins(block, "local-llama")).toEqual({
+      mode: "fusion",
+      fusion: { orchestratorModel: "gpt-5" },
+    });
+  });
 });
 
 describe("cloudWorkers (F21)", () => {
