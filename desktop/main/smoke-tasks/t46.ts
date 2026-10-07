@@ -342,6 +342,15 @@ async function whereItRuns(js: Js, check: Check): Promise<void> {
       SEL.kind = 'backend'; SEL.open = true; SEL.err = null; SEL.addOpen = false; WIZ.phase = null;
       render(); await tick(60);
     };
+    // ATO-254: wait for the menu to close and Settings to open, up to 3 s, rather than a fixed
+    // 150 ms that a slow runner (windows-11-arm) did not always meet.
+    const settled = async () => {
+      for (let waited = 0; waited < 3000; waited += 50) {
+        if (!document.querySelector('.selpop .modelrow[data-id="fusion"]') && S.settings) break;
+        await tick(50);
+      }
+      await tick(50);
+    };
     const after = () => ({err: document.querySelectorAll('.selerr').length + (SEL.err ? 1 : 0),
       backendShown: !!document.querySelector('.selpop .modelrow[data-id="fusion"]'),
       settings: S.settings ? settingsPaneId(S.settingsPane) : null, wiz: WIZ.phase || null, llmMode: LLMP.mode});
@@ -359,14 +368,14 @@ async function whereItRuns(js: Js, check: Check): Promise<void> {
       // The Cloud row's own button.
       const btn = document.querySelector('.selpop .modelrow[data-id="cloud"] .seladd');
       if (btn) btn.click();
-      await tick(150);
+      await settled();
       const viaButton = after();
       act('close'); window.__settingsClose(); await tick(50);
       // The blocked Fusion row itself — what used to raise the red line.
       await stage();
       const fz = document.querySelector('.selpop .modelrow[data-id="fusion"]');
       if (fz) fz.click();
-      await tick(150);
+      await settled();
       const viaRow = after();
       return {rows, withButton, label, viaButton, viaRow, logGrew: S.log.length - keep.log};
     } finally {
