@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { groundFor } from "../components/context-chip.js";
-import type { ContextUsageView } from "../select-context-usage.js";
+import { groundFor } from "../context/context-chip.js";
+import type { ContextUsageView } from "../context/select-context-usage.js";
 import { contrastRatio } from "./color-contrast.js";
 import { readableOn } from "./readable-foreground.js";
 import {

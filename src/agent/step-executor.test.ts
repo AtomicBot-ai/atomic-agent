@@ -2031,6 +2031,9 @@ describe("executeStep approval-gated batches behind approval barriers (#109)", (
         grammar,
         profile: PLAIN_INSTRUCT_PROFILE,
         onEvent: (event) => events.push(event),
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
         approvalPosture: { getLevel: () => gate.getLevel() },
       },
     );
@@ -2282,7 +2285,10 @@ describe("executeStep approval-gated batches behind approval barriers (#109)", (
           grammar,
           profile: PLAIN_INSTRUCT_PROFILE,
           onEvent: (event) => events.push(event),
-          approvalPosture: { getLevel: () => gate.getLevel() },
+          toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        approvalPosture: { getLevel: () => gate.getLevel() },
         },
       ),
     ).rejects.toMatchObject({ category: "cancelled" });

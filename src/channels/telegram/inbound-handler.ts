@@ -1,4 +1,4 @@
-import type { AgentLoopEvent } from "../../agent/agent-loop.js";
+import type { AgentLoopEvent } from "../../agent/agent-contract.js";
 import { describeFailedAttempts } from "../../llm/fallback/index.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -178,7 +178,7 @@ export interface InboundContext {
    * acks (`/help`, `/status`, `/new`, `/cancel`), infra messages
    * (`Turn cancelled.`, `(no reply)`), and failure envelopes
    * (`Turn failed [...]: ...`) always send as plain text regardless,
-   * matching the AGENTS.md scope carve-out: only "agent content"
+   * matching the ../README.md scope carve-out: only "agent content"
    * is formatted, "channel infrastructure" stays unformatted so the
    * operator can never misread a runtime error as agent output.
    * Defaults to `"plain"` when omitted.

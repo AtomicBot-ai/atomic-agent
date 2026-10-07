@@ -1,6 +1,6 @@
 /**
  * Atomic Mail — the agent's own `@atomicmail.ai` inbox, registered with
- * a proof-of-work instead of a human. See AGENTS.md §"Atomic Mail".
+ * a proof-of-work instead of a human. See README.md.
  */
 export {
   ATOMIC_MAIL_API_URL,

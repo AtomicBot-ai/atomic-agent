@@ -5,7 +5,7 @@ import {
   setActiveTextProviderInConfig,
   upsertLlmProvider,
   writeProviderApiKeyToDotenv,
-} from "../persist-llm-provider.js";
+} from "../../config/llm-provider-commands.js";
 import { findProviderPreset } from "./provider-presets.js";
 import { wizardKeyIsOptional } from "./providers-wizard-target.js";
 import {

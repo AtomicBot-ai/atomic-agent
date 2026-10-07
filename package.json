@@ -25,6 +25,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "smoke:e2e": "node scripts/smoke-e2e.mjs",
     "eval": "vitest run --config eval/vitest.config.ts",
     "eval:judge": "tsx eval/scripts/judge-from-jsonl.ts",
     "eval:lint": "tsc -p eval/tsconfig.json --noEmit",
@@ -77,7 +78,18 @@
     "release": "bash scripts/release.sh",
     "release:patch": "bash scripts/release.sh patch",
     "release:minor": "bash scripts/release.sh minor",
-    "release:major": "bash scripts/release.sh major"
+    "release:major": "bash scripts/release.sh major",
+    "docs:check": "node scripts/check-docs.mjs",
+    "typecheck:tests": "node scripts/check-test-types.mjs",
+    "typecheck:tests:raw": "tsc -p tsconfig.test.json --noEmit",
+    "typecheck:tests:reduce": "node scripts/check-test-types.mjs --reduce",
+    "typecheck:tests:self-test": "node scripts/check-test-types.selftest.mjs",
+    "test:ci": "node scripts/run-tests.mjs",
+    "test:quarantine": "node scripts/run-tests.mjs --quarantine",
+    "quarantine:check": "node scripts/run-tests.mjs --check",
+    "quarantine:self-test": "node scripts/run-tests.selftest.mjs",
+    "imports:check": "node scripts/check-imports.mjs",
+    "imports:self-test": "node scripts/check-imports.selftest.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

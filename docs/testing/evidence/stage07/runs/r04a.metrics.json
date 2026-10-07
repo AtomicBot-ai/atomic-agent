@@ -1,0 +1,156 @@
+{
+  "actions": 19,
+  "returnedOutputBytes": 55206,
+  "observedSourceBytes": 54030,
+  "uniqueVersionedSourceBytes": 53790,
+  "repeatedSourceBytes": 240,
+  "uniqueInstructionBytes": 8045,
+  "uniqueCodeBytes": 29524,
+  "uniqueOtherBytes": 16221,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+      "uniqueBytes": 6714
+    },
+    {
+      "path": "README.md",
+      "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+      "uniqueBytes": 9797
+    },
+    {
+      "path": "src/tui/memory/memory-actions.ts",
+      "hash": "7e3e2641b5a8cff00ab0e3b1ee53555bd4273bfa6ac64d403ec17de65845c39d",
+      "uniqueBytes": 38
+    },
+    {
+      "path": "src/tui/memory/memory-reducer.ts",
+      "hash": "e6b59f7857d925c7617ad0215410f153ed6871fbd2ff64f91c92c53ffb4845ea",
+      "uniqueBytes": 34
+    },
+    {
+      "path": "src/tui/memory/memory-orchestrator.ts",
+      "hash": "8af6ebb7f37353ff41af99a2db24693897440c29eab0627a7f5b41c12a3c7e1c",
+      "uniqueBytes": 56
+    },
+    {
+      "path": "src/tui/local-models/local-models-orchestrator.ts",
+      "hash": "376168352cc7c88d3d3f1e61bc258774aa927a46c75ce19c12119fda60c5bb8b",
+      "uniqueBytes": 60
+    },
+    {
+      "path": "src/tui/local-models/local-models-actions.ts",
+      "hash": "fb4e59790615df8ed71a3eaf25183822026decdca49c1c691ceb6af70118481f",
+      "uniqueBytes": 44
+    },
+    {
+      "path": "src/tui/local-models/local-models-reducer.ts",
+      "hash": "cda0e4504566069a95b6e80901f75bca17f719014909f7a54504d865c3fa1a81",
+      "uniqueBytes": 40
+    },
+    {
+      "path": "src/tui/tasks/tasks-reducer.ts",
+      "hash": "afde06dbfdedeb5e96e138558ecb817ce438cc692c526c15996f7fb736000704",
+      "uniqueBytes": 33
+    },
+    {
+      "path": "src/tui/tasks/tasks-actions.ts",
+      "hash": "f226e5c58344e307ba4722b0af751ca45b58de825ad69d2947b19d5e75d269e3",
+      "uniqueBytes": 37
+    },
+    {
+      "path": "src/tui/tasks/tasks-orchestrator.ts",
+      "hash": "5b30ebfa50ee6643edf51452f897e0208ce0ab0447cac31474df2df7132f3b9d",
+      "uniqueBytes": 55
+    },
+    {
+      "path": "src/tui/mcp/mcp-orchestrator.ts",
+      "hash": "364ae76099689e7cc956cb0e4ddf11c7df2e3efa1a8410dde3bf8f7beee6c977",
+      "uniqueBytes": 53
+    },
+    {
+      "path": "src/tui/mcp/mcp-reducer.test.ts",
+      "hash": "2f2cdf9b2beab9cdf900308e6d4710a500da3feaeda292084907b3581f85773a",
+      "uniqueBytes": 6963
+    },
+    {
+      "path": "src/tui/mcp/mcp-reducer.ts",
+      "hash": "3c1eb790bcd32d0d3e55e0a3174eaf4dc30bc67124599aa17384e569e4f030b8",
+      "uniqueBytes": 6965
+    },
+    {
+      "path": "src/tui/mcp/mcp-actions.ts",
+      "hash": "39bc3c6b0d3e70fc7b2368078602221def4686dbf9608facfb6aa6703a7e79b5",
+      "uniqueBytes": 35
+    },
+    {
+      "path": "src/tui/skills/skills-reducer.ts",
+      "hash": "6274c0cd1edd680b9d1e51c4b94a18ef33a8e5826b9f9063e81560b2b608fefb",
+      "uniqueBytes": 34
+    },
+    {
+      "path": "src/tui/skills/skills-orchestrator.ts",
+      "hash": "c6414ac2d58a0af55f7b21a77c1b356a231e435ab3866e3c9c48ef1de8b411a2",
+      "uniqueBytes": 56
+    },
+    {
+      "path": "src/tui/skills/skills-actions.ts",
+      "hash": "d5cf85d0ac1d12f0f4b9a88d7a057ac52ca2d815c47136f2cb5e75edc38d9e9b",
+      "uniqueBytes": 38
+    },
+    {
+      "path": "src/tui/AGENTS.md",
+      "hash": "9200a72e0601d4b244a9f8c22cfb7a744c9cdabec8fd5edfbbe9a7faa88357cb",
+      "uniqueBytes": 1331
+    },
+    {
+      "path": "src/tui/README.md",
+      "hash": "13fc50cbb46872745c3ec57f85dcdb918bb0e1b40c1d6c97ad0aa58640de6510",
+      "uniqueBytes": 3563
+    },
+    {
+      "path": "src/tui/mcp/README.md",
+      "hash": "5efebcec8dee3daf64df902d8e1c7dd2d89462f76286ccfc3f579c2a9af414c4",
+      "uniqueBytes": 2861
+    },
+    {
+      "path": "src/tui/mcp/mcp-list.tsx",
+      "hash": "ce01a2629b4c8901e61ee29cdb10fdab70ff3dfdef8ca7a0e9025882fae28fc6",
+      "uniqueBytes": 3129
+    },
+    {
+      "path": "src/tui/mcp/mcp-panel-state.ts",
+      "hash": "acf4a5550be1688077fd6888f8e8eb4bb7e6ccfef9bb2b6ea3b040515a6a009a",
+      "uniqueBytes": 3544
+    },
+    {
+      "path": "src/tui/mcp/mcp-panel.test.tsx",
+      "hash": "ac72d5bb8c7f2c3cc7ce7811df45039b97ff7508001f62460208b1248852ebad",
+      "uniqueBytes": 2087
+    },
+    {
+      "path": "src/tui/mcp/mcp-panel.tsx",
+      "hash": "b380f318c97b3be215716bbd1a0b57f805e4ae109c2d811c4a8e01abd952d0b9",
+      "uniqueBytes": 2793
+    },
+    {
+      "path": "src/tui/mcp/mcp-reducer.test.ts",
+      "hash": "619082d7da9c0fb909be464d0141f8d6e2c087a9645579e57d1690b53b400130",
+      "uniqueBytes": 1817
+    },
+    {
+      "path": "src/tui/tui-state.ts",
+      "hash": "28ae1cdb8996de3dd175a878a78760d0b74788094d3a000782add8f81ec5cd60",
+      "uniqueBytes": 920
+    },
+    {
+      "path": "src/tui/test-fixtures.ts",
+      "hash": "128f6e73d624d930f66e0f9d93e621062bc06c0f2d22cca6797da7a2d463ae17",
+      "uniqueBytes": 693
+    }
+  ],
+  "changedFiles": [
+    "src/tui/mcp/mcp-reducer.test.ts",
+    "src/tui/mcp/mcp-reducer.ts"
+  ]
+}

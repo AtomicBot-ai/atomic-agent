@@ -30,13 +30,13 @@ import {
   resolveModelFilePath,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { writeBackendVersion } from "../../local-llm/backend-version.js";
-import { DaemonHealthError } from "../../local-llm/daemon-lifecycle.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { writeBackendVersion } from "../../local-llm/backend/backend-version.js";
+import { DaemonHealthError } from "../../local-llm/server/daemon-lifecycle.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import {
   WINDOWS_BACKEND_ASSETS,
   setConfiguredBackendVariant,
-} from "../../local-llm/windows-backend-variant.js";
+} from "../../local-llm/backend/windows-backend-variant.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 

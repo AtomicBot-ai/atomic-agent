@@ -7,7 +7,7 @@ import { registerEmbeddingProviderKind } from "./embedding-provider-registry.js"
 import {
   getEmbeddingModelDef,
   isKnownEmbeddingModelId,
-} from "../../local-llm/models-catalog.js";
+} from "../../local-llm/catalog/models-catalog.js";
 import {
   OPENROUTER_APP_CATEGORIES,
   OPENROUTER_APP_REFERER,

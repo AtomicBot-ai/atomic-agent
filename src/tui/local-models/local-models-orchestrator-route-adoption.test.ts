@@ -4,6 +4,15 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../../local-llm/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../local-llm/index.js")>("../../local-llm/index.js");
+  return {
+    ...actual,
+    // The pid fixture represents this model, regardless of a real server on its port.
+    fetchServedModelIds: vi.fn(async () => ["qwen-3.5-4b"]),
+  };
+});
+
 import {
   getUserConfigPath,
   writeUserConfigFileSync,
@@ -20,10 +29,10 @@ import {
   resolvePidFilePath,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import { ProviderRegistry } from "../../llm/provider/registry/provider-registry.js";
 import type { LlmProvider } from "../../llm/provider/llm-provider.js";
-import { setActiveTextProviderInConfig } from "../persist-llm-provider.js";
+import { setActiveTextProviderInConfig } from "../../config/llm-provider-commands.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
 type Internals = {

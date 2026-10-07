@@ -1,10 +1,10 @@
 import type { Key } from "ink";
 import type { LocalModelId } from "../../local-llm/index.js";
-import type { OnboardingScreenCallbacks } from "../components/onboarding-screen.js";
+import type { OnboardingScreenCallbacks } from "./onboarding-screen.js";
 import {
   waitOrJumpPullStatus,
   waitOrJumpRowCount,
-} from "../components/onboarding-wait-or-jump-step.js";
+} from "./wait-or-jump-selectors.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";

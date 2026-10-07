@@ -1,11 +1,11 @@
-import { ContextChip } from "./components/context-chip.js";
+import { ContextChip } from "./context/context-chip.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
   codingModeLook,
   resolveCodingMode,
   type CodingMode,
-} from "./coding-mode.js";
+} from "./coding-mode/coding-mode.js";
 import {
   backdropRevertsThemePreview,
   resolveBackdropDismissal,
@@ -21,17 +21,17 @@ import {
   raiseDesktopNotification,
   shouldNotify,
 } from "./terminal-notify.js";
-import { CodingModeChip } from "./components/coding-mode-chip.js";
-import { CodingModePopup } from "./components/coding-mode-popup.js";
-import { IssueReportPopup } from "./components/issue-report-popup.js";
+import { CodingModeChip } from "./coding-mode/coding-mode-chip.js";
+import { CodingModePopup } from "./coding-mode/coding-mode-popup.js";
+import { IssueReportPopup } from "./issue-report/issue-report-popup.js";
 import type { IssueReportLevel } from "./issue-report/report-levels.js";
-import { OnboardingScreen } from "./components/onboarding-screen.js";
+import { OnboardingScreen } from "./onboarding/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
-import { ContextPanel } from "./components/context-panel.js";
+import { ContextPanel } from "./context/context-panel.js";
 import {
   selectComposerContextUsage,
   selectContextUsage,
-} from "./select-context-usage.js";
+} from "./context/select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import type { HuggingFaceRepoChoices } from "../local-llm/index.js";
 import {
@@ -66,7 +66,7 @@ import {
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
-import { ChatLog } from "./components/chat-log.js";
+import { ChatLog } from "./chat/chat-log.js";
 import {
   ComposerSwitchPopup,
   runComposerSwitchRow,
@@ -78,12 +78,12 @@ import {
 import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
-import { EXECUTE_PLAN_MESSAGE } from "./components/plan-handoff.js";
+import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
-import { SessionDeleteModal } from "./components/session-delete-modal.js";
-import { UninstallModal } from "./components/uninstall-modal.js";
-import { SessionPicker } from "./components/session-picker.js";
-import { ThemePicker } from "./components/theme-picker.js";
+import { SessionDeleteModal } from "./session-rail/session-delete-modal.js";
+import { UninstallModal } from "./uninstall/uninstall-modal.js";
+import { SessionPicker } from "./session-rail/session-picker.js";
+import { ThemePicker } from "./theme-picker/theme-picker.js";
 import {
   isThemeName,
   setActiveTheme,
@@ -100,10 +100,10 @@ import {
 } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
-import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
-import { UpdateModal } from "./components/update-modal.js";
-import { UpdateIndicator } from "./components/update-indicator.js";
-import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
+import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
+import { UpdateModal } from "./update/update-modal.js";
+import { UpdateIndicator } from "./update/update-indicator.js";
+import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
 import { ProviderOutageReadout } from "./components/provider-outage-readout.js";
 import { useElapsed } from "./hooks/use-elapsed.js";
@@ -286,6 +286,7 @@ export interface TuiAppCallbacks {
   onSessionPinToggled?(sessionId: string): void;
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
+  onCompactionRequested?(verb: "run" | "show"): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
@@ -1584,13 +1585,13 @@ export function TuiApp({
   /**
    * The composer's stop chip. Exactly the pair of calls the Esc branch
    * in `handleAppKey` makes — one abort path, whichever way it was
-   * asked for. The chip only renders while `status === "running"`, so
-   * unlike Esc there is no precedence ladder to walk first.
+   * asked for. Maintenance can run between turns: stopping it must not
+   * mark an idle chat as an aborted turn.
    */
   const onStopRun = useCallback(() => {
     callbacks.onAbort();
-    dispatch({ type: "abort_requested" });
-  }, [callbacks]);
+    if (state.status === "running" || state.status === "awaiting_approval") dispatch({ type: "abort_requested" });
+  }, [callbacks, state.status]);
 
   const onEditorChange = useCallback(
     (next: string) => {
@@ -2437,7 +2438,7 @@ export function TuiApp({
                         contextSlot={promptContextSlot}
                         modeSlot={promptModeSlot}
                         fit={metaBarFit}
-                        running={state.status === "running"}
+                        running={state.status === "running" || Boolean(state.contextCompactions[state.session.sessionId ?? ""])}
                         onStop={onStopRun}
                         focus={editorFocus}
                         disabled={!canTypeMessage(state)}

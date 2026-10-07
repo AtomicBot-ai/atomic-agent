@@ -6,7 +6,7 @@
  * Map<server, ResourceClass> so the agent-loop's `resourceClassFor`
  * call stays O(1).
  *
- * Trust policy (locked invariant — see AGENTS.md §"MCP client"):
+ * Trust policy (locked invariant — see docs/client.md):
  *   - `approval_gated` (default) — every MCP tool invocation is
  *     forbidden inside multi-call batches and routed through the
  *     approval gate by `mcp-tool-adapter.ts` (tools whose

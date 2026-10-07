@@ -1,0 +1,116 @@
+--- src/local-llm/download-resume.test.ts (seeded before)
++++ src/local-llm/download-resume.test.ts (agent after)
+@@ -0,0 +1,102 @@
++import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++
++import {
++  resolvePartialMetaPath,
++  resolvePartialPath,
++  writePartialMeta,
++  type ByteRange,
++} from "./download-partial.js";
++import { describeResume } from "./download-resume.js";
++
++const URL = "https://example.com/model.gguf";
++const ETAG = '"v1"';
++
++describe("describeResume", () => {
++  let dir: string;
++  let dest: string;
++
++  beforeEach(() => {
++    dir = mkdtempSync(join(tmpdir(), "local-llm-resume-"));
++    dest = join(dir, "model.gguf");
++  });
++
++  afterEach(() => {
++    rmSync(dir, { recursive: true, force: true });
++  });
++
++  it.each<{
++    name: string;
++    done: ByteRange[];
++    total: number;
++    offset: number;
++  }>([
++    { name: "prefix", done: [[0, 5]], total: 10, offset: 5 },
++    { name: "interior hole", done: [[0, 3], [7, 10]], total: 10, offset: 3 },
++    { name: "hole at zero", done: [[5, 10]], total: 10, offset: 0 },
++    { name: "complete file", done: [[0, 10]], total: 10, offset: 10 },
++    { name: "unknown length prefix", done: [[0, 5]], total: 0, offset: 5 },
++  ])("requests the first missing byte for $name", ({ done, total, offset }) => {
++    writeFileSync(resolvePartialPath(dest), Buffer.alloc(10));
++    writePartialMeta(dest, {
++      url: URL,
++      total,
++      etag: ETAG,
++      lastModified: "Mon, 01 Jan 2024 00:00:00 GMT",
++      done,
++    });
++    const headers = { "User-Agent": "test" };
++
++    const plan = describeResume(URL, dest, headers);
++
++    expect(plan.done).toEqual(done);
++    expect(plan.total).toBe(total);
++    expect(plan.offset).toBe(offset);
++    expect(plan.sentRange).toBe(true);
++    expect(plan.leadHeaders).toEqual({
++      ...headers,
++      Range: `bytes=${offset}-`,
++      "If-Range": ETAG,
++    });
++    expect(headers).toEqual({ "User-Agent": "test" });
++    expect(existsSync(resolvePartialPath(dest))).toBe(true);
++  });
++
++  it("uses Last-Modified when an ETag is unavailable", () => {
++    const lastModified = "Mon, 01 Jan 2024 00:00:00 GMT";
++    writeFileSync(resolvePartialPath(dest), Buffer.alloc(5));
++    writePartialMeta(dest, {
++      url: URL, total: 10, etag: null, lastModified, done: [[0, 5]],
++    });
++
++    expect(describeResume(URL, dest, {}).leadHeaders).toEqual({
++      Range: "bytes=5-",
++      "If-Range": lastModified,
++    });
++  });
++
++  it.each([
++    { name: "another URL", url: `${URL}?other`, total: 10, done: [[0, 5]] },
++    { name: "unknown length with a hole", url: URL, total: 0, done: [[5, 10]] },
++  ])("discards $name and starts from zero", ({ url, total, done }) => {
++    writeFileSync(resolvePartialPath(dest), Buffer.alloc(10));
++    writePartialMeta(dest, {
++      url, total, etag: ETAG, lastModified: null, done: done as ByteRange[],
++    });
++    writeFileSync(`${resolvePartialMetaPath(dest)}.tmp`, "leftover");
++
++    const plan = describeResume(URL, dest, { "User-Agent": "test" });
++
++    expect(plan.done).toEqual([]);
++    expect(plan.total).toBe(0);
++    expect(plan.offset).toBe(0);
++    expect(plan.sentRange).toBe(false);
++    expect(plan.leadHeaders).toEqual({ "User-Agent": "test" });
++    expect(existsSync(resolvePartialPath(dest))).toBe(false);
++    expect(existsSync(resolvePartialMetaPath(dest))).toBe(false);
++    expect(existsSync(`${resolvePartialMetaPath(dest)}.tmp`)).toBe(false);
++  });
++});
+--- src/local-llm/download-resume.ts (seeded before)
++++ src/local-llm/download-resume.ts (agent after)
+@@ -57,7 +57,7 @@
+   // has confirmed it still is that file. A partial whose first hole is
+   // at byte 0 (the lead had not delivered when the last run died) still
+   // sends a range: a plain GET would read as "start over".
+-  const offset = done.length === 0 ? 0 : ((holes[0]?.[0] ?? total) + 1);
++  const offset = done.length === 0 ? 0 : (holes[0]?.[0] ?? total);
+   const sentRange = done.length > 0;
+   const leadHeaders = { ...headers };
+   if (sentRange) {

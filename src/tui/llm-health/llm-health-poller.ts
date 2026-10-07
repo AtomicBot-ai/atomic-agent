@@ -3,7 +3,7 @@ import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-registry.js";
 import { llamaEndpointUrl } from "../../llm/llama-endpoint-url.js";
-import { apiKeyForUrl } from "../../local-llm/managed-api-key.js";
+import { apiKeyForUrl } from "../../local-llm/server/managed-api-key.js";
 import type { TuiAction } from "../tui-action.js";
 
 /**

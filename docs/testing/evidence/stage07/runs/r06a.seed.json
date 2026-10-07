@@ -1,0 +1,61 @@
+{
+  "snapshot": "/tmp/atomic-stage07-final-v2",
+  "dest": "/tmp/atomic-stage07-benchmark/runs/final-06",
+  "task": 6,
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "goldenPath": null,
+  "seed": {
+    "task": 6,
+    "kind": "seeded-regression",
+    "patches": [
+      {
+        "file": "src/llm/provider/model-vision.ts",
+        "start": 2550,
+        "end": 2568,
+        "line": 51,
+        "old": "row.supportsVision",
+        "new": "row.supportsVision || entry.supportsVision || false",
+        "anchor": "model explicit false fallback"
+      }
+    ],
+    "beforeSha256": "e42f694c08e6c877ded0e5c7061003b1efdaf5dacee4ae6b8011963bca89d9cb",
+    "afterSha256": "5c02887afd7c747d97f819e1e9db51251c933e3dabe1ebe2364cf9dbf94604e3"
+  },
+  "unseeded": {
+    "exit": 0,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 6,
+      "pass": true,
+      "assertions": 8,
+      "observed": [
+        "explicit false beats provider true",
+        "explicit true beats provider false",
+        "absent uses provider false",
+        "live provider change",
+        "live model change",
+        "old model independent",
+        "actual route hides text model",
+        "actual route follows next live read"
+      ]
+    },
+    "stdout": "{\"task\":6,\"pass\":true,\"assertions\":8,\"observed\":[\"explicit false beats provider true\",\"explicit true beats provider false\",\"absent uses provider false\",\"live provider change\",\"live model change\",\"old model independent\",\"actual route hides text model\",\"actual route follows next live read\"]}\n"
+  },
+  "seeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 6,
+      "pass": false,
+      "assertions": 0,
+      "error": {
+        "name": "AssertionError",
+        "message": "explicit false beats provider true\n\ntrue !== false\n",
+        "stack": "AssertionError [ERR_ASSERTION]: explicit false beats provider true\n\ntrue !== false\n\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\n    at Object.check6 (/private/tmp/atomic-stage07-benchmark/check.mjs:53:296)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":6,\"pass\":false,\"assertions\":0,\"error\":{\"name\":\"AssertionError\",\"message\":\"explicit false beats provider true\\n\\ntrue !== false\\n\",\"stack\":\"AssertionError [ERR_ASSERTION]: explicit false beats provider true\\n\\ntrue !== false\\n\\n    at eq (/private/tmp/atomic-stage07-benchmark/check.mjs:14:43)\\n    at Object.check6 (/private/tmp/atomic-stage07-benchmark/check.mjs:53:296)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  }
+}

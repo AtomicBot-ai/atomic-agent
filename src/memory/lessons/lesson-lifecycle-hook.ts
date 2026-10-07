@@ -1,7 +1,7 @@
 import type {
   LessonLifecycleHook,
   LessonLifecycleOutcome,
-} from "../../agent/agent-loop.js";
+} from "../../agent/agent-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import type { LessonStore } from "./lesson-store.js";

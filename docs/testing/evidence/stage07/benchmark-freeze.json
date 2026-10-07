@@ -1,0 +1,510 @@
+{
+  "frozenAt": "2026-10-06T17:20:41.639Z",
+  "snapshots": {
+    "original": "/tmp/atomic-stage07-original",
+    "final": "/tmp/atomic-stage07-final-v2"
+  },
+  "harnessSha256": "b44094bb2edafa5485098482e0e02f5e2c18b49b0b638126321dbc3efd43fab3",
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "positiveControls": [
+    {
+      "variant": "original",
+      "task": 1,
+      "exit": 0,
+      "signal": null,
+      "stderr": "",
+      "result": {
+        "task": 1,
+        "pass": true,
+        "assertions": 45,
+        "observed": [
+          "stable prefix 0",
+          "respond/reasoning framing 0",
+          "no-notice tail 0",
+          "stable prefix 1",
+          "respond/reasoning framing 1",
+          "notice before respond 1",
+          "notice last substantive section 1",
+          "stable prefix 2",
+          "respond/reasoning framing 2",
+          "no-notice tail 2",
+          "stable prefix 3",
+          "respond/reasoning framing 3",
+          "notice before respond 3",
+          "notice last substantive section 3",
+          "date before notice 3",
+          "stable prefix 4",
+          "respond/reasoning framing 4",
+          "no-notice tail 4",
+          "stable prefix 5",
+          "respond/reasoning framing 5",
+          "notice before respond 5",
+          "notice last substantive section 5",
+          "stable prefix 6",
+          "respond/reasoning framing 6",
+          "no-notice tail 6",
+          "stable prefix 7",
+          "respond/reasoning framing 7",
+          "notice before respond 7",
+          "notice last substantive section 7",
+          "date before notice 7",
+          "stable prefix 8",
+          "respond/reasoning framing 8",
+          "no-notice tail 8",
+          "stable prefix 9",
+          "respond/reasoning framing 9",
+          "notice before respond 9",
+          "notice last substantive section 9",
+          "stable prefix 10",
+          "respond/reasoning framing 10",
+          "no-notice tail 10",
+          "stable prefix 11",
+          "respond/reasoning framing 11",
+          "notice before respond 11",
+          "notice last substantive section 11",
+          "date before notice 11"
+        ]
+      },
+      "stdout": "{\"task\":1,\"pass\":true,\"assertions\":45,\"observed\":[\"stable prefix 0\",\"respond/reasoning framing 0\",\"no-notice tail 0\",\"stable prefix 1\",\"respond/reasoning framing 1\",\"notice before respond 1\",\"notice last substantive section 1\",\"stable prefix 2\",\"respond/reasoning framing 2\",\"no-notice tail 2\",\"stable prefix 3\",\"respond/reasoning framing 3\",\"notice before respond 3\",\"notice last substantive section 3\",\"date before notice 3\",\"stable prefix 4\",\"respond/reasoning framing 4\",\"no-notice tail 4\",\"stable prefix 5\",\"respond/reasoning framing 5\",\"notice before respond 5\",\"notice last substantive section 5\",\"stable prefix 6\",\"respond/reasoning framing 6\",\"no-notice tail 6\",\"stable prefix 7\",\"respond/reasoning framing 7\",\"notice before respond 7\",\"notice last substantive section 7\",\"date before notice 7\",\"stable prefix 8\",\"respond/reasoning framing 8\",\"no-notice tail 8\",\"stable prefix 9\",\"respond/reasoning framing 9\",\"notice before respond 9\",\"notice last substantive section 9\",\"stable prefix 10\",\"respond/reasoning framing 10\",\"no-notice tail 10\",\"stable prefix 11\",\"respond/reasoning framing 11\",\"notice before respond 11\",\"notice last substantive section 11\",\"date before notice 11\"]}\n"
+    },
+    {
+      "variant": "original",
+      "task": 2,
+      "exit": 0,
+      "signal": null,
+      "stderr": "",
+      "result": {
+        "task": 2,
+        "pass": true,
+        "assertions": 28,
+        "observed": [
+          "exists registered by actual OS registrar",
+          "exists readonly",
+          "exists resource class",
+          "exactly one descriptor",
+          "native schema requires string path",
+          "native wire requires path",
+          "production grammar admits exists",
+          "exists status file",
+          "exists value file",
+          "kind file",
+          "exists status dir",
+          "exists value dir",
+          "kind dir",
+          "exists status missing",
+          "exists value missing",
+          "kind missing",
+          "other exists",
+          "other kind",
+          "bad exists args {}",
+          "bad exists args {\"path\":\"\"}",
+          "bad exists args {\"path\":\"   \"}",
+          "bad exists args {\"path\":8}",
+          "bad exists args {\"path\":null}",
+          "non-ENOENT IO error retained",
+          "read boundary wraps exists",
+          "worker outside root refused",
+          "worker in root admitted",
+          "file untouched"
+        ]
+      },
+      "stdout": "{\"task\":2,\"pass\":true,\"assertions\":28,\"observed\":[\"exists registered by actual OS registrar\",\"exists readonly\",\"exists resource class\",\"exactly one descriptor\",\"native schema requires string path\",\"native wire requires path\",\"production grammar admits exists\",\"exists status file\",\"exists value file\",\"kind file\",\"exists status dir\",\"exists value dir\",\"kind dir\",\"exists status missing\",\"exists value missing\",\"kind missing\",\"other exists\",\"other kind\",\"bad exists args {}\",\"bad exists args {\\\"path\\\":\\\"\\\"}\",\"bad exists args {\\\"path\\\":\\\"   \\\"}\",\"bad exists args {\\\"path\\\":8}\",\"bad exists args {\\\"path\\\":null}\",\"non-ENOENT IO error retained\",\"read boundary wraps exists\",\"worker outside root refused\",\"worker in root admitted\",\"file untouched\"]}\n"
+    },
+    {
+      "variant": "final-v2",
+      "task": 1,
+      "exit": 0,
+      "signal": null,
+      "stderr": "",
+      "result": {
+        "task": 1,
+        "pass": true,
+        "assertions": 45,
+        "observed": [
+          "stable prefix 0",
+          "respond/reasoning framing 0",
+          "no-notice tail 0",
+          "stable prefix 1",
+          "respond/reasoning framing 1",
+          "notice before respond 1",
+          "notice last substantive section 1",
+          "stable prefix 2",
+          "respond/reasoning framing 2",
+          "no-notice tail 2",
+          "stable prefix 3",
+          "respond/reasoning framing 3",
+          "notice before respond 3",
+          "notice last substantive section 3",
+          "date before notice 3",
+          "stable prefix 4",
+          "respond/reasoning framing 4",
+          "no-notice tail 4",
+          "stable prefix 5",
+          "respond/reasoning framing 5",
+          "notice before respond 5",
+          "notice last substantive section 5",
+          "stable prefix 6",
+          "respond/reasoning framing 6",
+          "no-notice tail 6",
+          "stable prefix 7",
+          "respond/reasoning framing 7",
+          "notice before respond 7",
+          "notice last substantive section 7",
+          "date before notice 7",
+          "stable prefix 8",
+          "respond/reasoning framing 8",
+          "no-notice tail 8",
+          "stable prefix 9",
+          "respond/reasoning framing 9",
+          "notice before respond 9",
+          "notice last substantive section 9",
+          "stable prefix 10",
+          "respond/reasoning framing 10",
+          "no-notice tail 10",
+          "stable prefix 11",
+          "respond/reasoning framing 11",
+          "notice before respond 11",
+          "notice last substantive section 11",
+          "date before notice 11"
+        ]
+      },
+      "stdout": "{\"task\":1,\"pass\":true,\"assertions\":45,\"observed\":[\"stable prefix 0\",\"respond/reasoning framing 0\",\"no-notice tail 0\",\"stable prefix 1\",\"respond/reasoning framing 1\",\"notice before respond 1\",\"notice last substantive section 1\",\"stable prefix 2\",\"respond/reasoning framing 2\",\"no-notice tail 2\",\"stable prefix 3\",\"respond/reasoning framing 3\",\"notice before respond 3\",\"notice last substantive section 3\",\"date before notice 3\",\"stable prefix 4\",\"respond/reasoning framing 4\",\"no-notice tail 4\",\"stable prefix 5\",\"respond/reasoning framing 5\",\"notice before respond 5\",\"notice last substantive section 5\",\"stable prefix 6\",\"respond/reasoning framing 6\",\"no-notice tail 6\",\"stable prefix 7\",\"respond/reasoning framing 7\",\"notice before respond 7\",\"notice last substantive section 7\",\"date before notice 7\",\"stable prefix 8\",\"respond/reasoning framing 8\",\"no-notice tail 8\",\"stable prefix 9\",\"respond/reasoning framing 9\",\"notice before respond 9\",\"notice last substantive section 9\",\"stable prefix 10\",\"respond/reasoning framing 10\",\"no-notice tail 10\",\"stable prefix 11\",\"respond/reasoning framing 11\",\"notice before respond 11\",\"notice last substantive section 11\",\"date before notice 11\"]}\n"
+    },
+    {
+      "variant": "final-v2",
+      "task": 2,
+      "exit": 0,
+      "signal": null,
+      "stderr": "",
+      "result": {
+        "task": 2,
+        "pass": true,
+        "assertions": 28,
+        "observed": [
+          "exists registered by actual OS registrar",
+          "exists readonly",
+          "exists resource class",
+          "exactly one descriptor",
+          "native schema requires string path",
+          "native wire requires path",
+          "production grammar admits exists",
+          "exists status file",
+          "exists value file",
+          "kind file",
+          "exists status dir",
+          "exists value dir",
+          "kind dir",
+          "exists status missing",
+          "exists value missing",
+          "kind missing",
+          "other exists",
+          "other kind",
+          "bad exists args {}",
+          "bad exists args {\"path\":\"\"}",
+          "bad exists args {\"path\":\"   \"}",
+          "bad exists args {\"path\":8}",
+          "bad exists args {\"path\":null}",
+          "non-ENOENT IO error retained",
+          "read boundary wraps exists",
+          "worker outside root refused",
+          "worker in root admitted",
+          "file untouched"
+        ]
+      },
+      "stdout": "{\"task\":2,\"pass\":true,\"assertions\":28,\"observed\":[\"exists registered by actual OS registrar\",\"exists readonly\",\"exists resource class\",\"exactly one descriptor\",\"native schema requires string path\",\"native wire requires path\",\"production grammar admits exists\",\"exists status file\",\"exists value file\",\"kind file\",\"exists status dir\",\"exists value dir\",\"kind dir\",\"exists status missing\",\"exists value missing\",\"kind missing\",\"other exists\",\"other kind\",\"bad exists args {}\",\"bad exists args {\\\"path\\\":\\\"\\\"}\",\"bad exists args {\\\"path\\\":\\\"   \\\"}\",\"bad exists args {\\\"path\\\":8}\",\"bad exists args {\\\"path\\\":null}\",\"non-ENOENT IO error retained\",\"read boundary wraps exists\",\"worker outside root refused\",\"worker in root admitted\",\"file untouched\"]}\n"
+    }
+  ],
+  "negativeControls": [
+    {
+      "variant": "original",
+      "task": 1,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/original-01",
+      "seedKind": "feature-absent",
+      "baselinePass": false,
+      "negativeFailure": "notice last substantive section 3\n+ actual - expected\n\n+ '### notice\\n' +\n+   'fixed transient hint\\n' +\n+   '\\n' +\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\n- '### notice\\nfixed transient hint'\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/original-01.hidden-manifest.json"
+    },
+    {
+      "variant": "original",
+      "task": 2,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/original-02",
+      "seedKind": "feature-absent",
+      "baselinePass": false,
+      "negativeFailure": "exists registered by actual OS registrar",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/original-02.hidden-manifest.json"
+    },
+    {
+      "variant": "original",
+      "task": 3,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/original-03",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "legacy approval {\"approvalRequired\":false}\n\n1 !== 5\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/original-03.hidden-manifest.json"
+    },
+    {
+      "variant": "original",
+      "task": 4,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/original-04",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "failure stops loading\n\ntrue !== false\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/original-04.hidden-manifest.json"
+    },
+    {
+      "variant": "original",
+      "task": 5,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/original-05",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "resume offset prefix\n\n5 !== 4\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/original-05.hidden-manifest.json"
+    },
+    {
+      "variant": "original",
+      "task": 6,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/original-06",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "explicit false beats provider true\n\ntrue !== false\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/original-06.hidden-manifest.json"
+    },
+    {
+      "variant": "original",
+      "task": 7,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/original-07",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "abort prevents next serial and terminal\n+ actual - expected\n\n  [\n    'first',\n+   'second'\n  ]\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/original-07.hidden-manifest.json"
+    },
+    {
+      "variant": "final",
+      "task": 1,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/final-01",
+      "seedKind": "feature-absent",
+      "baselinePass": false,
+      "negativeFailure": "notice last substantive section 3\n+ actual - expected\n\n+ '### notice\\n' +\n+   'fixed transient hint\\n' +\n+   '\\n' +\n+   'CURRENT DATE: 2026-06-09 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.'\n- '### notice\\nfixed transient hint'\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/final-01.hidden-manifest.json"
+    },
+    {
+      "variant": "final",
+      "task": 2,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/final-02",
+      "seedKind": "feature-absent",
+      "baselinePass": false,
+      "negativeFailure": "exists registered by actual OS registrar",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/final-02.hidden-manifest.json"
+    },
+    {
+      "variant": "final",
+      "task": 3,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/final-03",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "legacy approval {\"approvalRequired\":false}\n\n1 !== 5\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/final-03.hidden-manifest.json"
+    },
+    {
+      "variant": "final",
+      "task": 4,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/final-04",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "failure stops loading\n\ntrue !== false\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/final-04.hidden-manifest.json"
+    },
+    {
+      "variant": "final",
+      "task": 5,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/final-05",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "resume offset prefix\n\n5 !== 4\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/final-05.hidden-manifest.json"
+    },
+    {
+      "variant": "final",
+      "task": 6,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/final-06",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "explicit false beats provider true\n\ntrue !== false\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/final-06.hidden-manifest.json"
+    },
+    {
+      "variant": "final",
+      "task": 7,
+      "dest": "/tmp/atomic-stage07-benchmark/runs/final-07",
+      "seedKind": "seeded-regression",
+      "baselinePass": true,
+      "negativeFailure": "abort prevents next serial and terminal\n+ actual - expected\n\n  [\n    'first',\n+   'second'\n  ]\n",
+      "manifest": "/tmp/atomic-stage07-benchmark/runs/final-07.hidden-manifest.json"
+    }
+  ],
+  "instructions": "Only roots under runs go to fresh agents. Do not reveal check.mjs, manifests, golden controls, golden JSON or failed-check diagnostic. Share task brief prose and common read-observer tool only.",
+  "limits": [
+    "One matched pair per task is a case study",
+    "No token accounting from bytes",
+    "Checks use fake 416 fetch and pre-aborted cancellation; running-transfer cancellation covered separately by existing downloader tests",
+    "read-only exists requires result.details exists/kind (or same fields directly on result)"
+  ],
+  "rootSanitization": {
+    "at": "2026-10-06T17:21:59.930Z",
+    "allowedTrackedBasenames": [
+      ".env.example",
+      ".github",
+      ".gitignore",
+      "AGENTS.md",
+      "BUNDLING.md",
+      "EVOLUTION.md",
+      "INTENT_FABRIC_V1.md",
+      "LICENSE",
+      "MEMORY.md",
+      "MEMORY_FABRIC_V2.5.md",
+      "MEMORY_FABRIC_V2.md",
+      "MEMORY_GUIDE.md",
+      "PROMPT.md",
+      "README.md",
+      "SKILLS.md",
+      "TESTING.md",
+      "TUI.md",
+      "assets",
+      "eval",
+      "eval-agents",
+      "eval-memory",
+      "grammars",
+      "package-lock.json",
+      "package.json",
+      "probe5.mjs",
+      "probe6.mjs",
+      "scripts",
+      "sea-config.json",
+      "src",
+      "starter-skills",
+      "tsconfig.json",
+      "tsconfig.scripts.json",
+      "tsconfig.test.json",
+      "vitest.config.ts"
+    ],
+    "removed": [
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-01",
+        "file": "ARCHITECTURE.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-01",
+        "file": "CLAW-LOOT.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-01",
+        "file": "EVIDENCE_ROUTER_MODEL.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-01",
+        "file": "src-hashes.json"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-02",
+        "file": "ARCHITECTURE.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-02",
+        "file": "CLAW-LOOT.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-02",
+        "file": "EVIDENCE_ROUTER_MODEL.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-02",
+        "file": "src-hashes.json"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-03",
+        "file": "ARCHITECTURE.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-03",
+        "file": "CLAW-LOOT.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-03",
+        "file": "EVIDENCE_ROUTER_MODEL.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-03",
+        "file": "src-hashes.json"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-04",
+        "file": "ARCHITECTURE.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-04",
+        "file": "CLAW-LOOT.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-04",
+        "file": "EVIDENCE_ROUTER_MODEL.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-04",
+        "file": "src-hashes.json"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-05",
+        "file": "ARCHITECTURE.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-05",
+        "file": "CLAW-LOOT.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-05",
+        "file": "EVIDENCE_ROUTER_MODEL.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-05",
+        "file": "src-hashes.json"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-06",
+        "file": "ARCHITECTURE.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-06",
+        "file": "CLAW-LOOT.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-06",
+        "file": "EVIDENCE_ROUTER_MODEL.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-06",
+        "file": "src-hashes.json"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-07",
+        "file": "ARCHITECTURE.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-07",
+        "file": "CLAW-LOOT.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-07",
+        "file": "EVIDENCE_ROUTER_MODEL.md"
+      },
+      {
+        "root": "/tmp/atomic-stage07-benchmark/runs/final-07",
+        "file": "src-hashes.json"
+      }
+    ],
+    "symmetricExclusions": [
+      "probe5.mjs",
+      "probe6.mjs"
+    ],
+    "reason": "Tracked runtime/Telegram debug probes excluded symmetrically; not task answers. Root source extras/ignored/protected artifacts excluded; AGENTS current retained."
+  }
+}

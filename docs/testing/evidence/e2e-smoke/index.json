@@ -1,0 +1,160 @@
+{
+  "date": "2026-10-06",
+  "node": "v25.7.0",
+  "build": "atomic-agent 0.6.6",
+  "scope": "actual dist processes; scripted loopback providers; macOS PTY",
+  "repeatableCommand": "npm run build && npm run smoke:e2e -- --output /tmp/atomic-e2e-report",
+  "productionLogicChanged": false,
+  "processChecksPassed": 13,
+  "cliPositiveCasesPassed": 11,
+  "openaiNativeToolScenarioPassed": true,
+  "tuiScenariosPassed": 3,
+  "unchangedEvalSubset": {
+    "passed": 8,
+    "failed": 5,
+    "allFiveFailuresReproducedOnOriginal": "cce6262c"
+  },
+  "snapshotsNote": "Additional-run harnesses are captured session evidence with absolute local paths, not portable supported scripts. The supported script is scripts/smoke-e2e.mjs. Temporary workspaces from the repeatable smoke are removed.",
+  "files": [
+    {
+      "path": "process/report.json",
+      "sha256": "7c29e3ad74068c68202a4fd72e3cf27bb2998e5c15ae9d4201d5b86dec1b5cb9",
+      "bytes": 600712
+    },
+    {
+      "path": "process/sidecar.ndjson",
+      "sha256": "6e1ab3f9f34d8140f5650f57375ea308d8ad489419a54f71389f4b33369e07dc",
+      "bytes": 79645
+    },
+    {
+      "path": "process/sidecar.stderr.log",
+      "sha256": "4d7a618368cf1ba3b57a6f6ebee18dfb37752aadf6b5079b9628eafb45e3f112",
+      "bytes": 615
+    },
+    {
+      "path": "cli/summary.json",
+      "sha256": "882de365bc22ee7d9a1937081c7cbae6db6f4bc39e5cb4bef99d256e76bc5e47",
+      "bytes": 1660
+    },
+    {
+      "path": "cli/results.json",
+      "sha256": "dbb8756e0d282f802ac8b4e05f593c9392997c8de54e3e1fe3d1d9210916a6da",
+      "bytes": 116430
+    },
+    {
+      "path": "cli/run.log",
+      "sha256": "2c4840eb229205c969d9224c64b46bda45c9f0a24a00f8f185344d753df8727e",
+      "bytes": 5160
+    },
+    {
+      "path": "cli/run.mjs",
+      "sha256": "c4ca5d1060ab3d303864dff5c7a44c2357a0c3cfd41f1af94a51d3718dd1f15f",
+      "bytes": 2400
+    },
+    {
+      "path": "cli/edit/results.json",
+      "sha256": "31d03bce1fe5b2fbad53eea22a8138e36f38c895522b04703af394b204f2316e",
+      "bytes": 19170
+    },
+    {
+      "path": "cli/edit/run.log",
+      "sha256": "14c3a4bbc4dc641fcb0a5005d00860c6157a2ea1663f737d97cd7de560a036c4",
+      "bytes": 743
+    },
+    {
+      "path": "cli/edit/run.mjs",
+      "sha256": "fc33f162ebed6603d1bc355c3e2a51fa50765f02938467dd2fa83e727295d9dd",
+      "bytes": 2503
+    },
+    {
+      "path": "cli/baseline/results.json",
+      "sha256": "aebf657076934e3f0bf7eab59e2801aba22b07ffebaa89d78ada0147bc9c4266",
+      "bytes": 83573
+    },
+    {
+      "path": "cli/baseline/run.log",
+      "sha256": "ae143f43176fac89916f1c3820d5601b816862a6416f343650123e8aec944a4a",
+      "bytes": 3730
+    },
+    {
+      "path": "cli/baseline/run.mjs",
+      "sha256": "724b662ff5fe2172ba9d7ab73ab7fe5a6009cb9a5850d855ae336347cbd9e4ad",
+      "bytes": 2518
+    },
+    {
+      "path": "openai/summary.json",
+      "sha256": "a7be13cc370b582cf4f8fa47822f88e3a872611cd448a3f831c2eedd1399c1ef",
+      "bytes": 1057
+    },
+    {
+      "path": "openai/requests.json",
+      "sha256": "c63fbf2027f1bc29a0700bb3b1bb2d2e06706e12b26da8f1fa90eb1dd3643224",
+      "bytes": 189107
+    },
+    {
+      "path": "openai/cli-result.json",
+      "sha256": "a13918f970ae17e24789867709298afa82185187ef877f232fcccdaa329245ed",
+      "bytes": 2411
+    },
+    {
+      "path": "openai/run.mjs",
+      "sha256": "f97b059989fdea179f72840aef108e0df69b5c6ddc2a3f293768af812fe14437",
+      "bytes": 5924
+    },
+    {
+      "path": "openai/run.log",
+      "sha256": "dfbd0b2bac7519c46229c92061115ead73240559890dd5304528723b624e571b",
+      "bytes": 1058
+    },
+    {
+      "path": "tui/verified-results.json",
+      "sha256": "e64a290c10455d17c3384101f02b71486f68eb3dac98e98ca12f4ff291273e74",
+      "bytes": 3047
+    },
+    {
+      "path": "tui/run.py",
+      "sha256": "a4c5bd9897943e12145dbe416a9041c8f6dcb7e0a42e680d3ef4b914cebd70c7",
+      "bytes": 2867
+    },
+    {
+      "path": "tui/navigation.py",
+      "sha256": "1db4dc7d33221727d7fb2cc690d16068eeecd6dec46f0439e629d45decc17745",
+      "bytes": 3198
+    },
+    {
+      "path": "tui/verify.py",
+      "sha256": "b956c5640ea818a65e54ec3629603fc73f0f1852c5ab296dec998c38da71b77c",
+      "bytes": 1512
+    },
+    {
+      "path": "tui/onboarding/full.ansi",
+      "sha256": "10178ee47af2e12b64fad2ff87a73f6103a2ee14403f56689712fce8c1b8895e",
+      "bytes": 178165
+    },
+    {
+      "path": "tui/onboarding/full.txt",
+      "sha256": "bb9f67fbf34bfd0a15dcc9b184b90260eba56f851aae1884a043147ab4d838dd",
+      "bytes": 67202
+    },
+    {
+      "path": "tui/main/full.ansi",
+      "sha256": "faef131851e6add403bd6a7b2d26fa5dcc02d966a82a33b0a13563f42052c2d7",
+      "bytes": 48138
+    },
+    {
+      "path": "tui/main/full.txt",
+      "sha256": "5c7a35f60bb2bdbda29f2a3d937d5ab9027e7d471ca510802cac672d65c6f269",
+      "bytes": 28248
+    },
+    {
+      "path": "tui/navigation/full.ansi",
+      "sha256": "c1775ca6c4530810336302f37f0204c69520222f6defb0b61818b4643fbbbecb",
+      "bytes": 77035
+    },
+    {
+      "path": "tui/navigation/full.txt",
+      "sha256": "7fe2d08a83fa6babc5e70b07420f43f2a63a6ecc19d5fe7bbe1b48fa4225641d",
+      "bytes": 44592
+    }
+  ]
+}

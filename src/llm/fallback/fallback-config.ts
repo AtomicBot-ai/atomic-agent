@@ -3,7 +3,7 @@ import type { ResolvedLlmConfig } from "../provider/registry/provider-types.js";
 /**
  * Resolved, defaulted timing knobs for the circuit breaker. All values
  * are wall-clock milliseconds. Defaults are the owner-approved numbers
- * (see AGENTS.md §"Provider fallback chain"); operators override any of
+ * (see ../docs/fallback.md); operators override any of
  * them via `llm.fallback.*` but the shape here is always fully
  * populated so the breaker never branches on `undefined`.
  */
@@ -57,7 +57,7 @@ function providerClass(kind: string | undefined): ProviderClass {
 /**
  * Build the effective fallback chain from resolved LLM config.
  *
- * Rules (AGENTS.md §"Provider fallback chain"):
+ * Rules (../docs/fallback.md):
  *  - Start from `fallback.chain` if present, else `[activeTextProvider]`.
  *  - Drop ids that are not configured providers (defensive — parse-time
  *    validation already rejects unknown ids, but a hot-swapped config

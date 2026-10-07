@@ -47,7 +47,7 @@ describe("modelWantsStrictTools", () => {
       const resolved = configWith([
         {
           ...strictEntry,
-          userModels: [{ id: "mercury-2.5", supportsTools: level }],
+          userModels: [{ id: "mercury-2.5", kind: "chat", supportsTools: level }],
         },
       ]);
       expect(modelWantsStrictTools(resolved, "gate"), level).toBe(false);

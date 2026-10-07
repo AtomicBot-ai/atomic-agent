@@ -4,7 +4,7 @@ import {
   codingModeLook,
   resolveCodingMode,
   type CodingMode,
-} from "../tui/coding-mode.js";
+} from "../approval/coding-mode.js";
 import { clampApprovalLevel } from "../approval/approval-level.js";
 import { openaiError } from "./openai-errors.js";
 import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-context.js";

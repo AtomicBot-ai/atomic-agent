@@ -6,7 +6,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { resetConfigCache } from "../../config/index.js";
-import { OnboardingScreen } from "../components/onboarding-screen.js";
+import { OnboardingScreen } from "./onboarding-screen.js";
 import { MouseProvider } from "../mouse/mouse-context.js";
 import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";

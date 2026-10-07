@@ -1,0 +1,491 @@
+import { render } from "ink-testing-library";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
+import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { OPENAI_COMPAT_DEFAULT_CHAT_MODEL } from "./providers-model-options.js";
+import { KIND_ROW_ORDER } from "./providers-wizard-phases.js";
+import { createProvidersWizardState } from "./providers-wizard-state.js";
+import type {
+  ProvidersWizardKind,
+  ProvidersWizardState,
+} from "./providers-wizard-state.js";
+import { ProvidersWizard } from "./providers-wizard.js";
+
+function stripAnsi(value: string): string {
+  return value.replace(/\[[0-9;]*m/g, "");
+}
+
+function chatModelStep(baseUrlLine: string, cursor = 0) {
+  return {
+    ...createProvidersWizardState("add", { kind: "openai-compatible" }),
+    phase: "chat_model_line" as const,
+    baseUrlLine,
+    cursor,
+  };
+}
+
+function cloudPickStep(kind: ProvidersWizardKind, cursor: number) {
+  return {
+    ...createProvidersWizardState("add", { kind }),
+    phase: "pick_chat_model" as const,
+    cursor,
+  };
+}
+
+/** Count rendered option rows by a substring every option label carries. */
+function countRows(text: string, needle: string): number {
+  return text.split("\n").filter((line) => line.includes(needle)).length;
+}
+
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+describe("ProvidersWizard chat model step", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("windows a long discovered model list around the cursor", async () => {
+    const ids = Array.from({ length: 30 }, (_, i) => `model-${i + 1}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: ids.map((id) => ({ id })) }),
+      })),
+    );
+
+    const { lastFrame } = render(
+      // pasted with `/v1`: the header must show the URL actually requested
+      <ProvidersWizard wizard={chatModelStep("https://many.example/v1", 20)} />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("30 from https://many.example/v1/models");
+    // ids are listed sorted; cursor 20 lands on the 21st of them
+    expect(text).toContain("> model-28");
+    // The counter opens the hint, right after the movement keys.
+    expect(text).toContain("↑/↓ move (21/30) · PgUp/PgDn jump");
+    expect(text).not.toContain("model-10");
+  });
+
+  it("keeps the compat window when the cursor sits at the tail", async () => {
+    const ids = Array.from({ length: 30 }, (_, i) => `model-${i + 1}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: ids.map((id) => ({ id })) }),
+      })),
+    );
+
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={chatModelStep("https://many.example/v1", 29)} />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("(30/30)");
+    expect(countRows(text, "model-")).toBeLessThanOrEqual(12);
+  });
+
+  it("shows a rejected-submit error alongside the discovered model list", async () => {
+    // A rejected submit (empty or non-ASCII key) leaves the wizard on the
+    // chat-model step with `error` set, but the pick list has no error slot
+    // of its own. Without surfacing it here, the operator's Enter reads as
+    // doing nothing.
+    const ids = ["model-a", "model-b"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: ids.map((id) => ({ id })) }),
+      })),
+    );
+
+    const wizard = {
+      ...chatModelStep("https://listed.example/v1"),
+      error: "API key contains non-ASCII characters. Use a plain ASCII key.",
+    };
+    const { lastFrame } = render(<ProvidersWizard wizard={wizard} />);
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    // The model list still renders...
+    expect(text).toContain("model-a");
+    // ...and the submit error is visible under it.
+    expect(text).toContain("non-ASCII characters");
+  });
+
+  it("explains a refused key instead of showing the raw status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 403 })),
+    );
+
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={chatModelStep("https://refused.example")} />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    // 403 becomes an actionable line naming the service, not `http 403`.
+    expect(text).toContain("rejected this key");
+    expect(text).toContain("type the id");
+    expect(text).not.toContain("model list unavailable");
+  });
+
+  it("names the preset service in a refused-key message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 401 })),
+    );
+
+    const wizard = {
+      ...createProvidersWizardState("add", { kind: "openai-compatible" }),
+      phase: "chat_model_line" as const,
+      presetId: "groq",
+      baseUrlLine: "https://api.groq.com/openai",
+    };
+    const { lastFrame } = render(<ProvidersWizard wizard={wizard} />);
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Groq rejected this key");
+  });
+});
+
+describe("ProvidersWizard CLI-backed configure step", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("opens a claude-cli row on its model, not on a key screen", async () => {
+    // What `c` now reaches. A CLI-backed provider has no key and no
+    // endpoint, so anything but the model id would be a dead end — and
+    // the openai-compat placeholder would name a model `claude` rejects.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={createProvidersWizardState("configure", {
+          providerId: "claude-cli",
+          kind: "claude-cli",
+          chatModel: "opus",
+        })}
+      />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model id — claude CLI");
+    expect(text).toContain("opus");
+    expect(text).toContain("the CLI uses its own session");
+    // The key screen's own copy, absent because that phase is skipped.
+    expect(text).not.toContain("Saved to");
+    expect(text).not.toContain(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+    // No endpoint exists behind the CLI; listing must not be attempted.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tells a codex-cli operator that an empty line is the answer", async () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={createProvidersWizardState("configure", {
+          providerId: "codex-cli",
+          kind: "codex-cli",
+        })}
+      />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model id — codex CLI");
+    expect(text).toContain("the CLI resolves the model");
+  });
+});
+
+describe("ProvidersWizard pick list counter", () => {
+  it("shows a clear Gemini provider row", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={createProvidersWizardState("add")} />,
+    );
+
+    expect(stripAnsi(lastFrame() ?? "")).toContain("Gemini (Google AI)");
+  });
+
+  it("shows the position counter on the provider list", () => {
+    // 2 catalog kinds + 10 presets + manual entry. The counter is not a
+    // long-list extra: hiding it below a size threshold reads as a glitch,
+    // and with the preset rows the list now runs past the viewport anyway.
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={createProvidersWizardState("add")} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain(
+      `j/k move (1/${KIND_ROW_ORDER.length}) · Enter pick · / search · Esc cancel`,
+    );
+  });
+});
+
+describe("ProvidersWizard search box", () => {
+  function providerList(search: string | null, cursor = 0) {
+    return { ...createProvidersWizardState("add"), search, cursor };
+  }
+
+  it("advertises the search box on the closed provider list", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList(null)} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("search: / to search");
+  });
+
+  it("shows the query, the surviving rows, and a counter over the filtered set", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList("cli")} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("search: cli");
+    // Both subscription CLI rows survive "cli"; nothing else does.
+    expect(text).toContain("Claude Code subscription");
+    expect(text).toContain("OpenAI Codex subscription");
+    expect(text).not.toContain("OpenRouter (cloud chat");
+    // The counter names the filtered list, not the 25 rows behind it.
+    expect(text).toContain("(1/2)");
+    // With the box open, j/k are characters and Esc empties it first.
+    expect(text).toContain("↑/↓ move (1/2) · Enter pick · Esc clears search");
+  });
+
+  it("says so instead of drawing an empty box when nothing matches", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList("no-such-provider")} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain('no match for "no-such-provider"');
+    expect(text).toContain("Backspace to widen it");
+    expect(text).toContain("(0/0)");
+    expect(text).not.toContain("Gemini (Google AI)");
+  });
+
+  it("highlights the clamped row when the cursor outlives the rows", () => {
+    // Nothing in the flow leaves a cursor past the end, but a catalog
+    // refresh landing between two keypresses can, and the highlight has
+    // to stay on a row that exists — it is what Enter selects.
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList("cli", 9)} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("> OpenAI Codex subscription");
+    expect(text).toContain("(2/2)");
+  });
+});
+
+describe("ProvidersWizard cloud model pickers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("windows the OpenRouter picker when the live catalog has 300+ models", async () => {
+    const many = Array.from({ length: 305 }, (_, i) => ({
+      id: `vendor/model-${String(i).padStart(3, "0")}`,
+      name: `Model ${i}`,
+      context_length: 128_000,
+      pricing: { prompt: "0.000001", completion: "0.000002" },
+      supported_parameters: ["tools"],
+      architecture: { input_modalities: ["text"] },
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ data: many }) })),
+    );
+    await refreshOpenRouterChatCatalogFromApi();
+
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={cloudPickStep("openrouter", 150)} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("> vendor/model-150");
+    expect(text).toContain("(151/305)");
+    expect(countRows(text, "vendor/model-")).toBeLessThanOrEqual(12);
+    expect(text).not.toContain("vendor/model-000");
+    expect(text).not.toContain("vendor/model-304");
+  });
+
+  it("triggers the live refresh when the picker opens cold and swaps the list in", async () => {
+    // Fresh module registry: the picker must start from the static
+    // catalog and fire the fetch itself, not inherit a cache warmed by
+    // the tests above.
+    vi.resetModules();
+    const [{ ProvidersWizard: FreshWizard }, wizardState] = await Promise.all([
+      import("./providers-wizard.js"),
+      import("./providers-wizard-state.js"),
+    ]);
+
+    let releaseFetch: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const many = Array.from({ length: 305 }, (_, i) => ({
+      id: `vendor/model-${String(i).padStart(3, "0")}`,
+      name: `Model ${i}`,
+      context_length: 128_000,
+      pricing: { prompt: "0.000001", completion: "0.000002" },
+      supported_parameters: ["tools"],
+      architecture: { input_modalities: ["text"] },
+    }));
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0]) => {
+      await gate;
+      return { ok: true, json: async () => ({ data: many }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wizard = {
+      ...wizardState.createProvidersWizardState("add", { kind: "openrouter" }),
+      phase: "pick_chat_model" as const,
+      cursor: 0,
+    };
+    const { lastFrame } = render(<FreshWizard wizard={wizard} />);
+    await flush();
+
+    // While the fetch is in flight: static list + a visible loading note.
+    let text = stripAnsi(lastFrame() ?? "");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://openrouter.ai/api/v1/models",
+    );
+    expect(text).toContain("updating model list from API");
+    expect(text).toContain("openrouter/auto");
+    expect(text).not.toContain("/305)");
+
+    releaseFetch();
+    await flush();
+
+    text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("(1/305)");
+    expect(text).not.toContain("updating model list from API");
+  });
+
+  it("stays on the static list without crashing when the refresh fails", async () => {
+    vi.resetModules();
+    const [{ ProvidersWizard: FreshWizard }, wizardState, aimlapiCatalog] =
+      await Promise.all([
+        import("./providers-wizard.js"),
+        import("./providers-wizard-state.js"),
+        import("../../llm/provider/aimlapi/aimlapi-models-catalog.js"),
+      ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    );
+
+    const wizard = {
+      ...wizardState.createProvidersWizardState("add", { kind: "aimlapi" }),
+      phase: "pick_chat_model" as const,
+      cursor: 0,
+    };
+    const { lastFrame } = render(<FreshWizard wizard={wizard} />);
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model (AI/ML API)");
+    // The static head entry is still on screen and the loading note is gone.
+    expect(text).toContain(aimlapiCatalog.AIMLAPI_CHAT_MODEL_ORDER[0]!);
+    expect(text).not.toContain("updating model list from API");
+  });
+
+  it("windows the aimlapi picker when the live catalog has 300+ models", async () => {
+    const many = Array.from({ length: 337 }, (_, i) => ({
+      id: `vendor/model-${String(i).padStart(3, "0")}`,
+      type: "openai/chat-completions",
+      info: { name: `Model ${i}`, contextLength: 128_000 },
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ data: many }) })),
+    );
+    await refreshAimlapiChatCatalogFromApi();
+
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={cloudPickStep("aimlapi", 336)} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    // The cursor at the tail still sits inside a 12-row viewport.
+    expect(text).toContain("> vendor/model-336");
+    expect(text).toContain("(337/337)");
+    expect(countRows(text, "vendor/model-")).toBeLessThanOrEqual(12);
+    expect(text).not.toContain("vendor/model-000");
+  });
+});
+
+/**
+ * Reported as "I added a random key and got stuck on embedding
+ * selection". The key check did fire and did refuse the save — nothing
+ * was written — but a list screen had nowhere to print `wizard.error`
+ * and nowhere to say a check was running, so Enter looked like a key
+ * that did nothing, forever.
+ */
+describe("ProvidersWizard surfaces the key check on list screens", () => {
+  // The chat-model case mounts `CatalogChatModelStep`, which fires a
+  // live catalog refresh on mount. Keep it offline: a real response
+  // would replace the module cache the windowing tests assert against.
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function embeddingStep(overrides: Partial<ProvidersWizardState>) {
+    return {
+      ...createProvidersWizardState("add", { kind: "openrouter" }),
+      phase: "pick_embedding" as const,
+      cursor: 0,
+      ...overrides,
+    };
+  }
+
+  it("prints the refusal on the embedding screen", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={embeddingStep({
+          error: "OpenRouter does not recognize this key (http 401)",
+        })}
+      />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("OpenRouter does not recognize this key");
+  });
+
+  it("says a check is in flight while the save waits on the provider", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={embeddingStep({ submitting: true })} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("checking the key with the provider");
+    expect(text).toContain("Esc cancels");
+  });
+
+  it("prints the refusal on the chat-model screen too", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={{
+          ...cloudPickStep("aimlapi", 0),
+          error: "AI/ML API accepted the key but the account has no balance",
+        }}
+      />,
+    );
+    expect(stripAnsi(lastFrame() ?? "")).toContain("no balance");
+  });
+});

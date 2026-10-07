@@ -13,6 +13,7 @@ import {
   sanitizeSessionTitle,
   shouldNameSession,
   stripTitleReasoning,
+  type SessionTitleDeps,
 } from "./session-title.js";
 
 function session(
@@ -204,30 +205,27 @@ describe("generateSessionTitle", () => {
   });
 
   it("asks a llama-server link with thinking off", async () => {
-    const complete = vi.fn(async () => ({ content: "Fix the abort chord" }));
+    const complete = vi.fn<SessionTitleDeps["complete"]>(async () => ({ content: "Fix the abort chord" }));
     await generateSessionTitle(session([ASKED, ANSWERED]), {
       complete,
       slotId: () => 3,
     });
-    const params = complete.mock.calls[0]?.[0] as unknown as {
-      prompt: string;
-      chat?: { system: string; user: string; enableThinking?: boolean };
-    };
+    const params = complete.mock.calls[0]?.[0];
+    if (params === undefined) throw new Error("expected a session naming request");
     expect(params.chat?.enableThinking).toBe(false);
     // The raw text stays beside it for a server that cannot render.
     expect(params.chat?.user).toBe(params.prompt);
   });
 
   it("sends the raw prompt alone when the operator turned templates off", async () => {
-    const complete = vi.fn(async () => ({ content: "Fix the abort chord" }));
+    const complete = vi.fn<SessionTitleDeps["complete"]>(async () => ({ content: "Fix the abort chord" }));
     await generateSessionTitle(session([ASKED, ANSWERED]), {
       complete,
       slotId: () => 3,
       serverTemplate: false,
     });
-    const params = complete.mock.calls[0]?.[0] as unknown as {
-      chat?: unknown;
-    };
+    const params = complete.mock.calls[0]?.[0];
+    if (params === undefined) throw new Error("expected a session naming request");
     expect(params.chat).toBeUndefined();
   });
 

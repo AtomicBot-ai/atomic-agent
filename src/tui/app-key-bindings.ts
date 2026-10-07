@@ -1,12 +1,9 @@
-import { CODING_MODES, type CodingMode } from "./coding-mode.js";
-import {
-  ISSUE_REPORT_LEVELS,
-  type IssueReportLevel,
-} from "./issue-report/report-levels.js";
-import type { IssueReportState } from "./issue-report/issue-report-state.js";
+import { handleUpdateKey } from "./update/update-key-bindings.js";
+import { CODING_MODES, type CodingMode } from "./coding-mode/coding-mode.js";
+import type { IssueReportLevel } from "./issue-report/report-levels.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
-import { handleContextPanelKey } from "./context-panel-keys.js";
+import { handleContextPanelKey } from "./context/context-panel-keys.js";
 import type { Key } from "ink";
 import {
   canGrantCategory,
@@ -31,7 +28,8 @@ import {
 } from "./session-rail/index.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
-import { isUninstallConfirmed } from "./uninstall/uninstall-state.js";
+import { handleUninstallKey } from "./uninstall/uninstall-key-bindings.js";
+import { handleIssueReportKey } from "./issue-report/issue-report-key-bindings.js";
 
 /**
  * Number of **terminal rows** a single PageUp / PageDown keypress
@@ -496,6 +494,8 @@ export function handleAppKey(
     if (state.status === "running" || state.status === "awaiting_approval") {
       callbacks.onAbort();
       dispatch({ type: "abort_requested" });
+    } else if (state.contextCompactions[state.session.sessionId ?? ""]) {
+      callbacks.onAbort();
     }
     return true;
   }
@@ -526,9 +526,11 @@ export function handleAppKey(
   // `disabled` while a turn runs, which switches its `useInput` off and
   // makes the abort branch over there unreachable. Overlays that own Esc
   // themselves keep it; a pending approval already returned above.
+  // Between turns Esc can cancel context maintenance without arming an
+  // agent-turn abort: no completed steps are being discarded then.
   if (
     key.escape &&
-    state.status === "running" &&
+    (state.status === "running" || Boolean(state.contextCompactions[state.session.sessionId ?? ""])) &&
     !state.slashPaletteOpen &&
     !state.themePickerOpen &&
     !state.sessionPickerOpen &&
@@ -546,6 +548,10 @@ export function handleAppKey(
     // offset there would just make Esc look dead.
     if (state.uiMode === "chat" && state.chatScrollOffset > 0) {
       dispatch({ type: "chat_scroll_reset" });
+      return true;
+    }
+    if (state.status !== "running") {
+      callbacks.onAbort();
       return true;
     }
     // Esc arms; `1` below confirms. Aborting a turn throws away every
@@ -845,20 +851,6 @@ export function applyNavSlot(
   dispatch({ type: "tab_changed", tab: slot.tab });
 }
 
-function handleUpdateKey(input: string, key: Key, ctx: AppKeyContext): boolean {
-  if (key.ctrl || key.meta) return false;
-  const lower = input.toLowerCase();
-  if (lower === "y") {
-    ctx.callbacks.onUpdateConfirmed?.();
-    return true;
-  }
-  if (lower === "n" || key.escape) {
-    ctx.dispatch({ type: "update_dismissed" });
-    return true;
-  }
-  return false;
-}
-
 /**
  * Human confirmation line for a just-issued session grant, dropped into
  * the chat transcript so the operator sees the grant land in the same
@@ -1092,95 +1084,6 @@ function handleSessionDeleteKey(
   return true;
 }
 
-/**
- * Keys for the uninstall ladder.
- *
- * Two rules carry the whole design. The first: `y` does nothing, on any
- * screen — the reflex answer to a confirm dialog must not be an answer
- * here. The second: on the last screen, Enter only means something once
- * the word has actually been typed, and every other printable key is
- * text going into that field rather than a command. There is no key
- * that skips a step and no key that means "yes" twice in a row.
- */
-function handleUninstallKey(
-  input: string,
-  key: Key,
-  ctx: AppKeyContext,
-): boolean {
-  const { state, dispatch, callbacks } = ctx;
-  const flow = state.uninstall;
-  if (!flow) return false;
-  const close = (): void => dispatch({ type: "uninstall_closed" });
-
-  // Nothing is answerable once the app is on its way down — including
-  // Ctrl+C, which at that point would leave a half-removed install.
-  if (flow.step === "closing") return true;
-
-  // Ctrl+C closes the dialog and hands the key on, same contract the
-  // session dialog has: "stop everything" must never be swallowed.
-  if (key.ctrl && input === "c") {
-    close();
-    return false;
-  }
-  if (key.escape) {
-    close();
-    return true;
-  }
-  if (key.ctrl || key.meta) return false;
-
-  if (flow.step === "loading" || flow.step === "failed") return true;
-
-  if (flow.step === "review") {
-    if (key.leftArrow || key.rightArrow || key.tab) {
-      dispatch({
-        type: "uninstall_cursor_set",
-        cursor: flow.cursor === "cancel" ? "continue" : "cancel",
-      });
-      return true;
-    }
-    if (key.return) {
-      // An empty plan has nothing to continue to, so Enter closes.
-      if (flow.cursor === "continue" && (flow.preview?.rows.length ?? 0) > 0) {
-        dispatch({ type: "uninstall_review_accepted" });
-      } else {
-        close();
-      }
-      return true;
-    }
-    return true;
-  }
-
-  // `confirm`: a text field with one accepted value.
-  if (key.return) {
-    if (!isUninstallConfirmed(flow.typed)) return true;
-    dispatch({ type: "uninstall_started" });
-    // The callback only flags the post-exit uninstall handoff;
-    // `quit_requested` is what unmounts Ink so the handoff is reached.
-    callbacks.onUninstallConfirmed?.();
-    dispatch({ type: "quit_requested" });
-    return true;
-  }
-  if (key.backspace || key.delete) {
-    dispatch({ type: "uninstall_typed_set", typed: flow.typed.slice(0, -1) });
-    return true;
-  }
-  if (
-    input &&
-    !key.upArrow &&
-    !key.downArrow &&
-    !key.leftArrow &&
-    !key.rightArrow
-  ) {
-    // Capped at a little over the word's length: a paste of a whole
-    // paragraph should not become a field the operator has to clear
-    // one backspace at a time.
-    const typed = `${flow.typed}${input}`.slice(0, 32);
-    dispatch({ type: "uninstall_typed_set", typed });
-    return true;
-  }
-  return true;
-}
-
 function handleApprovalKey(
   input: string,
   key: Key,
@@ -1221,57 +1124,5 @@ function handleApprovalKey(
       return true;
     default:
       return false;
-  }
-}
-
-function handleIssueReportKey(
-  input: string,
-  key: Key,
-  report: IssueReportState,
-  ctx: AppKeyContext,
-): void {
-  const { state, dispatch, callbacks } = ctx;
-  const close = (): void => {
-    // The orchestrator forgets its prepared report; the reducer closes
-    // the popup. Both, so a stub without the callback still closes.
-    callbacks.onIssueReportCloseRequested?.();
-    dispatch({ type: "issue_report_closed" });
-  };
-  // A send in flight cannot be abandoned: the issue may already exist
-  // and the link is the only thing left to show. A build can — the
-  // orchestrator drops a result that arrives after the close.
-  if (report.step === "sending") return;
-  if (report.step === "building") {
-    if (key.escape) close();
-    return;
-  }
-  if (key.escape || report.step === "sent" || report.step === "error") {
-    close();
-    return;
-  }
-  if (report.step === "pick") {
-    if (key.upArrow || key.downArrow || input === "j" || input === "k") {
-      dispatch({
-        type: "issue_report_cursor_moved",
-        delta: key.downArrow || input === "j" ? 1 : -1,
-      });
-      return;
-    }
-    const digit = /^[1-9]$/.test(input) ? Number(input) - 1 : -1;
-    const picked =
-      digit >= 0
-        ? ISSUE_REPORT_LEVELS[digit]
-        : key.return
-          ? ISSUE_REPORT_LEVELS[report.cursor]
-          : undefined;
-    if (picked) callbacks.onIssueReportPickRequested?.(picked.level, state);
-    return;
-  }
-  if (report.step === "confirm") {
-    if (input === "n") {
-      close();
-      return;
-    }
-    if (key.return || input === "y") callbacks.onIssueReportSendRequested?.();
   }
 }

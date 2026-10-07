@@ -1,0 +1,176 @@
+{
+  "actions": 18,
+  "returnedOutputBytes": 97215,
+  "observedSourceBytes": 90275,
+  "uniqueVersionedSourceBytes": 88203,
+  "repeatedSourceBytes": 2072,
+  "uniqueInstructionBytes": 7939,
+  "uniqueCodeBytes": 58582,
+  "uniqueOtherBytes": 21682,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+      "uniqueBytes": 6714
+    },
+    {
+      "path": "README.md",
+      "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+      "uniqueBytes": 8980
+    },
+    {
+      "path": "src/agent/AGENTS.md",
+      "hash": "88b874a3ec206e7e604f87564196fab1b57a4e21378e1a9f7d75063c375643ca",
+      "uniqueBytes": 1225
+    },
+    {
+      "path": "src/agent/review-stall.test.ts",
+      "hash": "5882e1f954840c75d56feb96ed83d3ff2dbcdab5afcda4f9aa58631304b6f6dd",
+      "uniqueBytes": 94
+    },
+    {
+      "path": "src/agent/review-stall.ts",
+      "hash": "1c4186c89ed25d67ad45615257be1e48f2a39662c45def9bf7b2b85c555e283a",
+      "uniqueBytes": 71
+    },
+    {
+      "path": "src/agent/loop-detector.ts",
+      "hash": "9259f9ee77695833d8751ac5ecd416b482431090f9142b362b906d09469a3468",
+      "uniqueBytes": 212
+    },
+    {
+      "path": "src/agent/batch-summary-cap.test.ts",
+      "hash": "54af1ede6bde80ab657b65b9286e0789e8c15f054ddf17952c77cbfe7a3bf5f2",
+      "uniqueBytes": 206
+    },
+    {
+      "path": "src/agent/step-events.ts",
+      "hash": "9ec60449d06094565286d0c5267ea3d2d6fbc864ee6deef629d9be0cd313785b",
+      "uniqueBytes": 1687
+    },
+    {
+      "path": "src/agent/tool-name-resolution.ts",
+      "hash": "a124a9e57aa4fa265df76b1c0936bfaa6b6a6b77ebde015323505cbf0d4af1af",
+      "uniqueBytes": 71
+    },
+    {
+      "path": "src/agent/batch-summary-cap.ts",
+      "hash": "d74317811127c3a446691cdecf538b27ca6f4e6d5cc66386fb040f3c98914f30",
+      "uniqueBytes": 415
+    },
+    {
+      "path": "src/agent/fusion-orchestrator-mode.test.ts",
+      "hash": "395073cb3d8d3fe9df8d47c0120a736d8692017fc08e441a8df8c67f7aabcd2e",
+      "uniqueBytes": 67
+    },
+    {
+      "path": "src/agent/agent-loop.test.ts",
+      "hash": "a16b9f660878fa32e7852787bd2294e5773ee51127e7a4a7039ffe8f34749071",
+      "uniqueBytes": 300
+    },
+    {
+      "path": "src/agent/agent-loop.ts",
+      "hash": "9b30bd59c67ba4bbc5b53d2e7b3fd8159a8cb1d45f7eb313ba6654e6ac170c4f",
+      "uniqueBytes": 783
+    },
+    {
+      "path": "src/agent/tool-resource-class.test.ts",
+      "hash": "28fdc2548eefd63d5c6b6f27d6348dce04b5babdb6d34b0b548c5dbe25fdefc4",
+      "uniqueBytes": 85
+    },
+    {
+      "path": "src/agent/agent-loop-recalled-memory-allowlist.test.ts",
+      "hash": "1854254fc3bdb82c01d23f719a90b4362130283b4be378cd14e31da12a748e56",
+      "uniqueBytes": 283
+    },
+    {
+      "path": "src/agent/tool-resource-class.ts",
+      "hash": "a061b3b9c0534e28b57041f347fd5a5b0451855f3bcecf7dafc6f0b1f7e67060",
+      "uniqueBytes": 1469
+    },
+    {
+      "path": "src/agent/batch-executor.test.ts",
+      "hash": "1eac0b929bcfc29453d6e5e107af6b690178d450ea3784384ad037b9c083e988",
+      "uniqueBytes": 21065
+    },
+    {
+      "path": "src/agent/agent-loop-progress-note.test.ts",
+      "hash": "51c564b48385046e200dcc3b3116779ea87deb1683d62d7d3ce8f93e5c3516de",
+      "uniqueBytes": 356
+    },
+    {
+      "path": "src/agent/batch-executor.ts",
+      "hash": "0fb5bfe1de7246b17cedb14ba0182a7d8b888266052d7b61ef94b2e4b4354547",
+      "uniqueBytes": 296
+    },
+    {
+      "path": "src/agent/agent-contract.ts",
+      "hash": "c06f08ef0f17ebb9d80c3a1143292cdf117389e962995ed7e2dec85be98ed12c",
+      "uniqueBytes": 202
+    },
+    {
+      "path": "src/agent/progress-note-reply.executor.test.ts",
+      "hash": "86fe4fc7857f28e3f983c0416f7c053207b56b4e95732499ee981b83c64715f0",
+      "uniqueBytes": 460
+    },
+    {
+      "path": "src/agent/step/README.md",
+      "hash": "331ede7eb02e58c4a2ce447cebeaf981a2fd12d2a79b1f80e500ba38bf41957f",
+      "uniqueBytes": 649
+    },
+    {
+      "path": "src/agent/step/step-errors.ts",
+      "hash": "0736d6ae946a61e68a403eb93b9a26623f9bc9ef42994cd216f7a41cc700db9b",
+      "uniqueBytes": 177
+    },
+    {
+      "path": "src/agent/step-executor.test.ts",
+      "hash": "fe0289e84f03633c2ef13f188b695b26cb52ff2d38936a26b6b8f4192869b0e3",
+      "uniqueBytes": 226
+    },
+    {
+      "path": "src/agent/README.md",
+      "hash": "6488774e9eddcc6e41447129abe2bf646780b2b096f0e80bfe283b798b9df306",
+      "uniqueBytes": 2391
+    },
+    {
+      "path": "src/agent/docs/batching.md",
+      "hash": "d19fb888ceebdb1e52dcae8ec8cd3026a894c1a5aeec34fe35bec93e8f0e21dd",
+      "uniqueBytes": 2342
+    },
+    {
+      "path": "src/agent/dispatch/batch-scheduler.ts",
+      "hash": "68d077923948ae95dc595446d2ee3cb247a81779f7de31ba029f200c346166e6",
+      "uniqueBytes": 16813
+    },
+    {
+      "path": "src/agent/dispatch/README.md",
+      "hash": "73ee3e7cd60dc0f2bf67bcc6243d852c26d9bc627b50ac76ac7d09e88773d4e8",
+      "uniqueBytes": 768
+    },
+    {
+      "path": "package.json",
+      "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+      "uniqueBytes": 6552
+    },
+    {
+      "path": "src/agent/dispatch/batch-contract.ts",
+      "hash": "9276b2dc7d685ce101009e6f8fce1f6ac22ad3f0eedec27d13fcc4704a4b5fa9",
+      "uniqueBytes": 8534
+    },
+    {
+      "path": "src/tools/tool-registry.ts",
+      "hash": "c3d9298cd28860936f3050b54140b9b950656ac9fe0e34ad44ba3c8b74629a8b",
+      "uniqueBytes": 3267
+    },
+    {
+      "path": "src/agent/batch-executor.test.ts",
+      "hash": "65be4d30f2374103fcf928b12cb84d0bfa8fd33f832ad4b3b4084b73b0182211",
+      "uniqueBytes": 1443
+    }
+  ],
+  "changedFiles": [
+    "src/agent/batch-executor.test.ts",
+    "src/agent/dispatch/batch-scheduler.ts"
+  ]
+}

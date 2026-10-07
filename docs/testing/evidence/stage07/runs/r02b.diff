@@ -1,0 +1,260 @@
+--- grammars/tool-call.gbnf (seeded before)
++++ grammars/tool-call.gbnf (agent after)
+@@ -7,7 +7,7 @@
+ tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
+ tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | fusion-tool | verify-tool | mcp-native-tool | mcp-server-tool | "\"reply\"" | "\"finish\""
+ browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
+-os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
++os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.exists" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
+ discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""
+ memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.store" | "notes.recall" | "notes.forget" | "lessons.recall" | "procedures.recall" ) "\""
+ tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
+--- src/agent/tool-resource-class.ts (seeded before)
++++ src/agent/tool-resource-class.ts (agent after)
+@@ -75,6 +75,7 @@
+ 
+   // os.fs.* read-only
+   "os.fs.read": "pure_read",
++  "os.fs.exists": "pure_read",
+   "os.fs.read_document": "pure_read",
+   "os.fs.list": "pure_read",
+   "os.fs.glob": "pure_read",
+--- src/prompt/default-tool-args-schemas.ts (seeded before)
++++ src/prompt/default-tool-args-schemas.ts (agent after)
+@@ -310,6 +310,10 @@
+       },
+       ["path", "destDir"],
+     ),
++  ],
++  [
++    "os.fs.exists",
++    obj({ path: { type: "string", minLength: 1 } }, ["path"]),
+   ],
+   [
+     "os.fs.hash",
+--- src/prompt/default-tool-descriptors-a.ts (seeded before)
++++ src/prompt/default-tool-descriptors-a.ts (agent after)
+@@ -144,6 +144,12 @@
+     summary: "Extract an archive to destDir (guarded; may require approval).",
+     argsSchema:
+       "{ path: string, destDir: string, overwrite?: boolean, followSymlinks?: boolean, include?: string[], limits?: { maxTotalBytes?: number, maxEntryBytes?: number, maxEntries?: number }, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
++    tier: "rare",
++  },
++  {
++    name: "os.fs.exists",
++    summary: "Check a non-empty path without reading contents; returns exists and kind (file, dir, other, or null). Read-only; relative to the working directory.",
++    argsSchema: "{ path: string /* non-empty */ }",
+     tier: "rare",
+   },
+   {
+--- src/tools/os/fs-exists.test.ts (seeded before)
++++ src/tools/os/fs-exists.test.ts (agent after)
+@@ -0,0 +1,116 @@
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { ApprovalGate } from "../../approval/approval-gate.js";
++import { resourceClassFor } from "../../agent/tool-resource-class.js";
++import { loadToolCallGrammar, parseToolCalls } from "../../llm/grammar/tool-call-grammar.js";
++import { descriptorsToOpenAiTools } from "../../llm/provider/openai/openai-tool-call-adapter.js";
++import { getToolDescriptorByName } from "../../prompt/tool-descriptors.js";
++import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
++import { confineReads } from "../read-scope/confine-reads.js";
++import { ToolRegistry, type ToolContext } from "../tool-registry.js";
++import { roleAdmits } from "../tool-roles.js";
++import { osFsExistsTool } from "./fs-exists.js";
++
++describe("os.fs.exists", () => {
++  let dir: string;
++  const ctx = (): ToolContext => ({
++    workingDir: dir,
++    sessionId: "exists-test",
++    stepIndex: 0,
++    signal: new AbortController().signal,
++  });
++  beforeEach(async () => {
++    dir = await mkdtemp(join(tmpdir(), "atomic-exists-"));
++    await writeFile(join(dir, "file.txt"), "contents must not appear in output");
++    await mkdir(join(dir, "folder"));
++  });
++  afterEach(async () => {
++    await rm(dir, { recursive: true, force: true });
++  });
++
++  it.each([
++    ["file.txt", true, "file"],
++    ["folder", true, "dir"],
++    ["missing", false, null],
++    ["missing/child", false, null],
++  ])("stats %s relative to workingDir", async (path, exists, kind) => {
++    const result = await osFsExistsTool.run({ path }, ctx());
++    expect(result.status).toBe("ok");
++    expect(result.details).toEqual({ path: join(dir, path as string), exists, kind });
++    expect(result.summary).not.toContain("contents must not appear");
++  });
++
++  it.each([undefined, null, "", 1, [], {}])("rejects a bad path: %j", async (path) => {
++    await expect(osFsExistsTool.run({ path }, ctx())).rejects.toThrow("non-empty string");
++  });
++
++  it("preserves ENOTDIR instead of reporting missing", async () => {
++    await expect(osFsExistsTool.run({ path: "file.txt/child" }, ctx()))
++      .rejects.toMatchObject({ code: "ENOTDIR" });
++  });
++
++  it.skipIf(process.platform === "win32")("identifies a device as other", async () => {
++    await symlink("/dev/null", join(dir, "device"));
++    expect((await osFsExistsTool.run({ path: "device" }, ctx())).details)
++      .toMatchObject({ exists: true, kind: "other" });
++  });
++
++  it("follows symlinks and treats a dangling target as missing", async () => {
++    await symlink(join(dir, "file.txt"), join(dir, "link"));
++    await symlink(join(dir, "absent"), join(dir, "dangling"));
++    expect((await osFsExistsTool.run({ path: "link" }, ctx())).details.kind).toBe("file");
++    expect((await osFsExistsTool.run({ path: "dangling" }, ctx())).details)
++      .toMatchObject({ exists: false, kind: null });
++  });
++
++  it("has a native schema, catalog, resource class, role and grammar entry", () => {
++    const descriptor = getToolDescriptorByName("os.fs.exists")!;
++    expect(descriptor.argsSchema).toContain("path: string");
++    const parameters = {
++      type: "object",
++      properties: { path: { type: "string", minLength: 1 } },
++      required: ["path"],
++      additionalProperties: false,
++    };
++    expect(descriptor.argsJsonSchema).toEqual(parameters);
++    expect(descriptorsToOpenAiTools([descriptor])).toContainEqual({
++      type: "function",
++      function: {
++        name: "os__fs__exists",
++        description: `${descriptor.summary}\nArgs: ${descriptor.argsSchema}`,
++        parameters,
++      },
++    });
++    expect(resourceClassFor("os.fs.exists")).toBe("pure_read");
++    expect(roleAdmits("builder", "os.fs.exists")).toBe(true);
++    expect(roleAdmits("orchestrator", "os.fs.exists")).toBe(true);
++    expect(loadToolCallGrammar()).toContain('"fs.exists"');
++    expect(parseToolCalls('[{"tool":"os.fs.exists","args":{"path":"file.txt"}}]').calls)
++      .toEqual([{ tool: "os.fs.exists", args: { path: "file.txt" } }]);
++  });
++
++  it("executes in scope and refuses outside paths through the registry wrapper", async () => {
++    const registry = new ToolRegistry();
++    registry.register(osFsExistsTool);
++    const gate = new ApprovalGate({
++      level: 3,
++      emit: (request) => queueMicrotask(() => gate.resolve({ approvalId: request.approvalId, approved: false })),
++    });
++    expect(confineReads(registry, {
++      grantedDirs: () => [],
++      readScope: () => "working-dir",
++      approvals: { approvals: gate, approvalRequired: true },
++    })).toEqual(["os.fs.exists"]);
++    expect((await registry.invoke("os.fs.exists", { path: "file.txt" }, ctx())).details.kind)
++      .toBe("file");
++    const refused = await registry.invoke("os.fs.exists", { path: "/srv/atomic-exists-outside/missing" }, ctx());
++    expect(refused.status).toBe("error");
++    expect(refused.summary).toContain("confined");
++    const workerRefused = await registry.invoke("os.fs.exists", { path: "../sibling/missing" }, {
++      ...ctx(), sessionId: `${FUSION_WORKER_ID_PREFIX}1`,
++    });
++    expect(workerRefused.status).toBe("error");
++  });
++});
+--- src/tools/os/fs-exists.ts (seeded before)
++++ src/tools/os/fs-exists.ts (agent after)
+@@ -0,0 +1,33 @@
++import { stat } from "node:fs/promises";
++import { compressToolResult } from "../../compressor/result-compressor.js";
++import type { ToolDefinition } from "../tool-registry.js";
++import { resolveUserPath } from "./expand-home.js";
++
++/** Stat follows symlinks, like the other filesystem read tools. */
++export const osFsExistsTool: ToolDefinition = {
++  name: "os.fs.exists",
++  description: "Check whether a path exists and its kind without reading contents. Read-only.",
++  readonly: true,
++  async run(args, ctx) {
++    if (typeof args.path !== "string" || args.path.length === 0) {
++      throw new Error("os.fs.exists: `path` must be a non-empty string");
++    }
++    const path = resolveUserPath(args.path, ctx.workingDir);
++    let kind: "file" | "dir" | "other" | null = null;
++    try {
++      const info = await stat(path);
++      kind = info.isFile() ? "file" : info.isDirectory() ? "dir" : "other";
++    } catch (error) {
++      // Only an absent target is a successful negative answer. Permission,
++      // malformed path and other I/O failures retain their original error.
++      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
++    }
++    const exists = kind !== null;
++    return compressToolResult({
++      tool: "os.fs.exists",
++      status: "ok",
++      output: JSON.stringify({ path, exists, kind }),
++      details: { path, exists, kind },
++    });
++  },
++};
+--- src/tools/os/index.ts (seeded before)
++++ src/tools/os/index.ts (agent after)
+@@ -6,6 +6,7 @@
+ import type { ShellGuardPolicy } from "./shell-command-guard/index.js";
+ import type { ShellJobRegistry } from "./shell-jobs.js";
+ import { osFsReadTool } from "./fs-read.js";
++import { osFsExistsTool } from "./fs-exists.js";
+ import { buildOsFsWriteTool } from "./fs-write.js";
+ import { buildOsFsTrashTool } from "./fs-trash.js";
+ import { osFsListTool } from "./fs-list.js";
+@@ -55,6 +56,7 @@
+ 
+ export { buildOsShellTool } from "./shell.js";
+ export { osFsReadTool } from "./fs-read.js";
++export { osFsExistsTool } from "./fs-exists.js";
+ export { buildOsFsWriteTool } from "./fs-write.js";
+ export { buildOsFsTrashTool } from "./fs-trash.js";
+ export { osFsListTool } from "./fs-list.js";
+@@ -218,6 +220,7 @@
+       : { declaredInputs: options.declaredInputs }),
+   };
+   registry.register(osFsReadTool);
++  registry.register(osFsExistsTool);
+   registry.register(buildOsFsWriteTool(fsMutation));
+   registry.register(buildOsFsTrashTool(options));
+   registry.register(osFsListTool);
+--- src/tools/os/os-tools.test.ts (seeded before)
++++ src/tools/os/os-tools.test.ts (agent after)
+@@ -586,6 +586,7 @@
+         "os.fs.archive.extract",
+         "os.fs.archive.list",
+         "os.fs.archive.read_entry",
++        "os.fs.exists",
+         "os.fs.diff",
+         "os.fs.edit",
+         "os.fs.glob",
+--- src/tools/read-scope/read-scope-targets.ts (seeded before)
++++ src/tools/read-scope/read-scope-targets.ts (agent after)
+@@ -25,6 +25,7 @@
+   ReadTargetsOf
+ >([
+   ["os.fs.read", pathArg],
++  ["os.fs.exists", pathArg],
+   ["os.fs.list", pathArg],
+   ["os.fs.hash", pathArg],
+   ["os.fs.watch", pathArg],
+--- src/tools/tool-roles.ts (seeded before)
++++ src/tools/tool-roles.ts (agent after)
+@@ -43,6 +43,7 @@
+  */
+ const FS_READ_TOOLS: readonly string[] = [
+   "os.fs.read",
++  "os.fs.exists",
+   "os.fs.read_document",
+   "os.fs.list",
+   "os.fs.glob",

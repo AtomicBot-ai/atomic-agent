@@ -1,0 +1,422 @@
+{
+  "actions": 58,
+  "returnedOutputBytes": 185159,
+  "observedSourceBytes": 174505,
+  "uniqueVersionedSourceBytes": 169556,
+  "repeatedSourceBytes": 4949,
+  "uniqueInstructionBytes": 12100,
+  "uniqueCodeBytes": 116454,
+  "uniqueOtherBytes": 41002,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+      "uniqueBytes": 6714
+    },
+    {
+      "path": "README.md",
+      "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+      "uniqueBytes": 8980
+    },
+    {
+      "path": "src/tools/AGENTS.md",
+      "hash": "a5965903da419fa67f52b6729f64ec789df66388836fa509d5150b7f0301d35b",
+      "uniqueBytes": 1290
+    },
+    {
+      "path": "src/tools/README.md",
+      "hash": "7b802152e2c0ce0d3064b43ddfd9be9942d6ea138d3de40ca3353f44b0770abd",
+      "uniqueBytes": 1574
+    },
+    {
+      "path": "src/session/session-store.ts",
+      "hash": "ed3fe3e8af085fd620802f6814d3f084bbaf43ad49ab2d79d7429b318d119e88",
+      "uniqueBytes": 64
+    },
+    {
+      "path": "src/tracing/agent-metrics.ts",
+      "hash": "ef1e62659a18eb9842505a92591061ed65df1e55abca6bfcfe9afa5bbc5db6b4",
+      "uniqueBytes": 73
+    },
+    {
+      "path": "src/agent/step-executor.test.ts",
+      "hash": "fe0289e84f03633c2ef13f188b695b26cb52ff2d38936a26b6b8f4192869b0e3",
+      "uniqueBytes": 185
+    },
+    {
+      "path": "src/agent/dispatch/batch-scheduler.ts",
+      "hash": "6001ace9126b1f14b8dcdb004f8c3a41732f1ee05f2fc41d585ada2480325403",
+      "uniqueBytes": 142
+    },
+    {
+      "path": "src/agent/dispatch/batch-gates.test.ts",
+      "hash": "a9be44a5bbe24a668e0a046f6033569288d561faaeed5c1440c50d880fda2097",
+      "uniqueBytes": 201
+    },
+    {
+      "path": "src/tools/tool-roles.test.ts",
+      "hash": "615fcc985f8cead4b7bdf20899974a39a265097888bdc538fd8287b7f7a2f606",
+      "uniqueBytes": 81
+    },
+    {
+      "path": "src/agent/dispatch/batch-contract.ts",
+      "hash": "9276b2dc7d685ce101009e6f8fce1f6ac22ad3f0eedec27d13fcc4704a4b5fa9",
+      "uniqueBytes": 73
+    },
+    {
+      "path": "src/agent/tool-resource-class.test.ts",
+      "hash": "28fdc2548eefd63d5c6b6f27d6348dce04b5babdb6d34b0b548c5dbe25fdefc4",
+      "uniqueBytes": 213
+    },
+    {
+      "path": "src/agent/batch-executor.test.ts",
+      "hash": "1eac0b929bcfc29453d6e5e107af6b690178d450ea3784384ad037b9c083e988",
+      "uniqueBytes": 387
+    },
+    {
+      "path": "src/tools/tool-registry.ts",
+      "hash": "c3d9298cd28860936f3050b54140b9b950656ac9fe0e34ad44ba3c8b74629a8b",
+      "uniqueBytes": 3267
+    },
+    {
+      "path": "src/agent/step-executor.ts",
+      "hash": "f1fc5014032f35441177e0a0f65ed6d7c87c5063635db9667fb33781631f58b6",
+      "uniqueBytes": 62
+    },
+    {
+      "path": "src/agent/step-events.ts",
+      "hash": "9ec60449d06094565286d0c5267ea3d2d6fbc864ee6deef629d9be0cd313785b",
+      "uniqueBytes": 140
+    },
+    {
+      "path": "src/runtime/tool-contract-composition.test.ts",
+      "hash": "8d26dfe77f022533b0ed51d71fdcff3f8850c93360d9a0236fb2d8b64b43cc53",
+      "uniqueBytes": 6579
+    },
+    {
+      "path": "src/agent/tool-resource-class.ts",
+      "hash": "a061b3b9c0534e28b57041f347fd5a5b0451855f3bcecf7dafc6f0b1f7e67060",
+      "uniqueBytes": 6674
+    },
+    {
+      "path": "src/approval/approval-level.ts",
+      "hash": "608aefebf6b72b6feb6717fe5d9a39c894047dbf6859bd658f52e5a7313fe7f3",
+      "uniqueBytes": 70
+    },
+    {
+      "path": "src/runtime/bootstrap-composition.test.ts",
+      "hash": "ac234f7d4167f25414191ce1625fb8edffef067f09e497ddcb853b61f75f9e84",
+      "uniqueBytes": 456
+    },
+    {
+      "path": "src/approval/AGENTS.md",
+      "hash": "ea91e0b0d46943015fbec838b77d67766696b066a4db258e88915b59b30844f1",
+      "uniqueBytes": 256
+    },
+    {
+      "path": "src/agent/step/step-batch-policy.ts",
+      "hash": "c91717b3f6c15270e5af87a5151f2037f17b862ba6398da258a45b7bdba64e73",
+      "uniqueBytes": 131
+    },
+    {
+      "path": "src/approval/index.ts",
+      "hash": "621f0d66b8ad5fdbca1f568fb5c299095356c6086f6b9bf4856d423733122b54",
+      "uniqueBytes": 57
+    },
+    {
+      "path": "src/agent/step/step-batch-parsing.ts",
+      "hash": "46090ab05b545d31a1e9aff0dbc98c5972ea1f27601f4874a8f2358b143ac523",
+      "uniqueBytes": 73
+    },
+    {
+      "path": "src/approval/read-scope-grants.ts",
+      "hash": "d0ababde675b701e968b4d0a6de863fac3e6d7c27e62b341b60f2666caef5b49",
+      "uniqueBytes": 74
+    },
+    {
+      "path": "src/approval/approval-gate.ts",
+      "hash": "690e19b479eb42843a5c530eef49aa235fac664a78487a80ca7abb0e49a1763a",
+      "uniqueBytes": 125
+    },
+    {
+      "path": "src/approval/README.md",
+      "hash": "e3b931353d4a11cd889d212c21443499b757b70b07ab80acda435815f9e13d0f",
+      "uniqueBytes": 157
+    },
+    {
+      "path": "src/runtime/composition/runtime-tool-catalog.test.ts",
+      "hash": "89fc32bdbc5f48ace2a81f80a7712c776c030d225ce1d82794fb508c0f826b3a",
+      "uniqueBytes": 244
+    },
+    {
+      "path": "src/agent/step/step-batch-lifecycle.test.ts",
+      "hash": "3af0f7c9cccee703e832266ef4ea062cbb8c94bab84e373b32cff0740cbe00a0",
+      "uniqueBytes": 153
+    },
+    {
+      "path": "src/approval/read-scope-grants.test.ts",
+      "hash": "6aac1b4ff632002424a8a789a70b733d45820ae98ff36659e4e1fa8d58c0e46d",
+      "uniqueBytes": 57
+    },
+    {
+      "path": "src/tools/fusion/index.ts",
+      "hash": "a2f5dde4f1b14d0444b633b75b5baf7791c52670e424dd6cadeebef1976bfc8c",
+      "uniqueBytes": 104
+    },
+    {
+      "path": "src/tools/os/fs/fs-hash-contract.test.ts",
+      "hash": "1d0a1bedf2d3141345e1b3bd1efb36a948fa5e4a800416c8810b771a5174711b",
+      "uniqueBytes": 8396
+    },
+    {
+      "path": "src/runtime/composition/runtime-tool-catalog.ts",
+      "hash": "199f9923a20f5c834baed7775d096771d7a76553fba08efd216d63acadf29af3",
+      "uniqueBytes": 130
+    },
+    {
+      "path": "src/tools/os/fs/fs-glob-contract.ts",
+      "hash": "e3016dacc6c998ef1d27f98ba814fae7732c8699ee797112e058a236a03b9750",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/tools/os/fs/fs-list-contract.ts",
+      "hash": "7bbe14daf77473201072928578bea335225f58b9c488127b6c56f043e663518e",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/tools/docs/contracts.md",
+      "hash": "2b90b877baa7b6b1aa5713becf5a046f160f18a8fc254f54613d3019d83429c2",
+      "uniqueBytes": 3914
+    },
+    {
+      "path": "src/tools/os/fs/fs-grep-contract.ts",
+      "hash": "6e6e05a19c70f5b45c4fa0b3ffb983ed6a277f85d0662a13e3bf2bee62abcbfd",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/tools/tool-contract-conformance.test.ts",
+      "hash": "8a92cadbf933df1a9379df68554357e7740c1461dd7658f55612469f477dce81",
+      "uniqueBytes": 12236
+    },
+    {
+      "path": "src/tools/os/fs/fs-read-contract.ts",
+      "hash": "bcb1a5b5c5fc388f1a1e35a6084a0ea2bfba35707ce391446ca2716f0948581f",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/tools/os/fs/fs-diff-contract.ts",
+      "hash": "cea464170d058b2ff917c53c8a86ebe9437d81157baa97fa6bbdd170b77e0a0c",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/tools/os/fs/fs-hash-contract.ts",
+      "hash": "7471094eff49cccb572667a19a13136c4ab129fcf616c4e924bd4082effb3b25",
+      "uniqueBytes": 2527
+    },
+    {
+      "path": "src/tools/os/fs/fs-watch-contract.ts",
+      "hash": "465b6cc164f3143ea6ca2a70fdd61c4a076505db746098ac727800ad0e7de265",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/tools/os/fs/fs-locate-project.test.ts",
+      "hash": "25a09474f17641e3e4727f269f888c1dd0964236488ff3750116bce8b241ee29",
+      "uniqueBytes": 124
+    },
+    {
+      "path": "src/tools/os/fs/fs-locate-project-contract.ts",
+      "hash": "0d1a9612d7d92f348ce017dbe7822119960a8781e6c4338f040a9ea05ab98205",
+      "uniqueBytes": 29
+    },
+    {
+      "path": "src/tools/os/fs/README.md",
+      "hash": "de898aac5745719d0f503296f51f85daf9519602de86356fd5be78c076ce2788",
+      "uniqueBytes": 5346
+    },
+    {
+      "path": "src/runtime/bootstrap-composition-startup.test.ts",
+      "hash": "7eba9496ac575737914d0a9751d485febfbd79d976820a262c7a7fff50a74354",
+      "uniqueBytes": 428
+    },
+    {
+      "path": "src/tools/os/fs/fs-read-contracts.test.ts",
+      "hash": "e9a336b0046e2a305ec4659911fde5e4e7e5b71cdf2139ecacf32e74e37376f9",
+      "uniqueBytes": 64
+    },
+    {
+      "path": "src/tools/os/fs/docs/contracts.md",
+      "hash": "d3edef7fa473d83e7d92869825af33a0ab06314d207682a87e176198646a6678",
+      "uniqueBytes": 4426
+    },
+    {
+      "path": "src/tools/read-scope/read-scope-shell.ts",
+      "hash": "6dc6bbe05f86d71a7c225eec89052b23db86342ca62d2dbadc01c293f8043ad5",
+      "uniqueBytes": 25
+    },
+    {
+      "path": "src/tools/read-scope/read-scope.ts",
+      "hash": "857e7be38de0db5f2db9756b9c798e6865e1d6b1fa84d59424b47df80d1af295",
+      "uniqueBytes": 278
+    },
+    {
+      "path": "src/tools/read-scope/index.ts",
+      "hash": "e247ec20a16236b5b166b20be7b7e9c04a6a92108874ee0af1ae968f4a75857e",
+      "uniqueBytes": 494
+    },
+    {
+      "path": "src/tools/read-scope/read-scope-roots.test.ts",
+      "hash": "80a52c21f7cb06015cf056512654a73b8cfd125940bc3d63278c546408667dcb",
+      "uniqueBytes": 69
+    },
+    {
+      "path": "src/tools/read-scope/read-scope-approval.test.ts",
+      "hash": "38a1d85ad9d920a627dc44eece9c0e17cc7e325ee79ca7ecbf7c11a2ad88b7c0",
+      "uniqueBytes": 5941
+    },
+    {
+      "path": "src/tools/read-scope/confine-reads.ts",
+      "hash": "43f60af99ebb1e8065599d6ef5934c6726ed8a8d87c8250082428ad53537620e",
+      "uniqueBytes": 5621
+    },
+    {
+      "path": "src/prompt/AGENTS.md",
+      "hash": "9126f8c5f74be699dc8e567b7142e173ac3e0dfb9c8949751b542560c73e42d5",
+      "uniqueBytes": 1236
+    },
+    {
+      "path": "src/prompt/README.md",
+      "hash": "e36cc87c1e9acb9e963196889c5a624a9eda4cd23d7e696a4587c1ff33a84e67",
+      "uniqueBytes": 1609
+    },
+    {
+      "path": "src/agent/AGENTS.md",
+      "hash": "88b874a3ec206e7e604f87564196fab1b57a4e21378e1a9f7d75063c375643ca",
+      "uniqueBytes": 1225
+    },
+    {
+      "path": "src/agent/README.md",
+      "hash": "6488774e9eddcc6e41447129abe2bf646780b2b096f0e80bfe283b798b9df306",
+      "uniqueBytes": 2391
+    },
+    {
+      "path": "src/tools/os/README.md",
+      "hash": "4aea2f0871ef18b19870b9e25008b73c8260723e0f882fa4175c3d083702e5c8",
+      "uniqueBytes": 2034
+    },
+    {
+      "path": "src/tools/os/fs/fs-hash.ts",
+      "hash": "84951d2d0acc08c7c04f365ad6eecca538dc2e3c84280ff0c430a21de28de2b9",
+      "uniqueBytes": 1798
+    },
+    {
+      "path": "src/prompt/default-tool-args-schemas.ts",
+      "hash": "6cdfd23aff578645b5e81d6ebeb695214f1867909bff33b6ee5106dd8de4a479",
+      "uniqueBytes": 1057
+    },
+    {
+      "path": "src/tools/os/index.ts",
+      "hash": "14a5cbbf62fde0ec24063b228f7f3193ea580b1c04f6e6ab489bc6bf8478bbe7",
+      "uniqueBytes": 5312
+    },
+    {
+      "path": "src/prompt/tool-descriptors.ts",
+      "hash": "96bfdfadf034e7a09d6cc074b552194d6a2c50c981c47226b9c4e5f385591376",
+      "uniqueBytes": 1386
+    },
+    {
+      "path": "src/tools/read-scope/read-scope-targets.ts",
+      "hash": "6983fd8215e8ae9561f48f03147200d4a1acd8030ccabd737f21b9855c94a406",
+      "uniqueBytes": 2219
+    },
+    {
+      "path": "src/tools/tool-roles.ts",
+      "hash": "a726628c6a38d07f9af6f640b2b307be2ee5282d99fdcbb1ccda8b6b46ea9f6e",
+      "uniqueBytes": 5690
+    },
+    {
+      "path": "src/tools/os/fs/fs-hash.test.ts",
+      "hash": "a8feb60873964edcf14aa0f3812a8a7fa2beff4cd717792a86450d811ba38107",
+      "uniqueBytes": 3520
+    },
+    {
+      "path": "src/prompt/default-tool-descriptors-a.ts",
+      "hash": "fdbf5b79d6bd4f8a1f6f798986e2c51cdd0890c53f3879c4b8f8e301884479d7",
+      "uniqueBytes": 10264
+    },
+    {
+      "path": "src/llm/AGENTS.md",
+      "hash": "f2624279a8605c84c6295c046f7baf3fc643b0c2a12dc6f32d8ff76869b52dca",
+      "uniqueBytes": 1379
+    },
+    {
+      "path": "src/llm/README.md",
+      "hash": "fdc2818c8dc96131a5b8e658c03a6493042aeda50ecc199992ef0ad698f7880f",
+      "uniqueBytes": 1164
+    },
+    {
+      "path": "src/agent/docs/batching.md",
+      "hash": "d19fb888ceebdb1e52dcae8ec8cd3026a894c1a5aeec34fe35bec93e8f0e21dd",
+      "uniqueBytes": 2342
+    },
+    {
+      "path": "src/llm/grammar/build-grammar.ts",
+      "hash": "81a4aa2480ac169bb9e9eb6388e21bcec0086421441d058abdc96d7e6f2b108c",
+      "uniqueBytes": 10734
+    },
+    {
+      "path": "src/llm/grammar/tool-call-grammar.test.ts",
+      "hash": "151bd61067a34db7eb316a4836f1048f79710fda5226ded47741e49b801bfa6b",
+      "uniqueBytes": 5046
+    },
+    {
+      "path": "grammars/tool-call.gbnf",
+      "hash": "c2af64af507b7d54c40f2531616efd533c4cbb2b6efbc2a3d0509c2748f0e783",
+      "uniqueBytes": 4706
+    },
+    {
+      "path": "src/llm/docs/profiles.md",
+      "hash": "0c791d6d442d35047ffc4d879aa8755da062b38f0c9ed75f72e45a7677606bf9",
+      "uniqueBytes": 2359
+    },
+    {
+      "path": "src/llm/provider/openai/openai-tool-call-adapter.ts",
+      "hash": "0effcaf318c90f188d6af8a918ed7af1c3efb22515b53ab96b89e10770f3dc9a",
+      "uniqueBytes": 4174
+    },
+    {
+      "path": "src/tools/read-scope/read-scope.test.ts",
+      "hash": "7a7b5da9e067aaab3167d1094b95a9f595c581fe3c40167cea5b92fa270e6ba0",
+      "uniqueBytes": 81
+    },
+    {
+      "path": "src/tools/read-scope/worker-read-scope.test.ts",
+      "hash": "b1dba9f253a3393f241566225f9e69c3fdbc0879b094ead196a04f63ad5e4ffb",
+      "uniqueBytes": 5069
+    },
+    {
+      "path": "src/tools/os/os-tools.test.ts",
+      "hash": "67bc8daf9111d21ccc850f50e2e9bc8b3c630ccd3c375c46f5563290382af3e7",
+      "uniqueBytes": 3883
+    }
+  ],
+  "changedFiles": [
+    "grammars/tool-call.gbnf",
+    "src/agent/README.md",
+    "src/agent/tool-resource-class.ts",
+    "src/prompt/README.md",
+    "src/prompt/default-tool-args-schemas.ts",
+    "src/prompt/default-tool-descriptors-a.ts",
+    "src/tools/README.md",
+    "src/tools/docs/contracts.md",
+    "src/tools/os/fs/README.md",
+    "src/tools/os/fs/docs/contracts.md",
+    "src/tools/os/fs/fs-exists-contract.ts",
+    "src/tools/os/fs/fs-exists.test.ts",
+    "src/tools/os/fs/fs-exists.ts",
+    "src/tools/os/index.ts",
+    "src/tools/os/os-tools.test.ts",
+    "src/tools/read-scope/read-scope-targets.ts",
+    "src/tools/tool-contract-conformance.test.ts",
+    "src/tools/tool-roles.ts"
+  ]
+}

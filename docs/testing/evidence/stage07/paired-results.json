@@ -1,0 +1,3102 @@
+{
+  "status": "complete",
+  "frozenChecksSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "observerSha256": "d8a276b4275d64c334171fd55539554d48b93101e6cabdea99fe15a6eda9f3d8",
+  "totals": {
+    "original": {
+      "passedTasks": 6,
+      "tasks": 7,
+      "uniqueVersionedSourceBytes": 807679,
+      "uniqueInstructionBytes": 354019,
+      "repeatedSourceBytes": 67905,
+      "unrelatedEdits": 0,
+      "testFixtureFindings": 0
+    },
+    "final": {
+      "passedTasks": 6,
+      "tasks": 7,
+      "uniqueVersionedSourceBytes": 624249,
+      "uniqueInstructionBytes": 63201,
+      "repeatedSourceBytes": 13607,
+      "unrelatedEdits": 0,
+      "testFixtureFindings": 1
+    }
+  },
+  "sourceOutputReductionPercent": 22.710755139108485,
+  "limits": [
+    "One matched pair per task; no statistical speed/quality claim.",
+    "Model/reasoning settings inherited with no override; exact backend ID/token/cost unavailable.",
+    "Source output measured at observer stdout; transport truncation/automatic context not measured.",
+    "Task copies omit nonessential eval/release/licensing scaffolding; extra docs/SQLite failures are recorded separately.",
+    "Agent check counts are self-reported; fixed acceptance results, diffs and observer outputs independently captured.",
+    "Review performed by root against concrete diffs; one reviewer, no external review service."
+  ],
+  "runs": [
+    {
+      "id": "r01a",
+      "task": 1,
+      "variant": "original",
+      "root": "/tmp/atomic-stage07-benchmark/runs/original-01",
+      "log": "/tmp/atomic-stage07-runs/r01a.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-original",
+      "status": "completed",
+      "brief": "**Промпт.** Сделать transient notice последней содержательной секцией перед respond: текущую дату показывать раньше notice. Stable prefix должен остаться побайтово прежним; без notice дата и respond сохраняются, grammar и reasoning framing не меняются. Checks: buildPrompt с/без notice/date на plain/Qwen/Gemma, notice непосредственно перед respond, stablePrefix равен исходному. Это feature task, без seeded bug.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/original-01. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Промпт.** Сделать transient notice последней содержательной секцией перед respond: текущую дату показывать раньше notice. Stable prefix должен остаться побайтово прежним; без notice дата и respond сохраняются, grammar и reasoning framing не меняются. Checks: buildPrompt с/без notice/date на plain/Qwen/Gemma, notice непосредственно перед respond, stablePrefix равен исходному. Это feature task, без seeded bug.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-01 /tmp/atomic-stage07-runs/r01a.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-01 /tmp/atomic-stage07-runs/r01a.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-01 /tmp/atomic-stage07-runs/r01a.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/original-01 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r01a-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r01a",
+      "startedAtRecorded": "2026-10-06T17:24:02.151Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:26:40.756Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 1,
+          "pass": true,
+          "assertions": 45,
+          "observed": [
+            "stable prefix 0",
+            "respond/reasoning framing 0",
+            "no-notice tail 0",
+            "stable prefix 1",
+            "respond/reasoning framing 1",
+            "notice before respond 1",
+            "notice last substantive section 1",
+            "stable prefix 2",
+            "respond/reasoning framing 2",
+            "no-notice tail 2",
+            "stable prefix 3",
+            "respond/reasoning framing 3",
+            "notice before respond 3",
+            "notice last substantive section 3",
+            "date before notice 3",
+            "stable prefix 4",
+            "respond/reasoning framing 4",
+            "no-notice tail 4",
+            "stable prefix 5",
+            "respond/reasoning framing 5",
+            "notice before respond 5",
+            "notice last substantive section 5",
+            "stable prefix 6",
+            "respond/reasoning framing 6",
+            "no-notice tail 6",
+            "stable prefix 7",
+            "respond/reasoning framing 7",
+            "notice before respond 7",
+            "notice last substantive section 7",
+            "date before notice 7",
+            "stable prefix 8",
+            "respond/reasoning framing 8",
+            "no-notice tail 8",
+            "stable prefix 9",
+            "respond/reasoning framing 9",
+            "notice before respond 9",
+            "notice last substantive section 9",
+            "stable prefix 10",
+            "respond/reasoning framing 10",
+            "no-notice tail 10",
+            "stable prefix 11",
+            "respond/reasoning framing 11",
+            "notice before respond 11",
+            "notice last substantive section 11",
+            "date before notice 11"
+          ]
+        },
+        "stdout": "{\"task\":1,\"pass\":true,\"assertions\":45,\"observed\":[\"stable prefix 0\",\"respond/reasoning framing 0\",\"no-notice tail 0\",\"stable prefix 1\",\"respond/reasoning framing 1\",\"notice before respond 1\",\"notice last substantive section 1\",\"stable prefix 2\",\"respond/reasoning framing 2\",\"no-notice tail 2\",\"stable prefix 3\",\"respond/reasoning framing 3\",\"notice before respond 3\",\"notice last substantive section 3\",\"date before notice 3\",\"stable prefix 4\",\"respond/reasoning framing 4\",\"no-notice tail 4\",\"stable prefix 5\",\"respond/reasoning framing 5\",\"notice before respond 5\",\"notice last substantive section 5\",\"stable prefix 6\",\"respond/reasoning framing 6\",\"no-notice tail 6\",\"stable prefix 7\",\"respond/reasoning framing 7\",\"notice before respond 7\",\"notice last substantive section 7\",\"date before notice 7\",\"stable prefix 8\",\"respond/reasoning framing 8\",\"no-notice tail 8\",\"stable prefix 9\",\"respond/reasoning framing 9\",\"notice before respond 9\",\"notice last substantive section 9\",\"stable prefix 10\",\"respond/reasoning framing 10\",\"no-notice tail 10\",\"stable prefix 11\",\"respond/reasoning framing 11\",\"notice before respond 11\",\"notice last substantive section 11\",\"date before notice 11\"]}\n"
+      },
+      "metrics": {
+        "actions": 23,
+        "returnedOutputBytes": 126055,
+        "observedSourceBytes": 118979,
+        "uniqueVersionedSourceBytes": 110123,
+        "repeatedSourceBytes": 8856,
+        "uniqueInstructionBytes": 31857,
+        "uniqueCodeBytes": 54296,
+        "uniqueOtherBytes": 23970,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+            "uniqueBytes": 31857
+          },
+          {
+            "path": "README.md",
+            "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+            "uniqueBytes": 9797
+          },
+          {
+            "path": "src/prompt/build-prompt.ts",
+            "hash": "a0886b88036c362f274941e0455a1c99bed93ead3bfefa270cf31de895b7c891",
+            "uniqueBytes": 16817
+          },
+          {
+            "path": "PROMPT.md",
+            "hash": "4a370ff9c51c5175b4120bdfae6a7123403de13cf24c147e401d107c60a1d893",
+            "uniqueBytes": 9254
+          },
+          {
+            "path": "src/prompt/build-prompt.test.ts",
+            "hash": "d8754a1ea5283599754463bd81ddd2bff94ddabc49597ef8944186181e5c7b11",
+            "uniqueBytes": 23144
+          },
+          {
+            "path": "src/prompt/build-prompt-types.ts",
+            "hash": "9385a0ba45175fe5b7d5a2ef33f8936a6cea5b7fdafba081a539c12e593ccd1d",
+            "uniqueBytes": 7205
+          },
+          {
+            "path": "src/prompt/stable-prefix.test.ts",
+            "hash": "43d0f0d2b56a04287f3a1e977d3f3cd4bb21198a6960276695e300295732d926",
+            "uniqueBytes": 2785
+          },
+          {
+            "path": "package.json",
+            "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+            "uniqueBytes": 4919
+          },
+          {
+            "path": "src/prompt/build-prompt.ts",
+            "hash": "8bcd534c0ad0369505927fc2d966153d77f0faeafe4452a7141f721fb3e81e64",
+            "uniqueBytes": 2266
+          },
+          {
+            "path": "src/prompt/build-prompt.test.ts",
+            "hash": "b8607b1595d73044db18410423501dde9f5a00a7e508b8fad06aff06c2319243",
+            "uniqueBytes": 2079
+          }
+        ],
+        "changedFiles": [
+          "PROMPT.md",
+          "src/prompt/build-prompt-types.ts",
+          "src/prompt/build-prompt.test.ts",
+          "src/prompt/build-prompt.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 283,
+        "lint": true,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    },
+    {
+      "id": "r01b",
+      "task": 1,
+      "variant": "final",
+      "root": "/tmp/atomic-stage07-benchmark/runs/final-01",
+      "log": "/tmp/atomic-stage07-runs/r01b.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-final-v2",
+      "status": "completed",
+      "brief": "**Промпт.** Сделать transient notice последней содержательной секцией перед respond: текущую дату показывать раньше notice. Stable prefix должен остаться побайтово прежним; без notice дата и respond сохраняются, grammar и reasoning framing не меняются. Checks: buildPrompt с/без notice/date на plain/Qwen/Gemma, notice непосредственно перед respond, stablePrefix равен исходному. Это feature task, без seeded bug.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/final-01. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Промпт.** Сделать transient notice последней содержательной секцией перед respond: текущую дату показывать раньше notice. Stable prefix должен остаться побайтово прежним; без notice дата и respond сохраняются, grammar и reasoning framing не меняются. Checks: buildPrompt с/без notice/date на plain/Qwen/Gemma, notice непосредственно перед respond, stablePrefix равен исходному. Это feature task, без seeded bug.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-01 /tmp/atomic-stage07-runs/r01b.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-01 /tmp/atomic-stage07-runs/r01b.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-01 /tmp/atomic-stage07-runs/r01b.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/final-01 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r01b-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r01b",
+      "startedAtRecorded": "2026-10-06T17:24:02.152Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:26:40.757Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 1,
+          "pass": true,
+          "assertions": 45,
+          "observed": [
+            "stable prefix 0",
+            "respond/reasoning framing 0",
+            "no-notice tail 0",
+            "stable prefix 1",
+            "respond/reasoning framing 1",
+            "notice before respond 1",
+            "notice last substantive section 1",
+            "stable prefix 2",
+            "respond/reasoning framing 2",
+            "no-notice tail 2",
+            "stable prefix 3",
+            "respond/reasoning framing 3",
+            "notice before respond 3",
+            "notice last substantive section 3",
+            "date before notice 3",
+            "stable prefix 4",
+            "respond/reasoning framing 4",
+            "no-notice tail 4",
+            "stable prefix 5",
+            "respond/reasoning framing 5",
+            "notice before respond 5",
+            "notice last substantive section 5",
+            "stable prefix 6",
+            "respond/reasoning framing 6",
+            "no-notice tail 6",
+            "stable prefix 7",
+            "respond/reasoning framing 7",
+            "notice before respond 7",
+            "notice last substantive section 7",
+            "date before notice 7",
+            "stable prefix 8",
+            "respond/reasoning framing 8",
+            "no-notice tail 8",
+            "stable prefix 9",
+            "respond/reasoning framing 9",
+            "notice before respond 9",
+            "notice last substantive section 9",
+            "stable prefix 10",
+            "respond/reasoning framing 10",
+            "no-notice tail 10",
+            "stable prefix 11",
+            "respond/reasoning framing 11",
+            "notice before respond 11",
+            "notice last substantive section 11",
+            "date before notice 11"
+          ]
+        },
+        "stdout": "{\"task\":1,\"pass\":true,\"assertions\":45,\"observed\":[\"stable prefix 0\",\"respond/reasoning framing 0\",\"no-notice tail 0\",\"stable prefix 1\",\"respond/reasoning framing 1\",\"notice before respond 1\",\"notice last substantive section 1\",\"stable prefix 2\",\"respond/reasoning framing 2\",\"no-notice tail 2\",\"stable prefix 3\",\"respond/reasoning framing 3\",\"notice before respond 3\",\"notice last substantive section 3\",\"date before notice 3\",\"stable prefix 4\",\"respond/reasoning framing 4\",\"no-notice tail 4\",\"stable prefix 5\",\"respond/reasoning framing 5\",\"notice before respond 5\",\"notice last substantive section 5\",\"stable prefix 6\",\"respond/reasoning framing 6\",\"no-notice tail 6\",\"stable prefix 7\",\"respond/reasoning framing 7\",\"notice before respond 7\",\"notice last substantive section 7\",\"date before notice 7\",\"stable prefix 8\",\"respond/reasoning framing 8\",\"no-notice tail 8\",\"stable prefix 9\",\"respond/reasoning framing 9\",\"notice before respond 9\",\"notice last substantive section 9\",\"stable prefix 10\",\"respond/reasoning framing 10\",\"no-notice tail 10\",\"stable prefix 11\",\"respond/reasoning framing 11\",\"notice before respond 11\",\"notice last substantive section 11\",\"date before notice 11\"]}\n"
+      },
+      "metrics": {
+        "actions": 20,
+        "returnedOutputBytes": 71296,
+        "observedSourceBytes": 69697,
+        "uniqueVersionedSourceBytes": 67356,
+        "repeatedSourceBytes": 2341,
+        "uniqueInstructionBytes": 9329,
+        "uniqueCodeBytes": 37754,
+        "uniqueOtherBytes": 20273,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+            "uniqueBytes": 6714
+          },
+          {
+            "path": "README.md",
+            "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+            "uniqueBytes": 7487
+          },
+          {
+            "path": "src/prompt/README.md",
+            "hash": "e36cc87c1e9acb9e963196889c5a624a9eda4cd23d7e696a4587c1ff33a84e67",
+            "uniqueBytes": 1609
+          },
+          {
+            "path": "src/prompt/AGENTS.md",
+            "hash": "9126f8c5f74be699dc8e567b7142e173ac3e0dfb9c8949751b542560c73e42d5",
+            "uniqueBytes": 1236
+          },
+          {
+            "path": "src/prompt/docs/assembly.md",
+            "hash": "2c96d88799d599067f5b653b3f493b73d776f9b4b8b934abe05ea4f294088066",
+            "uniqueBytes": 2336
+          },
+          {
+            "path": "src/prompt/token-budget.ts",
+            "hash": "d3395953da0d7a68c4ce691eaa25ff97e5d0c00d9474f04e10d348eaed0a9da5",
+            "uniqueBytes": 64
+          },
+          {
+            "path": "src/prompt/build-prompt.ts",
+            "hash": "5505f837899bf0c0819709485b18aecb5f3d26907dbe33376cd47e123adcfa48",
+            "uniqueBytes": 12901
+          },
+          {
+            "path": "src/prompt/build-prompt-types.ts",
+            "hash": "9385a0ba45175fe5b7d5a2ef33f8936a6cea5b7fdafba081a539c12e593ccd1d",
+            "uniqueBytes": 1381
+          },
+          {
+            "path": "src/prompt/build-prompt.test.ts",
+            "hash": "f7f05a344294c25818387b2695919d07b6491c73d059cb8eba175ad057a20cd5",
+            "uniqueBytes": 20720
+          },
+          {
+            "path": "src/prompt/stable-prefix.ts",
+            "hash": "d0167a0b6f4109ef4145cff24b9755e247efa3034d828897e7309527cab3a25e",
+            "uniqueBytes": 594
+          },
+          {
+            "path": "src/llm/README.md",
+            "hash": "fdc2818c8dc96131a5b8e658c03a6493042aeda50ecc199992ef0ad698f7880f",
+            "uniqueBytes": 1164
+          },
+          {
+            "path": "src/llm/AGENTS.md",
+            "hash": "f2624279a8605c84c6295c046f7baf3fc643b0c2a12dc6f32d8ff76869b52dca",
+            "uniqueBytes": 1379
+          },
+          {
+            "path": "package.json",
+            "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+            "uniqueBytes": 5318
+          },
+          {
+            "path": "src/llm/docs/profiles.md",
+            "hash": "0c791d6d442d35047ffc4d879aa8755da062b38f0c9ed75f72e45a7677606bf9",
+            "uniqueBytes": 2359
+          },
+          {
+            "path": "src/llm/profile-invariants.test.ts",
+            "hash": "c23a5535fb20dc8b449eff760a625ace8b9f8d0116a47901f65622757cf389e3",
+            "uniqueBytes": 88
+          },
+          {
+            "path": "src/prompt/build-prompt.ts",
+            "hash": "19258f55ef330a8b09d3e48dda26c8e054cf4c4606abfb287ae5c938d0129dc3",
+            "uniqueBytes": 2006
+          }
+        ],
+        "changedFiles": [
+          "src/prompt/build-prompt-types.ts",
+          "src/prompt/build-prompt.test.ts",
+          "src/prompt/build-prompt.ts",
+          "src/prompt/docs/assembly.md"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 241,
+        "lint": true,
+        "testTypeGate": true,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": [
+        "docs:check cannot pass in task scaffold: LICENSE, eval report and release workflow were not copied. Not a product failure."
+      ]
+    },
+    {
+      "id": "r02a",
+      "task": 2,
+      "variant": "final",
+      "root": "/tmp/atomic-stage07-benchmark/runs/final-02",
+      "log": "/tmp/atomic-stage07-runs/r02a.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-final-v2",
+      "status": "completed",
+      "brief": "**Read-only инструмент.** Добавить os.fs.exists с обязательным непустым path. Результат содержит exists и kind=file/dir/other/null; ENOENT даёт успешный false/null, остальные I/O errors сохраняются. Путь относительный к workingDir; операция не читает содержимое и ничего не пишет. Registration/descriptor/JSON Schema/parser/resource class pure_read/grammar и read boundary должны согласовываться; новая metadata имеет один owner там, где это поддерживается исходной архитектурой. Checks: реальные temp file/dir/missing path, bad args, native schema, catalog/registry/class presence и вызов через read-scope wrapper. На original не требуется создавать всю будущую систему canonical13 ради одного инструмента.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/final-02. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Read-only инструмент.** Добавить os.fs.exists с обязательным непустым path. Результат содержит exists и kind=file/dir/other/null; ENOENT даёт успешный false/null, остальные I/O errors сохраняются. Путь относительный к workingDir; операция не читает содержимое и ничего не пишет. Registration/descriptor/JSON Schema/parser/resource class pure_read/grammar и read boundary должны согласовываться; новая metadata имеет один owner там, где это поддерживается исходной архитектурой. Checks: реальные temp file/dir/missing path, bad args, native schema, catalog/registry/class presence и вызов через read-scope wrapper. На original не требуется создавать всю будущую систему canonical13 ради одного инструмента.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-02 /tmp/atomic-stage07-runs/r02a.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-02 /tmp/atomic-stage07-runs/r02a.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-02 /tmp/atomic-stage07-runs/r02a.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/final-02 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r02a-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r02a",
+      "startedAtRecorded": "2026-10-06T17:24:02.152Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:30:06.920Z",
+      "acceptance": {
+        "exit": 1,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 2,
+          "pass": false,
+          "assertions": 20,
+          "error": {
+            "name": "AssertionError",
+            "message": "bad exists args {\"path\":\"   \"}",
+            "stack": "AssertionError [ERR_ASSERTION]: bad exists args {\"path\":\"   \"}\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:39:204)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+          }
+        },
+        "stdout": "{\"task\":2,\"pass\":false,\"assertions\":20,\"error\":{\"name\":\"AssertionError\",\"message\":\"bad exists args {\\\"path\\\":\\\"   \\\"}\",\"stack\":\"AssertionError [ERR_ASSERTION]: bad exists args {\\\"path\\\":\\\"   \\\"}\\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:39:204)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+      },
+      "metrics": {
+        "actions": 58,
+        "returnedOutputBytes": 185159,
+        "observedSourceBytes": 174505,
+        "uniqueVersionedSourceBytes": 169556,
+        "repeatedSourceBytes": 4949,
+        "uniqueInstructionBytes": 12100,
+        "uniqueCodeBytes": 116454,
+        "uniqueOtherBytes": 41002,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+            "uniqueBytes": 6714
+          },
+          {
+            "path": "README.md",
+            "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+            "uniqueBytes": 8980
+          },
+          {
+            "path": "src/tools/AGENTS.md",
+            "hash": "a5965903da419fa67f52b6729f64ec789df66388836fa509d5150b7f0301d35b",
+            "uniqueBytes": 1290
+          },
+          {
+            "path": "src/tools/README.md",
+            "hash": "7b802152e2c0ce0d3064b43ddfd9be9942d6ea138d3de40ca3353f44b0770abd",
+            "uniqueBytes": 1574
+          },
+          {
+            "path": "src/session/session-store.ts",
+            "hash": "ed3fe3e8af085fd620802f6814d3f084bbaf43ad49ab2d79d7429b318d119e88",
+            "uniqueBytes": 64
+          },
+          {
+            "path": "src/tracing/agent-metrics.ts",
+            "hash": "ef1e62659a18eb9842505a92591061ed65df1e55abca6bfcfe9afa5bbc5db6b4",
+            "uniqueBytes": 73
+          },
+          {
+            "path": "src/agent/step-executor.test.ts",
+            "hash": "fe0289e84f03633c2ef13f188b695b26cb52ff2d38936a26b6b8f4192869b0e3",
+            "uniqueBytes": 185
+          },
+          {
+            "path": "src/agent/dispatch/batch-scheduler.ts",
+            "hash": "6001ace9126b1f14b8dcdb004f8c3a41732f1ee05f2fc41d585ada2480325403",
+            "uniqueBytes": 142
+          },
+          {
+            "path": "src/agent/dispatch/batch-gates.test.ts",
+            "hash": "a9be44a5bbe24a668e0a046f6033569288d561faaeed5c1440c50d880fda2097",
+            "uniqueBytes": 201
+          },
+          {
+            "path": "src/tools/tool-roles.test.ts",
+            "hash": "615fcc985f8cead4b7bdf20899974a39a265097888bdc538fd8287b7f7a2f606",
+            "uniqueBytes": 81
+          },
+          {
+            "path": "src/agent/dispatch/batch-contract.ts",
+            "hash": "9276b2dc7d685ce101009e6f8fce1f6ac22ad3f0eedec27d13fcc4704a4b5fa9",
+            "uniqueBytes": 73
+          },
+          {
+            "path": "src/agent/tool-resource-class.test.ts",
+            "hash": "28fdc2548eefd63d5c6b6f27d6348dce04b5babdb6d34b0b548c5dbe25fdefc4",
+            "uniqueBytes": 213
+          },
+          {
+            "path": "src/agent/batch-executor.test.ts",
+            "hash": "1eac0b929bcfc29453d6e5e107af6b690178d450ea3784384ad037b9c083e988",
+            "uniqueBytes": 387
+          },
+          {
+            "path": "src/tools/tool-registry.ts",
+            "hash": "c3d9298cd28860936f3050b54140b9b950656ac9fe0e34ad44ba3c8b74629a8b",
+            "uniqueBytes": 3267
+          },
+          {
+            "path": "src/agent/step-executor.ts",
+            "hash": "f1fc5014032f35441177e0a0f65ed6d7c87c5063635db9667fb33781631f58b6",
+            "uniqueBytes": 62
+          },
+          {
+            "path": "src/agent/step-events.ts",
+            "hash": "9ec60449d06094565286d0c5267ea3d2d6fbc864ee6deef629d9be0cd313785b",
+            "uniqueBytes": 140
+          },
+          {
+            "path": "src/runtime/tool-contract-composition.test.ts",
+            "hash": "8d26dfe77f022533b0ed51d71fdcff3f8850c93360d9a0236fb2d8b64b43cc53",
+            "uniqueBytes": 6579
+          },
+          {
+            "path": "src/agent/tool-resource-class.ts",
+            "hash": "a061b3b9c0534e28b57041f347fd5a5b0451855f3bcecf7dafc6f0b1f7e67060",
+            "uniqueBytes": 6674
+          },
+          {
+            "path": "src/approval/approval-level.ts",
+            "hash": "608aefebf6b72b6feb6717fe5d9a39c894047dbf6859bd658f52e5a7313fe7f3",
+            "uniqueBytes": 70
+          },
+          {
+            "path": "src/runtime/bootstrap-composition.test.ts",
+            "hash": "ac234f7d4167f25414191ce1625fb8edffef067f09e497ddcb853b61f75f9e84",
+            "uniqueBytes": 456
+          },
+          {
+            "path": "src/approval/AGENTS.md",
+            "hash": "ea91e0b0d46943015fbec838b77d67766696b066a4db258e88915b59b30844f1",
+            "uniqueBytes": 256
+          },
+          {
+            "path": "src/agent/step/step-batch-policy.ts",
+            "hash": "c91717b3f6c15270e5af87a5151f2037f17b862ba6398da258a45b7bdba64e73",
+            "uniqueBytes": 131
+          },
+          {
+            "path": "src/approval/index.ts",
+            "hash": "621f0d66b8ad5fdbca1f568fb5c299095356c6086f6b9bf4856d423733122b54",
+            "uniqueBytes": 57
+          },
+          {
+            "path": "src/agent/step/step-batch-parsing.ts",
+            "hash": "46090ab05b545d31a1e9aff0dbc98c5972ea1f27601f4874a8f2358b143ac523",
+            "uniqueBytes": 73
+          },
+          {
+            "path": "src/approval/read-scope-grants.ts",
+            "hash": "d0ababde675b701e968b4d0a6de863fac3e6d7c27e62b341b60f2666caef5b49",
+            "uniqueBytes": 74
+          },
+          {
+            "path": "src/approval/approval-gate.ts",
+            "hash": "690e19b479eb42843a5c530eef49aa235fac664a78487a80ca7abb0e49a1763a",
+            "uniqueBytes": 125
+          },
+          {
+            "path": "src/approval/README.md",
+            "hash": "e3b931353d4a11cd889d212c21443499b757b70b07ab80acda435815f9e13d0f",
+            "uniqueBytes": 157
+          },
+          {
+            "path": "src/runtime/composition/runtime-tool-catalog.test.ts",
+            "hash": "89fc32bdbc5f48ace2a81f80a7712c776c030d225ce1d82794fb508c0f826b3a",
+            "uniqueBytes": 244
+          },
+          {
+            "path": "src/agent/step/step-batch-lifecycle.test.ts",
+            "hash": "3af0f7c9cccee703e832266ef4ea062cbb8c94bab84e373b32cff0740cbe00a0",
+            "uniqueBytes": 153
+          },
+          {
+            "path": "src/approval/read-scope-grants.test.ts",
+            "hash": "6aac1b4ff632002424a8a789a70b733d45820ae98ff36659e4e1fa8d58c0e46d",
+            "uniqueBytes": 57
+          },
+          {
+            "path": "src/tools/fusion/index.ts",
+            "hash": "a2f5dde4f1b14d0444b633b75b5baf7791c52670e424dd6cadeebef1976bfc8c",
+            "uniqueBytes": 104
+          },
+          {
+            "path": "src/tools/os/fs/fs-hash-contract.test.ts",
+            "hash": "1d0a1bedf2d3141345e1b3bd1efb36a948fa5e4a800416c8810b771a5174711b",
+            "uniqueBytes": 8396
+          },
+          {
+            "path": "src/runtime/composition/runtime-tool-catalog.ts",
+            "hash": "199f9923a20f5c834baed7775d096771d7a76553fba08efd216d63acadf29af3",
+            "uniqueBytes": 130
+          },
+          {
+            "path": "src/tools/os/fs/fs-glob-contract.ts",
+            "hash": "e3016dacc6c998ef1d27f98ba814fae7732c8699ee797112e058a236a03b9750",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/tools/os/fs/fs-list-contract.ts",
+            "hash": "7bbe14daf77473201072928578bea335225f58b9c488127b6c56f043e663518e",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/tools/docs/contracts.md",
+            "hash": "2b90b877baa7b6b1aa5713becf5a046f160f18a8fc254f54613d3019d83429c2",
+            "uniqueBytes": 3914
+          },
+          {
+            "path": "src/tools/os/fs/fs-grep-contract.ts",
+            "hash": "6e6e05a19c70f5b45c4fa0b3ffb983ed6a277f85d0662a13e3bf2bee62abcbfd",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/tools/tool-contract-conformance.test.ts",
+            "hash": "8a92cadbf933df1a9379df68554357e7740c1461dd7658f55612469f477dce81",
+            "uniqueBytes": 12236
+          },
+          {
+            "path": "src/tools/os/fs/fs-read-contract.ts",
+            "hash": "bcb1a5b5c5fc388f1a1e35a6084a0ea2bfba35707ce391446ca2716f0948581f",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/tools/os/fs/fs-diff-contract.ts",
+            "hash": "cea464170d058b2ff917c53c8a86ebe9437d81157baa97fa6bbdd170b77e0a0c",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/tools/os/fs/fs-hash-contract.ts",
+            "hash": "7471094eff49cccb572667a19a13136c4ab129fcf616c4e924bd4082effb3b25",
+            "uniqueBytes": 2527
+          },
+          {
+            "path": "src/tools/os/fs/fs-watch-contract.ts",
+            "hash": "465b6cc164f3143ea6ca2a70fdd61c4a076505db746098ac727800ad0e7de265",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/tools/os/fs/fs-locate-project.test.ts",
+            "hash": "25a09474f17641e3e4727f269f888c1dd0964236488ff3750116bce8b241ee29",
+            "uniqueBytes": 124
+          },
+          {
+            "path": "src/tools/os/fs/fs-locate-project-contract.ts",
+            "hash": "0d1a9612d7d92f348ce017dbe7822119960a8781e6c4338f040a9ea05ab98205",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/tools/os/fs/README.md",
+            "hash": "de898aac5745719d0f503296f51f85daf9519602de86356fd5be78c076ce2788",
+            "uniqueBytes": 5346
+          },
+          {
+            "path": "src/runtime/bootstrap-composition-startup.test.ts",
+            "hash": "7eba9496ac575737914d0a9751d485febfbd79d976820a262c7a7fff50a74354",
+            "uniqueBytes": 428
+          },
+          {
+            "path": "src/tools/os/fs/fs-read-contracts.test.ts",
+            "hash": "e9a336b0046e2a305ec4659911fde5e4e7e5b71cdf2139ecacf32e74e37376f9",
+            "uniqueBytes": 64
+          },
+          {
+            "path": "src/tools/os/fs/docs/contracts.md",
+            "hash": "d3edef7fa473d83e7d92869825af33a0ab06314d207682a87e176198646a6678",
+            "uniqueBytes": 4426
+          },
+          {
+            "path": "src/tools/read-scope/read-scope-shell.ts",
+            "hash": "6dc6bbe05f86d71a7c225eec89052b23db86342ca62d2dbadc01c293f8043ad5",
+            "uniqueBytes": 25
+          },
+          {
+            "path": "src/tools/read-scope/read-scope.ts",
+            "hash": "857e7be38de0db5f2db9756b9c798e6865e1d6b1fa84d59424b47df80d1af295",
+            "uniqueBytes": 278
+          },
+          {
+            "path": "src/tools/read-scope/index.ts",
+            "hash": "e247ec20a16236b5b166b20be7b7e9c04a6a92108874ee0af1ae968f4a75857e",
+            "uniqueBytes": 494
+          },
+          {
+            "path": "src/tools/read-scope/read-scope-roots.test.ts",
+            "hash": "80a52c21f7cb06015cf056512654a73b8cfd125940bc3d63278c546408667dcb",
+            "uniqueBytes": 69
+          },
+          {
+            "path": "src/tools/read-scope/read-scope-approval.test.ts",
+            "hash": "38a1d85ad9d920a627dc44eece9c0e17cc7e325ee79ca7ecbf7c11a2ad88b7c0",
+            "uniqueBytes": 5941
+          },
+          {
+            "path": "src/tools/read-scope/confine-reads.ts",
+            "hash": "43f60af99ebb1e8065599d6ef5934c6726ed8a8d87c8250082428ad53537620e",
+            "uniqueBytes": 5621
+          },
+          {
+            "path": "src/prompt/AGENTS.md",
+            "hash": "9126f8c5f74be699dc8e567b7142e173ac3e0dfb9c8949751b542560c73e42d5",
+            "uniqueBytes": 1236
+          },
+          {
+            "path": "src/prompt/README.md",
+            "hash": "e36cc87c1e9acb9e963196889c5a624a9eda4cd23d7e696a4587c1ff33a84e67",
+            "uniqueBytes": 1609
+          },
+          {
+            "path": "src/agent/AGENTS.md",
+            "hash": "88b874a3ec206e7e604f87564196fab1b57a4e21378e1a9f7d75063c375643ca",
+            "uniqueBytes": 1225
+          },
+          {
+            "path": "src/agent/README.md",
+            "hash": "6488774e9eddcc6e41447129abe2bf646780b2b096f0e80bfe283b798b9df306",
+            "uniqueBytes": 2391
+          },
+          {
+            "path": "src/tools/os/README.md",
+            "hash": "4aea2f0871ef18b19870b9e25008b73c8260723e0f882fa4175c3d083702e5c8",
+            "uniqueBytes": 2034
+          },
+          {
+            "path": "src/tools/os/fs/fs-hash.ts",
+            "hash": "84951d2d0acc08c7c04f365ad6eecca538dc2e3c84280ff0c430a21de28de2b9",
+            "uniqueBytes": 1798
+          },
+          {
+            "path": "src/prompt/default-tool-args-schemas.ts",
+            "hash": "6cdfd23aff578645b5e81d6ebeb695214f1867909bff33b6ee5106dd8de4a479",
+            "uniqueBytes": 1057
+          },
+          {
+            "path": "src/tools/os/index.ts",
+            "hash": "14a5cbbf62fde0ec24063b228f7f3193ea580b1c04f6e6ab489bc6bf8478bbe7",
+            "uniqueBytes": 5312
+          },
+          {
+            "path": "src/prompt/tool-descriptors.ts",
+            "hash": "96bfdfadf034e7a09d6cc074b552194d6a2c50c981c47226b9c4e5f385591376",
+            "uniqueBytes": 1386
+          },
+          {
+            "path": "src/tools/read-scope/read-scope-targets.ts",
+            "hash": "6983fd8215e8ae9561f48f03147200d4a1acd8030ccabd737f21b9855c94a406",
+            "uniqueBytes": 2219
+          },
+          {
+            "path": "src/tools/tool-roles.ts",
+            "hash": "a726628c6a38d07f9af6f640b2b307be2ee5282d99fdcbb1ccda8b6b46ea9f6e",
+            "uniqueBytes": 5690
+          },
+          {
+            "path": "src/tools/os/fs/fs-hash.test.ts",
+            "hash": "a8feb60873964edcf14aa0f3812a8a7fa2beff4cd717792a86450d811ba38107",
+            "uniqueBytes": 3520
+          },
+          {
+            "path": "src/prompt/default-tool-descriptors-a.ts",
+            "hash": "fdbf5b79d6bd4f8a1f6f798986e2c51cdd0890c53f3879c4b8f8e301884479d7",
+            "uniqueBytes": 10264
+          },
+          {
+            "path": "src/llm/AGENTS.md",
+            "hash": "f2624279a8605c84c6295c046f7baf3fc643b0c2a12dc6f32d8ff76869b52dca",
+            "uniqueBytes": 1379
+          },
+          {
+            "path": "src/llm/README.md",
+            "hash": "fdc2818c8dc96131a5b8e658c03a6493042aeda50ecc199992ef0ad698f7880f",
+            "uniqueBytes": 1164
+          },
+          {
+            "path": "src/agent/docs/batching.md",
+            "hash": "d19fb888ceebdb1e52dcae8ec8cd3026a894c1a5aeec34fe35bec93e8f0e21dd",
+            "uniqueBytes": 2342
+          },
+          {
+            "path": "src/llm/grammar/build-grammar.ts",
+            "hash": "81a4aa2480ac169bb9e9eb6388e21bcec0086421441d058abdc96d7e6f2b108c",
+            "uniqueBytes": 10734
+          },
+          {
+            "path": "src/llm/grammar/tool-call-grammar.test.ts",
+            "hash": "151bd61067a34db7eb316a4836f1048f79710fda5226ded47741e49b801bfa6b",
+            "uniqueBytes": 5046
+          },
+          {
+            "path": "grammars/tool-call.gbnf",
+            "hash": "c2af64af507b7d54c40f2531616efd533c4cbb2b6efbc2a3d0509c2748f0e783",
+            "uniqueBytes": 4706
+          },
+          {
+            "path": "src/llm/docs/profiles.md",
+            "hash": "0c791d6d442d35047ffc4d879aa8755da062b38f0c9ed75f72e45a7677606bf9",
+            "uniqueBytes": 2359
+          },
+          {
+            "path": "src/llm/provider/openai/openai-tool-call-adapter.ts",
+            "hash": "0effcaf318c90f188d6af8a918ed7af1c3efb22515b53ab96b89e10770f3dc9a",
+            "uniqueBytes": 4174
+          },
+          {
+            "path": "src/tools/read-scope/read-scope.test.ts",
+            "hash": "7a7b5da9e067aaab3167d1094b95a9f595c581fe3c40167cea5b92fa270e6ba0",
+            "uniqueBytes": 81
+          },
+          {
+            "path": "src/tools/read-scope/worker-read-scope.test.ts",
+            "hash": "b1dba9f253a3393f241566225f9e69c3fdbc0879b094ead196a04f63ad5e4ffb",
+            "uniqueBytes": 5069
+          },
+          {
+            "path": "src/tools/os/os-tools.test.ts",
+            "hash": "67bc8daf9111d21ccc850f50e2e9bc8b3c630ccd3c375c46f5563290382af3e7",
+            "uniqueBytes": 3883
+          }
+        ],
+        "changedFiles": [
+          "grammars/tool-call.gbnf",
+          "src/agent/README.md",
+          "src/agent/tool-resource-class.ts",
+          "src/prompt/README.md",
+          "src/prompt/default-tool-args-schemas.ts",
+          "src/prompt/default-tool-descriptors-a.ts",
+          "src/tools/README.md",
+          "src/tools/docs/contracts.md",
+          "src/tools/os/fs/README.md",
+          "src/tools/os/fs/docs/contracts.md",
+          "src/tools/os/fs/fs-exists-contract.ts",
+          "src/tools/os/fs/fs-exists.test.ts",
+          "src/tools/os/fs/fs-exists.ts",
+          "src/tools/os/index.ts",
+          "src/tools/os/os-tools.test.ts",
+          "src/tools/read-scope/read-scope-targets.ts",
+          "src/tools/tool-contract-conformance.test.ts",
+          "src/tools/tool-roles.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 158,
+        "lint": true,
+        "testTypeGate": true,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [
+        {
+          "kind": "frozen-acceptance",
+          "file": "src/tools/os/fs/fs-exists-contract.ts",
+          "message": "Frozen check rejects whitespace-only path. Both implementations validate length>0, preserving legal whitespace filenames. Brief does not specify trimming. Kept as frozen failure; evaluation ambiguity, not silently rescored."
+        }
+      ],
+      "environmentLimits": [
+        "docs:check cannot pass in task scaffold: LICENSE, eval report and release workflow were not copied. Not a product failure.",
+        "Selected SQLite suites initially require native ABI141 while default Node26 requires147. r02a/r06b reran on Node25.7; r04b/r06a optional HTTP/full-runtime suites remain unverified in agent run. Independent paired checks run on Node25.7."
+      ]
+    },
+    {
+      "id": "r02b",
+      "task": 2,
+      "variant": "original",
+      "root": "/tmp/atomic-stage07-benchmark/runs/original-02",
+      "log": "/tmp/atomic-stage07-runs/r02b.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-original",
+      "status": "completed",
+      "brief": "**Read-only инструмент.** Добавить os.fs.exists с обязательным непустым path. Результат содержит exists и kind=file/dir/other/null; ENOENT даёт успешный false/null, остальные I/O errors сохраняются. Путь относительный к workingDir; операция не читает содержимое и ничего не пишет. Registration/descriptor/JSON Schema/parser/resource class pure_read/grammar и read boundary должны согласовываться; новая metadata имеет один owner там, где это поддерживается исходной архитектурой. Checks: реальные temp file/dir/missing path, bad args, native schema, catalog/registry/class presence и вызов через read-scope wrapper. На original не требуется создавать всю будущую систему canonical13 ради одного инструмента.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/original-02. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Read-only инструмент.** Добавить os.fs.exists с обязательным непустым path. Результат содержит exists и kind=file/dir/other/null; ENOENT даёт успешный false/null, остальные I/O errors сохраняются. Путь относительный к workingDir; операция не читает содержимое и ничего не пишет. Registration/descriptor/JSON Schema/parser/resource class pure_read/grammar и read boundary должны согласовываться; новая metadata имеет один owner там, где это поддерживается исходной архитектурой. Checks: реальные temp file/dir/missing path, bad args, native schema, catalog/registry/class presence и вызов через read-scope wrapper. На original не требуется создавать всю будущую систему canonical13 ради одного инструмента.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-02 /tmp/atomic-stage07-runs/r02b.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-02 /tmp/atomic-stage07-runs/r02b.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-02 /tmp/atomic-stage07-runs/r02b.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/original-02 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r02b-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r02b",
+      "startedAtRecorded": "2026-10-06T17:26:40.758Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:30:36.237Z",
+      "acceptance": {
+        "exit": 1,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 2,
+          "pass": false,
+          "assertions": 20,
+          "error": {
+            "name": "AssertionError",
+            "message": "bad exists args {\"path\":\"   \"}",
+            "stack": "AssertionError [ERR_ASSERTION]: bad exists args {\"path\":\"   \"}\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:39:204)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+          }
+        },
+        "stdout": "{\"task\":2,\"pass\":false,\"assertions\":20,\"error\":{\"name\":\"AssertionError\",\"message\":\"bad exists args {\\\"path\\\":\\\"   \\\"}\",\"stack\":\"AssertionError [ERR_ASSERTION]: bad exists args {\\\"path\\\":\\\"   \\\"}\\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:39:204)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+      },
+      "metrics": {
+        "actions": 44,
+        "returnedOutputBytes": 181006,
+        "observedSourceBytes": 174555,
+        "uniqueVersionedSourceBytes": 170198,
+        "repeatedSourceBytes": 4357,
+        "uniqueInstructionBytes": 61444,
+        "uniqueCodeBytes": 91057,
+        "uniqueOtherBytes": 17697,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+            "uniqueBytes": 61444
+          },
+          {
+            "path": "README.md",
+            "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+            "uniqueBytes": 8980
+          },
+          {
+            "path": "src/prompt/stable-prefix.ts",
+            "hash": "d0167a0b6f4109ef4145cff24b9755e247efa3034d828897e7309527cab3a25e",
+            "uniqueBytes": 1427
+          },
+          {
+            "path": "src/prompt/default-tool-args-schemas.ts",
+            "hash": "33639cd7aab352734566bcf286143dbef578d75dc4dceeb2c5ba9445fd606ba7",
+            "uniqueBytes": 3402
+          },
+          {
+            "path": "src/prompt/default-tool-descriptors-a.ts",
+            "hash": "3f5b8e142706c126f853e1d6cb2a89ab3e2c197112b9c0483d91983bb347aace",
+            "uniqueBytes": 9905
+          },
+          {
+            "path": "src/tools/os/os-tools.test.ts",
+            "hash": "ff2257bf18d7510b8fca0d7ccdd34ec8a45caad282b1596823f3150b096784c3",
+            "uniqueBytes": 3861
+          },
+          {
+            "path": "src/tools/os/fs-list.test.ts",
+            "hash": "7b4fb602aab11938dc1afd5476f841870e5eaf2853a3b9de6f849f0a424dc16c",
+            "uniqueBytes": 44
+          },
+          {
+            "path": "src/tools/os/index.ts",
+            "hash": "8fefa020d4d7e30e8831320e0beab13808900f845845693ad8557a4ec71dfc6c",
+            "uniqueBytes": 10851
+          },
+          {
+            "path": "src/tools/os/fs-hash.test.ts",
+            "hash": "517fcec44aaefcb70c1eea7042197713813b446beff1f751ea5a0326f0dba7ac",
+            "uniqueBytes": 3224
+          },
+          {
+            "path": "src/tools/os/fs-hash.ts",
+            "hash": "fef3ea2adf37b4fda3c65e131b42b76e8acef1a9eac3cc3af1c1dd73e39e4691",
+            "uniqueBytes": 3301
+          },
+          {
+            "path": "src/tools/read-scope/read-scope-targets.ts",
+            "hash": "6983fd8215e8ae9561f48f03147200d4a1acd8030ccabd737f21b9855c94a406",
+            "uniqueBytes": 2219
+          },
+          {
+            "path": "src/agent/tool-resource-class.ts",
+            "hash": "1313dabc223e602caf6c498456c2de4b9d554226023a5a4abc31f579d934ad64",
+            "uniqueBytes": 4129
+          },
+          {
+            "path": "grammars/tool-call.gbnf",
+            "hash": "c2af64af507b7d54c40f2531616efd533c4cbb2b6efbc2a3d0509c2748f0e783",
+            "uniqueBytes": 3927
+          },
+          {
+            "path": "src/tools/tool-registry.ts",
+            "hash": "c3d9298cd28860936f3050b54140b9b950656ac9fe0e34ad44ba3c8b74629a8b",
+            "uniqueBytes": 3267
+          },
+          {
+            "path": "src/tools/read-scope/confine-reads.ts",
+            "hash": "43f60af99ebb1e8065599d6ef5934c6726ed8a8d87c8250082428ad53537620e",
+            "uniqueBytes": 5621
+          },
+          {
+            "path": "src/tools/read-scope/worker-read-scope.test.ts",
+            "hash": "b1dba9f253a3393f241566225f9e69c3fdbc0879b094ead196a04f63ad5e4ffb",
+            "uniqueBytes": 4916
+          },
+          {
+            "path": "src/llm/grammar/tool-call-grammar.test.ts",
+            "hash": "151bd61067a34db7eb316a4836f1048f79710fda5226ded47741e49b801bfa6b",
+            "uniqueBytes": 968
+          },
+          {
+            "path": "src/llm/provider/openai/strict-tool-schema.test.ts",
+            "hash": "a5b5beca2e4652cd93158bda8b371dca92bcec3d264558757118f502ae62a1f4",
+            "uniqueBytes": 3798
+          },
+          {
+            "path": "src/tools/tool-roles.ts",
+            "hash": "a726628c6a38d07f9af6f640b2b307be2ee5282d99fdcbb1ccda8b6b46ea9f6e",
+            "uniqueBytes": 5481
+          },
+          {
+            "path": "src/prompt/tool-descriptors.ts",
+            "hash": "96bfdfadf034e7a09d6cc074b552194d6a2c50c981c47226b9c4e5f385591376",
+            "uniqueBytes": 1386
+          },
+          {
+            "path": "src/agent/tool-resource-class.test.ts",
+            "hash": "28fdc2548eefd63d5c6b6f27d6348dce04b5babdb6d34b0b548c5dbe25fdefc4",
+            "uniqueBytes": 2317
+          },
+          {
+            "path": "src/llm/provider/openai/openai-tool-call-adapter.ts",
+            "hash": "0effcaf318c90f188d6af8a918ed7af1c3efb22515b53ab96b89e10770f3dc9a",
+            "uniqueBytes": 4872
+          },
+          {
+            "path": "src/tools/os/expand-home.ts",
+            "hash": "fc5d5e2fe3847226c64088df3dd40dc28531a7548f7e2d056ddda9dea4799dee",
+            "uniqueBytes": 2585
+          },
+          {
+            "path": "src/llm/grammar/tool-call-grammar.ts",
+            "hash": "c8d4c7721b499bdc9cc850c083b6e552717214f69b62a6570136331bfffa4790",
+            "uniqueBytes": 4590
+          },
+          {
+            "path": "src/prompt/default-tool-args-schemas.test.ts",
+            "hash": "9dcb90d117343942cb7da8998f3f4a01a90b1e0b8c30d4c90da37354dfa92968",
+            "uniqueBytes": 2843
+          },
+          {
+            "path": "src/config/config-schema.ts",
+            "hash": "cc148f792d9d6ee5723b27abc55dfd834e53a40ccbabf3dd7e32c8cd9822c394",
+            "uniqueBytes": 2290
+          },
+          {
+            "path": "src/tools/read-scope/read-scope-approval.test.ts",
+            "hash": "38a1d85ad9d920a627dc44eece9c0e17cc7e325ee79ca7ecbf7c11a2ad88b7c0",
+            "uniqueBytes": 3760
+          },
+          {
+            "path": "package.json",
+            "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+            "uniqueBytes": 4790
+          }
+        ],
+        "changedFiles": [
+          "grammars/tool-call.gbnf",
+          "src/agent/tool-resource-class.ts",
+          "src/prompt/default-tool-args-schemas.ts",
+          "src/prompt/default-tool-descriptors-a.ts",
+          "src/tools/os/fs-exists.test.ts",
+          "src/tools/os/fs-exists.ts",
+          "src/tools/os/index.ts",
+          "src/tools/os/os-tools.test.ts",
+          "src/tools/read-scope/read-scope-targets.ts",
+          "src/tools/tool-roles.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 245,
+        "lint": true,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [
+        {
+          "kind": "frozen-acceptance",
+          "file": "src/tools/os/fs-exists.ts",
+          "message": "Frozen check rejects whitespace-only path. Both implementations validate length>0, preserving legal whitespace filenames. Brief does not specify trimming. Kept as frozen failure; evaluation ambiguity, not silently rescored."
+        }
+      ],
+      "environmentLimits": []
+    },
+    {
+      "id": "r03a",
+      "task": 3,
+      "variant": "original",
+      "root": "/tmp/atomic-stage07-benchmark/runs/original-03",
+      "log": "/tmp/atomic-stage07-runs/r03a.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-original",
+      "status": "completed",
+      "brief": "**Миграция.** Исправить seeded regression: legacy approvalRequired=false ошибочно выбирает требующее approval значение. Явный approvalLevel имеет приоритет; true/false, строковые bool, null/absence и current defaults сохраняют прежнюю семантику. Checks: independent parseUserConfigFile scenarios и существующие approval migration tests. Version не повышать ради исправления regression; остальные поля не менять.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/original-03. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Миграция.** Исправить seeded regression: legacy approvalRequired=false ошибочно выбирает требующее approval значение. Явный approvalLevel имеет приоритет; true/false, строковые bool, null/absence и current defaults сохраняют прежнюю семантику. Checks: independent parseUserConfigFile scenarios и существующие approval migration tests. Version не повышать ради исправления regression; остальные поля не менять.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-03 /tmp/atomic-stage07-runs/r03a.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-03 /tmp/atomic-stage07-runs/r03a.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-03 /tmp/atomic-stage07-runs/r03a.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/original-03 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r03a-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r03a",
+      "startedAtRecorded": "2026-10-06T17:26:40.758Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:28:55.770Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 3,
+          "pass": true,
+          "assertions": 17,
+          "observed": [
+            "legacy approval {\"approvalRequired\":false}",
+            "legacy key removed",
+            "legacy approval {\"approvalRequired\":true}",
+            "legacy key removed",
+            "legacy approval {\"approvalRequired\":\"false\"}",
+            "legacy key removed",
+            "legacy approval {\"approvalRequired\":\"true\"}",
+            "legacy key removed",
+            "legacy approval {\"approvalLevel\":3,\"approvalRequired\":false}",
+            "legacy key removed",
+            "legacy approval {\"approvalLevel\":5,\"approvalRequired\":true}",
+            "legacy key removed",
+            "legacy approval {\"approvalLevel\":null,\"approvalRequired\":null}",
+            "legacy key removed",
+            "legacy approval {}",
+            "legacy key removed",
+            "current default"
+          ]
+        },
+        "stdout": "{\"task\":3,\"pass\":true,\"assertions\":17,\"observed\":[\"legacy approval {\\\"approvalRequired\\\":false}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":true}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":\\\"false\\\"}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":\\\"true\\\"}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":3,\\\"approvalRequired\\\":false}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":5,\\\"approvalRequired\\\":true}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":null,\\\"approvalRequired\\\":null}\",\"legacy key removed\",\"legacy approval {}\",\"legacy key removed\",\"current default\"]}\n"
+      },
+      "metrics": {
+        "actions": 20,
+        "returnedOutputBytes": 114464,
+        "observedSourceBytes": 103793,
+        "uniqueVersionedSourceBytes": 89082,
+        "repeatedSourceBytes": 14711,
+        "uniqueInstructionBytes": 54260,
+        "uniqueCodeBytes": 20106,
+        "uniqueOtherBytes": 14716,
+        "files": [
+          {
+            "path": "README.md",
+            "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+            "uniqueBytes": 9797
+          },
+          {
+            "path": "AGENTS.md",
+            "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+            "uniqueBytes": 54260
+          },
+          {
+            "path": "src/config/subcall-timeout-migration.test.ts",
+            "hash": "c56dce2f18d1eb5c7b837820af7906a9f078466c958212031ded56c4fc0f72d5",
+            "uniqueBytes": 135
+          },
+          {
+            "path": "src/config/custom-models-schema.test.ts",
+            "hash": "03adf03a328005fae5a4a755d436f76eafa32337eb4824baefbced32fbccc453",
+            "uniqueBytes": 225
+          },
+          {
+            "path": "src/config/config-file.ts",
+            "hash": "480f3502af42e77e8224c942750fe3f0becef71f15ae712545caf40b7844a761",
+            "uniqueBytes": 239
+          },
+          {
+            "path": "src/config/index.ts",
+            "hash": "ea5399af0c9eeccd8358160c19a77c61371b150444447246fcb341dcf856f668",
+            "uniqueBytes": 22
+          },
+          {
+            "path": "src/config/config-file.test.ts",
+            "hash": "de74721040481a300bf5b531f8141951b77200a7685b871dd89494e89b915bd4",
+            "uniqueBytes": 1918
+          },
+          {
+            "path": "src/config/config-paths.ts",
+            "hash": "a16e84df03545bf7cff160c27e8e6d2ec991659aca1a6e219464e3f92c8a4dd7",
+            "uniqueBytes": 219
+          },
+          {
+            "path": "src/config/custom-models-store.ts",
+            "hash": "2c5e0271ed52a2b2b94ab6e38386e231addd853c3e0205722801f2cfd29ef5f6",
+            "uniqueBytes": 98
+          },
+          {
+            "path": "src/config/config-schema.test.ts",
+            "hash": "48535e932580045b3f424412f77f556374daaeb88335eaa8ea075a82011ba00e",
+            "uniqueBytes": 12798
+          },
+          {
+            "path": "src/config/config-schema.ts",
+            "hash": "ea8949e17fb52312d4aa8231a475d1b86eaecdd59003dfea83cfcf0dcf1a4a48",
+            "uniqueBytes": 4019
+          },
+          {
+            "path": "package.json",
+            "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+            "uniqueBytes": 4919
+          },
+          {
+            "path": "src/config/config-schema.ts",
+            "hash": "cc148f792d9d6ee5723b27abc55dfd834e53a40ccbabf3dd7e32c8cd9822c394",
+            "uniqueBytes": 433
+          }
+        ],
+        "changedFiles": [
+          "src/config/config-schema.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 241,
+        "lint": false,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    },
+    {
+      "id": "r03b",
+      "task": 3,
+      "variant": "final",
+      "root": "/tmp/atomic-stage07-benchmark/runs/final-03",
+      "log": "/tmp/atomic-stage07-runs/r03b.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-final-v2",
+      "status": "completed",
+      "brief": "**Миграция.** Исправить seeded regression: legacy approvalRequired=false ошибочно выбирает требующее approval значение. Явный approvalLevel имеет приоритет; true/false, строковые bool, null/absence и current defaults сохраняют прежнюю семантику. Checks: independent parseUserConfigFile scenarios и существующие approval migration tests. Version не повышать ради исправления regression; остальные поля не менять.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/final-03. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Миграция.** Исправить seeded regression: legacy approvalRequired=false ошибочно выбирает требующее approval значение. Явный approvalLevel имеет приоритет; true/false, строковые bool, null/absence и current defaults сохраняют прежнюю семантику. Checks: independent parseUserConfigFile scenarios и существующие approval migration tests. Version не повышать ради исправления regression; остальные поля не менять.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-03 /tmp/atomic-stage07-runs/r03b.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-03 /tmp/atomic-stage07-runs/r03b.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-03 /tmp/atomic-stage07-runs/r03b.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/final-03 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r03b-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r03b",
+      "startedAtRecorded": "2026-10-06T17:28:55.771Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:30:36.239Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 3,
+          "pass": true,
+          "assertions": 17,
+          "observed": [
+            "legacy approval {\"approvalRequired\":false}",
+            "legacy key removed",
+            "legacy approval {\"approvalRequired\":true}",
+            "legacy key removed",
+            "legacy approval {\"approvalRequired\":\"false\"}",
+            "legacy key removed",
+            "legacy approval {\"approvalRequired\":\"true\"}",
+            "legacy key removed",
+            "legacy approval {\"approvalLevel\":3,\"approvalRequired\":false}",
+            "legacy key removed",
+            "legacy approval {\"approvalLevel\":5,\"approvalRequired\":true}",
+            "legacy key removed",
+            "legacy approval {\"approvalLevel\":null,\"approvalRequired\":null}",
+            "legacy key removed",
+            "legacy approval {}",
+            "legacy key removed",
+            "current default"
+          ]
+        },
+        "stdout": "{\"task\":3,\"pass\":true,\"assertions\":17,\"observed\":[\"legacy approval {\\\"approvalRequired\\\":false}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":true}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":\\\"false\\\"}\",\"legacy key removed\",\"legacy approval {\\\"approvalRequired\\\":\\\"true\\\"}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":3,\\\"approvalRequired\\\":false}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":5,\\\"approvalRequired\\\":true}\",\"legacy key removed\",\"legacy approval {\\\"approvalLevel\\\":null,\\\"approvalRequired\\\":null}\",\"legacy key removed\",\"legacy approval {}\",\"legacy key removed\",\"current default\"]}\n"
+      },
+      "metrics": {
+        "actions": 22,
+        "returnedOutputBytes": 85453,
+        "observedSourceBytes": 84037,
+        "uniqueVersionedSourceBytes": 82306,
+        "repeatedSourceBytes": 1731,
+        "uniqueInstructionBytes": 8740,
+        "uniqueCodeBytes": 32995,
+        "uniqueOtherBytes": 40571,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+            "uniqueBytes": 6714
+          },
+          {
+            "path": "README.md",
+            "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+            "uniqueBytes": 7487
+          },
+          {
+            "path": "src/config/README.md",
+            "hash": "c85fbd53355d590842b368563b4d2ef18086ce2890356a1277ae5528c4dfcdfa",
+            "uniqueBytes": 7178
+          },
+          {
+            "path": "src/config/AGENTS.md",
+            "hash": "9ef5c52bed9f12aad44501b84754d2db316367eeb30cfa20e61b8a8c77568a62",
+            "uniqueBytes": 1088
+          },
+          {
+            "path": "src/config/config-file.test.ts",
+            "hash": "de74721040481a300bf5b531f8141951b77200a7685b871dd89494e89b915bd4",
+            "uniqueBytes": 2365
+          },
+          {
+            "path": "src/config/agent/agent-config.test.ts",
+            "hash": "8825d9b3d4f5337a9064f24851e108a79ee3db1bc5e4bbbaa345bddb1063e415",
+            "uniqueBytes": 5194
+          },
+          {
+            "path": "src/config/agent/agent-parser.ts",
+            "hash": "1766f82d11c855329025e317ef6849f892957a9dc5a24068c6e95123384368e2",
+            "uniqueBytes": 6018
+          },
+          {
+            "path": "src/config/agent/agent-types.ts",
+            "hash": "2776351d6d117ec57b8fe798553f54def86800a3724302f8968c314cfb455496",
+            "uniqueBytes": 62
+          },
+          {
+            "path": "src/config/config-schema.test.ts",
+            "hash": "48535e932580045b3f424412f77f556374daaeb88335eaa8ea075a82011ba00e",
+            "uniqueBytes": 5844
+          },
+          {
+            "path": "src/config/config-schema.ts",
+            "hash": "244617f0172392f8c6ee90f0447ac9e3a16a448e4719fac4e7186a5b990d66ba",
+            "uniqueBytes": 7271
+          },
+          {
+            "path": "src/config/agent/README.md",
+            "hash": "16378d5d9bc5c4b5cf35b17b9a35fec8a36191f89eed68dfdc249e520394e102",
+            "uniqueBytes": 1316
+          },
+          {
+            "path": "src/config/docs/compatibility.md",
+            "hash": "e4e1849b8f06c94823d760bb930b47c334aa24af6f34a2807c40ef2c29b372c9",
+            "uniqueBytes": 13037
+          },
+          {
+            "path": "src/approval/AGENTS.md",
+            "hash": "ea91e0b0d46943015fbec838b77d67766696b066a4db258e88915b59b30844f1",
+            "uniqueBytes": 938
+          },
+          {
+            "path": "src/approval/README.md",
+            "hash": "e3b931353d4a11cd889d212c21443499b757b70b07ab80acda435815f9e13d0f",
+            "uniqueBytes": 1028
+          },
+          {
+            "path": "src/config/docs/execution-resource.md",
+            "hash": "05f1cb275cc2eb1f3102ec1666144267cb9c44967c94649c49513bf552aacd16",
+            "uniqueBytes": 4538
+          },
+          {
+            "path": "package.json",
+            "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+            "uniqueBytes": 5987
+          },
+          {
+            "path": "src/config/agent/agent-defaults.ts",
+            "hash": "7cbf2567b69fb494dcde20b6a6acd1c178c8e35b0763cf27e5585c86165ddb9d",
+            "uniqueBytes": 845
+          },
+          {
+            "path": "src/config/config-primitives.ts",
+            "hash": "88b3c4b3cceba8f4f7d083c202355ad5728484d0680387099b44947c16cdde04",
+            "uniqueBytes": 5026
+          },
+          {
+            "path": "src/config/agent/agent-parser.ts",
+            "hash": "10410e96cd25bf224f01dc6235e06cf0e082add9b0b9f0e5a8f68ebb13898187",
+            "uniqueBytes": 370
+          }
+        ],
+        "changedFiles": [
+          "src/config/agent/agent-parser.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 249,
+        "lint": true,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    },
+    {
+      "id": "r04a",
+      "task": 4,
+      "variant": "final",
+      "root": "/tmp/atomic-stage07-benchmark/runs/final-04",
+      "log": "/tmp/atomic-stage07-runs/r04a.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-final-v2",
+      "status": "completed",
+      "brief": "**MCP UI.** Исправить seeded regression: ошибка refresh оставляет loading=true. Ошибка должна снимать loading, показывать своё сообщение и сохранять rows/cursor/детали; следующий refresh_started очищает ошибку и снова включает loading. Checks: reducer actions до/после failure и повторный refresh, существующие MCP tests.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/final-04. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **MCP UI.** Исправить seeded regression: ошибка refresh оставляет loading=true. Ошибка должна снимать loading, показывать своё сообщение и сохранять rows/cursor/детали; следующий refresh_started очищает ошибку и снова включает loading. Checks: reducer actions до/после failure и повторный refresh, существующие MCP tests.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-04 /tmp/atomic-stage07-runs/r04a.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-04 /tmp/atomic-stage07-runs/r04a.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-04 /tmp/atomic-stage07-runs/r04a.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/final-04 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r04a-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r04a",
+      "startedAtRecorded": "2026-10-06T17:30:06.923Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:33:04.075Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 4,
+          "pass": true,
+          "assertions": 12,
+          "observed": [
+            "refresh starts",
+            "failure stops loading",
+            "failure message",
+            "failed keeps rows",
+            "failed keeps cursor",
+            "failed keeps detail",
+            "failed keeps mode",
+            "failed keeps detailRowKey",
+            "failed keeps detailTab",
+            "failed keeps detailCursor",
+            "retry starts",
+            "retry clears error"
+          ]
+        },
+        "stdout": "{\"task\":4,\"pass\":true,\"assertions\":12,\"observed\":[\"refresh starts\",\"failure stops loading\",\"failure message\",\"failed keeps rows\",\"failed keeps cursor\",\"failed keeps detail\",\"failed keeps mode\",\"failed keeps detailRowKey\",\"failed keeps detailTab\",\"failed keeps detailCursor\",\"retry starts\",\"retry clears error\"]}\n"
+      },
+      "metrics": {
+        "actions": 19,
+        "returnedOutputBytes": 55206,
+        "observedSourceBytes": 54030,
+        "uniqueVersionedSourceBytes": 53790,
+        "repeatedSourceBytes": 240,
+        "uniqueInstructionBytes": 8045,
+        "uniqueCodeBytes": 29524,
+        "uniqueOtherBytes": 16221,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+            "uniqueBytes": 6714
+          },
+          {
+            "path": "README.md",
+            "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+            "uniqueBytes": 9797
+          },
+          {
+            "path": "src/tui/memory/memory-actions.ts",
+            "hash": "7e3e2641b5a8cff00ab0e3b1ee53555bd4273bfa6ac64d403ec17de65845c39d",
+            "uniqueBytes": 38
+          },
+          {
+            "path": "src/tui/memory/memory-reducer.ts",
+            "hash": "e6b59f7857d925c7617ad0215410f153ed6871fbd2ff64f91c92c53ffb4845ea",
+            "uniqueBytes": 34
+          },
+          {
+            "path": "src/tui/memory/memory-orchestrator.ts",
+            "hash": "8af6ebb7f37353ff41af99a2db24693897440c29eab0627a7f5b41c12a3c7e1c",
+            "uniqueBytes": 56
+          },
+          {
+            "path": "src/tui/local-models/local-models-orchestrator.ts",
+            "hash": "376168352cc7c88d3d3f1e61bc258774aa927a46c75ce19c12119fda60c5bb8b",
+            "uniqueBytes": 60
+          },
+          {
+            "path": "src/tui/local-models/local-models-actions.ts",
+            "hash": "fb4e59790615df8ed71a3eaf25183822026decdca49c1c691ceb6af70118481f",
+            "uniqueBytes": 44
+          },
+          {
+            "path": "src/tui/local-models/local-models-reducer.ts",
+            "hash": "cda0e4504566069a95b6e80901f75bca17f719014909f7a54504d865c3fa1a81",
+            "uniqueBytes": 40
+          },
+          {
+            "path": "src/tui/tasks/tasks-reducer.ts",
+            "hash": "afde06dbfdedeb5e96e138558ecb817ce438cc692c526c15996f7fb736000704",
+            "uniqueBytes": 33
+          },
+          {
+            "path": "src/tui/tasks/tasks-actions.ts",
+            "hash": "f226e5c58344e307ba4722b0af751ca45b58de825ad69d2947b19d5e75d269e3",
+            "uniqueBytes": 37
+          },
+          {
+            "path": "src/tui/tasks/tasks-orchestrator.ts",
+            "hash": "5b30ebfa50ee6643edf51452f897e0208ce0ab0447cac31474df2df7132f3b9d",
+            "uniqueBytes": 55
+          },
+          {
+            "path": "src/tui/mcp/mcp-orchestrator.ts",
+            "hash": "364ae76099689e7cc956cb0e4ddf11c7df2e3efa1a8410dde3bf8f7beee6c977",
+            "uniqueBytes": 53
+          },
+          {
+            "path": "src/tui/mcp/mcp-reducer.test.ts",
+            "hash": "2f2cdf9b2beab9cdf900308e6d4710a500da3feaeda292084907b3581f85773a",
+            "uniqueBytes": 6963
+          },
+          {
+            "path": "src/tui/mcp/mcp-reducer.ts",
+            "hash": "3c1eb790bcd32d0d3e55e0a3174eaf4dc30bc67124599aa17384e569e4f030b8",
+            "uniqueBytes": 6965
+          },
+          {
+            "path": "src/tui/mcp/mcp-actions.ts",
+            "hash": "39bc3c6b0d3e70fc7b2368078602221def4686dbf9608facfb6aa6703a7e79b5",
+            "uniqueBytes": 35
+          },
+          {
+            "path": "src/tui/skills/skills-reducer.ts",
+            "hash": "6274c0cd1edd680b9d1e51c4b94a18ef33a8e5826b9f9063e81560b2b608fefb",
+            "uniqueBytes": 34
+          },
+          {
+            "path": "src/tui/skills/skills-orchestrator.ts",
+            "hash": "c6414ac2d58a0af55f7b21a77c1b356a231e435ab3866e3c9c48ef1de8b411a2",
+            "uniqueBytes": 56
+          },
+          {
+            "path": "src/tui/skills/skills-actions.ts",
+            "hash": "d5cf85d0ac1d12f0f4b9a88d7a057ac52ca2d815c47136f2cb5e75edc38d9e9b",
+            "uniqueBytes": 38
+          },
+          {
+            "path": "src/tui/AGENTS.md",
+            "hash": "9200a72e0601d4b244a9f8c22cfb7a744c9cdabec8fd5edfbbe9a7faa88357cb",
+            "uniqueBytes": 1331
+          },
+          {
+            "path": "src/tui/README.md",
+            "hash": "13fc50cbb46872745c3ec57f85dcdb918bb0e1b40c1d6c97ad0aa58640de6510",
+            "uniqueBytes": 3563
+          },
+          {
+            "path": "src/tui/mcp/README.md",
+            "hash": "5efebcec8dee3daf64df902d8e1c7dd2d89462f76286ccfc3f579c2a9af414c4",
+            "uniqueBytes": 2861
+          },
+          {
+            "path": "src/tui/mcp/mcp-list.tsx",
+            "hash": "ce01a2629b4c8901e61ee29cdb10fdab70ff3dfdef8ca7a0e9025882fae28fc6",
+            "uniqueBytes": 3129
+          },
+          {
+            "path": "src/tui/mcp/mcp-panel-state.ts",
+            "hash": "acf4a5550be1688077fd6888f8e8eb4bb7e6ccfef9bb2b6ea3b040515a6a009a",
+            "uniqueBytes": 3544
+          },
+          {
+            "path": "src/tui/mcp/mcp-panel.test.tsx",
+            "hash": "ac72d5bb8c7f2c3cc7ce7811df45039b97ff7508001f62460208b1248852ebad",
+            "uniqueBytes": 2087
+          },
+          {
+            "path": "src/tui/mcp/mcp-panel.tsx",
+            "hash": "b380f318c97b3be215716bbd1a0b57f805e4ae109c2d811c4a8e01abd952d0b9",
+            "uniqueBytes": 2793
+          },
+          {
+            "path": "src/tui/mcp/mcp-reducer.test.ts",
+            "hash": "619082d7da9c0fb909be464d0141f8d6e2c087a9645579e57d1690b53b400130",
+            "uniqueBytes": 1817
+          },
+          {
+            "path": "src/tui/tui-state.ts",
+            "hash": "28ae1cdb8996de3dd175a878a78760d0b74788094d3a000782add8f81ec5cd60",
+            "uniqueBytes": 920
+          },
+          {
+            "path": "src/tui/test-fixtures.ts",
+            "hash": "128f6e73d624d930f66e0f9d93e621062bc06c0f2d22cca6797da7a2d463ae17",
+            "uniqueBytes": 693
+          }
+        ],
+        "changedFiles": [
+          "src/tui/mcp/mcp-reducer.test.ts",
+          "src/tui/mcp/mcp-reducer.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 194,
+        "lint": true,
+        "testTypeGate": true,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    },
+    {
+      "id": "r04b",
+      "task": 4,
+      "variant": "original",
+      "root": "/tmp/atomic-stage07-benchmark/runs/original-04",
+      "log": "/tmp/atomic-stage07-runs/r04b.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-original",
+      "status": "completed",
+      "brief": "**MCP UI.** Исправить seeded regression: ошибка refresh оставляет loading=true. Ошибка должна снимать loading, показывать своё сообщение и сохранять rows/cursor/детали; следующий refresh_started очищает ошибку и снова включает loading. Checks: reducer actions до/после failure и повторный refresh, существующие MCP tests.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/original-04. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **MCP UI.** Исправить seeded regression: ошибка refresh оставляет loading=true. Ошибка должна снимать loading, показывать своё сообщение и сохранять rows/cursor/детали; следующий refresh_started очищает ошибку и снова включает loading. Checks: reducer actions до/после failure и повторный refresh, существующие MCP tests.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-04 /tmp/atomic-stage07-runs/r04b.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-04 /tmp/atomic-stage07-runs/r04b.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-04 /tmp/atomic-stage07-runs/r04b.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/original-04 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r04b-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r04b",
+      "startedAtRecorded": "2026-10-06T17:30:36.239Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:33:04.759Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 4,
+          "pass": true,
+          "assertions": 12,
+          "observed": [
+            "refresh starts",
+            "failure stops loading",
+            "failure message",
+            "failed keeps rows",
+            "failed keeps cursor",
+            "failed keeps detail",
+            "failed keeps mode",
+            "failed keeps detailRowKey",
+            "failed keeps detailTab",
+            "failed keeps detailCursor",
+            "retry starts",
+            "retry clears error"
+          ]
+        },
+        "stdout": "{\"task\":4,\"pass\":true,\"assertions\":12,\"observed\":[\"refresh starts\",\"failure stops loading\",\"failure message\",\"failed keeps rows\",\"failed keeps cursor\",\"failed keeps detail\",\"failed keeps mode\",\"failed keeps detailRowKey\",\"failed keeps detailTab\",\"failed keeps detailCursor\",\"retry starts\",\"retry clears error\"]}\n"
+      },
+      "metrics": {
+        "actions": 19,
+        "returnedOutputBytes": 79457,
+        "observedSourceBytes": 74599,
+        "uniqueVersionedSourceBytes": 74054,
+        "repeatedSourceBytes": 545,
+        "uniqueInstructionBytes": 32348,
+        "uniqueCodeBytes": 27660,
+        "uniqueOtherBytes": 14046,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+            "uniqueBytes": 32348
+          },
+          {
+            "path": "README.md",
+            "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+            "uniqueBytes": 8980
+          },
+          {
+            "path": "src/tui/memory/memory-actions.ts",
+            "hash": "7e3e2641b5a8cff00ab0e3b1ee53555bd4273bfa6ac64d403ec17de65845c39d",
+            "uniqueBytes": 38
+          },
+          {
+            "path": "src/tui/memory/memory-reducer.ts",
+            "hash": "e6b59f7857d925c7617ad0215410f153ed6871fbd2ff64f91c92c53ffb4845ea",
+            "uniqueBytes": 34
+          },
+          {
+            "path": "src/tui/memory/memory-orchestrator.ts",
+            "hash": "8af6ebb7f37353ff41af99a2db24693897440c29eab0627a7f5b41c12a3c7e1c",
+            "uniqueBytes": 56
+          },
+          {
+            "path": "src/tui/tasks/tasks-reducer.ts",
+            "hash": "afde06dbfdedeb5e96e138558ecb817ce438cc692c526c15996f7fb736000704",
+            "uniqueBytes": 33
+          },
+          {
+            "path": "src/tui/tasks/tasks-actions.ts",
+            "hash": "f226e5c58344e307ba4722b0af751ca45b58de825ad69d2947b19d5e75d269e3",
+            "uniqueBytes": 37
+          },
+          {
+            "path": "src/tui/tasks/tasks-orchestrator.ts",
+            "hash": "5b30ebfa50ee6643edf51452f897e0208ce0ab0447cac31474df2df7132f3b9d",
+            "uniqueBytes": 55
+          },
+          {
+            "path": "src/tui/mcp/mcp-orchestrator.ts",
+            "hash": "89bd33966e2cfd082a43f4b54a678db6e9696de8bc30cc9bb45cdd4d4f9459ae",
+            "uniqueBytes": 4405
+          },
+          {
+            "path": "src/tui/mcp/mcp-reducer.test.ts",
+            "hash": "2f2cdf9b2beab9cdf900308e6d4710a500da3feaeda292084907b3581f85773a",
+            "uniqueBytes": 7824
+          },
+          {
+            "path": "src/tui/mcp/mcp-reducer.ts",
+            "hash": "3c1eb790bcd32d0d3e55e0a3174eaf4dc30bc67124599aa17384e569e4f030b8",
+            "uniqueBytes": 5934
+          },
+          {
+            "path": "src/tui/mcp/mcp-actions.ts",
+            "hash": "39bc3c6b0d3e70fc7b2368078602221def4686dbf9608facfb6aa6703a7e79b5",
+            "uniqueBytes": 1830
+          },
+          {
+            "path": "src/tui/local-models/local-models-orchestrator.ts",
+            "hash": "3efa86060b328bf2387ee5e5e1613b0b0a83242d765b4eaa97c56e873122855f",
+            "uniqueBytes": 60
+          },
+          {
+            "path": "src/tui/local-models/local-models-actions.ts",
+            "hash": "fb4e59790615df8ed71a3eaf25183822026decdca49c1c691ceb6af70118481f",
+            "uniqueBytes": 44
+          },
+          {
+            "path": "src/tui/local-models/local-models-reducer.ts",
+            "hash": "cda0e4504566069a95b6e80901f75bca17f719014909f7a54504d865c3fa1a81",
+            "uniqueBytes": 40
+          },
+          {
+            "path": "src/tui/skills/skills-reducer.ts",
+            "hash": "6274c0cd1edd680b9d1e51c4b94a18ef33a8e5826b9f9063e81560b2b608fefb",
+            "uniqueBytes": 34
+          },
+          {
+            "path": "src/tui/skills/skills-actions.ts",
+            "hash": "d5cf85d0ac1d12f0f4b9a88d7a057ac52ca2d815c47136f2cb5e75edc38d9e9b",
+            "uniqueBytes": 38
+          },
+          {
+            "path": "src/tui/skills/skills-orchestrator.ts",
+            "hash": "c6414ac2d58a0af55f7b21a77c1b356a231e435ab3866e3c9c48ef1de8b411a2",
+            "uniqueBytes": 56
+          },
+          {
+            "path": "src/tui/mcp/mcp-panel-state.ts",
+            "hash": "fb3d1125184120bbd98af829107fccb6b728961b9c8b1c5fe8ded4625f97df16",
+            "uniqueBytes": 3528
+          },
+          {
+            "path": "package.json",
+            "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+            "uniqueBytes": 5066
+          },
+          {
+            "path": "src/tui/components/mcp-panel.tsx",
+            "hash": "46b4282d4ee8e595c5fbca55991730ba274e86bfcfe12c96e64ba549be51473a",
+            "uniqueBytes": 2798
+          },
+          {
+            "path": "src/tui/components/mcp-list.tsx",
+            "hash": "669f4ba5fe10c68561ee68b7903356bae13dba4f87e673372dcc1c30c129a142",
+            "uniqueBytes": 91
+          },
+          {
+            "path": "src/tui/mcp/mcp-reducer.ts",
+            "hash": "6e3dc92f921d9ee94c55df139c7095194802e5667e35c17b50061b999de475de",
+            "uniqueBytes": 725
+          }
+        ],
+        "changedFiles": [
+          "src/tui/mcp/mcp-reducer.test.ts",
+          "src/tui/mcp/mcp-reducer.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 216,
+        "lint": true,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": [
+        "Selected SQLite suites initially require native ABI141 while default Node26 requires147. r02a/r06b reran on Node25.7; r04b/r06a optional HTTP/full-runtime suites remain unverified in agent run. Independent paired checks run on Node25.7."
+      ]
+    },
+    {
+      "id": "r05a",
+      "task": 5,
+      "variant": "original",
+      "root": "/tmp/atomic-stage07-benchmark/runs/original-05",
+      "log": "/tmp/atomic-stage07-runs/r05a.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-original",
+      "status": "completed",
+      "brief": "**Скачивание модели.** Исправить seeded resume regression: первый Range начинается на один байт позже первой дыры. Сохранить валидатор If-Range, неизвестную длину, fully-complete offset/416 path, discard чужого URL и cancellation cleanup. Checks: temp partial metadata/data и describeResume для prefix/hole/complete/unknown cases; существующие resume/download tests без реального скачивания.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/original-05. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Скачивание модели.** Исправить seeded resume regression: первый Range начинается на один байт позже первой дыры. Сохранить валидатор If-Range, неизвестную длину, fully-complete offset/416 path, discard чужого URL и cancellation cleanup. Checks: temp partial metadata/data и describeResume для prefix/hole/complete/unknown cases; существующие resume/download tests без реального скачивания.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-05 /tmp/atomic-stage07-runs/r05a.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-05 /tmp/atomic-stage07-runs/r05a.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-05 /tmp/atomic-stage07-runs/r05a.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/original-05 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r05a-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r05a",
+      "startedAtRecorded": "2026-10-06T17:30:36.239Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:33:05.293Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 5,
+          "pass": true,
+          "assertions": 34,
+          "observed": [
+            "resume offset prefix",
+            "Range prefix",
+            "validator prefix",
+            "caller header prefix",
+            "resume offset hole",
+            "Range hole",
+            "validator hole",
+            "caller header hole",
+            "resume offset zero-hole",
+            "Range zero-hole",
+            "validator zero-hole",
+            "caller header zero-hole",
+            "resume offset complete",
+            "Range complete",
+            "validator complete",
+            "caller header complete",
+            "complete finalized",
+            "complete reported once",
+            "complete metadata cleaned",
+            "resume offset unknown",
+            "Range unknown",
+            "validator unknown",
+            "caller header unknown",
+            "actual 416 Range",
+            "actual 416 validator",
+            "416 one request",
+            "416 publishes actual partial",
+            "416 metadata cleanup",
+            "pre-cancel starts no request",
+            "cancel never publishes",
+            "cancel keeps resumable partial",
+            "foreign URL restarts",
+            "foreign no Range",
+            "foreign partial removed"
+          ]
+        },
+        "stdout": "{\"task\":5,\"pass\":true,\"assertions\":34,\"observed\":[\"resume offset prefix\",\"Range prefix\",\"validator prefix\",\"caller header prefix\",\"resume offset hole\",\"Range hole\",\"validator hole\",\"caller header hole\",\"resume offset zero-hole\",\"Range zero-hole\",\"validator zero-hole\",\"caller header zero-hole\",\"resume offset complete\",\"Range complete\",\"validator complete\",\"caller header complete\",\"complete finalized\",\"complete reported once\",\"complete metadata cleaned\",\"resume offset unknown\",\"Range unknown\",\"validator unknown\",\"caller header unknown\",\"actual 416 Range\",\"actual 416 validator\",\"416 one request\",\"416 publishes actual partial\",\"416 metadata cleanup\",\"pre-cancel starts no request\",\"cancel never publishes\",\"cancel keeps resumable partial\",\"foreign URL restarts\",\"foreign no Range\",\"foreign partial removed\"]}\n"
+      },
+      "metrics": {
+        "actions": 25,
+        "returnedOutputBytes": 118653,
+        "observedSourceBytes": 111637,
+        "uniqueVersionedSourceBytes": 110513,
+        "repeatedSourceBytes": 1124,
+        "uniqueInstructionBytes": 52684,
+        "uniqueCodeBytes": 42820,
+        "uniqueOtherBytes": 15009,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+            "uniqueBytes": 52684
+          },
+          {
+            "path": "README.md",
+            "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+            "uniqueBytes": 9797
+          },
+          {
+            "path": "src/local-llm/download-resume.ts",
+            "hash": "38b17baa75f57d3633cbe9c8373d7543137c4faee8b086a83d3dbe8e2286efcc",
+            "uniqueBytes": 3421
+          },
+          {
+            "path": "src/local-llm/download-attempt.ts",
+            "hash": "21ad71e3d690c935852b84cf93c252fa7c98f85f922c2924cd73ad30ca4785ad",
+            "uniqueBytes": 4665
+          },
+          {
+            "path": "src/local-llm/download-partial.ts",
+            "hash": "8ac371a3a27d481ae2b5cb11036dbf37b06ee66831c78e971dc4fbeff4f073f0",
+            "uniqueBytes": 6660
+          },
+          {
+            "path": "src/local-llm/download-partial.test.ts",
+            "hash": "4a7c70746f13cfa247959a61830f8b675c30bd2487e1f0dd1c9b9152cd8d7187",
+            "uniqueBytes": 4696
+          },
+          {
+            "path": "src/local-llm/download-attempt.test.ts",
+            "hash": "d996c98e7c20d6869ec8b51ce67a87eaf319200337bcbdb4e8505464d57c3f06",
+            "uniqueBytes": 3694
+          },
+          {
+            "path": "package.json",
+            "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+            "uniqueBytes": 5212
+          },
+          {
+            "path": "src/local-llm/download-file.test.ts",
+            "hash": "0ab27f2079f823a4e92533a42382b1268de3ddfd5e845c9c2dca2341720307b5",
+            "uniqueBytes": 10171
+          },
+          {
+            "path": "src/local-llm/download-file-parallel.test.ts",
+            "hash": "605820531e25ac45758648ce113dc775583ec109f945a15ea5cf31bf9870015c",
+            "uniqueBytes": 6123
+          },
+          {
+            "path": "src/local-llm/download-resume.test.ts",
+            "hash": "e555b025314f934003bc51da4ca777825a312ddfbae352e27b14bb4af7cb7fd0",
+            "uniqueBytes": 3390
+          }
+        ],
+        "changedFiles": [
+          "src/local-llm/download-resume.test.ts",
+          "src/local-llm/download-resume.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 99,
+        "lint": false,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    },
+    {
+      "id": "r05b",
+      "task": 5,
+      "variant": "final",
+      "root": "/tmp/atomic-stage07-benchmark/runs/final-05",
+      "log": "/tmp/atomic-stage07-runs/r05b.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-final-v2",
+      "status": "completed",
+      "brief": "**Скачивание модели.** Исправить seeded resume regression: первый Range начинается на один байт позже первой дыры. Сохранить валидатор If-Range, неизвестную длину, fully-complete offset/416 path, discard чужого URL и cancellation cleanup. Checks: temp partial metadata/data и describeResume для prefix/hole/complete/unknown cases; существующие resume/download tests без реального скачивания.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/final-05. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Скачивание модели.** Исправить seeded resume regression: первый Range начинается на один байт позже первой дыры. Сохранить валидатор If-Range, неизвестную длину, fully-complete offset/416 path, discard чужого URL и cancellation cleanup. Checks: temp partial metadata/data и describeResume для prefix/hole/complete/unknown cases; существующие resume/download tests без реального скачивания.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-05 /tmp/atomic-stage07-runs/r05b.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-05 /tmp/atomic-stage07-runs/r05b.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-05 /tmp/atomic-stage07-runs/r05b.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/final-05 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r05b-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r05b",
+      "startedAtRecorded": "2026-10-06T17:33:05.293Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:34:17.826Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 5,
+          "pass": true,
+          "assertions": 34,
+          "observed": [
+            "resume offset prefix",
+            "Range prefix",
+            "validator prefix",
+            "caller header prefix",
+            "resume offset hole",
+            "Range hole",
+            "validator hole",
+            "caller header hole",
+            "resume offset zero-hole",
+            "Range zero-hole",
+            "validator zero-hole",
+            "caller header zero-hole",
+            "resume offset complete",
+            "Range complete",
+            "validator complete",
+            "caller header complete",
+            "complete finalized",
+            "complete reported once",
+            "complete metadata cleaned",
+            "resume offset unknown",
+            "Range unknown",
+            "validator unknown",
+            "caller header unknown",
+            "actual 416 Range",
+            "actual 416 validator",
+            "416 one request",
+            "416 publishes actual partial",
+            "416 metadata cleanup",
+            "pre-cancel starts no request",
+            "cancel never publishes",
+            "cancel keeps resumable partial",
+            "foreign URL restarts",
+            "foreign no Range",
+            "foreign partial removed"
+          ]
+        },
+        "stdout": "{\"task\":5,\"pass\":true,\"assertions\":34,\"observed\":[\"resume offset prefix\",\"Range prefix\",\"validator prefix\",\"caller header prefix\",\"resume offset hole\",\"Range hole\",\"validator hole\",\"caller header hole\",\"resume offset zero-hole\",\"Range zero-hole\",\"validator zero-hole\",\"caller header zero-hole\",\"resume offset complete\",\"Range complete\",\"validator complete\",\"caller header complete\",\"complete finalized\",\"complete reported once\",\"complete metadata cleaned\",\"resume offset unknown\",\"Range unknown\",\"validator unknown\",\"caller header unknown\",\"actual 416 Range\",\"actual 416 validator\",\"416 one request\",\"416 publishes actual partial\",\"416 metadata cleanup\",\"pre-cancel starts no request\",\"cancel never publishes\",\"cancel keeps resumable partial\",\"foreign URL restarts\",\"foreign no Range\",\"foreign partial removed\"]}\n"
+      },
+      "metrics": {
+        "actions": 15,
+        "returnedOutputBytes": 60595,
+        "observedSourceBytes": 58305,
+        "uniqueVersionedSourceBytes": 57840,
+        "repeatedSourceBytes": 465,
+        "uniqueInstructionBytes": 7770,
+        "uniqueCodeBytes": 24813,
+        "uniqueOtherBytes": 25257,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+            "uniqueBytes": 6714
+          },
+          {
+            "path": "README.md",
+            "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+            "uniqueBytes": 9797
+          },
+          {
+            "path": "docs/testing/stage-07-task-briefs.md",
+            "hash": "8893fafb914f0e91f6254cffe7304f9d5f1815a35ebf35e5d256596229dd2051",
+            "uniqueBytes": 539
+          },
+          {
+            "path": "src/local-llm/downloads/download-resume.ts",
+            "hash": "38b17baa75f57d3633cbe9c8373d7543137c4faee8b086a83d3dbe8e2286efcc",
+            "uniqueBytes": 3421
+          },
+          {
+            "path": "src/local-llm/downloads/download-attempt.ts",
+            "hash": "2c3fa7e3a7ffa5d86cdc4112b1f17f2b8875680422492d5e0340b4115482f1c5",
+            "uniqueBytes": 5120
+          },
+          {
+            "path": "src/local-llm/AGENTS.md",
+            "hash": "32a4a5a4d3045401b91c584a6c41ea770bb0e735833e86cc605b15cc47668f59",
+            "uniqueBytes": 1056
+          },
+          {
+            "path": "src/local-llm/README.md",
+            "hash": "8874bfb58d50884af0663ae4ebd37039da73ae646d1296c6700faa8d3f442faf",
+            "uniqueBytes": 2420
+          },
+          {
+            "path": "src/local-llm/docs/downloads.md",
+            "hash": "34df81b3c718c52ab5cb463e6e73ecf79e1b2c674d8d7e20e3c110b51388947e",
+            "uniqueBytes": 972
+          },
+          {
+            "path": "src/local-llm/downloads/README.md",
+            "hash": "00d89ee1345136aa42ea3a7d114ce2289ad5264f10eff13ab2fe55d10795e6f4",
+            "uniqueBytes": 4977
+          },
+          {
+            "path": "src/local-llm/downloads/download-partial.ts",
+            "hash": "8ac371a3a27d481ae2b5cb11036dbf37b06ee66831c78e971dc4fbeff4f073f0",
+            "uniqueBytes": 6660
+          },
+          {
+            "path": "src/local-llm/downloads/download-attempt.test.ts",
+            "hash": "8ebfcdd68658eafddeb5a52fc943edd0a50e07c09dcdd0b790cb9322aeb33bde",
+            "uniqueBytes": 3690
+          },
+          {
+            "path": "src/local-llm/downloads/download-file.test.ts",
+            "hash": "da8e718182b29a97f11047db1c5c1b4e83ccf5b7cc0c6c56eb5908a321b427a7",
+            "uniqueBytes": 5922
+          },
+          {
+            "path": "package.json",
+            "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+            "uniqueBytes": 6552
+          }
+        ],
+        "changedFiles": [
+          "src/local-llm/downloads/download-resume.test.ts",
+          "src/local-llm/downloads/download-resume.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 142,
+        "lint": true,
+        "testTypeGate": true,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    },
+    {
+      "id": "r06a",
+      "task": 6,
+      "variant": "final",
+      "root": "/tmp/atomic-stage07-benchmark/runs/final-06",
+      "log": "/tmp/atomic-stage07-runs/r06a.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-final-v2",
+      "status": "completed",
+      "brief": "**Провайдер.** Исправить seeded regression в разрешении возможностей модели: явный supportsVision=false не должен заменяться provider-level true. Явный true/false приоритетнее fallback; отсутствие model override использует provider defaults; live смена модели/провайдера меняет решение на следующем чтении. Checks: actual serving-route vision resolver с explicit false/true/absent и существующие vision route/per-model tests. Без платного API и model daemon.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/final-06. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Провайдер.** Исправить seeded regression в разрешении возможностей модели: явный supportsVision=false не должен заменяться provider-level true. Явный true/false приоритетнее fallback; отсутствие model override использует provider defaults; live смена модели/провайдера меняет решение на следующем чтении. Checks: actual serving-route vision resolver с explicit false/true/absent и существующие vision route/per-model tests. Без платного API и model daemon.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-06 /tmp/atomic-stage07-runs/r06a.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-06 /tmp/atomic-stage07-runs/r06a.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-06 /tmp/atomic-stage07-runs/r06a.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/final-06 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r06a-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r06a",
+      "startedAtRecorded": "2026-10-06T17:33:05.293Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:36:41.844Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 6,
+          "pass": true,
+          "assertions": 8,
+          "observed": [
+            "explicit false beats provider true",
+            "explicit true beats provider false",
+            "absent uses provider false",
+            "live provider change",
+            "live model change",
+            "old model independent",
+            "actual route hides text model",
+            "actual route follows next live read"
+          ]
+        },
+        "stdout": "{\"task\":6,\"pass\":true,\"assertions\":8,\"observed\":[\"explicit false beats provider true\",\"explicit true beats provider false\",\"absent uses provider false\",\"live provider change\",\"live model change\",\"old model independent\",\"actual route hides text model\",\"actual route follows next live read\"]}\n"
+      },
+      "metrics": {
+        "actions": 30,
+        "returnedOutputBytes": 118128,
+        "observedSourceBytes": 107007,
+        "uniqueVersionedSourceBytes": 105198,
+        "repeatedSourceBytes": 1809,
+        "uniqueInstructionBytes": 9278,
+        "uniqueCodeBytes": 75201,
+        "uniqueOtherBytes": 20719,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+            "uniqueBytes": 6714
+          },
+          {
+            "path": "README.md",
+            "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+            "uniqueBytes": 7288
+          },
+          {
+            "path": "src/tools/vision/describe.ts",
+            "hash": "0bb6348bfc82b769e4ac4c9d0dcf6ec650c1d6eb02983e0e5f8ac6bb114b7103",
+            "uniqueBytes": 167
+          },
+          {
+            "path": "src/analytics/turn-usage-meter.test.ts",
+            "hash": "690d4c0672f48fa8e0dc828feb1c62bc93994c9f4be55219a2fbc703266f29d4",
+            "uniqueBytes": 51
+          },
+          {
+            "path": "src/llm/provider/model-vision.test.ts",
+            "hash": "532b9a51de2ce3f1d8559817270763c0bd953cf4348318d70ce1d92688eaca6d",
+            "uniqueBytes": 5554
+          },
+          {
+            "path": "src/llm/provider/model-vision-rejections.ts",
+            "hash": "470766717cb28292ae5ae58268f5bff41f771b7f9e0d7719b0779202a96cf45a",
+            "uniqueBytes": 71
+          },
+          {
+            "path": "src/llm/provider/registry/register-built-in-providers.ts",
+            "hash": "65ced291e7196efdc45fd1298a6dc5bcdc4db942ef4a976f2680b2f730f77b8f",
+            "uniqueBytes": 4935
+          },
+          {
+            "path": "src/local-llm/downloads/model-installer.test.ts",
+            "hash": "ecdcbe28173fedd65be5bf02240470b4c5547211694d25bfcffb7003b8574900",
+            "uniqueBytes": 142
+          },
+          {
+            "path": "src/llm/provider/openrouter/openrouter-models-catalog.ts",
+            "hash": "33a754278ad057fa2c175d8c3a2880e287faec0c1f90712b5d9858ad05e179db",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/llm/provider/registry/provider-types.ts",
+            "hash": "c539fec04758bfba7ce8ef5ab05ec9697575cf7d38bfff5ef70e41aa0dce77c3",
+            "uniqueBytes": 4684
+          },
+          {
+            "path": "src/llm/provider/openrouter/fetch-openrouter-chat-catalog.ts",
+            "hash": "952f6aa84270263daf2c69ec07596fb80e8444308a1f698669c4aff18c591c4d",
+            "uniqueBytes": 167
+          },
+          {
+            "path": "src/llm/provider/openrouter/openrouter-open-weight-chat-models.ts",
+            "hash": "62db667553dc932d6aaff0d3bf10fe195c975d6fb538eb807b00727f21e6239d",
+            "uniqueBytes": 840
+          },
+          {
+            "path": "src/llm/provider/openrouter/openrouter-frontier-chat-models.ts",
+            "hash": "e2fa4013309d0b908fbd54997c8416f36540314b0c681a772b5c8b0e5d6d0398",
+            "uniqueBytes": 594
+          },
+          {
+            "path": "src/llm/provider/openai/openai-provider.ts",
+            "hash": "086d88436e0206bf591eabd20580b82184f9e7ad67a1e97e822a21fae804a00f",
+            "uniqueBytes": 2247
+          },
+          {
+            "path": "src/local-llm/downloads/download-worker.ts",
+            "hash": "8336eb60a2d1f33a15951c821716bc4db5218bb424e0f48f535aa5855f4947ad",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/llm/model-profile.ts",
+            "hash": "7152da5011e84120239e31472405dc3307d31b567d29aa615a7e815035f0e3e6",
+            "uniqueBytes": 69
+          },
+          {
+            "path": "src/llm/provider/aimlapi/aimlapi-models-catalog.ts",
+            "hash": "36da9fadef00d739e8f57e0c90aced134088d8298de0ce387e1133f4a498871e",
+            "uniqueBytes": 946
+          },
+          {
+            "path": "src/llm/provider/aimlapi/fetch-aimlapi-chat-catalog.ts",
+            "hash": "8cb75cad82660cd6675d3705a734965acbcd5e6ed8d6d83ec19e8056cc262498",
+            "uniqueBytes": 161
+          },
+          {
+            "path": "src/llm/provider/model-resolver.ts",
+            "hash": "80a323e3aee550c8589d951e137bd7fe1f0b695df5faf3cf1637db1ef776917c",
+            "uniqueBytes": 99
+          },
+          {
+            "path": "src/llm/provider/model-catalog-entry.ts",
+            "hash": "1ce76b1028478fbd8eea64f0353f5e51213bfd61c6ab45e521fceda760b53fe3",
+            "uniqueBytes": 105
+          },
+          {
+            "path": "src/llm/provider/model-pricing-filter.test.ts",
+            "hash": "fd7a5712302183e96bdc1fa967b6c4ea72e1c4fb5335d1dc8914ea7c72ac0d77",
+            "uniqueBytes": 26
+          },
+          {
+            "path": "src/llm/provider/format-model-details.ts",
+            "hash": "ed4996f94fe8b284663bed87401c6a71b87a955eb6661d1c78018adf8299a3b2",
+            "uniqueBytes": 60
+          },
+          {
+            "path": "src/llm/provider/model-search.test.ts",
+            "hash": "d93a9bcfbe574a3c28a67a7aa2e06904581f8ca0bc00c6c8f2e76c8b39aaa159",
+            "uniqueBytes": 111
+          },
+          {
+            "path": "src/llm/provider/model-search.ts",
+            "hash": "9f079f72701a0bfb74dcd34f250037732864a592b1e76fc27ce4aaf7383eb2a9",
+            "uniqueBytes": 54
+          },
+          {
+            "path": "src/llm/provider/model-vision.ts",
+            "hash": "5c02887afd7c747d97f819e1e9db51251c933e3dabe1ebe2364cf9dbf94604e3",
+            "uniqueBytes": 4431
+          },
+          {
+            "path": "src/local-llm/downloads/model-installer.ts",
+            "hash": "2466292e3e9b63f5c20be15da8e2502dc091c848e358c8f4c0ae3a0fd2dd899a",
+            "uniqueBytes": 217
+          },
+          {
+            "path": "src/local-llm/catalog/models-catalog.test.ts",
+            "hash": "8256fdfd1e0b5b4ccae504ea62d39e774d07e53f61f155da9526f7c0f8a9b4ef",
+            "uniqueBytes": 240
+          },
+          {
+            "path": "src/local-llm/catalog/huggingface-model-def.ts",
+            "hash": "0de0bc4f6b0da76c7029530cdbacdb464b0eb11e198ee91a42605f98cffdcb4d",
+            "uniqueBytes": 36
+          },
+          {
+            "path": "src/local-llm/catalog/models-catalog.ts",
+            "hash": "63e7cfaa61462171ea7e0aa05d49fbb10cb938468374aefb4b858e33457cfbed",
+            "uniqueBytes": 500
+          },
+          {
+            "path": "src/config/custom-models-schema.ts",
+            "hash": "a224574d6ca9d0abce9a0940310094ea59478eccf3f5f7618501fa1e1544b1bc",
+            "uniqueBytes": 108
+          },
+          {
+            "path": "src/cli/models-command.test.ts",
+            "hash": "4b8c5c826e0862af4fc13082dfa6104ba1fb4c016881788073b06bbadfa427ce",
+            "uniqueBytes": 24
+          },
+          {
+            "path": "src/local-llm/catalog/huggingface-resolve.test.ts",
+            "hash": "b092d328d7fd4b875a8aeee264b383b1076c6f4c8de044592498bd39b1dcec96",
+            "uniqueBytes": 85
+          },
+          {
+            "path": "src/runtime/composition/runtime-inference.test.ts",
+            "hash": "f2fc878a7866aee9dfefae719a9f8d8386d9c5f0c0bb05c77c36945f37733560",
+            "uniqueBytes": 140
+          },
+          {
+            "path": "src/llm/README.md",
+            "hash": "fdc2818c8dc96131a5b8e658c03a6493042aeda50ecc199992ef0ad698f7880f",
+            "uniqueBytes": 1164
+          },
+          {
+            "path": "src/llm/AGENTS.md",
+            "hash": "f2624279a8605c84c6295c046f7baf3fc643b0c2a12dc6f32d8ff76869b52dca",
+            "uniqueBytes": 1379
+          },
+          {
+            "path": "src/runtime/AGENTS.md",
+            "hash": "074ed252b3eee8f3da7bdeb32e7b5595ac574cdc95d6e24d2060e09fd97f12f2",
+            "uniqueBytes": 1185
+          },
+          {
+            "path": "src/runtime/README.md",
+            "hash": "7544aebb567568e79c73cb6801d8898b95681c82cf24a68a6de0bc46e0383e1a",
+            "uniqueBytes": 2052
+          },
+          {
+            "path": "src/runtime/vision-route.test.ts",
+            "hash": "8a6b40581206ce5975005a1af870aa34671647c892e3d10bec2e54f6065b2b6c",
+            "uniqueBytes": 4264
+          },
+          {
+            "path": "src/runtime/vision-per-model.test.ts",
+            "hash": "435d61e4826577942089da4f518842f2943b28b1f1197521051f8c1a6339f861",
+            "uniqueBytes": 12299
+          },
+          {
+            "path": "src/runtime/vision-follows-route.test.ts",
+            "hash": "3042249c28b3f522b15240804cab8206afcde65b23d364d22b3686460e31127f",
+            "uniqueBytes": 6506
+          },
+          {
+            "path": "src/runtime/composition/runtime-inference.ts",
+            "hash": "b2d79483216df4d8b005bb6500290150fb390044aa4e0eeaad04cd666b55cc1b",
+            "uniqueBytes": 3394
+          },
+          {
+            "path": "src/runtime/vision-route.ts",
+            "hash": "92fa4c9e739a79f05560ac65f13836060985b1ee54747c0da285d4263690e410",
+            "uniqueBytes": 3551
+          },
+          {
+            "path": "src/runtime/composition/README.md",
+            "hash": "0de03aaed51dd994dc1bb25882ce92aef0f150cc678937c209fbb205e16681eb",
+            "uniqueBytes": 4062
+          },
+          {
+            "path": "package.json",
+            "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+            "uniqueBytes": 5724
+          },
+          {
+            "path": "src/native/README.md",
+            "hash": "cc7f872056eb008c40c90b22ba5d96ec89c70ab5f446c6615d11be5ef1cd4896",
+            "uniqueBytes": 429
+          },
+          {
+            "path": "src/native/load-better-sqlite3.ts",
+            "hash": "ad60977ca226d2f5ded7edb80b1ae7c7a6019c4658789c3afe6e3f4271e124d5",
+            "uniqueBytes": 2707
+          },
+          {
+            "path": "src/llm/provider/registry/provider-registry.ts",
+            "hash": "2e76c20dc9ef7737e1ce89a44141d2d4a1adb7801448a36b5d920ddaa5f89b9d",
+            "uniqueBytes": 6745
+          },
+          {
+            "path": "src/llm/provider/registry/provider-registry.test.ts",
+            "hash": "778103ed159a4587fe320aa63ba84da66b7fe44c1b96167c2b08c75c1ca9cfc3",
+            "uniqueBytes": 4556
+          },
+          {
+            "path": "src/llm/provider/registry/register-built-in-providers.test.ts",
+            "hash": "54a0dfc21f9383f7fb92bb9e452f16fab916a64c90101b4414924cbe3cc3ed27",
+            "uniqueBytes": 4257
+          }
+        ],
+        "changedFiles": [
+          "src/llm/provider/model-vision.test.ts",
+          "src/llm/provider/model-vision.ts",
+          "src/runtime/vision-model-overrides.test.ts",
+          "src/runtime/vision-per-model.test.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 61,
+        "lint": true,
+        "testTypeGate": true,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [
+        {
+          "kind": "test-fixture-type-safety",
+          "file": "src/runtime/vision-model-overrides.test.ts",
+          "message": "New fixture uses as never for logger, llamaClient and profile. This bypasses dependency type verification and could mask later interface drift; production resolver fix itself passes independent checks."
+        }
+      ],
+      "environmentLimits": [
+        "Selected SQLite suites initially require native ABI141 while default Node26 requires147. r02a/r06b reran on Node25.7; r04b/r06a optional HTTP/full-runtime suites remain unverified in agent run. Independent paired checks run on Node25.7."
+      ]
+    },
+    {
+      "id": "r06b",
+      "task": 6,
+      "variant": "original",
+      "root": "/tmp/atomic-stage07-benchmark/runs/original-06",
+      "log": "/tmp/atomic-stage07-runs/r06b.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-original",
+      "status": "completed",
+      "brief": "**Провайдер.** Исправить seeded regression в разрешении возможностей модели: явный supportsVision=false не должен заменяться provider-level true. Явный true/false приоритетнее fallback; отсутствие model override использует provider defaults; live смена модели/провайдера меняет решение на следующем чтении. Checks: actual serving-route vision resolver с explicit false/true/absent и существующие vision route/per-model tests. Без платного API и model daemon.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/original-06. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Провайдер.** Исправить seeded regression в разрешении возможностей модели: явный supportsVision=false не должен заменяться provider-level true. Явный true/false приоритетнее fallback; отсутствие model override использует provider defaults; live смена модели/провайдера меняет решение на следующем чтении. Checks: actual serving-route vision resolver с explicit false/true/absent и существующие vision route/per-model tests. Без платного API и model daemon.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-06 /tmp/atomic-stage07-runs/r06b.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-06 /tmp/atomic-stage07-runs/r06b.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-06 /tmp/atomic-stage07-runs/r06b.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/original-06 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r06b-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r06b",
+      "startedAtRecorded": "2026-10-06T17:33:05.293Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:36:42.335Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 6,
+          "pass": true,
+          "assertions": 8,
+          "observed": [
+            "explicit false beats provider true",
+            "explicit true beats provider false",
+            "absent uses provider false",
+            "live provider change",
+            "live model change",
+            "old model independent",
+            "actual route hides text model",
+            "actual route follows next live read"
+          ]
+        },
+        "stdout": "{\"task\":6,\"pass\":true,\"assertions\":8,\"observed\":[\"explicit false beats provider true\",\"explicit true beats provider false\",\"absent uses provider false\",\"live provider change\",\"live model change\",\"old model independent\",\"actual route hides text model\",\"actual route follows next live read\"]}\n"
+      },
+      "metrics": {
+        "actions": 28,
+        "returnedOutputBytes": 188443,
+        "observedSourceBytes": 175220,
+        "uniqueVersionedSourceBytes": 144826,
+        "repeatedSourceBytes": 30394,
+        "uniqueInstructionBytes": 79512,
+        "uniqueCodeBytes": 46219,
+        "uniqueOtherBytes": 19095,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+            "uniqueBytes": 79512
+          },
+          {
+            "path": "README.md",
+            "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+            "uniqueBytes": 19095
+          },
+          {
+            "path": "src/local-llm/model-installer.test.ts",
+            "hash": "c3e9a1a8185a57755eb1aa984125bce9c2d455970e052079ce51eee8cd1d50fc",
+            "uniqueBytes": 142
+          },
+          {
+            "path": "src/local-llm/models-catalog.test.ts",
+            "hash": "19cbf390efb3cb0c9b110cbcf5c80f5c5e9f8bc1265562c4f468a29873fbdd29",
+            "uniqueBytes": 240
+          },
+          {
+            "path": "src/local-llm/huggingface-model-def.ts",
+            "hash": "0de0bc4f6b0da76c7029530cdbacdb464b0eb11e198ee91a42605f98cffdcb4d",
+            "uniqueBytes": 36
+          },
+          {
+            "path": "src/local-llm/huggingface-resolve.test.ts",
+            "hash": "b092d328d7fd4b875a8aeee264b383b1076c6f4c8de044592498bd39b1dcec96",
+            "uniqueBytes": 85
+          },
+          {
+            "path": "src/local-llm/download-worker.ts",
+            "hash": "e4bb85f025cb7a10bc7d71ea4c5b29d5f3382e161aef304a8cbb1228979f7c96",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/local-llm/model-installer.ts",
+            "hash": "06c8e65d6c65a8fa0c19c1a7fd5ad86ad0c1aec56fc970465f8770350710028c",
+            "uniqueBytes": 217
+          },
+          {
+            "path": "src/config/custom-models-schema.ts",
+            "hash": "f13bf83b9295f32faa69a74935a4c81536ed4d9c5da6bb018e2b6a8ac800869b",
+            "uniqueBytes": 108
+          },
+          {
+            "path": "src/config/custom-models-schema.test.ts",
+            "hash": "03adf03a328005fae5a4a755d436f76eafa32337eb4824baefbced32fbccc453",
+            "uniqueBytes": 145
+          },
+          {
+            "path": "src/local-llm/models-catalog.ts",
+            "hash": "63e7cfaa61462171ea7e0aa05d49fbb10cb938468374aefb4b858e33457cfbed",
+            "uniqueBytes": 500
+          },
+          {
+            "path": "src/config/llm-config.test.ts",
+            "hash": "692fa8a850307bff59761a764c155cecd9b6f3ad10d216f208dd224f467e1125",
+            "uniqueBytes": 94
+          },
+          {
+            "path": "src/config/config-schema.ts",
+            "hash": "cc148f792d9d6ee5723b27abc55dfd834e53a40ccbabf3dd7e32c8cd9822c394",
+            "uniqueBytes": 64
+          },
+          {
+            "path": "src/tui/onboarding/local-model-picks.test.ts",
+            "hash": "931fe92d189f07599a38a5a9437e021a2bd38681370e2427d02a2b19ebb019bb",
+            "uniqueBytes": 30
+          },
+          {
+            "path": "src/config/llm-config.ts",
+            "hash": "dc7d17140dbed067572f80b127842bae5029125cdf966e13017e4abeb6f633c2",
+            "uniqueBytes": 330
+          },
+          {
+            "path": "src/tui/llm-panel/llm-panel-selectors.test.ts",
+            "hash": "bf7761ccfa9ab12bdabf8c1d0bfbb9e35467e0a05f368c5f24c1fd34118826b1",
+            "uniqueBytes": 26
+          },
+          {
+            "path": "src/tui/providers/providers-inline-models-flow.test.ts",
+            "hash": "1b04ba1768e8dca2ba13d51243a918506849252b94670de86a15de8c0d47babe",
+            "uniqueBytes": 75
+          },
+          {
+            "path": "src/tui/llm-panel/llm-panel-row-builders.ts",
+            "hash": "afb866cfb9ad610fe1531bd49cc6a6d2a079de309783cb52dc359093602c604d",
+            "uniqueBytes": 69
+          },
+          {
+            "path": "src/tui/llm-panel/llm-panel-local-keys-app.test.tsx",
+            "hash": "882825676f6ee94afb579e3408ed6af0dc7f092702f46d790eda19c117286545",
+            "uniqueBytes": 26
+          },
+          {
+            "path": "src/tui/llm-panel/llm-panel-key-bindings.test.ts",
+            "hash": "3109b2152f815ab6ec70abc7995a730aed83ab4e06064800c91cbd37986effce",
+            "uniqueBytes": 182
+          },
+          {
+            "path": "src/llm/provider/model-vision.test.ts",
+            "hash": "532b9a51de2ce3f1d8559817270763c0bd953cf4348318d70ce1d92688eaca6d",
+            "uniqueBytes": 7462
+          },
+          {
+            "path": "src/analytics/turn-usage-meter.test.ts",
+            "hash": "690d4c0672f48fa8e0dc828feb1c62bc93994c9f4be55219a2fbc703266f29d4",
+            "uniqueBytes": 51
+          },
+          {
+            "path": "src/tui/local-models/local-models-orchestrator.ts",
+            "hash": "3efa86060b328bf2387ee5e5e1613b0b0a83242d765b4eaa97c56e873122855f",
+            "uniqueBytes": 185
+          },
+          {
+            "path": "src/runtime/vision-per-model.test.ts",
+            "hash": "435d61e4826577942089da4f518842f2943b28b1f1197521051f8c1a6339f861",
+            "uniqueBytes": 12944
+          },
+          {
+            "path": "src/llm/provider/openai/openai-provider.ts",
+            "hash": "086d88436e0206bf591eabd20580b82184f9e7ad67a1e97e822a21fae804a00f",
+            "uniqueBytes": 253
+          },
+          {
+            "path": "src/tui/local-models/local-models-panel-state.test.ts",
+            "hash": "58f2e0afd92dd332ec23d8a1aa965dfc5c4a2c911d9ab98355c68dab12de573a",
+            "uniqueBytes": 26
+          },
+          {
+            "path": "src/tui/local-models/local-models-panel-state.ts",
+            "hash": "4825ef44740571de4ce2c8fbc23de763f7aad987f8b72f36430a13c43fcf2042",
+            "uniqueBytes": 83
+          },
+          {
+            "path": "src/tui/components/local-models-panel.tsx",
+            "hash": "13fbe2f612a92777fa587c34f1cec29535c0db25cba5576542f499dc6ccbe529",
+            "uniqueBytes": 122
+          },
+          {
+            "path": "src/tui/local-models/local-models-reducer.test.ts",
+            "hash": "ad937fe69b8b877bb8564d05a6d09dc34e571bbab3124a50c18e78d6fc8900a2",
+            "uniqueBytes": 136
+          },
+          {
+            "path": "src/tui/local-models/local-models-key-bindings.test.ts",
+            "hash": "7ef1748bd1df9a11ba63f2a1a416c93b82fcf8b4f0dc8997a4c2b34576563091",
+            "uniqueBytes": 447
+          },
+          {
+            "path": "src/tui/components/llm-mode-rows.tsx",
+            "hash": "01aff6c38375bf1a7da22c06618744e8195c0fe00438e9abb57615f256870ef9",
+            "uniqueBytes": 120
+          },
+          {
+            "path": "src/tui/composer-switch/composer-switch-fixtures.ts",
+            "hash": "d08b647195e4e853b799e866b12b5277ab6ab20961cca96af753112d832ffbe9",
+            "uniqueBytes": 26
+          },
+          {
+            "path": "src/tools/vision/describe.ts",
+            "hash": "0bb6348bfc82b769e4ac4c9d0dcf6ec650c1d6eb02983e0e5f8ac6bb114b7103",
+            "uniqueBytes": 167
+          },
+          {
+            "path": "src/cli/models-handlers.ts",
+            "hash": "a6981325d94a4799a9f47a3b46242bdf28abc8541b3c9a620c26d24e538619d2",
+            "uniqueBytes": 174
+          },
+          {
+            "path": "src/llm/provider/model-vision.ts",
+            "hash": "5c02887afd7c747d97f819e1e9db51251c933e3dabe1ebe2364cf9dbf94604e3",
+            "uniqueBytes": 4431
+          },
+          {
+            "path": "src/cli/models-command.test.ts",
+            "hash": "4b8c5c826e0862af4fc13082dfa6104ba1fb4c016881788073b06bbadfa427ce",
+            "uniqueBytes": 24
+          },
+          {
+            "path": "src/cli/models-search-command.ts",
+            "hash": "5fe24e4ea3ccbbb3abeec2c20db7f05acf32bab99176d1c0855863544def7ba1",
+            "uniqueBytes": 57
+          },
+          {
+            "path": "src/cli/models-search-command.test.ts",
+            "hash": "110542cd5ebc9faafdcff2c26903eb3d226afa970e58f4377291982c2b280b43",
+            "uniqueBytes": 74
+          },
+          {
+            "path": "src/llm/provider/model-pricing-filter.test.ts",
+            "hash": "fd7a5712302183e96bdc1fa967b6c4ea72e1c4fb5335d1dc8914ea7c72ac0d77",
+            "uniqueBytes": 26
+          },
+          {
+            "path": "src/llm/provider/model-vision-rejections.ts",
+            "hash": "470766717cb28292ae5ae58268f5bff41f771b7f9e0d7719b0779202a96cf45a",
+            "uniqueBytes": 71
+          },
+          {
+            "path": "src/llm/provider/model-search.ts",
+            "hash": "9f079f72701a0bfb74dcd34f250037732864a592b1e76fc27ce4aaf7383eb2a9",
+            "uniqueBytes": 54
+          },
+          {
+            "path": "src/llm/provider/format-model-details.ts",
+            "hash": "ed4996f94fe8b284663bed87401c6a71b87a955eb6661d1c78018adf8299a3b2",
+            "uniqueBytes": 60
+          },
+          {
+            "path": "src/llm/provider/aimlapi/aimlapi-models-catalog.ts",
+            "hash": "36da9fadef00d739e8f57e0c90aced134088d8298de0ce387e1133f4a498871e",
+            "uniqueBytes": 946
+          },
+          {
+            "path": "src/llm/provider/openrouter/openrouter-models-catalog.ts",
+            "hash": "33a754278ad057fa2c175d8c3a2880e287faec0c1f90712b5d9858ad05e179db",
+            "uniqueBytes": 29
+          },
+          {
+            "path": "src/llm/provider/aimlapi/fetch-aimlapi-chat-catalog.ts",
+            "hash": "8cb75cad82660cd6675d3705a734965acbcd5e6ed8d6d83ec19e8056cc262498",
+            "uniqueBytes": 161
+          },
+          {
+            "path": "src/llm/provider/model-resolver.ts",
+            "hash": "80a323e3aee550c8589d951e137bd7fe1f0b695df5faf3cf1637db1ef776917c",
+            "uniqueBytes": 99
+          },
+          {
+            "path": "src/llm/provider/model-catalog-entry.ts",
+            "hash": "1ce76b1028478fbd8eea64f0353f5e51213bfd61c6ab45e521fceda760b53fe3",
+            "uniqueBytes": 105
+          },
+          {
+            "path": "src/llm/model-profile.ts",
+            "hash": "69fa49b6e82c8383f6c50f55353486fa7bb8b09350851c154c62533e1ff526b4",
+            "uniqueBytes": 69
+          },
+          {
+            "path": "src/llm/provider/openrouter/fetch-openrouter-chat-catalog.ts",
+            "hash": "952f6aa84270263daf2c69ec07596fb80e8444308a1f698669c4aff18c591c4d",
+            "uniqueBytes": 167
+          },
+          {
+            "path": "src/llm/provider/openrouter/openrouter-open-weight-chat-models.ts",
+            "hash": "62db667553dc932d6aaff0d3bf10fe195c975d6fb538eb807b00727f21e6239d",
+            "uniqueBytes": 127
+          },
+          {
+            "path": "src/runtime/vision-route.ts",
+            "hash": "92fa4c9e739a79f05560ac65f13836060985b1ee54747c0da285d4263690e410",
+            "uniqueBytes": 3551
+          },
+          {
+            "path": "src/runtime/vision-follows-route.test.ts",
+            "hash": "3042249c28b3f522b15240804cab8206afcde65b23d364d22b3686460e31127f",
+            "uniqueBytes": 5167
+          },
+          {
+            "path": "src/runtime/vision-route.test.ts",
+            "hash": "8a6b40581206ce5975005a1af870aa34671647c892e3d10bec2e54f6065b2b6c",
+            "uniqueBytes": 4264
+          },
+          {
+            "path": "src/llm/provider/registry/register-built-in-providers.ts",
+            "hash": "65ced291e7196efdc45fd1298a6dc5bcdc4db942ef4a976f2680b2f730f77b8f",
+            "uniqueBytes": 1890
+          },
+          {
+            "path": "src/runtime/bootstrap.ts",
+            "hash": "76048fad7c8cc144b34b2bcb168771ac0f94ad3e2824f8d7bd8d255250ef7954",
+            "uniqueBytes": 253
+          }
+        ],
+        "changedFiles": [
+          "src/llm/provider/model-vision.test.ts",
+          "src/llm/provider/model-vision.ts",
+          "src/runtime/vision-per-model.test.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 45,
+        "lint": true,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": [
+        "Selected SQLite suites initially require native ABI141 while default Node26 requires147. r02a/r06b reran on Node25.7; r04b/r06a optional HTTP/full-runtime suites remain unverified in agent run. Independent paired checks run on Node25.7."
+      ]
+    },
+    {
+      "id": "r07a",
+      "task": 7,
+      "variant": "original",
+      "root": "/tmp/atomic-stage07-benchmark/runs/original-07",
+      "log": "/tmp/atomic-stage07-runs/r07a.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-original",
+      "status": "completed",
+      "brief": "**Отмена batch.** Исправить seeded regression: после отмены выполнение serial group начинает ещё один вызов. Уже начатые calls сохраняют свои results, оставшиеся slots cancelled, tail terminal не запускается. Сохранить обычный non-cancel tool-error path и batch-index alignment. Checks: deferred typed tool, abort после первого вызова, invocation log/outcomes/terminal barrier; существующие batch tests.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/original-07. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Отмена batch.** Исправить seeded regression: после отмены выполнение serial group начинает ещё один вызов. Уже начатые calls сохраняют свои results, оставшиеся slots cancelled, tail terminal не запускается. Сохранить обычный non-cancel tool-error path и batch-index alignment. Checks: deferred typed tool, abort после первого вызова, invocation log/outcomes/terminal barrier; существующие batch tests.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-07 /tmp/atomic-stage07-runs/r07a.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-07 /tmp/atomic-stage07-runs/r07a.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/original-07 /tmp/atomic-stage07-runs/r07a.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/original-07 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r07a-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r07a",
+      "startedAtRecorded": "2026-10-06T17:34:17.827Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:39:21.903Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 7,
+          "pass": true,
+          "assertions": 9,
+          "observed": [
+            "index alignment true",
+            "abort prevents next serial and terminal",
+            "started call result kept",
+            "remaining cancelled",
+            "batch cancelled",
+            "index alignment false",
+            "ordinary error keeps siblings/terminal",
+            "ordinary error materialized",
+            "ordinary error not cancellation"
+          ]
+        },
+        "stdout": "{\"task\":7,\"pass\":true,\"assertions\":9,\"observed\":[\"index alignment true\",\"abort prevents next serial and terminal\",\"started call result kept\",\"remaining cancelled\",\"batch cancelled\",\"index alignment false\",\"ordinary error keeps siblings/terminal\",\"ordinary error materialized\",\"ordinary error not cancellation\"]}\n"
+      },
+      "metrics": {
+        "actions": 22,
+        "returnedOutputBytes": 128355,
+        "observedSourceBytes": 116801,
+        "uniqueVersionedSourceBytes": 108883,
+        "repeatedSourceBytes": 7918,
+        "uniqueInstructionBytes": 41914,
+        "uniqueCodeBytes": 59681,
+        "uniqueOtherBytes": 7288,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+            "uniqueBytes": 41914
+          },
+          {
+            "path": "README.md",
+            "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+            "uniqueBytes": 7288
+          },
+          {
+            "path": "src/agent/loop-detector.ts",
+            "hash": "c8250ad5c40c19f4b540e9d3b885ae6258d54d3355fb1225ab30c20b2e7a5034",
+            "uniqueBytes": 73
+          },
+          {
+            "path": "src/agent/parse-failure-recovery.ts",
+            "hash": "91534700bd6f2683c3ab3680c9f09c266f416674c880dc8892af7f1a4f0cb4ad",
+            "uniqueBytes": 73
+          },
+          {
+            "path": "src/agent/test-command-key.test.ts",
+            "hash": "c0548467ab51372b49aee784fa9d09748bf0375f91c64a297d458966a18fa1ea",
+            "uniqueBytes": 84
+          },
+          {
+            "path": "src/agent/batch-executor.ts",
+            "hash": "c169413af16619451dbca175d6182eeb477632399b665302d04432cb9a3ba3fa",
+            "uniqueBytes": 26441
+          },
+          {
+            "path": "src/agent/step-events.ts",
+            "hash": "9ec60449d06094565286d0c5267ea3d2d6fbc864ee6deef629d9be0cd313785b",
+            "uniqueBytes": 67
+          },
+          {
+            "path": "src/agent/empty-completion-recovery.ts",
+            "hash": "05896371f57e0256d01de5f556a481fbc11f888d1f80f62ad0457a8b69e6935b",
+            "uniqueBytes": 67
+          },
+          {
+            "path": "src/agent/tool-resource-class.ts",
+            "hash": "1313dabc223e602caf6c498456c2de4b9d554226023a5a4abc31f579d934ad64",
+            "uniqueBytes": 292
+          },
+          {
+            "path": "src/agent/batch-executor.test.ts",
+            "hash": "1eac0b929bcfc29453d6e5e107af6b690178d450ea3784384ad037b9c083e988",
+            "uniqueBytes": 18590
+          },
+          {
+            "path": "src/agent/step-executor.test.ts",
+            "hash": "fe0289e84f03633c2ef13f188b695b26cb52ff2d38936a26b6b8f4192869b0e3",
+            "uniqueBytes": 7895
+          },
+          {
+            "path": "src/tools/tool-registry.ts",
+            "hash": "c3d9298cd28860936f3050b54140b9b950656ac9fe0e34ad44ba3c8b74629a8b",
+            "uniqueBytes": 3267
+          },
+          {
+            "path": "src/agent/parallel-tool-calls.integration.test.ts",
+            "hash": "7fba2e7a83833fbb1472fbfa9bcb97cac981b076cf920dd258a91756bd44dbbc",
+            "uniqueBytes": 2832
+          }
+        ],
+        "changedFiles": [
+          "src/agent/batch-executor.test.ts",
+          "src/agent/batch-executor.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 251,
+        "lint": true,
+        "testTypeGate": null,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    },
+    {
+      "id": "r07b",
+      "task": 7,
+      "variant": "final",
+      "root": "/tmp/atomic-stage07-benchmark/runs/final-07",
+      "log": "/tmp/atomic-stage07-runs/r07b.reads.jsonl",
+      "snapshot": "/tmp/atomic-stage07-final-v2",
+      "status": "completed",
+      "brief": "**Отмена batch.** Исправить seeded regression: после отмены выполнение serial group начинает ещё один вызов. Уже начатые calls сохраняют свои results, оставшиеся slots cancelled, tail terminal не запускается. Сохранить обычный non-cancel tool-error path и batch-index alignment. Checks: deferred typed tool, abort после первого вызова, invocation log/outcomes/terminal barrier; существующие batch tests.",
+      "prompt": "Вы выполняете независимую задачу разработки atomic-agent в единственной disposable копии /tmp/atomic-stage07-benchmark/runs/final-07. Работайте только в ней; основное дерево и другие копии не открывать и не менять. Не читать hidden manifests/goldens или внешний проверочный harness. Истории проекта у вас нет. Максимум 10 минут; завершите реализацию и существующие целевые проверки, без полного CI и без публикации/коммитов. Изменения из этой копии не пойдут в продукт.\n\nЗадача: **Отмена batch.** Исправить seeded regression: после отмены выполнение serial group начинает ещё один вызов. Уже начатые calls сохраняют свои results, оставшиеся slots cancelled, tail terminal не запускается. Сохранить обычный non-cancel tool-error path и batch-index alignment. Checks: deferred typed tool, abort после первого вызова, invocation log/outcomes/terminal barrier; существующие batch tests.\n\nПеред изменениями прочитайте AGENTS.md, README и нужные локальные инструкции в своей копии. Язык репозитория английский. Для ВСЕХ намеренных чтений исходников/документов/инструкций и поиска используйте только инструментированный маршрут:\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-07 /tmp/atomic-stage07-runs/r07b.reads.jsonl read PATH FIRST_LINE LINE_COUNT\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-07 /tmp/atomic-stage07-runs/r07b.reads.jsonl search PATTERN [PATH]\nnode /Users/aleksejkalina/code/atomicbot/atomic-agent/docs/testing/fixtures/stage07-read-observer.mjs /tmp/atomic-stage07-benchmark/runs/final-07 /tmp/atomic-stage07-runs/r07b.reads.jsonl files [GLOB]\nКаждый excerpt ограничен 16KiB; сузьте диапазон/поиск при cap. Не используйте cat/sed/rg/readFile напрямую для чтения проекта; записи через apply_patch/обычныеfiletools и запуск тестов допустимы. Тестовые stdout/stacks и автоматический контекст учитываются отдельно от наблюдаемых чтений. Для команд выставляйте workdir=/tmp/atomic-stage07-benchmark/runs/final-07 и ATOMIC_AGENT_STATE_DIR=/tmp/atomic-stage07-runs/r07b-state, чтобы не затронуть личный config. Не подключайте внешние сервисы.\n\nВ конце кратко сообщите какие файлы изменены, проверки/результат, любые чтения в обход observer и что осталось непроверенным. Не пытайтесь сообщать в другие агентные задачи.",
+      "agent": "/root/eval_r07b",
+      "startedAtRecorded": "2026-10-06T17:36:42.335Z",
+      "settings": "fresh fork_turns=none; inherited parent model/reasoning; no overrides",
+      "actualModelId": null,
+      "completedAtRecorded": "2026-10-06T17:39:22.451Z",
+      "acceptance": {
+        "exit": 0,
+        "signal": null,
+        "stderr": "",
+        "result": {
+          "task": 7,
+          "pass": true,
+          "assertions": 9,
+          "observed": [
+            "index alignment true",
+            "abort prevents next serial and terminal",
+            "started call result kept",
+            "remaining cancelled",
+            "batch cancelled",
+            "index alignment false",
+            "ordinary error keeps siblings/terminal",
+            "ordinary error materialized",
+            "ordinary error not cancellation"
+          ]
+        },
+        "stdout": "{\"task\":7,\"pass\":true,\"assertions\":9,\"observed\":[\"index alignment true\",\"abort prevents next serial and terminal\",\"started call result kept\",\"remaining cancelled\",\"batch cancelled\",\"index alignment false\",\"ordinary error keeps siblings/terminal\",\"ordinary error materialized\",\"ordinary error not cancellation\"]}\n"
+      },
+      "metrics": {
+        "actions": 18,
+        "returnedOutputBytes": 97215,
+        "observedSourceBytes": 90275,
+        "uniqueVersionedSourceBytes": 88203,
+        "repeatedSourceBytes": 2072,
+        "uniqueInstructionBytes": 7939,
+        "uniqueCodeBytes": 58582,
+        "uniqueOtherBytes": 21682,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+            "uniqueBytes": 6714
+          },
+          {
+            "path": "README.md",
+            "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+            "uniqueBytes": 8980
+          },
+          {
+            "path": "src/agent/AGENTS.md",
+            "hash": "88b874a3ec206e7e604f87564196fab1b57a4e21378e1a9f7d75063c375643ca",
+            "uniqueBytes": 1225
+          },
+          {
+            "path": "src/agent/review-stall.test.ts",
+            "hash": "5882e1f954840c75d56feb96ed83d3ff2dbcdab5afcda4f9aa58631304b6f6dd",
+            "uniqueBytes": 94
+          },
+          {
+            "path": "src/agent/review-stall.ts",
+            "hash": "1c4186c89ed25d67ad45615257be1e48f2a39662c45def9bf7b2b85c555e283a",
+            "uniqueBytes": 71
+          },
+          {
+            "path": "src/agent/loop-detector.ts",
+            "hash": "9259f9ee77695833d8751ac5ecd416b482431090f9142b362b906d09469a3468",
+            "uniqueBytes": 212
+          },
+          {
+            "path": "src/agent/batch-summary-cap.test.ts",
+            "hash": "54af1ede6bde80ab657b65b9286e0789e8c15f054ddf17952c77cbfe7a3bf5f2",
+            "uniqueBytes": 206
+          },
+          {
+            "path": "src/agent/step-events.ts",
+            "hash": "9ec60449d06094565286d0c5267ea3d2d6fbc864ee6deef629d9be0cd313785b",
+            "uniqueBytes": 1687
+          },
+          {
+            "path": "src/agent/tool-name-resolution.ts",
+            "hash": "a124a9e57aa4fa265df76b1c0936bfaa6b6a6b77ebde015323505cbf0d4af1af",
+            "uniqueBytes": 71
+          },
+          {
+            "path": "src/agent/batch-summary-cap.ts",
+            "hash": "d74317811127c3a446691cdecf538b27ca6f4e6d5cc66386fb040f3c98914f30",
+            "uniqueBytes": 415
+          },
+          {
+            "path": "src/agent/fusion-orchestrator-mode.test.ts",
+            "hash": "395073cb3d8d3fe9df8d47c0120a736d8692017fc08e441a8df8c67f7aabcd2e",
+            "uniqueBytes": 67
+          },
+          {
+            "path": "src/agent/agent-loop.test.ts",
+            "hash": "a16b9f660878fa32e7852787bd2294e5773ee51127e7a4a7039ffe8f34749071",
+            "uniqueBytes": 300
+          },
+          {
+            "path": "src/agent/agent-loop.ts",
+            "hash": "9b30bd59c67ba4bbc5b53d2e7b3fd8159a8cb1d45f7eb313ba6654e6ac170c4f",
+            "uniqueBytes": 783
+          },
+          {
+            "path": "src/agent/tool-resource-class.test.ts",
+            "hash": "28fdc2548eefd63d5c6b6f27d6348dce04b5babdb6d34b0b548c5dbe25fdefc4",
+            "uniqueBytes": 85
+          },
+          {
+            "path": "src/agent/agent-loop-recalled-memory-allowlist.test.ts",
+            "hash": "1854254fc3bdb82c01d23f719a90b4362130283b4be378cd14e31da12a748e56",
+            "uniqueBytes": 283
+          },
+          {
+            "path": "src/agent/tool-resource-class.ts",
+            "hash": "a061b3b9c0534e28b57041f347fd5a5b0451855f3bcecf7dafc6f0b1f7e67060",
+            "uniqueBytes": 1469
+          },
+          {
+            "path": "src/agent/batch-executor.test.ts",
+            "hash": "1eac0b929bcfc29453d6e5e107af6b690178d450ea3784384ad037b9c083e988",
+            "uniqueBytes": 21065
+          },
+          {
+            "path": "src/agent/agent-loop-progress-note.test.ts",
+            "hash": "51c564b48385046e200dcc3b3116779ea87deb1683d62d7d3ce8f93e5c3516de",
+            "uniqueBytes": 356
+          },
+          {
+            "path": "src/agent/batch-executor.ts",
+            "hash": "0fb5bfe1de7246b17cedb14ba0182a7d8b888266052d7b61ef94b2e4b4354547",
+            "uniqueBytes": 296
+          },
+          {
+            "path": "src/agent/agent-contract.ts",
+            "hash": "c06f08ef0f17ebb9d80c3a1143292cdf117389e962995ed7e2dec85be98ed12c",
+            "uniqueBytes": 202
+          },
+          {
+            "path": "src/agent/progress-note-reply.executor.test.ts",
+            "hash": "86fe4fc7857f28e3f983c0416f7c053207b56b4e95732499ee981b83c64715f0",
+            "uniqueBytes": 460
+          },
+          {
+            "path": "src/agent/step/README.md",
+            "hash": "331ede7eb02e58c4a2ce447cebeaf981a2fd12d2a79b1f80e500ba38bf41957f",
+            "uniqueBytes": 649
+          },
+          {
+            "path": "src/agent/step/step-errors.ts",
+            "hash": "0736d6ae946a61e68a403eb93b9a26623f9bc9ef42994cd216f7a41cc700db9b",
+            "uniqueBytes": 177
+          },
+          {
+            "path": "src/agent/step-executor.test.ts",
+            "hash": "fe0289e84f03633c2ef13f188b695b26cb52ff2d38936a26b6b8f4192869b0e3",
+            "uniqueBytes": 226
+          },
+          {
+            "path": "src/agent/README.md",
+            "hash": "6488774e9eddcc6e41447129abe2bf646780b2b096f0e80bfe283b798b9df306",
+            "uniqueBytes": 2391
+          },
+          {
+            "path": "src/agent/docs/batching.md",
+            "hash": "d19fb888ceebdb1e52dcae8ec8cd3026a894c1a5aeec34fe35bec93e8f0e21dd",
+            "uniqueBytes": 2342
+          },
+          {
+            "path": "src/agent/dispatch/batch-scheduler.ts",
+            "hash": "68d077923948ae95dc595446d2ee3cb247a81779f7de31ba029f200c346166e6",
+            "uniqueBytes": 16813
+          },
+          {
+            "path": "src/agent/dispatch/README.md",
+            "hash": "73ee3e7cd60dc0f2bf67bcc6243d852c26d9bc627b50ac76ac7d09e88773d4e8",
+            "uniqueBytes": 768
+          },
+          {
+            "path": "package.json",
+            "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+            "uniqueBytes": 6552
+          },
+          {
+            "path": "src/agent/dispatch/batch-contract.ts",
+            "hash": "9276b2dc7d685ce101009e6f8fce1f6ac22ad3f0eedec27d13fcc4704a4b5fa9",
+            "uniqueBytes": 8534
+          },
+          {
+            "path": "src/tools/tool-registry.ts",
+            "hash": "c3d9298cd28860936f3050b54140b9b950656ac9fe0e34ad44ba3c8b74629a8b",
+            "uniqueBytes": 3267
+          },
+          {
+            "path": "src/agent/batch-executor.test.ts",
+            "hash": "65be4d30f2374103fcf928b12cb84d0bfa8fd33f832ad4b3b4084b73b0182211",
+            "uniqueBytes": 1443
+          }
+        ],
+        "changedFiles": [
+          "src/agent/batch-executor.test.ts",
+          "src/agent/dispatch/batch-scheduler.ts"
+        ],
+        "modelReceivedSourceBytes": null,
+        "automaticContextBytes": null,
+        "observationLevel": "source byte ranges emitted by the bounded observer; further tool truncation is not observable"
+      },
+      "declaredAgentChecks": {
+        "passedTests": 228,
+        "lint": true,
+        "testTypeGate": true,
+        "deliberateProjectReadsOutsideObserver": false,
+        "operatorPromptReadOutsideObserver": true
+      },
+      "unrelatedEdits": [],
+      "reviewFindings": [],
+      "environmentLimits": []
+    }
+  ]
+}

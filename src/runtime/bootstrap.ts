@@ -1,838 +1,76 @@
-import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
-import { AsyncLocalStorage } from "node:async_hooks";
+import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
+import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
+import { createContextCompaction } from "./context-compaction.js";
+import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
+import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
+import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
+import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
+import { connectRuntimeChannels } from "./composition/runtime-channels.js";
+import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
+export type { AgentRuntime, CreateAgentRuntimeOptions, RuntimeEventHandlers } from "./runtime-contract.js";
+export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
+import { createRuntimeObservability } from "./composition/runtime-observability.js";
+import { createRuntimeTraces } from "./composition/runtime-traces.js";
+import { prepareRuntimeLocalProfile, connectRuntimeLocalProfile } from "./composition/runtime-local-profile.js";
+import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads } from "./composition/runtime-inference.js";
+import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
+import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
+import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
+import { resolve } from "node:path";
 
-import type { AtomicAgentConfig } from "../config/index.js";
-import {
-  getConfig,
-  getTrustConfigPaths,
-  resetConfigCache,
-  getUserConfigPath,
-} from "../config/index.js";
+import { getConfig } from "../config/index.js";
 
-import type { LlmStreamParams } from "../agent/step-executor.js";
 import { TurnController } from "./turn-controller.js";
 import { SteeringInbox } from "./steering-inbox.js";
-import { SHUTDOWN_TURN_GRACE_MS, TurnsInFlight } from "./turns-in-flight.js";
-import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
-import type { ChannelStatus } from "./channel-status.js";
 
 import { TelegramChannel } from "../channels/telegram/index.js";
-import { DiscordChannel, DiscordLockfile } from "../channels/discord/index.js";
+import { DiscordChannel } from "../channels/discord/index.js";
 import { SwarmRegistry } from "../channels/swarm/index.js";
-import type { BotFactory } from "../channels/telegram/index.js";
 
-import {
-  McpManager,
-  buildMcpPromptGetTool,
-  buildMcpPromptListTool,
-  buildMcpResourceListTool,
-  buildMcpResourceReadTool,
-  buildMcpToolDescriptors,
-  createMcpSamplingHandler,
-  mergeMcpDescriptors,
-  applyMcpToolNameRule,
-  buildMcpToolNameRule,
-} from "../mcp/index.js";
-
-import { LlamaServerClient } from "../llm/llama-server-client.js";
-import type {
-  CompletionResult,
-  StreamChunk,
-} from "../llm/llama-server-client.js";
-import {
-  buildGrammar,
-  detectModelProfile,
-  extractTotalSlots,
-  ModelProfileManager,
-  PLAIN_INSTRUCT_PROFILE,
-} from "../llm/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
-import { checkProfileGrammarAligned } from "../llm/profile-invariants.js";
-import { DEFAULT_SLOT_COUNT, SlotManager } from "../llm/slot-manager.js";
-import { checkLlamaServer } from "../llm/llama-server-health.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
-import type { ApprovalLevel } from "../approval/approval-level.js";
+
 import { ApprovalRouter } from "../approval/approval-router.js";
-import type { ApprovalHandler } from "../approval/approval-router.js";
+
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
-import { ToolRegistry } from "../tools/tool-registry.js";
-import { finishTool } from "../tools/finish.js";
-import { replyTool } from "../tools/conversation/index.js";
-import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
-import {
-  DeclaredInputsRegistry,
-  registerOsTools,
-  ShellJobRegistry,
-} from "../tools/os/index.js";
-import { registerVerifyTools, runChecks } from "../tools/verify/index.js";
-import { registerGithubTools } from "../tools/github/index.js";
-import { resolveGithubToken } from "../github/index.js";
-import { registerSkillTools } from "../tools/skill/index.js";
-import { buildToolViewTool } from "../tools/tool-view/index.js";
-import { registerMemoryTools } from "../tools/memory/index.js";
-import { registerTaskTools } from "../tools/tasks/index.js";
-import {
-  buildFusionDelegateTool,
-  pickOriginalRequest,
-  readSlotOccupancy,
-} from "../tools/fusion/index.js";
-import { confineReads } from "../tools/read-scope/index.js";
-import type { ToolRole } from "../tools/tool-roles.js";
-import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
-import { registerVisionTools } from "../tools/vision/index.js";
-import { resolveVisionProvider, visionRouteAvailable } from "./vision-route.js";
-import { visionCapableAlternatives } from "../llm/provider/model-vision.js";
-import {
-  type LlmProvider,
-  ProviderRegistry,
-  resolveLlmConfig,
-} from "../llm/provider/index.js";
-import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
-import {
-  activeTextProviderIsLlamaServer,
-  providerIdIsLlamaServer,
-} from "../llm/provider/registry/active-text-provider.js";
-import {
-  createLocalLinkPreparer,
-  DeferredLocalBackendProbes,
-} from "../llm/local-backend-gate.js";
+import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+
+import { resolveLlmConfig } from "../llm/provider/index.js";
+
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
-import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
-import type { ResolvedModel } from "../llm/provider/model-resolver.js";
-import { resolveModelPricingFor } from "./resolve-model-pricing.js";
-import type { ReasoningEffort } from "../llm/provider/completion-types.js";
-import { LearnedContextWindows } from "./learned-context-windows.js";
+
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
-import {
-  createFallbackCompleter,
-  createFallbackStreamer,
-  type FallbackSeamDeps,
-} from "./llm-fallback-seam.js";
-import { abortableSubcall } from "./abortable-subcall.js";
+import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
+export { SessionNotFoundError } from "./session-not-found-error.js";
 
-import { MemoryStore } from "../memory/memory-store.js";
-import { ProfileStore } from "../memory/profile-store.js";
-import {
-  sessionGroundingSource,
-  verifyProfileNameFacts,
-} from "../memory/name-grounding.js";
-import { LessonStore } from "../memory/lessons/lesson-store.js";
-import { ProcedureStore } from "../memory/procedures/procedure-store.js";
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
-import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
-import {
-  type RewriterLlmComplete,
-  createQueryRewriterRunner,
-  createRewriterAwareMemoryContextProvider,
-  createAlwaysGate,
-  createEmbeddingGate,
-  createHeuristicGate,
-  DEFAULT_REWRITER_EXEMPLARS,
-  type RewriterGate,
-} from "../memory/retrieve/index.js";
-import type { EmbeddingClient } from "../memory/embeddings/embedding-client.js";
-import {
-  createLocalEmbeddingClient,
-  EmbeddingStore,
-  EmbeddingWriter,
-} from "../memory/embeddings/index.js";
-import {
-  getEmbeddingModelDef,
-  isKnownEmbeddingModelId,
-  readLaunchRecord,
-  readRunningPid,
-  readThroughputRecord,
-} from "../local-llm/index.js";
-import {
-  createReflectionRunner,
-  type ReflectionLlmComplete,
-  type ReflectionRunner,
-  type ReflectionTraceEvent,
-} from "../memory/reflection/index.js";
-import {
-  LinkStore,
-  createLinkGeneratorRunner,
-  createLinkAwareReflectionRunner,
-} from "../memory/links/index.js";
-import type {
-  LinkGeneratorLlmComplete,
-  LinkGeneratorTraceEvent,
-} from "../memory/links/index.js";
-import { NeighborEvolver } from "../memory/evolution/index.js";
-import {
-  ConsolidatorJob,
-  DistillRunner,
-} from "../memory/consolidator/index.js";
-import {
-  VoteStore,
-  createVoteRunner,
-  createVoteAwareReflectionRunner,
-} from "../memory/voting/index.js";
-import type { VoteRunnerLlmComplete } from "../memory/voting/index.js";
-import {
-  createMemoryHealthAnnouncer,
-  createVoteTraceSink,
-  observeVoteRunnerHealth,
-} from "./announce-memory-health.js";
 
-import { SkillRegistry } from "../skills/skill-registry.js";
-import { buildSkillCatalogSection } from "../skills/skill-catalog.js";
-import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
+import { createMemoryHealthAnnouncer } from "./announce-memory-health.js";
 
-import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
-import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../atomic-mail/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
-import { renderRouteChangeNote } from "../prompt/route-change-note.js";
-import { minUsableContextWindow } from "../prompt/token-budget.js";
-import type {
-  CapabilitiesSummary,
-  SkillCatalogEntry,
-  ToolDescriptor,
-} from "../prompt/stable-prefix.js";
+
+import type { SkillCatalogEntry, ToolDescriptor } from "../prompt/stable-prefix.js";
 
 import { AgentLoop } from "../agent/agent-loop.js";
-import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 
-import {
-  SessionStore,
-  INTERRUPTED_TURN_ENDING,
-  createEmptySessionState,
-  createFusionWorkerSession,
-  readFusionWorkerMeta,
-  contextUsageFromPrompt,
-  recordTurn,
-  userTurn,
-  type ContextUsageState,
-  type FusionWorkerMeta,
-  SESSION_LLM_METADATA_KEY,
-  SESSION_ROUTE_METADATA_KEY,
-  readSessionRoute,
-  resolveTurnRoute,
-  SESSION_TITLE_METADATA_KEY,
-  SESSION_TITLE_TIMEOUT_MS,
-  generateSessionTitle,
-  pruneSessions,
-  readSessionPins,
-  readSessionTitle,
-  shouldNameSession,
-  type SessionLlmStamp,
-  type SessionState,
-} from "../session/index.js";
-// Lane B — context before the first message (item 3): previewPrompt.
-import { buildPrompt } from "../prompt/build-prompt.js";
-import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
-import { formatCurrentDate } from "../prompt/current-date.js";
+import { TurnUsageMeter } from "../analytics/index.js";
 
-import { TaskRunner, TaskStore } from "../tasks/index.js";
-import { Scheduler } from "../scheduler/index.js";
-import {
-  WEBHOOK_SESSIONS_FILENAME,
-  WebhookSessionStore,
-} from "../http/webhook-session-store.js";
-
-import { resolveComposioServerConfig } from "../composio/index.js";
-import { StructuredLogger } from "../tracing/structured-logger.js";
-import type { LogSink } from "../tracing/structured-logger.js";
-import { MetricsCollector } from "../tracing/metrics-collector.js";
-import type { MetricSink } from "../tracing/metrics-collector.js";
-import { AgentMetrics } from "../tracing/agent-metrics.js";
-import {
-  createNdjsonTraceSink,
-  createTraceBus,
-  createTraceRecorder,
-  type TraceBus,
-  type TraceRecorder,
-  type TraceSink,
-} from "../tracing/trace/index.js";
-
-import type { ApprovalRequest } from "../approval/approval-gate.js";
-
-import {
-  AnalyticsStateStore,
-  buildRuntimeTelemetry,
-  captureAppInstalled,
-  captureAppOpened,
-  captureMessageSent,
-  captureModelConfigured,
-  captureOnboardingStep,
-  createTelemetryToggle,
-  detectOtherSurfaceInstalled,
-  resolveAnalyticsDimensions,
-  sanitizeModelAlias,
-  TurnUsageMeter,
-} from "../analytics/index.js";
-import type {
-  AnalyticsDisabledVia,
-  AnalyticsSurface,
-} from "../analytics/index.js";
-import {
-  installGlobalErrorHandlers,
-  captureError,
-} from "../error-reporting/index.js";
-import type { BrokenPipePolicy } from "../error-reporting/index.js";
-import { getAppVersion } from "../version.js";
-
-export interface RuntimeEventHandlers {
-  /**
-   * Global event sink, fired for every turn on every session. The
-   * second argument names the session the event belongs to (from the
-   * per-turn `AsyncLocalStorage` frame) so a host rendering a single
-   * session — the TUI — can drop events from turns running in the
-   * background instead of painting them into the wrong transcript. It
-   * is absent for events emitted outside a turn frame.
-   */
-  onAgentEvent?: (event: AgentLoopEvent, sessionId?: string) => void;
-  onApprovalRequest?: (request: ApprovalRequest) => void;
-  /**
-   * `entries` is the rebuilt catalog, `dropped` how many installed
-   * skills `skills.catalogTokenBudget` left out of it. Hosts that
-   * display a count need both: an install can push the catalog over the
-   * budget, so the number they show has to be able to stop growing and
-   * say why (issue #466). Handlers written against the one-argument
-   * signature keep working — the extra argument is simply ignored.
-   */
-  onSkillRegistryChange?: (
-    entries: SkillCatalogEntry[],
-    dropped: number,
-  ) => void;
-  /**
-   * Optional sink for remote-control channel lifecycle changes (e.g.
-   * Telegram). Fires on every observable transition (`starting →
-   * up`, `up → down`, `disabled → starting`, …). Hosts that ignore
-   * this handler keep working — the runtime never blocks on it.
-   */
-  onChannelStatus?: (status: ChannelStatus) => void;
-  logSinks?: LogSink[];
-  metricSinks?: MetricSink[];
-  /**
-   * Extra destinations for `TraceEvent`s produced by the recorder. Always
-   * combined with the default NDJSON sink (when tracing is active) — set
-   * to an empty array to keep only the on-disk sink, or pass custom sinks
-   * (e.g. `createTraceNdjsonSidecarSink`) to relay traces to embedding
-   * hosts.
-   */
-  traceSinks?: TraceSink[];
-}
-
-export interface CreateAgentRuntimeOptions {
-  workingDir: string;
-  /**
-   * Boot value for the approval ladder (1 = ask for everything … 5 =
-   * approve everything). Entry points resolve it from the persisted
-   * `agent.approvalLevel` plus `--no-approval` (which forces 5); the
-   * live value afterwards is owned by the ApprovalGate.
-   */
-  approvalLevel: ApprovalLevel;
-  handlers?: RuntimeEventHandlers;
-  /**
-   * Default activation state for tracing when
-   * `config.tracing.trace.enabled` is `null` (the default). CLI / TUI /
-   * serve entry points pass `true` so local debugging is observable by
-   * default; the sidecar passes `false` so embedded hosts opt in via
-   * config or by providing their own sinks.
-   */
-  traceDefault?: boolean;
-  /**
-   * Whether this runtime is being created for an interactive launch a
-   * person actually performed, which is what `app_opened` counts.
-   *
-   * Defaults to `false` because `createAgentRuntime` is also the entry
-   * point for headless work — scheduled/cron tasks, `run`, `serve`,
-   * the sidecar. Those create a runtime with nobody at the keyboard, and
-   * counting them would inflate the denominator of the activation
-   * funnel: one user with an hourly task would look like 24 launches a
-   * day. Only the TUI passes `true`.
-   */
-  interactiveLaunch?: boolean;
-  /**
-   * What this process does when the reader of its stdout or stderr goes
-   * away (see `BrokenPipePolicy`). Default `exit`; `serve` passes `mute`,
-   * so a server whose host died keeps going until its orphan watch ends
-   * it through the teardown, instead of exiting at its next log line.
-   * Process-wide and first-come: the handlers are installed once.
-   */
-  brokenPipe?: BrokenPipePolicy;
-  /**
-   * Analytics `surface` of the entry point (the TUI passes `tui`).
-   * Headless entry points leave it unset so `ATOMIC_AGENT_SURFACE` from
-   * the desktop app applies, else `cli`.
-   */
-  analyticsSurface?: AnalyticsSurface;
-  /** Optional overrides — used by tests to inject fakes. */
-  overrides?: {
-    llamaComplete?: (params: LlmStreamParams) => Promise<CompletionResult>;
-    /**
-     * Streaming counterpart of `llamaComplete`. Tests inject a fake SSE
-     * generator here; production wiring always hands a real
-     * `LlamaServerClient.completeStream` through.
-     */
-    llamaCompleteStream?: (
-      params: LlmStreamParams,
-    ) => AsyncGenerator<StreamChunk, CompletionResult, void>;
-    /**
-     * When true, skip wiring the streaming client at all. Useful for the
-     * HTTP/sidecar tests that still exercise the unary path.
-     */
-    disableStreaming?: boolean;
-    browserBackend?: BrowserBackend;
-    skipLlamaHealthCheck?: boolean;
-    /**
-     * Skip the blocking startup health probe and `/props` fetch but keep
-     * the real `LlamaServerClient` + `ModelProfileManager` wired. The TUI
-     * uses this so the chat UI renders instantly even when the managed
-     * daemon has not finished starting yet; the profile manager will
-     * hot-swap to the real profile on the first turn refresh once
-     * `/props` starts answering.
-     *
-     * Mutually exclusive with `skipLlamaHealthCheck` (which also stubs
-     * out the HTTP path for tests).
-     */
-    deferLlamaHealthCheck?: boolean;
-    llamaProps?: Record<string, unknown>;
-    llamaPropsError?: Error;
-    /**
-     * Test seam — replace the default grammy adapter used by the
-     * Telegram channel. Production wiring leaves this undefined and
-     * `TelegramChannel` falls back to `defaultGrammyBotFactory`.
-     */
-    telegramBotFactory?: BotFactory;
-  };
-}
-
-/**
- * Thrown by `previewPrompt` for an id the store does not hold. Matched by
- * name at the HTTP edge so the route module needs no value import of
- * the runtime.
- */
-export class SessionNotFoundError extends Error {
-  constructor(public readonly sessionId: string) {
-    super(`session not found: ${sessionId}`);
-    this.name = "SessionNotFoundError";
-  }
-}
-
-export interface AgentRuntime {
-  readonly config: AtomicAgentConfig;
-  readonly loop: AgentLoop;
-  readonly toolRegistry: ToolRegistry;
-  readonly skillRegistry: SkillRegistry;
-  readonly approvals: ApprovalGate;
-  readonly slotManager: SlotManager;
-  readonly sessionStore: SessionStore;
-  /**
-   * Single per-session turn-ownership primitive shared by every
-   * caller of `runTurn` — CLI, TUI, HTTP, sidecar, and the future
-   * scheduler. Exposed for introspection (`isBusy`,
-   * `busySessionIds`) and direct enqueueing from out-of-band entry
-   * points; the canonical user-facing path is `runTurn`, which
-   * funnels through this controller internally.
-   */
-  readonly turnController: TurnController;
-  /**
-   * Out-of-band channel for messages sent to a session whose turn is
-   * already running. `TurnController` is strictly FIFO by design, so a
-   * mid-turn message would otherwise have to wait for the turn to
-   * close; the inbox lets it reach the model at the next step boundary
-   * instead. Prefer {@link AgentRuntime.steer} over touching this
-   * directly — it is the same call with the intent documented.
-   */
-  readonly steeringInbox: SteeringInbox;
-  /**
-   * Fold `text` into the turn currently running on `sessionId`.
-   *
-   * Returns `false` — and queues nothing — when no running turn is
-   * still able to pick the message up (no turn in flight, or the turn
-   * has already done its final drain), when the text is blank, or when
-   * the inbox for that session is full. A `false` return means "not
-   * steered": the caller is expected to fall back to a normal
-   * `runTurn`, or to its own message queue. `true` means the message is
-   * either delivered at a step boundary or returned on
-   * `RunTurnResult.undelivered` — never stranded. Never starts a turn
-   * on its own.
-   */
-  steer(sessionId: string, text: string): boolean;
-  /**
-   * Durable user-profile store. Present even when
-   * `memory.profile.enabled` is `false`, because the store owns the
-   * SQLite connection used by any future feature that reuses the same
-   * file. Callers should respect the config flag before writing.
-   */
-  readonly profileStore: ProfileStore;
-  /**
-   * FTS5-backed freeform notes store. Present even when
-   * `memory.notes.enabled` is `false`, for the same reason as
-   * `profileStore`: the class owns a SQLite connection that shares a
-   * file with other memory layers and must be disposed through
-   * `shutdown()`.
-   */
-  readonly notesStore: MemoryStore;
-  /**
-   * Memory-v2 phase 5. Distilled lesson store. Always present (lives
-   * alongside `notesStore` in `memory.sqlite`), regardless of
-   * `memory.lessons.enabled` — the agent-facing tool registration is
-   * gated, but the store itself is always open so `shutdown` can
-   * close it cleanly.
-   */
-  readonly lessonStore: LessonStore;
-  /**
-   * Memory-v2 phase 7b. Procedure templates store. Always
-   * constructed (handle ownership) — the agent-facing tool is
-   * gated on `memory.procedures.enabled` and the consolidator
-   * persists procedures only when the runner is configured with
-   * `withProcedure=true`.
-   */
-  readonly procedureStore: ProcedureStore;
-  /**
-   * Memory-v2 phase 2. Typed link graph store. Always present (same
-   * SQLite file as `notesStore`); recall expansion and link-generator
-   * are gated on `memory.links.enabled`.
-   */
-  readonly linkStore: LinkStore;
-  /**
-   * Memory-v2 phase 7a. Curation vote store. `null` when
-   * `memory.voting.enabled` is `false`. Shares its SQLite handle
-   * with `notesStore`, so no separate dispose is required.
-   */
-  readonly voteStore: VoteStore | null;
-  /**
-   * Durable task queue. Always present, even when `tasks.enabled` is
-   * false, because the store owns its SQLite connection and must be
-   * disposed through `shutdown()`. Callers should respect the config
-   * flag (or the runner — `TaskRunner.drainPending` is a no-op when
-   * disabled) before submitting work.
-   */
-  readonly taskStore: TaskStore;
-  readonly taskRunner: TaskRunner;
-  /**
-   * Periodic scheduler that drains due tasks off the `scheduled_for`
-   * index. `null` when `tasks.enabled` or `tasks.schedulerEnabled` is
-   * false — tests and ops tooling can still call `taskRunner.runDue`
-   * directly for a one-shot tick.
-   */
-  readonly scheduler: Scheduler | null;
-  /**
-   * Persistent mapping of webhook name -> session id, used by the
-   * `POST /api/webhooks/:name` route when `sessionMode=persistent`.
-   * Always present — the store is a tiny on-disk JSON file whose
-   * cost is negligible even when no webhooks are configured.
-   */
-  readonly webhookSessionStore: WebhookSessionStore;
-  /**
-   * Telegram remote-control channel. **Always non-null** post slice 3B
-   * — the channel is constructed unconditionally so the live-control
-   * TUI panel can flip `enabled=true` (or update token / owner) without
-   * restarting the host. When `config.telegram.enabled === false` at
-   * boot, `start()` is *not* invoked and the channel stays in
-   * `disabled` state, idle and emitting no lifecycle events. When
-   * enabled, the channel owns token resolution and transitions itself
-   * through `starting → up | down` on `start()`; a missing
-   * `TELEGRAM_BOT_TOKEN` lands as `state: "down"`. Status is
-   * propagated to hosts via `RuntimeEventHandlers.onChannelStatus`.
-   * The type stays `TelegramChannel | null` for forward compatibility
-   * with potential subsystem-disable flags; callers should still
-   * defensively check before calling.
-   */
-  readonly telegramChannel: TelegramChannel | null;
-  /**
-   * Discord remote-control channel, or `null` when the build never
-   * constructed one. Same contract as `telegramChannel`.
-   */
-  readonly discordChannel: DiscordChannel | null;
-  /**
-   * Extra Telegram / Discord bots (`config.swarm.units`), or `null` when
-   * the build never constructed the registry. Same contract as the
-   * primary channels: constructed unconditionally, units started only
-   * when enabled with a token.
-   */
-  readonly swarm: SwarmRegistry | null;
-  /**
-   * MCP client manager. **Always non-null** — constructed even when
-   * `config.mcp.servers[]` is empty so the live-control surface stays
-   * uniform with the Telegram channel pattern. When no servers are
-   * configured, this is a zero-cost no-op manager: `start()` returns
-   * immediately, `listStatuses()` is empty, no resolver is installed.
-   * Owns one `McpClient` per configured server and exposes the
-   * aggregated tool / resource / prompt catalogs through
-   * `runtime.mcpManager.listCatalogs()`. Shutdown is wired into the
-   * runtime `shutdown()` so closing the runtime tears every client
-   * down.
-   */
-  readonly mcpManager: McpManager;
-  /**
-   * Text LLM provider registry (local llama-server and cloud backends).
-   * `activeText` is the provider wired into `llmComplete` / sub-calls.
-   */
-  readonly providerRegistry: ProviderRegistry;
-  readonly capabilities: CapabilitiesSummary;
-  readonly skillCatalog: readonly SkillCatalogEntry[];
-  /**
-   * Installed skills `skills.catalogTokenBudget` left out of
-   * `skillCatalog`; `0` when every one fit. The agent loop gets this
-   * count on `loopDeps` and turns it into the `### skills` truncation
-   * marker (issue #466), but the prompt is not the only place the
-   * catalog is counted: the `run` banner, `/api/capabilities`, the TUI
-   * diagnostics line and `/skills dump` all report `skillCatalog.length` as
-   * "installed". Without the count beside it every one of them states a
-   * clipped number as the whole truth — the same misreading the prompt
-   * marker exists to prevent, told to the operator instead of to the
-   * model. Live getter for the same reason `skillCatalog` is one:
-   * `refreshSkills()` can turn a catalog that fit into one that does
-   * not, and a snapshot taken at boot would go stale on the first
-   * install.
-   */
-  readonly skillCatalogDropped: number;
-  readonly toolDescriptors: readonly ToolDescriptor[];
-  readonly grammar: string;
-  readonly logger: StructuredLogger;
-  readonly metrics: AgentMetrics;
-  /**
-   * Create a fresh session state (id, workingDir, optional metadata),
-   * persist it, and return it. User messages are fed through `runTurn`.
-   *
-   * `persist: false` keeps the state in memory only — no row, no trace
-   * file — until something saves it, which for a chat session is its
-   * first turn: `executeTurn` opens the recorder and saves the result.
-   * The TUI mints its sessions that way because an allocation nobody
-   * types into left a row the session rail hides (it lists threads that
-   * have a first prompt), so there was no row to press `x` on and
-   * nothing could ever delete it. Every caller that hands the id to
-   * something else before that first turn takes the default: a durable
-   * task writes `session_id` into `tasks.sqlite`, a webhook and a
-   * Telegram chat remember a mapping, and each expects a later `load`
-   * to answer.
-   */
-  createSession(input?: {
-    metadata?: Record<string, unknown>;
-    persist?: boolean;
-  }): SessionState;
-  /**
-   * Drive one chat turn: append the user message, run the agent loop
-   * until the model emits `reply` (or `finish`), persist the resulting
-   * state, and return the new session + reason.
-   *
-   * Always funnels through `turnController.enqueue`, so concurrent
-   * invocations on the same `session.id` serialise FIFO while
-   * different sessions run in parallel. Callers that need to observe
-   * intermediate `AgentLoopEvent`s for their turn (HTTP SSE, sidecar
-   * NDJSON, future scheduler) pass an `eventHook` — events are routed
-   * to the hook of the currently-running submission for that session
-   * only. `origin` is informational; defaults to `"cli"`.
-   *
-   * `providerId` pins every completion of the turn to one configured
-   * provider and bypasses the fallback chain (a fusion worker on the
-   * local leg); an id the registry does not know rejects before the
-   * turn is queued — a pinned worker fails loudly rather than silently
-   * running on the active provider. `taskMaxDurationMs` is the turn's
-   * wall-clock ceiling (see `RunTurnOptions`).
-   */
-  runTurn(
-    session: SessionState,
-    userMessage: string,
-    options?: {
-      maxSteps?: number;
-      signal?: AbortSignal;
-      eventHook?: TurnEventHook;
-      origin?: TurnOrigin;
-      providerId?: string;
-      taskMaxDurationMs?: number;
-      /**
-       * Hide tools from this turn (see `RunTurnOptions.toolFilter`).
-       * `fusion.delegate` narrows a worker's catalog with it.
-       */
-      toolFilter?: (name: string) => boolean;
-      /** The turn's tool role (see `RunTurnOptions.toolRole`); a worker is a `builder`. */
-      toolRole?: ToolRole;
-      /** See `RunTurnOptions.reasoningEffort` — a fusion worker's setting. */
-      reasoningEffort?: ReasoningEffort;
-      /** See `RunTurnOptions.maxOutputTokens` — a fusion worker's cap. */
-      maxOutputTokens?: number;
-    },
-  ): Promise<RunTurnResult>;
-  /**
-   * Inline counterpart to `runTurn` — runs the agent loop and
-   * persists the result without acquiring the per-session lock. Use
-   * this only from a `run` callback already passed to
-   * `turnController.enqueue` for the same `session.id`; calling it
-   * outside a controller-managed frame defeats the concurrency
-   * contract and may race other turns on the session.
-   *
-   * The intended use case is a frontend (sidecar, HTTP) that needs
-   * to perform extra work *under* the per-session lock — re-reading
-   * a session mirror, updating local state — without re-entering
-   * the controller and deadlocking.
-   */
-  executeTurn(
-    session: SessionState,
-    userMessage: string,
-    options?: {
-      maxSteps?: number;
-      signal?: AbortSignal;
-      providerId?: string;
-      taskMaxDurationMs?: number;
-      toolFilter?: (name: string) => boolean;
-      toolRole?: ToolRole;
-      reasoningEffort?: ReasoningEffort;
-      maxOutputTokens?: number;
-    },
-  ): Promise<RunTurnResult>;
-  /**
-   * Mint an in-memory fusion worker session stamped with `meta`. Unlike
-   * `createSession` — whose deferred form is saved by its first turn —
-   * a worker is never persisted and opens no trace recorder; a
-   * turn run on it is `ephemeral` (no memory recall, reflection or
-   * lesson bump) and is never saved, so the id never reaches the session
-   * list. The orchestrator reads the returned transcript and discards
-   * it. See `src/session/fusion-worker-session.ts`.
-   */
-  createEphemeralSession(meta: FusionWorkerMeta): SessionState;
-
-  /**
-   * Build — never run, never persist — the prompt the next turn would
-   * open with, for a composer's context readout before any message is
-   * sent (the desktop's `POST /api/context-preview`). `sessionId` null
-   * means a fresh thread in this workspace: an unpersisted state with a
-   * throwaway id, so nothing lands in sessions.sqlite. An unknown id
-   * throws a `SessionNotFoundError`. Pure: no recall / memory-index
-   * prefetch runs, so those two sections are empty here and only appear
-   * once a real turn has built them.
-   */
-  previewPrompt(input: { sessionId: string | null; userMessage?: string }): BuiltPrompt;
-  /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
-  refreshSkills(): Promise<void>;
-  /**
-   * Rebuild the GBNF grammar and the `### tools` prompt catalog from
-   * the current `McpManager` state. Called by the TUI MCP panel after
-   * `mcpManager.addServerLive(...)` / `removeServerLive(...)` so the
-   * model can see (or stops seeing) the qualified MCP tool names on
-   * the next inference without a runtime restart. Mutates the
-   * `grammar` / `toolDescriptors` fields visible through the live
-   * AgentLoop closure; safe to call from any thread of control —
-   * `AgentLoop` reads both via late-binding getters set by bootstrap.
-   *
-   * KV-cache invalidation is intentional: the stable prefix changes
-   * the moment the tool catalog does. This is semantically equivalent
-   * to a runtime restart, just without the process churn.
-   */
-  refreshMcp(): Promise<void>;
-  /** Merge newly-added `config.llm.providers` entries into the registry. */
-  reloadLlmProviders(): Promise<void>;
-  /** Rebuild one provider from the current config (TUI configure flow). */
-  reloadLlmProvider(id: string): Promise<void>;
-  /**
-   * Re-read the local model's `/props` now (profile, vision, context
-   * window, slot pool) instead of at the next local turn. The TUI calls
-   * it after every managed daemon (re)start — by hand, by the
-   * supervisor, after a port move — so the capabilities a restart
-   * changed land on the live provider before anything asks for them.
-   * Never throws; a failed probe keeps the prior profile.
-   */
-  refreshLocalModelProfile(): Promise<void>;
-  /**
-   * Register `handler` as the approval sink for `sessionId`. Every
-   * `ApprovalRequest` whose `sessionId` matches will be routed to
-   * `handler` instead of the host's `onApprovalRequest` fallback.
-   * Returns an `unsubscribe` callback that removes the registration —
-   * the unsubscribe is a no-op if a later registration has already
-   * replaced this one (see `ApprovalRouter` for the locked
-   * invariants). Channels that own a session (Telegram today) call
-   * this so an approval prompt lands on the surface that originated
-   * the turn.
-   */
-  setApprovalHandlerForSession(
-    sessionId: string,
-    handler: ApprovalHandler,
-  ): () => void;
-  /**
-   * Hot-toggle anonymous analytics + error reporting (they share the
-   * single `config.analytics.enabled` opt-out). Rebuilds the in-memory
-   * PostHog / Sentry clients so the change applies without a restart.
-   * Persisting the flag to `config.json` is the caller's responsibility
-   * (the TUI settings tab). Idempotent. Turning it off first sends
-   * `analytics_disabled` with `via` (default `settings`).
-   */
-  setAnalyticsEnabled(
-    enabled: boolean,
-    via?: AnalyticsDisabledVia,
-  ): Promise<void>;
-  /**
-   * Report that the first-run flow reached `step` (a closed
-   * `OnboardingStep` name, never free text). `outcome` is passed only on
-   * the terminal step. A no-op while analytics is off. The TUI owns the
-   * flow, so it is the caller; the runtime owns the client.
-   */
-  reportOnboardingStep(step: string, outcome?: string): void;
-  /**
-   * Report that a provider was verified and saved — the install has a
-   * working backend. Fires at most once per install (state-store
-   * guarded); a no-op while analytics is off.
-   */
-  reportModelConfigured(provider: string, kind: "local" | "cloud"): void;
-  /**
-   * Live approval level (1 = every gated action asks … 5 = approve
-   * everything). Reads the gate, not the boot-time config snapshot, so
-   * it reflects `--no-approval` boots and later `setApprovalLevel`
-   * calls.
-   */
-  getApprovalLevel(): ApprovalLevel;
-  /**
-   * Move the approval ladder without a restart, in either direction.
-   * Out-of-range input is clamped to [1, 5]. Level 2 stops asking for
-   * file writes inside the session working directory; level 3 adds
-   * home-directory file operations (Trash, archive extraction) and
-   * HTTP; level 4 adds guarded shell commands, skill scripts, and
-   * process kills; level 5 approves everything, including browser
-   * navigation to non-web URLs. Hardline shell-guard rules still block
-   * outright at every level (they fire before the gate). Persisting
-   * `agent.approvalLevel` to `config.json` is the caller's
-   * responsibility. Idempotent; pending prompts
-   * are not resolved retroactively.
-   */
-  setApprovalLevel(level: number): void;
-  /**
-   * Plan mode: read-only until further notice.
-   *
-   * Orthogonal to the approval ladder, and deliberately so — the ladder
-   * answers "does this need to ask first", plan mode answers "is this
-   * the kind of thing we are doing right now". Every mutating tool is
-   * refused with a message telling the model to present a plan instead;
-   * every read-only tool still runs. See `agent/plan-mode.ts`.
-   *
-   * Session state rather than config: a "look but do not touch" that
-   * survived a restart would be a mystery rather than a memory.
-   */
-  getPlanMode(): boolean;
-  setPlanMode(on: boolean): void;
-  /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
-  shutdown(): Promise<void>;
-}
-
-/**
- * Log hint when managed mode llama-server is down.
- * Invariant: the agent runtime never spawns llama-server — use
- * `atomic-agent models start`. Exported for unit tests.
- */
-export function managedLocalLlmHealthFailureHint(port: number): string {
-  const url = `http://127.0.0.1:${port}`;
-  return (
-    `managed llama-server not reachable at ${url} → run \`atomic-agent models start\` or, if backend/model missing, ` +
-    `\`atomic-agent models update\` + \`atomic-agent models pull <id>\``
-  );
-}
+import { installGlobalErrorHandlers } from "../error-reporting/index.js";
 
 /**
  * One-stop factory that wires the whole agent runtime. Both the CLI
  * (`atomic-agent run`) and the sidecar (`atomic-agent-sidecar`) go
  * through this function — there is no other way to construct a live
- * AgentLoop. Keeping the wiring in a single file means the two entry
- * points cannot drift in subtle ways.
+ * AgentLoop. Explicit construction phases share the same root so
+ * entry points use the same wiring and lifecycle.
  */
 export async function createAgentRuntime(
   options: CreateAgentRuntimeOptions,
@@ -847,224 +85,21 @@ export async function createAgentRuntime(
   installTransportDeadlines(config);
   const workingDir = resolve(options.workingDir);
 
-  const logSinks: LogSink[] = options.handlers?.logSinks ?? [];
-  const metricSinks: MetricSink[] = options.handlers?.metricSinks ?? [];
-  const logger = new StructuredLogger({
-    level: config.log.level,
-    sinks: logSinks,
-  });
-  const metrics = new AgentMetrics(
-    new MetricsCollector({ sinks: metricSinks }),
-  );
+  const observability = createRuntimeObservability(config, options);
+  const { logger, metrics, analyticsStateStore } = observability;
 
-  // Anonymous product analytics (PostHog). Opt-out via
-  // `config.analytics.enabled = false`. The client is `null` when
-  // disabled; every event carries only an anonymous install id plus
-  // `{ provider, model }` — never message content, paths, args, or IP
-  // (see `src/analytics/`). Fire the one-time `app_installed` event on
-  // the first boot of a fresh install.
-  const analyticsStateStore = new AnalyticsStateStore(
-    resolve(config.paths.stateDir, "analytics.json"),
-  );
-  // Surface / arch / install channel / desktop version, stamped on every
-  // event and error report. The install id is the machine-wide one
-  // shared with the other surface (desktop <-> terminal).
-  const analyticsDimensions = resolveAnalyticsDimensions({
-    stateDir: config.paths.stateDir,
-    ...(options.analyticsSurface ? { surface: options.analyticsSurface } : {}),
-  });
-  const appInstalledContext = () => ({
-    installChannel: analyticsDimensions.installChannel,
-    otherSurfaceInstalled: detectOtherSurfaceInstalled(
-      analyticsDimensions.surface,
-    ),
-  });
-  // Both clients are `let` (not `const`) so `setAnalyticsEnabled` can
-  // hot-swap them without a process restart. The `runTurn` / `onEvent` /
-  // `shutdown` closures read these variables at call time, so a reassign
-  // is picked up on the next event.
-  //
-  // Anonymous error reporting (Sentry) shares the opt-out flag
-  // (`config.analytics.enabled`, or `ATOMIC_AGENT_ANALYTICS=off` for the
-  // process) and the anonymous install id with product analytics. Strict
-  // allowlist: only error type / category / safe scalar codes /
-  // path-stripped stack frames ever leave the machine — never message
-  // content, paths, tool args, or IP (see `src/error-reporting/`). Each
-  // client is `null` when disabled or its key/DSN is the placeholder.
-  const buildTelemetry = (enabled: boolean) =>
-    buildRuntimeTelemetry({
-      enabled,
-      store: analyticsStateStore,
-      dimensions: analyticsDimensions,
-      version: getAppVersion(),
-      logger,
-    });
-  let { analytics, errorReporter } = buildTelemetry(config.analytics.enabled);
-  captureAppInstalled(analytics, analyticsStateStore, appInstalledContext());
-  // Every interactive launch, not just the first: `app_installed` alone
-  // cannot tell a download that never ran from one that ran and stalled.
-  // Gated on the entry point opting in, so a cron task or a `serve`
-  // process does not read as somebody opening the app.
-  if (options.interactiveLaunch === true) {
-    captureAppOpened(analytics);
-  }
   // Read the current reporter lazily so a hot-toggle is reflected without
   // re-installing the process-global handlers.
-  installGlobalErrorHandlers(() => errorReporter, {
+  installGlobalErrorHandlers(observability.getErrorReporter, {
     brokenPipe: options.brokenPipe,
   });
 
-  /**
-   * Hot-toggle anonymous analytics (PostHog) and error reporting
-   * (Sentry). Persisting the flag to `config.json` is the caller's job
-   * (the TUI settings tab); this only rebuilds the in-memory clients so
-   * the change applies without a restart. Idempotent against the live
-   * intent; turning off sends `analytics_disabled` first (see
-   * `createTelemetryToggle`).
-   */
-  const toggleTelemetry = createTelemetryToggle({
-    initialEnabled: config.analytics.enabled,
-    store: analyticsStateStore,
-    get: () => ({ analytics, errorReporter }),
-    set: (next) => {
-      ({ analytics, errorReporter } = next);
-    },
-    rebuild: () => buildTelemetry(true),
-    // Fire the one-time `app_installed` event if it never went out
-    // while analytics was disabled (guarded by the state store).
-    onEnabled: () =>
-      captureAppInstalled(
-        analytics,
-        analyticsStateStore,
-        appInstalledContext(),
-      ),
-  });
-  const setAnalyticsEnabled = async (
-    enabled: boolean,
-    via?: AnalyticsDisabledVia,
-  ): Promise<void> => {
-    if (await toggleTelemetry(enabled, via)) {
-      logger.info("analytics toggled", { enabled });
-    }
-  };
+  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured } =
+    observability.createControls();
 
-  // Both read `analytics` at call time, so a hot-toggle is picked up
-  // without re-registering anything.
-  const reportOnboardingStep = (step: string, outcome?: string): void => {
-    captureOnboardingStep(analytics, step, outcome);
-  };
-  const reportModelConfigured = (
-    provider: string,
-    kind: "local" | "cloud",
-  ): void => {
-    captureModelConfigured(analytics, analyticsStateStore, { provider, kind });
-  };
+  const traces = createRuntimeTraces(config, options, logger);
+  const { traceBus, turnContext, touchRecorder, dropRecorder, ensureRecorder } = traces;
 
-  const traceEnabled = resolveTraceEnabled(
-    config.tracing.trace.enabled,
-    options.traceDefault,
-  );
-  const traceBus = traceEnabled
-    ? buildTraceBus({
-        extraSinks: options.handlers?.traceSinks ?? [],
-        dir: config.tracing.trace.dir,
-        maxBytesPerSession: config.tracing.trace.maxBytesPerSession,
-        logger,
-      })
-    : null;
-  /**
-   * Trace recorders keyed by session id, bounded so a long-lived runtime
-   * that serves many sessions (sidecar, HTTP server, background tasks)
-   * cannot grow this map without limit.
-   *
-   * `Map` preserves *insertion* order, which is not the same as recency:
-   * re-reading a key does not move it. Evicting `keys().next()` therefore
-   * targets the oldest-*created* session, which in a long-lived runtime is
-   * usually the operator's own still-running one. `touchRecorder` re-inserts
-   * on every access so the order really is least-recently-used, and
-   * `dropRecorder` removes a session's recorder when the session itself goes
-   * away — cheaper and more correct than waiting for the cap to push it out.
-   *
-   * Eviction is not free: `beginSession` is written to run once per NDJSON
-   * file, so re-creating an evicted recorder appends a second
-   * `session_started` and restarts `seq` at 0 in a file that already has
-   * events. Anything sorting or de-duplicating by `seq` then mis-orders.
-   * That is why an actively-running session is never evicted.
-   */
-  const MAX_TRACE_RECORDERS = 64;
-  const recorders = new Map<string, TraceRecorder>();
-  /** Sessions with a turn in flight. Never evicted; see `evictRecorders`. */
-  const activeTraceSessions = new Set<string>();
-
-  /** Look a recorder up and mark it most-recently-used. */
-  const touchRecorder = (sessionId: string): TraceRecorder | undefined => {
-    const recorder = recorders.get(sessionId);
-    if (recorder !== undefined) {
-      recorders.delete(sessionId);
-      recorders.set(sessionId, recorder);
-    }
-    return recorder;
-  };
-
-  /** Sessions deleted mid-turn, to be dropped once their turn releases. */
-  const pendingRecorderDrops = new Set<string>();
-
-  /**
-   * Forget a session's recorder once the session is gone.
-   *
-   * A delete that lands mid-turn must not unpin the running turn: the HTTP
-   * route deletes without an `isBusy` check (unlike the TUI, which refuses),
-   * and dropping the pin there would let the next burst evict a recorder the
-   * turn is still writing through — reintroducing the split trace file this
-   * pinning exists to prevent. Such a delete is deferred instead, and the
-   * turn's `finally` completes it; leaving it to cap pressure would strand the
-   * recorder of a session that no longer exists until 64 more arrive.
-   */
-  const dropRecorder = (sessionId: string): void => {
-    if (activeTraceSessions.has(sessionId)) {
-      pendingRecorderDrops.add(sessionId);
-      return;
-    }
-    pendingRecorderDrops.delete(sessionId);
-    recorders.delete(sessionId);
-  };
-
-  /**
-   * Trim to the cap, least-recently-used first, skipping sessions with a live
-   * turn and `exempt` (the entry the caller just created — it has not had a
-   * chance to be pinned yet, and evicting it would throw away the recorder
-   * whose creation triggered this call).
-   *
-   * If everything is pinned the map is allowed over the cap: losing a running
-   * session's trace is worse than holding a few extra recorders, and the
-   * excess drains as those turns finish and release their pins.
-   */
-  const evictRecorders = (exempt?: string): void => {
-    if (recorders.size <= MAX_TRACE_RECORDERS) return;
-    for (const sessionId of [...recorders.keys()]) {
-      if (recorders.size <= MAX_TRACE_RECORDERS) break;
-      if (sessionId === exempt) continue;
-      if (activeTraceSessions.has(sessionId)) continue;
-      recorders.delete(sessionId);
-    }
-  };
-  /**
-   * Per-turn context used to route `loopDeps.onEvent` calls back to
-   * the correct session. Two sessions running concurrently each have
-   * their own `AsyncLocalStorage` frame, so the `loopDeps.onEvent`
-   * closure can look up the right recorder without a process-global
-   * pointer.
-   */
-  const turnContext = new AsyncLocalStorage<{ sessionId: string }>();
-  /**
-   * The running turn's window occupancy, per session. Written by
-   * `emitAgentLoopEvent` (`prompt_built`, refined by `llm_completed`),
-   * consumed once by `executeTurn` when it stamps the finished session,
-   * and always cleared in its `finally` so an aborted turn cannot leak
-   * an entry — or bleed one turn's gauge into a session that never
-   * built a prompt of its own.
-   */
-  const lastTurnContextUsage = new Map<string, ContextUsageState>();
   const steeringInbox = new SteeringInbox();
   const turnController = new TurnController({
     onHookError: (err, ctxInfo) => {
@@ -1076,77 +111,14 @@ export async function createAgentRuntime(
     },
   });
 
-  /**
-   * Single fan-out for `AgentLoopEvent`s. The loop's own `onEvent`
-   * closure (built later) routes through here, and so does the provider
-   * fallback chain's notice sink — a `provider_switched` event surfaces
-   * exactly like any other loop event (trace recorder, TUI/HTTP/sidecar
-   * event streams, host handler).
-   *
-   * The session is a PARAMETER, not a read of the ambient ALS frame:
-   * `emitAgentLoopEvent` below supplies it from the frame for every
-   * ordinary caller, while the fusion fan-out supplies the parent's id
-   * explicitly from inside a worker's frame. Either way the id is what
-   * keeps two concurrent sessions from cross-contaminating.
-   */
-  const emitAgentLoopEventFor = (
-    sessionId: string | undefined,
-    event: AgentLoopEvent,
-  ): void => {
-    const ctx = sessionId === undefined ? undefined : { sessionId };
-    if (ctx) {
-      const recorder = touchRecorder(ctx.sessionId);
-      recorder?.onAgentEvent(event);
-      turnController.emit(ctx.sessionId, event);
-      // Track the turn's window occupancy so `executeTurn` can stamp it
-      // onto the session before the post-turn save. Mirrors the TUI's own
-      // reduction: the `prompt_built` estimate, refined by the provider's
-      // real tokenizer count when the completion reports one.
-      if (event.type === "llm_event") {
-        const step = event.event;
-        if (step.type === "prompt_built") {
-          lastTurnContextUsage.set(
-            ctx.sessionId,
-            contextUsageFromPrompt(step.prompt),
-          );
-        } else if (step.type === "llm_completed") {
-          const counted = step.completion.timing?.promptTokens ?? 0;
-          const usage = lastTurnContextUsage.get(ctx.sessionId);
-          if (counted > 0 && usage) {
-            lastTurnContextUsage.set(ctx.sessionId, {
-              ...usage,
-              tokens: counted,
-            });
-          }
-        }
-      }
-    }
-    if (event.type === "loop_failed") {
-      captureError(errorReporter, event.error, {
-        source: "llm_failure",
-        category: event.category,
-      });
-    }
-    options.handlers?.onAgentEvent?.(event, ctx?.sessionId);
-  };
-
-  /**
-   * The ALS-resolving form every in-turn caller uses. Split from
-   * `emitAgentLoopEventFor` for one caller that cannot use it:
-   * `fusion.delegate` emits its worker progress from inside a worker
-   * turn's event hook, which runs under the WORKER's ALS frame, and
-   * those events belong to the parent — the worker session has no
-   * recorder, no hook and no UI, so an event tagged with its id reaches
-   * nobody at all.
-   */
-  const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
-    emitAgentLoopEventFor(turnContext.getStore()?.sessionId, event);
-  };
+  const { emitAgentLoopEventFor, emitAgentLoopEvent } = traces.createEventRouting(
+    turnController, options, observability.getErrorReporter,
+  );
 
   // Memory sub-calls run fire-and-forget and fail without a word. This
   // counts consecutive timeouts / failures per session and sub-call and
-  // lifts the first streak into one `memory_health_warning` (AGENTS.md
-  // §"Memory sub-call health warning"). The session comes from the
+  // lifts the first streak into one `memory_health_warning` (see
+  // ../memory/docs/formation.md). The session comes from the
   // runner's own outcome, not the ALS frame: reflection settles after
   // `turn_finished`.
   const memoryHealth = createMemoryHealthAnnouncer({
@@ -1156,7 +128,7 @@ export async function createAgentRuntime(
 
   // Cross-provider fallover breaker. Owns no timer — every decision is
   // computed lazily from the wall clock when a turn asks for a provider
-  // (AGENTS.md §"Provider fallback chain"). The notice sink lifts each
+  // (../llm/docs/fallback.md). The notice sink lifts each
   // one-shot switch into a `provider_switched` AgentLoopEvent; the logger
   // records every advance, with the failed link's status and message.
   // Set once the provider registry exists (below). Until then the chain
@@ -1166,12 +138,7 @@ export async function createAgentRuntime(
     resolve: createFallbackChainResolver({
       readLlmConfig: () => resolveLlmConfig(getConfig()),
       builtProviderIds: () => builtProviderIds?.() ?? null,
-      // The auto-appended local link with no weights on disk is not a
-      // backstop: its daemon cannot start, and the turn would wait out
-      // its refused connection instead of failing on the primary's own
-      // error (ATO-117).
-      linkUnavailable: (llm, id) =>
-        isLocalLinkWithoutModel(llm, id, getConfig()),
+      linkUnavailable: (llm, id) => isLocalLinkWithoutModel(llm, id, getConfig()),
       logger,
     }),
     noticeSink: (notice) =>
@@ -1182,9 +149,8 @@ export async function createAgentRuntime(
   // Approval requests flow through `ApprovalRouter`: per-session
   // handlers (Telegram channel, future Slack/etc.) win, otherwise the
   // host's `onApprovalRequest` callback fires. The fallback closure
-  // captures `options.handlers` once so handler-rebinding via a
-  // future API would not be observed here — sessions that need a
-  // different fallback should register a per-session handler instead.
+  // reads `options.handlers` when an approval arrives. Sessions that
+  // need a different handler register with the per-session router.
   const approvalRouter = new ApprovalRouter((request) => {
     options.handlers?.onApprovalRequest?.(request);
   });
@@ -1212,125 +178,8 @@ export async function createAgentRuntime(
   // I/O. A cloud-backed boot must not open `/health` or `/props`
   // against a llama-server nobody is routed to: the warnings it prints
   // read as an active-backend failure while the real provider is fine.
-  const localTextActiveAtBoot = activeTextProviderIsLlamaServer(
-    resolveLlmConfig(config),
-  );
-
-  // The boot-time local `/health` line. Skipped whole when the route is
-  // cloud — including the "deferred" notice, which is advice about a
-  // backend this session never talks to.
-  const runBootHealthProbe = async (): Promise<void> => {
-    if (
-      !options.overrides?.skipLlamaHealthCheck &&
-      !options.overrides?.deferLlamaHealthCheck &&
-      !options.overrides?.llamaComplete
-    ) {
-      // One attempt, not the retry ladder: this probe exists to log a line,
-      // and with llama down the default ladder (5 attempts, exponential
-      // backoff) stalled every boot for 15.5 s before the loop then failed
-      // fast anyway. The first real completion is the retry.
-      const health = await checkLlamaServer({ retries: 0 });
-      if (!health.reachable) {
-        logger.warn("llama-server health check failed", {
-          error: health.error,
-          url: config.localModels.url,
-        });
-        if (config.localModels.mode === "managed") {
-          logger.warn(
-            managedLocalLlmHealthFailureHint(config.localModels.managed.port),
-            {
-              mode: "managed",
-            },
-          );
-        }
-      } else {
-        logger.info("llama-server reachable", {
-          url: config.localModels.url,
-          latencyMs: health.latencyMs,
-        });
-      }
-    } else if (options.overrides?.deferLlamaHealthCheck) {
-      logger.info(
-        "llama-server health check deferred; runtime will refresh on first turn",
-        {
-          url: config.localModels.url,
-        },
-      );
-    }
-  };
-
-  if (localTextActiveAtBoot) {
-    await runBootHealthProbe();
-  } else {
-    logger.info(
-      "local llama probes skipped; active text provider is not local",
-      {
-        activeTextProvider: resolveLlmConfig(config).activeTextProvider,
-        url: config.localModels.url,
-      },
-    );
-  }
-
-  const llama = new LlamaServerClient();
-  const { profile, modelAlias, totalSlots } = await resolveModelProfile(
-    options.overrides,
-    llama,
-    logger,
-    config.localModels.url,
-    localTextActiveAtBoot,
-  );
-  const slotManager = new SlotManager(totalSlots ?? undefined);
-  if (totalSlots !== null) {
-    logger.info("slot manager configured from /props", {
-      totalSlots,
-      url: config.localModels.url,
-    });
-  } else {
-    // Managed mode always defers the boot probe (the daemon may not be up
-    // yet), so this is the normal path there. `ModelProfileManager` calls
-    // `slotManager.resize()` on its first successful `/props` refresh at
-    // turn start; until then the pool is the single slot every
-    // llama-server is guaranteed to have.
-    logger.info("slot manager using conservative default (probe deferred)", {
-      slotCount: DEFAULT_SLOT_COUNT,
-    });
-  }
-
-  // A context window that cannot hold the fixed prompt plus a full
-  // generation budget makes every step come back `truncated` — the model
-  // burns its remaining tokens and never closes a tool-call array. Loud
-  // at startup because the failure mode downstream is silent.
-  //
-  // Advice about the LOCAL server's `--ctx-size` only, so it rides the
-  // same gate as the probe that produced the number (issue #112): on a
-  // cloud route there is no `/props` reading to judge, and the hints it
-  // prints name flags a cloud provider does not have.
-  const warnOnSmallContextWindow = (
-    candidate: ReturnType<typeof detectModelProfile>,
-  ): void => {
-    // Judged against the reply reserve the budget really holds on this
-    // window, so a cap raised past the window (96k on a 32k model) does
-    // not make every model "too small".
-    const minUsableCtx = minUsableContextWindow(
-      config.localModels.completionMaxTokens,
-      candidate.contextWindow,
-    );
-    if (candidate.contextWindow && candidate.contextWindow < minUsableCtx) {
-      logger.warn("context window too small for the agent prompt", {
-        contextWindow: candidate.contextWindow,
-        required: minUsableCtx,
-        completionMaxTokens: config.localModels.completionMaxTokens,
-        hint:
-          config.localModels.mode === "managed"
-            ? "raise localModels.managed.contextSize, lower localModels.completionMaxTokens, or pick a model that fits VRAM"
-            : "start llama-server with a larger --ctx-size, or lower localModels.completionMaxTokens",
-      });
-    }
-  };
-  if (localTextActiveAtBoot) {
-    warnOnSmallContextWindow(profile);
-  }
-
+  const localProfile = await prepareRuntimeLocalProfile(config, options, logger);
+  const { llama, profile, slotManager } = localProfile;
   const browserBackend: BrowserBackend =
     options.overrides?.browserBackend ??
     new PlaywrightBackend({
@@ -1342,26 +191,8 @@ export async function createAgentRuntime(
       launchTimeoutMs: config.browser.launchTimeoutMs,
       cdpUrl: config.browser.cdpUrl,
     });
-
-  await seedStarterSkillsIfMissing({
-    globalSkillsDir: config.paths.globalSkillsDir,
-    logger,
-  });
-
-  const skillRegistry = new SkillRegistry(
-    {
-      globalDir: config.paths.globalSkillsDir,
-      projectDir: join(workingDir, config.paths.projectSkillsDirName),
-    },
-    config.skills.disabled,
-  );
-  await skillRegistry.refresh();
-  for (const e of skillRegistry.errors()) {
-    logger.warn("skill registry: skipped skill directory", {
-      path: e.path,
-      error: e.error,
-    });
-  }
+  const preparedSkills = await prepareRuntimeSkills(config, workingDir, logger);
+  const { skillRegistry } = preparedSkills;
 
   const capabilities = await buildCapabilities({
     workingDir,
@@ -1400,21 +231,8 @@ export async function createAgentRuntime(
       );
     }
   }
-  // TODO(memory-v2): cross-phase invariant 4 — the consolidator
-  // (phase 5) registers with the existing `Scheduler` here, not via a
-  // new `setInterval`. Bootstrap also gains a check from phase 5
-  // onwards: assert `memory.dedup.fts5Threshold ≤
-  // memory.consolidation.similarityThreshold` (§13.7.3 / invariant 14),
-  // fail-fast on violation.
-  const profileStore = new ProfileStore({
-    dbFile: config.paths.memoryDbFile,
-    metrics,
-    maxEntries: config.memory.profile.maxEntries,
-    // Issue #407. The store knows no session; a write from a tool call
-    // or from reflection runs inside the turn's ALS frame, which names
-    // it. The log carries counts only — keys can be sensitive — while
-    // the local trace keeps the keys (`/report` strips them).
-    onEvicted: (eviction) => {
+  const memoryStores = await createRuntimeMemoryStores({
+    config, metrics, onProfileEvicted: (eviction) => {
       const sessionId = turnContext.getStore()?.sessionId;
       logger.info("profile facts evicted over memory.profile.maxEntries", {
         evicted: eviction.evicted.length,
@@ -1431,221 +249,9 @@ export async function createAgentRuntime(
       });
     },
   });
-  const notesStore = new MemoryStore({
-    dbFile: config.paths.memoryDbFile,
-    maxEntries: config.memory.notes.maxEntries,
-    dedup: {
-      enabled: config.memory.dedup.enabled,
-      fts5Threshold: config.memory.dedup.fts5Threshold,
-    },
-    eviction: {
-      utilityWeighted: config.memory.eviction.utilityWeighted,
-      maxAgeMs: config.memory.eviction.maxAgeMs,
-    },
-    metrics,
-  });
+  const { profileStore, notesStore, embeddingClient, linkStore, lessonStore, procedureStore, voteStore } = memoryStores;
 
-  // Memory-v2 phase 1B. Embedding plumbing — opt-in, graceful
-  // degradation. Conditions to wire it up (in order):
-  //
-  //   1. Both feature flags on: `memory.embeddings.enabled` AND
-  //      `localModels.embeddings.enabled`. Either off ⇒ FTS5-only.
-  //   2. A valid embedding model id is configured.
-  //   3. Probe `localModels.embeddings.url` for `/health`. Daemon
-  //      down ⇒ FTS5-only (logged + counted as `disabled`, not as a
-  //      failure — runtime keeps booting).
-  //
-  // The probe runs in the bootstrap critical path with a short
-  // timeout so a stale lockfile / stuck daemon cannot wedge the
-  // entire startup. Failure is observability-only: we never throw.
-  let embeddingHealth: "ok" | "unreachable" | "disabled" = "disabled";
-  let embeddingClient: EmbeddingClient | null = null;
-  if (
-    config.memory.embeddings.enabled &&
-    config.localModels.embeddings.enabled &&
-    config.localModels.embeddings.modelId !== null &&
-    isKnownEmbeddingModelId(config.localModels.embeddings.modelId)
-  ) {
-    const embModelDef = getEmbeddingModelDef(
-      config.localModels.embeddings.modelId,
-    );
-    const embUrl = config.localModels.embeddings.url;
-    const probe = await checkLlamaServer({
-      url: embUrl,
-      retries: 0,
-      backoffMs: 0,
-      timeoutMs: 2000,
-    }).catch(() => ({ reachable: false }));
-    if (probe.reachable) {
-      try {
-        // Not a bare `LlamaEmbeddingClient`: a managed embedding daemon
-        // requires the key (#582), and `/health` above is exempt from
-        // it, so a keyless client would pass the probe and then get 401
-        // on every `/embedding`.
-        const client = createLocalEmbeddingClient({
-          url: embUrl,
-          dim: embModelDef.dim,
-          model: embModelDef.id,
-        });
-        embeddingClient = client;
-        const embStore = new EmbeddingStore({
-          db: notesStore.getDatabaseHandleForEmbeddings(),
-        });
-        const writer = new EmbeddingWriter({
-          client,
-          store: embStore,
-          metrics,
-        });
-        notesStore.attachEmbeddings({ writer, store: embStore });
-        embeddingHealth = "ok";
-      } catch (e) {
-        // Construction errors here are pure programmer error
-        // (constructor validation): log + degrade, never throw.
-        process.stderr.write(
-          `memory-v2 phase 1B: failed to wire embedding client: ${
-            e instanceof Error ? e.message : String(e)
-          }\n`,
-        );
-        embeddingHealth = "unreachable";
-      }
-    } else {
-      embeddingHealth = "unreachable";
-      process.stderr.write(
-        `memory-v2 phase 1B: embedding daemon at ${embUrl} is unreachable; ` +
-          `hybrid recall disabled, FTS5-only path active.\n`,
-      );
-    }
-    metrics.recordMemoryEmbeddingsDaemonHealth({
-      outcome: embeddingHealth,
-      model: embModelDef.id,
-    });
-  } else {
-    metrics.recordMemoryEmbeddingsDaemonHealth({
-      outcome: "disabled",
-      model: null,
-    });
-  }
-
-  // Memory-v2 phase 2. The link graph store rides the same memory.sqlite
-  // handle as `notesStore` — `MemoryStore` already enabled
-  // `foreign_keys = ON` so the cascade fires on `memories.remove(id)`.
-  // The store is always constructed (the table exists from schema v6
-  // onwards); the agent-facing recall expansion + link-generator
-  // sub-call are independently gated on `memory.links.enabled` /
-  // `memory.links.autoGenerate`.
-  const linkStore = new LinkStore({
-    db: notesStore.getDatabaseHandleForEmbeddings(),
-  });
-
-  // Memory-v2 phase 5. `LessonStore` is always constructed when the
-  // schema is present (v8+) — the agent-facing tool registration is
-  // gated on `memory.lessons.enabled`, and the consolidator is
-  // additionally gated on `memory.consolidation.enabled`. Keeping the
-  // handle open even when both switches are off is intentional: the
-  // SQLite connection lives next to `MemoryStore` / `ProfileStore` /
-  // `LinkStore` in the same file and must be closed in `shutdown`.
-  const lessonStore = new LessonStore({
-    dbFile: config.paths.memoryDbFile,
-    maxEntries: config.memory.lessons.maxEntries,
-    metrics,
-  });
-
-  // Memory-v2 phase 7b. `ProcedureStore` shares the same SQLite handle
-  // as `MemoryStore`; the `procedures` table sits next to `memories`,
-  // `lessons`, and `profile_facts`. Always constructed when the schema
-  // (v10+) is present so the handle has one owner — the agent-facing
-  // tool registration + consolidator wiring are independently gated
-  // on `memory.procedures.enabled`.
-  const procedureStore = new ProcedureStore({
-    dbFile: config.paths.memoryDbFile,
-    maxEntries: config.memory.procedures.maxEntries,
-    metrics,
-  });
-
-  // Memory-v2 phase 7a. `VoteStore` shares the same SQLite handle as
-  // the `MemoryStore` (the `vote_score` columns live on the same
-  // tables it owns), so there is no separate file to close in
-  // `shutdown`. It is always constructed when `memory.voting.enabled`
-  // is on; the rest of the wiring (reflection decorator, consolidator
-  // dep) is conditional on the same flag.
-  const voteStore: VoteStore | null = config.memory.voting.enabled
-    ? new VoteStore({
-        db: notesStore.getDatabaseHandleForEmbeddings(),
-      })
-    : null;
-
-  // Constructed before the tool registry: `os.fs.locate_project`
-  // (issue #77) reads recent-session working dirs through the
-  // column-only `listRecentWorkingDirs` projection, so the store must
-  // exist by the time `registerOsTools` wires the closure below.
-  const sessionStore = new SessionStore();
-  if (sessionStore.turnMarksUnavailable !== null) {
-    // The first open after an upgrade adds the `turn_owner` column, and
-    // could not this time. The runtime runs without turn marks — as it
-    // did before they existed — and the next start tries again.
-    logger.warn("session turn marks unavailable for this run", {
-      error: sessionStore.turnMarksUnavailable,
-    });
-  }
-  // A row still marked `running` by a process that is gone is a turn that
-  // will never write its end — the app was killed or crashed mid-turn —
-  // and every list would show it running for ever. End those before
-  // anything reads the table (the retention pass below included: it
-  // never prunes a live row, so a ghost would also be kept for ever).
-  // Rows a live process still owns — a second window, a `serve` beside a
-  // TUI — are left alone. Never blocks boot.
-  try {
-    const recovered = sessionStore.recoverInterruptedTurns();
-    if (recovered.length > 0) {
-      logger.info("sessions left mid-turn by a stopped agent marked cancelled", {
-        count: recovered.length,
-        sessionIds: recovered.join(","),
-      });
-    }
-  } catch (err) {
-    logger.warn("could not end sessions left mid-turn; continuing", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-  // `sessions.sqlite` and the traces beside it are the only state this
-  // runtime never shrinks (§"Session retention"). One bounded pass here,
-  // opt-in, and wrapped so that a prune can never be the reason a
-  // runtime fails to start — a retention pass that throws costs the
-  // operator nothing but disk.
-  if (config.sessions.retention.enabled) {
-    try {
-      const pruned = pruneSessions({
-        db: sessionStore.getDatabaseHandleForRetention(),
-        maxAgeDays: config.sessions.retention.maxAgeDays,
-        maxRows: config.sessions.retention.maxRows,
-        tracesDir: config.paths.tracesDir,
-        // Read here, not inside the prune: what points at a session is
-        // this runtime's knowledge, and both files are read before the
-        // stores that own them exist (the task queue and the webhook
-        // map are both built hundreds of lines below).
-        keepSessionIds: readSessionPins({
-          tasksDbFile: config.paths.tasksDbFile,
-          webhookSessionsFile: resolve(
-            config.paths.stateDir,
-            WEBHOOK_SESSIONS_FILENAME,
-          ),
-        }),
-      });
-      // Nothing on a no-op: an install inside its retention window would
-      // otherwise log a line every boot saying it did nothing.
-      if (pruned.deleted > 0) {
-        logger.info("pruned sessions past retention", {
-          ...pruned,
-          maxAgeDays: config.sessions.retention.maxAgeDays,
-          maxRows: config.sessions.retention.maxRows,
-        });
-      }
-    } catch (err) {
-      logger.warn("session retention pass failed; continuing", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  const sessionStore = prepareRuntimeSessionStore(config, logger);
   // The commands `os.shell.run` detached at the default timeout (F47).
   // One registry for the runtime, so the turn-end (`executeTurn`),
   // session-delete and shutdown paths below can stop what a session
@@ -1654,26 +260,10 @@ export async function createAgentRuntime(
     jobMaxMs: config.tools.shell.jobMaxMs,
     maxJobs: config.tools.shell.maxJobs,
   });
-  // Drop a session's trace recorder — and stop its detached shell jobs,
-  // kept ones included — when the session itself is deleted, so the map
-  // shrinks on teardown instead of relying on the cap to push entries
-  // out. Wrapped here rather than at each call site (the TUI and the
-  // HTTP route both delete sessions) so every caller gets it.
-  const deleteSession = sessionStore.delete.bind(sessionStore);
-  sessionStore.delete = (id: string): void => {
-    dropRecorder(id);
-    shellJobs.endSession(id);
-    deleteSession(id);
-  };
+  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs);
 
-  const toolRegistry = new ToolRegistry();
-  toolRegistry.register(finishTool);
-  toolRegistry.register(replyTool);
-  if (config.browser.enabled) {
-    for (const tool of buildBrowserTools(browserBackend, dangerous)) {
-      toolRegistry.register(tool);
-    }
-  }
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous);
+
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
   // and read by `os.fs.write` to tell an input the request names from
@@ -1687,84 +277,9 @@ export async function createAgentRuntime(
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
   const declaredInputs = new DeclaredInputsRegistry();
-  registerOsTools(toolRegistry, {
-    ...dangerous,
-    config: {
-      http: config.http,
-      web: config.web,
-      projects: config.projects,
-      tools: config.tools,
-    },
-    listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
-    resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
-    declaredInputs,
-    // The trust surface (`config.json` + `.env`) is resolved once, here,
-    // and injected into the fs tools — the tools layer must not know
-    // where it lives. Pinned by the level-4 `trust_config` case in
-    // bootstrap.test.ts.
-    trustConfigPaths: getTrustConfigPaths(config.paths),
-    // Lets `os.web.search` persist its result cache and provider cooldown
-    // across processes (#256); `web.search.persistCache: false` opts out.
-    // Pinned by the `#256` seam case in bootstrap.test.ts — the direct
-    // persistence tests cannot see this line.
-    stateDir: config.paths.stateDir,
-    // The closed-repository switch, read live: the Integrations hub
-    // writes `git.remoteSync` and resets the config cache, so the very
-    // next `git push` through the shell sees the new answer without a
-    // restart. The guard never reads config itself.
-    shellPolicy: {
-      isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
-    },
-    shellJobs,
-  });
-  // The read-only `verify.*` family: syntax per file, and (below) a
-  // command / service / page run against a throwaway copy of the
-  // working directory. Registered next to the OS tools because it is
-  // the review half of what they build.
-  registerVerifyTools(toolRegistry, {
-    ...dangerous,
-    config: { browser: config.browser },
-  });
-  // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
-  // token saved in the Integrations hub works on the next turn. The
-  // descriptors, by contrast, are gated on the token (see
-  // `rebuildToolDescriptorsFromMcp`) so the model never sees tools it
-  // cannot exercise.
-  registerGithubTools(toolRegistry, dangerous);
-  registerSkillTools(toolRegistry, skillRegistry, dangerous);
-  toolRegistry.register(buildToolViewTool());
-  // ATO-199. Every stored user message, newest session first — the only
-  // source a stored name is checked against. Then check, once, every
-  // name-like profile fact no check has looked at yet (an older build
-  // stored names the user never wrote), and re-check the ones found
-  // ungrounded against the sessions written since. Not awaited: until a
-  // name is vouched for it simply stays out of `### profile`. A store
-  // closed under the walk (shutdown) ends it with a warning, nothing
-  // more; nothing is ever deleted.
-  const nameGroundingSource = sessionGroundingSource(sessionStore);
-  if (config.memory.profile.enabled) {
-    void verifyProfileNameFacts({
-      store: profileStore,
-      source: nameGroundingSource,
-      logger,
-    }).catch((err: unknown) => {
-      logger.warn("profile name check failed; unchecked names stay out of the prompt", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-  registerMemoryTools(toolRegistry, {
-    profileStore,
-    profileEnabled: config.memory.profile.enabled,
-    notesStore,
-    notesEnabled: config.memory.notes.enabled,
-    notesRecallDefaultK: config.memory.notes.recallDefaultK,
-    notesMaxContentChars: config.memory.notes.maxContentChars,
-    lessonStore,
-    lessonsEnabled: config.memory.lessons.enabled,
-    procedureStore,
-    proceduresEnabled: config.memory.procedures.enabled,
-    nameGroundingSource,
+  registerRuntimeCoreTools({
+    config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
+    declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
   });
 
   // Vision provider wiring is deferred until after `profileManager` is
@@ -1773,197 +288,15 @@ export async function createAgentRuntime(
   // `plain-instruct` fallback at construction time. See
   // `LlamaServerProvider.capabilities` for the rationale.
 
-  let skillSection = buildSkillCatalogSection(skillRegistry.list(), {
-    tokenBudget: config.skills.catalogTokenBudget,
-  });
-  let skillCatalog: readonly SkillCatalogEntry[] = skillSection.entries;
+  const skillCatalogState = preparedSkills.createCatalog();
 
-  let grammar = await buildGrammar(profile, config.paths.grammarsDir, {
-    browserEnabled: config.browser.enabled,
-    reasoningBudgetTokens: config.localModels.reasoningBudgetTokens,
-  });
-  const grammarViolations = checkProfileGrammarAligned(profile, grammar);
-  if (grammarViolations.length > 0) {
-    logger.warn("profile/grammar invariant violated", {
-      profile: profile.id,
-      violations: grammarViolations,
-    });
-  }
+  const connectedLocal = await connectRuntimeLocalProfile(config, options, logger, localProfile);
+  const { profileManager, localBackend } = connectedLocal;
+  const initialGrammar = connectedLocal.initialGrammar;
 
-  // Install a hot-swap manager only when the runtime is bound to a real
-  // llama-server. Tests that inject `llamaComplete` or `llamaProps*`
-  // stub out the HTTP layer and must keep the static profile/grammar
-  // pair they already configured.
-  const profileManager = shouldInstallProfileManager(options.overrides)
-    ? new ModelProfileManager({
-        llama,
-        initialProfile: profile,
-        initialGrammar: grammar,
-        initialModelId: modelAlias,
-        grammarsDir: config.paths.grammarsDir,
-        browserEnabled: config.browser.enabled,
-        reasoningBudgetTokens: config.localModels.reasoningBudgetTokens,
-        onTotalSlots: (discovered) => {
-          if (discovered === slotManager.getSlotCount()) return;
-          logger.info("slot pool resized from /props", {
-            from: slotManager.getSlotCount(),
-            to: discovered,
-          });
-          slotManager.resize(discovered);
-        },
-        // The managed daemon's start-time throughput probe leaves its
-        // reading next to the pid file; the pid check keeps a previous
-        // daemon's figure from describing this one. An external server
-        // was never probed, so nothing is read for it.
-        ...(config.localModels.mode === "managed"
-          ? {
-              readThroughput: () => {
-                const dataDir = config.paths.localModelsDataDir;
-                return (
-                  readThroughputRecord(dataDir, readRunningPid(dataDir))
-                    ?.tokensPerSecond ?? null
-                );
-              },
-              // Whether the live daemon runs `--swa-full` — what turns a
-              // sliding-window model's `prefixReuse` back to `partial`.
-              swaFullActive: () => {
-                const dataDir = config.paths.localModelsDataDir;
-                return (
-                  readLaunchRecord(dataDir, readRunningPid(dataDir))
-                    ?.swaFull === true
-                );
-              },
-            }
-          : {}),
-        logger,
-      })
-    : undefined;
-
-  const getLiveProfile = () => profileManager?.getProfile() ?? profile;
-  const getLiveModelId = () => profileManager?.getModelId() ?? modelAlias;
-
-  // Issue #112. The manager above is built either way — construction is
-  // pure field assignment, no I/O — because deleting it on a cloud boot
-  // would leave a mid-turn fallover to a `llama-server` link running on
-  // a frozen `plain-instruct` profile with no way back. What is gated is
-  // its *probing*: the boot probes are deferred here and replayed once,
-  // lazily, by whichever path reaches local inference first (a provider
-  // switch, via the agent loop's turn-start gate, or a cloud→local
-  // fallover, via the fallback seam's `prepareLink`).
-  const localBackend = new DeferredLocalBackendProbes(
-    {
-      isActive: () =>
-        activeTextProviderIsLlamaServer(resolveLlmConfig(getConfig())),
-      restore: async () => {
-        logger.info("restoring local llama backend state", {
-          url: config.localModels.url,
-        });
-        try {
-          await runBootHealthProbe();
-          // `refresh()` is the deferred `/props`: profile, grammar and
-          // the slot pool (via `onTotalSlots`) in one round trip. It
-          // swallows its own failures and keeps the prior profile.
-          await profileManager?.refresh();
-          warnOnSmallContextWindow(getLiveProfile());
-        } catch (err) {
-          // The seam awaits this before a fallover attempt: a throw here
-          // would fail the link and advance the chain over a diagnostic.
-          // The completion itself is the real verdict on the backend.
-          logger.warn("local llama backend restore failed; continuing", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      },
-    },
-    localTextActiveAtBoot,
-  );
-
-  const providerRegistry = await ProviderRegistry.fromConfig(config, {
-    config,
-    llamaClient: llama,
-    getProfile: getLiveProfile,
-    getModelId: getLiveModelId,
-    logger,
-  });
+  const providers = await connectRuntimeProviders(config, logger, localProfile, connectedLocal);
+  const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveActiveModelName, resolveRouteVision } = providers;
   builtProviderIds = () => providerRegistry.listIds();
-
-  /**
-   * Re-read on every inference so TUI `setActive` hot-swap takes effect.
-   * `providerId` overrides which provider is used for this call — the
-   * fallback chain passes the chosen link's id; transport/adapter/slot
-   * affinity are then resolved for THAT provider, not the active one. An
-   * unknown id degrades to the active provider (a raced config edit).
-   */
-  const resolveActiveLlmSlice = (providerId?: string) => {
-    const fresh = getConfig();
-    const resolved = resolveLlmConfig(fresh);
-    const provider =
-      (providerId ? providerRegistry.getProvider(providerId) : undefined) ??
-      providerRegistry.activeText;
-    return {
-      provider,
-      transport: resolveActiveToolTransport(resolved, provider),
-      adapter: provider.toolCallAdapter ?? null,
-      slotAffinity: provider.capabilities.supportsSlotAffinity,
-      parallelTools: provider.capabilities.supportsParallelTools,
-      strictTools: modelWantsStrictTools(resolved, provider.id),
-      // The entry's kind, not the provider object's — `LlmProvider` has
-      // no kind and a llama-server link is only identifiable from the
-      // config entry it was built from.
-      isLlamaServer:
-        resolved.providers.find((p) => p.id === provider.id)?.kind ===
-        "llama-server",
-    };
-  };
-
-  /**
-   * The live run mode. Re-read per call, never captured: the resolver's
-   * rule is that `llm.activeTextProvider` is authoritative, so an
-   * operator who switches provider by hand drops out of fusion on the
-   * next read and `fusion.delegate` must see that immediately.
-   */
-  const resolveCurrentRunMode = (): ResolvedRunMode => {
-    const fresh = getConfig();
-    return resolveRunMode(resolveLlmConfig(fresh), {
-      managedModelId: fresh.localModels.managed.modelId,
-    });
-  };
-
-  /**
-   * Real model identifier for analytics. Cloud providers carry the model
-   * in their config entry (`defaultChatModel` / `model`). Local llama-server
-   * has no model name in its synthesized `local-llama` entry, so we prefer
-   * the managed GGUF id (`localModels.managed.modelId`); in external mode
-   * (no GGUF id) we fall back to the sanitized operator `--alias`
-   * (`/props.model_alias`). The detected profile id (e.g. `plain-instruct`)
-   * is only a last-resort fallback — it names the prompt profile, not the
-   * model, so it must never be the primary source.
-   */
-  const resolveActiveModelName = (): string => {
-    const liveConfig = getConfig();
-    const resolved = resolveLlmConfig(liveConfig);
-    const entry = resolved.providers.find(
-      (p) => p.id === resolved.activeTextProvider,
-    );
-    return (
-      entry?.defaultChatModel ??
-      entry?.model ??
-      liveConfig.localModels.managed.modelId ??
-      sanitizeModelAlias(modelAlias) ??
-      getLiveProfile().id
-    );
-  };
-
-  /**
-   * Whether the model on `providerId` can read images, for the route
-   * note. `null` when the provider is unknown. Per provider today; a
-   * per-model answer slots in here without touching the note.
-   */
-  const resolveRouteVision = (providerId: string): boolean | null => {
-    if (!getConfig().vision.enabled) return false;
-    const provider = providerRegistry.getProvider(providerId);
-    return provider === undefined ? null : provider.capabilities.vision;
-  };
 
   const bootstrapLlmSlice = resolveActiveLlmSlice();
   const textProvider = bootstrapLlmSlice.provider;
@@ -1980,289 +313,16 @@ export async function createAgentRuntime(
   // `captureMessageSent` fires.
   const turnUsageMeter = new TurnUsageMeter();
 
-  /**
-   * Pricing for a model id on the provider that served it (default: the
-   * active one). See `resolveModelPricingFor` for the sources and why
-   * the served id, not the active id, is the right key.
-   */
-  const resolveModelPricing = (
-    modelId: string | null,
-    providerId?: string,
-  ): ResolvedModel | undefined =>
-    resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId);
+  const modelContext = createRuntimeModelContext(config, providers);
+  const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
+  registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
 
-  /**
-   * The active model's context window, for providers the `/props` probe
-   * cannot reach.
-   *
-   * `source === "default"` is deliberately treated as unknown. That
-   * branch is `DEFAULT_CHAT`'s nominal 128k — a placeholder, not a fact
-   * about the model actually serving the request — and a budget computed
-   * against a guessed window silently mis-sizes every prompt. Better to
-   * report no window and let the caller fall back to a fixed cap it can
-   * defend. The same reasoning keeps the TUI gauge from drawing itself
-   * against that number.
-   *
-   * Resolved per step rather than captured once, so switching model
-   * mid-session is picked up by the next prompt.
-   */
-  /**
-   * Context windows the model server revealed — by cutting a reply short
-   * (`completion_truncated` with cause `context_window`, where prompt +
-   * reply tokens is the window) or by refusing a request as too large
-   * (`prompt_repacked`). Keyed by provider and model, kept for the life
-   * of the process: the same server keeps the same window, and a
-   * restart may well change it (llama.cpp `-c`, Lemonade's auto-sizing).
-   * A demonstrated window overrides the catalogue's nominal 128k default
-   * and clamps a real catalogue entry, since a server can run a model
-   * with less context than the model supports. A window only moves
-   * towards what the server demonstrated — see `LearnedContextWindows`.
-   */
-  const observedContextWindows = new LearnedContextWindows();
-  const activeModelKey = (): string =>
-    `${resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName()}`;
-  const observeContextWindow = (contextWindow: number): void => {
-    observedContextWindows.observe(activeModelKey(), contextWindow);
-  };
-  const raiseContextWindowTo = (tokens: number): void => {
-    observedContextWindows.raise(activeModelKey(), tokens);
-  };
-  const resolveCatalogContextWindow = (): number | null => {
-    const observed = observedContextWindows.get(activeModelKey());
-    const model = resolveModelPricing(resolveActiveModelName());
-    const catalogued =
-      !model || model.source === "default" || model.contextWindow <= 0
-        ? null
-        : model.contextWindow;
-    if (observed === undefined) return catalogued;
-    return catalogued === null ? observed : Math.min(observed, catalogued);
-  };
+  const mcpCatalog = await connectRuntimeMcpCatalog({
+    config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
+    visionOnLiveRoute, resolveCurrentRunMode,
+  });
+  const { mcpManager, getGrammar, effectiveToolDescriptors } = mcpCatalog;
 
-  // Vision follows the live route (`vision-route.ts`): each call asks
-  // the registry for the provider serving that step — the pinned fusion
-  // worker leg, else the active text provider — so a `/llm provider`,
-  // `/model` or route-picker switch takes effect on the next call. The
-  // boot provider used to be captured here, and kept receiving images
-  // after the operator had moved off it.
-  const resolveCurrentVisionProvider = (
-    providerId: string | undefined,
-  ): LlmProvider | undefined =>
-    resolveVisionProvider(providerRegistry, providerId);
-  const visionOnLiveRoute = (): boolean =>
-    config.vision.enabled &&
-    visionRouteAvailable({
-      registry: providerRegistry,
-      isLlamaServer: (providerId) =>
-        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
-      fusionWorkerProviderId: () => {
-        const mode = resolveCurrentRunMode();
-        return mode.effective === "fusion" ? mode.workerProviderId : null;
-      },
-    });
-  registerVisionTools(toolRegistry, {
-    provider: config.vision.enabled ? resolveCurrentVisionProvider : undefined,
-    enabled: config.vision.enabled,
-    maxImagesPerCall: config.vision.maxImagesPerCall,
-    maxImageBytes: config.vision.maxImageBytes,
-    // A refusal names vision-capable models on the same provider, read
-    // from the live config so it follows the entry being refused.
-    visionAlternatives: (providerId) => {
-      const entry = resolveLlmConfig(getConfig()).providers.find(
-        (candidate) => candidate.id === providerId,
-      );
-      return entry ? visionCapableAlternatives(entry) : [];
-    },
-    logger,
-  });
-  // MCP client subsystem. The manager is always constructed so the
-  // live-control surface (TUI panel, slash commands — planned) stays
-  // uniform with the Telegram channel pattern. An empty
-  // `config.mcp.servers[]` produces a zero-cost no-op manager.
-  //
-  // We start the manager **before** the descriptor filter + grammar
-  // rule application so the prompt + GBNF reflect the live catalog
-  // exactly. Each `McpClient` is bounded by a 15s connect timeout,
-  // and failures are isolated per-server — one broken config never
-  // blocks bootstrap. Catalog growth after this point (hot-add
-  // server) requires a rebuild of the stable prefix / grammar
-  // (currently a runtime restart — see AGENTS.md §"MCP client").
-  // Composio rides the same rails: when a key is configured we mint (or
-  // reuse) a tool-router session and mount its hosted endpoint as one
-  // more MCP server. With no key `resolveComposioServerConfig` returns
-  // `undefined` and this line is the only trace of the integration —
-  // no server, no tools, nothing for the model to reach for. Failure is
-  // soft: an unreachable Composio must not stop the agent from booting.
-  const composioServerConfig = await resolveComposioServerConfig({
-    composio: config.composio,
-    userConfigFile: config.paths.userConfigFile,
-    logger,
-  });
-  const mcpServerConfigs = [
-    ...(config.mcp?.servers ?? []),
-    ...(composioServerConfig ? [composioServerConfig] : []),
-  ];
-  const mcpEnabled = mcpServerConfigs.length > 0;
-  const mcpManager = new McpManager(mcpServerConfigs, {
-    toolRegistry,
-    logger,
-    // Same approval wiring as the native dangerous tools: servers at
-    // the default `approval_gated` trust get their calls routed
-    // through `requireApproval` (issue #132).
-    dangerous,
-    // Sampling handler is per-client; we install one for every
-    // connecting server so the SDK advertises the capability. Routes
-    // to LlamaServerClient with `slotId: -1` (invariant 1 in
-    // `mcp-sampling-handler.ts`).
-    samplingHandler: mcpEnabled
-      ? createMcpSamplingHandler({
-          llamaServerClient: llama,
-          server: "*",
-        })
-      : undefined,
-    ...(options.handlers?.onChannelStatus
-      ? {
-          onStatus: (status) =>
-            options.handlers!.onChannelStatus!({
-              channel: `mcp:${status.name}`,
-              state: status.state,
-              ...(status.lastError ? { lastError: status.lastError } : {}),
-            }),
-        }
-      : {}),
-  });
-  // The four meta-tools (`mcp.resources.{list,read}` /
-  // `mcp.prompts.{list,get}`) read aggregated state from `mcpManager`.
-  // They are safe to register even when zero servers are connected
-  // — the manager returns empty aggregates and the tools fail with a
-  // structured "no server" error if invoked. Registering them
-  // unconditionally lets the live-add path (variant γ) skip a
-  // first-server-only branch.
-  let mcpMetaToolsRegistered = false;
-  const registerMcpMetaToolsOnce = (): void => {
-    if (mcpMetaToolsRegistered) return;
-    toolRegistry.register(buildMcpResourceListTool(mcpManager));
-    toolRegistry.register(buildMcpResourceReadTool(mcpManager));
-    toolRegistry.register(buildMcpPromptListTool(mcpManager));
-    toolRegistry.register(buildMcpPromptGetTool(mcpManager));
-    mcpMetaToolsRegistered = true;
-  };
-  // Baseline grammar without MCP tool names — kept around so
-  // `refreshMcp()` can rebuild from the same starting point regardless
-  // of what the current MCP catalog looks like. `applyMcpToolNameRule`
-  // is purely additive on top of this baseline.
-  const baseGrammar = grammar;
-  if (mcpEnabled) {
-    await mcpManager.start();
-    registerMcpMetaToolsOnce();
-    const mcpToolMetas = mcpManager.listAllToolMeta();
-    const rule = buildMcpToolNameRule(mcpToolMetas);
-    grammar = applyMcpToolNameRule(baseGrammar, rule);
-    logger.info("mcp: manager started", {
-      configured: mcpServerConfigs.length,
-      connected: mcpManager.listStatuses().filter((s) => s.state === "up")
-        .length,
-      tools: mcpToolMetas.length,
-    });
-  }
-
-  // The descriptor stays in the prompt while the live route can see
-  // (`visionRouteAvailable`) — for a local link even before the profile
-  // probe lands. The descriptor blurb already says "Only available when
-  // the active model + provider support multimodal input"; if the user
-  // asks for image work before mmproj is loaded, the tool surfaces a
-  // clear refusal naming the provider instead of silently disappearing
-  // from the toolset.
-  // Drop descriptors whose backing tool will not be registered at
-  // runtime under the current config gates. Without this filter the
-  // stable prefix advertises tools that the registry rejects on
-  // first invocation — see `filter-disabled-tools.ts` for the full
-  // mapping. The historical inline `vision.describe` filter is now
-  // one entry in that table; behaviour for vision is unchanged.
-  // Live-MCP support: every input that varies with the MCP catalog
-  // (descriptor list + grammar) is rebuildable via the helper below.
-  // The closure captures everything else (vision/memory/tasks gates,
-  // baseline grammar, etc.) so `refreshMcp()` can re-run it after a
-  // server is added or removed at runtime without touching the rest.
-  const rebuildToolDescriptorsFromMcp = (): readonly ToolDescriptor[] => {
-    const liveMcpEnabled = mcpManager.listServerNames().length > 0;
-    const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
-      browser: { enabled: config.browser.enabled },
-      web: { search: { enabled: config.web.search.enabled } },
-      // Live, like the fusion gate: offered while some leg of the
-      // current route can see (see `visionRouteAvailable`).
-      vision: {
-        enabled: config.vision.enabled,
-        providerAvailable: visionOnLiveRoute(),
-      },
-      memory: {
-        profile: { enabled: config.memory.profile.enabled },
-        notes: { enabled: config.memory.notes.enabled },
-        lessons: { enabled: config.memory.lessons.enabled },
-        procedures: { enabled: config.memory.procedures.enabled },
-      },
-      tasks: {
-        agentToolsEnabled:
-          config.tasks.enabled && config.tasks.agentToolsEnabled,
-      },
-      email: {
-        available:
-          readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
-      },
-      mcp: { enabled: liveMcpEnabled },
-      // Read at rebuild time, not boot time: the Integrations hub calls
-      // `refreshMcp()` after a token save, which lands here.
-      github: { connected: resolveGithubToken() !== null },
-      // The fan-out descriptor (and the `### fusion` guidance block that
-      // keys off it) only exists while the resolver says fusion — an
-      // orchestrator that cannot delegate must not be told it can.
-      fusion: { enabled: resolveCurrentRunMode().effective === "fusion" },
-    });
-    if (!liveMcpEnabled) return base;
-    return mergeMcpDescriptors(
-      base,
-      buildMcpToolDescriptors(mcpManager.listAllToolMeta()),
-    );
-  };
-  /**
-   * The descriptor list the loop reads, with a LIVE fusion gate.
-   *
-   * The gate cannot be a boot snapshot. `resolveCurrentRunMode()`
-   * changes answer the moment the operator switches the active provider
-   * or the stored mode — Manage → LLM writes the config file and resets
-   * the config cache in the same breath — and a list frozen at boot left
-   * the whole mode inert: an operator who started on local or cloud and
-   * switched into fusion got the mode's chrome, no `fusion.delegate`
-   * descriptor and no `### fusion` guidance, so the orchestrator never
-   * reached for the tool and fusion silently did nothing until a
-   * restart.
-   *
-   * Rebuilding is not free (it filters the whole catalog and re-merges
-   * the MCP descriptors), so the array is memoised on the gate: while
-   * the gate holds, every read returns the *same array identity* and the
-   * stable prefix stays byte-identical. When the gate flips the prefix
-   * legitimately changes once and that session's KV cache is dropped —
-   * exactly what installing a skill or live-adding an MCP server
-   * (`refreshMcp`) already costs, and for the same reason: the tool
-   * catalog changed, so the prefix must.
-   */
-  //
-  // The vision gate is memoised the same way and for the same reason:
-  // switching to a provider that cannot see drops `vision.describe`
-  // from the prompt, switching back restores it — one prefix change per
-  // flip, none while the route holds.
-  const liveDescriptorGates = (): string =>
-    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}`;
-  let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
-  let cachedDescriptorGates = liveDescriptorGates();
-  const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {
-    cachedDescriptorGates = liveDescriptorGates();
-    cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
-    return cachedToolDescriptors;
-  };
-  const effectiveToolDescriptors = (): readonly ToolDescriptor[] =>
-    liveDescriptorGates() === cachedDescriptorGates
-      ? cachedToolDescriptors
-      : rebuildToolDescriptors();
   if (config.vision.enabled) {
     logger.info("vision provider configured", {
       provider: textProvider.id,
@@ -2272,447 +332,56 @@ export async function createAgentRuntime(
     });
   }
 
-  // Fold a unary completion's usage into cost + meter. Lifted out of the
-  // seam so the fallback loop + `servedTransport` stamp live in the
-  // testable `llm-fallback-seam` module (which knows nothing about cost
-  // tracking). The per-provider retry budget (PR #90) still runs one
-  // level below, inside `provider.complete`, so the breaker only ever
-  // sees an error after those retries are spent.
-  const recordUnaryUsage = (
-    params: LlmStreamParams,
-    result: CompletionResult,
-    servedProviderId: string,
-  ): void => {
-    if (!result.usage) return;
-    const model = resolveModelPricing(result.modelId, servedProviderId);
-    if (costAccumulator) {
-      costAccumulator.recordTurn({
-        modelId: result.modelId,
-        usage: result.usage,
-        ...(model ? { model } : {}),
-      });
-    }
-    if (params.sessionId) {
-      turnUsageMeter.record({
-        sessionId: params.sessionId,
-        usage: result.usage,
-        ...(model ? { model } : {}),
-      });
-    }
-  };
-
-  const recordStreamUsage = (
-    sessionId: string | undefined,
-    result: CompletionResult,
-    servedProviderId: string,
-  ): void => {
-    if (!result.usage || !sessionId) return;
-    const model = resolveModelPricing(result.modelId, servedProviderId);
-    turnUsageMeter.record({
-      sessionId,
-      usage: result.usage,
-      ...(model ? { model } : {}),
-    });
-  };
-
-  /**
-   * Warm a `llama-server` link before it is asked to infer: replay the
-   * probes a cloud boot deferred, refresh a stale profile, and let the
-   * loop know a local link is serving. A no-op for every other kind.
-   *
-   * Two callers, one seam. The fallback chain uses it when a cloud→local
-   * fallover is about to happen, and `fusion.delegate` uses it before it
-   * fans out — same problem, since a fusion boot is cloud-active and
-   * leaves the local backend on deferred state (plain profile, one-slot
-   * pool, no `/props`) until something reaches for it.
-   */
-  const prepareLocalLink = createLocalLinkPreparer({
-    gate: localBackend,
-    isLocalLink: (providerId) =>
-      providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
-    refreshIfStale: async () => {
-      await profileManager?.refreshIfStale();
-    },
+  const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
+    fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
+    costAccumulator, turnUsageMeter, resolveModelPricing,
+  });
+  const { taskStore, webhookSessionStore } = createRuntimeTaskStores({ config, logger });
+  const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
+    config, profileStore, notesStore, linkStore, lessonStore, procedureStore, voteStore, embeddingClient,
+    slotManager, llmComplete, toolTransport: bootstrapLlmSlice.transport, logger, metrics, touchRecorder, memoryHealth,
   });
 
-  const fallbackSeamDeps: FallbackSeamDeps = {
-    fallbackChain,
-    resolveSlice: (providerId) => {
-      const { provider, transport } = resolveActiveLlmSlice(providerId);
-      return { provider, transport };
-    },
-    // Issue #112. The one place that knows a cloud→local fallover is
-    // about to happen: the chain has already picked the link and the
-    // completion has not been sent, so warm it here rather than infer
-    // against it. No-op on every other attempt — one boolean after the
-    // first call. See `prepareLocalLink` above.
-    prepareLink: prepareLocalLink,
-    recordUnaryUsage,
-    recordStreamUsage,
+  const promptPreviewDeps = {
+    workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
+    getSkillCatalog: skillCatalogState.getSkillCatalog,
+    getLiveProfile: connectedLocal.getLiveProfile,
+    resolveToolTransport: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).transport,
+    profileWindowApplies: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).isLlamaServer,
+    resolveCatalogContextWindow: (id?: string) => resolveCatalogContextWindow(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined),
   };
-
-  const llmComplete =
-    options.overrides?.llamaComplete ??
-    createFallbackCompleter(fallbackSeamDeps);
-
-  const llmCompleteStream = options.overrides?.disableStreaming
-    ? undefined
-    : (options.overrides?.llamaCompleteStream ??
-      (options.overrides?.llamaComplete
-        ? undefined
-        : createFallbackStreamer(fallbackSeamDeps)));
-
-  const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
-  const webhookSessionStore = new WebhookSessionStore(
-    resolve(config.paths.stateDir, WEBHOOK_SESSIONS_FILENAME),
-  );
-  if (taskStore.runOwnersUnavailable !== null) {
-    logger.warn("task runs will not record their process; boot recovery falls back to age", {
-      reason: taskStore.runOwnersUnavailable,
-    });
-  }
-  // Tasks left `running` by an agent that is gone go back to `pending`,
-  // judged by the process that claimed them — the way session turn marks
-  // are — before the scheduler can look at the table. Ones a live agent
-  // on the same state dir is running are left alone. Never blocks boot.
-  try {
-    const recoveredTasks = taskStore.recoverInterrupted({
-      staleAfterMs: config.tasks.staleAfterMs,
-    });
-    if (recoveredTasks.length > 0) {
-      logger.info("tasks left running by a stopped agent put back to pending", {
-        count: recoveredTasks.length,
-        taskIds: recoveredTasks.join(","),
-      });
-    }
-  } catch (err) {
-    logger.warn("could not recover tasks left running; continuing", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  // Memory-v2 phase 3. The neighbor-evolver writes parsed EVOLVE
-  // directives back into `MemoryStore` after notes are stored.
-  // Construction is unconditional but cheap; the runner is only
-  // **wired into reflection** when the feature flag is on, so the
-  // evolver itself is harmless when present-but-not-used.
-  const neighborEvolver = config.memory.evolution.enabled
-    ? new NeighborEvolver({
-        memoryStore: notesStore,
-        maxPerWrite: config.memory.evolution.maxPerWrite,
-        leaseMs: config.memory.evolution.leaseMs,
-        logger,
-        metrics,
-      })
-    : undefined;
-
-  const baseReflectionRunner = buildReflectionRunner({
-    config,
-    slotManager,
-    llmComplete,
-    toolTransport: bootstrapLlmSlice.transport,
-    profileStore,
-    notesStore,
-    logger,
-    metrics,
-    ...(neighborEvolver ? { neighborEvolver } : {}),
-    // Per-session trace emission. The recorder map is keyed by
-    // sessionId; reflection fires fire-and-forget after
-    // `turn_finished`, so a missing recorder is a normal "tracing
-    // disabled for this session" outcome, not an error.
-    emitTrace: (event: ReflectionTraceEvent) => {
-      touchRecorder(event.sessionId)?.recordReflection({
-        outcome: event.outcome,
-        ...(typeof event.factsWritten === "number"
-          ? { factsWritten: event.factsWritten }
-          : {}),
-        ...(typeof event.notesWritten === "number"
-          ? { notesWritten: event.notesWritten }
-          : {}),
-        ...(event.reason ? { reason: event.reason } : {}),
-      });
-      // After the row, so a trace shows the outcome before the warning it
-      // completed; outside the recorder check, so an untraced session is
-      // still warned. Same in the link-generator and rewriter hooks.
-      memoryHealth.observe(
-        event.sessionId,
-        "reflection",
-        event.outcome,
-        event.reason,
-      );
+  const compaction = createContextCompaction({
+    config: () => getConfig().agent.compaction,
+    sessionStore, turnController, complete: llmComplete,
+    promptInput: (state) => buildRuntimePromptInput(getConfig(), promptPreviewDeps, state),
+    route: (id, pin) => {
+      const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
+      const slice = resolveActiveLlmSlice(providerId);
+      return {
+        providerId, transport: slice.transport,
+        contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
+        serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
+      };
     },
-  });
-
-  // Memory-v2 phase 2. Compose the base reflection runner with the
-  // link-generator sub-call when the feature flag + auto-generation
-  // are both on. The wrapper keeps the agent-loop call site
-  // unchanged (it still calls `reflectionRunner.reflect(input)`); the
-  // link-generator fires after the base runner returns, using
-  // `input.recalledMemoryIds` as the allowlist.
-  //
-  // The link-generator rides the **same** `reflectionSlotId` as the
-  // base reflection (cross-phase invariant 2). When the base runner
-  // is absent (memory.reflection disabled), link-generation is also
-  // skipped — we never want to spawn an LLM call just for the graph.
-  let reflectionRunner: ReflectionRunner | undefined = baseReflectionRunner;
-  if (
-    baseReflectionRunner &&
-    config.memory.links.enabled &&
-    config.memory.links.autoGenerate
-  ) {
-    // Resolved per call: in managed mode the pool is one slot until the
-    // first `/props`, so a reservation taken here would never exist.
-    const reflectionSlotId = () => slotManager.sideCallSlotId();
-    const linkGenLlmComplete: LinkGeneratorLlmComplete = abortableSubcall(
-      llmComplete,
-      (params: Parameters<LinkGeneratorLlmComplete>[0]) => ({
-        prompt: params.prompt,
-        grammar: params.grammar,
-        slotId: params.slotId,
-        sessionId: params.sessionId,
-        ...(params.responseFormat
-          ? { responseFormat: params.responseFormat }
-          : {}),
-      }),
-    );
-    // Per-session trace emission — same resolve-by-sessionId pattern
-    // as reflection / vote. Shared by the runner and the decorator:
-    // the decorator's hydration-failure bail-out returns before
-    // `generate()` is reached, so it is the only one that can report
-    // that outcome, and it must land in the same stream under the
-    // same event type or the trace still reads as "link-gen off".
-    const emitLinkGeneratorTrace = (event: LinkGeneratorTraceEvent) => {
-      touchRecorder(event.sessionId)?.recordLinkGenerator({
-        outcome: event.outcome,
-        ...(typeof event.linksWritten === "number"
-          ? { linksWritten: event.linksWritten }
-          : {}),
-        ...(event.reason ? { reason: event.reason } : {}),
-      });
-      memoryHealth.observe(
-        event.sessionId,
-        "link_generator",
-        event.outcome,
-        event.reason,
-      );
-    };
-    const linkGenerator = createLinkGeneratorRunner({
-      llmComplete: linkGenLlmComplete,
-      linkStore,
-      reflectionSlotId,
-      timeoutMs: config.memory.links.generatorTimeoutMs,
-      maxLinksPerCall: config.memory.links.maxLinksPerCall,
-      minCandidates: config.memory.links.minCandidates,
-      logger,
-      metrics,
-      emitTrace: emitLinkGeneratorTrace,
-    });
-    reflectionRunner = createLinkAwareReflectionRunner({
-      reflection: baseReflectionRunner,
-      linkGenerator,
-      notesStore,
-      minCandidates: config.memory.links.minCandidates,
-      logger,
-      emitTrace: emitLinkGeneratorTrace,
-    });
-  }
-
-  // Memory-v2 phase 7a. Decorate the reflection runner with the
-  // vote-runner sub-call so curation runs after `SET` / `NOTE` /
-  // link-gen / `EVOLVE`. The decorator is fire-safe: a failed
-  // vote-runner never breaks the reflection chain. Wiring only
-  // proceeds when:
-  //   - The base reflection chain is wired.
-  //   - `memory.voting.enabled` (carries the VoteStore).
-  // The vote-runner rides the **same** reflection slot as the
-  // upstream chain (cross-phase invariant 2). Allowlist is
-  // sourced from `ReflectionInput.{recalledIds, recalledLessonIds,
-  // recalledProfileFactIds}` populated by `agent-loop.runTurn`
-  // from `memory-context-provider` and `LessonStore.recall` —
-  // anti-feedback-loop guardrail (invariant 18).
-  if (reflectionRunner && voteStore) {
-    const voteSlotId = () => slotManager.sideCallSlotId();
-    const voteLlmComplete: VoteRunnerLlmComplete = abortableSubcall(
-      llmComplete,
-      (params: Parameters<VoteRunnerLlmComplete>[0]) => ({
-        prompt: params.prompt,
-        grammar: params.grammar,
-        slotId: params.slotId,
-        sessionId: params.sessionId,
-        ...(params.responseFormat
-          ? { responseFormat: params.responseFormat }
-          : {}),
-      }),
-    );
-    // Memory-v2 phase 7a — one sink for both legs of voting: the
-    // runner's per-vote rows and the decorator's run-level row. The
-    // decorator's two bail-outs return before `run()` is reached, so
-    // they are the only ones that can report those turns, and their
-    // row has to land in the same stream or the trace still reads as
-    // "voting off". Extracted (`createVoteTraceSink`) because nothing
-    // could reach it from in here — see its own doc for which branch
-    // folds health and why.
-    const emitVoteTrace = createVoteTraceSink({
-      resolveRecorder: touchRecorder,
-      health: memoryHealth,
-    });
-    const voteRunner = createVoteRunner({
-      llmComplete: voteLlmComplete,
-      voteStore,
-      reflectionSlotId: voteSlotId,
-      timeoutMs: config.memory.reflection.timeoutMs,
-      maxVotePerItem: config.memory.voting.maxVotePerItem,
-      eventLogMaxRows: config.memory.voting.eventLogMaxRows,
-      logger,
-      metrics,
-      emitTrace: emitVoteTrace,
-    });
-    reflectionRunner = createVoteAwareReflectionRunner({
-      reflection: reflectionRunner,
-      // The vote runner reports its outcome only in its result, so the
-      // health check reads it there.
-      voteRunner: observeVoteRunnerHealth(voteRunner, memoryHealth),
-      memoryStore: notesStore,
-      lessonStore,
-      profileStore,
-      procedureStore: config.memory.procedures.enabled ? procedureStore : null,
-      logger,
-      emitTrace: emitVoteTrace,
-    });
-  }
-
-  // Read-side counterpart of reflection: pre-step recall injection and
-  // memory-index pointer rendering. Wired only when `memory.notes` is
-  // enabled — otherwise the runtime has nothing to read from and the
-  // prompt tail skips both sections.
-  const baseMemoryContextProvider = config.memory.notes.enabled
-    ? createDefaultMemoryContextProvider({
-        store: notesStore,
-        recall: {
-          enabled: config.memory.recallInjection.enabled,
-          k: config.memory.recallInjection.k,
-        },
-        index: {
-          enabled: config.memory.index.enabled,
-          limit: config.memory.index.limit,
-          previewChars: config.memory.index.previewChars,
-        },
-        // Memory-v2 phase 2: read-side BFS expansion. Falls back to a
-        // no-op when the feature flag is off, so phase 1B callers stay
-        // byte-identical.
-        ...(config.memory.links.enabled
-          ? {
-              links: {
-                enabled: true,
-                store: linkStore,
-                depth: config.memory.links.expansionDepth,
-                maxExpanded: config.memory.links.maxExpanded,
-              },
-              metrics,
-            }
-          : {}),
-        // Memory-v2 phase 5: surface lesson pointers in `### lessons`.
-        // When `memory.lessons.enabled=false`, the provider skips the
-        // call entirely and `recalledLessons` stays empty — the prompt
-        // renderer then omits the section header.
-        ...(config.memory.lessons.enabled
-          ? {
-              lessons: {
-                enabled: true,
-                store: lessonStore,
-                k: config.memory.lessons.recallK,
-              },
-            }
-          : {}),
-        // Memory-v2 phase 7b. Surface advisory procedure pointers
-        // in `### procedures`. Same gating story as lessons —
-        // when disabled, the renderer omits the header.
-        ...(config.memory.procedures.enabled
-          ? {
-              procedures: {
-                enabled: true,
-                store: procedureStore,
-                k: config.memory.procedures.recallK,
-              },
-            }
-          : {}),
-      })
-    : undefined;
-
-  // v2.5 heuristic-gated query rewriter (Phase A, config v18).
-  // When enabled, wrap the default provider with a decorator that
-  // rewrites referential follow-ups via an LLM call on the reserved
-  // reflection slot (`-1` while the pool has none to spare) before
-  // delegating recall. Disabled-by-default contract: when the
-  // flag is off, `memoryContextProvider` is byte-identical to the
-  // pre-v18 chain.
-  let memoryContextProvider = baseMemoryContextProvider;
-  if (baseMemoryContextProvider && config.memory.retrieve.rewriter.enabled) {
-    const rewriterLlmComplete: RewriterLlmComplete = abortableSubcall(
-      llmComplete,
-      (params: Parameters<RewriterLlmComplete>[0]) => ({
-        prompt: params.prompt,
-        grammar: params.grammar,
-        slotId: params.slotId,
-        sessionId: params.sessionId,
-        ...(params.responseFormat
-          ? { responseFormat: params.responseFormat }
-          : {}),
-      }),
-    );
-    const rewriterCfg = config.memory.retrieve.rewriter;
-    let gate: RewriterGate;
-    if (rewriterCfg.gateMode === "embedding") {
-      if (embeddingClient) {
-        gate = createEmbeddingGate({
-          embedder: embeddingClient,
-          exemplars:
-            rewriterCfg.embeddingGate.exemplars ?? DEFAULT_REWRITER_EXEMPLARS,
-          threshold: rewriterCfg.embeddingGate.threshold,
-          logger,
-          metrics,
-        });
-      } else {
-        logger.warn?.(
-          "rewriter.gateMode=embedding but no embeddingClient — falling back to heuristic",
-        );
-        gate = createHeuristicGate();
+    sideCallSlotId: () => slotManager.sideCallSlotId(),
+    costOf: (result, providerId) => {
+      const pricing = resolveModelPricing(result.modelId, providerId)?.pricing;
+      return pricing && result.usage ? estimateUsageCostUsd(result.usage, pricing) : undefined;
+    },
+    persist: (state, inTurn) => {
+      const existed = sessionStore.load(state.id) !== null;
+      sessionStore.save(state);
+      // A deferred TUI session may get its first row at this checkpoint.
+      if (inTurn && !existed) sessionStore.beginTurn(state.id);
+    },
+    warn: (sessionId, message) => logger.warn(message, { sessionId }),
+    emit: (event) => {
+      if (event.type === "compaction_failed" && event.result.status === "failed") {
+        logger.warn("context compaction failed; continuing with history trimming", { sessionId: event.sessionId, reason: event.result.message });
       }
-    } else if (rewriterCfg.gateMode === "always") {
-      gate = createAlwaysGate();
-    } else {
-      gate = createHeuristicGate();
-    }
-    const rewriterRunner = createQueryRewriterRunner({
-      llmComplete: rewriterLlmComplete,
-      timeoutMs: rewriterCfg.timeoutMs,
-      slotId: () => slotManager.sideCallSlotId(),
-      gate,
-      logger,
-      metrics,
-      // Per-session trace emission — the rewriter runs during
-      // `refreshMemoryContext`, so the recorder for this session may
-      // not exist yet on the very first turn; a missing recorder is a
-      // normal "tracing disabled" outcome.
-      emitTrace: (event) => {
-        touchRecorder(event.sessionId)?.recordQueryRewriter({
-          outcome: event.outcome,
-          ...(event.reason ? { reason: event.reason } : {}),
-        });
-        memoryHealth.observe(
-          event.sessionId,
-          "rewriter",
-          event.outcome,
-          event.reason,
-        );
-      },
-    });
-    memoryContextProvider = createRewriterAwareMemoryContextProvider({
-      inner: baseMemoryContextProvider,
-      rewriter: rewriterRunner,
-      historyTurns: config.memory.retrieve.rewriter.historyTurns,
-    });
-  }
+      emitAgentLoopEventFor(event.sessionId, event);
+    },
+  });
 
   // Plan mode. Session state, deliberately not config: it is a stance
   // for the next few turns, not a setting, and a "look but do not touch"
@@ -2723,6 +392,7 @@ export async function createAgentRuntime(
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
   const loopDeps = {
+    compaction: compaction.control,
     registry: toolRegistry,
     // A getter, so `runtime.setPlanMode` is observed by the next tool
     // call rather than by the next process. Same reason the approval
@@ -2739,10 +409,9 @@ export async function createAgentRuntime(
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
     clearFanoutTurnGrant: (sessionId: string) =>
       approvals.fanoutScopes.clearTurnGrant(sessionId),
-    forgetDeclinedApprovals: (sessionId: string) =>
-      approvals.forgetDeclined(sessionId),
+    forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
-    grammar,
+    grammar: getGrammar(),
     llmComplete,
     // Mid-turn steering: the loop drains this at every step boundary.
     steeringInbox,
@@ -2762,6 +431,7 @@ export async function createAgentRuntime(
     resolveLlmSlice: (providerId: string) => {
       const slice = resolveActiveLlmSlice(providerId);
       return {
+        contextWindow: resolveCatalogContextWindow(providerId),
         toolTransport: slice.transport,
         toolCallAdapter: slice.adapter,
         supportsSlotAffinity: slice.slotAffinity,
@@ -2821,14 +491,14 @@ export async function createAgentRuntime(
   };
   Object.defineProperty(loopDeps, "skillCatalog", {
     enumerable: true,
-    get: () => skillCatalog,
+    get: skillCatalogState.getSkillCatalog,
   });
   // Same live binding, for the same reason: `refreshSkills()` can turn
   // a catalog that fit into one that does not, and the `### skills`
   // truncation marker has to move with it.
   Object.defineProperty(loopDeps, "skillCatalogDropped", {
     enumerable: true,
-    get: () => skillSection.dropped,
+    get: skillCatalogState.getSkillCatalogDropped,
   });
   // Late-binding getters for the MCP-driven fields. `grammar` and
   // `toolDescriptors` are recomputed by `runtime.refreshMcp()` after a
@@ -2837,7 +507,7 @@ export async function createAgentRuntime(
   // the next inference without restarting the loop.
   Object.defineProperty(loopDeps, "grammar", {
     enumerable: true,
-    get: () => grammar,
+    get: getGrammar,
   });
   Object.defineProperty(loopDeps, "toolDescriptors", {
     enumerable: true,
@@ -2879,1248 +549,58 @@ export async function createAgentRuntime(
   let telegramChannelForShutdown: TelegramChannel | null = null;
   let discordChannelForShutdown: DiscordChannel | null = null;
   let swarmForShutdown: SwarmRegistry | null = null;
-  /**
-   * In-flight session-naming calls, so teardown can cut them.
-   *
-   * `nameSession` is fired as a bare `void` at the end of a turn and
-   * only reads and writes the session store once its completion comes
-   * back — up to `SESSION_TITLE_TIMEOUT_MS` later. `shutdown` closes
-   * that store, so a call still in flight is the reflection race again:
-   * aborting here settles the completion instead of leaving a side-call
-   * slot and an HTTP read outstanding while the runtime goes away.
-   *
-   * The abort is not what keeps the store write safe — an abort a
-   * provider ignores would still let the continuation run. That is
-   * `shutdownCalled`'s job, checked on both sides of the completion.
-   */
-  const pendingSessionNamings = new Set<AbortController>();
-  /**
-   * The turns `executeTurn` is running, so `shutdown` can let the ones
-   * their hosts stopped write their own end before the session store
-   * closes (`TurnsInFlight`).
-   */
-  const turnsInFlight = new TurnsInFlight();
-  /**
-   * Record every turn this runtime still has marked `running` as
-   * interrupted. Shutdown only: by then a turn that has not written its
-   * end cannot be counted on to, and a row left `running` would show a
-   * turn nothing is running until some later boot cleans it up.
-   * `keepMarks` writes it as a stand-in the turn's own end can still
-   * replace (`SessionStore.releaseOwnTurns`).
-   */
-  const releaseTurnsInterrupted = (
-    options: { keepMarks?: boolean } = {},
-  ): void => {
-    try {
-      sessionStore.releaseOwnTurns(INTERRUPTED_TURN_ENDING, options);
-    } catch (err) {
-      logger.warn("could not record the turns this shutdown interrupted", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  };
-  let shutdownCalled = false;
-  const shutdown = async (): Promise<void> => {
-    if (shutdownCalled) return;
-    shutdownCalled = true;
-    // Say now, while the store is certainly open, that the turns still
-    // running were interrupted: a stop that turns into a kill partway
-    // through this teardown — the desktop gives it 4 s — still leaves
-    // every row right. It goes in as a stand-in: a turn that writes its
-    // own end before the store closes (below), or that throws and ends
-    // through `releaseTurn`, replaces it with what really happened.
-    releaseTurnsInterrupted({ keepMarks: true });
-    // No scheduled turn may start on a runtime that is closing: the
-    // ticker stops here, and the task turns in flight — the tick's, and
-    // any a create's drain or `POST /api/tasks/:id/run` started — are
-    // stopped now, so they write their ends while both stores are open.
-    // Each task goes back for a later run: a recurring one to its next
-    // firing, a one-shot one to the next start. Nothing stopped them
-    // before, and shutdown waited on them — on a model server that was
-    // not answering, until the desktop killed the agent. Both are waited
-    // for further down, at most `SHUTDOWN_TURN_GRACE_MS` from here.
-    const taskRunsStopped = taskRunner
-      .stop(SHUTDOWN_TURN_GRACE_MS)
-      .catch((err: unknown) => {
-        logger.warn("stopping task runs failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return 0;
-      });
-    const schedulerStopped = scheduler
-      ?.stop(SHUTDOWN_TURN_GRACE_MS)
-      .catch((err: unknown) => {
-        logger.warn("scheduler stop failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    // Nothing will drain the inbox after this point; drop pending
-    // steers so a message cannot resurface in a later process.
-    steeringInbox.clearAll();
-    // Every detached shell job, kept or not: nothing will wait on it
-    // once this process is gone, and its ceiling timer dies with us.
-    shellJobs.endAll();
-    // Cancel any in-flight reflection before tearing down the profile
-    // store — otherwise a late-arriving completion could try to write
-    // into a closed SQLite connection.
-    try {
-      reflectionRunner?.abortPending();
-    } catch {
-      // runner already disposed
-    }
-    // Same race, same reason, for session naming (`pendingSessionNamings`).
-    for (const naming of pendingSessionNamings) naming.abort();
-    pendingSessionNamings.clear();
-    if (telegramChannelForShutdown) {
-      try {
-        await telegramChannelForShutdown.stop();
-      } catch (err) {
-        logger.warn("telegram: shutdown failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    if (discordChannelForShutdown) {
-      try {
-        // Stops the gateway, aborts in-flight turns and releases the
-        // single-instance lock. Runs alongside the Telegram teardown,
-        // before the LLM client goes away.
-        await discordChannelForShutdown.stop();
-      } catch (err) {
-        logger.warn("discord: shutdown failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    if (swarmForShutdown) {
-      try {
-        await swarmForShutdown.stopAll();
-      } catch (err) {
-        logger.warn("swarm: shutdown failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    try {
-      // MCP manager closes every connected `McpClient` (transport
-      // + sampling handler) and clears the dynamic resource-class
-      // resolver. Best-effort: per-server close errors are
-      // swallowed inside the manager.
-      await mcpManager.shutdown();
-    } catch (err) {
-      logger.warn("mcp: shutdown failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-    try {
-      await browserBackend.shutdown();
-    } catch (err) {
-      logger.warn("browser shutdown failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-    // The turns their hosts stopped — `serve`'s dropped connections, the
-    // TUI's and the sidecar's aborts, the channels above — are unwinding
-    // now. Closing the store under them is how a turn cancelled by a quit
-    // used to lose its end: it saved a moment after `close`, and its row
-    // kept what it held before the turn. Give them a moment first; a
-    // turn nobody stopped (a scheduled task) is not waited for.
-    const stillEnding = await turnsInFlight.settleCancelled(
-      SHUTDOWN_TURN_GRACE_MS,
-    );
-    if (stillEnding > 0) {
-      logger.warn("stopped turns still running at shutdown; recorded as interrupted", {
-        count: stillEnding,
-      });
-    }
-    // A turn that did not end in time, or that started after the release
-    // at the top, is recorded the same way before the store goes away.
-    releaseTurnsInterrupted();
-    try {
-      sessionStore.close();
-    } catch {
-      // already closed
-    }
-    try {
-      profileStore.close();
-    } catch {
-      // already closed
-    }
-    try {
-      // Memory-v2 phase 5. LessonStore owns its own SQLite handle on
-      // the same `memory.sqlite` file as MemoryStore / ProfileStore /
-      // LinkStore — close before letting the process exit so WAL
-      // checkpointing finishes cleanly.
-      lessonStore.close();
-    } catch {
-      // already closed
-    }
-    try {
-      // Memory-v2 phase 7b. ProcedureStore owns its own SQLite
-      // handle on the same `memory.sqlite` file. Close it before
-      // notesStore so all derived stores release their connection
-      // pre-WAL checkpoint.
-      procedureStore.close();
-    } catch {
-      // already closed
-    }
-    try {
-      notesStore.close();
-    } catch {
-      // already closed
-    }
-    // Stopped at the top; this waits out the tick and the task runs that
-    // were in progress then. A run still going is left `running` under
-    // this process, for the next boot to take back.
-    await schedulerStopped;
-    const tasksStillRunning = await taskRunsStopped;
-    if (tasksStillRunning > 0) {
-      logger.warn("task runs still going at shutdown; left for the next boot", {
-        count: tasksStillRunning,
-      });
-    }
-    if (consolidatorJob) {
-      try {
-        await consolidatorJob.stop();
-      } catch (err) {
-        logger.warn("consolidator stop failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    try {
-      taskStore.close();
-    } catch {
-      // already closed
-    }
-    // Flush any queued analytics events before the process exits.
-    // Fire-safe: `shutdown()` swallows its own errors.
-    if (analytics) {
-      await analytics.shutdown();
-    }
-    // Flush any queued error reports before the process exits.
-    if (errorReporter) {
-      await errorReporter.shutdown();
-    }
-  };
-
-  const refreshSkills = async (): Promise<void> => {
-    await skillRegistry.refresh();
-    for (const e of skillRegistry.errors()) {
-      logger.warn("skill registry: skipped skill directory", {
-        path: e.path,
-        error: e.error,
-      });
-    }
-    skillSection = buildSkillCatalogSection(skillRegistry.list(), {
-      tokenBudget: config.skills.catalogTokenBudget,
-    });
-    skillCatalog = skillSection.entries;
-    options.handlers?.onSkillRegistryChange?.(
-      [...skillCatalog],
-      skillSection.dropped,
-    );
-  };
-
-  /**
-   * Rebuild the GBNF grammar and the prompt's `### tools` catalog from
-   * the live `mcpManager` state. Called by the TUI MCP orchestrator
-   * after `addServerLive` / `removeServerLive`. Idempotent — safe to
-   * call when nothing changed (just re-runs the same builders).
-   *
-   * If MCP has just transitioned from "no servers" to "≥1 server", we
-   * register the four MCP meta-tools on demand (they were skipped at
-   * bootstrap to keep the descriptor catalog clean).
-   */
-  const refreshMcp = async (): Promise<void> => {
-    const serverCount = mcpManager.listServerNames().length;
-    if (serverCount > 0) {
-      registerMcpMetaToolsOnce();
-    }
-    const metas = mcpManager.listAllToolMeta();
-    const rule = buildMcpToolNameRule(metas);
-    grammar = applyMcpToolNameRule(baseGrammar, rule);
-    rebuildToolDescriptors();
-    logger.info("mcp: catalog refreshed", {
-      servers: serverCount,
-      tools: metas.length,
-    });
-  };
-
-  const llmProviderCtx = {
-    config: getConfig(),
-    llamaClient: llama,
-    getProfile: getLiveProfile,
-    getModelId: getLiveModelId,
-    logger,
-  };
-
-  const reloadLlmProviders = async (): Promise<void> => {
-    resetConfigCache();
-    const fresh = getConfig();
-    llmProviderCtx.config = fresh;
-    const added = await providerRegistry.mergeProvidersFromConfig(fresh, {
-      config: fresh,
-      llamaClient: llama,
-      getProfile: getLiveProfile,
-      getModelId: getLiveModelId,
-      logger,
-    });
-    if (added.length > 0) {
-      logger.info("llm: providers registered", { ids: added.join(",") });
-    }
-  };
-
-  const reloadLlmProvider = async (id: string): Promise<void> => {
-    resetConfigCache();
-    const fresh = getConfig();
-    llmProviderCtx.config = fresh;
-    await providerRegistry.replaceProviderFromConfig(id, fresh, {
-      config: fresh,
-      llamaClient: llama,
-      getProfile: getLiveProfile,
-      getModelId: getLiveModelId,
-      logger,
-    });
-    logger.info("llm: provider refreshed", { id });
-  };
-
-  const ensureRecorder = (
-    session: SessionState,
-    /**
-     * What the `session_started` line records instead of the stored
-     * metadata, when the caller is about to change it: `executeTurn`
-     * passes this turn's `llm` stamp and route, so a file opened at turn
-     * start does not name the previous turn's model in its header.
-     */
-    headerMetadata?: Record<string, unknown>,
-  ): TraceRecorder | null => {
-    if (!traceBus) return null;
-    const existing = touchRecorder(session.id);
-    if (existing) return existing;
-    const recorder = createTraceRecorder({
-      sessionId: session.id,
-      emit: (event) => traceBus.emit(event),
-    });
-    const metadata = headerMetadata ?? session.metadata;
-    recorder.beginSession({
-      workingDir: session.workingDir,
-      ...(metadata ? { metadata } : {}),
-    });
-    recorders.set(session.id, recorder);
-    // Exempt the entry just created: the caller pins it only after this
-    // returns, so without this it is the sole unpinned entry when every other
-    // session is mid-turn and would evict itself — losing the whole turn's
-    // trace to a file that already has its `session_started` line.
-    evictRecorders(session.id);
-    return recorder;
-  };
-
-  const createSession = (
-    input: { metadata?: Record<string, unknown>; persist?: boolean } = {},
-  ): SessionState => {
-    const state = createEmptySessionState({
-      id: `s-${randomUUID()}`,
-      workingDir,
-      ...(input.metadata ? { metadata: input.metadata } : {}),
-    });
-    // Deferred: the first turn writes the row and opens the recorder, so
-    // an allocation nobody speaks to leaves nothing behind — neither a
-    // row nor a trace file. See `AgentRuntime.createSession`.
-    if (input.persist === false) return state;
-    sessionStore.save(state);
-    ensureRecorder(state);
-    return state;
-  };
-
-  // In memory only: no `sessionStore.save`, no `ensureRecorder`. The
-  // worker stamp is what `executeTurn` keys its skips on.
-  const createEphemeralSession = (meta: FusionWorkerMeta): SessionState =>
-    createFusionWorkerSession({ workingDir, meta });
-
-  /**
-   * The loop-side budget for one turn. An explicit `maxSteps` from a
-   * caller (a durable task that pins its own budget, `run --max-steps`)
-   * is a *ceiling* that caller chose — honour it as one. Absent that,
-   * the config value is the leg length and `agent.task.*` supplies the
-   * ceiling, so an ordinary turn runs the task to completion instead of
-   * stopping at the first checkpoint. The provider pin and the duration
-   * ceiling ride along unchanged.
-   */
-  const buildLoopTurnBudget = (runOptions: {
-    maxSteps?: number;
-    signal?: AbortSignal;
-    providerId?: string;
-    taskMaxDurationMs?: number;
-    toolFilter?: (name: string) => boolean;
-    toolRole?: ToolRole;
-    reasoningEffort?: ReasoningEffort;
-    maxOutputTokens?: number;
-  }) => ({
-    ...(runOptions.reasoningEffort === undefined
-      ? {}
-      : { reasoningEffort: runOptions.reasoningEffort }),
-    ...(runOptions.maxOutputTokens === undefined
-      ? {}
-      : { maxOutputTokens: runOptions.maxOutputTokens }),
-    maxSteps: Math.min(
-      config.agent.maxSteps,
-      runOptions.maxSteps ?? config.agent.maxSteps,
-    ),
-    ...(runOptions.maxSteps === undefined
-      ? {}
-      : { taskMaxSteps: runOptions.maxSteps }),
-    ...(runOptions.taskMaxDurationMs === undefined
-      ? {}
-      : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
-    ...(runOptions.providerId === undefined
-      ? {}
-      : { providerId: runOptions.providerId }),
-    ...(runOptions.toolFilter === undefined
-      ? {}
-      : { toolFilter: runOptions.toolFilter }),
-    ...(runOptions.toolRole === undefined
-      ? {}
-      : { toolRole: runOptions.toolRole }),
-    signal: runOptions.signal ?? new AbortController().signal,
+  const turnState = prepareRuntimeTurnState();
+  const { pendingSessionNamings, turnsInFlight } = turnState;
+  const lifecycle = createRuntimeLifecycle({
+    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight, compaction,
+    browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
+    get scheduler() { return scheduler; },
+    get taskRunner() { return taskRunner; },
+    get telegramChannelForShutdown() { return telegramChannelForShutdown; },
+    get discordChannelForShutdown() { return discordChannelForShutdown; },
+    get swarmForShutdown() { return swarmForShutdown; },
+    get consolidatorJob() { return consolidatorJob; },
+    get taskStore() { return taskStore; },
+    get analytics() { return observability.getAnalytics(); },
+    get errorReporter() { return observability.getErrorReporter(); },
   });
+  const { shutdown } = lifecycle;
+  const refreshSkills = skillCatalogState.createRefreshSkills(options);
 
-  /**
-   * A pinned turn must land on the provider it names. The registry is
-   * the authority; an id it does not hold would otherwise degrade to the
-   * active provider inside `resolveActiveLlmSlice` — for a fusion worker
-   * that means silently running on the cloud leg.
-   */
-  const assertKnownProvider = (providerId: string | undefined): void => {
-    if (providerId === undefined) return;
-    if (!providerRegistry.getProvider(providerId)) {
-      throw new Error(
-        `cannot pin turn to llm provider "${providerId}": not configured`,
-      );
-    }
-  };
+  const refreshMcp = mcpCatalog.createRefreshMcp();
 
-  // Lane B — context before the first message (item 3). The same inputs
-  // the loop hands buildPrompt for a real step (agent-loop.ts step
-  // context + step-executor.ts promptInput), minus the per-step extras
-  // (transient notice, terminal-only tools) that only exist mid-turn.
-  const previewPrompt = (input: {
-    sessionId: string | null;
-    userMessage?: string;
-  }): BuiltPrompt => {
-    let session: SessionState;
-    if (input.sessionId) {
-      const loaded = sessionStore.load(input.sessionId);
-      if (!loaded) throw new SessionNotFoundError(input.sessionId);
-      session = loaded;
-    } else {
-      // createEmptySessionState, not createSession: the latter saves.
-      session = createEmptySessionState({
-        id: `preview-${randomUUID()}`,
-        workingDir,
-      });
-    }
-    // The draft belongs in the transcript, exactly as the loop puts it
-    // there (agent-loop.ts: `state = recordTurn(state, userTurn(text))`
-    // before the first step). `buildPrompt`'s own `userMessage` input
-    // never reaches the conversation section — it only feeds the profile
-    // keyword gate and the task policy — so without this the preview
-    // would price the draft at zero. Nothing is persisted: `session` is
-    // an in-memory value here and `sessionStore.save` is never called.
-    if (input.userMessage !== undefined && input.userMessage.length > 0) {
-      session = recordTurn(session, userTurn(input.userMessage));
-    }
-    const transport = resolveActiveLlmSlice().transport;
-    return buildPrompt({
-      session,
-      // Called, not read: main made the descriptors late-bound so a live MCP
-      // add/remove is visible without a restart. The preview wants the same
-      // catalogue the next real turn would get.
-      toolDescriptors: effectiveToolDescriptors(),
-      capabilities,
-      skillCatalog,
-      currentDate: formatCurrentDate(new Date()),
-      profile: getLiveProfile(),
-      toolTransport: transport,
-      suppressReasoningPrefill: transport === "native_tools",
-      contextWindow: resolveCatalogContextWindow(),
-      ...(config.memory.profile.enabled
-        ? { profileFacts: profileStore.listForPrompt() }
-        : {}),
-      ...(input.userMessage !== undefined
-        ? { userMessage: input.userMessage }
-        : {}),
-    });
-  };
-
-  /**
-   * Ask the model for a short name and store it on the session.
-   *
-   * Re-reads and re-saves through the store rather than writing the
-   * `finished` object it was handed: the call takes a second or two and
-   * the next turn may already have saved over it, so the read-modify-
-   * write has to happen when the answer arrives, not before.
-   */
-  const nameSession = async (state: SessionState): Promise<void> => {
-    // A turn can finish *during* teardown — `shutdown` aborts the set
-    // below and then awaits channel/MCP/browser teardown before the
-    // stores close, and a turn completing in that window would register
-    // a fresh controller into a set nothing will visit again. Naming a
-    // session a quit is already discarding buys nothing, so don't start.
-    if (shutdownCalled) return;
-    // Its own deadline: the turn is over, nothing is waiting on this,
-    // and a naming call that hangs must not hold a slot for the next
-    // turn to queue behind.
-    const abort = new AbortController();
-    const timer = setTimeout(
-      () => abort.abort(),
-      SESSION_TITLE_TIMEOUT_MS,
-    ).unref?.();
-    void timer;
-    // Teardown's handle on this call, dropped again below so a quit
-    // after the call has settled aborts nothing.
-    pendingSessionNamings.add(abort);
-    try {
-      const title = await generateSessionTitle(state, {
-        complete: async (params) => {
-          const result = await llmComplete({
-            ...params,
-            signal: abort.signal,
-          });
-          return { content: result.content, ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}) };
-        },
-        slotId: () => slotManager.sideCallSlotId(),
-        // Which wire shape this call has to take. A cloud link answers a
-        // bare prompt with an empty `content`, so the title has to be
-        // asked for the way every other sub-call asks.
-        toolTransport: resolveActiveLlmSlice().transport,
-        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
-        onError: (err: unknown) =>
-          logger.debug("session naming failed", {
-            sessionId: state.id,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-      });
-      if (title === null) return;
-      // Teardown started while the completion was in flight: the store
-      // below is closing, and a name is not worth a write into a runtime
-      // that is going away. Keyed on teardown, not on `abort.signal`,
-      // because the signal also carries the 20 s deadline — and that
-      // deadline exists only to stop a hung call holding a side-call
-      // slot, not to veto a title that did arrive. Nothing awaits
-      // between here and the save, so the store cannot close under it.
-      if (shutdownCalled) return;
-      const current = sessionStore.load(state.id) ?? state;
-      // Lost the race, or someone named it in between: the first name
-      // wins, because a label the operator has already navigated by must
-      // not move.
-      if (readSessionTitle(current.metadata) !== null) return;
-      sessionStore.save({
-        ...current,
-        metadata: {
-          ...current.metadata,
-          [SESSION_TITLE_METADATA_KEY]: title,
-        },
-      });
-    } catch (err) {
-      // `executeTurn` fires this as a bare `void`, so a throw out of the
-      // read-modify-write is an unhandled rejection — reported as a
-      // crash. Losing the teardown race by a tick is the known one
-      // (`TypeError: The database connection is not open`), but naming
-      // is a nicety either way: log it and leave the session showing
-      // its first prompt.
-      logger.warn("session naming failed to store the title", {
-        sessionId: state.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      pendingSessionNamings.delete(abort);
-    }
-  };
-
-  /**
-   * Mark the session's row `running` for the turn about to run, so the
-   * store says what is happening while it happens and a turn cut off by
-   * a kill or a crash is recognised at the next boot
-   * (`SessionStore.beginTurn`). Bookkeeping only: a mark that cannot be
-   * written must not stop the turn.
-   */
-  const markTurnRunning = (sessionId: string): void => {
-    try {
-      sessionStore.beginTurn(sessionId);
-    } catch (err) {
-      logger.warn("could not mark the session running", {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  };
-
-  /**
-   * End a turn that has no state to save — it threw — on the status it
-   * actually ended with: `cancelled` when it had been told to stop (an
-   * abort can surface as any error), `failed` with the error otherwise.
-   * The transcript stays what it was before the turn (`session`); there
-   * is nothing truer to put there. A cancel puts back the `lastError`
-   * the session had before the turn, which a shutdown's stand-in may
-   * have overwritten meanwhile.
-   */
-  const releaseThrownTurn = (
-    session: SessionState,
-    err: unknown,
-    signal: AbortSignal | undefined,
-  ): void => {
-    try {
-      sessionStore.releaseTurn(
-        session.id,
-        signal?.aborted === true
-          ? { status: "cancelled", lastError: session.lastError }
-          : {
-              status: "failed",
-              lastError: err instanceof Error ? err.message : String(err),
-            },
-      );
-    } catch (releaseErr) {
-      logger.warn("could not record how a turn ended", {
-        sessionId: session.id,
-        error:
-          releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
-      });
-    }
-  };
-
-  const executeTurn = async (
-    session: SessionState,
-    userMessage: string,
-    runOptions: {
-      maxSteps?: number;
-      signal?: AbortSignal;
-      providerId?: string;
-      taskMaxDurationMs?: number;
-      toolFilter?: (name: string) => boolean;
-      toolRole?: ToolRole;
-      reasoningEffort?: ReasoningEffort;
-      maxOutputTokens?: number;
-    } = {},
-  ): Promise<RunTurnResult> => {
-    assertKnownProvider(runOptions.providerId);
-    // A fusion worker session is throwaway: no recorder, no trace pin, no
-    // memory, and — at the end — no save. The parent session's turn
-    // owns the durable record of what the worker did.
-    const worker = readFusionWorkerMeta(session.metadata);
-    if (worker) {
-      return turnContext.run({ sessionId: session.id }, async () => {
-        try {
-          // The worker's request is its brief: the operator's words sit
-          // in its ORIGINAL REQUEST block, which is what the input guard
-          // reads (`quotedRequestText`).
-          turnRequests.set(session.id, userMessage);
-          return await loop.runTurn(session, {
-            userMessage,
-            ephemeral: true,
-            ...buildLoopTurnBudget(runOptions),
-          });
-        } finally {
-          turnRequests.delete(session.id);
-          // The prompt_captured hook still records the worker's window
-          // occupancy under its id; nothing persists it, so drop it.
-          lastTurnContextUsage.delete(session.id);
-          // A worker's turn is its whole life: nothing waits on its jobs.
-          shellJobs.endSession(session.id);
-          // …nor on its slot pin. The step executor pinned whatever slot
-          // the server put the worker's prompt in; the session id is never
-          // seen again, so the entry would outlive it for the life of the
-          // process, one per worker ever run, and `reserveReflectionSlot`
-          // would keep treating those slots as taken by a live session.
-          slotManager.release(session.id);
-        }
-      });
-    }
-    // Resolved before the turn runs, from the live config: the model the
-    // operator chose for this turn is what the session should remember,
-    // not whatever the config says by the time the turn finishes — and
-    // deliberately not the fallback chain's emergency substitute either.
-    const llmResolved = resolveLlmConfig(getConfig());
-    const llmEntry = llmResolved.providers.find(
-      (p) => p.id === llmResolved.activeTextProvider,
-    );
-    const llmStamp: SessionLlmStamp = {
-      providerId: llmResolved.activeTextProvider,
-      chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
-    };
-    // What this turn is served by, against what the session's previous
-    // turn was: a switch of provider, model, run mode or fusion worker —
-    // or a fallover still in force — is told to the model once, as
-    // `### route`, because the transcript it reads names the old model
-    // and repeats the old model's refusals (session-route.ts).
-    const turnRoute = resolveTurnRoute({
-      resolved: llmResolved,
-      runMode: resolveCurrentRunMode(),
-      managedModelId: getConfig().localModels.managed.modelId ?? null,
-      ...(runOptions.providerId !== undefined
-        ? { pinnedProviderId: runOptions.providerId }
-        : {}),
-      // Not a stand-in the chain will pass over for the primary: the
-      // turn starts on the primary then, and that is what it is told.
-      fallbackOverrideId: fallbackChain.standingOverrideFor(session.id),
-    });
-    const previousRoute = readSessionRoute(session.metadata);
-    const routeNote =
-      previousRoute === null
-        ? null
-        : renderRouteChangeNote(previousRoute, turnRoute, {
-            vision: resolveRouteVision(turnRoute.main.providerId),
-          });
-    if (routeNote !== null) {
-      logger.info("serving route changed since the previous turn", {
-        sessionId: session.id,
-        from: previousRoute,
-        to: turnRoute,
-      });
-    }
-    // The session's trace records the model this turn runs on, not the
-    // one in the stored metadata: that is the previous turn's until the
-    // turn's save below, so after a switch the log named the old model.
-    const recorder = ensureRecorder(session, {
-      ...session.metadata,
-      [SESSION_LLM_METADATA_KEY]: llmStamp,
-      [SESSION_ROUTE_METADATA_KEY]: turnRoute,
-    });
-    recorder?.noteTurnRoute(turnRoute);
-    // Pin this session for the duration of the turn. Without it a burst of
-    // new sessions can push this one's recorder out mid-turn, after which
-    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
-    // remaining event of the turn and any tool call whose `pendingCalls`
-    // entry went with it is logged with empty args.
-    activeTraceSessions.add(session.id);
-    return turnContext.run({ sessionId: session.id }, async () => {
-      // Registered before the mark and ended after the turn's end is
-      // written, so `shutdown` waiting on it waits for the row to be right.
-      const inFlight = turnsInFlight.begin(runOptions.signal);
-      markTurnRunning(session.id);
-      try {
-        // Recorded for `fusion.delegate`, which quotes it to the workers.
-        const turnRequest = pickOriginalRequest({
-          current: userMessage,
-          earlierTurns: session.turns,
-        });
-        if (turnRequest !== undefined) {
-          turnRequests.set(session.id, turnRequest);
-        }
-        // An explicit `maxSteps` from a caller (a durable task that pins
-        // its own budget, `run --max-steps`) is a *ceiling* that caller
-        // chose — honour it as one. Absent that, the config value is the
-        // leg length and `agent.task.*` supplies the ceiling, so an
-        // ordinary turn runs the task to completion instead of stopping
-        // at the first checkpoint.
-        const result = await loop.runTurn(session, {
-          userMessage,
-          // The same record the workers' briefs quote, pinned into the
-          // orchestrator's own prompt once the packer drops its carrier.
-          ...(turnRequest !== undefined
-            ? { originalRequest: turnRequest }
-            : {}),
-          ...(routeNote !== null ? { routeNote } : {}),
-          ...buildLoopTurnBudget(runOptions),
-        });
-        // Stamp the turn's window occupancy so the stored session can
-        // restore the TUI's context gauge when it is reopened. A turn
-        // that built no prompt (failed before step 1) leaves whatever
-        // snapshot the previous turn persisted. The same save also
-        // stamps what this turn ran on, so switching back into the
-        // session later restores its provider/model (session-llm.ts).
-        const usage = lastTurnContextUsage.get(session.id);
-        const finished: SessionState = {
-          ...result.session,
-          ...(usage === undefined ? {} : { contextUsage: usage }),
-          metadata: {
-            ...result.session.metadata,
-            [SESSION_LLM_METADATA_KEY]: llmStamp,
-            [SESSION_ROUTE_METADATA_KEY]: turnRoute,
-          },
-        };
-        // The turn's end replaces its `running` mark (`beginTurn`).
-        sessionStore.finishTurn(finished);
-        // Name the thread once, from its first prompt, after the first
-        // turn that actually answered. Fire-and-forget on purpose: the
-        // turn is already saved and already returned, and an unnamed
-        // session simply keeps showing its prompt — which is what every
-        // session showed before. It must never delay or fail a reply.
-        if (getConfig().agent.nameSessions && shouldNameSession(finished)) {
-          void nameSession(finished);
-        }
-        // `finish` ended the whole session: its kept jobs go with it.
-        if (finished.status === "completed") shellJobs.endSession(session.id);
-        return { ...result, session: finished };
-      } catch (err) {
-        // The loop hands back a state for every ending it can classify —
-        // reply, finish, max steps, failed, cancelled — so this is a turn
-        // that threw, or whose save did. Its row must not go on saying
-        // `running`.
-        releaseThrownTurn(session, err, runOptions.signal);
-        throw err;
-      } finally {
-        inFlight.end();
-        // The turn is over, however it ended: the shell jobs it started
-        // and did not `keep` are stopped here — the one choke point
-        // every turn passes through (§"A turn is a task, not a step
-        // budget").
-        shellJobs.endTurn(session.id);
-        lastTurnContextUsage.delete(session.id);
-        turnRequests.delete(session.id);
-        activeTraceSessions.delete(session.id);
-        // A delete that arrived mid-turn was deferred to keep the pin honest;
-        // complete it now that nothing is writing through the recorder.
-        if (pendingRecorderDrops.has(session.id)) {
-          pendingRecorderDrops.delete(session.id);
-          recorders.delete(session.id);
-        }
-        // The turn may have out-waited a burst that could not evict while it
-        // was pinned; settle the map now that it can.
-        evictRecorders();
-      }
-    });
-  };
-
-  /**
-   * Public entry point for mid-turn steering. Deliberately does NOT
-   * enqueue: the whole point is to reach the turn that is already
-   * running, and going through `turnController` would put the message
-   * behind it.
-   *
-   * One call, one decision. It deliberately does NOT pre-check
-   * `turnController.isBusy`: that is a second fact which stops being
-   * true at a different moment than "the loop will drain this again"
-   * (the loop's final drain happens inside `runTurn`, `busy.delete`
-   * later in the controller's `finally`). Guarding on it made this a
-   * check-then-act with a real lost-update window — accepted here,
-   * never delivered, and resurfacing at step 0 of some later turn under
-   * a "while you were working" notice about a turn that had already
-   * ended. `push` alone is authoritative: it accepts only while the
-   * running turn's window is open, and that window is closed by the
-   * same call that performs the final drain.
-   */
-  const steer = (sessionId: string, text: string): boolean =>
-    steeringInbox.push(sessionId, text);
-
-  const runTurn = async (
-    session: SessionState,
-    userMessage: string,
-    runOptions: {
-      maxSteps?: number;
-      signal?: AbortSignal;
-      eventHook?: TurnEventHook;
-      origin?: TurnOrigin;
-      providerId?: string;
-      taskMaxDurationMs?: number;
-      toolFilter?: (name: string) => boolean;
-      toolRole?: ToolRole;
-      reasoningEffort?: ReasoningEffort;
-      maxOutputTokens?: number;
-    } = {},
-  ): Promise<RunTurnResult> => {
-    // Before the queue, so a bad pin rejects now rather than after
-    // waiting behind whatever is running on the session.
-    assertKnownProvider(runOptions.providerId);
-    const origin = runOptions.origin ?? "cli";
-    const submission = {
-      sessionId: session.id,
-      origin,
-      // Re-read the freshest stored session when the queue hands over
-      // the lock, not when the caller enqueued: between those moments a
-      // turn from another origin (scheduler, HTTP, a TUI thread the
-      // operator backgrounded) can finish and save, and running on the
-      // caller's snapshot would make whichever turn saves last clobber
-      // the other's transcript. This is the contract's own rule — never
-      // hold a stale `SessionState` between enqueue and run; re-read
-      // inside the queued callback (§"Concurrency contract"). A session
-      // the store cannot answer for (never persisted, or deleted while
-      // parked) falls back to the caller's copy, the pre-existing
-      // behaviour.
-      run: () =>
-        executeTurn(
-          sessionStore.load(session.id) ?? session,
-          userMessage,
-          runOptions,
-        ),
-      ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
-      ...(runOptions.signal ? { signal: runOptions.signal } : {}),
-    } as const;
-
-    // Product analytics: count only human-originated turns. Scheduler-
-    // driven turns (durable tasks, cron, webhook ingress) are excluded
-    // — they are not "a person sending a message". We measure the turn's
-    // wall-clock duration (`latency_ms`) plus non-content shape metrics
-    // (`step_count`, `outcome`), and emit whether the turn resolves or
-    // throws — a failed/aborted turn is still a real "message sent"
-    // attempt. On throw we have no result, so only `outcome: "failed"`
-    // is known. `captureMessageSent` no-ops when analytics is disabled
-    // and also fires the one-time `first_message_sent`.
-    // A fusion worker turn is excluded for the same reason: it is the
-    // orchestrator fanning out, not a person; the parent session's turn
-    // is the one `message_sent` and the meter already count.
-    if (origin === "scheduler" || origin === "fusion") {
-      return turnController.enqueue(submission);
-    }
-    const startedAt = Date.now();
-    turnUsageMeter.begin(session.id);
-    try {
-      const result = await turnController.enqueue(submission);
-      captureMessageSent(analytics, analyticsStateStore, {
-        provider: providerRegistry.activeText.name,
-        model: resolveActiveModelName(),
-        latencyMs: Date.now() - startedAt,
-        stepCount: result.stepCount,
-        outcome: result.reason,
-        ...turnUsageMeter.snapshot(session.id),
-      });
-      return result;
-    } catch (error) {
-      captureMessageSent(analytics, analyticsStateStore, {
-        provider: providerRegistry.activeText.name,
-        model: resolveActiveModelName(),
-        latencyMs: Date.now() - startedAt,
-        outcome: "failed",
-        ...turnUsageMeter.snapshot(session.id),
-      });
-      throw error;
-    }
-  };
-
-  const taskRunner = new TaskRunner({
-    store: taskStore,
-    runtime: { runTurn },
-    sessionLoader: sessionStore,
-    sessionFactory: {
-      create: (input) => createSession(input ?? {}),
-      save: (state) => sessionStore.save(state),
-    },
-    defaultMaxSteps: config.agent.maxSteps,
-    backoff: {
-      initialMs: config.tasks.backoffInitialMs,
-      maxMs: config.tasks.backoffMaxMs,
-    },
-    enabled: config.tasks.enabled,
-    runOnCreate: config.tasks.runOnCreate,
-    minIntervalMs: config.tasks.minIntervalMs,
-    // Telegram is the only `TaskNotifyTarget` today, so the runner's
-    // single sink IS the Telegram route (a second target would turn
-    // this into a per-target dispatch). The channel is constructed
-    // after the runner — it needs the finished runtime object — so the
-    // sink resolves the same live reference the shutdown path uses,
-    // assigned further below, at delivery time. A report that fires in
-    // the window before that assignment (a due task on an early
-    // scheduler tick while bootstrap is still, e.g., awaiting MCP
-    // connects) is warn-logged and dropped, never lost silently; skips
-    // never affect the task's own status, and the runner isolates sink
-    // rejections. Skip-path logging is pinned by the sink's own unit
-    // tests in telegram-channel.test.ts.
-    reportSink: TelegramChannel.buildTaskReportSink({
-      resolveChannel: () => telegramChannelForShutdown,
-      logger,
-    }),
-    logger,
-    metrics,
-  });
-
-  registerTaskTools(toolRegistry, {
-    taskStore,
-    taskRunner,
-    createSession,
-    agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
-    defaultMaxAttempts: config.tasks.maxAttempts,
-    defaultListLimit: 20,
-  });
-
-  // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
-  // re-reads `resolveRunMode()` on every call and refuses when fusion is
-  // not effective, which is the correct and only gate it needs. A boot
-  // gate here was worse than redundant — it made the tool unreachable
-  // for the rest of the process to anyone who switched into fusion
-  // mid-session, so the mode ran with its chip, its tint and its config
-  // and no way to delegate. What the model is *told* about still tracks
-  // the live mode: `effectiveToolDescriptors()` adds and drops the
-  // descriptor (and with it the `### fusion` guidance) as the resolver's
-  // answer changes.
-  toolRegistry.register(
-    buildFusionDelegateTool({
-      runTurn: (session, userMessage, turnOptions) =>
-        runTurn(session, userMessage, turnOptions),
-      createEphemeralSession,
-      resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
-      declaredInputs,
-      // The worker leg's pricing, when the catalogue or a hand-priced
-      // entry knows it — the status table's spend line.
-      resolveWorkerPricing: (providerId, modelId) =>
-        resolveModelPricingFor(
-          resolveLlmConfig(getConfig()),
-          modelId,
-          providerId,
-        )?.pricing,
-      // The same client the llama-server provider serves workers with,
-      // so the speed a worker's time limit is sized from is the speed
-      // its own completions run at.
-      localTokensPerSecond: () => llama.measuredTokensPerSecond(),
-      // The same client again, for the one `/slots` read a local
-      // worker's queue watchdog makes before it gives up on the worker:
-      // the hint on that row is chosen from what the server was doing.
-      probeSlotOccupancy: async () => {
-        try {
-          return readSlotOccupancy(await llama.fetchSlots());
-        } catch {
-          return null;
-        }
-      },
-      approvals,
-      approvalRequired: dangerous.approvalRequired,
-      slotManager,
-      resolveRunMode: resolveCurrentRunMode,
-      workerSupportsSlotAffinity: (providerId) =>
-        providerRegistry.getProvider(providerId)?.capabilities
-          .supportsSlotAffinity ?? false,
-      warmWorkerBackend: prepareLocalLink,
-      // The PARENT's id, explicitly: the hook these fire from runs
-      // under the worker's ALS frame, where the ambient session is a
-      // throwaway nobody is listening to.
-      emitEvent: emitAgentLoopEventFor,
-      workingDir,
-      outputCharCap: config.agent.batchToolResultCharCap,
-      // A contract's declared `checks` run through the verify family,
-      // each on a throwaway copy of the workspace, so a fan-out is judged
-      // by what its output does, never by what a worker's reply says.
-      runChecks: (specs, ctx) =>
-        runChecks(specs, {
-          workingDir: ctx.workingDir,
-          signal: ctx.signal,
-          config,
-        }),
-      logger,
-    }),
+  const { reloadLlmProviders, reloadLlmProvider } = createRuntimeProviderReloads(
+    logger, localProfile, connectedLocal, providerRegistry,
   );
-  // Every session reads inside its working directory and the paths the
-  // user named unasked, by default (`agent.readScope`,
-  // `src/tools/read-scope/`); a read outside that asks through the
-  // ladder as `fs_read_outside` — the same gate and surfaces as every
-  // other gated action — and a `y` widens the session's roots. A fusion
-  // worker is confined more narrowly still — its working directory and
-  // its fan-out's write scope, never the brief's — and refused, since
-  // nobody is at the other end of its prompt. The shell gets the same
-  // scope as a token check. Installed here, after every native
-  // filesystem tool and the shell are registered. The scope is re-read
-  // per call, so `agent.readScope: "unrestricted"` needs no restart.
-  confineReads(toolRegistry, {
-    grantedDirs: (sessionId) => approvals.fanoutScopes.scopeFor(sessionId),
-    readScope: () => getConfig().agent.readScope,
-    approvals: dangerous,
+
+  const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
+
+  const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
+    sessions: { sessionStore, turnContext, turnRequests },
+    execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
+    inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
+    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter },
+    state: turnState, lifecycle, logger,
   });
 
-  const scheduler =
-    config.tasks.enabled && config.tasks.schedulerEnabled
-      ? new Scheduler({
-          taskRunner,
-          tickMs: config.tasks.schedulerTickMs,
-          batch: config.tasks.schedulerBatch,
-          logger,
-          metrics,
-        })
-      : null;
-  // `scheduler?.start()` is deliberately deferred until after the
-  // Telegram channel object is constructed (near the end of bootstrap)
-  // so a task report from the very first due tick can never observe a
-  // missing channel — a not-yet-`up` channel queues reports itself.
-  // The only cost is that overdue tasks fire their first tick a few
-  // seconds later on a cold start; the tick cadence is unchanged.
+  const taskRunner = createRuntimeTaskRunner({
+    config, taskStore, runTurn, sessionStore, createSession, toolRegistry,
+    resolveTelegram: () => telegramChannelForShutdown, logger, metrics,
+  });
 
-  // Memory-v2 phase 5: cold-path consolidator. Owns its own
-  // `setInterval` (scoped carve-out from "Scheduler is the only
-  // periodic timer" invariant — analogous to the Telegram polling
-  // carve-out). Started only when `memory.consolidation.enabled` is
-  // true AND a reflection-slot llmComplete is available. Distillation
-  // shares the reflection slot reserved above for link-generation;
-  // when no slot was reserved (memory.reflection disabled or only one
-  // llama-server slot) we fall back to slotId=-1 (no KV-cache reuse).
-  let consolidatorJob: ConsolidatorJob | null = null;
-  if (config.memory.lessons.enabled && config.memory.consolidation.enabled) {
-    // One monotonic counter shared by every consolidator-origin trace
-    // event (distill outcome + lesson/procedure deprecation) so the
-    // synthetic `consolidator.ndjson` file stays totally ordered across
-    // all event types within a tick. The consolidator does not run
-    // through a per-session recorder, so we own the `seq` here.
-    let consolidatorSeq = 0;
-    // Piggy-back on the reflection slot for the distill call. The slot
-    // is per-runtime, not per-job, and resolved per call — the slot
-    // manager reserves once and returns the same id afterwards.
-    const distillSlot = () => slotManager.sideCallSlotId();
-    const distillLlmComplete: ReflectionLlmComplete = abortableSubcall(
-      llmComplete,
-      (params: Parameters<ReflectionLlmComplete>[0]) => ({
-        prompt: params.prompt,
-        grammar: params.grammar,
-        slotId: params.slotId,
-        sessionId: params.sessionId,
-        ...(params.responseFormat
-          ? { responseFormat: params.responseFormat }
-          : {}),
-      }),
-    );
-    const distillRunner = new DistillRunner({
-      llmComplete: distillLlmComplete,
-      slotId: distillSlot,
-      timeoutMs: config.memory.consolidation.distillTimeoutMs,
-      logger,
-      metrics,
-      // Cold-path trace emission. The consolidator does not run through
-      // a per-session recorder, so we emit straight onto the bus with
-      // the synthetic `consolidator` sessionId and the shared cold-path
-      // `seq`. No-op when tracing is disabled.
-      ...(traceBus
-        ? {
-            emitTrace: (event) => {
-              traceBus.emit({
-                type: "distill",
-                sessionId: "consolidator",
-                seq: consolidatorSeq++,
-                ts: Date.now(),
-                outcome: event.outcome,
-                ...(typeof event.clusterSize === "number"
-                  ? { clusterSize: event.clusterSize }
-                  : {}),
-                ...(typeof event.hasProcedure === "boolean"
-                  ? { hasProcedure: event.hasProcedure }
-                  : {}),
-                ...(event.reason ? { reason: event.reason } : {}),
-              });
-            },
-          }
-        : {}),
-      // Memory-v2 phase 7b — emit a combined LESSON+PROCEDURE
-      // response when procedures are enabled. The grammar still
-      // permits the procedure half to be empty (conceptual
-      // clusters), so this stays the safe default-on once the
-      // feature is configured. Cross-phase invariant 21: this
-      // does **not** add a second LLM call.
-      withProcedure: config.memory.procedures.enabled,
-    });
-    consolidatorJob = new ConsolidatorJob(
-      {
-        enabled: true,
-        intervalMs: config.memory.consolidation.intervalMs,
-        cooldownMs: config.memory.consolidation.cooldownMs,
-        minClusterSize: config.memory.consolidation.minClusterSize,
-        maxClustersPerTick: config.memory.consolidation.maxClustersPerTick,
-        requireSharedTag: config.memory.consolidation.requireSharedTag,
-        consolidationLeaseMs: 60_000,
-        // Memory-v2 phase 6 — wire the age-based deprecation
-        // threshold and the per-tick deprecation cap. Both come
-        // from `memory.lessons.*` since they govern lesson rows.
-        // `maxEntries` is held inside the `LessonStore` itself
-        // (already passed via `LessonStoreOptions`) and surfaces
-        // through `pickOverflowForDeprecation()`.
-        deprecationAgeMs: config.memory.lessons.deprecationAgeMs,
-        maxDeprecationsPerTick: 100,
-        // Memory-v2 phase 7a — vote-driven decay runs once per
-        // tick (cross-phase invariant 23). `0` here disables both
-        // the decay pass and the vote-driven deprecation sweep
-        // even if the `voteStore` dep is present, so the master
-        // switch is honoured without re-checking `enabled` deep
-        // inside the job.
-        voteSignalDecay: config.memory.voting.enabled
-          ? config.memory.voting.signalDecay
-          : 0,
-        // Memory-v2 phase 7b — procedure age threshold and cascade
-        // hook live behind the procedures master switch.
-        ...(config.memory.procedures.enabled
-          ? {
-              procedureDeprecationAgeMs:
-                config.memory.procedures.deprecationAgeMs,
-            }
-          : {}),
-      },
-      {
-        memoryStore: notesStore,
-        linkStore,
-        lessonStore,
-        distillRunner,
-        metrics,
-        logger,
-        ...(config.memory.procedures.enabled ? { procedureStore } : {}),
-        ...(voteStore ? { voteStore } : {}),
-        // Memory-v2 phase 6. Bridge the sweep's per-lesson demotion
-        // callback to the trace bus. The consolidator runs
-        // out-of-band so we use the synthetic `consolidator`
-        // session id (matching the one the DistillRunner uses).
-        // The bus fans out to the NDJSON sink which writes to
-        // `<stateDir>/traces/consolidator.ndjson` — a dedicated
-        // cold-path log keyed by sessionId. A local `seq` counter
-        // keeps the file monotonically ordered; per-session
-        // counters are recorder-owned, but the consolidator does
-        // not run through a recorder.
-        ...(traceBus
-          ? ((): {
-              onLessonDeprecated: (event: {
-                lessonId: number;
-                reason: string;
-              }) => void;
-              onProcedureCreated?: (event: {
-                procedureId: number;
-                parentLessonIds: readonly number[];
-                parentMemoryIds: readonly number[];
-                source: "consolidator" | "manual";
-              }) => void;
-              onProcedureDeprecated?: (event: {
-                procedureId: number;
-                reason: string;
-              }) => void;
-            } => {
-              // Shares the hoisted `consolidatorSeq` declared above so
-              // distill + lesson/procedure events stay ordered in the
-              // same cold-path NDJSON file.
-              return {
-                onLessonDeprecated: ({ lessonId, reason }) =>
-                  traceBus.emit({
-                    type: "lesson_deprecated",
-                    sessionId: "consolidator",
-                    seq: consolidatorSeq++,
-                    ts: Date.now(),
-                    lessonId,
-                    reason,
-                  }),
-                ...(config.memory.procedures.enabled
-                  ? {
-                      onProcedureCreated: ({
-                        procedureId,
-                        parentLessonIds,
-                        parentMemoryIds,
-                        source,
-                      }) =>
-                        traceBus.emit({
-                          type: "procedure_created",
-                          sessionId: "consolidator",
-                          seq: consolidatorSeq++,
-                          ts: Date.now(),
-                          procedureId,
-                          parentLessonIds: [...parentLessonIds],
-                          parentMemoryIds: [...parentMemoryIds],
-                          source,
-                        }),
-                      onProcedureDeprecated: ({ procedureId, reason }) =>
-                        traceBus.emit({
-                          type: "procedure_deprecated",
-                          sessionId: "consolidator",
-                          seq: consolidatorSeq++,
-                          ts: Date.now(),
-                          procedureId,
-                          reason,
-                        }),
-                    }
-                  : {}),
-              };
-            })()
-          : {}),
-      },
-    );
-    consolidatorJob.start();
-  }
+  registerRuntimeFusionAndReadScope({
+    config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest: (id) => turnRequests.get(id),
+    declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
+    providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
+  });
+
+  const scheduler = createRuntimeScheduler({ config, taskRunner, logger, metrics });
+  const consolidatorJob = createRuntimeMemoryConsolidator({
+    config, notesStore, linkStore, lessonStore, procedureStore, voteStore,
+    slotManager, llmComplete, logger, metrics, traceBus,
+  });
+  consolidatorJob?.start();
 
   const runtime = {
     config,
@@ -4150,7 +630,7 @@ export async function createAgentRuntime(
     providerRegistry,
     capabilities,
     toolDescriptors: effectiveToolDescriptors(),
-    grammar,
+    grammar: getGrammar(),
     logger,
     metrics,
     createSession,
@@ -4158,6 +638,9 @@ export async function createAgentRuntime(
     runTurn,
     executeTurn,
     previewPrompt,
+    compactSession: compaction.compactSession,
+    getSessionCompaction: compaction.getSessionCompaction,
+    cancelSessionCompaction: compaction.cancelSessionCompaction,
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,
@@ -4184,14 +667,13 @@ export async function createAgentRuntime(
   };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
-    get: () => skillCatalog,
+    get: skillCatalogState.getSkillCatalog,
   });
-  // Reads `skillSection`, not a captured number: `refreshSkills()`
-  // reassigns the whole section, so a getter over the binding is what
-  // keeps the dropped count in step with the entries it belongs to.
+  // Read the catalog owner on every access: refreshSkills replaces the
+  // section, so the dropped count must follow its current entries.
   Object.defineProperty(runtime, "skillCatalogDropped", {
     enumerable: true,
-    get: () => skillSection.dropped,
+    get: skillCatalogState.getSkillCatalogDropped,
   });
   // Same late binding as the loop's own getter: `/tools`, the sidecar
   // and every host that reads the catalog off the runtime must see the
@@ -4202,84 +684,12 @@ export async function createAgentRuntime(
     get: () => effectiveToolDescriptors(),
   });
 
-  // Telegram remote-control channel. The channel is always constructed
-  // (even when `telegram.enabled === false` at boot) so slice-3B
-  // live-control surfaces can flip it on without restarting the host —
-  // the constructor is side-effect-free, only `start()` opens the
-  // network connection. The channel owns token resolution end-to-end
-  // (reads `TELEGRAM_BOT_TOKEN` from the env on construction);
-  // bootstrap deliberately does not look at the env var so it stays
-  // agnostic of telegram-specific naming. `start()` is fired-and-
-  // forgotten so a slow `getMe` probe never delays the first user
-  // turn; when `enabled=true` but no token is present, the channel
-  // transitions to `down` with `lastError: "missing
-  // TELEGRAM_BOT_TOKEN"`.
-  const telegramChannel = new TelegramChannel({
-    runtime,
-    config,
-    logger,
-    metrics,
-    emitStatus: (status) => options.handlers?.onChannelStatus?.(status),
-    ...(options.overrides?.telegramBotFactory
-      ? { botFactory: options.overrides.telegramBotFactory }
-      : {}),
+  connectRuntimeChannels({
+    runtime, config, logger, metrics, approvals, approvalRouter, options,
+    connectTelegram: (channel) => { telegramChannelForShutdown = channel; },
+    connectDiscord: (channel) => { discordChannelForShutdown = channel; },
+    connectSwarm: (swarm) => { swarmForShutdown = swarm; },
   });
-  runtime.telegramChannel = telegramChannel;
-  telegramChannelForShutdown = telegramChannel;
-  if (config.telegram.enabled) {
-    void telegramChannel.start().catch((err) => {
-      logger.error("telegram: start() rejected unexpectedly", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-
-  // Discord: same shape as Telegram — constructed unconditionally so
-  // the Integrations hub can report its state, started only when the
-  // operator enabled it. `start()` is fire-and-forget so a slow
-  // `/users/@me` probe never delays the first turn, and a missing
-  // token settles as `disabled` rather than `down` (an unconfigured
-  // integration is a resting state, not a failure).
-  const discordChannel = new DiscordChannel({
-    runtime,
-    logger,
-    approvals,
-    approvalRouter,
-    enabled: config.discord.enabled,
-    ownerUserIds: config.discord.ownerUserIds,
-    sessionPointerPath: resolve(config.paths.stateDir, "discord-session.json"),
-    inboxDir: resolve(config.paths.stateDir, "inbox", "discord"),
-    lock: new DiscordLockfile(resolve(config.paths.stateDir, "discord.lock")),
-    onStatus: (status) => options.handlers?.onChannelStatus?.(status),
-  });
-  runtime.discordChannel = discordChannel;
-  discordChannelForShutdown = discordChannel;
-  if (config.discord.enabled) {
-    void discordChannel.start().catch((err) => {
-      logger.error("discord: start() rejected unexpectedly", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-
-  // Swarm: extra bots beside the two primaries. Constructed
-  // unconditionally so the Swarm tab can list them; each enabled unit
-  // with a token is started fire-and-forget, like the primaries.
-  const swarm = new SwarmRegistry({
-    runtime,
-    config,
-    logger,
-    approvals,
-    approvalRouter,
-    stateDir: config.paths.stateDir,
-    userConfigFile: getUserConfigPath(config.paths.stateDir),
-    ...(options.overrides?.telegramBotFactory
-      ? { telegramBotFactory: options.overrides.telegramBotFactory }
-      : {}),
-  });
-  runtime.swarm = swarm;
-  swarmForShutdown = swarm;
-  void swarm.startEnabled();
 
   // Deferred from the Scheduler construction site above: the first
   // due tick must not race the Telegram channel construction, so task
@@ -4288,226 +698,4 @@ export async function createAgentRuntime(
   scheduler?.start();
 
   return runtime;
-}
-
-interface ResolvedModelProfile {
-  profile: ReturnType<typeof detectModelProfile>;
-  /** `/props.model_alias` verbatim, or `null` on fallback / probe miss. */
-  modelAlias: string | null;
-  /**
-   * `/props.total_slots` when the probe succeeded. `null` means the probe
-   * was skipped or failed; the caller should fall back to the SlotManager
-   * default. Used to keep the in-process slot pool in sync with the server
-   * so `slot_id` values we send always exist physically.
-   */
-  totalSlots: number | null;
-}
-
-async function resolveModelProfile(
-  overrides: CreateAgentRuntimeOptions["overrides"] | undefined,
-  llama: LlamaServerClient,
-  logger: StructuredLogger,
-  llamaUrl: string,
-  /**
-   * `false` when the active text provider is not a `llama-server` link:
-   * the `/props` probe is skipped entirely and the run starts on the
-   * plain profile (issue #112). Deliberately silent — the cloud route is
-   * not a failed probe, and the "using plain fallback" warning below
-   * would say it was. A later switch or fallover to a local link warms
-   * the real profile through `DeferredLocalBackendProbes`.
-   */
-  probeLocal: boolean,
-): Promise<ResolvedModelProfile> {
-  if (!probeLocal) {
-    return {
-      profile: PLAIN_INSTRUCT_PROFILE,
-      modelAlias: null,
-      totalSlots: null,
-    };
-  }
-  if (overrides?.llamaPropsError) {
-    logger.warn("model profile probe failed; using plain fallback", {
-      error: overrides.llamaPropsError.message,
-      url: llamaUrl,
-    });
-    return {
-      profile: PLAIN_INSTRUCT_PROFILE,
-      modelAlias: null,
-      totalSlots: null,
-    };
-  }
-  if (overrides?.llamaProps) {
-    return logResolvedProfile(overrides.llamaProps, logger);
-  }
-  if (
-    overrides?.llamaComplete ||
-    overrides?.skipLlamaHealthCheck ||
-    overrides?.deferLlamaHealthCheck
-  ) {
-    return {
-      profile: PLAIN_INSTRUCT_PROFILE,
-      modelAlias: null,
-      totalSlots: null,
-    };
-  }
-  try {
-    const props = await llama.fetchProps();
-    return logResolvedProfile(props, logger);
-  } catch (error) {
-    logger.warn("model profile probe failed; using plain fallback", {
-      error: error instanceof Error ? error.message : String(error),
-      url: llamaUrl,
-    });
-    return {
-      profile: PLAIN_INSTRUCT_PROFILE,
-      modelAlias: null,
-      totalSlots: null,
-    };
-  }
-}
-
-function logResolvedProfile(
-  props: Record<string, unknown>,
-  logger: StructuredLogger,
-): ResolvedModelProfile {
-  const resolved = detectModelProfile(props);
-  const alias =
-    typeof props.model_alias === "string" ? props.model_alias : null;
-  const totalSlots = extractTotalSlots(props);
-  logger.info("model profile resolved", {
-    id: resolved.id,
-    alias,
-    contextWindow: resolved.contextWindow ?? null,
-    totalSlots,
-  });
-  return { profile: resolved, modelAlias: alias, totalSlots };
-}
-
-/**
- * Only wire the hot-swap manager when the runtime actually talks to a
- * real llama-server. Any test override that replaces the HTTP layer
- * (fake completions, pre-canned `/props`, or an explicit probe-failure
- * simulation) keeps the legacy static-profile wiring so existing fakes
- * do not need to stand up a fresh `fetchProps` stub.
- */
-function shouldInstallProfileManager(
-  overrides: CreateAgentRuntimeOptions["overrides"] | undefined,
-): boolean {
-  if (!overrides) return true;
-  if (overrides.llamaComplete) return false;
-  if (overrides.llamaProps) return false;
-  if (overrides.llamaPropsError) return false;
-  if (overrides.skipLlamaHealthCheck) return false;
-  return true;
-}
-
-/**
- * Resolve the effective trace toggle. The config value wins when explicit
- * (`true` / `false`); otherwise the entry-point default decides (CLI is
- * `true`, sidecar is `false`, absent defaults to `false`).
- */
-function resolveTraceEnabled(
-  fromConfig: boolean | null,
-  fromEntryPoint: boolean | undefined,
-): boolean {
-  if (fromConfig !== null) return fromConfig;
-  return fromEntryPoint ?? false;
-}
-
-/**
- * Instantiate the async end-of-turn reflection runner when memory +
- * reflection are enabled in config. Reserves a dedicated slot from the
- * shared `SlotManager` so the main agent's KV cache is never evicted by
- * a reflection call. Falls back to `slotId: -1` (no slot affinity) when
- * the llama-server is configured with only one slot — reflection still
- * runs, it just doesn't get its own prefix cache reuse.
- *
- * Returns `undefined` (wiring skipped) when either memory layer is
- * disabled — the AgentLoop then behaves exactly as before the
- * reflection feature was introduced.
- */
-function buildReflectionRunner(args: {
-  config: AtomicAgentConfig;
-  slotManager: SlotManager;
-  llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
-  toolTransport?: import("../llm/provider/completion-types.js").ToolCallTransport;
-  profileStore: ProfileStore;
-  /**
-   * Freeform notes store. Wired only when both `memory.notes.enabled`
-   * and `memory.reflection.autoStoreNotes` are true — otherwise the
-   * runner falls back to profile-only extraction and the NOTE channel
-   * is silently dropped.
-   */
-  notesStore: MemoryStore;
-  /** Memory-v2 phase 3. Optional; when omitted EVOLVE is dropped. */
-  neighborEvolver?: NeighborEvolver;
-  /**
-   * Optional per-call trace sink. Bootstrap resolves the per-session
-   * `TraceRecorder` by `event.sessionId` and forwards to
-   * `recordReflection`.
-   */
-  emitTrace?: (event: ReflectionTraceEvent) => void;
-  logger: StructuredLogger;
-  metrics: AgentMetrics;
-}): ReflectionRunner | undefined {
-  const memory = args.config.memory;
-  if (!memory.profile.enabled || !memory.reflection.enabled) return undefined;
-  // Resolved per call rather than reserved here: a managed daemon's
-  // slot count is not known at boot (the pool is one slot until the
-  // first `/props`), and a reservation taken now would be `-1` forever
-  // — every reflection call would then let llama-server pick any idle
-  // slot, the main loop's included.
-  const reflectionSlotId = () => args.slotManager.sideCallSlotId();
-  const reflectionLlmComplete: ReflectionLlmComplete = abortableSubcall(
-    args.llmComplete,
-    ({ signal: _signal, ...rest }: Parameters<ReflectionLlmComplete>[0]) =>
-      rest,
-  );
-  const notesWriteEnabled =
-    memory.notes.enabled &&
-    memory.reflection.autoStoreNotes &&
-    memory.reflection.maxNotesPerCall > 0;
-  return createReflectionRunner({
-    llmComplete: reflectionLlmComplete,
-    ...(args.toolTransport ? { toolTransport: args.toolTransport } : {}),
-    profileStore: args.profileStore,
-    ...(notesWriteEnabled ? { memoryStore: args.notesStore } : {}),
-    ...(args.neighborEvolver ? { neighborEvolver: args.neighborEvolver } : {}),
-    ...(args.emitTrace ? { emitTrace: args.emitTrace } : {}),
-    reflectionSlotId,
-    timeoutMs: memory.reflection.timeoutMs,
-    maxFactsPerCall: memory.reflection.maxFactsPerCall,
-    maxNotesPerCall: notesWriteEnabled ? memory.reflection.maxNotesPerCall : 0,
-    // v2.5 typed-NOTE extraction (Phase C). Threaded as a
-    // boolean dep so the runner can pick the typed reflection prefix
-    // and the parser can project [type=X] into the `type:<X>` tag.
-    typedNotes: memory.reflection.typedNotes.enabled,
-    // Multi-party reflection mode (config v19). When enabled, the
-    // runner switches to REFLECTION_STABLE_PREFIX_ANY_SPEAKER so
-    // third-party speakers in the USER channel become valid
-    // extraction sources. Wins over `typedNotes`.
-    anySpeaker: memory.reflection.anySpeaker,
-    logger: args.logger,
-    metrics: args.metrics,
-  });
-}
-
-/**
- * Wire trace sinks into a fan-out bus. Always includes the on-disk
- * NDJSON sink so `atomic-agent trace show` can read the session back —
- * callers append additional sinks (sidecar relay, sentry, …) via
- * `handlers.traceSinks`.
- */
-function buildTraceBus(args: {
-  extraSinks: TraceSink[];
-  dir: string;
-  maxBytesPerSession: number;
-  logger: StructuredLogger;
-}): TraceBus {
-  const ndjsonSink = createNdjsonTraceSink({
-    dir: args.dir,
-    maxBytesPerSession: args.maxBytesPerSession,
-    logger: args.logger,
-  });
-  return createTraceBus([ndjsonSink, ...args.extraSinks]);
 }

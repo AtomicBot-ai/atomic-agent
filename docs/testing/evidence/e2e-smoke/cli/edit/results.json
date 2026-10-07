@@ -1,0 +1,173 @@
+{
+  "node": "v25.7.0",
+  "cli": "/Users/aleksejkalina/code/atomicbot/atomic-agent/dist/cli/index.js",
+  "judge": "not loaded; no judge cases",
+  "passed": 3,
+  "total": 3,
+  "results": [
+    {
+      "caseId": "coding-fix-cart-total",
+      "passed": true,
+      "spawn": {
+        "exitCode": 0,
+        "signal": null,
+        "stdout": "Changed calculateTotal to sum price * quantity for each item. Validation not run.\n",
+        "stderr": "[atomic-agent] migrated config v10 → v74 at /var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-fix-cart-total-YsI0yY/state/config.json\n[2026-10-06T17:55:10.912Z] INFO llama-server reachable {\"url\":\"http://127.0.0.1:19084\",\"latencyMs\":13}\n[2026-10-06T17:55:10.913Z] INFO model profile resolved {\"id\":\"plain-instruct\",\"alias\":null,\"contextWindow\":32768,\"totalSlots\":null}\n[2026-10-06T17:55:10.913Z] INFO slot manager using conservative default (probe deferred) {\"slotCount\":1}\n[2026-10-06T17:55:10.930Z] INFO starter-skills: installed global skills {\"skills\":[\"apple-calendar\",\"apple-notes\",\"apple-reminders\",\"audio-transcribe\",\"currency\",\"docker\",\"ffmpeg\",\"github\",\"gog-workspace\",\"imagemagick\",\"notion\",\"obsidian\",\"pandoc\",\"pdf\",\"skill-creator\",\"verify-work\",\"wttr-weather\",\"xlsx\"],\"sourceDir\":\"/Users/aleksejkalina/code/atomicbot/atomic-agent/dist/starter-skills\"}\nweb.search: provider \"exa\" is configured but EXA_API_KEY is not set; running on the keyless tier — expect HTTP 429 and silent degradation to duckduckgo. Set EXA_API_KEY for search-heavy autonomous work.\n[2026-10-06T17:55:10.968Z] INFO vision provider configured {\"provider\":\"local-llama\",\"followsLiveRoute\":true,\"autoDetect\":true,\"offeredAtBootstrap\":true}\natomic-agent run (chat)\n  cwd:     /var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-fix-cart-total-YsI0yY/work\n  llama:   http://127.0.0.1:19084\n  browser: chrome\n  skills:  19 installed\n  approval: level 5 (full trust)\n  type /quit to exit, /abort to cancel current turn\nyou> » turn 0 started\n[step 0] started\n[2026-10-06T17:55:10.985Z] WARN llama-server has no /apply-template; local prompts stay in atag's own framing {\"status\":404}\n  → os.fs.read({\"path\":\"src/cart.ts\"})\n  ← os.fs.read ok: export interface CartItem {\n  price: number;\n  quantity: number;\n}\nexport function calculateTotal(items: CartItem[]): number {\n  return items.length;\n}\n[2026-10-06T17:55:10.991Z] INFO tool executed {\"sessionId\":\"s-213cdb18-4791-4eda-bba6-1d6aa7fa0b40\",\"stepIndex\":0,\"batchIndex\":0,\"batchSize\":1,\"tool\":\"os.fs.read\",\"status\":\"ok\",\"durationMs\":1}\n[step 0] export interface CartItem {\n  price: number;\n  quantity: number;\n}\nexport function calculateTotal(items: CartItem[]): number {\n  return items.length;\n} (13ms)\n[step 1] started\n  → os.fs.edit({\"path\":\"src/cart.ts\",\"oldString\":\"return items.length;\",\"newString\":\"return items.reduce((total, item) => total + item.price * item.quantity, 0);\"})\n  ← os.fs.edit ok: --- a//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-fix-cart-total-YsI0yY/work/src/cart.ts\n+++ b//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-fix-cart-total-YsI0yY/work/src/cart.ts\n export function calculateTotal(items: CartItem[]): number {\n-  return items.length;\n+  return items.reduce((total, item) => total + item.price * item.quantity, 0);\n }\n[2026-10-06T17:55:10.996Z] INFO tool executed {\"sessionId\":\"s-213cdb18-4791-4eda-bba6-1d6aa7fa0b40\",\"stepIndex\":1,\"batchIndex\":0,\"batchSize\":1,\"tool\":\"os.fs.edit\",\"status\":\"ok\",\"durationMs\":2}\n[step 1] --- a//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-fix-cart-total-YsI0yY/work/src/cart.ts\n+++ b//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-fix-cart-total-YsI0yY/work/src/cart.ts\n export function calculateTotal(items: CartItem[]): number {\n-  return items.length;\n+  return items.reduce((total, item) => total + item.price * item.quantity, 0);\n } (5ms)\n[step 2] started\n  → reply({\"text\":\"Changed calculateTotal to sum price * quantity for each item. Validation not run.\"})\n  ← reply ok: Changed calculateTotal to sum price * quantity for each item. Validation not run.\n[2026-10-06T17:55:10.999Z] INFO tool executed {\"sessionId\":\"s-213cdb18-4791-4eda-bba6-1d6aa7fa0b40\",\"stepIndex\":2,\"batchIndex\":0,\"batchSize\":1,\"tool\":\"reply\",\"status\":\"ok\",\"durationMs\":0}\n[step 2] Changed calculateTotal to sum price * quantity for each item. Validation not run. (3ms)\n» turn 0 reply (3 steps, 24ms)\n{\n  \"sessionId\": \"s-213cdb18-4791-4eda-bba6-1d6aa7fa0b40\",\n  \"status\": \"pending\",\n  \"turnCount\": 1,\n  \"stepCount\": 3,\n  \"lastError\": null\n}\n",
+        "timedOut": false,
+        "durationMs": 1228
+      },
+      "cli": {
+        "reply": "Changed calculateTotal to sum price * quantity for each item. Validation not run.",
+        "sessionId": "s-213cdb18-4791-4eda-bba6-1d6aa7fa0b40",
+        "sessionStatus": "pending",
+        "stepCount": 3,
+        "lastError": null
+      },
+      "metrics": {
+        "found": true,
+        "stepCount": 3,
+        "totalPromptTokens": 24004,
+        "totalPredictedTokens": 89,
+        "cacheHits": 2,
+        "parseRetries": 0,
+        "loopDetected": 0,
+        "toolErrorCount": 0,
+        "batchCount": 0,
+        "maxBatchSize": 1,
+        "toolInvocations": [
+          {
+            "tool": "os.fs.read",
+            "status": "ok"
+          },
+          {
+            "tool": "os.fs.edit",
+            "status": "ok"
+          },
+          {
+            "tool": "reply",
+            "status": "ok"
+          }
+        ],
+        "failureCategory": null,
+        "failureMessage": null
+      },
+      "failures": [],
+      "judgeRecords": [],
+      "tracePath": "/var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-fix-cart-total-YsI0yY/state/traces/s-213cdb18-4791-4eda-bba6-1d6aa7fa0b40.ndjson",
+      "skipped": false,
+      "skipReason": null
+    },
+    {
+      "caseId": "debug-fix-slugify",
+      "passed": true,
+      "spawn": {
+        "exitCode": 0,
+        "signal": null,
+        "stdout": "Fixed slugify normalization. Validation not run.\n",
+        "stderr": "[atomic-agent] migrated config v10 → v74 at /var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-debug-fix-slugify-wNN4Wi/state/config.json\n[2026-10-06T17:55:12.228Z] INFO llama-server reachable {\"url\":\"http://127.0.0.1:19084\",\"latencyMs\":77}\n[2026-10-06T17:55:12.233Z] INFO model profile resolved {\"id\":\"plain-instruct\",\"alias\":null,\"contextWindow\":32768,\"totalSlots\":null}\n[2026-10-06T17:55:12.233Z] INFO slot manager using conservative default (probe deferred) {\"slotCount\":1}\n[2026-10-06T17:55:12.315Z] INFO starter-skills: installed global skills {\"skills\":[\"apple-calendar\",\"apple-notes\",\"apple-reminders\",\"audio-transcribe\",\"currency\",\"docker\",\"ffmpeg\",\"github\",\"gog-workspace\",\"imagemagick\",\"notion\",\"obsidian\",\"pandoc\",\"pdf\",\"skill-creator\",\"verify-work\",\"wttr-weather\",\"xlsx\"],\"sourceDir\":\"/Users/aleksejkalina/code/atomicbot/atomic-agent/dist/starter-skills\"}\nweb.search: provider \"exa\" is configured but EXA_API_KEY is not set; running on the keyless tier — expect HTTP 429 and silent degradation to duckduckgo. Set EXA_API_KEY for search-heavy autonomous work.\n[2026-10-06T17:55:12.365Z] INFO vision provider configured {\"provider\":\"local-llama\",\"followsLiveRoute\":true,\"autoDetect\":true,\"offeredAtBootstrap\":true}\natomic-agent run (chat)\n  cwd:     /var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-debug-fix-slugify-wNN4Wi/work\n  llama:   http://127.0.0.1:19084\n  browser: chrome\n  skills:  19 installed\n  approval: level 5 (full trust)\n  type /quit to exit, /abort to cancel current turn\nyou> » turn 0 started\n[step 0] started\n[2026-10-06T17:55:12.383Z] WARN llama-server has no /apply-template; local prompts stay in atag's own framing {\"status\":404}\n  → os.fs.read({\"path\":\"src/slug.ts\"})\n  → os.fs.read({\"path\":\"src/slug.test.ts\"})\n  ← os.fs.read ok: import { describe, expect, it } from \"vitest\";\nimport { slugify } from \"./slug.js\";\ndescribe(\"slugify\", () => {\n  it(\"normalizes titles for URLs\", () => {\n    expect(slugify(\"  Hello Atomic Agent  \")).toBe(\"hello-atomic-agent\");\n    expect(slugify(\"Retry, Repair, Repeat!\")).toBe(\"retry-repair-repeat\");\n  });\n});\n[2026-10-06T17:55:12.389Z] INFO tool executed {\"sessionId\":\"s-1c84e237-670a-4256-9af8-65e80107c38a\",\"stepIndex\":0,\"batchIndex\":1,\"batchSize\":2,\"tool\":\"os.fs.read\",\"status\":\"ok\",\"durationMs\":0}\n  ← os.fs.read ok: export function slugify(input: string): string {\n  return input.trim().replace(/\\s+/g, \"_\");\n}\n[2026-10-06T17:55:12.389Z] INFO tool executed {\"sessionId\":\"s-1c84e237-670a-4256-9af8-65e80107c38a\",\"stepIndex\":0,\"batchIndex\":0,\"batchSize\":2,\"tool\":\"os.fs.read\",\"status\":\"ok\",\"durationMs\":2}\n[step 0] 2 tools: os.fs.read[ok], os.fs.read[ok] (13ms)\n[step 1] started\n  → os.fs.edit({\"path\":\"src/slug.ts\",\"oldString\":\"export function slugify(input: string): string {\\n  return input.trim().replace(/\\\\s+/g, \\\"_\\\");\\n}\\n\",\"newString\":\"export function slugify(input: string): string {\\n  return input.trim().toLowerCase().replace(/[^a-z0-9]+/g, \\\"-\\\").replace(/^-+|-+$/g, \\\"\\\");\\n}\\n\"})\n  ← os.fs.edit ok: --- a//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-debug-fix-slugify-wNN4Wi/work/src/slug.ts\n+++ b//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-debug-fix-slugify-wNN4Wi/work/src/slug.ts\n export function slugify(input: string): string {\n-  return input.trim().replace(/\\s+/g, \"_\");\n+  return input.trim().toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-+|-+$/g, \"\");\n }\n[2026-10-06T17:55:12.394Z] INFO tool executed {\"sessionId\":\"s-1c84e237-670a-4256-9af8-65e80107c38a\",\"stepIndex\":1,\"batchIndex\":0,\"batchSize\":1,\"tool\":\"os.fs.edit\",\"status\":\"ok\",\"durationMs\":2}\n[step 1] --- a//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-debug-fix-slugify-wNN4Wi/work/src/slug.ts\n+++ b//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-debug-fix-slugify-wNN4Wi/work/src/slug.ts\n export function slugify(input: string): string {\n-  return input.trim().replace(/\\s+/g, \"_\");\n+  return input.trim().toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-+|-+$/g, \"\");\n } (4ms)\n[step 2] started\n  → reply({\"text\":\"Fixed slugify normalization. Validation not run.\"})\n  ← reply ok: Fixed slugify normalization. Validation not run.\n[2026-10-06T17:55:12.397Z] INFO tool executed {\"sessionId\":\"s-1c84e237-670a-4256-9af8-65e80107c38a\",\"stepIndex\":2,\"batchIndex\":0,\"batchSize\":1,\"tool\":\"reply\",\"status\":\"ok\",\"durationMs\":0}\n[step 2] Fixed slugify normalization. Validation not run. (3ms)\n» turn 0 reply (3 steps, 24ms)\n{\n  \"sessionId\": \"s-1c84e237-670a-4256-9af8-65e80107c38a\",\n  \"status\": \"pending\",\n  \"turnCount\": 1,\n  \"stepCount\": 3,\n  \"lastError\": null\n}\n",
+        "timedOut": false,
+        "durationMs": 1228
+      },
+      "cli": {
+        "reply": "Fixed slugify normalization. Validation not run.",
+        "sessionId": "s-1c84e237-670a-4256-9af8-65e80107c38a",
+        "sessionStatus": "pending",
+        "stepCount": 3,
+        "lastError": null
+      },
+      "metrics": {
+        "found": true,
+        "stepCount": 3,
+        "totalPromptTokens": 24223,
+        "totalPredictedTokens": 133,
+        "cacheHits": 2,
+        "parseRetries": 0,
+        "loopDetected": 0,
+        "toolErrorCount": 0,
+        "batchCount": 1,
+        "maxBatchSize": 2,
+        "toolInvocations": [
+          {
+            "tool": "os.fs.read",
+            "status": "ok"
+          },
+          {
+            "tool": "os.fs.read",
+            "status": "ok"
+          },
+          {
+            "tool": "os.fs.edit",
+            "status": "ok"
+          },
+          {
+            "tool": "reply",
+            "status": "ok"
+          }
+        ],
+        "failureCategory": null,
+        "failureMessage": null
+      },
+      "failures": [],
+      "judgeRecords": [],
+      "tracePath": "/var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-debug-fix-slugify-wNN4Wi/state/traces/s-1c84e237-670a-4256-9af8-65e80107c38a.ndjson",
+      "skipped": false,
+      "skipReason": null
+    },
+    {
+      "caseId": "coding-wire-shared-tax-rate",
+      "passed": true,
+      "spawn": {
+        "exitCode": 0,
+        "signal": null,
+        "stdout": "Updated invoiceTotal to use TAX_RATE. Validation not run.\n",
+        "stderr": "[atomic-agent] migrated config v10 → v74 at /var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-wire-shared-tax-rate-K3aIAA/state/config.json\n[2026-10-06T17:55:13.382Z] INFO llama-server reachable {\"url\":\"http://127.0.0.1:19084\",\"latencyMs\":12}\n[2026-10-06T17:55:13.383Z] INFO model profile resolved {\"id\":\"plain-instruct\",\"alias\":null,\"contextWindow\":32768,\"totalSlots\":null}\n[2026-10-06T17:55:13.383Z] INFO slot manager using conservative default (probe deferred) {\"slotCount\":1}\n[2026-10-06T17:55:13.399Z] INFO starter-skills: installed global skills {\"skills\":[\"apple-calendar\",\"apple-notes\",\"apple-reminders\",\"audio-transcribe\",\"currency\",\"docker\",\"ffmpeg\",\"github\",\"gog-workspace\",\"imagemagick\",\"notion\",\"obsidian\",\"pandoc\",\"pdf\",\"skill-creator\",\"verify-work\",\"wttr-weather\",\"xlsx\"],\"sourceDir\":\"/Users/aleksejkalina/code/atomicbot/atomic-agent/dist/starter-skills\"}\nweb.search: provider \"exa\" is configured but EXA_API_KEY is not set; running on the keyless tier — expect HTTP 429 and silent degradation to duckduckgo. Set EXA_API_KEY for search-heavy autonomous work.\n[2026-10-06T17:55:13.436Z] INFO vision provider configured {\"provider\":\"local-llama\",\"followsLiveRoute\":true,\"autoDetect\":true,\"offeredAtBootstrap\":true}\natomic-agent run (chat)\n  cwd:     /var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-wire-shared-tax-rate-K3aIAA/work\n  llama:   http://127.0.0.1:19084\n  browser: chrome\n  skills:  19 installed\n  approval: level 5 (full trust)\n  type /quit to exit, /abort to cancel current turn\nyou> » turn 0 started\n[step 0] started\n[2026-10-06T17:55:13.452Z] WARN llama-server has no /apply-template; local prompts stay in atag's own framing {\"status\":404}\n  → os.fs.read({\"path\":\"src/tax.ts\"})\n  → os.fs.read({\"path\":\"src/invoice.ts\"})\n  ← os.fs.read ok: export const TAX_RATE = 0.2;\nexport function calculateTax(subtotal: number): number {\n  return subtotal * TAX_RATE;\n}\n[2026-10-06T17:55:13.457Z] INFO tool executed {\"sessionId\":\"s-fddd5d38-5bed-446b-87cd-7c0d4fddbd8c\",\"stepIndex\":0,\"batchIndex\":0,\"batchSize\":2,\"tool\":\"os.fs.read\",\"status\":\"ok\",\"durationMs\":1}\n  ← os.fs.read ok: export function invoiceTotal(subtotal: number): number {\n  const tax = subtotal * 0.18;\n  return subtotal + tax;\n}\n[2026-10-06T17:55:13.457Z] INFO tool executed {\"sessionId\":\"s-fddd5d38-5bed-446b-87cd-7c0d4fddbd8c\",\"stepIndex\":0,\"batchIndex\":1,\"batchSize\":2,\"tool\":\"os.fs.read\",\"status\":\"ok\",\"durationMs\":1}\n[step 0] 2 tools: os.fs.read[ok], os.fs.read[ok] (13ms)\n[step 1] started\n  → os.fs.edit({\"path\":\"src/invoice.ts\",\"oldString\":\"export function invoiceTotal(subtotal: number): number {\\n  const tax = subtotal * 0.18;\\n  return subtotal + tax;\\n}\\n\",\"newString\":\"import { TAX_RATE } from \\\"./tax.js\\\";\\n\\nexport function invoiceTotal(subtotal: number): number {\\n  const tax = subtotal * TAX_RATE;\\n  return subtotal + tax;\\n}\\n\"})\n  ← os.fs.edit ok: --- a//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-wire-shared-tax-rate-K3aIAA/work/src/invoice.ts\n+++ b//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-wire-shared-tax-rate-K3aIAA/work/src/invoice.ts\n-export function invoiceTotal(subtotal: number): number {\n-  const tax = subtotal * 0.18;\n+import { TAX_RATE } from \"./tax.js\";\n+\n+export function invoiceTotal(subtotal: number): number {\n+  const tax = subtotal * TAX_RATE;\n   return subtotal + tax;\n }\n[2026-10-06T17:55:13.462Z] INFO tool executed {\"sessionId\":\"s-fddd5d38-5bed-446b-87cd-7c0d4fddbd8c\",\"stepIndex\":1,\"batchIndex\":0,\"batchSize\":1,\"tool\":\"os.fs.edit\",\"status\":\"ok\",\"durationMs\":2}\n[step 1] --- a//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-wire-shared-tax-rate-K3aIAA/work/src/invoice.ts\n+++ b//var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-wire-shared-tax-rate-K3aIAA/work/src/invoice.ts\n-export function invoiceTotal(subtotal: number): number {\n-  const tax = subtotal * 0.18;\n+import { TAX_RATE } from \"./tax.js\";\n+\n+export function invoiceTotal(subtotal: number): number {\n+  const tax = subtotal * TAX_RATE;\n   return subtotal + tax;\n } (4ms)\n[step 2] started\n  → reply({\"text\":\"Updated invoiceTotal to use TAX_RATE. Validation not run.\"})\n  ← reply ok: Updated invoiceTotal to use TAX_RATE. Validation not run.\n[2026-10-06T17:55:13.465Z] INFO tool executed {\"sessionId\":\"s-fddd5d38-5bed-446b-87cd-7c0d4fddbd8c\",\"stepIndex\":2,\"batchIndex\":0,\"batchSize\":1,\"tool\":\"reply\",\"status\":\"ok\",\"durationMs\":0}\n[step 2] Updated invoiceTotal to use TAX_RATE. Validation not run. (3ms)\n» turn 0 reply (3 steps, 22ms)\n{\n  \"sessionId\": \"s-fddd5d38-5bed-446b-87cd-7c0d4fddbd8c\",\n  \"status\": \"pending\",\n  \"turnCount\": 1,\n  \"stepCount\": 3,\n  \"lastError\": null\n}\n",
+        "timedOut": false,
+        "durationMs": 1060
+      },
+      "cli": {
+        "reply": "Updated invoiceTotal to use TAX_RATE. Validation not run.",
+        "sessionId": "s-fddd5d38-5bed-446b-87cd-7c0d4fddbd8c",
+        "sessionStatus": "pending",
+        "stepCount": 3,
+        "lastError": null
+      },
+      "metrics": {
+        "found": true,
+        "stepCount": 3,
+        "totalPromptTokens": 24218,
+        "totalPredictedTokens": 144,
+        "cacheHits": 2,
+        "parseRetries": 0,
+        "loopDetected": 0,
+        "toolErrorCount": 0,
+        "batchCount": 1,
+        "maxBatchSize": 2,
+        "toolInvocations": [
+          {
+            "tool": "os.fs.read",
+            "status": "ok"
+          },
+          {
+            "tool": "os.fs.read",
+            "status": "ok"
+          },
+          {
+            "tool": "os.fs.edit",
+            "status": "ok"
+          },
+          {
+            "tool": "reply",
+            "status": "ok"
+          }
+        ],
+        "failureCategory": null,
+        "failureMessage": null
+      },
+      "failures": [],
+      "judgeRecords": [],
+      "tracePath": "/var/folders/kj/7j7q0z2s2_x2kb2l4ytkkpy40000gn/T/atomic-eval-coding-wire-shared-tax-rate-K3aIAA/state/traces/s-fddd5d38-5bed-446b-87cd-7c0d4fddbd8c.ndjson",
+      "skipped": false,
+      "skipReason": null
+    }
+  ]
+}

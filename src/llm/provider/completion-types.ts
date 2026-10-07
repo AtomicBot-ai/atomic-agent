@@ -56,6 +56,8 @@ export type PromptTurn =
  * model sees.
  */
 export interface PromptMessages {
+  /** Historical checkpoint, outside the stable system instructions. */
+  contextSummary?: string;
   /** The stable prefix, byte for byte. */
   system: string;
   /** The packer's one-line recap of dropped turns, or `null`. */

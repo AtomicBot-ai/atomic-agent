@@ -192,6 +192,8 @@ export interface BuiltPromptTruncationFlags {
 }
 
 export interface BuiltPrompt {
+  /** Untrimmed active history, used only to plan compaction before packing loses content. */
+  compactionBudget?: { cap: number; activeTokens: number; activePairs: number };
   text: string;
   stablePrefix: string;
   tail: string;
@@ -203,6 +205,7 @@ export interface BuiltPrompt {
    */
   messages: PromptMessages;
   tokens: {
+    compaction?: number;
     stablePrefix: number;
     loadedSkills: number;
     sessionFacts: number;

@@ -1,5 +1,5 @@
-import type { AgentLoopEvent } from "../../agent/agent-loop.js";
-import type { StepEvent } from "../../agent/step-executor.js";
+import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import type { StepEvent } from "../../agent/step-events.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
@@ -509,6 +509,12 @@ export function createTraceRecorder(
     },
     onAgentEvent(event) {
       switch (event.type) {
+        case "compaction_started":
+        case "compaction_progress":
+        case "compaction_completed":
+        case "compaction_failed":
+          push({ ...event, sessionId, seq: nextSeq(), ts: now() });
+          return;
         case "user_message":
           pendingUserMessage = event.text;
           return;

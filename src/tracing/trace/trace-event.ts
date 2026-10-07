@@ -1,4 +1,5 @@
-import type { AgentLoopReason } from "../../agent/agent-loop.js";
+import type { CompactionEvent } from "../../agent/compaction-control.js";
+import type { AgentLoopReason } from "../../agent/agent-contract.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { ProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import type { MemorySubcallKind } from "../../memory/health/index.js";
@@ -19,7 +20,10 @@ import type { SessionRoute } from "../../session/session-route.js";
  *   The sink writes payloads verbatim; consumers must treat traces as
  *   sensitive local artefacts.
  */
+export type TraceCompaction = CompactionEvent & TraceEventBase;
+
 export type TraceEvent =
+  | TraceCompaction
   | TraceSessionStarted
   | TraceTurnStarted
   | TraceTurnFinished
@@ -469,7 +473,7 @@ export interface TraceVoteRejected extends TraceEventBase {
  * `observeVoteRunnerHealth` reads it, and `runOne`'s `finish()` writes
  * a metric and a log line but no row — so a `none` / `timeout` /
  * `failed` run is still trace-silent. Widening `outcome` and routing
- * `finish()` through here too is the follow-up (see AGENTS.md phase 7a,
+ * `finish()` through here too is the follow-up (see ../README.md phase 7a,
  * out of scope).
  */
 export interface TraceVote extends TraceEventBase {

@@ -5,7 +5,7 @@ import type {
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import { activeProviderRemovalMessage } from "../persist-llm-provider.js";
+import { activeProviderRemovalMessage } from "../../config/llm-provider-commands.js";
 import { configureWizardKindForRow } from "../providers/providers-orchestrator.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";

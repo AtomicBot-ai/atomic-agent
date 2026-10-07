@@ -2,8 +2,8 @@ import { Box, Text } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
-import { CODING_MODES, codingModeLook } from "./coding-mode.js";
-import { CodingModePopup } from "./components/coding-mode-popup.js";
+import { CODING_MODES, codingModeLook } from "./coding-mode/coding-mode.js";
+import { CodingModePopup } from "./coding-mode/coding-mode-popup.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import {
   createInitialTuiState,

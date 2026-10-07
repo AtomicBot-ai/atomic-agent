@@ -1,0 +1,140 @@
+--- PROMPT.md (seeded before)
++++ PROMPT.md (agent after)
+@@ -130,6 +130,7 @@
+ ### recalled         (medium) top-K BM25 hits against the current user message
+ ### world            (hot)    compressed ARIA / browser state
+ ### conversation     (hot)    transcript (oldest turns folded into a summary)
++CURRENT DATE: ...    (optional) today, for time-relative reasoning
+ ### notice           (hot, optional) one-shot runtime hint (e.g. loop detected)
+ ### respond
+ Respond now.
+@@ -138,6 +139,11 @@
+ 
+ Every section starts with its `###` header and ends with one blank line.
+ Empty sections are omitted entirely (no header).
++
++The optional current-date line precedes `### notice`. When a transient notice
++is present, it is the last content section immediately before `### respond`;
++without a notice, the date line still precedes the respond anchor. Both live
++in the variable tail, so neither changes the stable prefix or reasoning framing.
+ 
+ ### 3.1 Mutability tiers
+ 
+--- src/prompt/build-prompt-types.ts (seeded before)
++++ src/prompt/build-prompt-types.ts (agent after)
+@@ -54,7 +54,8 @@
+   toolRole?: ToolRole;
+   /**
+    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
+-   * `CURRENT DATE:` line in the variable tail just before `### respond`.
++   * `CURRENT DATE:` line in the variable tail before the optional
++   * `### notice` and `### respond` anchor.
+    * Lives in the tail, not the stable prefix, so it never affects
+    * KV-cache reuse. When omitted the line is not rendered.
+    */
+@@ -117,6 +118,7 @@
+   sessionSectionsMaxTokens?: number;
+   worldSnapshotMaxTokens?: number;
+   completionMaxTokens?: number;
++  /** One-shot runtime hint, the last content section before `### respond`. */
+   transientNotice?: string;
+   /**
+    * The serving route changed since the session's previous turn
+--- src/prompt/build-prompt.test.ts (seeded before)
++++ src/prompt/build-prompt.test.ts (agent after)
+@@ -205,7 +205,7 @@
+     expect(stablePrefix).toContain("### lessons");
+   });
+ 
+-  it("renders `currentDate` in the variable tail just before `### respond`", () => {
++  it("renders `currentDate` before `### respond` when there is no notice", () => {
+     const { stablePrefix, tail, text } = buildPrompt({
+       session: mkSession(),
+       toolDescriptors: TOOLS,
+@@ -863,6 +863,51 @@
+     expect(noticeIdx).toBeGreaterThan(conversationIdx);
+   });
+ 
++  describe.each([
++    ["plain", PLAIN_INSTRUCT_PROFILE, "### respond\nRespond now.\n"],
++    ["qwen", QWEN_THINK_PROFILE, "### respond\nRespond now.\n\n<think>\n"],
++    ["gemma", GEMMA4_THINK_PROFILE, "### respond\nRespond now.\n\n<turn|>\n<|turn>model\n"],
++  ] as const)("notice/date ordering for %s", (_name, profile, ending) => {
++    it.each([
++      [false, false],
++      [false, true],
++      [true, false],
++      [true, true],
++    ])("keeps the notice last (notice=%s, date=%s)", (hasNotice, hasDate) => {
++      const input = {
++        session: mkSession(),
++        toolDescriptors: TOOLS,
++        capabilities: CAPS,
++        skillCatalog: SKILLS,
++        profile,
++      };
++      const baseline = buildPrompt(input);
++      const prompt = buildPrompt({
++        ...input,
++        ...(hasNotice ? { transientNotice: "one-shot hint" } : {}),
++        ...(hasDate ? { currentDate: "2026-10-06" } : {}),
++      });
++      expect(prompt.stablePrefix).toBe(baseline.stablePrefix);
++      expect(prompt.messages.system).toBe(baseline.messages.system);
++      expect(prompt.tail.endsWith(ending)).toBe(true);
++      for (const tail of [prompt.tail, prompt.messages.tail]) {
++        if (hasNotice) {
++          expect(tail).toContain("### notice\none-shot hint\n\n### respond\nRespond now.");
++        } else {
++          expect(tail).not.toContain("### notice");
++        }
++        if (hasDate) {
++          expect(tail).toContain("CURRENT DATE: 2026-10-06 — this is today.");
++          expect(tail.indexOf("CURRENT DATE:")).toBeLessThan(
++            tail.indexOf(hasNotice ? "### notice" : "### respond"),
++          );
++        } else {
++          expect(tail).not.toContain("CURRENT DATE:");
++        }
++      }
++    });
++  });
++
+   it("renders a task policy for code and debug work without changing the stable prefix", () => {
+     const base = buildPrompt({
+       session: mkSession(),
+@@ -2169,8 +2214,8 @@
+             tail.slice(tail.indexOf("### task-policy")),
+           ]
+         : [
+-            tail.slice(0, tail.indexOf("### notice")),
+-            tail.slice(tail.indexOf("### notice")),
++            tail.slice(0, tail.indexOf("CURRENT DATE:")),
++            tail.slice(tail.indexOf("CURRENT DATE:")),
+           ];
+     expect(prompt.tail.startsWith(before)).toBe(true);
+     expect(prompt.tail.endsWith(after)).toBe(true);
+--- src/prompt/build-prompt.ts (seeded before)
++++ src/prompt/build-prompt.ts (agent after)
+@@ -422,9 +422,6 @@
+   }
+   if (taskPolicy !== null) {
+     tailAfter.push(`### task-policy`, taskPolicy.body, ``);
+-  }
+-  if (input.transientNotice && input.transientNotice.length > 0) {
+-    tailAfter.push(`### notice`, input.transientNotice, ``);
+   }
+   // Current date lives in the variable tail (not the stable prefix) so it
+   // sits close to the generation point where the model actually attends to
+@@ -436,6 +433,11 @@
+       `CURRENT DATE: ${input.currentDate} — this is today. Use it for any time-relative reasoning; never assume an earlier year.`,
+       ``,
+     );
++  }
++  // A one-shot runtime hint is the last content before the emit anchor,
++  // including when the current date is present.
++  if (input.transientNotice && input.transientNotice.length > 0) {
++    tailAfter.push(`### notice`, input.transientNotice, ``);
+   }
+   // Static 2-line emit anchor right before the (optional) reasoning prefill.
+   // Kept out of the stable prefix so it sits as close as possible to the

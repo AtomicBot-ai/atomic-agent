@@ -676,6 +676,8 @@ export interface ConversationPackStart {
 export const DEFAULT_CONVERSATION_LOW_WATER = 0.65;
 
 export interface PackConversationOptions {
+  /** Compacted histories pin requests outside this suffix. */
+  pinCurrentTask?: boolean;
   /**
    * Keep at most this many macro-turns. An *additional* constraint, never
    * a replacement for `maxTokens`: a pair has no bounded size — one task
@@ -1012,7 +1014,7 @@ export function packConversation(
   // instruction would compress into the dropped-summary line while the
   // correction stayed, and the model would continue from the correction
   // alone. Pin the current macro-turn's opening user turn as well.
-  if (currentStart < startIndex && turns[currentStart]?.kind === "user") {
+  if (options.pinCurrentTask !== false && currentStart < startIndex && turns[currentStart]?.kind === "user") {
     startIndex = currentStart;
   }
 

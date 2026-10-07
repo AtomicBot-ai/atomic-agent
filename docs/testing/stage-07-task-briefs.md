@@ -1,0 +1,28 @@
+# Фиксированные задачи сравнительной оценки
+
+Status: specified
+Owner: repository maintainers
+
+Зафиксированы до comparative runs [этапа07](../plans/07-agent-cycle-evaluation.md). Сравниваются runnable original Git revision cce6262c (AGENTS.md совпадает побайтово с archived original) и итог07. У original lint проходит с текущими установленными lockfile dependencies. Основное рабочее дерево и protected files в эксперимент не входят; каждый run получает отдельную disposable copy, одинаковый task text и checks. Изменения из эксперимента не переносятся в продукт.
+
+Одна matched пара на задачу — case study. Повторы для статистической оценки не обещаются; нельзя по одному run объявлять ускорение всей разработки. Свежие исполнители не получают историю реорганизации, подсказки новых внутренних путей или готовые patches. Порядок original/final чередуется. Фиксируются agent/model/settings, старт/конец, snapshot hashes, exit проверок и причина остановки.
+
+## Briefs и acceptance
+
+1. **Промпт.** Сделать transient notice последней содержательной секцией перед respond: текущую дату показывать раньше notice. Stable prefix должен остаться побайтово прежним; без notice дата и respond сохраняются, grammar и reasoning framing не меняются. Checks: buildPrompt с/без notice/date на plain/Qwen/Gemma, notice непосредственно перед respond, stablePrefix равен исходному. Это feature task, без seeded bug.
+2. **Read-only инструмент.** Добавить os.fs.exists с обязательным непустым path. Результат содержит exists и kind=file/dir/other/null; ENOENT даёт успешный false/null, остальные I/O errors сохраняются. Путь относительный к workingDir; операция не читает содержимое и ничего не пишет. Registration/descriptor/JSON Schema/parser/resource class pure_read/grammar и read boundary должны согласовываться; новая metadata имеет один owner там, где это поддерживается исходной архитектурой. Checks: реальные temp file/dir/missing path, bad args, native schema, catalog/registry/class presence и вызов через read-scope wrapper. На original не требуется создавать всю будущую систему canonical13 ради одного инструмента.
+3. **Миграция.** Исправить seeded regression: legacy approvalRequired=false ошибочно выбирает требующее approval значение. Явный approvalLevel имеет приоритет; true/false, строковые bool, null/absence и current defaults сохраняют прежнюю семантику. Checks: independent parseUserConfigFile scenarios и существующие approval migration tests. Version не повышать ради исправления regression; остальные поля не менять.
+4. **MCP UI.** Исправить seeded regression: ошибка refresh оставляет loading=true. Ошибка должна снимать loading, показывать своё сообщение и сохранять rows/cursor/детали; следующий refresh_started очищает ошибку и снова включает loading. Checks: reducer actions до/после failure и повторный refresh, существующие MCP tests.
+5. **Скачивание модели.** Исправить seeded resume regression: первый Range начинается на один байт позже первой дыры. Сохранить валидатор If-Range, неизвестную длину, fully-complete offset/416 path, discard чужого URL и cancellation cleanup. Checks: temp partial metadata/data и describeResume для prefix/hole/complete/unknown cases; существующие resume/download tests без реального скачивания.
+6. **Провайдер.** Исправить seeded regression в разрешении возможностей модели: явный supportsVision=false не должен заменяться provider-level true. Явный true/false приоритетнее fallback; отсутствие model override использует provider defaults; live смена модели/провайдера меняет решение на следующем чтении. Checks: actual serving-route vision resolver с explicit false/true/absent и существующие vision route/per-model tests. Без платного API и model daemon.
+7. **Отмена batch.** Исправить seeded regression: после отмены выполнение serial group начинает ещё один вызов. Уже начатые calls сохраняют свои results, оставшиеся slots cancelled, tail terminal не запускается. Сохранить обычный non-cancel tool-error path и batch-index alignment. Checks: deferred typed tool, abort после первого вызова, invocation log/outcomes/terminal barrier; существующие batch tests.
+
+Seeds создаются по проверенному mechanism/AST anchor в обоих snapshots. Перед каждым run independent check обязан провалиться на seed (или на исходном отсутствии feature для1/2). Точный diff/hash seeds и checks сохраняются до выдачи task; если соответствующего механизма нет, task считается unavailable, не заменяется более лёгкой задачей после наблюдения результата. Исполнитель не видит hidden check или golden fix.
+
+## Наблюдение и review
+
+Для reads нужен инструментированный маршрут: записывать реально возвращённые ограниченные excerpts/search output, instruction/code paths, unique и повторные bytes. Полный размер файла не равен прочитанному контексту; автоматический context, truncation и неинструментированные действия отмечать отдельно. Если runner не даёт общего token accounting, измерять только observed read bytes, не оценивать tokens по размеру.
+
+Acceptance проверяет behavior одинаковой version-aware harness, а не желаемые filenames. Review одинаково проверяет correctness, invariant/security violations, unrelated edits, недостающие проверки и unnecessary public API changes. Findings приводятся по конкретным failed assertions/diff; произвольный stylistic score не назначается. Missing raw evidence не превращается в нулевое число замечаний.
+
+Report отвечает отдельно на completion, observed context, unrelated changes и review findings; отмечает бюджет, early failures и ограничения одной пары. Если matched runs недоступны после попытки, criterion оценки остаётся открытым — зелёный CI его не заменяет.

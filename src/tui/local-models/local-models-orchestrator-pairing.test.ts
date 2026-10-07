@@ -29,7 +29,7 @@ import {
   resolveModelFilePath,
   resolveServerBinPath,
 } from "../../local-llm/index.js";
-import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
 import {
   getUserConfigPath,
   readUserConfigFileSync,

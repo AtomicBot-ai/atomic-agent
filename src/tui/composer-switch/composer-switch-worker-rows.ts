@@ -3,7 +3,7 @@ import {
   configuredCloudProviders,
   localSliceLoadingRows,
   type ComposerSwitchRow,
-} from "./composer-switch-rows.js";
+} from "./composer-switch-row-contracts.js";
 
 /**
  * The rows of the composer's fourth control, `workers` — drawn only on

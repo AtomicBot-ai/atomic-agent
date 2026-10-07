@@ -16,6 +16,8 @@ vi.mock("../local-llm/index.js", async () => {
     listVulkanDevices: vi.fn(),
     probeNvidiaVramMiB: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
+    // Server lifecycle is scripted here; never reclaim the operator's live port.
+    reclaimManagedPort: vi.fn(async () => ({ kind: "free" })),
   };
 });
 
@@ -26,8 +28,8 @@ import {
   resolveModelFilePath,
   resolveServerBinPath,
 } from "../local-llm/index.js";
-import { writeBackendVersion } from "../local-llm/backend-version.js";
-import { resolvePlatformAsset } from "../local-llm/platform-assets.js";
+import { writeBackendVersion } from "../local-llm/backend/backend-version.js";
+import { resolvePlatformAsset } from "../local-llm/backend/platform-assets.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import type { LocalTurnGateFacts } from "./local-turn-gate.js";

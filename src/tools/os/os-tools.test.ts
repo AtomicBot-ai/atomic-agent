@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../approval/approval-gate.js";
 import { ToolRegistry, type ToolContext } from "../tool-registry.js";
-import { osFsReadTool } from "./fs-read.js";
-import { osFsListTool } from "./fs-list.js";
-import { buildOsFsWriteTool } from "./fs-write.js";
-import { buildOsShellTool, needsShellInterpretation } from "./shell.js";
-import { buildOsFsTrashTool } from "./fs-trash.js";
+import { osFsReadTool } from "./fs/fs-read.js";
+import { osFsListTool } from "./fs/fs-list.js";
+import { buildOsFsWriteTool } from "./fs/fs-write.js";
+import { buildOsShellTool, needsShellInterpretation } from "./shell/shell.js";
+import { buildOsFsTrashTool } from "./fs/fs-trash.js";
 import { runCommand } from "../../sandbox/command-runner.js";
 import { registerOsTools } from "./index.js";
 

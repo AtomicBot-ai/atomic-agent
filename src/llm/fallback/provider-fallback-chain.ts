@@ -54,7 +54,7 @@ const DEFAULT_PARTITION = "";
  * Cross-provider circuit breaker layered over the single-provider
  * reliability slice. Owns no timer: every decision is computed lazily
  * from the wall clock at the moment a turn asks for a provider (see
- * AGENTS.md §"Provider fallback chain" — lazy probe carve-out).
+ * ../docs/fallback.md — lazy probe carve-out).
  *
  * The wrapper that drives real completions calls, per turn:
  *   1. `pickProvider()` once, to choose the starting provider;

@@ -1,7 +1,7 @@
 import { isLocalModelsHfOpen } from "../local-models/local-models-hf-keys.js";
 import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
 import type { TuiState } from "../tui-state.js";
-import { hasLlmModal } from "./llm-panel-modals.js";
+import { hasLlmModal } from "../llm-panel/llm-panel-modals.js";
 
 /**
  * Who draws the bar for a running download. One download, one bar.

@@ -1,3 +1,15 @@
+import { OS_FS_READ_CONTRACT } from "../tools/os/fs/fs-read-contract.js";
+import { OS_FS_LIST_CONTRACT } from "../tools/os/fs/fs-list-contract.js";
+import { OS_FS_GLOB_CONTRACT } from "../tools/os/fs/fs-glob-contract.js";
+import { OS_FS_GREP_CONTRACT } from "../tools/os/fs/fs-grep-contract.js";
+import { OS_FS_DIFF_CONTRACT } from "../tools/os/fs/fs-diff-contract.js";
+import { OS_FS_WATCH_CONTRACT } from "../tools/os/fs/fs-watch-contract.js";
+import { OS_FS_WRITE_CONTRACT } from "../tools/os/fs/fs-write-contract.js";
+import { OS_FS_EDIT_CONTRACT } from "../tools/os/fs/fs-edit-contract.js";
+import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
+import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
+import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Per-tool JSON Schemas for the cloud `native_tools` transport.
  *
@@ -29,6 +41,7 @@
  *     guards the **shape**.
  */
 
+import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
@@ -135,116 +148,15 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
 
   // ── os.fs ────────────────────────────────────────────────────────────────
-  [
-    "os.fs.read",
-    obj(
-      {
-        path: stringSchema,
-        maxBytes: numberSchema,
-        offset: numberSchema,
-        limit: numberSchema,
-        lineNumbers: booleanSchema,
-      },
-      ["path"],
-    ),
-  ],
-  [
-    "os.fs.write",
-    obj(
-      {
-        path: stringSchema,
-        content: stringSchema,
-        mode: { type: "string", enum: ["replace", "append"] },
-        // F51: the only way past the input refusal (`fs-input-guard.ts`).
-        overwrite: booleanSchema,
-      },
-      ["path", "content"],
-    ),
-  ],
-  ["os.fs.restore", obj({ path: stringSchema }, ["path"])],
-  ["os.fs.trash", obj({ paths: stringArraySchema }, ["paths"])],
-  [
-    "os.fs.list",
-    obj(
-      {
-        path: stringSchema,
-        pattern: stringSchema,
-        kind: { type: "string", enum: ["file", "dir"] },
-        extensions: stringArraySchema,
-        sort: { type: "string", enum: ["name", "size", "mtime"] },
-        maxEntries: numberSchema,
-      },
-      ["path"],
-    ),
-  ],
-  [
-    "os.fs.glob",
-    obj(
-      {
-        pattern: {
-          anyOf: [stringSchema, stringArraySchema],
-        },
-        cwd: stringSchema,
-        path: stringSchema,
-        ignore: stringArraySchema,
-        absolute: booleanSchema,
-        limit: numberSchema,
-        sortByMtime: booleanSchema,
-        nocase: booleanSchema,
-      },
-      ["pattern"],
-    ),
-  ],
-  [
-    "os.fs.locate_project",
-    obj(
-      {
-        name: stringSchema,
-        limit: numberSchema,
-      },
-      ["name"],
-    ),
-  ],
-  [
-    "os.fs.grep",
-    obj(
-      {
-        pattern: stringSchema,
-        path: stringSchema,
-        glob: {
-          anyOf: [stringSchema, stringArraySchema],
-        },
-        type: stringSchema,
-        literal: booleanSchema,
-        caseInsensitive: booleanSchema,
-        multiline: booleanSchema,
-        outputMode: {
-          type: "string",
-          enum: ["content", "files_with_matches", "count"],
-        },
-        contextBefore: numberSchema,
-        contextAfter: numberSchema,
-        contextAround: numberSchema,
-        headLimit: numberSchema,
-        offset: numberSchema,
-        showLineNumbers: booleanSchema,
-        timeoutMs: numberSchema,
-      },
-      ["pattern"],
-    ),
-  ],
-  [
-    "os.fs.edit",
-    obj(
-      {
-        path: stringSchema,
-        oldString: stringSchema,
-        newString: stringSchema,
-        replaceAll: booleanSchema,
-      },
-      ["path", "oldString", "newString"],
-    ),
-  ],
+  [OS_FS_READ_CONTRACT.name, OS_FS_READ_CONTRACT.argsJsonSchema],
+  [OS_FS_WRITE_CONTRACT.name, OS_FS_WRITE_CONTRACT.argsJsonSchema],
+  [OS_FS_RESTORE_CONTRACT.name, OS_FS_RESTORE_CONTRACT.argsJsonSchema],
+  [OS_FS_TRASH_CONTRACT.name, OS_FS_TRASH_CONTRACT.argsJsonSchema],
+  [OS_FS_LIST_CONTRACT.name, OS_FS_LIST_CONTRACT.argsJsonSchema],
+  [OS_FS_GLOB_CONTRACT.name, OS_FS_GLOB_CONTRACT.argsJsonSchema],
+  [OS_FS_LOCATE_PROJECT_CONTRACT.name, OS_FS_LOCATE_PROJECT_CONTRACT.argsJsonSchema],
+  [OS_FS_GREP_CONTRACT.name, OS_FS_GREP_CONTRACT.argsJsonSchema],
+  [OS_FS_EDIT_CONTRACT.name, OS_FS_EDIT_CONTRACT.argsJsonSchema],
   [
     "os.fs.read_document",
     obj(
@@ -311,65 +223,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["path", "destDir"],
     ),
   ],
-  [
-    "os.fs.hash",
-    obj(
-      {
-        path: stringSchema,
-        algorithm: {
-          type: "string",
-          enum: ["md5", "sha1", "sha256", "sha512"],
-        },
-        encoding: { type: "string", enum: ["hex", "base64"] },
-      },
-      ["path"],
-    ),
-  ],
-  [
-    "os.fs.diff",
-    obj({
-      aPath: stringSchema,
-      aText: stringSchema,
-      aLabel: stringSchema,
-      bPath: stringSchema,
-      bText: stringSchema,
-      bLabel: stringSchema,
-      context: numberSchema,
-      ignoreWhitespace: booleanSchema,
-    }),
-  ],
-  [
-    "os.fs.patch",
-    obj({
-      patch: stringSchema,
-      patchPath: stringSchema,
-      apply: booleanSchema,
-      rootDir: stringSchema,
-      fuzzFactor: numberSchema,
-      stripComponents: numberSchema,
-    }),
-  ],
-  [
-    "os.fs.watch",
-    obj(
-      {
-        path: stringSchema,
-        timeoutMs: numberSchema,
-        recursive: booleanSchema,
-        events: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["add", "change", "unlink", "addDir", "unlinkDir"],
-          },
-        },
-        ignoreInitial: booleanSchema,
-        maxEvents: numberSchema,
-        stopAfterFirst: booleanSchema,
-      },
-      ["path"],
-    ),
-  ],
+  [OS_FS_HASH_CONTRACT.name, OS_FS_HASH_CONTRACT.argsJsonSchema],
+  [OS_FS_DIFF_CONTRACT.name, OS_FS_DIFF_CONTRACT.argsJsonSchema],
+  [OS_FS_PATCH_CONTRACT.name, OS_FS_PATCH_CONTRACT.argsJsonSchema],
+  [OS_FS_WATCH_CONTRACT.name, OS_FS_WATCH_CONTRACT.argsJsonSchema],
 
   // ── os.git ───────────────────────────────────────────────────────────────
   ["os.git.status", obj({ repo: stringSchema })],

@@ -1,10 +1,10 @@
+import { isPrintableFilterInput } from "../input/printable-filter-input.js";
 import type { Key } from "ink";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import {
   handleLlmModalKey,
-  isPrintableFilterInput,
 } from "./llm-panel-modal-key-bindings.js";
 import { selectCloudModelSection } from "./llm-panel-row-builders.js";
 import { clampLlmCursor, selectLlmRowAt } from "./llm-panel-selectors.js";

@@ -1,0 +1,131 @@
+{
+  "actions": 19,
+  "returnedOutputBytes": 79457,
+  "observedSourceBytes": 74599,
+  "uniqueVersionedSourceBytes": 74054,
+  "repeatedSourceBytes": 545,
+  "uniqueInstructionBytes": 32348,
+  "uniqueCodeBytes": 27660,
+  "uniqueOtherBytes": 14046,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+      "uniqueBytes": 32348
+    },
+    {
+      "path": "README.md",
+      "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+      "uniqueBytes": 8980
+    },
+    {
+      "path": "src/tui/memory/memory-actions.ts",
+      "hash": "7e3e2641b5a8cff00ab0e3b1ee53555bd4273bfa6ac64d403ec17de65845c39d",
+      "uniqueBytes": 38
+    },
+    {
+      "path": "src/tui/memory/memory-reducer.ts",
+      "hash": "e6b59f7857d925c7617ad0215410f153ed6871fbd2ff64f91c92c53ffb4845ea",
+      "uniqueBytes": 34
+    },
+    {
+      "path": "src/tui/memory/memory-orchestrator.ts",
+      "hash": "8af6ebb7f37353ff41af99a2db24693897440c29eab0627a7f5b41c12a3c7e1c",
+      "uniqueBytes": 56
+    },
+    {
+      "path": "src/tui/tasks/tasks-reducer.ts",
+      "hash": "afde06dbfdedeb5e96e138558ecb817ce438cc692c526c15996f7fb736000704",
+      "uniqueBytes": 33
+    },
+    {
+      "path": "src/tui/tasks/tasks-actions.ts",
+      "hash": "f226e5c58344e307ba4722b0af751ca45b58de825ad69d2947b19d5e75d269e3",
+      "uniqueBytes": 37
+    },
+    {
+      "path": "src/tui/tasks/tasks-orchestrator.ts",
+      "hash": "5b30ebfa50ee6643edf51452f897e0208ce0ab0447cac31474df2df7132f3b9d",
+      "uniqueBytes": 55
+    },
+    {
+      "path": "src/tui/mcp/mcp-orchestrator.ts",
+      "hash": "89bd33966e2cfd082a43f4b54a678db6e9696de8bc30cc9bb45cdd4d4f9459ae",
+      "uniqueBytes": 4405
+    },
+    {
+      "path": "src/tui/mcp/mcp-reducer.test.ts",
+      "hash": "2f2cdf9b2beab9cdf900308e6d4710a500da3feaeda292084907b3581f85773a",
+      "uniqueBytes": 7824
+    },
+    {
+      "path": "src/tui/mcp/mcp-reducer.ts",
+      "hash": "3c1eb790bcd32d0d3e55e0a3174eaf4dc30bc67124599aa17384e569e4f030b8",
+      "uniqueBytes": 5934
+    },
+    {
+      "path": "src/tui/mcp/mcp-actions.ts",
+      "hash": "39bc3c6b0d3e70fc7b2368078602221def4686dbf9608facfb6aa6703a7e79b5",
+      "uniqueBytes": 1830
+    },
+    {
+      "path": "src/tui/local-models/local-models-orchestrator.ts",
+      "hash": "3efa86060b328bf2387ee5e5e1613b0b0a83242d765b4eaa97c56e873122855f",
+      "uniqueBytes": 60
+    },
+    {
+      "path": "src/tui/local-models/local-models-actions.ts",
+      "hash": "fb4e59790615df8ed71a3eaf25183822026decdca49c1c691ceb6af70118481f",
+      "uniqueBytes": 44
+    },
+    {
+      "path": "src/tui/local-models/local-models-reducer.ts",
+      "hash": "cda0e4504566069a95b6e80901f75bca17f719014909f7a54504d865c3fa1a81",
+      "uniqueBytes": 40
+    },
+    {
+      "path": "src/tui/skills/skills-reducer.ts",
+      "hash": "6274c0cd1edd680b9d1e51c4b94a18ef33a8e5826b9f9063e81560b2b608fefb",
+      "uniqueBytes": 34
+    },
+    {
+      "path": "src/tui/skills/skills-actions.ts",
+      "hash": "d5cf85d0ac1d12f0f4b9a88d7a057ac52ca2d815c47136f2cb5e75edc38d9e9b",
+      "uniqueBytes": 38
+    },
+    {
+      "path": "src/tui/skills/skills-orchestrator.ts",
+      "hash": "c6414ac2d58a0af55f7b21a77c1b356a231e435ab3866e3c9c48ef1de8b411a2",
+      "uniqueBytes": 56
+    },
+    {
+      "path": "src/tui/mcp/mcp-panel-state.ts",
+      "hash": "fb3d1125184120bbd98af829107fccb6b728961b9c8b1c5fe8ded4625f97df16",
+      "uniqueBytes": 3528
+    },
+    {
+      "path": "package.json",
+      "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+      "uniqueBytes": 5066
+    },
+    {
+      "path": "src/tui/components/mcp-panel.tsx",
+      "hash": "46b4282d4ee8e595c5fbca55991730ba274e86bfcfe12c96e64ba549be51473a",
+      "uniqueBytes": 2798
+    },
+    {
+      "path": "src/tui/components/mcp-list.tsx",
+      "hash": "669f4ba5fe10c68561ee68b7903356bae13dba4f87e673372dcc1c30c129a142",
+      "uniqueBytes": 91
+    },
+    {
+      "path": "src/tui/mcp/mcp-reducer.ts",
+      "hash": "6e3dc92f921d9ee94c55df139c7095194802e5667e35c17b50061b999de475de",
+      "uniqueBytes": 725
+    }
+  ],
+  "changedFiles": [
+    "src/tui/mcp/mcp-reducer.test.ts",
+    "src/tui/mcp/mcp-reducer.ts"
+  ]
+}

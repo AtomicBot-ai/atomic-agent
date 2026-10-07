@@ -14,7 +14,7 @@
  *
  * Not periodic work: one `unref`'d timer at a time, armed only after a
  * failure and cancelled by `stop()`, so it stays inside the polling
- * carve-out (AGENTS.md §"Telegram remote-control channel").
+ * carve-out (../docs/adapters.md).
  */
 
 import { backoffMs } from "../reconnect-backoff.js";

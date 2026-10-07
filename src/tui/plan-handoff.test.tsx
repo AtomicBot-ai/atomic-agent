@@ -2,13 +2,13 @@ import { Box } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 
-import { ChatLog } from "./components/chat-log.js";
+import { ChatLog } from "./chat/chat-log.js";
 
-import type { CodingMode } from "./coding-mode.js";
+import type { CodingMode } from "./coding-mode/coding-mode.js";
 import {
   EXECUTE_PLAN_MESSAGE,
   PlanHandoff,
-} from "./components/plan-handoff.js";
+} from "./coding-mode/plan-handoff.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { finishTurn, startNewRun } from "./reducer-helpers.js";
 import {

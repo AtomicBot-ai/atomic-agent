@@ -1,5 +1,5 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
-import type { StepToolSet } from "./step-tool-set.js";
+import type { StepToolSet } from "./policies/step-tool-set.js";
 
 /**
  * A Fusion planner that only reads is made to choose (F41).

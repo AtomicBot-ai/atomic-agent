@@ -4,7 +4,7 @@ import {
   LOGO_METRICS,
   WORDMARK_WIDTH,
   type LogoVariant,
-} from "./splash-fit.js";
+} from "../chat/splash-fit.js";
 
 function measure(rows: readonly string[]): { width: number; height: number } {
   return {

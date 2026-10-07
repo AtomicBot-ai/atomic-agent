@@ -10,7 +10,7 @@
  */
 
 import { ConfigValidationError } from "./config-validation-error.js";
-import type { LocalModelDef } from "../local-llm/models-catalog.js";
+import type { LocalModelDef } from "../local-llm/catalog/models-catalog.js";
 
 /** The id becomes a directory name under `<dataDir>/models/`. */
 const CUSTOM_ID_RE = /^custom-[a-z0-9._-]+$/;

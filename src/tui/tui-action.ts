@@ -1,5 +1,5 @@
-import type { CodingMode } from "./coding-mode.js";
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { CodingMode } from "./coding-mode/coding-mode.js";
+import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
@@ -40,6 +40,8 @@ import type { ContextUsageState } from "../session/context-usage.js";
  */
 export type TuiAction =
   | { type: "runtime_info"; line: string }
+  | { type: "compaction_requested"; sessionId: string }
+  | { type: "compaction_request_settled"; sessionId: string; busy: boolean }
   /** Append a local system message directly into the chat transcript. */
   | {
       type: "system_message";

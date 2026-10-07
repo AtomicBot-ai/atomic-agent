@@ -17,7 +17,7 @@ import type { TuiAction } from "./tui-action.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
-import { registerSession } from "../local-llm/session-registry.js";
+import { registerSession } from "../local-llm/server/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { buildInkRenderOptions } from "./ink-render-options.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
@@ -53,7 +53,7 @@ import {
   ONBOARDING_RERUN_RESET,
   reopenOnboarding,
 } from "./onboarding/rerun-onboarding.js";
-import { persistOnboardingState } from "./persist-onboarding-state.js";
+import { persistOnboardingState } from "./onboarding/persist-onboarding-state.js";
 import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
@@ -502,6 +502,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.moveSession(id, toIndex),
         onSessionsEndReached: () => orchestrator.loadMoreSessions(),
         onSessionNewRequested: () => orchestrator.newSession(),
+        onCompactionRequested: (verb) => { void orchestrator.compactContext(verb); },
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>

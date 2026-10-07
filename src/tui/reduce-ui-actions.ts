@@ -2,7 +2,7 @@ import {
   CONVERSATION_MAX_PAIRS_MAX,
   CONVERSATION_MAX_PAIRS_MIN,
 } from "../config/config-schema.js";
-import { CODING_MODES, cycleCodingMode } from "./coding-mode.js";
+import { CODING_MODES, cycleCodingMode } from "./coding-mode/coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";

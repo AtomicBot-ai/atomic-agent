@@ -1,7 +1,7 @@
 /**
  * Single-server MCP client.
  *
- * Locked invariant (AGENTS.md §"MCP client"): this is the ONLY file
+ * Locked invariant (docs/client.md): this is the ONLY file
  * in the runtime that imports `@modelcontextprotocol/sdk`.
  * Everything else operates on the neutral shapes from
  * `mcp-types.ts`. Future replacement of the SDK touches this file
@@ -427,7 +427,7 @@ export class McpClient {
     if (t.kind === "stdio") {
       // Inherit the agent's `process.env` (already augmented from
       // `<stateDir>/.env` at bootstrap) and overlay per-server keys.
-      // See AGENTS.md §"Secrets and process environment" — there is
+      // See docs/client.md for the environment contract — there is
       // no env filtering today, MCP subprocesses see every var the
       // agent has.
       const env: Record<string, string> = {};

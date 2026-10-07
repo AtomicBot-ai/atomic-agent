@@ -23,7 +23,7 @@ const cloudGateFacts = (): LocalTurnGateFacts => ({
 });
 
 /**
- * The TUI's half of the mid-turn steering contract (AGENTS.md
+ * The TUI's half of the mid-turn steering contract (README.md
  * §"Mid-turn steering"):
  *   - a message typed while a turn is running is offered to that turn
  *     first, and only falls back to the orchestrator's own pending

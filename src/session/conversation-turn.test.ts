@@ -246,6 +246,7 @@ describe("conversation-turn helpers", () => {
         summary: listing,
         at: 7,
       });
+      if (turn.kind !== "tool_result") throw new Error("expected a listing tool result");
       expect(renderToolResultBody(turn, { inCurrentMacroTurn: true })).toBe(
         listing,
       );
@@ -271,6 +272,7 @@ describe("conversation-turn helpers", () => {
       summary: listing,
       at: 7,
     });
+    if (shell.kind !== "tool_result") throw new Error("expected a shell tool result");
     const agedShell = renderToolResultBody(shell, {
       inCurrentMacroTurn: false,
     });

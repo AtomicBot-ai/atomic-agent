@@ -1,0 +1,2232 @@
+{
+  "source": "docs/archive/2026-10-06/agent-guide.md",
+  "sourceSha256": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+  "sections": [
+    {
+      "line": 5,
+      "level": 2,
+      "title": "Mission",
+      "current": [
+        "docs/architecture.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 14,
+      "level": 2,
+      "title": "Architectural invariants",
+      "current": [
+        "AGENTS.md",
+        "src/prompt/docs/assembly.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/prompt/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 25,
+      "level": 2,
+      "title": "Rare tools: `tool.view` and `### loaded-tools`",
+      "current": [
+        "src/tools/docs/contracts.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 35,
+      "level": 2,
+      "title": "Skills enable / disable",
+      "current": [
+        "src/skills/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/skills/AGENTS.md"
+      ]
+    },
+    {
+      "line": 39,
+      "level": 2,
+      "title": "Parallel tool calls per step",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 43,
+      "level": 3,
+      "title": "Grammar shape (array-only)",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 59,
+      "level": 3,
+      "title": "Resource-class taxonomy",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 77,
+      "level": 3,
+      "title": "Batch executor and step pipeline",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 89,
+      "level": 3,
+      "title": "Strict tool schemas",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 120,
+      "level": 3,
+      "title": "Refused before dispatch: control markers, unknown keys, a replaced user file",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 134,
+      "level": 3,
+      "title": "A command still running at the default timeout is detached, not killed",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 138,
+      "level": 3,
+      "title": "Reads are confined to the working directory",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 142,
+      "level": 3,
+      "title": "A reply batched with work is a progress note",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 146,
+      "level": 3,
+      "title": "Locked invariants (pinned by tests)",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 159,
+      "level": 3,
+      "title": "Configuration (`agent.*`)",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 175,
+      "level": 3,
+      "title": "A turn is a task, not a step budget",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 215,
+      "level": 3,
+      "title": "Waiting out a provider outage",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 288,
+      "level": 3,
+      "title": "Truncated completions",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 350,
+      "level": 3,
+      "title": "An unparseable completion is retried, not fatal",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 388,
+      "level": 3,
+      "title": "No-progress loop detection",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 426,
+      "level": 3,
+      "title": "Out of scope (deferred)",
+      "current": [
+        "src/agent/docs/batching.md",
+        "src/agent/docs/recovery.md",
+        "src/tools/docs/contracts.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/agent/AGENTS.md",
+        "src/tools/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 430,
+      "level": 2,
+      "title": "Layout rules (enforced)",
+      "current": [
+        "AGENTS.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 441,
+      "level": 2,
+      "title": "Mouse support",
+      "current": [
+        "src/tui/docs/interface.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tui/AGENTS.md"
+      ]
+    },
+    {
+      "line": 463,
+      "level": 2,
+      "title": "Module map",
+      "current": [
+        "AGENTS.md",
+        "docs/architecture.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 503,
+      "level": 2,
+      "title": "Atomic Mail",
+      "current": [
+        "src/atomic-mail/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 513,
+      "level": 2,
+      "title": "Secrets and process environment",
+      "current": [
+        "src/config/docs/compatibility.md",
+        "src/mcp/docs/client.md",
+        "src/integrations/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/config/AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 521,
+      "level": 2,
+      "title": "Web search reliability",
+      "current": [
+        "src/tools/os/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 586,
+      "level": 2,
+      "title": "HTTP retry contract",
+      "current": [
+        "src/llm/docs/fallback.md",
+        "src/tools/os/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 608,
+      "level": 2,
+      "title": "Build & test",
+      "current": [
+        "docs/development.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 619,
+      "level": 2,
+      "title": "LLM provider abstraction",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 623,
+      "level": 3,
+      "title": "Registry and transport",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 637,
+      "level": 3,
+      "title": "Bootstrap wiring",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 645,
+      "level": 3,
+      "title": "Hot-swap",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 649,
+      "level": 3,
+      "title": "Credential check before save",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 659,
+      "level": 3,
+      "title": "Structured Outputs for memory sub-calls",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 670,
+      "level": 3,
+      "title": "Locked invariants",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 684,
+      "level": 3,
+      "title": "Embeddings",
+      "current": [
+        "src/llm/README.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 688,
+      "level": 2,
+      "title": "Output ceilings",
+      "current": [
+        "src/config/docs/compatibility.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/config/AGENTS.md"
+      ]
+    },
+    {
+      "line": 700,
+      "level": 2,
+      "title": "llama-server modes",
+      "current": [
+        "src/local-llm/docs/lifecycle.md",
+        "src/llm/docs/profiles.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/local-llm/AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 729,
+      "level": 2,
+      "title": "Current memory model",
+      "current": [
+        "src/memory/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 755,
+      "level": 2,
+      "title": "Memory fabric",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 761,
+      "level": 3,
+      "title": "Memory-v2 phase 1B \u2014 hybrid FTS5 + embedding recall (opt-in)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 803,
+      "level": 3,
+      "title": "Memory-v2 phase 2 \u2014 reactive link graph (on by default)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 866,
+      "level": 3,
+      "title": "Memory-v2 phase 3 \u2014 neighbor-evolver (on by default)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 931,
+      "level": 3,
+      "title": "Memory-v2 phase 4 \u2014 bi-temporal ProfileStore",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 979,
+      "level": 3,
+      "title": "Memory-v2 phase 5 \u2014 lessons + cold-path consolidator (C-half)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1054,
+      "level": 3,
+      "title": "Memory-v2 phase 6 \u2014 lesson lifecycle and deprecation",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1102,
+      "level": 3,
+      "title": "Memory-v2 phase 7a \u2014 ExpeL-style vote curation",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1162,
+      "level": 3,
+      "title": "Memory-v2 phase 7b \u2014 MemP-style advisory procedure templates",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1251,
+      "level": 3,
+      "title": "ProfileStore (durable facts, in the prompt tail)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1262,
+      "level": 3,
+      "title": "MemoryStore (FTS5 freeform notes)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1272,
+      "level": 3,
+      "title": "Reflection (async end-of-turn memory formation)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1284,
+      "level": 3,
+      "title": "Configuration",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1297,
+      "level": 3,
+      "title": "Invariants",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1306,
+      "level": 3,
+      "title": "Explicit out-of-scope",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1310,
+      "level": 3,
+      "title": "Memory sub-call health warning",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1321,
+      "level": 3,
+      "title": "Memory v2.5 \u2014 phase A heuristic-gated query rewriter (on by default)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1385,
+      "level": 3,
+      "title": "Memory v2.5 \u2014 phase B sliding-window reflection segmentation (opt-in)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1432,
+      "level": 3,
+      "title": "Memory v2.5 \u2014 phase C typed NOTE extraction (opt-in)",
+      "current": [
+        "src/memory/docs/retrieval.md",
+        "src/memory/docs/formation.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/memory/AGENTS.md",
+        "src/memory/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1477,
+      "level": 2,
+      "title": "Concurrency contract",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1481,
+      "level": 3,
+      "title": "Invariants (locked, pinned by [src/runtime/turn-controller.test.ts](src/runtime/turn-controller.test.ts))",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1490,
+      "level": 3,
+      "title": "Fusion worker turns",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1500,
+      "level": 3,
+      "title": "Ownership of shared resources",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1512,
+      "level": 3,
+      "title": "What the scheduler / webhook paths may and may not assume",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1520,
+      "level": 3,
+      "title": "Mid-turn steering",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1548,
+      "level": 3,
+      "title": "Extension points",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1555,
+      "level": 3,
+      "title": "Risk (acknowledged)",
+      "current": [
+        "src/runtime/docs/lifecycle.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/runtime/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1559,
+      "level": 2,
+      "title": "Privacy tab (analytics + approvals)",
+      "current": [
+        "src/analytics/README.md",
+        "src/approval/README.md",
+        "src/tui/docs/interface.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/approval/AGENTS.md",
+        "src/tui/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1587,
+      "level": 3,
+      "title": "Analytics surface, install id, and environment",
+      "current": [
+        "src/analytics/README.md",
+        "src/approval/README.md",
+        "src/tui/docs/interface.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/approval/AGENTS.md",
+        "src/tui/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1607,
+      "level": 3,
+      "title": "Session grants (prompt-side approval, issue #79)",
+      "current": [
+        "src/analytics/README.md",
+        "src/approval/README.md",
+        "src/tui/docs/interface.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/approval/AGENTS.md",
+        "src/tui/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1627,
+      "level": 2,
+      "title": "Session retention",
+      "current": [
+        "src/session/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/session/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1633,
+      "level": 3,
+      "title": "Configuration (`sessions.retention.*`)",
+      "current": [
+        "src/session/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/session/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1639,
+      "level": 3,
+      "title": "The rules",
+      "current": [
+        "src/session/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/session/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1650,
+      "level": 3,
+      "title": "Invariants",
+      "current": [
+        "src/session/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/session/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1663,
+      "level": 3,
+      "title": "Out of scope (deferred)",
+      "current": [
+        "src/session/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/session/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1667,
+      "level": 2,
+      "title": "Turn marks: the row says when a turn is running",
+      "current": [
+        "src/tui/docs/interface.md",
+        "src/session/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tui/AGENTS.md",
+        "src/session/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1687,
+      "level": 2,
+      "title": "Durable tasks",
+      "current": [
+        "src/tasks/docs/queue.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1705,
+      "level": 3,
+      "title": "Lifecycle",
+      "current": [
+        "src/tasks/docs/queue.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1719,
+      "level": 3,
+      "title": "Drain semantics",
+      "current": [
+        "src/tasks/docs/queue.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1730,
+      "level": 3,
+      "title": "Locked invariants (pinned by tests)",
+      "current": [
+        "src/tasks/docs/queue.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1739,
+      "level": 3,
+      "title": "Surfaces",
+      "current": [
+        "src/tasks/docs/queue.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1747,
+      "level": 3,
+      "title": "Configuration",
+      "current": [
+        "src/tasks/docs/queue.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1758,
+      "level": 3,
+      "title": "Out of scope (deferred)",
+      "current": [
+        "src/tasks/docs/queue.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1762,
+      "level": 2,
+      "title": "Background autonomy",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1766,
+      "level": 3,
+      "title": "Schedules on `TaskRecord`",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1781,
+      "level": 3,
+      "title": "Scheduler",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1791,
+      "level": 3,
+      "title": "Session lifecycle for scheduled tasks",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1803,
+      "level": 3,
+      "title": "Wake reason on session metadata",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1814,
+      "level": 3,
+      "title": "Webhook ingress",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1826,
+      "level": 3,
+      "title": "Agent tools (`tasks.*`)",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1842,
+      "level": 3,
+      "title": "Telegram reports for scheduled tasks (`notify`)",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1857,
+      "level": 3,
+      "title": "Configuration (env-only under `tasks.*`)",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1869,
+      "level": 3,
+      "title": "Metrics (tasks)",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1877,
+      "level": 3,
+      "title": "CLI",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1890,
+      "level": 3,
+      "title": "TUI surface (Tasks tab)",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1929,
+      "level": 3,
+      "title": "Locked invariants (pinned by tests)",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1943,
+      "level": 3,
+      "title": "TUI surface (Memory tab)",
+      "current": [
+        "src/tasks/docs/queue.md",
+        "src/scheduler/README.md",
+        "src/http/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tasks/AGENTS.md",
+        "src/http/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1966,
+      "level": 2,
+      "title": "New terminal window (Ctrl+N)",
+      "current": [
+        "src/tui/docs/interface.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tui/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1984,
+      "level": 2,
+      "title": "Vision (multimodal input)",
+      "current": [
+        "src/tools/vision/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 1988,
+      "level": 3,
+      "title": "Surfaces",
+      "current": [
+        "src/tools/vision/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2003,
+      "level": 3,
+      "title": "Locked invariants",
+      "current": [
+        "src/tools/vision/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2014,
+      "level": 3,
+      "title": "Configuration (`vision.*`)",
+      "current": [
+        "src/tools/vision/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2027,
+      "level": 3,
+      "title": "Out of scope (deferred)",
+      "current": [
+        "src/tools/vision/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2031,
+      "level": 2,
+      "title": "Reply attachments (`reply.attachments`)",
+      "current": [
+        "src/tools/docs/contracts.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2042,
+      "level": 2,
+      "title": "Telegram remote-control channel",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2046,
+      "level": 3,
+      "title": "Lifecycle",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2054,
+      "level": 3,
+      "title": "Polling \u2014 explicit AGENTS.md carve-out",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2063,
+      "level": 3,
+      "title": "Sessions",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2073,
+      "level": 3,
+      "title": "Approvals",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2084,
+      "level": 3,
+      "title": "Task reports",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2088,
+      "level": 3,
+      "title": "Attachments (inbound)",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2098,
+      "level": 3,
+      "title": "Attachments (outbound)",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2102,
+      "level": 3,
+      "title": "Live control",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2114,
+      "level": 3,
+      "title": "TUI panel",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2124,
+      "level": 3,
+      "title": "Configuration",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2135,
+      "level": 3,
+      "title": "Metrics",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2142,
+      "level": 3,
+      "title": "Outbound formatting (HTML mode)",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2150,
+      "level": 3,
+      "title": "Locked invariants",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2170,
+      "level": 3,
+      "title": "Out of scope (deferred)",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2174,
+      "level": 2,
+      "title": "MCP client",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2178,
+      "level": 3,
+      "title": "Why MCP",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2182,
+      "level": 3,
+      "title": "Lifecycle",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2196,
+      "level": 3,
+      "title": "Module map",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2211,
+      "level": 3,
+      "title": "Resource classification",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2222,
+      "level": 3,
+      "title": "Sampling forwarding",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2228,
+      "level": 3,
+      "title": "Configuration (`config.mcp.servers[]`)",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2250,
+      "level": 3,
+      "title": "Locked invariants",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2269,
+      "level": 3,
+      "title": "Out of scope (deferred)",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2273,
+      "level": 3,
+      "title": "TUI surface (Manage tab \u2014 Mcp panel)",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2287,
+      "level": 3,
+      "title": "Poller liveness",
+      "current": [
+        "src/mcp/docs/client.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/mcp/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2291,
+      "level": 2,
+      "title": "Discord channel",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2295,
+      "level": 3,
+      "title": "Why no client library",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2299,
+      "level": 3,
+      "title": "Attachments (inbound)",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2303,
+      "level": 3,
+      "title": "Attachments (outbound)",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2323,
+      "level": 2,
+      "title": "Swarm (extra bots)",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2327,
+      "level": 3,
+      "title": "Registry",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2333,
+      "level": 3,
+      "title": "TUI tab",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2337,
+      "level": 3,
+      "title": "The hatchery",
+      "current": [
+        "src/channels/docs/adapters.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/channels/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2359,
+      "level": 2,
+      "title": "Integrations hub",
+      "current": [
+        "src/integrations/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 2379,
+      "level": 2,
+      "title": "GitHub integration",
+      "current": [
+        "src/github/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 2394,
+      "level": 2,
+      "title": "Issue reports (`/report`)",
+      "current": [
+        "src/tui/issue-report/README.md",
+        "src/error-reporting/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tui/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2425,
+      "level": 2,
+      "title": "Git remote sync (`os.git.{remote,fetch,pull,push,clone}`)",
+      "current": [
+        "src/tools/os/git/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2437,
+      "level": 2,
+      "title": "Composio (hosted toolkits)",
+      "current": [
+        "src/composio/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 2441,
+      "level": 3,
+      "title": "Why an MCP server and not an SDK",
+      "current": [
+        "src/composio/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "line": 2455,
+      "level": 2,
+      "title": "Project path resolution (`os.fs.locate_project`)",
+      "current": [
+        "src/tools/os/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2478,
+      "level": 2,
+      "title": "LLM reliability policy",
+      "current": [
+        "src/llm/docs/fallback.md",
+        "src/agent/docs/recovery.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/agent/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2494,
+      "level": 3,
+      "title": "Credit-limit repair (HTTP 402)",
+      "current": [
+        "src/llm/docs/fallback.md",
+        "src/agent/docs/recovery.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/agent/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2505,
+      "level": 3,
+      "title": "Structured-output refusal (sub-calls)",
+      "current": [
+        "src/llm/docs/fallback.md",
+        "src/agent/docs/recovery.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/agent/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2515,
+      "level": 3,
+      "title": "Failure taxonomy",
+      "current": [
+        "src/llm/docs/fallback.md",
+        "src/agent/docs/recovery.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/agent/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2529,
+      "level": 3,
+      "title": "Observability propagation",
+      "current": [
+        "src/llm/docs/fallback.md",
+        "src/agent/docs/recovery.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/agent/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2540,
+      "level": 2,
+      "title": "Provider fallback chain",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2544,
+      "level": 3,
+      "title": "Chain unit and config",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2565,
+      "level": 3,
+      "title": "Reset policy (circuit breaker, per provider id, per session)",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2575,
+      "level": 3,
+      "title": "No new timer (invariant)",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2579,
+      "level": 3,
+      "title": "Streaming",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2583,
+      "level": 3,
+      "title": "Cross-transport fallover (request AND response)",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2592,
+      "level": 3,
+      "title": "Locked invariants (Pinned by tests)",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2606,
+      "level": 3,
+      "title": "TUI: the Fallback pane",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2618,
+      "level": 4,
+      "title": "Locked invariants (Pinned by tests)",
+      "current": [
+        "src/llm/docs/fallback.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2627,
+      "level": 2,
+      "title": "Run modes (Local / Cloud / Fusion)",
+      "current": [
+        "src/llm/run-mode/README.md",
+        "src/tools/fusion/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2645,
+      "level": 3,
+      "title": "The resolver rule",
+      "current": [
+        "src/llm/run-mode/README.md",
+        "src/tools/fusion/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2659,
+      "level": 3,
+      "title": "TUI: the fourth \"Where it runs\" row",
+      "current": [
+        "src/llm/run-mode/README.md",
+        "src/tools/fusion/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2670,
+      "level": 3,
+      "title": "TUI: the fusion configurators",
+      "current": [
+        "src/llm/run-mode/README.md",
+        "src/tools/fusion/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2675,
+      "level": 3,
+      "title": "The orchestrator and its workers",
+      "current": [
+        "src/llm/run-mode/README.md",
+        "src/tools/fusion/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2699,
+      "level": 3,
+      "title": "Locked invariants (pinned by tests)",
+      "current": [
+        "src/llm/run-mode/README.md",
+        "src/tools/fusion/README.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/llm/AGENTS.md",
+        "src/tools/AGENTS.md"
+      ]
+    },
+    {
+      "line": 2717,
+      "level": 2,
+      "title": "Traceability and replay",
+      "current": [
+        "src/tracing/docs/traces.md"
+      ],
+      "instructions": [
+        "AGENTS.md",
+        "src/tracing/AGENTS.md"
+      ]
+    }
+  ]
+}

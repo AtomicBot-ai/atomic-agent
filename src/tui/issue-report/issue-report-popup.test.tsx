@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
-import { IssueReportPopup } from "../components/issue-report-popup.js";
+import { IssueReportPopup } from "./issue-report-popup.js";
 import type { IssueReportState } from "./issue-report-state.js";
 
 function popup(report: IssueReportState): string {

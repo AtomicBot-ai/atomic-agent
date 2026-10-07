@@ -1,0 +1,24 @@
+{
+  "before": [
+    "prompt_built",
+    "prompt_captured",
+    "llm_completed",
+    "llm_raw_completion",
+    "reasoning",
+    "tool_call_parsed",
+    "queued-from-reasoning",
+    "tool_call_executed",
+    "assistant_reply"
+  ],
+  "after": [
+    "prompt_built",
+    "prompt_captured",
+    "llm_completed",
+    "llm_raw_completion",
+    "reasoning",
+    "tool_call_parsed",
+    "queued-from-reasoning",
+    "tool_call_executed",
+    "assistant_reply"
+  ]
+}

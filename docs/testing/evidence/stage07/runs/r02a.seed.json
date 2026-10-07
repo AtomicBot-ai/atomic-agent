@@ -1,0 +1,44 @@
+{
+  "snapshot": "/tmp/atomic-stage07-final-v2",
+  "dest": "/tmp/atomic-stage07-benchmark/runs/final-02",
+  "task": 2,
+  "checkSha256": "5b2eda192c3d4bee3a373069da07c20ff75ccdce23233d8cc84b3448b16d1f37",
+  "goldenPath": null,
+  "seed": {
+    "task": 2,
+    "kind": "feature-absent",
+    "patches": []
+  },
+  "unseeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "[atomic-agent] created default config at /private/tmp/atomic-stage07-benchmark/states/1d06cf0dd907877e/config.json\n",
+    "result": {
+      "task": 2,
+      "pass": false,
+      "assertions": 0,
+      "error": {
+        "name": "AssertionError",
+        "message": "exists registered by actual OS registrar",
+        "stack": "AssertionError [ERR_ASSERTION]: exists registered by actual OS registrar\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:30:1)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":2,\"pass\":false,\"assertions\":0,\"error\":{\"name\":\"AssertionError\",\"message\":\"exists registered by actual OS registrar\",\"stack\":\"AssertionError [ERR_ASSERTION]: exists registered by actual OS registrar\\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:30:1)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  },
+  "seeded": {
+    "exit": 1,
+    "signal": null,
+    "stderr": "",
+    "result": {
+      "task": 2,
+      "pass": false,
+      "assertions": 0,
+      "error": {
+        "name": "AssertionError",
+        "message": "exists registered by actual OS registrar",
+        "stack": "AssertionError [ERR_ASSERTION]: exists registered by actual OS registrar\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:30:1)\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)"
+      }
+    },
+    "stdout": "{\"task\":2,\"pass\":false,\"assertions\":0,\"error\":{\"name\":\"AssertionError\",\"message\":\"exists registered by actual OS registrar\",\"stack\":\"AssertionError [ERR_ASSERTION]: exists registered by actual OS registrar\\n    at ok (/private/tmp/atomic-stage07-benchmark/check.mjs:15:30)\\n    at Object.check2 (/private/tmp/atomic-stage07-benchmark/check.mjs:30:1)\\n    at async <anonymous> (/private/tmp/atomic-stage07-benchmark/check.mjs:57:18)\"}}\n"
+  }
+}

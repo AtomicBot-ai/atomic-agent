@@ -1,0 +1,498 @@
+web.search: provider "exa" is configured but EXA_API_KEY is not set; running on the keyless tier — expect HTTP 429 and silent degradation to duckduckgo. Set EXA_API_KEY for search-heavy autonomous work.
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Ask anything about your codebase…                       send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ custom · llama.cpp                                        default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Ask anything about your codebase…                       send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Try `/help` to see all commands                         send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                                           #########++
+    ▗█░                 «                                 ##########++
+   █████░ atomic-agent                                 #############++
+     █▘░  v0.6.6                                  #############################+
+                                                  #############################++
+                                                  #############################++
+                                                    +++++++++#############+++++++
+   SESSIONS         + new                                    ##########+++++
+   (no sessions yet)                                         #########+++
+                                                             ########+++
+   TASKS 0 running  + new                                    #######+++
+   (no active tasks)                                           +++++++
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │ ▸ /mcp  open MCP tab (configured servers + discovered tools /      │
+                              │       resources / prompts) · subcommands: `/mcp add` opens         │
+                              │       JSON-paste modal, `/mcp remove <name>` opens delete-confirm  │
+                              ╰────────────────────────────────────────────────────────────────────╯
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ /mcp                                                     send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+    ☰ Menu            esc    ╰────────────────────────────────────────────────────────────────────╯
+                              [↑↓] select  ·  [tab/enter] accept  ·  [esc] close  atomic-agent v0.6.6  |   MANAGE ▸ MCP
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+    Tasks  |    Skills  |    Memory  |  ▸ MCP  |    Integrations  |    Swarm  |    LLM  |  
+    Import  |    Privacy
+  cwd /tmp/atomic-e2e-tui/navigation/cwd | llama http://127.0.0.1:19989 | llm — · step — | kv — | 
+  tools 0ok/0err | approval L1 | skills 18
+  auto · refreshed 8:56:45 PM · 0 servers
+  j/k · Enter open · n add · d remove · e on/off · R restart · r refresh · a auto
+
+  no MCP servers configured — add entries under `mcp.servers[]` in config.json
+
+  (no servers)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  [tab] next panel  ·  [shift+tab] prev panel  ·  [esc] back to Run  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Ask anything about your codebase…                       send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                                            ########++
+    ▗█░                 «                                  #########++
+   █████░ atomic-agent                                    ##########++
+     █▘░  v0.6.6                                       #############++
+                                                  #############################+
+                                                  #############################++
+                                                  #############################++
+   SESSIONS         + new                           +++++++++#############+++++++
+   (no sessions yet)                                         ##########+++++
+                                                             #########+++
+   TASKS 0 running  + new                                    ########+++
+   (no active tasks)                                         #######+++
+                                                               +++++++
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │ ▸ /skills  jump to the Skills tab · subcommand: `/skills dump` to  │
+                              │          print catalog in chat                                     │
+                              ╰────────────────────────────────────────────────────────────────────╯
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ /skills                                                  send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+    ☰ Menu            esc    ╰────────────────────────────────────────────────────────────────────╯
+                              [↑↓] select  ·  [tab/enter] accept  ·  [esc] close  atomic-agent v0.6.6  |   MANAGE ▸ Skills
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+    Tasks  |  ▸ Skills  |    Memory  |    MCP  |    Integrations  |    Swarm  |    LLM  |  
+    Import  |    Privacy
+  cwd /tmp/atomic-e2e-tui/navigation/cwd | llama http://127.0.0.1:19989 | llm — · step — | kv — | 
+  tools 0ok/0err | approval L1 | skills 18
+  filter:all · enabled · disabled   0 shown · 0 enabled · 0 disabled · auto   built-in tools: /tools
+
+
+  no skills match the current filter — install one with `atomic-agent skill install`, or press `f` 
+  to cycle filter / `r` to refresh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  [tab] next panel  ·  [shift+tab] prev panel  ·  [esc] back to Run  ·  [ctrl+c] quit  atomic-agent v0.6.6  |   MANAGE ▸ Skills
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+    Tasks  |  ▸ Skills (18)  |    Memory  |    MCP  |    Integrations  |    Swarm  |    LLM  |  
+  cwd /tmp/atomic-e2e-tui/navigation/cwd | llama http://127.0.0.1:19989 | llm — · step — | kv — | 
+  filter:all · enabled · disabled   18 shown · 18 enabled · 0 disabled ·      built-in tools: /tools
+    state source version name description
+  ▸ enabled[global]  v1.1.apple-calendar        Read macOS Calendar events via the `icalBuddy` CLI 
+    enabled[global]  v1.2.apple-notes           Manage Apple Notes via the `memo` CLI on macOS —
+    enabled[global]  v1.2.apple-reminders       Manage Apple Reminders via the `remindctl` CLI on
+    enabled[global]  v1.0.audio-transcribe      Transcribe speech from audio files (mp3, m4a, wav,
+    enabled[global]  v1.0.currency              Currency exchange rates and conversion via the
+    enabled[global]  v1.0.docker                Manage Docker containers, images, volumes, and
+    enabled[global]  v1.0.ffmpeg                Process audio and video with the `ffmpeg` /
+    enabled[global]  v1.2.github                Drive GitHub via the official `gh` CLI — repos,
+                                                issues, pul…
+    enabled[global]  v0.1.gog-workspace         Use the `gog` CLI for Google Workspace tasks across
+    enabled[global]  v1.0.imagemagick           Edit and convert images with the ImageMagick
+    enabled[global]  v1.3.notion                Read and write Notion pages, databases (data
+    enabled[global]  v1.2.obsidian              Read, search, and create Markdown notes inside an
+    enabled[global]  v1.0.pandoc                Convert documents between formats (Markdown, DOCX,
+    enabled[global]  v1.0.pdf                   Manipulate PDF files — merge, split, extract
+    enabled[global]  v1.3.skill-creator         Author or edit atomic-agent skills (SKILL.md +
+    enabled[global]  v1.0.verify-work           Prove that code, a script or a page you just
+                                                produced actua…
+    enabled[global]  v1.1.wttr-weather          Weather via wttr.in GET (no key). Use for
+    enabled[global]  v1.0.xlsx                  Create and edit Excel .xlsx workbooks (sheets,
+                                                cells, formu…
+  j/k move · Enter detail · e toggle · d remove · r refresh · a auto · f filter
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ╰─i · Skills Hub  browse & install skills from ClawHub───────────────────────────────────────────╯
+
+  [tab] next panel  ·  [shift+tab] prev panel  ·  [esc] back to Run  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Type a message or `/` for commands…                     send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                                            ########++
+    ▗█░                 «                                  #########++
+   █████░ atomic-agent                                    ##########++
+     █▘░  v0.6.6                                       #############++
+                                                  #############################+
+                                                  #############################++
+                                                  #############################++
+   SESSIONS         + new                           +++++++++#############+++++++
+   (no sessions yet)                                         ##########+++++
+                                                             #########+++
+   TASKS 0 running  + new                                    ########+++
+   (no active tasks)                                         #######+++
+                                                               +++++++
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │ ▸ /privacy  open the Privacy tab (analytics opt-out + session      │
+                              │           grants) · subcommands: `/privacy analytics on|off`       │
+                              ╰────────────────────────────────────────────────────────────────────╯
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ /privacy                                                 send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+    ☰ Menu            esc    ╰────────────────────────────────────────────────────────────────────╯
+                              [↑↓] select  ·  [tab/enter] accept  ·  [esc] close  atomic-agent v0.6.6  |   MANAGE ▸ Privacy
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+    Tasks  |    Skills (18)  |    Memory  |    MCP  |    Integrations  |    Swarm  |    LLM  |  
+    Import  |  ▸ Privacy
+  cwd /tmp/atomic-e2e-tui/navigation/cwd | llama http://127.0.0.1:19989 | llm — · step — | kv — | 
+  tools 0ok/0err | approval L1 | skills 18
+  Analytics
+
+     anonymous usage off
+
+     Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever
+   leave this machine — only an install id and coarse counters.
+
+  Session grants
+
+     none active — grants you make with [s] / [a] at a prompt appear here for this session
+
+  a: analytics on · r: refresh
+
+
+
+
+
+
+
+
+
+
+
+
+
+  [tab] next panel  ·  [shift+tab] prev panel  ·  [esc] back to Run  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «                                    #######+
+   █████░ atomic-agent                                      ########++
+     █▘░  v0.6.6                                           #########++
+                                                          ##########++
+                                                       #############++
+                                                  #############################+
+   SESSIONS         + new                         #############################++
+   (no sessions yet)                              #############################++
+                                                    +++++++++#############+++++++
+   TASKS 0 running  + new                                    ##########+++++
+   (no active tasks)                                         #########+++
+                                                             ########+++
+                                                             #######+++
+                                                               +++++++
+                           
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯  Try `/help` to see all commands                         send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                                            ########++
+    ▗█░                 «                                  #########++
+   █████░ atomic-agent                                    ##########++
+     █▘░  v0.6.6                                       #############++
+                                                  #############################+
+                                                  #############################++
+                                                  #############################++
+   SESSIONS         + new                           +++++++++#############+++++++
+   (no sessions yet)                                         ##########+++++
+                                                             #########+++
+   TASKS 0 running  + new                                    ########+++
+   (no active tasks)                                         #######+++
+                                                               +++++++
+                                       • /help                   list all slash commands
+                                       • /sessions               switch to a previous thread
+                                       • /new                    start a fresh session
+                                       • /model                  change the chat model
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │ ▸ /quit  exit atomic-agent                                         │
+                              ╰────────────────────────────────────────────────────────────────────╯
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ /quit                                                    send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+    ☰ Menu            esc    ╰────────────────────────────────────────────────────────────────────╯
+                              [↑↓] select  ·  [tab/enter] accept  ·  [esc] close
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «  
+   █████░ atomic-agent     
+     █▘░  v0.6.6           
+                           
+                           
+                           
+   SESSIONS         + new  
+   (no sessions yet)       
+                           
+   TASKS 0 running  + new  
+   (no active tasks)       
+                           
+                           
+                                ╭──────────────────────────────────────────────────────────────────╮
+                                │ · exiting                                                        │
+                                ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ Try `/help` to see all commands                          send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+                           
+    ▗█░                 «  
+   █████░ atomic-agent     
+     █▘░  v0.6.6           
+                           
+                           
+                           
+   SESSIONS         + new  
+   (no sessions yet)       
+                           
+   TASKS 0 running  + new  
+   (no active tasks)       
+                           
+                           
+                                ╭──────────────────────────────────────────────────────────────────╮
+                                │ · exiting                                                        │
+                                ╰──────────────────────────────────────────────────────────────────╯
+                           
+                                 [copy]
+                           
+                              ╭────────────────────────────────────────────────────────────────────╮
+                              │                                                                    │
+                              │ ❯ Try `/help` to see all commands                          send →  │
+                              │                                                                    │
+                              │                                                                    │
+                              │ ○ custom · llama.cpp                                      default  │
+                              │                                                                    │
+                              ╰────────────────────────────────────────────────────────────────────╯
+    ☰ Menu            esc    [enter] send  ·  [alt/option+enter] newline  ·  [ctrl+n] new window
+                              [drag] select text  ·  [esc] menu  ·  [ctrl+c] quit

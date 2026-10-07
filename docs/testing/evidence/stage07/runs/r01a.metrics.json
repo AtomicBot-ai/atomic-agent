@@ -1,0 +1,68 @@
+{
+  "actions": 23,
+  "returnedOutputBytes": 126055,
+  "observedSourceBytes": 118979,
+  "uniqueVersionedSourceBytes": 110123,
+  "repeatedSourceBytes": 8856,
+  "uniqueInstructionBytes": 31857,
+  "uniqueCodeBytes": 54296,
+  "uniqueOtherBytes": 23970,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+      "uniqueBytes": 31857
+    },
+    {
+      "path": "README.md",
+      "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+      "uniqueBytes": 9797
+    },
+    {
+      "path": "src/prompt/build-prompt.ts",
+      "hash": "a0886b88036c362f274941e0455a1c99bed93ead3bfefa270cf31de895b7c891",
+      "uniqueBytes": 16817
+    },
+    {
+      "path": "PROMPT.md",
+      "hash": "4a370ff9c51c5175b4120bdfae6a7123403de13cf24c147e401d107c60a1d893",
+      "uniqueBytes": 9254
+    },
+    {
+      "path": "src/prompt/build-prompt.test.ts",
+      "hash": "d8754a1ea5283599754463bd81ddd2bff94ddabc49597ef8944186181e5c7b11",
+      "uniqueBytes": 23144
+    },
+    {
+      "path": "src/prompt/build-prompt-types.ts",
+      "hash": "9385a0ba45175fe5b7d5a2ef33f8936a6cea5b7fdafba081a539c12e593ccd1d",
+      "uniqueBytes": 7205
+    },
+    {
+      "path": "src/prompt/stable-prefix.test.ts",
+      "hash": "43d0f0d2b56a04287f3a1e977d3f3cd4bb21198a6960276695e300295732d926",
+      "uniqueBytes": 2785
+    },
+    {
+      "path": "package.json",
+      "hash": "3a9511c8de75ae3a60147d040af4abf60c0f82420ba74f02e5c95414e8026cf8",
+      "uniqueBytes": 4919
+    },
+    {
+      "path": "src/prompt/build-prompt.ts",
+      "hash": "8bcd534c0ad0369505927fc2d966153d77f0faeafe4452a7141f721fb3e81e64",
+      "uniqueBytes": 2266
+    },
+    {
+      "path": "src/prompt/build-prompt.test.ts",
+      "hash": "b8607b1595d73044db18410423501dde9f5a00a7e508b8fad06aff06c2319243",
+      "uniqueBytes": 2079
+    }
+  ],
+  "changedFiles": [
+    "PROMPT.md",
+    "src/prompt/build-prompt-types.ts",
+    "src/prompt/build-prompt.test.ts",
+    "src/prompt/build-prompt.ts"
+  ]
+}

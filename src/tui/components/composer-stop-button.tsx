@@ -31,7 +31,7 @@ export interface ComposerStopButtonProps {
  * task deserves a button next to the field they are typing into.
  *
  * Unlike Send this chip has no disabled state: it only renders while
- * `status === "running"`, and a stop button that renders but refuses to
+ * a turn or context compaction is active, and a stop button that refuses to
  * press would be worse than none. The caller owns that condition, the
  * same way it owns wiring the press to the one abort path Esc uses.
  *

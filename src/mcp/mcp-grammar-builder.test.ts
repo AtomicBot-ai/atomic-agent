@@ -13,6 +13,7 @@ function metaOf(server: string, rawName: string): McpToolMeta {
     qualifiedName: `mcp.${server}.${rawName}`,
     description: "",
     inputSchema: { type: "object" },
+    resourceClass: "approval_gated",
   };
 }
 

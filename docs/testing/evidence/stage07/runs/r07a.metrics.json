@@ -1,0 +1,81 @@
+{
+  "actions": 22,
+  "returnedOutputBytes": 128355,
+  "observedSourceBytes": 116801,
+  "uniqueVersionedSourceBytes": 108883,
+  "repeatedSourceBytes": 7918,
+  "uniqueInstructionBytes": 41914,
+  "uniqueCodeBytes": 59681,
+  "uniqueOtherBytes": 7288,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "ae24a5d2df36bf92a846ddea2fbfa569291e17fa23ea8594af6c6a42dca752b3",
+      "uniqueBytes": 41914
+    },
+    {
+      "path": "README.md",
+      "hash": "0c61f34ff131d29a33e292a26e8f7d6e623b3e332dceba13036cb65721afedfe",
+      "uniqueBytes": 7288
+    },
+    {
+      "path": "src/agent/loop-detector.ts",
+      "hash": "c8250ad5c40c19f4b540e9d3b885ae6258d54d3355fb1225ab30c20b2e7a5034",
+      "uniqueBytes": 73
+    },
+    {
+      "path": "src/agent/parse-failure-recovery.ts",
+      "hash": "91534700bd6f2683c3ab3680c9f09c266f416674c880dc8892af7f1a4f0cb4ad",
+      "uniqueBytes": 73
+    },
+    {
+      "path": "src/agent/test-command-key.test.ts",
+      "hash": "c0548467ab51372b49aee784fa9d09748bf0375f91c64a297d458966a18fa1ea",
+      "uniqueBytes": 84
+    },
+    {
+      "path": "src/agent/batch-executor.ts",
+      "hash": "c169413af16619451dbca175d6182eeb477632399b665302d04432cb9a3ba3fa",
+      "uniqueBytes": 26441
+    },
+    {
+      "path": "src/agent/step-events.ts",
+      "hash": "9ec60449d06094565286d0c5267ea3d2d6fbc864ee6deef629d9be0cd313785b",
+      "uniqueBytes": 67
+    },
+    {
+      "path": "src/agent/empty-completion-recovery.ts",
+      "hash": "05896371f57e0256d01de5f556a481fbc11f888d1f80f62ad0457a8b69e6935b",
+      "uniqueBytes": 67
+    },
+    {
+      "path": "src/agent/tool-resource-class.ts",
+      "hash": "1313dabc223e602caf6c498456c2de4b9d554226023a5a4abc31f579d934ad64",
+      "uniqueBytes": 292
+    },
+    {
+      "path": "src/agent/batch-executor.test.ts",
+      "hash": "1eac0b929bcfc29453d6e5e107af6b690178d450ea3784384ad037b9c083e988",
+      "uniqueBytes": 18590
+    },
+    {
+      "path": "src/agent/step-executor.test.ts",
+      "hash": "fe0289e84f03633c2ef13f188b695b26cb52ff2d38936a26b6b8f4192869b0e3",
+      "uniqueBytes": 7895
+    },
+    {
+      "path": "src/tools/tool-registry.ts",
+      "hash": "c3d9298cd28860936f3050b54140b9b950656ac9fe0e34ad44ba3c8b74629a8b",
+      "uniqueBytes": 3267
+    },
+    {
+      "path": "src/agent/parallel-tool-calls.integration.test.ts",
+      "hash": "7fba2e7a83833fbb1472fbfa9bcb97cac981b076cf920dd258a91756bd44dbbc",
+      "uniqueBytes": 2832
+    }
+  ],
+  "changedFiles": [
+    "src/agent/batch-executor.test.ts",
+    "src/agent/batch-executor.ts"
+  ]
+}

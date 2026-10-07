@@ -7,8 +7,7 @@ import { ConfigValidationError } from "./config-validation-error.js";
  *   runs on this machine.
  * - `cloud`  — the active provider is a cloud one; everything runs there.
  * - `fusion` — a cloud model orchestrates and several local-model
- *   workers execute the parts it delegates. See AGENTS.md §"Run modes
- *   (Local / Cloud / Fusion)".
+ *   workers execute the parts it delegates. See README.md.
  *
  * `llm.activeTextProvider` stays authoritative in every mode; this block
  * is additive (see `resolveRunMode`).

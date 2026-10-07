@@ -1,3 +1,15 @@
+import { OS_FS_READ_CONTRACT } from "../tools/os/fs/fs-read-contract.js";
+import { OS_FS_LIST_CONTRACT } from "../tools/os/fs/fs-list-contract.js";
+import { OS_FS_GLOB_CONTRACT } from "../tools/os/fs/fs-glob-contract.js";
+import { OS_FS_GREP_CONTRACT } from "../tools/os/fs/fs-grep-contract.js";
+import { OS_FS_DIFF_CONTRACT } from "../tools/os/fs/fs-diff-contract.js";
+import { OS_FS_WATCH_CONTRACT } from "../tools/os/fs/fs-watch-contract.js";
+import { OS_FS_WRITE_CONTRACT } from "../tools/os/fs/fs-write-contract.js";
+import { OS_FS_EDIT_CONTRACT } from "../tools/os/fs/fs-edit-contract.js";
+import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
+import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
+import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Resource class taxonomy for parallel batched tool calls.
  *
@@ -42,6 +54,7 @@
  * asserts that every entry in `DEFAULT_TOOL_DESCRIPTORS` has an
  * explicit class.
  */
+import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import {
   isAutoApprovedAt,
   isGrantableCategory,
@@ -74,24 +87,24 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.shell.run": "approval_gated",
 
   // os.fs.* read-only
-  "os.fs.read": "pure_read",
+  [OS_FS_READ_CONTRACT.name]: OS_FS_READ_CONTRACT.resourceClass,
   "os.fs.read_document": "pure_read",
-  "os.fs.list": "pure_read",
-  "os.fs.glob": "pure_read",
-  "os.fs.locate_project": "pure_read",
-  "os.fs.grep": "pure_read",
-  "os.fs.hash": "pure_read",
-  "os.fs.diff": "pure_read",
-  "os.fs.watch": "pure_read",
+  [OS_FS_LIST_CONTRACT.name]: OS_FS_LIST_CONTRACT.resourceClass,
+  [OS_FS_GLOB_CONTRACT.name]: OS_FS_GLOB_CONTRACT.resourceClass,
+  [OS_FS_LOCATE_PROJECT_CONTRACT.name]: OS_FS_LOCATE_PROJECT_CONTRACT.resourceClass,
+  [OS_FS_GREP_CONTRACT.name]: OS_FS_GREP_CONTRACT.resourceClass,
+  [OS_FS_HASH_CONTRACT.name]: OS_FS_HASH_CONTRACT.resourceClass,
+  [OS_FS_DIFF_CONTRACT.name]: OS_FS_DIFF_CONTRACT.resourceClass,
+  [OS_FS_WATCH_CONTRACT.name]: OS_FS_WATCH_CONTRACT.resourceClass,
   "os.fs.archive.list": "pure_read",
   "os.fs.archive.read_entry": "pure_read",
 
   // os.fs.* mutating — all approval-gated
-  "os.fs.write": "approval_gated",
-  "os.fs.edit": "approval_gated",
-  "os.fs.trash": "approval_gated",
-  "os.fs.patch": "approval_gated",
-  "os.fs.restore": "approval_gated",
+  [OS_FS_WRITE_CONTRACT.name]: OS_FS_WRITE_CONTRACT.resourceClass,
+  [OS_FS_EDIT_CONTRACT.name]: OS_FS_EDIT_CONTRACT.resourceClass,
+  [OS_FS_TRASH_CONTRACT.name]: OS_FS_TRASH_CONTRACT.resourceClass,
+  [OS_FS_PATCH_CONTRACT.name]: OS_FS_PATCH_CONTRACT.resourceClass,
+  [OS_FS_RESTORE_CONTRACT.name]: OS_FS_RESTORE_CONTRACT.resourceClass,
   "os.fs.archive.extract": "approval_gated",
 
   // os.git.* — read-only shell-outs

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import { loadConfig } from "../../config/load-config.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
@@ -17,16 +18,20 @@ vi.mock("../../config/index.js", async (importOriginal) => {
 let currentConfig: AtomicAgentConfig;
 
 /**
- * Enough of the real config for the paths under test: the contract
- * probe reads `agent.maxParallelToolCalls` to send the
- * `parallel_tool_calls` a turn would send, so a fixture without it
- * would fail for a reason no user has.
+ * Load a complete config from the test setup's isolated state directory.
+ * Pin the probe's parallel-call budget independently of environment defaults.
  */
-const AGENT_CONFIG = { maxParallelToolCalls: 8 } as AtomicAgentConfig["agent"];
+function completeConfigBaseline(): AtomicAgentConfig {
+  const config = loadConfig();
+  return {
+    ...config,
+    agent: { ...config.agent, maxParallelToolCalls: 8 },
+  };
+}
 
 function configWithGemini(): AtomicAgentConfig {
   return {
-    agent: AGENT_CONFIG,
+    ...completeConfigBaseline(),
     llm: {
       activeTextProvider: "gemini",
       activeEmbeddingProvider: "local-llama-embed",
@@ -39,7 +44,7 @@ function configWithGemini(): AtomicAgentConfig {
         },
       ],
     },
-  } as AtomicAgentConfig;
+  };
 }
 
 /**
@@ -307,7 +312,7 @@ describe("ProvidersOrchestrator.completeWizard", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-    vi.doUnmock("../persist-llm-provider.js");
+    vi.doUnmock("../../config/llm-provider-commands.js");
   });
 
   function wizardFor(kind: "openrouter" | "aimlapi"): ProvidersWizardState {
@@ -389,9 +394,9 @@ describe("ProvidersOrchestrator.completeWizard", () => {
    * install may be reported as having a working backend.
    */
   async function importOrchestratorWithStubbedDisk() {
-    vi.doMock("../persist-llm-provider.js", async (importOriginal) => {
+    vi.doMock("../../config/llm-provider-commands.js", async (importOriginal) => {
       const original =
-        await importOriginal<typeof import("../persist-llm-provider.js")>();
+        await importOriginal<typeof import("../../config/llm-provider-commands.js")>();
       return {
         ...original,
         upsertLlmProvider: vi.fn(),
@@ -533,7 +538,7 @@ describe("ProvidersOrchestrator.completeWizard", () => {
 
   it("runs the contract probe on explicit request and reports the verdict", async () => {
     currentConfig = {
-      agent: AGENT_CONFIG,
+      ...completeConfigBaseline(),
       llm: {
         activeTextProvider: "openrouter",
         activeEmbeddingProvider: "local-llama-embed",
@@ -547,7 +552,7 @@ describe("ProvidersOrchestrator.completeWizard", () => {
           },
         ],
       },
-    } as AtomicAgentConfig;
+    };
     const bodies: string[] = [];
     vi.stubGlobal(
       "fetch",

@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetConfigCache } from "../../config/index.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
-import { upsertLlmProvider } from "../persist-llm-provider.js";
-import { PICK_WINDOW } from "../components/wizard-pick-list.js";
+import { upsertLlmProvider } from "../../config/llm-provider-commands.js";
+import { PICK_WINDOW } from "../components/pick-list-geometry.js";
 import { PROVIDER_PRESETS } from "./provider-presets.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
 import { handleProvidersWizardKey } from "./providers-wizard-key-bindings.js";

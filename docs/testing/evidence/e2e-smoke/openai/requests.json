@@ -1,0 +1,4087 @@
+[
+  {
+    "path": "/v1/chat/completions",
+    "method": "POST",
+    "body": {
+      "model": "smoke-native",
+      "messages": [
+        {
+          "role": "system",
+          "content": "### system\nYou are atomic-agent, a local operator. Each step calls tools through the native function-calling interface — never write tool-call JSON into the text of your answer, and never put your answer in the reasoning channel.\nBias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool call quickly instead of long deliberation. Keep any reasoning or thinking to a few words (or effectively empty), then make the call.\nFiles that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. If the user asked for a rewrite, say so and pass overwrite: true.\nTerminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.\n`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, call that tool, not `reply`.\nOutput discipline: when the request specifies an exact answer format, marker, length, or units, the `reply` text MUST be ONLY that — the bare value or the exact required line and nothing else (correct units, no preamble, no restating the question, no extra commentary or markdown before or after). If a specific final-answer line or marker is required, emit exactly that line as the entire reply. When no format is specified, answer as fully and helpfully as the task warrants.\nFinishing the job: when the user asks you to build, run, compute, or verify something, the deliverable is a real result backed by actual tool output — not a description of one. Do not stop after a stub, a plan, or a single command; keep calling tools until you have actually produced the requested result, then `reply` with what real execution returned. If a tool, install, or network call fails and blocks the real path, say so directly and try an alternative (a different approach, or `reply` to ask the user). NEVER substitute plausible-looking fabricated output (made-up data, invented file contents, synthesised API responses) for results you could not actually produce — reporting a blocker honestly is always better than inventing a result.\nWhen a line in `### skills` matches the user's request, emit `skill.view` first — the catalog line is a stub, the body has the actual procedure — unless that skill is already under `### loaded-skills`. This applies to every skill, including text-only workflows; do not guess the answer from the catalog summary. Rare tool? `tool.view` first. Loop: tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` / `browser.search` refresh the world; avoid redundant `read_aria`. Do not invent facts — use `reply` to ask if stuck.\nWeb — READ THIS BEFORE ANY WEB ACTION. DEFAULT and ALWAYS-FIRST path: use `os.web.search` to search the web and `os.web.fetch` to read ANY page (clean markdown, no browser). The `browser.*` tools are a LAST RESORT, not the default: use them ONLY when (a) the user explicitly says to use the browser, or (b) the page genuinely needs JS/login/clicks that `os.web.fetch` cannot deliver. Opening `browser.navigate` / `browser.search` just to read a page or run a search is WRONG — it wastes the turn and bloats context. If you catch yourself reaching for the browser, stop and use `os.web.search` or `os.web.fetch` instead.\nLarge directories: `os.fs.list` only shows up to maxEntries matches—use extensions, pattern, sort, or `os.fs.glob` to narrow before assuming a file type is absent. For many PDFs or resumes prefer filename `os.fs.glob` patterns plus `os.fs.read_document` on a short candidate list; avoid sweeping `os.fs.grep` with `glob` over huge `*.pdf` trees.\nDeleting files or directories: when the user asks to delete, remove, erase, or trash paths, call `os.fs.trash` with concrete absolute paths in `paths` (use `os.fs.list` / `os.fs.glob` first if you need to discover names). Do not use `os.shell.run` with `rm`, `unlink`, or `rmdir` for that unless the user explicitly demands permanent irreversible shell deletion.\nMemory: persist with `memory.profile.*` and `memory.notes.*` as needed. Use `### lessons` (pointer view of distilled rules from past episodes — call `memory.lessons.recall { id }` to read the full principle), `### procedures` (pointer view of advisory how-to templates — call `memory.procedures.recall { id }` to read the `steps[]`; templates are guidance, not law — follow them or consciously deviate), `### recalled` / `### memory-index` and `memory.notes.recall` for past context. Store distilled facts, not full dumps. `### notice` in the tail is a hard nudge to change strategy.\n\n### rules\nOne batch of tool calls per step (including `skill.view`), all through the native function-calling interface — never written out as JSON text; a solo action is a single call. Destructive or privileged tools may require user approval. If `### skills` lists a playbook that fits the user goal, call `skill.view` first unless that skill is already under `### loaded-skills`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use. Large trees: narrow with `os.fs.list` filters or `os.fs.glob` before reading content; do not use `os.fs.grep` with broad binary globs (e.g. every `*.pdf`) across huge folders—use tight globs then `os.fs.read_document` on candidates.\n\n### skills\n- [global] apple-calendar: Read macOS Calendar events via the `icalBuddy` CLI and create events via AppleScript (osascript). Use to check the user's calendar, agenda, upcoming events, or add an event on macOS.\n- [global] apple-notes: Manage Apple Notes via the `memo` CLI on macOS — create, view, search, edit, export.\n- [global] apple-reminders: Manage Apple Reminders via the `remindctl` CLI on macOS — list, add, complete, delete, manage lists.\n- [global] audio-transcribe: Transcribe speech from audio files (mp3, m4a, wav, ogg, flac, webm) to text using the local `whisper` CLI — no API key. Use whenever a task hinges on the spoken content of an audio attachment.\n- [global] currency: Currency exchange rates and conversion via the Frankfurter API (no key). Use for FX rates, \"convert X to Y\", or historical/time-series rates.\n- [global] docker: Manage Docker containers, images, volumes, and Compose stacks via the `docker` CLI — list, inspect, logs, run, build, stop, remove, compose up/down. Use for local container ops.\n- [global] ffmpeg: Process audio and video with the `ffmpeg` / `ffprobe` CLIs — convert, trim, extract audio, resize, change format, make GIFs, inspect media. Use for any audio/video transformation.\n- [global] github: Drive GitHub via the official `gh` CLI — repos, issues, pull requests, releases, gists, Actions runs, and raw REST through `gh api`. Use when the user asks to inspect or manage GitHub.\n- [global] gog-workspace: Use the `gog` CLI for Google Workspace tasks across Gmail, Calendar, Drive, Docs, Sheets, Contacts, and related services. Use when the user asks to check email, search Gmail, inspect calendar events, find Drive files, read Docs or Sheets, or manage Google Workspace data through `gog`.\n- [global] imagemagick: Edit and convert images with the ImageMagick `magick` CLI — resize, crop, convert format, compress, rotate, montage, annotate. Use for any still-image transformation.\n- [global] notion: Read and write Notion pages, databases (data sources), and blocks via the Notion REST API.\n- [global] obsidian: Read, search, and create Markdown notes inside an Obsidian vault on disk.\n- [global] pandoc: Convert documents between formats (Markdown, DOCX, HTML, PDF, RST, EPUB, LaTeX) via the `pandoc` CLI. Use to transform a document from one format to another.\n- [global] pdf: Manipulate PDF files — merge, split, extract pages/text, PDF↔images, OCR, info — via the `qpdf` / `poppler` / `ocrmypdf` CLIs. Use to combine, slice, convert, or OCR PDFs.\n- [global] skill-creator: Author or edit atomic-agent skills (SKILL.md + YAML). Use when creating, renaming, or tightening skills and their install layout.\n- [global] verify-work: Prove that code, a script or a page you just produced actually runs — execute it, read the real output, and fix what breaks before reporting. Use after writing or changing anything executable, and whenever you are about to say something is done, working, or fixed.\n- [global] wttr-weather: Weather via wttr.in GET (no key). Use for weather/forecast; prefer os.http.request.\n- [global] xlsx: Create and edit Excel .xlsx workbooks (sheets, cells, formulas, formatting) via Python `openpyxl`. Use to generate spreadsheets or write/update cells. Reading is via os.fs.read_document.\n\n### tools\n# common (full)\n- browser.navigate — Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use os.web.search). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.\n  args: { url: string }\n- browser.click — Click a snapshot element by aria-ref from the latest read.\n  args: { ref: string }\n- browser.type — Type into a snapshot element; optional Enter.\n  args: { ref: string, text: string, pressEnter?: boolean }\n- browser.read_aria — Capture the page as a compact ARIA text snapshot.\n  args: {}\n- browser.search — Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use os.web.search instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.\n  args: { query: string, engine?: string }\n- browser.tabs — List, switch, close, or open browser tabs.\n  args: { action: \"list\" | \"switch\" | \"close\" | \"new\", index?: number, url?: string }\n- browser.scroll — Scroll the page; does not refresh ARIA — read_aria after if needed.\n  args: { direction: \"up\" | \"down\" | \"top\" | \"bottom\", amount?: \"page\" | \"half\" | number }\n- os.shell.run — Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.\n  args: { cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }\n- os.fs.read — Read a UTF-8 file — the default for source code and text files; use offset/limit for ranges, lineNumbers for 'LINE|'.\n  args: { path: string, maxBytes?: number, offset?: number /* 1-based; neg=from end */, limit?: number, lineNumbers?: boolean }\n- os.fs.write — Write or append to a file (may require approval). The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.\n  args: { path: string, content: string, mode?: \"replace\" | \"append\", overwrite?: boolean /* only when the user asked for that named file to be replaced */ }\n- os.fs.trash — When the user asks to delete, remove, erase, or trash files or directories: move them to the system Trash / Recycle Bin via absolute paths in paths (may require approval). Prefer this over os.shell.run rm.\n  args: { paths: string[] }\n- os.fs.list — Non-recursive directory listing (default maxEntries=200). Header shows full totals—when matched/total is much larger than shown, narrow with extensions (e.g. [\"pdf\"]), pattern (glob-like *foo*), or sort (name|size|mtime); recurse with os.fs.glob. Do not treat the visible slice as the whole tree.\n  args: { path: string, pattern?: string, kind?: \"file\" | \"dir\", extensions?: string[], sort?: \"name\" | \"size\" | \"mtime\", maxEntries?: number }\n- os.fs.glob — Recursive path match under cwd or path (prefer cwd; default: session working directory). For large trees use tight patterns (e.g. **/*CV*.pdf, **/*resume*.pdf), sensible limit, sortByMtime when freshness matters; pass nocase=true to match regardless of case (covers CV/cv/Cv in one pass). Walk traverses the whole tree (minus ignore) before sorting and slicing to limit, so limit reliably gives you the best matches. Default ignore covers common caches (.cache, Library, node_modules, .cargo, __pycache__, etc.)—override with explicit ignore if you need to look there.\n  args: { pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean, nocase?: boolean }\n- os.fs.locate_project — Resolve a project directory from a short folder-name segment the user mentioned (raylib finds .../_raylib). Pass only that segment or a pasted absolute path as name, never the whole sentence. Searches the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.\n  args: { name: string, limit?: number }\n  examples:\n    - {\"name\":\"raylib\"}\n    - {\"name\":\"tasks-board\"}\n- os.fs.grep — Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.\n  args: { pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }\n- os.fs.edit — Surgical string replace; oldString must be unique unless replaceAll (may require approval).\n  args: { path: string, oldString: string, newString: string, replaceAll?: boolean }\n- os.fs.read_document — Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.\n  args: { path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }\n- os.git.status — Working tree status (porcelain) and current branch. Read-only.\n  args: { repo?: string }\n- os.git.log — Commit history with structured fields. Read-only.\n  args: { repo?: string, limit?: number, revisionRange?: string, path?: string }\n- os.git.diff — Unified diff (working tree, index, or revisions). Read-only.\n  args: { repo?: string, revisionRange?: string, staged?: boolean, paths?: string[], context?: number }\n- os.git.checkout — Switch to a branch, or create one first (may require approval). Never discards local changes.\n  args: { branch: string, create?: boolean, startPoint?: string, repo?: string }\n- os.git.commit — Stage (`paths` or `all`) and commit with `message` (may require approval). Neither → commits what is already staged.\n  args: { message: string, paths?: string[], all?: boolean, repo?: string }\n- os.git.push — Push the current (or named) branch to a remote, `-u` by default (may require approval). No force-push. Uses the connected GitHub token for github.com.\n  args: { remote?: string, branch?: string, setUpstream?: boolean, repo?: string }\n- os.git.add — Stage changes (`all` = everything, or `paths`); `unstage` reverses. Approval like a file write.\n  args: { repo?: string, paths?: string[], all?: boolean, unstage?: boolean }\n  examples:\n    - {\"all\":true}\n- os.git.commit — Commit staged changes with a message; `all` also commits tracked modifications. Approval like a file write.\n  args: { repo?: string, message: string, all?: boolean }\n  examples:\n    - {\"message\":\"feat: add parser\"}\n- os.proc.list — List processes (filter, limit). Read-only.\n  args: { filter?: string, limit?: number }\n- os.proc.kill — Send a signal to a PID (may require approval).\n  args: { pid: number, signal?: \"SIGTERM\" | \"SIGKILL\" | \"SIGINT\" | \"SIGHUP\" }\n- os.http.request — Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. To read a web page, use os.web.fetch.\n  args: { url: string, method?: 'GET' | 'POST', headers?: Record<string, string>, body?: string | object, timeoutMs?: number, followRedirects?: boolean }\n- os.web.search — Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; SearXNG/Brave configurable; Exa/Brave can use env API keys). Returns compact title/url/snippet results. Use os.web.fetch to read a chosen result.\n  args: { query: string, maxResults?: number }\n  examples:\n    - {\"query\":\"atomic agent local operator runtime\",\"maxResults\":5}\n    - {\"query\":\"latest llama.cpp server grammar cache_prompt slot_id\"}\n- os.web.fetch — Read a web page as readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. For raw API/JSON or POST, use os.http.request.\n  args: { url: string, extractMode?: \"markdown\" | \"text\", maxChars?: number, timeoutMs?: number }\n  examples:\n    - {\"url\":\"https://example.com/article\"}\n    - {\"url\":\"https://docs.example.com/guide\",\"extractMode\":\"text\",\"maxChars\":20000}\n- skill.view — Load an installed skill body (SKILL.md) into the session tail.\n  args: { name: string }\n- tool.view — Load full args schema for a tool listed in `# extras` into `### loaded-tools`.\n  args: { name: string } /* e.g. \"os.git.show\" */\n- vision.describe — Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input. Accepts at most 4 images per call by default (`vision.maxImagesPerCall`); to cover more images, split them across several calls.\n  args: { prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif; at most 4 by default */ }\n  examples:\n    - {\"path\":\"./screenshot.png\",\"prompt\":\"What error is shown?\"}\n    - {\"paths\":[\"a.png\",\"b.png\"],\"prompt\":\"Compare these two diagrams\"}\n- verify.syntax — Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.\n  args: { files: string[] }\n- verify.run — Run what was built against a throwaway copy of the working directory (nothing it writes reaches the workspace; may require approval). kind 'command': a test runner, compiler or script. kind 'service': start a server, wait for a port/url, send requests. kind 'page': a local HTML file or url in a headless browser — scripted input, then `seconds` of runtime with `probes` sampled; collects uncaught errors, console errors and failed getElementById/querySelector lookups. `checks` are assertions on the result. Default `network: false` (a soft proxy block, not a sandbox).\n  args: { kind: 'command' | 'service' | 'page', cmd?: string, args?: string[], start?: { cmd: string, args?: string[] }, ready?: { port?: number, url?: string, timeoutMs?: number }, requests?: [{ method?: string, path?: string, url?: string, body?: string, expectStatus?: number, expectBody?: string }], path?: string, url?: string, script?: [{ action: 'click' | 'key' | 'type' | 'wait', selector?: string, key?: string, text?: string, ms?: number }], seconds?: number /* page runtime, default 5 */, probes?: [{ name: string, expr: string /* JS expression */ }], checks?: string[] /* 'exit 0' | 'exit != 0' | 'stdout contains \"x\"' | 'stderr not contains \"x\"' | 'status 200' | 'no errors' | 'missing selectors 0' | 'probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>' */, cwd?: string, env?: Record<string,string>, timeoutMs?: number, network?: boolean }\n  examples:\n    - {\"kind\":\"page\",\"path\":\"index.html\",\"script\":[{\"action\":\"click\",\"selector\":\"#launch\"},{\"action\":\"key\",\"key\":\"ArrowLeft\"}],\"seconds\":6,\"probes\":[{\"name\":\"lives\",\"expr\":\"window.game.lives\"},{\"name\":\"score\",\"expr\":\"window.game.score\"}],\"checks\":[\"no errors\",\"missing selectors 0\",\"probe score increases\"]}\n    - {\"kind\":\"command\",\"cmd\":\"npm\",\"args\":[\"test\"],\"checks\":[\"exit 0\",\"stdout not contains \\\"failed\\\"\"]}\n- reply — Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.\n  args: { text: string, attachments?: string[] }\n- finish — End the session with a final summary; only if the user asked to end.\n  args: { summary: string }\n\n# extras (one-line; use `tool.view` { name: \"<tool>\" } for full schema)\n- os.fs.restore — Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory, by this session or another — the result of that call said it was saved (may require approval).\n- os.fs.archive.list — List archive entries (zip, tar, tar.gz, gz) without extracting.\n- os.fs.archive.read_entry — Read one archive entry without writing to disk. Read-only.\n- os.fs.archive.extract — Extract an archive to destDir (guarded; may require approval).\n- os.fs.hash — File digest (md5, sha1, sha256, sha512). Read-only, streams.\n- os.fs.diff — Unified diff: files and/or inline strings. Read-only.\n- os.fs.patch — Preview (default) or apply a unified-diff patch (apply=true may require approval).\n- os.fs.watch — One-shot file/dir watch up to timeoutMs. Read-only.\n- os.git.show — One commit: metadata, numstat, optional patch. Read-only.\n- os.git.blame — Per-line authorship for a file. Read-only.\n- os.git.branch — List branches; optional remotes, pattern, or contains. Read-only.\n- os.git.remote — List, add, re-point or remove remotes. add/set-url need Remote sync on and approval; URLs with embedded credentials are refused.\n- os.git.fetch — Fetch a remote (default origin) or all. Needs Remote sync on; approval-gated.\n- os.git.pull — Pull the current branch's upstream, fast-forward only unless rebase. Needs Remote sync on; approval-gated.\n- os.git.push — Push a branch (default: current) to a remote (default origin); sets upstream on first push; never forces. Needs Remote sync on; approval-gated.\n- os.git.clone — Clone a repository into the working directory (or dest). Needs Remote sync on; approval-gated.\n- os.git.init — Create a local git repository (no remote); optional repo-local identity. No-op on an existing repo. Approval like a file write.\n- os.git.checkout — Switch branches; `create` makes a new one (optionally from `startPoint`). Branches only, never paths. Approval like a file write.\n- os.clipboard.read — Read the system clipboard as text.\n- os.clipboard.write — Write text to the system clipboard.\n- os.window.list — List window titles. Read-only.\n- os.window.focus — Focus a window by title substring.\n- os.notify — System notification (title + message).\n- skill.run_script — Run a script from a skill's requires_scripts (may require approval).\n- tasks.schedule — Schedule a one-shot task; current session or newSession.\n- tasks.cron — Recurring cron task; runs in a dedicated persistent session.\n- tasks.list — List tasks (filter by status CSV; optional session). Read-only.\n- tasks.cancel — Cancel a task by id; idempotent on terminal rows.\n- tasks.show — One task by id. Read-only.\n\n### capabilities\nplatform: darwin/arm64\nbrowser: chrome\nworking_dir: /tmp/atomic-e2e-smoke-openai/work\nclipboard: yes\nwmctrl: yes\nnotifications: yes\n\n### instructions\nCall tools now, through the native function-calling interface (the `tools` your API request carries) — do NOT write tool-call JSON as text. The `### tools` catalog above is reference documentation for those same tools (tiers, examples, `tool.view`). For the final user-facing answer call `reply`, or answer in plain text.\nPARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), emit up to 8 tool calls in the SAME response — they run in parallel and cut wall time by ~Nx.\nEmit a single tool call (no others alongside) when: it is `reply`/`finish`, may need approval (`os.shell.run`, `os.fs.write`, `os.fs.edit`, `os.fs.trash`, `os.fs.patch`, `os.fs.restore`, `os.fs.archive.extract`, `os.proc.kill`, `os.http.request`, `skill.run_script`), or its args depend on a previous call's result.\n"
+        },
+        {
+          "role": "user",
+          "content": "Read marker.txt with os.fs.read and reply with its exact marker."
+        },
+        {
+          "role": "user",
+          "content": "### world\n(no world snapshot available)\n\nCURRENT DATE: 2026-10-06 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.\n\n### respond\nRespond now.\n"
+        }
+      ],
+      "temperature": 0.2,
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__navigate",
+            "description": "Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use os.web.search). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.\nArgs: { url: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__click",
+            "description": "Click a snapshot element by aria-ref from the latest read.\nArgs: { ref: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ref"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__type",
+            "description": "Type into a snapshot element; optional Enter.\nArgs: { ref: string, text: string, pressEnter?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "pressEnter": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ref",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__read_aria",
+            "description": "Capture the page as a compact ARIA text snapshot.\nArgs: {}",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__search",
+            "description": "Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use os.web.search instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.\nArgs: { query: string, engine?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "engine": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__tabs",
+            "description": "List, switch, close, or open browser tabs.\nArgs: { action: \"list\" | \"switch\" | \"close\" | \"new\", index?: number, url?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "list",
+                    "switch",
+                    "close",
+                    "new"
+                  ]
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__scroll",
+            "description": "Scroll the page; does not refresh ARIA — read_aria after if needed.\nArgs: { direction: \"up\" | \"down\" | \"top\" | \"bottom\", amount?: \"page\" | \"half\" | number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "up",
+                    "down",
+                    "top",
+                    "bottom"
+                  ]
+                },
+                "amount": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "page",
+                        "half"
+                      ]
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "direction"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__shell__run",
+            "description": "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.\nArgs: { cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "keep": {
+                  "type": "boolean"
+                },
+                "wait": {
+                  "type": "integer"
+                },
+                "kill": {
+                  "type": "integer"
+                },
+                "jobs": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__read",
+            "description": "Read a UTF-8 file — the default for source code and text files; use offset/limit for ranges, lineNumbers for 'LINE|'.\nArgs: { path: string, maxBytes?: number, offset?: number /* 1-based; neg=from end */, limit?: number, lineNumbers?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "maxBytes": {
+                  "type": "number"
+                },
+                "offset": {
+                  "type": "number"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "lineNumbers": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__write",
+            "description": "Write or append to a file (may require approval). The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.\nArgs: { path: string, content: string, mode?: \"replace\" | \"append\", overwrite?: boolean /* only when the user asked for that named file to be replaced */ }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                },
+                "overwrite": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__restore",
+            "description": "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory, by this session or another — the result of that call said it was saved (may require approval).\nArgs: { path: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__trash",
+            "description": "When the user asks to delete, remove, erase, or trash files or directories: move them to the system Trash / Recycle Bin via absolute paths in paths (may require approval). Prefer this over os.shell.run rm.\nArgs: { paths: string[] }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "paths"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__list",
+            "description": "Non-recursive directory listing (default maxEntries=200). Header shows full totals—when matched/total is much larger than shown, narrow with extensions (e.g. [\"pdf\"]), pattern (glob-like *foo*), or sort (name|size|mtime); recurse with os.fs.glob. Do not treat the visible slice as the whole tree.\nArgs: { path: string, pattern?: string, kind?: \"file\" | \"dir\", extensions?: string[], sort?: \"name\" | \"size\" | \"mtime\", maxEntries?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "file",
+                    "dir"
+                  ]
+                },
+                "extensions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "sort": {
+                  "type": "string",
+                  "enum": [
+                    "name",
+                    "size",
+                    "mtime"
+                  ]
+                },
+                "maxEntries": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__glob",
+            "description": "Recursive path match under cwd or path (prefer cwd; default: session working directory). For large trees use tight patterns (e.g. **/*CV*.pdf, **/*resume*.pdf), sensible limit, sortByMtime when freshness matters; pass nocase=true to match regardless of case (covers CV/cv/Cv in one pass). Walk traverses the whole tree (minus ignore) before sorting and slicing to limit, so limit reliably gives you the best matches. Default ignore covers common caches (.cache, Library, node_modules, .cargo, __pycache__, etc.)—override with explicit ignore if you need to look there.\nArgs: { pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean, nocase?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "pattern": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "ignore": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "absolute": {
+                  "type": "boolean"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "sortByMtime": {
+                  "type": "boolean"
+                },
+                "nocase": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "pattern"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__locate_project",
+            "description": "Resolve a project directory from a short folder-name segment the user mentioned (raylib finds .../_raylib). Pass only that segment or a pasted absolute path as name, never the whole sentence. Searches the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.\nArgs: { name: string, limit?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__grep",
+            "description": "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.\nArgs: { pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "pattern": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "glob": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "type": {
+                  "type": "string"
+                },
+                "literal": {
+                  "type": "boolean"
+                },
+                "caseInsensitive": {
+                  "type": "boolean"
+                },
+                "multiline": {
+                  "type": "boolean"
+                },
+                "outputMode": {
+                  "type": "string",
+                  "enum": [
+                    "content",
+                    "files_with_matches",
+                    "count"
+                  ]
+                },
+                "contextBefore": {
+                  "type": "number"
+                },
+                "contextAfter": {
+                  "type": "number"
+                },
+                "contextAround": {
+                  "type": "number"
+                },
+                "headLimit": {
+                  "type": "number"
+                },
+                "offset": {
+                  "type": "number"
+                },
+                "showLineNumbers": {
+                  "type": "boolean"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "pattern"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__edit",
+            "description": "Surgical string replace; oldString must be unique unless replaceAll (may require approval).\nArgs: { path: string, oldString: string, newString: string, replaceAll?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "oldString": {
+                  "type": "string"
+                },
+                "newString": {
+                  "type": "string"
+                },
+                "replaceAll": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "oldString",
+                "newString"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__read_document",
+            "description": "Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.\nArgs: { path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "pdf",
+                    "docx",
+                    "doc",
+                    "xlsx",
+                    "rtf",
+                    "odt",
+                    "pptx",
+                    "plain"
+                  ]
+                },
+                "maxBytes": {
+                  "type": "number"
+                },
+                "maxPages": {
+                  "type": "number"
+                },
+                "pagesFrom": {
+                  "type": "number"
+                },
+                "pagesTo": {
+                  "type": "number"
+                },
+                "sheets": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
+                },
+                "pageSeparators": {
+                  "type": "boolean"
+                },
+                "includeTables": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__archive__list",
+            "description": "List archive entries (zip, tar, tar.gz, gz) without extracting.\nArgs: { path: string, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "zip",
+                    "tar",
+                    "tar.gz",
+                    "gz"
+                  ]
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__archive__read_entry",
+            "description": "Read one archive entry without writing to disk. Read-only.\nArgs: { path: string, entry: string, as?: 'utf8' | 'base64', maxBytes?: number, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "entry": {
+                  "type": "string"
+                },
+                "as": {
+                  "type": "string",
+                  "enum": [
+                    "utf8",
+                    "base64"
+                  ]
+                },
+                "maxBytes": {
+                  "type": "number"
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "zip",
+                    "tar",
+                    "tar.gz",
+                    "gz"
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "entry"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__archive__extract",
+            "description": "Extract an archive to destDir (guarded; may require approval).\nArgs: { path: string, destDir: string, overwrite?: boolean, followSymlinks?: boolean, include?: string[], limits?: { maxTotalBytes?: number, maxEntryBytes?: number, maxEntries?: number }, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "destDir": {
+                  "type": "string"
+                },
+                "overwrite": {
+                  "type": "boolean"
+                },
+                "followSymlinks": {
+                  "type": "boolean"
+                },
+                "include": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "properties": {
+                    "maxTotalBytes": {
+                      "type": "number"
+                    },
+                    "maxEntryBytes": {
+                      "type": "number"
+                    },
+                    "maxEntries": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "zip",
+                    "tar",
+                    "tar.gz",
+                    "gz"
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "destDir"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__hash",
+            "description": "File digest (md5, sha1, sha256, sha512). Read-only, streams.\nArgs: { path: string, algorithm?: \"md5\" | \"sha1\" | \"sha256\" | \"sha512\", encoding?: \"hex\" | \"base64\" }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "algorithm": {
+                  "type": "string",
+                  "enum": [
+                    "md5",
+                    "sha1",
+                    "sha256",
+                    "sha512"
+                  ]
+                },
+                "encoding": {
+                  "type": "string",
+                  "enum": [
+                    "hex",
+                    "base64"
+                  ]
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__diff",
+            "description": "Unified diff: files and/or inline strings. Read-only.\nArgs: { aPath?: string, aText?: string, aLabel?: string, bPath?: string, bText?: string, bLabel?: string, context?: number, ignoreWhitespace?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "aPath": {
+                  "type": "string"
+                },
+                "aText": {
+                  "type": "string"
+                },
+                "aLabel": {
+                  "type": "string"
+                },
+                "bPath": {
+                  "type": "string"
+                },
+                "bText": {
+                  "type": "string"
+                },
+                "bLabel": {
+                  "type": "string"
+                },
+                "context": {
+                  "type": "number"
+                },
+                "ignoreWhitespace": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__patch",
+            "description": "Preview (default) or apply a unified-diff patch (apply=true may require approval).\nArgs: { patch?: string, patchPath?: string, apply?: boolean, rootDir?: string, fuzzFactor?: number, stripComponents?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "patch": {
+                  "type": "string"
+                },
+                "patchPath": {
+                  "type": "string"
+                },
+                "apply": {
+                  "type": "boolean"
+                },
+                "rootDir": {
+                  "type": "string"
+                },
+                "fuzzFactor": {
+                  "type": "number"
+                },
+                "stripComponents": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__watch",
+            "description": "One-shot file/dir watch up to timeoutMs. Read-only.\nArgs: { path: string, timeoutMs?: number, recursive?: boolean, events?: ('add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir')[], ignoreInitial?: boolean, maxEvents?: number, stopAfterFirst?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "recursive": {
+                  "type": "boolean"
+                },
+                "events": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "change",
+                      "unlink",
+                      "addDir",
+                      "unlinkDir"
+                    ]
+                  }
+                },
+                "ignoreInitial": {
+                  "type": "boolean"
+                },
+                "maxEvents": {
+                  "type": "number"
+                },
+                "stopAfterFirst": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__status",
+            "description": "Working tree status (porcelain) and current branch. Read-only.\nArgs: { repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__log",
+            "description": "Commit history with structured fields. Read-only.\nArgs: { repo?: string, limit?: number, revisionRange?: string, path?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "revisionRange": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__diff",
+            "description": "Unified diff (working tree, index, or revisions). Read-only.\nArgs: { repo?: string, revisionRange?: string, staged?: boolean, paths?: string[], context?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "revisionRange": {
+                  "type": "string"
+                },
+                "staged": {
+                  "type": "boolean"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "context": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__show",
+            "description": "One commit: metadata, numstat, optional patch. Read-only.\nArgs: { repo?: string, revision?: string, patch?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "patch": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__blame",
+            "description": "Per-line authorship for a file. Read-only.\nArgs: { repo?: string, path: string, revision?: string, startLine?: number, endLine?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "startLine": {
+                  "type": "number"
+                },
+                "endLine": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__branch",
+            "description": "List branches; optional remotes, pattern, or contains. Read-only.\nArgs: { repo?: string, includeRemote?: boolean, contains?: string, pattern?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "includeRemote": {
+                  "type": "boolean"
+                },
+                "contains": {
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__checkout",
+            "description": "Switch to a branch, or create one first (may require approval). Never discards local changes.\nArgs: { branch: string, create?: boolean, startPoint?: string, repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "type": "string"
+                },
+                "create": {
+                  "type": "boolean"
+                },
+                "startPoint": {
+                  "type": "string"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "branch"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__commit",
+            "description": "Stage (`paths` or `all`) and commit with `message` (may require approval). Neither → commits what is already staged.\nArgs: { message: string, paths?: string[], all?: boolean, repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "all": {
+                  "type": "boolean"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__push",
+            "description": "Push the current (or named) branch to a remote, `-u` by default (may require approval). No force-push. Uses the connected GitHub token for github.com.\nArgs: { remote?: string, branch?: string, setUpstream?: boolean, repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "remote": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "setUpstream": {
+                  "type": "boolean"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__remote",
+            "description": "List, add, re-point or remove remotes. add/set-url need Remote sync on and approval; URLs with embedded credentials are refused.\nArgs: { repo?: string, action?: \"list\" | \"add\" | \"set-url\" | \"remove\", name?: string, url?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "list",
+                    "add",
+                    "set-url",
+                    "remove"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__fetch",
+            "description": "Fetch a remote (default origin) or all. Needs Remote sync on; approval-gated.\nArgs: { repo?: string, remote?: string, all?: boolean, prune?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "remote": {
+                  "type": "string"
+                },
+                "all": {
+                  "type": "boolean"
+                },
+                "prune": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__pull",
+            "description": "Pull the current branch's upstream, fast-forward only unless rebase. Needs Remote sync on; approval-gated.\nArgs: { repo?: string, remote?: string, branch?: string, rebase?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "remote": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "rebase": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__clone",
+            "description": "Clone a repository into the working directory (or dest). Needs Remote sync on; approval-gated.\nArgs: { url: string, dest?: string, branch?: string, depth?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "dest": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "depth": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__init",
+            "description": "Create a local git repository (no remote); optional repo-local identity. No-op on an existing repo. Approval like a file write.\nArgs: { path?: string, initialBranch?: string, userName?: string, userEmail?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "initialBranch": {
+                  "type": "string"
+                },
+                "userName": {
+                  "type": "string"
+                },
+                "userEmail": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__add",
+            "description": "Stage changes (`all` = everything, or `paths`); `unstage` reverses. Approval like a file write.\nArgs: { repo?: string, paths?: string[], all?: boolean, unstage?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "all": {
+                  "type": "boolean"
+                },
+                "unstage": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__proc__list",
+            "description": "List processes (filter, limit). Read-only.\nArgs: { filter?: string, limit?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__proc__kill",
+            "description": "Send a signal to a PID (may require approval).\nArgs: { pid: number, signal?: \"SIGTERM\" | \"SIGKILL\" | \"SIGINT\" | \"SIGHUP\" }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "pid": {
+                  "type": "number"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "SIGTERM",
+                    "SIGKILL",
+                    "SIGINT",
+                    "SIGHUP"
+                  ]
+                }
+              },
+              "required": [
+                "pid"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__http__request",
+            "description": "Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. To read a web page, use os.web.fetch.\nArgs: { url: string, method?: 'GET' | 'POST', headers?: Record<string, string>, body?: string | object, timeoutMs?: number, followRedirects?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST"
+                  ]
+                },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "body": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object"
+                    }
+                  ]
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "followRedirects": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__web__search",
+            "description": "Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; SearXNG/Brave configurable; Exa/Brave can use env API keys). Returns compact title/url/snippet results. Use os.web.fetch to read a chosen result.\nArgs: { query: string, maxResults?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "maxResults": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "query"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__web__fetch",
+            "description": "Read a web page as readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. For raw API/JSON or POST, use os.http.request.\nArgs: { url: string, extractMode?: \"markdown\" | \"text\", maxChars?: number, timeoutMs?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "extractMode": {
+                  "type": "string",
+                  "enum": [
+                    "markdown",
+                    "text"
+                  ]
+                },
+                "maxChars": {
+                  "type": "number"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__clipboard__read",
+            "description": "Read the system clipboard as text.\nArgs: {}",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__clipboard__write",
+            "description": "Write text to the system clipboard.\nArgs: { value: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__window__list",
+            "description": "List window titles. Read-only.\nArgs: {}",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__window__focus",
+            "description": "Focus a window by title substring.\nArgs: { title: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__notify",
+            "description": "System notification (title + message).\nArgs: { title: string, message: string, sound?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "sound": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "title",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "skill__view",
+            "description": "Load an installed skill body (SKILL.md) into the session tail.\nArgs: { name: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tool__view",
+            "description": "Load full args schema for a tool listed in `# extras` into `### loaded-tools`.\nArgs: { name: string } /* e.g. \"os.git.show\" */",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "skill__run_script",
+            "description": "Run a script from a skill's requires_scripts (may require approval).\nArgs: { skill: string, script: string, args?: string[], timeoutMs?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "skill": {
+                  "type": "string"
+                },
+                "script": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "timeoutMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "skill",
+                "script"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__schedule",
+            "description": "Schedule a one-shot task; current session or newSession.\nArgs: { userMessage: string, at?: number, inSeconds?: number, newSession?: boolean, notify?: \"telegram\" }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "userMessage": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                },
+                "inSeconds": {
+                  "type": "number"
+                },
+                "newSession": {
+                  "type": "boolean"
+                },
+                "notify": {
+                  "type": "string",
+                  "enum": [
+                    "telegram"
+                  ]
+                }
+              },
+              "required": [
+                "userMessage"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__cron",
+            "description": "Recurring cron task; runs in a dedicated persistent session.\nArgs: { userMessage: string, expression: string, tz?: string /* IANA */, notify?: \"telegram\" /* report result to paired Telegram */ }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "userMessage": {
+                  "type": "string"
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "tz": {
+                  "type": "string"
+                },
+                "notify": {
+                  "type": "string",
+                  "enum": [
+                    "telegram"
+                  ]
+                }
+              },
+              "required": [
+                "userMessage",
+                "expression"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__list",
+            "description": "List tasks (filter by status CSV; optional session). Read-only.\nArgs: { status?: string, sessionId?: string, limit?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__cancel",
+            "description": "Cancel a task by id; idempotent on terminal rows.\nArgs: { id: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__show",
+            "description": "One task by id. Read-only.\nArgs: { id: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "vision__describe",
+            "description": "Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input. Accepts at most 4 images per call by default (`vision.maxImagesPerCall`); to cover more images, split them across several calls.\nArgs: { prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif; at most 4 by default */ }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 4
+                }
+              },
+              "required": [
+                "prompt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "verify__syntax",
+            "description": "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.\nArgs: { files: string[] }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "files"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "verify__run",
+            "description": "Run what was built against a throwaway copy of the working directory (nothing it writes reaches the workspace; may require approval). kind 'command': a test runner, compiler or script. kind 'service': start a server, wait for a port/url, send requests. kind 'page': a local HTML file or url in a headless browser — scripted input, then `seconds` of runtime with `probes` sampled; collects uncaught errors, console errors and failed getElementById/querySelector lookups. `checks` are assertions on the result. Default `network: false` (a soft proxy block, not a sandbox).\nArgs: { kind: 'command' | 'service' | 'page', cmd?: string, args?: string[], start?: { cmd: string, args?: string[] }, ready?: { port?: number, url?: string, timeoutMs?: number }, requests?: [{ method?: string, path?: string, url?: string, body?: string, expectStatus?: number, expectBody?: string }], path?: string, url?: string, script?: [{ action: 'click' | 'key' | 'type' | 'wait', selector?: string, key?: string, text?: string, ms?: number }], seconds?: number /* page runtime, default 5 */, probes?: [{ name: string, expr: string /* JS expression */ }], checks?: string[] /* 'exit 0' | 'exit != 0' | 'stdout contains \"x\"' | 'stderr not contains \"x\"' | 'status 200' | 'no errors' | 'missing selectors 0' | 'probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>' */, cwd?: string, env?: Record<string,string>, timeoutMs?: number, network?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "command",
+                    "service",
+                    "page"
+                  ]
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "env": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "network": {
+                  "type": "boolean"
+                },
+                "cmd": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "start": {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string"
+                    },
+                    "args": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                },
+                "ready": {
+                  "type": "object",
+                  "properties": {
+                    "port": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "timeoutMs": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                },
+                "requests": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "method": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      },
+                      "body": {
+                        "type": "string"
+                      },
+                      "expectStatus": {
+                        "type": "integer"
+                      },
+                      "expectBody": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "path": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "script": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "click",
+                          "key",
+                          "type",
+                          "wait"
+                        ]
+                      },
+                      "selector": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "ms": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "seconds": {
+                  "type": "number"
+                },
+                "probes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "expr": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "expr"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "reply",
+            "description": "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.\nArgs: { text: string, attachments?: string[] }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "User-visible reply text. Must be non-empty."
+                },
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Paths of existing files to deliver with the reply (sent as files on Telegram/Discord)."
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "finish",
+            "description": "End the session with a final summary; only if the user asked to end.\nArgs: { summary: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "Optional final user-visible text."
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "parallel_tool_calls": true,
+      "tool_choice": "auto"
+    }
+  },
+  {
+    "path": "/v1/chat/completions",
+    "method": "POST",
+    "body": {
+      "model": "smoke-native",
+      "messages": [
+        {
+          "role": "system",
+          "content": "### system\nYou are atomic-agent, a local operator. Each step calls tools through the native function-calling interface — never write tool-call JSON into the text of your answer, and never put your answer in the reasoning channel.\nBias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool call quickly instead of long deliberation. Keep any reasoning or thinking to a few words (or effectively empty), then make the call.\nFiles that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. If the user asked for a rewrite, say so and pass overwrite: true.\nTerminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.\n`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, call that tool, not `reply`.\nOutput discipline: when the request specifies an exact answer format, marker, length, or units, the `reply` text MUST be ONLY that — the bare value or the exact required line and nothing else (correct units, no preamble, no restating the question, no extra commentary or markdown before or after). If a specific final-answer line or marker is required, emit exactly that line as the entire reply. When no format is specified, answer as fully and helpfully as the task warrants.\nFinishing the job: when the user asks you to build, run, compute, or verify something, the deliverable is a real result backed by actual tool output — not a description of one. Do not stop after a stub, a plan, or a single command; keep calling tools until you have actually produced the requested result, then `reply` with what real execution returned. If a tool, install, or network call fails and blocks the real path, say so directly and try an alternative (a different approach, or `reply` to ask the user). NEVER substitute plausible-looking fabricated output (made-up data, invented file contents, synthesised API responses) for results you could not actually produce — reporting a blocker honestly is always better than inventing a result.\nWhen a line in `### skills` matches the user's request, emit `skill.view` first — the catalog line is a stub, the body has the actual procedure — unless that skill is already under `### loaded-skills`. This applies to every skill, including text-only workflows; do not guess the answer from the catalog summary. Rare tool? `tool.view` first. Loop: tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` / `browser.search` refresh the world; avoid redundant `read_aria`. Do not invent facts — use `reply` to ask if stuck.\nWeb — READ THIS BEFORE ANY WEB ACTION. DEFAULT and ALWAYS-FIRST path: use `os.web.search` to search the web and `os.web.fetch` to read ANY page (clean markdown, no browser). The `browser.*` tools are a LAST RESORT, not the default: use them ONLY when (a) the user explicitly says to use the browser, or (b) the page genuinely needs JS/login/clicks that `os.web.fetch` cannot deliver. Opening `browser.navigate` / `browser.search` just to read a page or run a search is WRONG — it wastes the turn and bloats context. If you catch yourself reaching for the browser, stop and use `os.web.search` or `os.web.fetch` instead.\nLarge directories: `os.fs.list` only shows up to maxEntries matches—use extensions, pattern, sort, or `os.fs.glob` to narrow before assuming a file type is absent. For many PDFs or resumes prefer filename `os.fs.glob` patterns plus `os.fs.read_document` on a short candidate list; avoid sweeping `os.fs.grep` with `glob` over huge `*.pdf` trees.\nDeleting files or directories: when the user asks to delete, remove, erase, or trash paths, call `os.fs.trash` with concrete absolute paths in `paths` (use `os.fs.list` / `os.fs.glob` first if you need to discover names). Do not use `os.shell.run` with `rm`, `unlink`, or `rmdir` for that unless the user explicitly demands permanent irreversible shell deletion.\nMemory: persist with `memory.profile.*` and `memory.notes.*` as needed. Use `### lessons` (pointer view of distilled rules from past episodes — call `memory.lessons.recall { id }` to read the full principle), `### procedures` (pointer view of advisory how-to templates — call `memory.procedures.recall { id }` to read the `steps[]`; templates are guidance, not law — follow them or consciously deviate), `### recalled` / `### memory-index` and `memory.notes.recall` for past context. Store distilled facts, not full dumps. `### notice` in the tail is a hard nudge to change strategy.\n\n### rules\nOne batch of tool calls per step (including `skill.view`), all through the native function-calling interface — never written out as JSON text; a solo action is a single call. Destructive or privileged tools may require user approval. If `### skills` lists a playbook that fits the user goal, call `skill.view` first unless that skill is already under `### loaded-skills`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use. Large trees: narrow with `os.fs.list` filters or `os.fs.glob` before reading content; do not use `os.fs.grep` with broad binary globs (e.g. every `*.pdf`) across huge folders—use tight globs then `os.fs.read_document` on candidates.\n\n### skills\n- [global] apple-calendar: Read macOS Calendar events via the `icalBuddy` CLI and create events via AppleScript (osascript). Use to check the user's calendar, agenda, upcoming events, or add an event on macOS.\n- [global] apple-notes: Manage Apple Notes via the `memo` CLI on macOS — create, view, search, edit, export.\n- [global] apple-reminders: Manage Apple Reminders via the `remindctl` CLI on macOS — list, add, complete, delete, manage lists.\n- [global] audio-transcribe: Transcribe speech from audio files (mp3, m4a, wav, ogg, flac, webm) to text using the local `whisper` CLI — no API key. Use whenever a task hinges on the spoken content of an audio attachment.\n- [global] currency: Currency exchange rates and conversion via the Frankfurter API (no key). Use for FX rates, \"convert X to Y\", or historical/time-series rates.\n- [global] docker: Manage Docker containers, images, volumes, and Compose stacks via the `docker` CLI — list, inspect, logs, run, build, stop, remove, compose up/down. Use for local container ops.\n- [global] ffmpeg: Process audio and video with the `ffmpeg` / `ffprobe` CLIs — convert, trim, extract audio, resize, change format, make GIFs, inspect media. Use for any audio/video transformation.\n- [global] github: Drive GitHub via the official `gh` CLI — repos, issues, pull requests, releases, gists, Actions runs, and raw REST through `gh api`. Use when the user asks to inspect or manage GitHub.\n- [global] gog-workspace: Use the `gog` CLI for Google Workspace tasks across Gmail, Calendar, Drive, Docs, Sheets, Contacts, and related services. Use when the user asks to check email, search Gmail, inspect calendar events, find Drive files, read Docs or Sheets, or manage Google Workspace data through `gog`.\n- [global] imagemagick: Edit and convert images with the ImageMagick `magick` CLI — resize, crop, convert format, compress, rotate, montage, annotate. Use for any still-image transformation.\n- [global] notion: Read and write Notion pages, databases (data sources), and blocks via the Notion REST API.\n- [global] obsidian: Read, search, and create Markdown notes inside an Obsidian vault on disk.\n- [global] pandoc: Convert documents between formats (Markdown, DOCX, HTML, PDF, RST, EPUB, LaTeX) via the `pandoc` CLI. Use to transform a document from one format to another.\n- [global] pdf: Manipulate PDF files — merge, split, extract pages/text, PDF↔images, OCR, info — via the `qpdf` / `poppler` / `ocrmypdf` CLIs. Use to combine, slice, convert, or OCR PDFs.\n- [global] skill-creator: Author or edit atomic-agent skills (SKILL.md + YAML). Use when creating, renaming, or tightening skills and their install layout.\n- [global] verify-work: Prove that code, a script or a page you just produced actually runs — execute it, read the real output, and fix what breaks before reporting. Use after writing or changing anything executable, and whenever you are about to say something is done, working, or fixed.\n- [global] wttr-weather: Weather via wttr.in GET (no key). Use for weather/forecast; prefer os.http.request.\n- [global] xlsx: Create and edit Excel .xlsx workbooks (sheets, cells, formulas, formatting) via Python `openpyxl`. Use to generate spreadsheets or write/update cells. Reading is via os.fs.read_document.\n\n### tools\n# common (full)\n- browser.navigate — Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use os.web.search). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.\n  args: { url: string }\n- browser.click — Click a snapshot element by aria-ref from the latest read.\n  args: { ref: string }\n- browser.type — Type into a snapshot element; optional Enter.\n  args: { ref: string, text: string, pressEnter?: boolean }\n- browser.read_aria — Capture the page as a compact ARIA text snapshot.\n  args: {}\n- browser.search — Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use os.web.search instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.\n  args: { query: string, engine?: string }\n- browser.tabs — List, switch, close, or open browser tabs.\n  args: { action: \"list\" | \"switch\" | \"close\" | \"new\", index?: number, url?: string }\n- browser.scroll — Scroll the page; does not refresh ARIA — read_aria after if needed.\n  args: { direction: \"up\" | \"down\" | \"top\" | \"bottom\", amount?: \"page\" | \"half\" | number }\n- os.shell.run — Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.\n  args: { cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }\n- os.fs.read — Read a UTF-8 file — the default for source code and text files; use offset/limit for ranges, lineNumbers for 'LINE|'.\n  args: { path: string, maxBytes?: number, offset?: number /* 1-based; neg=from end */, limit?: number, lineNumbers?: boolean }\n- os.fs.write — Write or append to a file (may require approval). The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.\n  args: { path: string, content: string, mode?: \"replace\" | \"append\", overwrite?: boolean /* only when the user asked for that named file to be replaced */ }\n- os.fs.trash — When the user asks to delete, remove, erase, or trash files or directories: move them to the system Trash / Recycle Bin via absolute paths in paths (may require approval). Prefer this over os.shell.run rm.\n  args: { paths: string[] }\n- os.fs.list — Non-recursive directory listing (default maxEntries=200). Header shows full totals—when matched/total is much larger than shown, narrow with extensions (e.g. [\"pdf\"]), pattern (glob-like *foo*), or sort (name|size|mtime); recurse with os.fs.glob. Do not treat the visible slice as the whole tree.\n  args: { path: string, pattern?: string, kind?: \"file\" | \"dir\", extensions?: string[], sort?: \"name\" | \"size\" | \"mtime\", maxEntries?: number }\n- os.fs.glob — Recursive path match under cwd or path (prefer cwd; default: session working directory). For large trees use tight patterns (e.g. **/*CV*.pdf, **/*resume*.pdf), sensible limit, sortByMtime when freshness matters; pass nocase=true to match regardless of case (covers CV/cv/Cv in one pass). Walk traverses the whole tree (minus ignore) before sorting and slicing to limit, so limit reliably gives you the best matches. Default ignore covers common caches (.cache, Library, node_modules, .cargo, __pycache__, etc.)—override with explicit ignore if you need to look there.\n  args: { pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean, nocase?: boolean }\n- os.fs.locate_project — Resolve a project directory from a short folder-name segment the user mentioned (raylib finds .../_raylib). Pass only that segment or a pasted absolute path as name, never the whole sentence. Searches the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.\n  args: { name: string, limit?: number }\n  examples:\n    - {\"name\":\"raylib\"}\n    - {\"name\":\"tasks-board\"}\n- os.fs.grep — Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.\n  args: { pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }\n- os.fs.edit — Surgical string replace; oldString must be unique unless replaceAll (may require approval).\n  args: { path: string, oldString: string, newString: string, replaceAll?: boolean }\n- os.fs.read_document — Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.\n  args: { path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }\n- os.git.status — Working tree status (porcelain) and current branch. Read-only.\n  args: { repo?: string }\n- os.git.log — Commit history with structured fields. Read-only.\n  args: { repo?: string, limit?: number, revisionRange?: string, path?: string }\n- os.git.diff — Unified diff (working tree, index, or revisions). Read-only.\n  args: { repo?: string, revisionRange?: string, staged?: boolean, paths?: string[], context?: number }\n- os.git.checkout — Switch to a branch, or create one first (may require approval). Never discards local changes.\n  args: { branch: string, create?: boolean, startPoint?: string, repo?: string }\n- os.git.commit — Stage (`paths` or `all`) and commit with `message` (may require approval). Neither → commits what is already staged.\n  args: { message: string, paths?: string[], all?: boolean, repo?: string }\n- os.git.push — Push the current (or named) branch to a remote, `-u` by default (may require approval). No force-push. Uses the connected GitHub token for github.com.\n  args: { remote?: string, branch?: string, setUpstream?: boolean, repo?: string }\n- os.git.add — Stage changes (`all` = everything, or `paths`); `unstage` reverses. Approval like a file write.\n  args: { repo?: string, paths?: string[], all?: boolean, unstage?: boolean }\n  examples:\n    - {\"all\":true}\n- os.git.commit — Commit staged changes with a message; `all` also commits tracked modifications. Approval like a file write.\n  args: { repo?: string, message: string, all?: boolean }\n  examples:\n    - {\"message\":\"feat: add parser\"}\n- os.proc.list — List processes (filter, limit). Read-only.\n  args: { filter?: string, limit?: number }\n- os.proc.kill — Send a signal to a PID (may require approval).\n  args: { pid: number, signal?: \"SIGTERM\" | \"SIGKILL\" | \"SIGINT\" | \"SIGHUP\" }\n- os.http.request — Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. To read a web page, use os.web.fetch.\n  args: { url: string, method?: 'GET' | 'POST', headers?: Record<string, string>, body?: string | object, timeoutMs?: number, followRedirects?: boolean }\n- os.web.search — Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; SearXNG/Brave configurable; Exa/Brave can use env API keys). Returns compact title/url/snippet results. Use os.web.fetch to read a chosen result.\n  args: { query: string, maxResults?: number }\n  examples:\n    - {\"query\":\"atomic agent local operator runtime\",\"maxResults\":5}\n    - {\"query\":\"latest llama.cpp server grammar cache_prompt slot_id\"}\n- os.web.fetch — Read a web page as readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. For raw API/JSON or POST, use os.http.request.\n  args: { url: string, extractMode?: \"markdown\" | \"text\", maxChars?: number, timeoutMs?: number }\n  examples:\n    - {\"url\":\"https://example.com/article\"}\n    - {\"url\":\"https://docs.example.com/guide\",\"extractMode\":\"text\",\"maxChars\":20000}\n- skill.view — Load an installed skill body (SKILL.md) into the session tail.\n  args: { name: string }\n- tool.view — Load full args schema for a tool listed in `# extras` into `### loaded-tools`.\n  args: { name: string } /* e.g. \"os.git.show\" */\n- vision.describe — Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input. Accepts at most 4 images per call by default (`vision.maxImagesPerCall`); to cover more images, split them across several calls.\n  args: { prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif; at most 4 by default */ }\n  examples:\n    - {\"path\":\"./screenshot.png\",\"prompt\":\"What error is shown?\"}\n    - {\"paths\":[\"a.png\",\"b.png\"],\"prompt\":\"Compare these two diagrams\"}\n- verify.syntax — Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.\n  args: { files: string[] }\n- verify.run — Run what was built against a throwaway copy of the working directory (nothing it writes reaches the workspace; may require approval). kind 'command': a test runner, compiler or script. kind 'service': start a server, wait for a port/url, send requests. kind 'page': a local HTML file or url in a headless browser — scripted input, then `seconds` of runtime with `probes` sampled; collects uncaught errors, console errors and failed getElementById/querySelector lookups. `checks` are assertions on the result. Default `network: false` (a soft proxy block, not a sandbox).\n  args: { kind: 'command' | 'service' | 'page', cmd?: string, args?: string[], start?: { cmd: string, args?: string[] }, ready?: { port?: number, url?: string, timeoutMs?: number }, requests?: [{ method?: string, path?: string, url?: string, body?: string, expectStatus?: number, expectBody?: string }], path?: string, url?: string, script?: [{ action: 'click' | 'key' | 'type' | 'wait', selector?: string, key?: string, text?: string, ms?: number }], seconds?: number /* page runtime, default 5 */, probes?: [{ name: string, expr: string /* JS expression */ }], checks?: string[] /* 'exit 0' | 'exit != 0' | 'stdout contains \"x\"' | 'stderr not contains \"x\"' | 'status 200' | 'no errors' | 'missing selectors 0' | 'probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>' */, cwd?: string, env?: Record<string,string>, timeoutMs?: number, network?: boolean }\n  examples:\n    - {\"kind\":\"page\",\"path\":\"index.html\",\"script\":[{\"action\":\"click\",\"selector\":\"#launch\"},{\"action\":\"key\",\"key\":\"ArrowLeft\"}],\"seconds\":6,\"probes\":[{\"name\":\"lives\",\"expr\":\"window.game.lives\"},{\"name\":\"score\",\"expr\":\"window.game.score\"}],\"checks\":[\"no errors\",\"missing selectors 0\",\"probe score increases\"]}\n    - {\"kind\":\"command\",\"cmd\":\"npm\",\"args\":[\"test\"],\"checks\":[\"exit 0\",\"stdout not contains \\\"failed\\\"\"]}\n- reply — Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.\n  args: { text: string, attachments?: string[] }\n- finish — End the session with a final summary; only if the user asked to end.\n  args: { summary: string }\n\n# extras (one-line; use `tool.view` { name: \"<tool>\" } for full schema)\n- os.fs.restore — Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory, by this session or another — the result of that call said it was saved (may require approval).\n- os.fs.archive.list — List archive entries (zip, tar, tar.gz, gz) without extracting.\n- os.fs.archive.read_entry — Read one archive entry without writing to disk. Read-only.\n- os.fs.archive.extract — Extract an archive to destDir (guarded; may require approval).\n- os.fs.hash — File digest (md5, sha1, sha256, sha512). Read-only, streams.\n- os.fs.diff — Unified diff: files and/or inline strings. Read-only.\n- os.fs.patch — Preview (default) or apply a unified-diff patch (apply=true may require approval).\n- os.fs.watch — One-shot file/dir watch up to timeoutMs. Read-only.\n- os.git.show — One commit: metadata, numstat, optional patch. Read-only.\n- os.git.blame — Per-line authorship for a file. Read-only.\n- os.git.branch — List branches; optional remotes, pattern, or contains. Read-only.\n- os.git.remote — List, add, re-point or remove remotes. add/set-url need Remote sync on and approval; URLs with embedded credentials are refused.\n- os.git.fetch — Fetch a remote (default origin) or all. Needs Remote sync on; approval-gated.\n- os.git.pull — Pull the current branch's upstream, fast-forward only unless rebase. Needs Remote sync on; approval-gated.\n- os.git.push — Push a branch (default: current) to a remote (default origin); sets upstream on first push; never forces. Needs Remote sync on; approval-gated.\n- os.git.clone — Clone a repository into the working directory (or dest). Needs Remote sync on; approval-gated.\n- os.git.init — Create a local git repository (no remote); optional repo-local identity. No-op on an existing repo. Approval like a file write.\n- os.git.checkout — Switch branches; `create` makes a new one (optionally from `startPoint`). Branches only, never paths. Approval like a file write.\n- os.clipboard.read — Read the system clipboard as text.\n- os.clipboard.write — Write text to the system clipboard.\n- os.window.list — List window titles. Read-only.\n- os.window.focus — Focus a window by title substring.\n- os.notify — System notification (title + message).\n- skill.run_script — Run a script from a skill's requires_scripts (may require approval).\n- tasks.schedule — Schedule a one-shot task; current session or newSession.\n- tasks.cron — Recurring cron task; runs in a dedicated persistent session.\n- tasks.list — List tasks (filter by status CSV; optional session). Read-only.\n- tasks.cancel — Cancel a task by id; idempotent on terminal rows.\n- tasks.show — One task by id. Read-only.\n\n### capabilities\nplatform: darwin/arm64\nbrowser: chrome\nworking_dir: /tmp/atomic-e2e-smoke-openai/work\nclipboard: yes\nwmctrl: yes\nnotifications: yes\n\n### instructions\nCall tools now, through the native function-calling interface (the `tools` your API request carries) — do NOT write tool-call JSON as text. The `### tools` catalog above is reference documentation for those same tools (tiers, examples, `tool.view`). For the final user-facing answer call `reply`, or answer in plain text.\nPARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), emit up to 8 tool calls in the SAME response — they run in parallel and cut wall time by ~Nx.\nEmit a single tool call (no others alongside) when: it is `reply`/`finish`, may need approval (`os.shell.run`, `os.fs.write`, `os.fs.edit`, `os.fs.trash`, `os.fs.patch`, `os.fs.restore`, `os.fs.archive.extract`, `os.proc.kill`, `os.http.request`, `skill.run_script`), or its args depend on a previous call's result.\n"
+        },
+        {
+          "role": "user",
+          "content": "Read marker.txt with os.fs.read and reply with its exact marker."
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "type": "function",
+              "function": {
+                "name": "os__fs__read",
+                "arguments": "{\"path\":\"marker.txt\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_1",
+          "content": "SMOKE-OPENAI-NATIVE-8352"
+        },
+        {
+          "role": "user",
+          "content": "### world\n(no world snapshot available)\n\nCURRENT DATE: 2026-10-06 (Tuesday) — this is today. Use it for any time-relative reasoning; never assume an earlier year.\n\n### respond\nRespond now.\n"
+        }
+      ],
+      "temperature": 0.2,
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__navigate",
+            "description": "Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use os.web.search). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.\nArgs: { url: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__click",
+            "description": "Click a snapshot element by aria-ref from the latest read.\nArgs: { ref: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ref"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__type",
+            "description": "Type into a snapshot element; optional Enter.\nArgs: { ref: string, text: string, pressEnter?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "pressEnter": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ref",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__read_aria",
+            "description": "Capture the page as a compact ARIA text snapshot.\nArgs: {}",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__search",
+            "description": "Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use os.web.search instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.\nArgs: { query: string, engine?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "engine": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__tabs",
+            "description": "List, switch, close, or open browser tabs.\nArgs: { action: \"list\" | \"switch\" | \"close\" | \"new\", index?: number, url?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "list",
+                    "switch",
+                    "close",
+                    "new"
+                  ]
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "browser__scroll",
+            "description": "Scroll the page; does not refresh ARIA — read_aria after if needed.\nArgs: { direction: \"up\" | \"down\" | \"top\" | \"bottom\", amount?: \"page\" | \"half\" | number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "up",
+                    "down",
+                    "top",
+                    "bottom"
+                  ]
+                },
+                "amount": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "page",
+                        "half"
+                      ]
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "direction"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__shell__run",
+            "description": "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.\nArgs: { cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "keep": {
+                  "type": "boolean"
+                },
+                "wait": {
+                  "type": "integer"
+                },
+                "kill": {
+                  "type": "integer"
+                },
+                "jobs": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__read",
+            "description": "Read a UTF-8 file — the default for source code and text files; use offset/limit for ranges, lineNumbers for 'LINE|'.\nArgs: { path: string, maxBytes?: number, offset?: number /* 1-based; neg=from end */, limit?: number, lineNumbers?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "maxBytes": {
+                  "type": "number"
+                },
+                "offset": {
+                  "type": "number"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "lineNumbers": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__write",
+            "description": "Write or append to a file (may require approval). The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.\nArgs: { path: string, content: string, mode?: \"replace\" | \"append\", overwrite?: boolean /* only when the user asked for that named file to be replaced */ }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                },
+                "overwrite": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__restore",
+            "description": "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory, by this session or another — the result of that call said it was saved (may require approval).\nArgs: { path: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__trash",
+            "description": "When the user asks to delete, remove, erase, or trash files or directories: move them to the system Trash / Recycle Bin via absolute paths in paths (may require approval). Prefer this over os.shell.run rm.\nArgs: { paths: string[] }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "paths"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__list",
+            "description": "Non-recursive directory listing (default maxEntries=200). Header shows full totals—when matched/total is much larger than shown, narrow with extensions (e.g. [\"pdf\"]), pattern (glob-like *foo*), or sort (name|size|mtime); recurse with os.fs.glob. Do not treat the visible slice as the whole tree.\nArgs: { path: string, pattern?: string, kind?: \"file\" | \"dir\", extensions?: string[], sort?: \"name\" | \"size\" | \"mtime\", maxEntries?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "file",
+                    "dir"
+                  ]
+                },
+                "extensions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "sort": {
+                  "type": "string",
+                  "enum": [
+                    "name",
+                    "size",
+                    "mtime"
+                  ]
+                },
+                "maxEntries": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__glob",
+            "description": "Recursive path match under cwd or path (prefer cwd; default: session working directory). For large trees use tight patterns (e.g. **/*CV*.pdf, **/*resume*.pdf), sensible limit, sortByMtime when freshness matters; pass nocase=true to match regardless of case (covers CV/cv/Cv in one pass). Walk traverses the whole tree (minus ignore) before sorting and slicing to limit, so limit reliably gives you the best matches. Default ignore covers common caches (.cache, Library, node_modules, .cargo, __pycache__, etc.)—override with explicit ignore if you need to look there.\nArgs: { pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean, nocase?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "pattern": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "ignore": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "absolute": {
+                  "type": "boolean"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "sortByMtime": {
+                  "type": "boolean"
+                },
+                "nocase": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "pattern"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__locate_project",
+            "description": "Resolve a project directory from a short folder-name segment the user mentioned (raylib finds .../_raylib). Pass only that segment or a pasted absolute path as name, never the whole sentence. Searches the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.\nArgs: { name: string, limit?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__grep",
+            "description": "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.\nArgs: { pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "pattern": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "glob": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "type": {
+                  "type": "string"
+                },
+                "literal": {
+                  "type": "boolean"
+                },
+                "caseInsensitive": {
+                  "type": "boolean"
+                },
+                "multiline": {
+                  "type": "boolean"
+                },
+                "outputMode": {
+                  "type": "string",
+                  "enum": [
+                    "content",
+                    "files_with_matches",
+                    "count"
+                  ]
+                },
+                "contextBefore": {
+                  "type": "number"
+                },
+                "contextAfter": {
+                  "type": "number"
+                },
+                "contextAround": {
+                  "type": "number"
+                },
+                "headLimit": {
+                  "type": "number"
+                },
+                "offset": {
+                  "type": "number"
+                },
+                "showLineNumbers": {
+                  "type": "boolean"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "pattern"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__edit",
+            "description": "Surgical string replace; oldString must be unique unless replaceAll (may require approval).\nArgs: { path: string, oldString: string, newString: string, replaceAll?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "oldString": {
+                  "type": "string"
+                },
+                "newString": {
+                  "type": "string"
+                },
+                "replaceAll": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "oldString",
+                "newString"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__read_document",
+            "description": "Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.\nArgs: { path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "pdf",
+                    "docx",
+                    "doc",
+                    "xlsx",
+                    "rtf",
+                    "odt",
+                    "pptx",
+                    "plain"
+                  ]
+                },
+                "maxBytes": {
+                  "type": "number"
+                },
+                "maxPages": {
+                  "type": "number"
+                },
+                "pagesFrom": {
+                  "type": "number"
+                },
+                "pagesTo": {
+                  "type": "number"
+                },
+                "sheets": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
+                },
+                "pageSeparators": {
+                  "type": "boolean"
+                },
+                "includeTables": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__archive__list",
+            "description": "List archive entries (zip, tar, tar.gz, gz) without extracting.\nArgs: { path: string, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "zip",
+                    "tar",
+                    "tar.gz",
+                    "gz"
+                  ]
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__archive__read_entry",
+            "description": "Read one archive entry without writing to disk. Read-only.\nArgs: { path: string, entry: string, as?: 'utf8' | 'base64', maxBytes?: number, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "entry": {
+                  "type": "string"
+                },
+                "as": {
+                  "type": "string",
+                  "enum": [
+                    "utf8",
+                    "base64"
+                  ]
+                },
+                "maxBytes": {
+                  "type": "number"
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "zip",
+                    "tar",
+                    "tar.gz",
+                    "gz"
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "entry"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__archive__extract",
+            "description": "Extract an archive to destDir (guarded; may require approval).\nArgs: { path: string, destDir: string, overwrite?: boolean, followSymlinks?: boolean, include?: string[], limits?: { maxTotalBytes?: number, maxEntryBytes?: number, maxEntries?: number }, format?: 'zip' | 'tar' | 'tar.gz' | 'gz' }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "destDir": {
+                  "type": "string"
+                },
+                "overwrite": {
+                  "type": "boolean"
+                },
+                "followSymlinks": {
+                  "type": "boolean"
+                },
+                "include": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "properties": {
+                    "maxTotalBytes": {
+                      "type": "number"
+                    },
+                    "maxEntryBytes": {
+                      "type": "number"
+                    },
+                    "maxEntries": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "zip",
+                    "tar",
+                    "tar.gz",
+                    "gz"
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "destDir"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__hash",
+            "description": "File digest (md5, sha1, sha256, sha512). Read-only, streams.\nArgs: { path: string, algorithm?: \"md5\" | \"sha1\" | \"sha256\" | \"sha512\", encoding?: \"hex\" | \"base64\" }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "algorithm": {
+                  "type": "string",
+                  "enum": [
+                    "md5",
+                    "sha1",
+                    "sha256",
+                    "sha512"
+                  ]
+                },
+                "encoding": {
+                  "type": "string",
+                  "enum": [
+                    "hex",
+                    "base64"
+                  ]
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__diff",
+            "description": "Unified diff: files and/or inline strings. Read-only.\nArgs: { aPath?: string, aText?: string, aLabel?: string, bPath?: string, bText?: string, bLabel?: string, context?: number, ignoreWhitespace?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "aPath": {
+                  "type": "string"
+                },
+                "aText": {
+                  "type": "string"
+                },
+                "aLabel": {
+                  "type": "string"
+                },
+                "bPath": {
+                  "type": "string"
+                },
+                "bText": {
+                  "type": "string"
+                },
+                "bLabel": {
+                  "type": "string"
+                },
+                "context": {
+                  "type": "number"
+                },
+                "ignoreWhitespace": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__patch",
+            "description": "Preview (default) or apply a unified-diff patch (apply=true may require approval).\nArgs: { patch?: string, patchPath?: string, apply?: boolean, rootDir?: string, fuzzFactor?: number, stripComponents?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "patch": {
+                  "type": "string"
+                },
+                "patchPath": {
+                  "type": "string"
+                },
+                "apply": {
+                  "type": "boolean"
+                },
+                "rootDir": {
+                  "type": "string"
+                },
+                "fuzzFactor": {
+                  "type": "number"
+                },
+                "stripComponents": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__fs__watch",
+            "description": "One-shot file/dir watch up to timeoutMs. Read-only.\nArgs: { path: string, timeoutMs?: number, recursive?: boolean, events?: ('add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir')[], ignoreInitial?: boolean, maxEvents?: number, stopAfterFirst?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "recursive": {
+                  "type": "boolean"
+                },
+                "events": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "change",
+                      "unlink",
+                      "addDir",
+                      "unlinkDir"
+                    ]
+                  }
+                },
+                "ignoreInitial": {
+                  "type": "boolean"
+                },
+                "maxEvents": {
+                  "type": "number"
+                },
+                "stopAfterFirst": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__status",
+            "description": "Working tree status (porcelain) and current branch. Read-only.\nArgs: { repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__log",
+            "description": "Commit history with structured fields. Read-only.\nArgs: { repo?: string, limit?: number, revisionRange?: string, path?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "revisionRange": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__diff",
+            "description": "Unified diff (working tree, index, or revisions). Read-only.\nArgs: { repo?: string, revisionRange?: string, staged?: boolean, paths?: string[], context?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "revisionRange": {
+                  "type": "string"
+                },
+                "staged": {
+                  "type": "boolean"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "context": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__show",
+            "description": "One commit: metadata, numstat, optional patch. Read-only.\nArgs: { repo?: string, revision?: string, patch?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "patch": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__blame",
+            "description": "Per-line authorship for a file. Read-only.\nArgs: { repo?: string, path: string, revision?: string, startLine?: number, endLine?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "startLine": {
+                  "type": "number"
+                },
+                "endLine": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__branch",
+            "description": "List branches; optional remotes, pattern, or contains. Read-only.\nArgs: { repo?: string, includeRemote?: boolean, contains?: string, pattern?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "includeRemote": {
+                  "type": "boolean"
+                },
+                "contains": {
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__checkout",
+            "description": "Switch to a branch, or create one first (may require approval). Never discards local changes.\nArgs: { branch: string, create?: boolean, startPoint?: string, repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "type": "string"
+                },
+                "create": {
+                  "type": "boolean"
+                },
+                "startPoint": {
+                  "type": "string"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "branch"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__commit",
+            "description": "Stage (`paths` or `all`) and commit with `message` (may require approval). Neither → commits what is already staged.\nArgs: { message: string, paths?: string[], all?: boolean, repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "all": {
+                  "type": "boolean"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__push",
+            "description": "Push the current (or named) branch to a remote, `-u` by default (may require approval). No force-push. Uses the connected GitHub token for github.com.\nArgs: { remote?: string, branch?: string, setUpstream?: boolean, repo?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "remote": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "setUpstream": {
+                  "type": "boolean"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__remote",
+            "description": "List, add, re-point or remove remotes. add/set-url need Remote sync on and approval; URLs with embedded credentials are refused.\nArgs: { repo?: string, action?: \"list\" | \"add\" | \"set-url\" | \"remove\", name?: string, url?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "list",
+                    "add",
+                    "set-url",
+                    "remove"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__fetch",
+            "description": "Fetch a remote (default origin) or all. Needs Remote sync on; approval-gated.\nArgs: { repo?: string, remote?: string, all?: boolean, prune?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "remote": {
+                  "type": "string"
+                },
+                "all": {
+                  "type": "boolean"
+                },
+                "prune": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__pull",
+            "description": "Pull the current branch's upstream, fast-forward only unless rebase. Needs Remote sync on; approval-gated.\nArgs: { repo?: string, remote?: string, branch?: string, rebase?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "remote": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "rebase": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__clone",
+            "description": "Clone a repository into the working directory (or dest). Needs Remote sync on; approval-gated.\nArgs: { url: string, dest?: string, branch?: string, depth?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "dest": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "depth": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__init",
+            "description": "Create a local git repository (no remote); optional repo-local identity. No-op on an existing repo. Approval like a file write.\nArgs: { path?: string, initialBranch?: string, userName?: string, userEmail?: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "initialBranch": {
+                  "type": "string"
+                },
+                "userName": {
+                  "type": "string"
+                },
+                "userEmail": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__git__add",
+            "description": "Stage changes (`all` = everything, or `paths`); `unstage` reverses. Approval like a file write.\nArgs: { repo?: string, paths?: string[], all?: boolean, unstage?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "all": {
+                  "type": "boolean"
+                },
+                "unstage": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__proc__list",
+            "description": "List processes (filter, limit). Read-only.\nArgs: { filter?: string, limit?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__proc__kill",
+            "description": "Send a signal to a PID (may require approval).\nArgs: { pid: number, signal?: \"SIGTERM\" | \"SIGKILL\" | \"SIGINT\" | \"SIGHUP\" }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "pid": {
+                  "type": "number"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "SIGTERM",
+                    "SIGKILL",
+                    "SIGINT",
+                    "SIGHUP"
+                  ]
+                }
+              },
+              "required": [
+                "pid"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__http__request",
+            "description": "Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. To read a web page, use os.web.fetch.\nArgs: { url: string, method?: 'GET' | 'POST', headers?: Record<string, string>, body?: string | object, timeoutMs?: number, followRedirects?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST"
+                  ]
+                },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "body": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object"
+                    }
+                  ]
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "followRedirects": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__web__search",
+            "description": "Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; SearXNG/Brave configurable; Exa/Brave can use env API keys). Returns compact title/url/snippet results. Use os.web.fetch to read a chosen result.\nArgs: { query: string, maxResults?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "maxResults": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "query"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__web__fetch",
+            "description": "Read a web page as readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. For raw API/JSON or POST, use os.http.request.\nArgs: { url: string, extractMode?: \"markdown\" | \"text\", maxChars?: number, timeoutMs?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "extractMode": {
+                  "type": "string",
+                  "enum": [
+                    "markdown",
+                    "text"
+                  ]
+                },
+                "maxChars": {
+                  "type": "number"
+                },
+                "timeoutMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__clipboard__read",
+            "description": "Read the system clipboard as text.\nArgs: {}",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__clipboard__write",
+            "description": "Write text to the system clipboard.\nArgs: { value: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__window__list",
+            "description": "List window titles. Read-only.\nArgs: {}",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__window__focus",
+            "description": "Focus a window by title substring.\nArgs: { title: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "os__notify",
+            "description": "System notification (title + message).\nArgs: { title: string, message: string, sound?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "sound": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "title",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "skill__view",
+            "description": "Load an installed skill body (SKILL.md) into the session tail.\nArgs: { name: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tool__view",
+            "description": "Load full args schema for a tool listed in `# extras` into `### loaded-tools`.\nArgs: { name: string } /* e.g. \"os.git.show\" */",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "skill__run_script",
+            "description": "Run a script from a skill's requires_scripts (may require approval).\nArgs: { skill: string, script: string, args?: string[], timeoutMs?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "skill": {
+                  "type": "string"
+                },
+                "script": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "timeoutMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "skill",
+                "script"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__schedule",
+            "description": "Schedule a one-shot task; current session or newSession.\nArgs: { userMessage: string, at?: number, inSeconds?: number, newSession?: boolean, notify?: \"telegram\" }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "userMessage": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                },
+                "inSeconds": {
+                  "type": "number"
+                },
+                "newSession": {
+                  "type": "boolean"
+                },
+                "notify": {
+                  "type": "string",
+                  "enum": [
+                    "telegram"
+                  ]
+                }
+              },
+              "required": [
+                "userMessage"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__cron",
+            "description": "Recurring cron task; runs in a dedicated persistent session.\nArgs: { userMessage: string, expression: string, tz?: string /* IANA */, notify?: \"telegram\" /* report result to paired Telegram */ }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "userMessage": {
+                  "type": "string"
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "tz": {
+                  "type": "string"
+                },
+                "notify": {
+                  "type": "string",
+                  "enum": [
+                    "telegram"
+                  ]
+                }
+              },
+              "required": [
+                "userMessage",
+                "expression"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__list",
+            "description": "List tasks (filter by status CSV; optional session). Read-only.\nArgs: { status?: string, sessionId?: string, limit?: number }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__cancel",
+            "description": "Cancel a task by id; idempotent on terminal rows.\nArgs: { id: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "tasks__show",
+            "description": "One task by id. Read-only.\nArgs: { id: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "vision__describe",
+            "description": "Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input. Accepts at most 4 images per call by default (`vision.maxImagesPerCall`); to cover more images, split them across several calls.\nArgs: { prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif; at most 4 by default */ }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 4
+                }
+              },
+              "required": [
+                "prompt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "verify__syntax",
+            "description": "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.\nArgs: { files: string[] }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "files"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "verify__run",
+            "description": "Run what was built against a throwaway copy of the working directory (nothing it writes reaches the workspace; may require approval). kind 'command': a test runner, compiler or script. kind 'service': start a server, wait for a port/url, send requests. kind 'page': a local HTML file or url in a headless browser — scripted input, then `seconds` of runtime with `probes` sampled; collects uncaught errors, console errors and failed getElementById/querySelector lookups. `checks` are assertions on the result. Default `network: false` (a soft proxy block, not a sandbox).\nArgs: { kind: 'command' | 'service' | 'page', cmd?: string, args?: string[], start?: { cmd: string, args?: string[] }, ready?: { port?: number, url?: string, timeoutMs?: number }, requests?: [{ method?: string, path?: string, url?: string, body?: string, expectStatus?: number, expectBody?: string }], path?: string, url?: string, script?: [{ action: 'click' | 'key' | 'type' | 'wait', selector?: string, key?: string, text?: string, ms?: number }], seconds?: number /* page runtime, default 5 */, probes?: [{ name: string, expr: string /* JS expression */ }], checks?: string[] /* 'exit 0' | 'exit != 0' | 'stdout contains \"x\"' | 'stderr not contains \"x\"' | 'status 200' | 'no errors' | 'missing selectors 0' | 'probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>' */, cwd?: string, env?: Record<string,string>, timeoutMs?: number, network?: boolean }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "command",
+                    "service",
+                    "page"
+                  ]
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "env": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "timeoutMs": {
+                  "type": "number"
+                },
+                "network": {
+                  "type": "boolean"
+                },
+                "cmd": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "start": {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string"
+                    },
+                    "args": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                },
+                "ready": {
+                  "type": "object",
+                  "properties": {
+                    "port": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "timeoutMs": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                },
+                "requests": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "method": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      },
+                      "body": {
+                        "type": "string"
+                      },
+                      "expectStatus": {
+                        "type": "integer"
+                      },
+                      "expectBody": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "path": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "script": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "click",
+                          "key",
+                          "type",
+                          "wait"
+                        ]
+                      },
+                      "selector": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "ms": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "seconds": {
+                  "type": "number"
+                },
+                "probes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "expr": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "expr"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "reply",
+            "description": "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.\nArgs: { text: string, attachments?: string[] }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "User-visible reply text. Must be non-empty."
+                },
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Paths of existing files to deliver with the reply (sent as files on Telegram/Discord)."
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "finish",
+            "description": "End the session with a final summary; only if the user asked to end.\nArgs: { summary: string }",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "Optional final user-visible text."
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "parallel_tool_calls": true,
+      "tool_choice": "auto"
+    }
+  }
+]

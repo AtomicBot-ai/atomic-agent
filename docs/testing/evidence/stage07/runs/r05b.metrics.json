@@ -1,0 +1,81 @@
+{
+  "actions": 15,
+  "returnedOutputBytes": 60595,
+  "observedSourceBytes": 58305,
+  "uniqueVersionedSourceBytes": 57840,
+  "repeatedSourceBytes": 465,
+  "uniqueInstructionBytes": 7770,
+  "uniqueCodeBytes": 24813,
+  "uniqueOtherBytes": 25257,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "hash": "be7c164b4a2c31edfb1b985ef5ce41bb8ef89b7a3dff03c576ab99242d6463ad",
+      "uniqueBytes": 6714
+    },
+    {
+      "path": "README.md",
+      "hash": "622036f3434f67e3e16ea9ca59bad7c83bac5f60ca10baf2a75e42ab437143a2",
+      "uniqueBytes": 9797
+    },
+    {
+      "path": "docs/testing/stage-07-task-briefs.md",
+      "hash": "8893fafb914f0e91f6254cffe7304f9d5f1815a35ebf35e5d256596229dd2051",
+      "uniqueBytes": 539
+    },
+    {
+      "path": "src/local-llm/downloads/download-resume.ts",
+      "hash": "38b17baa75f57d3633cbe9c8373d7543137c4faee8b086a83d3dbe8e2286efcc",
+      "uniqueBytes": 3421
+    },
+    {
+      "path": "src/local-llm/downloads/download-attempt.ts",
+      "hash": "2c3fa7e3a7ffa5d86cdc4112b1f17f2b8875680422492d5e0340b4115482f1c5",
+      "uniqueBytes": 5120
+    },
+    {
+      "path": "src/local-llm/AGENTS.md",
+      "hash": "32a4a5a4d3045401b91c584a6c41ea770bb0e735833e86cc605b15cc47668f59",
+      "uniqueBytes": 1056
+    },
+    {
+      "path": "src/local-llm/README.md",
+      "hash": "8874bfb58d50884af0663ae4ebd37039da73ae646d1296c6700faa8d3f442faf",
+      "uniqueBytes": 2420
+    },
+    {
+      "path": "src/local-llm/docs/downloads.md",
+      "hash": "34df81b3c718c52ab5cb463e6e73ecf79e1b2c674d8d7e20e3c110b51388947e",
+      "uniqueBytes": 972
+    },
+    {
+      "path": "src/local-llm/downloads/README.md",
+      "hash": "00d89ee1345136aa42ea3a7d114ce2289ad5264f10eff13ab2fe55d10795e6f4",
+      "uniqueBytes": 4977
+    },
+    {
+      "path": "src/local-llm/downloads/download-partial.ts",
+      "hash": "8ac371a3a27d481ae2b5cb11036dbf37b06ee66831c78e971dc4fbeff4f073f0",
+      "uniqueBytes": 6660
+    },
+    {
+      "path": "src/local-llm/downloads/download-attempt.test.ts",
+      "hash": "8ebfcdd68658eafddeb5a52fc943edd0a50e07c09dcdd0b790cb9322aeb33bde",
+      "uniqueBytes": 3690
+    },
+    {
+      "path": "src/local-llm/downloads/download-file.test.ts",
+      "hash": "da8e718182b29a97f11047db1c5c1b4e83ccf5b7cc0c6c56eb5908a321b427a7",
+      "uniqueBytes": 5922
+    },
+    {
+      "path": "package.json",
+      "hash": "f0d2222491a02f5cc36072adc5dc35e8352009d6b38c972a536be2c462b42d42",
+      "uniqueBytes": 6552
+    }
+  ],
+  "changedFiles": [
+    "src/local-llm/downloads/download-resume.test.ts",
+    "src/local-llm/downloads/download-resume.ts"
+  ]
+}
