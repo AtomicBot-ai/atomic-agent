@@ -99,6 +99,105 @@ describe("setRunModeInConfig", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
   });
 
+  describe("re-pinning a fusion leg", () => {
+    beforeEach(() => {
+      writeUserConfigFileSync(getUserConfigPath(stateDir), {
+        ...USER_CONFIG_DEFAULTS,
+        llm: {
+          activeTextProvider: "openrouter",
+          activeEmbeddingProvider: "local-llama",
+          toolTransport: "auto",
+          providers: [
+            {
+              id: "local-llama",
+              kind: "llama-server",
+              url: "http://127.0.0.1:19091",
+            },
+            {
+              id: "local-llama-2",
+              kind: "llama-server",
+              url: "http://127.0.0.1:19092",
+            },
+            { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
+            { id: "openrouter-2", kind: "openrouter", defaultChatModel: "x" },
+          ],
+          runMode: {
+            mode: "fusion",
+            fusion: {
+              orchestratorProvider: "openrouter",
+              orchestratorModel: "gpt-pinned",
+              workerProvider: "local-llama",
+              workerModel: "qwen-pinned",
+            },
+          },
+        },
+      });
+      resetConfigCache();
+    });
+
+    it("drops a leg's model pin when the leg moves to another provider", () => {
+      setRunModeInConfig({
+        mode: "fusion",
+        activeTextProvider: "openrouter-2",
+        fusion: {
+          orchestratorProvider: "openrouter-2",
+          workerProvider: "local-llama-2",
+        },
+      });
+      expect(getConfig().llm?.runMode?.fusion).toEqual({
+        orchestratorProvider: "openrouter-2",
+        workerProvider: "local-llama-2",
+      });
+    });
+
+    it("drops only the pin of the leg that moved", () => {
+      setRunModeInConfig({
+        mode: "fusion",
+        activeTextProvider: "openrouter-2",
+        fusion: {
+          orchestratorProvider: "openrouter-2",
+          workerProvider: "local-llama",
+        },
+      });
+      expect(getConfig().llm?.runMode?.fusion).toEqual({
+        orchestratorProvider: "openrouter-2",
+        workerProvider: "local-llama",
+        workerModel: "qwen-pinned",
+      });
+    });
+
+    it("keeps the pins when the legs are re-applied unchanged", () => {
+      setRunModeInConfig({
+        mode: "fusion",
+        activeTextProvider: "openrouter",
+        fusion: {
+          orchestratorProvider: "openrouter",
+          workerProvider: "local-llama",
+        },
+      });
+      expect(getConfig().llm?.runMode?.fusion).toEqual({
+        orchestratorProvider: "openrouter",
+        orchestratorModel: "gpt-pinned",
+        workerProvider: "local-llama",
+        workerModel: "qwen-pinned",
+      });
+    });
+
+    it("takes a new model pin that comes with the move", () => {
+      setRunModeInConfig({
+        mode: "fusion",
+        activeTextProvider: "openrouter-2",
+        fusion: {
+          orchestratorProvider: "openrouter-2",
+          orchestratorModel: "x-pinned",
+        },
+      });
+      expect(getConfig().llm?.runMode?.fusion?.orchestratorModel).toBe(
+        "x-pinned",
+      );
+    });
+  });
+
   it("refuses a provider that is not configured, without writing", () => {
     expect(() =>
       setRunModeInConfig({ mode: "cloud", activeTextProvider: "ghost" }),
