@@ -359,6 +359,8 @@ export interface SessionDeleteConfirm {
 }
 
 export interface TuiState {
+  /** Accepted locally; the runtime will echo it once the selected model is ready. */
+  pendingModelMessage?: { sessionId: string; text: string } | null;
   session: TuiSessionInfo;
   status: TuiStatus;
   currentStep: number;

@@ -57,6 +57,7 @@ function stubRuntime(
     steer: () => false,
     runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
       runTurn(text, opts),
+    turnController: {isBusy:()=>false},
     sessionStore: {
       listSummaryPage: () => [],
       countUnreadable: () => 0,
@@ -590,3 +591,80 @@ function queueSnapshots(actions: readonly TuiAction[]): readonly string[][] {
     )
     .map((a) => [...a.queued]);
 }
+
+describe("messages accepted during model switching", () => {
+  function waitingChat() {
+    let release!: () => void;
+    const ready = new Promise<void>(r => { release = r; });
+    const run = vi.fn(async () => ({session:session(),reason:"reply",stepCount:1}));
+    const runtime = stubRuntime(run);
+    const bus = makeTuiEventBus(), actions: TuiAction[] = [];
+    bus.subscribe(a => actions.push(a));
+    const chat = new ChatOrchestrator(runtime, bus, {maxSteps:5,llamaUrl:"http://localhost:8080",readGateFacts:cloudGateFacts});
+    vi.spyOn(chat.localModels, "isSwitching", "get").mockReturnValue(true);
+    vi.spyOn(chat.localModels, "waitForSwitch").mockImplementation(signal => new Promise((resolve,reject) => {
+      ready.then(resolve); signal.addEventListener("abort",()=>reject(signal.reason),{once:true});
+    }));
+    return {chat, run, runtime, actions, release};
+  }
+  it("accepts once, shows the warning, then runs after the switch", async () => {
+    const {chat,run,actions,release} = waitingChat();
+    chat.sendMessage("hello");
+    expect(run).not.toHaveBeenCalled();
+    expect(actions).toContainEqual({type:"message_waiting_for_model",sessionId:"s1",text:"hello"});
+    expect(actions.some(a=>a.type==="system_message" && a.text.includes("reply may take longer"))).toBe(true);
+    release(); await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+  });
+  it("Escape cancels a waiting message without sending it later", async () => {
+    const {chat,run,actions,release} = waitingChat();
+    chat.sendMessage("cancel this"); chat.abortCurrentTurn(); release();
+    await vi.waitFor(()=>expect(actions).toContainEqual({type:"turn_gate_blocked",text:"Message cancelled."}));
+    expect(run).not.toHaveBeenCalled();
+  });
+  it("retains the backlog after startup failure and resumes only after readiness", async () => {
+    const {chat,run,actions,release} = waitingChat();
+    vi.spyOn(chat.localModels,"waitForSwitch").mockRejectedValue(new Error("model failed"));
+    chat.sendMessage("first"); chat.sendMessage("second"); release();
+    await vi.waitFor(()=>expect(actions.some(a=>a.type==="system_message" && a.text.includes("still queued"))).toBe(true));
+    expect(run).not.toHaveBeenCalled();
+    expect(queueSnapshots(actions).at(-1)).toEqual(["second"]);
+    vi.spyOn(chat.localModels,"isSwitching","get").mockReturnValue(false);
+    vi.spyOn(chat.localModels,"waitForSwitch").mockResolvedValue();
+    await (chat as unknown as {resumeModelQueue:()=>Promise<void>}).resumeModelQueue();
+    await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+    expect(run).toHaveBeenCalledWith("second", expect.objectContaining({origin:"tui"}));
+  });
+  it("does not carry retained backlog into another session", async () => {
+    const {chat,run,runtime,actions} = waitingChat();
+    runtime.approvals.denyPendingForSession = vi.fn(()=>0);
+    runtime.approvals.pendingRequestForSession = vi.fn(()=>null);
+    vi.spyOn(runtime.sessionStore,"load").mockReturnValue(session("s2"));
+    vi.spyOn(chat.localModels,"waitForSwitch").mockRejectedValue(new Error("model failed"));
+    chat.sendMessage("first");chat.sendMessage("original backlog");
+    await vi.waitFor(()=>expect(actions.some(a=>a.type==="system_message" && a.text.includes("still queued"))).toBe(true));
+    chat.switchSession("s2");
+    vi.spyOn(chat.localModels,"waitForSwitch").mockResolvedValue();
+    await (chat as unknown as {resumeModelQueue:()=>Promise<void>}).resumeModelQueue();
+    expect(run).not.toHaveBeenCalled();
+    expect(queueSnapshots(actions).at(-1)).toEqual([]);
+  });
+  it("does not apply a stopped local model's readiness error to a cloud follow-up", async () => {
+    const first = deferred("s1"), second = deferred("s1");
+    const run = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const chat = new ChatOrchestrator(stubRuntime(run),makeTuiEventBus(),{maxSteps:5,llamaUrl:"http://localhost",readGateFacts:cloudGateFacts});
+    const wait = vi.spyOn(chat.localModels,"waitForSwitch").mockRejectedValue(new Error("local model stopped"));
+    chat.sendMessage("cloud first");chat.sendMessage("cloud second");first.resolve();
+    await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(2));
+    expect(wait).not.toHaveBeenCalled();second.resolve();
+  });
+  it("keeps the original session when another chat opens before readiness", async () => {
+    const {chat,runtime,release} = waitingChat();
+    runtime.approvals.denyPendingForSession = vi.fn(()=>0);
+    const run = vi.spyOn(runtime,"runTurn");
+    chat.sendMessage("for original");
+    vi.spyOn(runtime,"createSession").mockReturnValue(session("s2"));
+    chat.newSession(); release();
+    await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0].id).toBe("s1");
+  });
+});
