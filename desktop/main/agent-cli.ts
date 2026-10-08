@@ -1745,7 +1745,7 @@ export interface UserConfigShape {
   localModels?: {
     url?: string;
     mode?: string;
-    managed?: { modelId?: string | null; port?: number; parallel?: number | string };
+    managed?: { engine?: "atomic-core" | "llama-server"; modelId?: string | null; port?: number; parallel?: number | string };
     // r5 item 7 (setup wizard): the custom-endpoint branch writes modelId
     // as persistUserRemoteLlmUrls does, so the field has to exist here.
     embeddings?: { url?: string; enabled?: boolean; modelId?: string | null };

@@ -147,7 +147,7 @@ try {
   const ch1 = await chips();
   const has = (list, kind, re) => list.some(([k, t]) => k === kind && re.test(t));
   check('B: the chips are fusion · aimlapi · its model ⇄ workers',
-    has(ch1, 'backend', /^fusion$/) && has(ch1, 'provider', /^aimlapi$/) && has(ch1, 'model', /grok-4-6/) && has(ch1, 'workers', /qwen-3\.5-4b/)
+    has(ch1, 'backend', /^fusion$/) && has(ch1, 'provider', /^aimlapi$/) && has(ch1, 'model', /grok-4-6/) && has(ch1, 'workerProvider', /Local llama|Atomic Chat/) && has(ch1, 'workers', /qwen-3\.5-4b/)
       && await app.eval(`!!document.querySelector('#composer .cfoot .fzswap')`), JSON.stringify(ch1));
   const intro = await app.eval(`[...document.querySelectorAll('.sysrow .fz-intro')].map((n) => n.textContent)`);
   check('B: the intro is in the transcript once, naming both legs',
@@ -155,13 +155,13 @@ try {
     intro.length + ' intro(s)');
   await shot('B-fusion-chips-intro');
 
-  /* C — the Workers control: pin the workers to the other cloud provider. */
-  await app.clickSel('#composer .cfoot [data-sel-open="workers"]');
-  await until(async () => (await popTitle()) === 'Workers', 'the Workers popover', 10000);
-  await until(async () => (await popRows()).length === 2, 'the workers rows', 15000);
+  /* C — the worker engine control: pin the workers to the other cloud provider. */
+  await app.clickSel('#composer .cfoot [data-sel-open="workerProvider"]');
+  await until(async () => (await popTitle()) === 'Worker inference engine', 'the Workers popover', 10000);
+  await until(async () => (await popRows()).length >= 3, 'the worker engine rows', 15000);
   const rowsC = await popRows();
-  check('C: workers rows — openrouter in the cloud, then Download more models…',
-    JSON.stringify(rowsC.map((r) => [r[0], r[1]])) === '[["OpenRouter","workers · in the cloud"],["Download more models…","opens the local models pane"]]', JSON.stringify(rowsC));
+  check('C: worker engine rows offer OpenRouter and both local engines',
+    ['OpenRouter', 'Local llama', 'Atomic Chat'].every(label => rowsC.some(r => r[0] === label)), JSON.stringify(rowsC));
   await shot('C-workers-popover');
   await app.clickSel('.selpop .modelrow[data-id="openrouter"]');
   await landed((c) => c.runMode && c.runMode.fusion && c.runMode.fusion.workerProvider === 'openrouter', 'the workers pinned to openrouter');
@@ -172,11 +172,12 @@ try {
 
   /* D — the Provider control under Fusion is the orchestrator seat. */
   await app.clickSel('#composer .cfoot [data-sel-open="provider"]');
-  await until(async () => (await popTitle()) === 'Provider' && (await popRows()).length >= 3, 'the Provider popover', 10000);
+  await until(async () => (await popTitle()) === 'Orchestrator inference engine' && (await popRows()).length >= 3, 'the Provider popover', 10000);
   await until(async () => (await popRows()).every((r) => r[1] !== 'checking keys…'), 'the key facts', 15000);
   const rowsD = await popRows();
-  check('D: provider rows read orchestrator, the current one marked',
-    JSON.stringify(rowsD) === '[["AI/ML API","orchestrator",true],["OpenRouter","orchestrator",false],["Add a new provider","opens the wizard",false]]', JSON.stringify(rowsD));
+  check('D: orchestrator engine rows exclude the worker provider and mark the current engine',
+    rowsD.some(r => r[0] === 'AI/ML API' && r[2]) && !rowsD.some(r => r[0] === 'OpenRouter')
+      && rowsD.some(r => r[0] === 'Local llama') && rowsD.some(r => r[0] === 'Atomic Chat'), JSON.stringify(rowsD));
   await shot('D-provider-popover');
   await closePopover();
 

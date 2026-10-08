@@ -275,6 +275,8 @@ contextBridge.exposeInMainWorld("atomic", {
   onDaemonWatch: (cb: (payload: unknown) => void) => on("app:daemonWatch", cb),
   daemonWatch: () => ipcRenderer.invoke("app:daemonWatch"),
   fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
+  composerEngine: (engine: string, leg?: string) => ipcRenderer.invoke("cli:composerEngine", engine, leg),
+  fusionModel: (leg: string, model: string) => ipcRenderer.invoke("cli:fusionModel", leg, model),
   fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
   useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
   setExternalLlamaUrl: (url: string) => ipcRenderer.invoke("cli:setExternalLlamaUrl", url),

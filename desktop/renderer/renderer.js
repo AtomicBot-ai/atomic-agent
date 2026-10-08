@@ -972,6 +972,8 @@ const SWXBR = {
   swapFusionLegs: () => { SWX.route = 'swapFusionLegs'; return BR.swapFusionLegs(); },
   fusionWorkers: (n) => { SWX.route = 'fusionWorkers'; return BR.fusionWorkers(n); },
   fusionWorkerModel: (id) => { SWX.route = 'fusionWorkerModel'; return BR.fusionWorkerModel(id); },
+  composerEngine: (id, leg) => { SWX.route = 'composerEngine'; return BR.composerEngine(id, leg); },
+  fusionModel: (leg, id) => { SWX.route = 'fusionModel'; return BR.fusionModel(leg, id); },
 };
 
 /* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
@@ -3395,7 +3397,10 @@ function routeChipsHtml(backend) {
         // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
-        + (selHasKind('provider')
+        + (backend === 'fusion' ? '<span class="composer-seat" role="group" aria-label="Orchestrator">' : '')
+        + (backend === 'local' ? composerEngineChip('provider', composerEngineName(composerEngineId()), true)
+          : backend === 'fusion' ? composerEngineChip('provider', composerSeatLocal(fzSeats().plans) ? composerEngineName(composerEngineId()) : fzSeats().plans.provider, composerSeatLocal(fzSeats().plans), 'Orchestrator')
+          : selHasKind('provider')
             ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider" data-id="' + esc(selProviderLabel()) + '"'
               + ' title="' + (backend === 'fusion' ? 'Plans the work: ' : 'Provider: ') + esc(providerWord(selProviderLabel())) + '"'
               + ' aria-label="' + (backend === 'fusion' ? 'Plans the work: ' : 'Provider: ') + esc(providerWord(selProviderLabel())) + '">'
@@ -3407,6 +3412,7 @@ function routeChipsHtml(backend) {
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
         + modelChipHtml()
+        + (backend === 'fusion' ? '</span>' : '')
         // Run mode — Fusion: the ⇄ between the two seats and the fourth control, `workers`.
         + fzChipsHtml();
 }
@@ -3452,7 +3458,7 @@ function syncLoader() {
 
 /** ' is-open' while the popover a composer chip opens is up (presentation only). */
 function cchipOpen(kind) {
-  if (kind === 'backend' || kind === 'provider' || kind === 'model' || kind === 'workers') {
+  if (kind === 'backend' || kind === 'provider' || kind === 'model' || kind === 'workers' || kind === 'workerProvider') {
     return SEL.open && !OB.open && SEL.kind === kind ? ' is-open' : '';
   }
   return S.overlay === kind ? ' is-open' : '';
@@ -15193,7 +15199,7 @@ function selLocalRoute() { return selBackend() === 'local'; }
 function selKinds() {
   const b = selBackend();
   // composerSwitchKindsFor: `if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"]`.
-  return b === 'local' ? ['backend','model'] : b === 'fusion' ? ['backend','provider','model','workers'] : ['backend','provider','model'];
+  return b === 'fusion' ? ['backend','provider','model','workerProvider','workers'] : ['backend','provider','model'];
 }
 /** True when the route offers `kind` — the chips and the switch read the same rule. */
 function selHasKind(kind) { return selKinds().indexOf(kind) >= 0; }
@@ -15232,11 +15238,11 @@ function openSelector(kind) {
   const want = kind || 'backend';
   SEL.open = true; SEL.kind = selHasKind(want) ? want : 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
   render();
-  if (SEL.kind === 'model') selEnterModelPane();
+  if (SEL.kind === 'model' || SEL.kind === 'workers') selEnterModelPane();
   if (SEL.kind === 'backend' && selBackend() !== 'cloud' && !SEL.local.length) selLoadLocal();
   /* Run mode — Fusion: the fusion row's pre-flight, the local orchestrator row
      and the workers rows read the key list and the on-disk snapshot. */
-  if (!BSW.localLoaded && (SEL.kind === 'backend' || SEL.kind === 'workers' || (SEL.kind === 'provider' && selBackend() === 'fusion'))) bswSnapshot();
+  if (!BSW.localLoaded && (SEL.kind === 'backend' || SEL.kind === 'workers' || SEL.kind === 'workerProvider' || (SEL.kind === 'provider' && selBackend() === 'fusion'))) bswSnapshot();
   // Re-read which providers have a key on every open: a key added since the
   // last read (a terminal export, the .env) is what unblocks Fusion's row.
   bswRefreshFacts();
@@ -15291,6 +15297,7 @@ async function selLoadModels(providerId) {
   const entry = selProviders().find((p) => p.id === providerId);
   SEL.modelsFor = providerId; SEL.models = []; SEL.modelsBusy = true; SEL.modelsErr = null; render();
   const res = await BR.providerModels(providerId, (entry && entry.kind) || '');
+  if (SEL.modelsFor !== providerId) return;
   SEL.modelsBusy = false;
   if (!res || !res.ok) { SEL.modelsErr = modelListFailLine(res, providerWord(providerId)) || (res && res.error) || 'could not list models'; render(); return; }
   SEL.models = res.models || [];
@@ -15298,10 +15305,8 @@ async function selLoadModels(providerId) {
 }
 
 function selEnterModelPane() {
-  // SELECTOR LANE: custom reads the same list as local (see selRows).
-  // Run mode — Fusion: the model pane is the orchestrator's catalogue (a cloud one's).
-  if (selBackend() !== 'cloud' && selBackend() !== 'fusion') { if (!SEL.local.length) selLoadLocal(); return; }
-  const id = selActiveProviderId();
+  const id = composerModelProvider();
+  if (selBackend() === 'local' || selBackend() === 'custom' || id === 'local-llama') { if (!SEL.local.length) selLoadLocal(); return; }
   if (id && SEL.modelsFor !== id && selProviders().some((p) => p.id === id)) selLoadModels(id);
 }
 
@@ -15385,8 +15390,9 @@ function selRows() {
        addProvider: !!fzBlocked, active: here === 'fusion'},
     ];
   }
-  if (SEL.kind === 'provider' && selBackend() === 'fusion') return fzProviderRows();
-  if (SEL.kind === 'workers') return fzWorkerRows();
+  if (SEL.kind === 'provider' && selBackend() === 'local') return composerLocalEngineRows();
+  if ((SEL.kind === 'provider' || SEL.kind === 'workerProvider') && selBackend() === 'fusion') return composerFusionEngineRows(SEL.kind === 'workerProvider' ? 'worker' : 'orchestrator');
+  if ((SEL.kind === 'model' || SEL.kind === 'workers') && selBackend() === 'fusion') return composerSeatModelRows();
   if (SEL.kind === 'provider') {
     const activeId = selActiveProviderId();
     // providerRows: hasApiKey ? (chatModel ?? 'default model') : 'no API key'.
@@ -15456,7 +15462,9 @@ function selRows() {
 }
 
 async function selActivate(row) {
-  if (!row) return;
+  if (!row || SEL.busy) return;
+  if (row.type === 'localEngine') return composerPickEngine(row);
+  if (row.type === 'seatModel') return composerPickSeatModel(row);
   if (row.type === 'backend') {
     // The custom row has no switch behind it: pointing the route at a server
     // the operator runs needs the URL probed first, which is the External
@@ -15495,6 +15503,7 @@ async function selActivate(row) {
   }
   // Either seat, either kind: a local orchestrator, or a cloud provider for the workers.
   if (row.type === 'fusionLeg') {
+    if (row.id !== 'local-llama' && !BSW.readyIds.includes(row.id)) { bswOpenKey(row.id); return; }
     const pins = row.leg === 'orchestrator' ? {orchestratorProvider: row.id} : {workerProvider: row.id};
     const before = fzBefore('switching…');
     fzAfter(await swxRun(BSW.line, row.leg === 'orchestrator' ? {backend:'fusion', providerId: row.id} : {backend:'fusion'},
@@ -15594,6 +15603,7 @@ function selRowLead(r) {
     return '<span class="tk-ico tk-ico--sm' + (r.active ? ' tk-ico--blue' : '') + '">'
       + ic(r.id === 'cloud' ? 'cloud' : r.id === 'local' ? 'laptop' : r.id === 'fusion' ? 'fusion' : 'server') + '</span>';
   }
+  if (r.type === 'localEngine') return composerEngineMark(r.id, 'sm');
   if (r.type === 'provider' || r.type === 'fusionLeg') return providerMark(r.id, 'sm');
   if (r.type === 'action' && r.id === 'loading') return '<span class="selspin"><span class="tk-spin"></span></span>';
   if (r.type === 'action') return '<span class="tk-ico tk-ico--sm">' + ic(r.id === 'add' ? 'plus' : 'download') + '</span>';
@@ -15653,18 +15663,20 @@ function selectorHTML() {
      the wizard's list (sel:add), which checks the key before it saves. */
 
   const title = SEL.kind === 'backend' ? 'Where it runs'
-    : SEL.kind === 'provider' ? 'Provider' : SEL.kind === 'workers' ? 'Workers' : 'Model';
+    : SEL.kind === 'workerProvider' ? 'Worker inference engine'
+    : SEL.kind === 'provider' ? (selBackend() === 'local' ? 'Inference engine' : selBackend() === 'fusion' ? 'Orchestrator inference engine' : 'Provider')
+    : SEL.kind === 'workers' ? 'Worker model' : selBackend() === 'fusion' ? 'Orchestrator model' : 'Model';
 
   // An empty list is not a list — it is one action. The provider and
   // local model panes always carry the TUI's action row ("Add a new
   // provider" last / "Download more models…" first, ATO-167), so, as in the TUI, an empty
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
-  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
+  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !((SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter)) {
     return selShell(title, '<div class="selbody"><p class="selnote cap">Nothing to show.</p></div>', '');
   }
 
-  const search = SEL.kind === 'model'
+  const search = (SEL.kind === 'model' || SEL.kind === 'workers')
     ? '<div class="selsearch"><label class="tk-inpwrap">' + ic('search') + '<input id="sel-filter" '
       + 'placeholder="Search models" value="' + esc(SEL.filter) + '" spellcheck="false" autocomplete="off"></label></div>'
     : '';
@@ -15715,7 +15727,7 @@ function selectorHTML() {
     // Review: set the out-of-reach block off when the list above it is only the Download row.
     + (outHTML && rows.length === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '')
     + outHTML
-    + (!real.length && !out.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
+    + (!real.length && !out.length && (SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
   /* ATO-167: no Done. A pick applies at once and a click outside closes the
@@ -15732,7 +15744,7 @@ function selShell(title, body, foot, lead) {
   const chip = (kind) => document.querySelector('#composer .cfoot [data-sel-open="' + kind + '"]');
   const anchor = chip(SEL.kind) || chip('provider') || chip('backend')
     || document.querySelector('.modelchip') || document.querySelector('.modechip');
-  const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' ? 520
+  const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' || SEL.kind === 'workers' ? 520
     : SEL.kind === 'provider' ? 420 : 440;
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover selpop tk-pop" style="' + anchorStyle(anchor, width) + '">'
@@ -16967,9 +16979,11 @@ function fzChipsHtml() {
       + ' title="' + esc(tip) + '"'
       + ' aria-label="' + esc(queued || 'Swap orchestrator and workers') + '">'
       + ic('swap') + '</button>'
+    + '<span class="composer-seat" role="group" aria-label="Worker">'
+    + composerEngineChip('workerProvider', composerSeatLocal(fzSeats().works) ? composerEngineName(composerEngineId()) : fzSeats().works.provider, composerSeatLocal(fzSeats().works), 'Worker')
     + '<button class="cchip workerschip' + cchipOpen('workers') + '" data-sel-open="workers" data-id="' + esc(label) + '"'
       + ' title="Does the work: ' + esc(label) + '" aria-label="Does the work: ' + esc(fzSeatWord(label)) + '">' + modelMark(label, 'xs')
-      + '<span class="cval">' + esc(fzSeatWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+      + '<span class="cval">' + esc(fzSeatWord(label)) + '</span>' + ic('chevD', 'chev') + '</button></span>';
 }
 /**
  * ATO-136 — the planner is a local model (after a ⇄, or picked so), as the
@@ -17006,9 +17020,9 @@ function fzIntroParagraphs(rm) {
     'Right now — ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
       + ' ' + worker + ' executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.',
     'How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.',
-    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one; so does a big local model directing a small one.',
+    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud providers work as well, a careful model directing a fast one. This setup has one managed local engine, which can serve either role.',
     'Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.',
-    'The Provider and Workers controls pick both seats — each row says whether it runs local or in the cloud. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.',
+    'Each seat has separate inference engine and model controls. Use the swap button to trade the seats. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.',
   ];
 }
 /** Only on the way IN — re-applying Fusion (another orchestrator) is not a moment to explain it again. */

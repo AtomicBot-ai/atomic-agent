@@ -50,7 +50,7 @@ export interface RunModeConfig {
   };
   localModels?: {
     mode?: string;
-    managed?: { modelId?: string | null; parallel?: number | string };
+    managed?: { engine?: "atomic-core" | "llama-server"; modelId?: string | null; parallel?: number | string };
   };
 }
 
@@ -318,7 +318,7 @@ export function planEnterFusion(
   const cloud = providers.filter((p) => !isLocalKind(p));
   const firstUsableCloud = (cloud.find(isKeyed) ?? cloud[0])?.id ?? null;
   // Cloud orchestrator is the default, not the rule: an explicit pin wins whatever its kind.
-  const leg = pins.orchestratorProvider ?? (activeIsCloud ? active : null) ?? firstUsableCloud
+  const leg = pins.orchestratorProvider ?? (before.effective === "fusion" ? before.orchestratorProviderId : null) ?? (activeIsCloud ? active : null) ?? firstUsableCloud
     ?? before.orchestratorProviderId ?? active;
   const workerLeg = pins.workerProvider
     ?? (before.workerProviderId !== leg ? before.workerProviderId : null)
@@ -330,7 +330,10 @@ export function planEnterFusion(
   if (!Array.isArray(llm.providers) || !llm.providers.some((p) => p.id === leg)) {
     return { write: false, before, refusal: `provider "${leg}" is not configured` };
   }
+  if (leg === workerLeg) return { write: false, before, refusal: "Choose a different engine for each Fusion role." };
   const fusion = withoutUndefined({ ...llm.runMode?.fusion, ...pins, orchestratorProvider: leg, workerProvider: workerLeg });
+  if (leg !== before.orchestratorProviderId && pins.orchestratorModel === undefined) delete fusion.orchestratorModel;
+  if (workerLeg !== before.workerProviderId && pins.workerModel === undefined) delete fusion.workerModel;
   cfg.llm = {
     ...llm,
     activeTextProvider: leg,

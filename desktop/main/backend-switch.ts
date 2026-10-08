@@ -17,6 +17,7 @@ import {
   localDaemonRunning,
   managedDaemonPidAlive,
   modelsList,
+  modelsEngine,
   modelsStart,
   modelsStartEmbedding,
   modelsStop,
@@ -950,7 +951,8 @@ async function afterRunModeWrite(res: {
   changed: boolean;
   error?: string;
   verdict?: RunModeVerdict;
-}, opts: { daemonByCaller?: boolean } = {}): Promise<SwitchResult> {
+}, opts: { daemonByCaller?: boolean; stillWanted?: () => boolean } = {}): Promise<SwitchResult> {
+  if (opts.stillWanted && !opts.stillWanted()) return { ok: true, daemon: "superseded", restart: false };
   if (!res.ok) return { ok: false, error: res.error };
   const v = res.verdict;
   if (v?.refusal) return { ok: false, refusal: v.refusal, error: v.refusal };
@@ -973,7 +975,12 @@ async function afterRunModeWrite(res: {
      the file still named — the one the workers were leaving — for tens of
      seconds and its memory, only to stop it for the new one. */
   const plan = opts.daemonByCaller ? "none" : runModeDaemonPlan(now, lm, v);
-  if (plan === "wait") up = (await onDisk(modelId)) ? await bringUpLocalDaemon(false) : { daemon: "skipped" };
+  if (opts.stillWanted && !opts.stillWanted()) return { ok: true, daemon: "superseded", restart: false };
+  if (plan === "wait") {
+    const ready = await onDisk(modelId);
+    if (opts.stillWanted && !opts.stillWanted()) return { ok: true, daemon: "superseded", restart: false };
+    up = ready ? await bringUpLocalDaemon(false) : { daemon: "skipped" };
+  }
   else if (plan === "background") bringUpBehindSwap(modelId);
   // The seats no longer need it (a seat moved to the cloud): a start on its way is moot, and what it spawned goes.
   else if (!opts.daemonByCaller && supersedeBringUp()) await modelsStop();
@@ -999,9 +1006,12 @@ async function afterRunModeWrite(res: {
  * provider control under Fusion (orchestrator pin) and a cloud row in the
  * workers control (worker pin).
  */
-export async function enterFusion(pins: { orchestratorProvider?: string; workerProvider?: string } = {}): Promise<SwitchResult> {
+export async function enterFusion(pins: { orchestratorProvider?: string; workerProvider?: string } = {}, stillWanted?: () => boolean): Promise<SwitchResult> {
   const isKeyed = keyed();
-  return afterRunModeWrite(await rewriteWholeConfig((cfg) => planEnterFusion(cfg, pins, isKeyed)));
+  return afterRunModeWrite(await rewriteWholeConfig((cfg) => {
+    if (stillWanted && !stillWanted()) return { write: false, before: resolveRunMode(cfg) };
+    return planEnterFusion(cfg, pins, isKeyed);
+  }), { stillWanted });
 }
 
 /**
@@ -1086,4 +1096,77 @@ export async function selectLocalModel(modelId: string): Promise<SwitchResult> {
     return { ok: false, needsDownload: true, modelId, error: `local model ${modelId} is not downloaded` };
   }
   return routeToLocal(modelId);
+}
+
+/** Composer engine selection shares the daemon queue with starts and stops. */
+export async function selectComposerEngine(engine: "atomic-core" | "llama-server", leg?: "orchestrator" | "worker"): Promise<SwitchResult> {
+  const requestedAt = stopsMark();
+  const stopsAt = stopsAsked();
+  const stillWanted = () => !turnsClosed && stopsMark() === requestedAt && stopsAsked() === stopsAt;
+  const superseded: SwitchResult = { ok: true, daemon: "superseded", restart: false };
+  const selected = await inDaemonTurn(async (): Promise<SwitchResult> => {
+    const read = await readWholeConfig();
+    if (!read.ok || !read.config) return { ok: false, error: read.error };
+    if (!stillWanted()) return superseded;
+    if (leg) {
+      const rm = resolveRunMode(read.config);
+      if (rm.effective !== "fusion") return { ok: false, error: "Select Fusion first." };
+      const other = leg === "worker" ? rm.orchestratorProviderId : rm.workerProviderId;
+      if (other === LOCAL_ID) return { ok: false, error: "The other role uses the local engine. Swap the roles to move it." };
+    }
+    const current = read.config.localModels?.managed?.engine ?? "llama-server";
+    if (current === engine) return { ok: true };
+    const changed = await modelsEngine(engine);
+    return { ok: changed.ok, error: changed.ok ? undefined : changed.error || changed.stderr, restart: changed.ok };
+  }, () => ({ ok: false, error: "The app is closing" }));
+  if (!stillWanted()) return superseded;
+  if (!selected.ok || !leg) return selected;
+  const entered = await enterFusion(leg === "worker" ? { workerProvider: LOCAL_ID } : { orchestratorProvider: LOCAL_ID }, stillWanted);
+  if (entered.daemon === "superseded") return entered;
+  return { ...entered, restart: selected.restart || entered.restart };
+}
+
+/** Pin a model on its own Fusion role without activating the worker as primary. */
+export async function selectFusionModel(leg: "orchestrator" | "worker", modelId: string): Promise<SwitchResult> {
+  const requestedAt = stopsMark();
+  const stopsAt = stopsAsked();
+  const stillWanted = () => !turnsClosed && stopsMark() === requestedAt && stopsAsked() === stopsAt;
+  const superseded: SwitchResult = { ok: true, daemon: "superseded", restart: false };
+  if (!modelId.trim() || modelId.length > 512) return { ok: false, error: "A model is required." };
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, error: read.error };
+  const rm = resolveRunMode(read.config);
+  if (rm.effective !== "fusion") return { ok: false, error: "Select Fusion first." };
+  const providerId = leg === "worker" ? rm.workerProviderId : rm.orchestratorProviderId;
+  const provider = read.config.llm?.providers?.find(p => p.id === providerId);
+  if (!provider) return { ok: false, error: "Choose an inference engine first." };
+  const local = provider.kind === "llama-server";
+  if (!local && !providerIsUsable(provider)) return needsKeyFor(provider, provider.id);
+  if (!stillWanted()) return superseded;
+  const localChanged = local && (read.config.localModels?.mode !== "managed" || read.config.localModels?.managed?.modelId !== modelId);
+  if (local) {
+    const list = await chatModelsList();
+    if (!list.ok || !list.models?.some(m => m.id === modelId && m.downloaded)) return { ok: false, error: "Download this local model first." };
+    if (!stillWanted()) return superseded;
+    if (localChanged) {
+      const used = await modelsUse(modelId);
+      if (!used.ok) return { ok: false, error: used.error };
+    }
+  }
+  if (!stillWanted()) return superseded;
+  const changed = await rewriteWholeConfig((cfg): RunModeVerdict => {
+    const now = resolveRunMode(cfg);
+    if (!stillWanted()) return { write: false, before: now };
+    const current = leg === "worker" ? now.workerProviderId : now.orchestratorProviderId;
+    if (now.effective !== "fusion" || current !== providerId) return { write: false, before: now, refusal: "The inference engine changed. Choose the model again." };
+    const fusion = cfg.llm!.runMode!.fusion!;
+    if (leg === "worker") fusion.workerModel = modelId;
+    else fusion.orchestratorModel = modelId;
+    return { write: true, before: now, after: resolveRunMode(cfg), leg: now.orchestratorProviderId ?? undefined };
+  });
+  if (!stillWanted()) return superseded;
+  const settled = await afterRunModeWrite(changed, { daemonByCaller: local });
+  if (!stillWanted()) return superseded;
+  if (!settled.ok || !local) return settled;
+  return { ...settled, ...await bringUpLocalDaemon(localChanged), modelId, restart: !!settled.restart || localChanged };
 }

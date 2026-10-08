@@ -97,6 +97,8 @@ import {
   restartsAgent,
   selectCloudModel,
   selectFusionWorkerModel,
+  selectComposerEngine,
+  selectFusionModel,
   selectLocalModel,
   setFusionWorkers,
   runModeWantsDaemon,
@@ -2268,6 +2270,15 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
     return switched(() => setFusionWorkers(workers), { action: "set_workers" });
+  });
+  ipcMain.handle("cli:composerEngine", async (_event, engine: unknown, leg: unknown) => {
+    if (engine !== "atomic-core" && engine !== "llama-server") return { ok: false, error: "Unknown inference engine" };
+    if (leg !== undefined && leg !== "worker" && leg !== "orchestrator") return { ok: false, error: "Unknown Fusion role" };
+    return switched(() => selectComposerEngine(engine, leg));
+  });
+  ipcMain.handle("cli:fusionModel", async (_event, leg: unknown, model: unknown) => {
+    if ((leg !== "worker" && leg !== "orchestrator") || typeof model !== "string") return { ok: false, error: "A role and model are required" };
+    return switched(() => selectFusionModel(leg, model));
   });
   ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };

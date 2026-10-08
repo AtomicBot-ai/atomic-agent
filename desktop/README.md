@@ -1448,3 +1448,7 @@ Settings → Models → Advanced → Engine offers Atomic Core and the existing 
 Core release checks run after startup and every six hours, like app checks. Check for updates also runs on demand. A check never downloads or stops a model. An unsupported newer Core is described as needing a newer Agent build. Update now refuses while local models run. The existing app updater remains responsible for the desktop app itself.
 
 These controls require the companion agent build with `models engine` support. Old agent builds report the unsupported command instead of pretending an engine was switched. The existing engine remains the default for old configurations.
+
+### Composer inference engines
+
+Local mode shows separate inference-engine and model pickers, with Local llama and Atomic Chat as engine choices. Fusion shows an engine/provider and model pair for each role, separated by the swap control. Model catalogs and model pins follow their own role; changing a worker does not activate it as the orchestrator. The managed runtime has one local slot, which can move between roles with swap. A loaded local model must be stopped before its engine changes. Route changes keep the existing busy-turn and Stop guards.
