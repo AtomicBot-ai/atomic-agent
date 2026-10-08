@@ -7,7 +7,7 @@ import type { StepDispatchPlan } from "./step-evidence.js";
 import type { BatchExecutionResult } from "../dispatch/batch-contract.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
-import { compressToolResult } from "../../compressor/result-compressor.js";
+import { compressToolResult, fullToolResult } from "../../compressor/result-compressor.js";
 import { evidenceMarks } from "./step-evidence.js";
 import type { SessionState } from "../../session/session-state.js";
 import { rememberConversationPackStart, recordLoadedTool, recordLatestResult, recordTurn, recordLoadedSkill, recordWorldSnapshot } from "../../session/session-state.js";
@@ -37,13 +37,14 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
   const { ctx, deps, prompt, completion, reasoning, batchOutcome, stepDurationMs, progressNote, waveSplitNotice } = args;
   const { calls, suppressed, unverified, unsourced, batchSize, progressNoteIndex } = args.admission;
   let { trimmedBatchNotice } = args;
+  const modelMode = (completion.servedModelMode ?? deps.modelMode)?.mode;
 
   // Materialise per-call results in batch-index order. Cancelled tail
   // calls are folded into a synthetic error result so the transcript
   // and `applyStateEffects` stay in lockstep with `toolCalls.length`.
   const toolResults: CompressedToolResult[] = batchOutcome.results.map(
     (slot, idx): CompressedToolResult => {
-      if (slot.compressed) return slot.compressed;
+      if (slot.compressed) return modelMode === "cloud" ? fullToolResult(slot.compressed) : slot.compressed;
       return compressToolResult({
         tool: slot.call.tool,
         status: "error",
@@ -75,6 +76,7 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
   let workSession: SessionState = rememberConversationPackStart(
     {
       ...ctx.session,
+      ...(prompt.cloudContext && !ctx.session.cloudContext ? { cloudContext: prompt.cloudContext } : {}),
       stepCount: ctx.session.stepCount + 1,
     },
     prompt.conversationPackStart,
@@ -107,7 +109,7 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
               : {}),
             source: "auto",
           },
-          getConfig().agent.loadedToolsCap,
+          modelMode === "cloud" ? Number.MAX_SAFE_INTEGER : getConfig().agent.loadedToolsCap,
         );
         deps.onEvent?.({
           type: "rare_tool_autoloaded",
@@ -147,7 +149,7 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
       summary: result.summary,
       ...(result.details !== undefined ? { details: result.details } : {}),
     });
-    nextSession = applyStateEffects(nextSession, result);
+    nextSession = applyStateEffects(nextSession, result, modelMode);
   }
 
   // Terminal classification looks at the **last** call of the batch:
@@ -171,6 +173,7 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
     results: stepResults,
     reasoning,
     terminal,
+    modelMode,
     onEvent: deps.onEvent,
   });
 
@@ -202,6 +205,7 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
 
   void stepDurationMs; // captured for future cross-call observability hooks
   if (batchOutcome.cancelled) {
+    if (modelMode === "cloud") deps.commitSession?.(nextSession);
     throw new CancelledError("batch cancelled mid-execution");
   }
   return {
@@ -241,6 +245,7 @@ export function classifyTerminal(
 
 
 export interface AppendBatchedTurnsParams {
+  modelMode?: "local" | "cloud";
   state: SessionState;
   calls: readonly ToolCallPayload[];
   results: readonly CompressedToolResult[];
@@ -302,7 +307,7 @@ export function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionSta
     const hasNonTerminal = terminalIdx > 0;
     let next = state;
     if (hasNonTerminal) {
-      const renderedSummaries = capBatchSummaries(
+      const renderedSummaries = params.modelMode === "cloud" ? results.slice(0, terminalIdx).map((r) => r.summary) : capBatchSummaries(
         results.slice(0, terminalIdx),
         calls.slice(0, terminalIdx),
         getConfig().agent.batchToolResultCharCap,
@@ -359,7 +364,7 @@ export function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionSta
     );
   }
 
-  const renderedSummaries = capBatchSummaries(
+  const renderedSummaries = params.modelMode === "cloud" ? results.map((r) => r.summary) : capBatchSummaries(
     results,
     calls,
     getConfig().agent.batchToolResultCharCap,
@@ -420,6 +425,7 @@ function readTurnField(result: CompressedToolResult): {
 export function applyStateEffects(
   session: SessionState,
   result: CompressedToolResult,
+  modelMode?: "local" | "cloud",
 ): SessionState {
   let next = session;
   const details = result.details;
@@ -452,7 +458,7 @@ export function applyStateEffects(
             : {}),
           source: t.source,
         },
-        getConfig().agent.loadedToolsCap,
+        modelMode === "cloud" ? Number.MAX_SAFE_INTEGER : getConfig().agent.loadedToolsCap,
       );
     }
     const loaded = (details as Record<string, unknown>).skillLoaded;

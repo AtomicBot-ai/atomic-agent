@@ -243,6 +243,7 @@ export function connectRuntimeFallback(
     costAccumulator: CostAccumulator | undefined;
     turnUsageMeter: TurnUsageMeter;
     resolveModelPricing: RuntimeModelContext["resolveModelPricing"];
+    resolveCatalogContextWindow?: RuntimeModelContext["resolveCatalogContextWindow"];
   },
 ) {
   const {
@@ -320,8 +321,9 @@ export function connectRuntimeFallback(
   const fallbackSeamDeps: FallbackSeamDeps = {
     fallbackChain,
     resolveSlice: (providerId) => {
-      const { provider, transport } = resolveActiveLlmSlice(providerId);
-      return { provider, transport };
+      const { provider, transport, isLlamaServer } = resolveActiveLlmSlice(providerId);
+      return { provider, transport, contextWindow: (isLlamaServer ? profileManager?.getProfile().contextWindow : undefined)
+        ?? deps.resolveCatalogContextWindow?.(providerId) ?? null };
     },
     // Issue #112. The one place that knows a cloud→local fallover is
     // about to happen: the chain has already picked the link and the

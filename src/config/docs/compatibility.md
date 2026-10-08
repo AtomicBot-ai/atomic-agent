@@ -5,13 +5,19 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The schema version at this documentation migration is 74; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 75; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
 Current checked examples: localModels mode=external, thinking=auto, reasoningBudgetTokens=1500, completionMaxTokens=16384; agent tokenBudget=3000 and maxSteps=25, with task-wide maxSteps=1000/maxDurationMs=7200000 and autoContinue=true. These are different budgets, not a promise that every task ends after 25 steps.
 
 Memory embeddings are off by default; query rewriting, links, evolution, lessons/procedures/consolidation/voting are enabled. Typed notes, reflection segmentation and anySpeaker are disabled. Retention is disabled by default. Environment overrides and migrations can make an existing install differ.
+
+## Cloud model mode migration
+
+For input versions below 75, validated providers without `modelMode` receive `cloud` when the shared [provider classification](../model-mode.ts) recognizes a cloud service. This uses the same rule as adding a connection. Explicit `local`/`cloud` settings and per-model overrides remain intact; local and unknown endpoints are left as they were. Null is parsed as absent before migration. Provider IDs, models, credentials and numerical limits are not changed by this migration.
+
+[Config loading](../config-file.ts) persists the upgraded version through its existing atomic owner-only writer. Read-only parsing returns migrated values without writing. Version 75 or newer does not reapply classification: manual `local` or `inherit` choices survive later loads and provider edits. A missing version follows the existing current-version rule. [Mode tests](../model-mode.test.ts), [file IO tests](../config-file.test.ts) and [provider commands](../llm-provider-commands.test.ts) cover classification, persistence, restart and manual precedence.
 
 ## Scalar validation
 

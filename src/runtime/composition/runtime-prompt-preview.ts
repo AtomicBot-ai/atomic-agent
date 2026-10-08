@@ -10,6 +10,7 @@ import type { ModelProfile } from "../../llm/model-profile.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
 import { SessionNotFoundError } from "../session-not-found-error.js";
+import type { ResolvedModelMode } from "../../llm/model-mode.js";
 
 export interface RuntimePromptPreviewDependencies {
   workingDir: string;
@@ -22,6 +23,8 @@ export interface RuntimePromptPreviewDependencies {
   resolveToolTransport(sessionId?: string): ToolCallTransport;
   resolveCatalogContextWindow(sessionId?: string): number | null;
   profileWindowApplies?(sessionId?: string): boolean;
+  resolveModelMode?(sessionId?: string): ResolvedModelMode;
+  resolveToolSchemaTokens?(sessionId: string, descriptors: readonly ToolDescriptor[]): number;
 }
 
 /** Build the next prompt without running memory prefetch, inference or persistence. */
@@ -60,12 +63,17 @@ export function createRuntimePromptPreview(config: AtomicAgentConfig, deps: Runt
 
 export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: RuntimePromptPreviewDependencies, session: SessionState, userMessage?: string): BuildPromptInput {
     const transport = deps.resolveToolTransport(session.id);
+    const modelMode = deps.resolveModelMode?.(session.id);
+    const descriptors = deps.effectiveToolDescriptors();
     return {
       session,
+      ...(modelMode ? { modelMode } : {}),
+      ...(modelMode?.mode === "cloud" && transport === "native_tools" && deps.resolveToolSchemaTokens
+        ? { toolSchemaTokens: deps.resolveToolSchemaTokens(session.id, descriptors) } : {}),
       // Called, not read: main made the descriptors late-bound so a live MCP
       // add/remove is visible without a restart. The preview wants the same
       // catalogue the next real turn would get.
-      toolDescriptors: deps.effectiveToolDescriptors(),
+      toolDescriptors: descriptors,
       capabilities: deps.capabilities,
       skillCatalog: deps.getSkillCatalog(),
       currentDate: formatCurrentDate(new Date()),

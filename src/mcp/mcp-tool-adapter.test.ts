@@ -51,6 +51,18 @@ const ctx: ToolContext = {
 };
 
 describe("projectMcpResponseToText", () => {
+  it("keeps full cloud text, structured data and embedded resource bodies without an exact mirror", () => {
+    const structuredContent = { hits: 3 };
+    const evidence = "evidence\n".repeat(3000) + "FINAL EVIDENCE";
+    const response = { structuredContent, content: [
+      { type: "text", text: JSON.stringify(structuredContent) },
+      { type: "text", text: evidence },
+      { type: "resource", resource: { uri: "file:///guide", text: "FULL RESOURCE BODY" } },
+    ] };
+    expect(projectMcpResponseToText(response, true)).toBe(`${JSON.stringify(structuredContent, null, 2)}\n${evidence}\n[resource file:///guide]\nFULL RESOURCE BODY`);
+    expect(projectMcpResponseToText(response)).toBe(JSON.stringify(structuredContent, null, 2));
+  });
+
   it("returns empty string for null / non-object input", () => {
     expect(projectMcpResponseToText(null)).toBe("");
     expect(projectMcpResponseToText("hi")).toBe("");

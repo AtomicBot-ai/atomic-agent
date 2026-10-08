@@ -1,4 +1,5 @@
 import { readContextLengthFromRejection } from "../llm/reliability/request-size-rejection.js";
+import { resolveModelMode } from "../llm/model-mode.js";
 import { prepareStepPrompt } from "./step/step-inference.js";
 import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
@@ -409,8 +410,20 @@ export class AgentLoop {
               ? { maxOutputTokens: options.maxOutputTokens }
               : {}),
           };
+        const contextProviderId = options.providerId ?? this.deps.contextProviderId?.(state.id);
+        const initialMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, options.providerId) : undefined;
+        const modelMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, contextProviderId) : undefined;
+        // Cloud transitions must use the sticky link before planning maintenance,
+        // not only at send time. All-local preparation retains its existing path.
+        const contextSlice = contextProviderId && (initialMode?.mode === "cloud" || modelMode?.mode === "cloud")
+          ? this.deps.resolveLlmSlice?.(contextProviderId) ?? pinnedSlice : pinnedSlice;
         const stepDeps: StepDependencies = {
             registry: this.deps.registry,
+            commitSession: (next) => {
+              state = next;
+              stepContext.session = next;
+              if (!options.ephemeral) this.deps.persistContext?.(next);
+            },
             ...(this.deps.isPlanMode
               ? { isPlanMode: this.deps.isPlanMode }
               : {}),
@@ -435,8 +448,8 @@ export class AgentLoop {
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
-            ...(pinnedSlice?.contextWindow !== undefined || this.deps.contextWindow
-              ? { contextWindow: pinnedSlice?.contextWindow !== undefined ? pinnedSlice.contextWindow : this.deps.contextWindow?.() ?? null }
+            ...(contextSlice?.contextWindow !== undefined || this.deps.contextWindow
+              ? { contextWindow: contextSlice?.contextWindow !== undefined ? contextSlice.contextWindow : this.deps.contextWindow?.() ?? null }
               : {}),
             // The `/props` profile describes the local llama-server. It
             // is the right window only when this step is routed there:
@@ -445,23 +458,27 @@ export class AgentLoop {
             // budgeting a cloud orchestrator against the workers'
             // per-slot `n_ctx` packed a 128k model to 16k.
             profileWindowApplies:
-              pinnedSlice?.isLlamaServer ?? this.localBackendActive(),
+              contextSlice?.isLlamaServer ?? this.localBackendActive(),
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
-            toolTransport: effectiveTransport,
+            toolTransport: contextSlice?.toolTransport ?? effectiveTransport,
+            ...(options.modelModePolicy ? {
+              modelModePolicy: options.modelModePolicy,
+              modelMode,
+            } : {}),
             toolCallAdapter:
-              pinnedSlice?.toolCallAdapter ?? this.deps.toolCallAdapter ?? null,
+              contextSlice?.toolCallAdapter ?? this.deps.toolCallAdapter ?? null,
             supportsSlotAffinity:
-              pinnedSlice?.supportsSlotAffinity ??
+              contextSlice?.supportsSlotAffinity ??
               this.deps.supportsSlotAffinity ??
               true,
             supportsParallelTools:
-              pinnedSlice?.supportsParallelTools ??
+              contextSlice?.supportsParallelTools ??
               this.deps.supportsParallelTools ??
               true,
             strictTools:
-              pinnedSlice?.strictTools ?? this.deps.strictTools ?? false,
+              contextSlice?.strictTools ?? this.deps.strictTools ?? false,
             ...(options.providerId !== undefined
               ? { providerId: options.providerId }
               : {}),
@@ -483,6 +500,11 @@ export class AgentLoop {
               this.deps.onEvent?.({ type: "llm_event", event });
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
+                if (event.prompt.cloudContext && state.cloudContext !== event.prompt.cloudContext) {
+                  state = { ...state, cloudContext: event.prompt.cloudContext };
+                  stepContext.session = state;
+                  if (!options.ephemeral) this.deps.persistContext?.(state);
+                }
               }
               // Issue #407. Skipped on a fusion worker's throwaway
               // session: it renders the same store as the orchestrator,

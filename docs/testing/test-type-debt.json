@@ -56,6 +56,7 @@
     "src/agent/batch-summary-cap.test.ts",
     "src/agent/batch-summary-cap.ts",
     "src/agent/claim-evidence.ts",
+    "src/agent/cloud-context-seam.test.ts",
     "src/agent/compaction-control.ts",
     "src/agent/dispatch/batch-contract.ts",
     "src/agent/dispatch/batch-gates.test.ts",
@@ -402,6 +403,9 @@
     "src/config/memory/memory-defaults.ts",
     "src/config/memory/memory-parser.ts",
     "src/config/memory/memory-types.ts",
+    "src/config/model-mode-commands.ts",
+    "src/config/model-mode.test.ts",
+    "src/config/model-mode.ts",
     "src/config/owner-only-file.test.ts",
     "src/config/owner-only-file.ts",
     "src/config/provider-auth-mode.test.ts",
@@ -650,6 +654,8 @@
     "src/llm/llama-server-probe-deadlines.test.ts",
     "src/llm/local-backend-gate.test.ts",
     "src/llm/local-backend-gate.ts",
+    "src/llm/model-mode.test.ts",
+    "src/llm/model-mode.ts",
     "src/llm/model-profile-manager.test.ts",
     "src/llm/model-profile-manager.ts",
     "src/llm/model-profile.fixtures.ts",
@@ -672,6 +678,7 @@
     "src/llm/provider/cloud-subcall.test.ts",
     "src/llm/provider/cloud-subcall.ts",
     "src/llm/provider/completion-types.ts",
+    "src/llm/provider/context-capacity.ts",
     "src/llm/provider/cost-accumulator.ts",
     "src/llm/provider/fake-provider.fixture.ts",
     "src/llm/provider/format-model-details.ts",
@@ -1124,6 +1131,7 @@
     "src/notifications/download-notifier.test.ts",
     "src/notifications/download-notifier.ts",
     "src/notifications/index.ts",
+    "src/prompt/build-cloud-prompt.ts",
     "src/prompt/build-prompt-types.ts",
     "src/prompt/build-prompt-world-conversation.test.ts",
     "src/prompt/build-prompt-world-conversation.ts",
@@ -1133,6 +1141,8 @@
     "src/prompt/capabilities.ts",
     "src/prompt/clip-profile-section.test.ts",
     "src/prompt/clip-profile-section.ts",
+    "src/prompt/cloud-context-sections.ts",
+    "src/prompt/cloud-context.test.ts",
     "src/prompt/composio-guidance.test.ts",
     "src/prompt/composio-guidance.ts",
     "src/prompt/conversation-cap-auto.test.ts",
@@ -1150,6 +1160,7 @@
     "src/prompt/github-guidance.ts",
     "src/prompt/github-tool-args-schemas.ts",
     "src/prompt/index.ts",
+    "src/prompt/model-mode-baseline.test.ts",
     "src/prompt/plan-compaction.ts",
     "src/prompt/render-loaded-tools.ts",
     "src/prompt/render-task-policy.ts",
@@ -1214,6 +1225,7 @@
     "src/runtime/composition/runtime-traces.ts",
     "src/runtime/composition/runtime-turn-service.test.ts",
     "src/runtime/composition/runtime-turn-service.ts",
+    "src/runtime/context-compaction-chunks.ts",
     "src/runtime/context-compaction-runner.ts",
     "src/runtime/context-compaction.test.ts",
     "src/runtime/context-compaction.ts",
@@ -1272,6 +1284,7 @@
     "src/scheduler/index.ts",
     "src/scheduler/scheduler.test.ts",
     "src/scheduler/scheduler.ts",
+    "src/session/cloud-context.ts",
     "src/session/context-usage.ts",
     "src/session/conversation-pack-start.test.ts",
     "src/session/conversation-pairs.test.ts",
@@ -1849,6 +1862,8 @@
     "src/tui/coding-mode/plan-handoff.tsx",
     "src/tui/commands/dispatch-run-mode.test.ts",
     "src/tui/commands/dispatch-run-mode.ts",
+    "src/tui/commands/model-mode-command.test.ts",
+    "src/tui/commands/model-mode-command.ts",
     "src/tui/commands/run-mode-verb.ts",
     "src/tui/commands/slash-bus-routing.test.ts",
     "src/tui/commands/slash-command-handler.test.ts",
@@ -1963,6 +1978,7 @@
     "src/tui/context-pairs-selection.test.ts",
     "src/tui/context-usage-from-prompt.test.ts",
     "src/tui/context-usage-from-prompt.ts",
+    "src/tui/context/compaction-live.test.tsx",
     "src/tui/context/context-chip.test.tsx",
     "src/tui/context/context-chip.tsx",
     "src/tui/context/context-panel-keys.test.ts",
@@ -2589,14 +2605,14 @@
     "src/update/run-app-update.ts",
     "src/version.ts"
   ],
-  "testTsx": 106,
+  "testTsx": 107,
   "diagnostics": [
     {
       "path": "src/agent/agent-loop-fusion-seams.test.ts",
       "code": 2322,
       "message": "Type '(_args: Record<string, unknown>, ctx: ToolContext) => Promise<{ tool: string; status: \"ok\"; summary: string; }>' is not assignable to type '(args: Record<string, unknown>, ctx: ToolContext) => Promise<CompressedToolResult>'.   Type 'Promise<{ tool: string; status: \"ok\"; summary: string; }>' is not assignable to type 'Promise<CompressedToolResult>'.     Type '{ tool: string; status: \"ok\"; summary: string; }' is missing the following properties from type 'CompressedToolResult': details, truncated",
       "anchor": "run",
-      "line": 164,
+      "line": 175,
       "count": 1
     },
     {
@@ -2604,7 +2620,7 @@
       "code": 2322,
       "message": "Type '() => { toolTransport: \"grammar\"; toolCallAdapter: null; supportsSlotAffinity: true; supportsParallelTools: true; }' is not assignable to type '(providerId: string) => ResolvedTurnLlmSlice'.   Property 'strictTools' is missing in type '{ toolTransport: \"grammar\"; toolCallAdapter: null; supportsSlotAffinity: true; supportsParallelTools: true; }' but required in type 'ResolvedTurnLlmSlice'.",
       "anchor": "resolveLlmSlice",
-      "line": 174,
+      "line": 185,
       "count": 1
     },
     {
@@ -2612,7 +2628,7 @@
       "code": 2322,
       "message": "Type '(providerId: string) => { toolTransport: \"native_tools\"; toolCallAdapter: ToolCallAdapter; supportsSlotAffinity: false; supportsParallelTools: true; }' is not assignable to type '(providerId: string) => ResolvedTurnLlmSlice'.   Property 'strictTools' is missing in type '{ toolTransport: \"native_tools\"; toolCallAdapter: ToolCallAdapter; supportsSlotAffinity: false; supportsParallelTools: true; }' but required in type 'ResolvedTurnLlmSlice'.",
       "anchor": "resolveLlmSlice",
-      "line": 120,
+      "line": 129,
       "count": 1
     },
     {
@@ -2732,7 +2748,7 @@
       "code": 18048,
       "message": "'params.messages' is possibly 'undefined'.",
       "anchor": "params.messages",
-      "line": 5391,
+      "line": 5397,
       "count": 1
     },
     {
@@ -2756,23 +2772,7 @@
       "code": 2345,
       "message": "Argument of type '{ logger?: StructuredLogger | undefined; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 4 more ...; registry: ToolRegistry; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ logger?: StructuredLogger | undefined; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 4 more ...; registry: ToolRegistry; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...(options.linkEvidence === false ? {} : { linkEvidence: { noticed: () => noticed, markNoticed: () => { noticed = true; marks += 1; }, }, }), ...(options.claimEvidence === true ? { claimEvidence: { noticed: () => claimMarks > 0, markNoticed: () => { claimMarks += 1; }, }, } : {}), slotManager: new SlotManager(2), llmComplete: async () => ({ content: JSON.stringify([{ tool: \"reply\", args: { text: replyText } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, ...(options.logger ? { logger: options.logger } : {}), }",
-      "line": 5858,
-      "count": 1
-    },
-    {
-      "path": "src/agent/step-executor.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ registry: ToolRegistry; isPlanMode?: (() => boolean) | undefined; isFusionOrchestrator?: (() => boolean) | undefined; fusionState?: (() => FusionOrchestratorState) | undefined; ... 24 more ...; approvalPosture?: StepApprovalPostureSource | undefined; }' is not assignable to parameter of type 'StepDependencies'.   Types of property 'toolTransport' are incompatible.     Type 'ToolCallTransport | undefined' is not assignable to type 'ToolCallTransport'.       Type 'undefined' is not assignable to type 'ToolCallTransport'.",
-      "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); return { content: JSON.stringify([ { tool: \"reply\", args: { text: \"done\" } }, ]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, ...depsExtra, }",
-      "line": 4936,
-      "count": 1
-    },
-    {
-      "path": "src/agent/step-executor.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ registry: ToolRegistry; isPlanMode?: (() => boolean) | undefined; isFusionOrchestrator?: (() => boolean) | undefined; fusionState?: (() => FusionOrchestratorState) | undefined; ... 24 more ...; approvalPosture?: StepApprovalPostureSource | undefined; }' is not assignable to parameter of type 'StepDependencies'.   Types of property 'toolTransport' are incompatible.     Type 'ToolCallTransport | undefined' is not assignable to type 'ToolCallTransport'.       Type 'undefined' is not assignable to type 'ToolCallTransport'.",
-      "anchor": "{ registry: makeRegistry(), slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); return { content: JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, ...depsExtra, }",
-      "line": 5166,
+      "line": 5864,
       "count": 1
     },
     {
@@ -2820,7 +2820,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 6056,
+      "line": 6062,
       "count": 1
     },
     {
@@ -2884,7 +2884,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "deps",
-      "line": 6352,
+      "line": 6358,
       "count": 3
     },
     {
@@ -2892,7 +2892,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: true; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: true; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "{ registry, slotManager, llmComplete: async (params: { slotId: number }) => { slots.push(params.slotId); return mockCompletion(replyBody, { slotId: 1 }); }, grammar, profile: PLAIN_INSTRUCT_PROFILE, supportsSlotAffinity: true, onEvent: (event: StepEvent) => { if (event.type === \"prompt_captured\") cacheReused.push(event.cacheReused); }, }",
-      "line": 6413,
+      "line": 6419,
       "count": 1
     },
     {
@@ -2900,7 +2900,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean; }) => Promise<...>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: false; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean | undefined; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: false; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "{ registry, slotManager, llmComplete: async (params: { slotId: number; cachePrompt?: boolean; }) => { seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt }); return mockCompletion(replyBody, { slotId: 5 }); }, grammar, profile: PLAIN_INSTRUCT_PROFILE, supportsSlotAffinity: false, }",
-      "line": 6451,
+      "line": 6457,
       "count": 1
     },
     {
@@ -2908,7 +2908,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean | undefined; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "deps",
-      "line": 6305,
+      "line": 6311,
       "count": 2
     },
     {
@@ -2916,7 +2916,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push({ ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }), ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }), ...(params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens }), }); return { content: JSON.stringify([ { tool: \"reply\", args: { text: \"ok\" } }, ]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 6116,
+      "line": 6122,
       "count": 1
     },
     {
@@ -2924,7 +2924,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); calls += 1; return { content: calls === 1 ? \"not json at all\" : JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 5087,
+      "line": 5090,
       "count": 1
     },
     {
@@ -2932,7 +2932,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: makeRegistry(), slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); const content = bodies[calls] ?? bodies[bodies.length - 1]!; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: QWEN_THINK_PROFILE, onEvent: (event) => { events.push(event); }, }",
-      "line": 6524,
+      "line": 6530,
       "count": 1
     },
     {
@@ -2940,7 +2940,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; toolTransport: \"grammar\"; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; ... 6 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile | TaggedReasoningModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; toolTransport: \"grammar\"; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; ... 6 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile | TaggedReasoningModelProfile; }' is missing the following properties from type 'StepDependencies': toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: registryWithReply(), slotManager: new SlotManager(2), toolTransport: \"grammar\", llmComplete: async (params) => { seen.push(params as unknown as Record<string, unknown>); return { content: JSON.stringify({ tool: \"reply\", args: { text: \"hi\" } }), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile, }",
-      "line": 6199,
+      "line": 6205,
       "count": 1
     },
     {
@@ -2948,7 +2948,7 @@
       "code": 2345,
       "message": "Argument of type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 6 more ...; registry: T...' is not assignable to parameter of type 'StepDependencies'.   Type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 6 more ...; registry: T...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...policy, ...(policy.isFusionOrchestrator ? { fusionState: () => ({ delegations: 0 }) } : {}), slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => events.push(ev), }",
-      "line": 5477,
+      "line": 5483,
       "count": 1
     },
     {
@@ -2956,7 +2956,7 @@
       "code": 2345,
       "message": "Argument of type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: P...' is not assignable to parameter of type 'StepDependencies'.   Type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: P...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...(options.claimEvidence === false ? {} : { claimEvidence: { noticed: () => noticed, markNoticed: () => { noticed = true; marks += 1; }, }, }), slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 5687,
+      "line": 5693,
       "count": 1
     },
     {
@@ -3716,7 +3716,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveA",
-      "line": 464,
+      "line": 480,
       "count": 1
     },
     {
@@ -3724,7 +3724,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveB",
-      "line": 465,
+      "line": 481,
       "count": 2
     },
     {
@@ -3732,7 +3732,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveSecond",
-      "line": 416,
+      "line": 432,
       "count": 1
     },
     {
@@ -3977,18 +3977,10 @@
     },
     {
       "path": "src/runtime/llm-fallback-seam.test.ts",
-      "code": 2322,
-      "message": "Type 'Promise<{ usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; }; content: string; reasoningContent: string; stop: boolean; truncated: boolean; timing: CompletionTiming; ... 8 more ...; generationId?: string | undefined; }>' is not assignable to type 'Promise<CompletionResult>'.   Type '{ usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; }; content: string; reasoningContent: string; stop: boolean; truncated: boolean; timing: CompletionTiming; ... 8 more ...; generationId?: string; }' is not assignable to type 'CompletionResult'.     Types of property 'usage' are incompatible.       Type '{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; }' is missing the following properties from type 'CompletionUsage': promptTokens, completionTokens, totalTokens",
-      "anchor": "({ ...answer(\"cloud\"), usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, }, })",
-      "line": 102,
-      "count": 1
-    },
-    {
-      "path": "src/runtime/llm-fallback-seam.test.ts",
       "code": 2345,
       "message": "Argument of type 'string | null' is not assignable to parameter of type 'string'.   Type 'null' is not assignable to type 'string'.",
       "anchor": "r.modelId",
-      "line": 115,
+      "line": 141,
       "count": 1
     },
     {
@@ -4228,7 +4220,7 @@
       "code": 2741,
       "message": "Property 'details' is missing in type '{ tool: string; status: \"ok\"; summary: string; truncated: false; }' but required in type 'CompressedToolResult'.",
       "anchor": "result",
-      "line": 266,
+      "line": 272,
       "count": 1
     },
     {
@@ -4292,7 +4284,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ... 5 more ...; activateMenuNode: (node: MenuNode) => number; }' is not assignable to parameter of type 'AppKeyContext'.   Property 'activateComposerSwitch' is missing in type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ... 5 more ...; activateMenuNode: (node: MenuNode) => number; }' but required in type 'AppKeyContext'.",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit, }, ctrlCArmed: false, setCtrlCArmed, sidebarVisible: false, menuLeaderArmed: true, setMenuLeaderArmed, activateMenuNode: (node) => activated.push(node), }",
-      "line": 830,
+      "line": 855,
       "count": 1
     },
     {
@@ -4300,7 +4292,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ... 5 more ...; activateMenuNode: Mock<...>; }' is not assignable to parameter of type 'AppKeyContext'.   Property 'activateComposerSwitch' is missing in type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ... 5 more ...; activateMenuNode: Mock<...>; }' but required in type 'AppKeyContext'.",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, menuLeaderArmed: false, setMenuLeaderArmed: vi.fn(), activateMenuNode: vi.fn(), }",
-      "line": 798,
+      "line": 823,
       "count": 1
     },
     {
@@ -4308,7 +4300,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "c",
-      "line": 1073,
+      "line": 1098,
       "count": 3
     },
     {
@@ -4316,7 +4308,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision, onAbort, onQuit: vi.fn() }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
-      "line": 511,
+      "line": 536,
       "count": 1
     },
     {
@@ -4324,7 +4316,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
-      "line": 545,
+      "line": 570,
       "count": 2
     },
     {
@@ -4332,7 +4324,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
-      "line": 674,
+      "line": 699,
       "count": 6
     },
     {
@@ -4340,7 +4332,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
-      "line": 85,
+      "line": 110,
       "count": 8
     },
     {
@@ -4348,7 +4340,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch: vi.fn(), callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
-      "line": 488,
+      "line": 513,
       "count": 4
     },
     {
@@ -4356,7 +4348,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch: vi.fn(), callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
-      "line": 67,
+      "line": 92,
       "count": 1
     },
     {
@@ -4364,7 +4356,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: true, }",
-      "line": 199,
+      "line": 224,
       "count": 6
     },
     {
@@ -4372,7 +4364,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onSessionsEndReached: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onSessionsEndReached: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), onSessionsEndReached, }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: true, }",
-      "line": 268,
+      "line": 293,
       "count": 1
     },
     {
@@ -4380,7 +4372,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onSessionsEndReached: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onSessionsEndReached: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch: vi.fn(), callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), onSessionsEndReached, }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: true, }",
-      "line": 299,
+      "line": 324,
       "count": 1
     },
     {
@@ -4388,7 +4380,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onSidebarTaskActivated: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onSidebarTaskActivated: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: true; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch: vi.fn(), callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), onSidebarTaskActivated, }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: true, }",
-      "line": 653,
+      "line": 678,
       "count": 1
     },
     {
@@ -4396,7 +4388,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onWhileBusyModePersistRequested: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onWhileBusyModePersistRequested: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "c",
-      "line": 999,
+      "line": 1024,
       "count": 4
     },
     {
@@ -4452,7 +4444,7 @@
       "code": 2493,
       "message": "Tuple type '[]' of length '0' has no element at index '0'.",
       "anchor": "0",
-      "line": 261,
+      "line": 265,
       "count": 1
     },
     {

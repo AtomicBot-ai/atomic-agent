@@ -208,7 +208,7 @@ export function buildMcpPromptGetTool(manager: McpManager): ToolDefinition {
       }
       try {
         const res = await client.getPrompt(name, args, ctx.signal);
-        const projected = projectPromptMessages(res);
+        const projected = projectPromptMessages(res, ctx.modelMode === "cloud");
         const compressed = compressToolResult(
           {
             tool: "mcp.prompt.get",
@@ -255,7 +255,7 @@ interface ProjectedPrompt {
   clipped: boolean;
 }
 
-function projectPromptMessages(res: unknown): ProjectedPrompt {
+function projectPromptMessages(res: unknown, full = false): ProjectedPrompt {
   const empty = { text: "", clipped: false };
   if (!res || typeof res !== "object") return empty;
   const messages = (res as { messages?: unknown }).messages;
@@ -291,7 +291,7 @@ function projectPromptMessages(res: unknown): ProjectedPrompt {
     }
   }
   const joined = parts.join("\n\n");
-  if (joined.length <= MAX_PROMPT_CHARS) {
+  if (full || joined.length <= MAX_PROMPT_CHARS) {
     return { text: joined, clipped: false };
   }
   return {

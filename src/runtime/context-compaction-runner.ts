@@ -88,7 +88,8 @@ export async function runContextCompaction(
     let model: string | null = null;
     // Serialize original records, including bodies that the prompt renderer clipped long ago.
     // Fragment oversized individual records instead of silently dropping their suffix.
-    const prepared = prepareCompactionSource(state.turns, plan.from, plan.through);
+    const prepared = prepareCompactionSource(state.turns, plan.from, plan.through,
+      input.modelMode?.mode === "cloud" ? state.cloudContext?.entries : undefined);
     const source = prepared.text;
     const system = `${INSTRUCTIONS}\nKeep the entire summary within ${plan.summaryMaxTokens} tokens.`;
     const anchors = requestAnchors(state);

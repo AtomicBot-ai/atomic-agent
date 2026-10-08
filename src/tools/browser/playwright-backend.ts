@@ -112,7 +112,7 @@ export class PlaywrightBackend implements BrowserBackend {
     return matched > 0;
   }
 
-  async snapshot(options: { depth?: number } = {}): Promise<AriaSnapshot> {
+  async snapshot(options: { depth?: number; full?: boolean } = {}): Promise<AriaSnapshot> {
     const page = await this.requireActivePage();
     const bodyLocator = page.locator("body");
     const raw = await bodyLocator.ariaSnapshot({
@@ -121,7 +121,8 @@ export class PlaywrightBackend implements BrowserBackend {
     } as never);
     const url = page.url();
     const title = await page.title().catch(() => "");
-    const summary = summariseAriaSnapshot(raw, { url, title });
+    const summary = summariseAriaSnapshot(raw, { url, title }, options?.full
+      ? { maxLines: Number.MAX_SAFE_INTEGER, maxChars: 0, dropNoise: false } : {});
     return {
       url,
       title,
