@@ -357,6 +357,7 @@ export interface TuiAppCallbacks {
    * worker keeps its partial file, so Enter on the row resumes it.
    */
   onLocalModelsPullCancelRequested?(kind: "chat" | "embedding"): void;
+  onLocalModelsEngineRequested?(engine: "atomic-core" | "llama-server"): void;
   onLocalModelsSetActiveRequested?(
     modelId: import("../local-llm/index.js").LocalModelId,
   ): void;

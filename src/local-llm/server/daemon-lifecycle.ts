@@ -1,3 +1,5 @@
+import { loadCoreSession, stopCoreSession, coreSessionStatus } from "../core/core-sessions.js";
+import { coreSessionPath, type ManagedEngine } from "../core/core-state.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
@@ -66,6 +68,8 @@ import {
 } from "./managed-api-key.js";
 
 export interface DaemonStartOptions {
+  engine?: ManagedEngine;
+  signal?: AbortSignal;
   dataDir: string;
   modelId: LocalModelId;
   port: number;
@@ -884,7 +888,7 @@ export async function startDaemon(
   await assertPortFree(opts.port);
 
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(opts.dataDir, binaryName);
+  const binPath = resolveServerBinPath(opts.dataDir, binaryName, opts.engine);
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
@@ -992,6 +996,19 @@ export async function startDaemon(
     model.id,
     contextSize,
   );
+
+  if (opts.engine === "atomic-core") {
+    const session = await loadCoreSession(opts.dataDir, {
+      role: "chat", modelId: model.id, modelPath, port: opts.port, args,
+      ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    writeFileSync(pidPath, String(session.pid), "utf8");
+    writeLaunchRecord(opts.dataDir, { pid: session.pid, modelId: model.id, contextSize,
+      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now() });
+    // Readiness does not wait for a synthetic generation. No measured speed means unknown.
+    return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond: null };
+  }
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {
@@ -1126,6 +1143,7 @@ export async function stopDaemon(
   dataDir: string,
   opts?: { timeoutMs?: number },
 ): Promise<void> {
+  if (await stopCoreSession(dataDir, "chat")) return;
   const pidPath = resolvePidFilePath(dataDir);
   let raw: string;
   try {
@@ -1200,6 +1218,12 @@ export async function getDaemonStatus(
   dataDir: string,
   port: number,
 ): Promise<DaemonStatus> {
+  if (existsSync(coreSessionPath(dataDir, "chat"))) {
+    const session = await coreSessionStatus(dataDir, "chat");
+    const health = session ? await probeLlamaHealth(session.port) : "down";
+    return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,
+      healthy: session !== null && health === "ok", loading: session !== null && health === "loading" };
+  }
   const pid = readRunningPid(dataDir);
   const h = await probeLlamaHealth(port);
   return {
@@ -1225,6 +1249,8 @@ export async function getDaemonStatus(
 // ---------------------------------------------------------------------
 
 export interface EmbeddingDaemonStartOptions {
+  engine?: ManagedEngine;
+  signal?: AbortSignal;
   dataDir: string;
   modelId: EmbeddingModelId;
   port: number;
@@ -1288,7 +1314,7 @@ export async function startEmbeddingDaemon(
   await assertPortFree(opts.port);
 
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(opts.dataDir, binaryName);
+  const binPath = resolveServerBinPath(opts.dataDir, binaryName, opts.engine);
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
@@ -1310,6 +1336,15 @@ export async function startEmbeddingDaemon(
     opts.apiKey ??
     resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());
   const args = buildEmbeddingServerArgs({ ...opts, device }, modelPath);
+
+  if (opts.engine === "atomic-core") {
+    const session = await loadCoreSession(opts.dataDir, {
+      role: "embedding", modelId: model.id, modelPath, port: opts.port, args,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    writeFileSync(pidPath, String(session.pid), "utf8");
+    return { pid: session.pid };
+  }
 
   const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
   try {
@@ -1372,6 +1407,7 @@ export async function stopEmbeddingDaemon(
   dataDir: string,
   opts?: { timeoutMs?: number },
 ): Promise<void> {
+  if (await stopCoreSession(dataDir, "embedding")) return;
   const pidPath = resolveEmbeddingPidFilePath(dataDir);
   let raw: string;
   try {
@@ -1446,6 +1482,12 @@ export async function getEmbeddingDaemonStatus(
   dataDir: string,
   port: number,
 ): Promise<DaemonStatus> {
+  if (existsSync(coreSessionPath(dataDir, "embedding"))) {
+    const session = await coreSessionStatus(dataDir, "embedding");
+    const health = session ? await probeLlamaHealth(session.port) : "down";
+    return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,
+      healthy: session !== null && health === "ok", loading: session !== null && health === "loading" };
+  }
   const pid = readRunningPid(dataDir, "embedding");
   const h = await probeLlamaHealth(port);
   return {

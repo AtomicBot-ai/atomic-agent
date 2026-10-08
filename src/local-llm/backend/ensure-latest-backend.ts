@@ -1,3 +1,6 @@
+import type { ManagedEngine } from "../core/core-state.js";
+import { isCoreBackendInstalled } from "../core/core-backend.js";
+import { activeCoreVersion } from "../core/core-state.js";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 import {
@@ -135,8 +138,9 @@ export function forgetBackendCheck(dataDir: string): void {
  */
 export async function checkForBackendUpdateForPanel(
   dataDir: string,
+  engine?: ManagedEngine,
 ): Promise<Awaited<ReturnType<typeof checkForBackendUpdate>>> {
-  const result = await checkForBackendUpdate(dataDir);
+  const result = await checkForBackendUpdate(dataDir, engine);
   if (result.updateAvailable) forgetBackendCheck(dataDir);
   return result;
 }
@@ -199,6 +203,7 @@ function standingCheck(
 export async function maybeAutoUpdateBackend(
   dataDir: string,
   opts: {
+    engine?: ManagedEngine;
     enabled: boolean;
     onProgress?: DownloadProgressFn;
     onWillDownload?: () => void;
@@ -228,6 +233,10 @@ export async function maybeAutoUpdateBackend(
     now?: () => number;
   },
 ): Promise<AutoUpdateBackendResult> {
+  // Core upgrades require a deliberate Update action; startup reuses the verified install.
+  if (opts.engine === "atomic-core") return isCoreBackendInstalled(dataDir)
+    ? { action: "current", tag: `Atomic Core ${activeCoreVersion(dataDir)}` }
+    : { action: "skipped" };
   if (!opts.enabled) return { action: "skipped" };
   const now = opts.now ?? Date.now;
   const remember = (opts.recheckAfterMs ?? 0) > 0;

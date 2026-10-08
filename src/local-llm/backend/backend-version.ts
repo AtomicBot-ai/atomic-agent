@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { readCoreBackend, type ManagedEngine } from "../core/core-state.js";
+
 import { resolveVersionFilePath } from "../backend-paths.js";
 
 export interface BackendVersionInfo {
@@ -40,7 +42,11 @@ export interface BackendVersionInfo {
   refusedCudaAsset?: { asset: string; tag: string };
 }
 
-export function readBackendVersion(dataDir: string): BackendVersionInfo | null {
+export function readBackendVersion(dataDir: string, engine?: ManagedEngine): BackendVersionInfo | null {
+  if (engine === "atomic-core") {
+    const backend = readCoreBackend(dataDir);
+    return backend ? { tag: `Atomic Core ${backend.coreVersion} · ${backend.version}`, downloadedAt: backend.installedAt, asset: backend.backend } : null;
+  }
   try {
     const raw = readFileSync(resolveVersionFilePath(dataDir), "utf-8");
     return JSON.parse(raw) as BackendVersionInfo;

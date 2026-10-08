@@ -1,3 +1,4 @@
+import { selectManagedEngine } from "../../local-llm/engine-selection.js";
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
@@ -353,8 +354,31 @@ export class LocalModelsOrchestrator {
     this.logsTimer = null;
   }
 
+  private startGeneration = 0;
+  private closing = false;
+  private backendAbort: AbortController | null = null;
+  private readonly coreStarts = new Map<Promise<unknown>, AbortController>();
+
+  private async trackCoreStart<T>(start: (signal?: AbortSignal) => Promise<T>): Promise<T> {
+    if (getConfig().localModels.managed.engine !== "atomic-core") return start();
+    const abort = new AbortController();
+    const pending = start(abort.signal);
+    this.coreStarts.set(pending, abort);
+    try { return await pending; } finally { this.coreStarts.delete(pending); }
+  }
+
+  private async cancelCoreStarts(): Promise<void> {
+    for (const abort of this.coreStarts.values()) abort.abort();
+    await Promise.allSettled(this.coreStarts.keys());
+  }
+
   async shutdown(): Promise<void> {
+    this.closing = true;
+    this.startGeneration++;
     this.supervisor.stop();
+    if (getConfig().localModels.managed.engine === "atomic-core") this.backendAbort?.abort();
+    await this.cancelCoreStarts();
+    if (getConfig().localModels.managed.engine === "atomic-core") await this.backendPullInFlight;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     // The workers are on their own: quitting must not stop a download.
@@ -409,13 +433,13 @@ export class LocalModelsOrchestrator {
           cfg.localModels.mode === "managed" &&
           cfg.localModels.managed.modelId === def.id,
       }));
-      const ver = readBackendVersion(dataDir);
+      const ver = readBackendVersion(dataDir, getConfig().localModels.managed.engine);
       let updateAvailable: boolean | null = null;
       let latestTag: string | null = null;
       try {
         // An update shown here is one the next start asks for too: it
         // drops the record a start would otherwise trust for hours.
-        const u = await checkForBackendUpdateForPanel(dataDir);
+        const u = await checkForBackendUpdateForPanel(dataDir, getConfig().localModels.managed.engine);
         updateAvailable = u.updateAvailable;
         latestTag = u.latestTag;
       } catch {
@@ -454,7 +478,7 @@ export class LocalModelsOrchestrator {
           currentTag: ver?.tag ?? null,
           latestTag,
           updateAvailable,
-          autoUpdate: cfg.localModels.managed.autoUpdate,
+          autoUpdate: cfg.localModels.managed.engine === "atomic-core" ? false : cfg.localModels.managed.autoUpdate,
         },
         daemon: {
           running: daemon.running,
@@ -520,13 +544,13 @@ export class LocalModelsOrchestrator {
       return;
     }
 
-    if (mode !== "mmproj-only" && !isBackendDownloaded(dataDir)) {
+    if (mode !== "mmproj-only" && !isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: backend missing — downloading llama.cpp first…",
       });
       await this.pullBackend();
-      if (!isBackendDownloaded(dataDir)) return;
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
     }
 
     try {
@@ -1305,13 +1329,15 @@ export class LocalModelsOrchestrator {
   }
 
   private async runBackendPull(): Promise<void> {
+    const controller = new AbortController();
+    this.backendAbort = controller;
     const dataDir = getConfig().paths.localModelsDataDir;
     this.bus.emit({
       type: "local_models_pull_started",
       pull: {
         kind: "backend",
         modelId: "_backend",
-        label: "llama.cpp backend",
+        label: getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Core engine" : "llama.cpp backend",
         percent: 0,
         transferredBytes: 0,
         totalBytes: 0,
@@ -1321,6 +1347,8 @@ export class LocalModelsOrchestrator {
     try {
       let lastProgress = { percent: 0, transferred: 0, total: 0 };
       await downloadBackend(dataDir, {
+        engine: getConfig().localModels.managed.engine,
+        signal: controller.signal,
         onProgress: (percent, transferred, total) => {
           lastProgress = { percent, transferred, total };
           this.bus.emit({
@@ -1498,7 +1526,24 @@ export class LocalModelsOrchestrator {
    * "hand-edit config.json" — the CLI equivalent takes the whole file.
    * Takes effect on the next start; nothing in flight is cancelled.
    */
+  async chooseEngine(engine: "atomic-core" | "llama-server"): Promise<void> {
+    this.startGeneration++;
+    const cfg = getConfig();
+    try {
+      await selectManagedEngine(cfg.paths.localModelsDataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
+        () => persistUserLocalModelsConfig({ managed: { engine } }));
+      this.bus.emit({ type: "runtime_info", line: `Local engine: ${engine}. Press B in Models to install it, then start your model.` });
+      await this.refresh();
+    } catch (err) {
+      this.bus.emit({ type: "runtime_info", line: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   async toggleBackendAutoUpdate(): Promise<void> {
+    if (getConfig().localModels.managed.engine === "atomic-core") {
+      this.bus.emit({ type: "runtime_info", line: "Atomic Core checks for updates in the model panel. Press B to install; running models must be stopped first." });
+      return;
+    }
     const next = !getConfig().localModels.managed.autoUpdate;
     persistUserLocalModelsConfig({ managed: { autoUpdate: next } });
     resetConfigCache();
@@ -1515,9 +1560,9 @@ export class LocalModelsOrchestrator {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     let ids: string[] = [];
-    if (isBackendDownloaded(dataDir)) {
+    if (isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName);
+      const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
       ids = (await listVulkanDevices(binPath)).map((d) => d.id);
     }
     const order = ["auto", ...ids, "cpu"];
@@ -1560,9 +1605,9 @@ export class LocalModelsOrchestrator {
     if (configuredDevice === "cpu") return null;
     // Preferred source: Vulkan devices reported by the backend
     // (covers NVIDIA / AMD / Intel). Requires the binary on disk.
-    if (this.cachedDevices === null && isBackendDownloaded(dataDir)) {
+    if (this.cachedDevices === null && isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName);
+      const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
       this.cachedDevices = await listVulkanDevices(binPath);
     }
     const budget = resolveGpuBudgetGb({
@@ -1612,6 +1657,8 @@ export class LocalModelsOrchestrator {
      */
     cpuFallbackAttempted?: boolean;
   }): Promise<boolean> {
+    const generation = this.startGeneration;
+    if (this.closing) return false;
     const cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
       this.bus.emit({
@@ -1631,13 +1678,13 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getLocalModelDef(mid);
     let justPulledBackend = false;
-    if (!isBackendDownloaded(dataDir)) {
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: backend missing — downloading…",
       });
       await this.pullBackend();
-      if (!isBackendDownloaded(dataDir)) return false;
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return false;
       justPulledBackend = true;
     }
     if (!isModelDownloaded(dataDir, def)) {
@@ -1684,7 +1731,7 @@ export class LocalModelsOrchestrator {
       const tensorSplit = cfg.localModels.managed.tensorSplit;
       const multiGpu = tensorSplit.length > 0;
       const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName);
+      const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
       const device = await resolveManagedDevice(
         binPath,
         cfg.localModels.managed.device,
@@ -1714,6 +1761,7 @@ export class LocalModelsOrchestrator {
         resolvedLlm,
         resolveRunMode(resolvedLlm, { managedModelId: mid }),
       );
+      if (this.closing || generation !== this.startGeneration) return false;
       const clearance = this.portClearanceDeps();
       const chatClear = await clearChatPort(cfg, mid, clearance);
       if (chatClear.adoptedPid !== null) {
@@ -1733,8 +1781,11 @@ export class LocalModelsOrchestrator {
         chatClear.port,
         clearance,
       );
-      const result = await startChatAndEmbeddingDaemons({
+      if (this.closing || generation !== this.startGeneration) return false;
+      const result = await this.trackCoreStart(signal => startChatAndEmbeddingDaemons({
         chat: {
+          engine: cfg.localModels.managed.engine,
+          signal,
           dataDir,
           modelId: mid,
           port: chatClear.port,
@@ -1748,9 +1799,9 @@ export class LocalModelsOrchestrator {
           ...(multiGpu ? { tensorSplit } : {}),
         },
         embedding: embClear.options
-          ? { ...embClear.options, ...(device ? { device } : {}) }
+          ? { ...embClear.options, signal, engine: cfg.localModels.managed.engine, ...(device ? { device } : {}) }
           : undefined,
-      });
+      }));
       this.daemonSupervised = true;
       this.supervisor.noteStarted();
       this.bus.emit({
@@ -1790,7 +1841,7 @@ export class LocalModelsOrchestrator {
       if (
         !opts?.cpuFallbackAttempted &&
         shouldFallBackToCpuBackend({
-          installedAsset: readBackendVersion(dataDir)?.asset,
+          installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
           configuredVariant: getConfiguredBackendVariant(),
           error: e,
         })
@@ -1849,7 +1900,7 @@ export class LocalModelsOrchestrator {
       pull: {
         kind: "backend",
         modelId: "_backend",
-        label: "llama.cpp backend",
+        label: getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Core engine" : "llama.cpp backend",
         percent: 0,
         transferredBytes: 0,
         totalBytes: 0,
@@ -1931,6 +1982,12 @@ export class LocalModelsOrchestrator {
   }
 
   async stopDaemon(opts?: { silent?: boolean }): Promise<void> {
+    this.startGeneration++;
+    if (getConfig().localModels.managed.engine === "atomic-core") {
+      this.backendAbort?.abort();
+      await this.backendPullInFlight;
+    }
+    await this.cancelCoreStarts();
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "stopping" });
@@ -2181,6 +2238,8 @@ export class LocalModelsOrchestrator {
   private async ensureEmbeddingPaired(opts?: {
     hotSwap?: boolean;
   }): Promise<void> {
+    const generation = this.startGeneration;
+    if (this.closing) return;
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
 
@@ -2250,7 +2309,8 @@ export class LocalModelsOrchestrator {
     }
 
     try {
-      const { pid } = await startEmbeddingDaemon(desired);
+      if (this.closing || generation !== this.startGeneration) return;
+      const { pid } = await this.trackCoreStart(signal => startEmbeddingDaemon({ ...desired, signal, engine: cfg.localModels.managed.engine }));
       persistMemoryEmbeddingsEnabled(true);
       this.bus.emit({
         type: "runtime_info",
@@ -2314,13 +2374,13 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getEmbeddingModelDef(id);
 
-    if (!isBackendDownloaded(dataDir)) {
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: backend missing — downloading llama.cpp first…",
       });
       await this.pullBackend();
-      if (!isBackendDownloaded(dataDir)) return;
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
     }
 
     try {
@@ -2588,6 +2648,7 @@ export class LocalModelsOrchestrator {
   ): Promise<boolean> {
     try {
       const result = await maybeAutoUpdateBackend(dataDir, {
+        engine: getConfig().localModels.managed.engine,
         enabled: getConfig().localModels.managed.autoUpdate,
         keepDaemonRunning: opts?.keepDaemonRunning,
         // A check from the last few hours stands, whichever process made
@@ -2603,7 +2664,7 @@ export class LocalModelsOrchestrator {
             pull: {
               kind: "backend",
               modelId: "_backend",
-              label: "llama.cpp backend",
+              label: getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Core engine" : "llama.cpp backend",
               percent: 0,
               transferredBytes: 0,
               totalBytes: 0,
@@ -2701,7 +2762,7 @@ export class LocalModelsOrchestrator {
     const mid = cfg.localModels.managed.modelId;
     if (!mid || !isKnownLocalModelId(mid)) return;
     const dataDir = cfg.paths.localModelsDataDir;
-    if (!isBackendDownloaded(dataDir)) return;
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
     const def = getLocalModelDef(mid);
     if (!isModelDownloaded(dataDir, def)) return;
     const running = await getDaemonStatus(
@@ -2842,7 +2903,7 @@ export class LocalModelsOrchestrator {
       (configured && isKnownLocalModelId(configured)
         ? configured
         : DEFAULT_LLAMACPP_MODEL_ID);
-    if (!isBackendDownloaded(dataDir)) {
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: downloading llama.cpp backend…",
