@@ -5,6 +5,7 @@ import {
   linkSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -25,7 +26,8 @@ import { resolveApiKeyFilePath } from "../backend-paths.js";
  * memory: the daemon outlives the process that started it and is reused
  * by every later one (the TUI after `models start`, a restarted TUI, the
  * sidecar), and each of them has to send the same key. Generated once,
- * then reused for as long as the file exists.
+ * then reused for as long as the file holds a usable key; a file that
+ * does not (empty, truncated, hand-edited) is replaced with a fresh one.
  *
  * It reaches the server through the `LLAMA_API_KEY` environment variable
  * of the spawned process (`--api-key`'s env binding), never argv: argv is
@@ -85,6 +87,11 @@ export function ensureManagedApiKey(dataDir: string): string | null {
   const existing = readManagedApiKey(dataDir);
   if (existing) return existing;
   const path = resolveApiKeyFilePath(dataDir);
+  if (existsSync(path)) {
+    // Present but not a key: give a racing writer the usual grace, then
+    // replace what is still unusable instead of launching keyless.
+    return readWrittenKey(dataDir) ?? replaceUnusableKey(dataDir);
+  }
   const key = randomBytes(32).toString("hex");
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -120,6 +127,39 @@ export function ensureManagedApiKey(dataDir: string): string | null {
   }
   restrictWindowsAcl(path);
   return readWrittenKey(dataDir);
+}
+
+/**
+ * Overwrite a key file that exists but holds no usable key (empty,
+ * whitespace, a value with commas, unreadable) with a fresh one. The new
+ * key is written to a private temp file and renamed over the old one, so
+ * a reader never sees a half-written file. What is on disk afterwards is
+ * the answer: a concurrent healer may have renamed its own key in last.
+ */
+function replaceUnusableKey(dataDir: string): string | null {
+  const path = resolveApiKeyFilePath(dataDir);
+  const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+  try {
+    writeFileSync(tmp, `${randomBytes(32).toString("hex")}\n`, {
+      encoding: "utf-8",
+      mode: SECRET_FILE_MODE,
+    });
+    renameSync(tmp, path);
+  } catch {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* never created */
+    }
+    return readManagedApiKey(dataDir);
+  }
+  try {
+    chmodSync(path, SECRET_FILE_MODE);
+  } catch {
+    /* best-effort on Windows */
+  }
+  restrictWindowsAcl(path);
+  return readManagedApiKey(dataDir);
 }
 
 /**

@@ -62,6 +62,51 @@ describe("managed llama-server api key (#582)", () => {
     expect(readManagedApiKey(dataDir)).toBeNull();
   });
 
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", "  \n\t\n"],
+    ["unusable (comma)", "a,b\n"],
+  ])("replaces an %s key file with a fresh key", (_label, contents) => {
+    const path = resolveApiKeyFilePath(dataDir);
+    writeFileSync(path, contents, "utf-8");
+    const key = ensureManagedApiKey(dataDir);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(readFileSync(path, "utf-8").trim()).toBe(key);
+    expect(readManagedApiKey(dataDir)).toBe(key);
+    expect(ensureManagedApiKey(dataDir)).toBe(key);
+    if (process.platform !== "win32") {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("config and daemon launch agree on the healed key", () => {
+    writeFileSync(resolveApiKeyFilePath(dataDir), "", "utf-8");
+    const configKey = resolveLocalLlamaApiKey({
+      envKey: undefined,
+      mode: "managed",
+      chatUrl: "http://127.0.0.1:19091",
+      managedPorts: [19091, 19092],
+      dataDir,
+    });
+    expect(configKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(resolveManagedServerApiKey(dataDir, null)).toBe(configKey);
+  });
+
+  it("leaves an unusable key file alone when the operator's env key is set", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    writeFileSync(path, "", "utf-8");
+    expect(
+      resolveLocalLlamaApiKey({
+        envKey: "operator-key",
+        mode: "managed",
+        chatUrl: "http://127.0.0.1:19091",
+        managedPorts: [19091, 19092],
+        dataDir,
+      }),
+    ).toBe("operator-key");
+    expect(readFileSync(path, "utf-8")).toBe("");
+  });
+
   it("the server key is the configured one, else the persisted one", () => {
     expect(resolveManagedServerApiKey(dataDir, "user-key")).toBe("user-key");
     expect(existsSync(resolveApiKeyFilePath(dataDir))).toBe(false);
