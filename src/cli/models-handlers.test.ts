@@ -104,6 +104,7 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(new Error("test stop"));
     await runLocalModelsStart({ interactive: true });
     expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.throughputProbe).toBe(false);
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.healthTimeoutMs).toBe(120_000);
     vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockClear();
     await runLocalModelsStart();
     expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.throughputProbe).toBeUndefined();

@@ -66,6 +66,8 @@ import {
 } from "./managed-api-key.js";
 
 export interface DaemonStartOptions {
+  /** Interactive callers allow cold GPU compilation while keeping selection available. */
+  healthTimeoutMs?: number;
   /** Cancel an owned launch while its model is loading. */
   signal?: AbortSignal;
   dataDir: string;
@@ -1043,7 +1045,7 @@ export async function startDaemon(
         child,
         port: opts.port,
         alias: model.id,
-        timeoutMs: 30_000,
+        timeoutMs: opts.healthTimeoutMs ?? 30_000,
         label: "llama-server",
         probeHealth: probeLlamaHealth,
         readLog: () => readFileSync(resolveLogFilePath(opts.dataDir), "utf-8"),
