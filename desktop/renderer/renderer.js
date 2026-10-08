@@ -15558,7 +15558,8 @@ async function selActivate(row) {
     if (!row.downloaded) { selPull(row.id); return; }
     // The popup stays open until main answers: a daemon that fails to
     // start has to be shown, and `models start` can take a while.
-    SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…'; render();
+    SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…';
+    closeSelector();
     const res = await swxRun(BSW.line, {backend:'local', model: row.id},
       () => SWXBR.selectLocalModel(row.id));
     if (res && res.superseded) return;
