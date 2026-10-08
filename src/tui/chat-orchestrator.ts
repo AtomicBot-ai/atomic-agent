@@ -315,6 +315,7 @@ export class ChatOrchestrator {
       onManagedDaemonRestarted: () => {
         void this.llmHealth.refreshModelLabel();
         void runtime.refreshLocalModelProfile?.();
+        void this.resumeModelQueue();
       },
       onManagedPortMoved: async (url) => {
         // Same three steps as saving a URL by hand: the provider's base
@@ -1376,6 +1377,17 @@ export class ChatOrchestrator {
     if (status?.message) this.notify(status.message);
   }
 
+  /** A failed load keeps the remaining backlog until a successful model start. */
+  private async resumeModelQueue(): Promise<void> {
+    if (!this.queue.length || this.currentController || this.quitting) return;
+    const sessionId = this.session?.id;
+    try { await this.localModels.waitForSwitch(new AbortController().signal); } catch { return; }
+    if (this.quitting || this.currentController || this.session?.id !== sessionId) return;
+    const next = this.queue.shift();
+    this.emitQueue();
+    if (next !== undefined) void this.runOneTurn(next, true);
+  }
+
   private readonly waitingModelMessages = new Map<string, string>();
 
   private async runOneTurn(text: string, fromQueue = false): Promise<void> {
@@ -1436,10 +1448,10 @@ export class ChatOrchestrator {
     let stopped = false;
     let dispatched = false;
     try {
-      if (waitingForModel) {
+      if (waitingForModel || fromQueue) {
         this.waitingModelMessages.set(turnSessionId, text);
         this.bus.emit({ type: "message_waiting_for_model", sessionId: turnSessionId, text });
-        this.notify("The model is switching, so the reply may take longer.");
+        if (waitingForModel) this.notify("The model is switching, so the reply may take longer.");
         await this.localModels.waitForSwitch(controller.signal);
         const readyGate = evaluateLocalTurnGate(
           (this.options.readGateFacts ?? readLocalTurnGateFacts)(), this.chatPull.current,
@@ -1499,7 +1511,7 @@ export class ChatOrchestrator {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       stopped = controller.signal.aborted;
-      if (waitingForModel && !dispatched && this.session?.id === turnSessionId) {
+      if (!dispatched && this.session?.id === turnSessionId) {
         this.bus.emit({ type: "turn_gate_blocked", text: stopped ? "Message cancelled." : msg });
       }
       if (stopped && !dispatched) return;
@@ -1520,6 +1532,12 @@ export class ChatOrchestrator {
         });
       }
       this.exitCode = 1;
+      if (!dispatched) {
+        if (this.session?.id === turnSessionId && this.queue.length) {
+          this.notify("The remaining messages are still queued. Choose a ready model to continue.");
+        }
+        return;
+      }
     } finally {
       this.waitingModelMessages.delete(turnSessionId);
       if (this.currentController === controller) this.currentController = null;
