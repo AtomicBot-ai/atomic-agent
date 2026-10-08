@@ -11,6 +11,8 @@ import type { ComposerBackendKind } from "./composer-switch-state.js";
  * `ProvidersOrchestrator`.
  */
 export type ComposerSwitchIntent =
+  | { readonly kind: "localEngine"; readonly engine: "atomic-core" | "llama-server"; readonly leg?: "orchestrator" | "worker" }
+  | { readonly kind: "fusionModel"; readonly leg: "orchestrator" | "worker"; readonly modelId: string }
   | { readonly kind: "backend"; readonly backend: ComposerBackendKind }
   | { readonly kind: "llmRow"; readonly row: LlmPanelRow }
   | { readonly kind: "addProvider" }

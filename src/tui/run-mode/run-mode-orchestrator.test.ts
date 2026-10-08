@@ -260,6 +260,7 @@ describe("RunModeOrchestrator.setMode", () => {
           id: "keyless",
           kind: "openai-compatible",
           baseUrl: "https://a.invalid",
+          apiKeyEnvVar: "ATOMIC_TEST_MISSING_KEY",
         },
         {
           id: "openrouter",

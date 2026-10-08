@@ -67,6 +67,8 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
     ...llm.runMode?.fusion,
     ...args.fusion,
   };
+  if (args.fusion?.orchestratorProvider && args.fusion.orchestratorProvider !== llm.runMode?.fusion?.orchestratorProvider && args.fusion.orchestratorModel === undefined) delete fusion.orchestratorModel;
+  if (args.fusion?.workerProvider && args.fusion.workerProvider !== llm.runMode?.fusion?.workerProvider && args.fusion.workerModel === undefined) delete fusion.workerModel;
   const next: UserConfigFile = {
     ...file,
     llm: {

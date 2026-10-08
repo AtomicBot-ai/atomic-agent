@@ -186,7 +186,7 @@ describe("llm-panel selectors", () => {
     };
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "openai/gpt-4o-mini ⇄ qwen-3.5-4b",
-      provider: "openrouter",
+      provider: "openrouter ⇄ Local llama",
     });
   });
 
@@ -247,7 +247,7 @@ describe("llm-panel selectors", () => {
     };
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "openai/gpt-4o-mini ⇄ qwen-3.5-4b",
-      provider: "openrouter",
+      provider: "openrouter ⇄ Local llama",
     });
   });
 
@@ -269,7 +269,7 @@ describe("llm-panel selectors", () => {
     // backend word `local` already names the runtime.
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "qwen-3.5-4b",
-      provider: null,
+      provider: "Local llama",
     });
   });
 
@@ -286,7 +286,7 @@ describe("llm-panel selectors", () => {
     };
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "something-served.gguf",
-      provider: null,
+      provider: "Local llama",
     });
   });
 
@@ -494,7 +494,7 @@ describe("local model rows during a pull", () => {
     };
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "qwen-3.5-4b ⇄ openai/gpt-4o-mini",
-      provider: "local-llama",
+      provider: "Local llama ⇄ openrouter",
     });
   });
 });

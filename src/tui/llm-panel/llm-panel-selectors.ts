@@ -230,7 +230,7 @@ export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
         "cloud");
     return {
       model: `${orchestrator} ⇄ ${worker}`,
-      provider: runMode.orchestratorProviderId ?? active?.id ?? null,
+      provider: `${orchestratorIsLocal ? (state.localModelsPanel.backend.engine === "atomic-core" ? "Atomic Chat" : "Local llama") : runMode.orchestratorProviderId ?? "Choose engine"} ⇄ ${workerIsLocal ? (state.localModelsPanel.backend.engine === "atomic-core" ? "Atomic Chat" : "Local llama") : runMode.workerProviderId ?? "Choose engine"}`,
     };
   }
   if (active && active.kind !== "llama-server") {
@@ -243,7 +243,7 @@ export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
     // while the daemon restarts) rather than a GGUF file name.
     return {
       model: state.localModelsPanel.activeModelId ?? state.llmHealth.model,
-      provider: null,
+      provider: (state.localModelsPanel.backend.engine === "atomic-core" ? "Atomic Chat" : "Local llama"),
     };
   }
   return {

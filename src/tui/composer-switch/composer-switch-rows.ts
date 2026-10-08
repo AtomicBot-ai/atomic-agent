@@ -1,3 +1,4 @@
+import { engineRows, fusionModelRows } from "./composer-engine-rows.js";
 export type {
   ComposerSwitchIntent,
   ComposerSwitchRow,
@@ -16,7 +17,6 @@ import {
 import type { TuiState } from "../tui-state.js";
 import { describeFusionBlocker } from "../run-mode/fusion-preflight.js";
 import { selectComposerBackend } from "./composer-backend-selectors.js";
-import { selectWorkerRows } from "./composer-switch-worker-rows.js";
 import { filterSwitchRows } from "./composer-switch-filter.js";
 import {
   COMPOSER_SWITCH_TITLES,
@@ -92,6 +92,8 @@ export function backendSwitchRow(
 }
 
 function providerRows(state: TuiState): readonly ComposerSwitchRow[] {
+  if (selectComposerBackend(state) === "local") return engineRows(state);
+  if (selectComposerBackend(state) === "fusion") return engineRows(state, "orchestrator");
   const runMode = state.providersPanel.runMode;
   const fusion = runMode?.effective === "fusion";
   const rows = configuredCloudProviders(state).map((provider) => ({
@@ -150,9 +152,10 @@ function providerRows(state: TuiState): readonly ComposerSwitchRow[] {
  */
 function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
   const backend = selectComposerBackend(state);
+  if (backend === "fusion") return fusionModelRows(state, "orchestrator");
   // Under fusion the model control addresses the orchestrator leg — the
   // active cloud provider — so its rows are the cloud rows.
-  if (backend === "cloud" || backend === "fusion") {
+  if (backend === "cloud") {
     const section = selectCloudModelSection(state);
     const provider = section.provider;
     if (!provider) return [];
@@ -213,8 +216,9 @@ export function selectComposerSwitchRows(
       ? backendRows(state)
       : kind === "provider"
         ? providerRows(state)
+        : kind === "workerProvider" ? engineRows(state, "worker")
         : kind === "workers"
-          ? selectWorkerRows(state)
+          ? fusionModelRows(state, "worker")
           : modelRows(state);
   const open = state.composerSwitch;
   // The typed filter is applied here, not in the renderer: cursor
@@ -255,6 +259,10 @@ export function initialComposerSwitchCursor(
   return at < 0 ? 0 : at;
 }
 
-export function selectComposerSwitchTitle(kind: ComposerSwitchKind): string {
+export function selectComposerSwitchTitle(kind: ComposerSwitchKind, state?: TuiState): string {
+  const backend = state ? selectComposerBackend(state) : null;
+  if (kind === "provider" && backend === "local") return "Inference engine";
+  if (kind === "provider" && backend === "fusion") return "Orchestrator inference engine";
+  if (kind === "model" && backend === "fusion") return "Orchestrator model";
   return COMPOSER_SWITCH_TITLES[kind];
 }

@@ -475,6 +475,7 @@ export class LocalModelsOrchestrator {
         type: "local_models_snapshot_loaded",
         rows,
         backend: {
+          engine: cfg.localModels.managed.engine ?? "llama-server",
           currentTag: ver?.tag ?? null,
           latestTag,
           updateAvailable,
@@ -1416,12 +1417,15 @@ export class LocalModelsOrchestrator {
    * this one live".
    */
   async setActive(id: LocalModelId): Promise<void> {
+    const generation = ++this.startGeneration;
+    const stillWanted = () => !this.closing && generation === this.startGeneration;
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: id } });
     resetConfigCache();
     this.hooks?.onManagedModelSelected?.(id);
     await this.refresh();
+    if (!stillWanted()) return;
     if (!isModelDownloaded(dataDir, getLocalModelDef(id))) {
       this.bus.emit({
         type: "runtime_info",
@@ -1434,6 +1438,7 @@ export class LocalModelsOrchestrator {
       dataDir,
       cfg.localModels.managed.port,
     );
+    if (!stillWanted()) return;
     if (running.running) {
       this.bus.emit({
         type: "runtime_info",
@@ -1441,6 +1446,7 @@ export class LocalModelsOrchestrator {
       });
       await this.stopProcessesForRestart({ silent: true });
     }
+    if (!stillWanted()) return;
     if (await this.startDaemon()) {
       // Tray refresh (optimistic id + `/props` re-read) is now fired by
       // `startDaemon` on success, so no explicit hook call is needed here.
@@ -1526,16 +1532,25 @@ export class LocalModelsOrchestrator {
    * "hand-edit config.json" — the CLI equivalent takes the whole file.
    * Takes effect on the next start; nothing in flight is cancelled.
    */
-  async chooseEngine(engine: "atomic-core" | "llama-server"): Promise<void> {
+  async chooseEngine(engine: "atomic-core" | "llama-server"): Promise<boolean> {
     this.startGeneration++;
     const cfg = getConfig();
+    if ((cfg.localModels.managed.engine ?? "llama-server") === engine) {
+      this.bus.emit({ type: "composer_notice", text: `${engine === "atomic-core" ? "Atomic Chat" : "Local llama"} is already selected.` });
+      return true;
+    }
     try {
       await selectManagedEngine(cfg.paths.localModelsDataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
         () => persistUserLocalModelsConfig({ managed: { engine } }));
       this.bus.emit({ type: "runtime_info", line: `Local engine: ${engine}. Press B in Models to install it, then start your model.` });
+      this.bus.emit({ type: "composer_notice", text: `Inference engine: ${engine === "atomic-core" ? "Atomic Chat" : "Local llama"}.` });
       await this.refresh();
+      return true;
     } catch (err) {
-      this.bus.emit({ type: "runtime_info", line: err instanceof Error ? err.message : String(err) });
+      const text = err instanceof Error ? err.message : String(err);
+      this.bus.emit({ type: "runtime_info", line: text });
+      this.bus.emit({ type: "composer_notice", text });
+      return false;
     }
   }
 
