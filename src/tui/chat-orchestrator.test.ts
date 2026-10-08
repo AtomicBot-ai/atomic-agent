@@ -620,6 +620,19 @@ describe("messages accepted during model switching", () => {
     await vi.waitFor(()=>expect(actions).toContainEqual({type:"turn_gate_blocked",text:"Message cancelled."}));
     expect(run).not.toHaveBeenCalled();
   });
+  it("retains the backlog after startup failure and resumes only after readiness", async () => {
+    const {chat,run,actions,release} = waitingChat();
+    vi.spyOn(chat.localModels,"waitForSwitch").mockRejectedValue(new Error("model failed"));
+    chat.sendMessage("first"); chat.sendMessage("second"); release();
+    await vi.waitFor(()=>expect(actions.some(a=>a.type==="system_message" && a.text.includes("still queued"))).toBe(true));
+    expect(run).not.toHaveBeenCalled();
+    expect(queueSnapshots(actions).at(-1)).toEqual(["second"]);
+    vi.spyOn(chat.localModels,"isSwitching","get").mockReturnValue(false);
+    vi.spyOn(chat.localModels,"waitForSwitch").mockResolvedValue();
+    await (chat as unknown as {resumeModelQueue:()=>Promise<void>}).resumeModelQueue();
+    await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+    expect(run).toHaveBeenCalledWith("second", expect.objectContaining({origin:"tui"}));
+  });
   it("keeps the original session when another chat opens before readiness", async () => {
     const {chat,runtime,release} = waitingChat();
     runtime.approvals.denyPendingForSession = vi.fn(()=>0);
