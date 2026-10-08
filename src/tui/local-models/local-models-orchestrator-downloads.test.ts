@@ -299,6 +299,24 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
     ).toBe(true);
   });
 
+  it("a completed download never replaces a newer selected model", async () => {
+    const gate = gatedBody();
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("127.0.0.1")) return new Response("{}", { status: 503 });
+      return new Response(gate.body, { status: 200, headers: { "content-length": "2" } });
+    }) as typeof fetch;
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const chosen = getLocalModelDef("qwen-3.5-9b");
+    mkdirSync(join(dataDir, "models", chosen.id), { recursive: true });
+    writeFileSync(resolveModelFilePath(dataDir, chosen.id, chosen.filename), "stub");
+    const pull = orchestrator.pullModel("qwen-3.5-4b", "gguf-only");
+    await waitFor(() => startedPulls(actions).length === 1);
+    await orchestrator.setActive(chosen.id);
+    gate.release(); await pull;
+    expect(getConfig().localModels.managed.modelId).toBe(chosen.id);
+    expect(startDaemon).toHaveBeenCalledTimes(1);
+  });
+
   it("a second pull detaches the watch; the first worker keeps going and its file still lands", async () => {
     const gate = gatedBody();
     let fetchCount = 0;

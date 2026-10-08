@@ -1,3 +1,4 @@
+import { ModelOperationQueue } from "./model-operation-queue.js";
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
@@ -256,13 +257,18 @@ export class LocalModelsOrchestrator {
    * `llama-server` process nothing can stop afterwards.
    */
   private restartInFlight: Promise<boolean> | null = null;
+  private readonly operations = new ModelOperationQueue();
+  private selectionRevision = 0;
+  private closing = false;
+  private selectedRequest: { id: LocalModelId; revision: number; done: Promise<void> } | null = null;
+  get isSwitching(): boolean { return this.operations.switching; }
   /** Tells a wedged live daemon from a busy one (see `WedgeWatch`). */
   private readonly wedgeWatch = new WedgeWatch();
   /** Restarts a daemon this TUI owns when it dies or wedges (`autoRestart`). */
   private readonly supervisor = new DaemonSupervisor({
     enabled: () => {
       const cfg = getConfig();
-      return cfg.localModels.mode === "managed" && cfg.localModels.managed.autoRestart;
+      return !this.isSwitching && !this.closing && cfg.localModels.mode === "managed" && cfg.localModels.managed.autoRestart;
     },
     owns: () => this.daemonSupervised,
     pidAlive: async () => readRunningPid(getConfig().paths.localModelsDataDir) !== null,
@@ -354,6 +360,8 @@ export class LocalModelsOrchestrator {
   }
 
   async shutdown(): Promise<void> {
+    this.closing = true;
+    await this.operations.close();
     this.supervisor.stop();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
@@ -508,6 +516,7 @@ export class LocalModelsOrchestrator {
     mode: "with-mmproj" | "gguf-only" | "mmproj-only" = "with-mmproj",
     opts?: PullOptions,
   ): Promise<void> {
+    const selectionRevision = this.selectionRevision;
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
 
@@ -572,7 +581,7 @@ export class LocalModelsOrchestrator {
       }
 
       this.bus.emit({ type: "local_models_pull_finished", kind: "chat" });
-      await this.finishChatPull(def, mode, projectorError);
+      await this.finishChatPull(def, mode, projectorError, selectionRevision);
       // The record has served its purpose: the files are on disk and
       // the follow-up ran. Leaving it would make the next launch run
       // the follow-up again.
@@ -601,6 +610,21 @@ export class LocalModelsOrchestrator {
     def: LocalModelDef,
     mode: "with-mmproj" | "gguf-only" | "mmproj-only",
     projectorError: string | null = null,
+    selectionRevision = this.selectionRevision,
+  ): Promise<void> {
+    return this.operations.run(async () => {
+      if (selectionRevision !== this.selectionRevision) {
+        await this.refresh();
+        return;
+      }
+      await this.finishChatPullNow(def, mode, projectorError);
+    }, undefined, false);
+  }
+
+  private async finishChatPullNow(
+    def: LocalModelDef,
+    mode: "with-mmproj" | "gguf-only" | "mmproj-only",
+    projectorError: string | null,
   ): Promise<void> {
     if (mode === "mmproj-only") {
       await this.refresh();
@@ -722,7 +746,7 @@ export class LocalModelsOrchestrator {
     try {
       for (;;) {
         await new Promise((r) => setTimeout(r, pollMs));
-        if (detached) return { outcome: "detached", job: last };
+        if (detached || this.closing) return { outcome: "detached", job: last };
         this.armPendingNotify();
         let job = readDownloadJob(dataDir, jobId);
         if (!job) throw new Error("download record disappeared");
@@ -1173,7 +1197,12 @@ export class LocalModelsOrchestrator {
   }
 
   private async startChatDaemonAfterPull(def: LocalModelDef): Promise<boolean> {
+    return this.operations.run(() => this.startChatDaemonAfterPullNow(def), false, false);
+  }
+
+  private async startChatDaemonAfterPullNow(def: LocalModelDef): Promise<boolean> {
     const cfg = getConfig();
+    if (cfg.localModels.managed.modelId !== def.id) return false;
     const dataDir = cfg.paths.localModelsDataDir;
     const running = await getDaemonStatus(
       dataDir,
@@ -1194,6 +1223,12 @@ export class LocalModelsOrchestrator {
   }
 
   private async startEmbeddingDaemonAfterPull(
+    def: EmbeddingModelDef,
+  ): Promise<void> {
+    return this.operations.run(() => this.startEmbeddingDaemonAfterPullNow(def), undefined, false);
+  }
+
+  private async startEmbeddingDaemonAfterPullNow(
     def: EmbeddingModelDef,
   ): Promise<void> {
     const cfg = getConfig();
@@ -1388,24 +1423,39 @@ export class LocalModelsOrchestrator {
    * this one live".
    */
   async setActive(id: LocalModelId): Promise<void> {
+    if (this.closing) return;
+    if (this.selectedRequest?.id === id && this.selectedRequest.revision === this.operations.revision) return this.selectedRequest.done;
+    this.selectionRevision++;
+    this.bus.emit({ type: "composer_notice", text: `Loading ${getLocalModelDef(id).name}… You can choose another model while it starts.` });
+    const done = this.operations.run(signal => this.applySelectedModel(id, () => !signal.aborted), undefined);
+    const request = { id, revision: this.operations.revision, done };
+    this.selectedRequest = request;
+    try { await done; } finally { if (this.selectedRequest === request) this.selectedRequest = null; }
+  }
+
+  private async applySelectedModel(id: LocalModelId, current: () => boolean): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: id } });
     resetConfigCache();
     this.hooks?.onManagedModelSelected?.(id);
     await this.refresh();
+    if (!current()) return;
     if (!isModelDownloaded(dataDir, getLocalModelDef(id))) {
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: model ${id} not downloaded — downloading now…`,
       });
-      await this.pullModel(id);
+      // The detached download must not hold the launch queue. Completion
+      // activates it only if no newer model was selected in the meantime.
+      void this.pullModel(id).catch(() => {});
       return;
     }
     const running = await getDaemonStatus(
       dataDir,
       cfg.localModels.managed.port,
     );
+    if (!current()) return;
     if (running.running) {
       this.bus.emit({
         type: "runtime_info",
@@ -1413,13 +1463,13 @@ export class LocalModelsOrchestrator {
       });
       await this.stopProcessesForRestart({ silent: true });
     }
-    if (await this.startDaemon()) {
+    if (!current()) return;
+    if (await this.startDaemon() && current()) {
       // Tray refresh (optimistic id + `/props` re-read) is now fired by
       // `startDaemon` on success, so no explicit hook call is needed here.
       // This branch is the operator choosing a model and it coming up —
       // the local counterpart of a verified cloud key.
       this.hooks?.onManagedModelActivated?.();
-      this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
   }
 
@@ -1604,7 +1654,12 @@ export class LocalModelsOrchestrator {
    * anonymous budget, and two passes racing on the same
    * `backend.next` staging dir.
    */
-  async startDaemon(opts?: {
+  async startDaemon(opts?: { backendAlreadyChecked?: boolean; cpuFallbackAttempted?: boolean }): Promise<boolean> {
+    return this.operations.run(signal => this.startDaemonNow({ ...opts, signal }), false);
+  }
+
+  private async startDaemonNow(opts?: {
+    signal?: AbortSignal;
     backendAlreadyChecked?: boolean;
     /**
      * Set by the retry the Windows CPU-backend fallback issues, so a
@@ -1652,9 +1707,10 @@ export class LocalModelsOrchestrator {
       });
       return false;
     }
+    if (opts?.signal?.aborted) return false;
     if (!justPulledBackend && !opts?.backendAlreadyChecked) {
       const updated = await this.applyBackendAutoUpdate(dataDir);
-      if (!updated) return false;
+      if (!updated || opts?.signal?.aborted) return false;
     }
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "starting" });
     this.bus.emit({
@@ -1715,7 +1771,9 @@ export class LocalModelsOrchestrator {
         resolveRunMode(resolvedLlm, { managedModelId: mid }),
       );
       const clearance = this.portClearanceDeps();
+      opts?.signal?.throwIfAborted();
       const chatClear = await clearChatPort(cfg, mid, clearance);
+      opts?.signal?.throwIfAborted();
       if (chatClear.adoptedPid !== null) {
         this.daemonSupervised = true;
         this.bus.emit({
@@ -1723,6 +1781,7 @@ export class LocalModelsOrchestrator {
           line: `local-llm: ready — pid ${chatClear.adoptedPid} on http://127.0.0.1:${chatClear.port}`,
         });
         await this.ensureEmbeddingPaired();
+        opts?.signal?.throwIfAborted();
         this.hooks?.onManagedModelSelected?.(mid);
         this.hooks?.onManagedDaemonRestarted?.();
         return true;
@@ -1735,6 +1794,8 @@ export class LocalModelsOrchestrator {
       );
       const result = await startChatAndEmbeddingDaemons({
         chat: {
+          signal: opts?.signal,
+          throughputProbe: false,
           dataDir,
           modelId: mid,
           port: chatClear.port,
@@ -1752,6 +1813,7 @@ export class LocalModelsOrchestrator {
           : undefined,
       });
       this.daemonSupervised = true;
+      opts?.signal?.throwIfAborted();
       this.supervisor.noteStarted();
       this.bus.emit({
         type: "runtime_info",
@@ -1786,6 +1848,12 @@ export class LocalModelsOrchestrator {
       this.hooks?.onManagedDaemonRestarted?.();
       return true;
     } catch (e) {
+      if (opts?.signal?.aborted) {
+        // A paired embedding start may be cancelled after chat is healthy.
+        // The next selection/stop owns cleanup; retain shutdown ownership.
+        if (readRunningPid(dataDir) !== null) this.daemonSupervised = true;
+        return false;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       if (
         !opts?.cpuFallbackAttempted &&
@@ -1795,7 +1863,7 @@ export class LocalModelsOrchestrator {
           error: e,
         })
       ) {
-        return await this.fallBackToCpuBackendAndRetry(dataDir, msg);
+        return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal);
       }
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
       this.bus.emit({
@@ -1821,6 +1889,7 @@ export class LocalModelsOrchestrator {
   private async fallBackToCpuBackendAndRetry(
     dataDir: string,
     failureMsg: string,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     this.bus.emit({
       type: "runtime_info",
@@ -1892,7 +1961,8 @@ export class LocalModelsOrchestrator {
       type: "runtime_info",
       line: "local-llm: CPU build installed — retrying start…",
     });
-    return await this.startDaemon({
+    return await this.startDaemonNow({
+      signal,
       backendAlreadyChecked: true,
       cpuFallbackAttempted: true,
     });
@@ -1931,6 +2001,10 @@ export class LocalModelsOrchestrator {
   }
 
   async stopDaemon(opts?: { silent?: boolean }): Promise<void> {
+    return this.operations.run(() => this.stopDaemonNow(opts), undefined);
+  }
+
+  private async stopDaemonNow(opts?: { silent?: boolean }): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "stopping" });
@@ -1992,12 +2066,12 @@ export class LocalModelsOrchestrator {
    */
   private restartOwnedDaemon(): Promise<boolean> {
     if (this.restartInFlight) return this.restartInFlight;
-    const inFlight = (async () => {
+    const inFlight = this.operations.run(async () => {
       const stopped = await this.stopChatDaemonOnly({
         stoppedLine: "local-llm: chat daemon stopped — bringing it back up…",
       });
       return stopped ? await this.startDaemon() : false;
-    })().finally(() => {
+    }, false).finally(() => {
       this.restartInFlight = null;
     });
     this.restartInFlight = inFlight;
@@ -2012,7 +2086,7 @@ export class LocalModelsOrchestrator {
       });
       return this.restartInFlight;
     }
-    const inFlight = restartLocalDaemon({
+    const inFlight = this.operations.run(() => restartLocalDaemon({
       emit: (action) => this.bus.emit(action),
       stopChatDaemonOnly: () =>
         this.stopChatDaemonOnly({
@@ -2022,7 +2096,7 @@ export class LocalModelsOrchestrator {
           stoppedLine: "local-llm: chat daemon stopped — bringing it back up…",
         }),
       startDaemon: () => this.startDaemon(),
-    }).finally(() => {
+    }), false).finally(() => {
       this.restartInFlight = null;
     });
     this.restartInFlight = inFlight;
@@ -2051,6 +2125,10 @@ export class LocalModelsOrchestrator {
    * process still owns.
    */
   async stopChatDaemonOnly(opts?: { stoppedLine?: string }): Promise<boolean> {
+    return this.operations.run(() => this.stopChatDaemonOnlyNow(opts), false);
+  }
+
+  private async stopChatDaemonOnlyNow(opts?: { stoppedLine?: string }): Promise<boolean> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const status = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
@@ -2181,6 +2259,12 @@ export class LocalModelsOrchestrator {
   private async ensureEmbeddingPaired(opts?: {
     hotSwap?: boolean;
   }): Promise<void> {
+    return this.operations.run(() => this.ensureEmbeddingPairedNow(opts), undefined, false);
+  }
+
+  private async ensureEmbeddingPairedNow(opts?: {
+    hotSwap?: boolean;
+  }): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
 
@@ -2250,7 +2334,8 @@ export class LocalModelsOrchestrator {
     }
 
     try {
-      const { pid } = await startEmbeddingDaemon(desired);
+      const { pid } = await startEmbeddingDaemon({ ...desired, signal: this.operations.signal });
+      this.operations.signal?.throwIfAborted();
       persistMemoryEmbeddingsEnabled(true);
       this.bus.emit({
         type: "runtime_info",
@@ -2370,6 +2455,10 @@ export class LocalModelsOrchestrator {
    * success.
    */
   async setActiveEmbedding(id: EmbeddingModelId): Promise<void> {
+    return this.operations.run(() => this.setActiveEmbeddingNow(id), undefined, false);
+  }
+
+  private async setActiveEmbeddingNow(id: EmbeddingModelId): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getEmbeddingModelDef(id);
@@ -2403,6 +2492,10 @@ export class LocalModelsOrchestrator {
    * `s` first so pairing can run.
    */
   async startEmbeddingPairing(): Promise<void> {
+    return this.operations.run(() => this.startEmbeddingPairingNow(), undefined, false);
+  }
+
+  private async startEmbeddingPairingNow(): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     if (!cfg.localModels.embeddings.modelId) {
@@ -2434,6 +2527,10 @@ export class LocalModelsOrchestrator {
   }
 
   async toggleEmbeddingEnabled(): Promise<void> {
+    return this.operations.run(() => this.toggleEmbeddingEnabledNow(), undefined, false);
+  }
+
+  private async toggleEmbeddingEnabledNow(): Promise<void> {
     const cfg = getConfig();
     const next = !cfg.localModels.embeddings.enabled;
     if (next) {
@@ -2463,6 +2560,10 @@ export class LocalModelsOrchestrator {
   }
 
   async disableEmbedding(): Promise<void> {
+    return this.operations.run(() => this.disableEmbeddingNow(), undefined, false);
+  }
+
+  private async disableEmbeddingNow(): Promise<void> {
     const cfg = getConfig();
     const wasEnabled = cfg.localModels.embeddings.enabled;
     const dataDir = cfg.paths.localModelsDataDir;
@@ -2596,7 +2697,7 @@ export class LocalModelsOrchestrator {
         // The zip is small (27-39 MB) but the link may not be. Without a
         // deadline a stalled-open connection pins the download for the
         // life of the process; the next start retries from scratch.
-        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+        signal: AbortSignal.any([AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS), ...(this.operations.signal ? [this.operations.signal] : [])]),
         onWillDownload: () => {
           this.bus.emit({
             type: "local_models_pull_started",
@@ -2621,6 +2722,7 @@ export class LocalModelsOrchestrator {
           });
         },
       });
+      if (this.operations.signal?.aborted) return false;
       if (result.action === "updated") {
         this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
         this.bus.emit({
@@ -2660,6 +2762,7 @@ export class LocalModelsOrchestrator {
       }
       return true;
     } catch (e) {
+      if (this.operations.signal?.aborted) return false;
       const msg = e instanceof Error ? e.message : String(e);
       this.bus.emit({
         type: "local_models_pull_failed",
@@ -2690,6 +2793,10 @@ export class LocalModelsOrchestrator {
    * the same reason.
    */
   async autoStartIfReady(): Promise<void> {
+    return this.operations.run(() => this.autoStartIfReadyNow(), undefined);
+  }
+
+  private async autoStartIfReadyNow(): Promise<void> {
     const cfg = getConfig();
     if (
       cfg.llm?.activeTextProvider &&
@@ -2708,6 +2815,7 @@ export class LocalModelsOrchestrator {
       dataDir,
       cfg.localModels.managed.port,
     );
+    if (this.operations.signal?.aborted) return;
     if (running.running && !(await this.servesConfiguredModel(mid))) {
       // Ours by pid, but it serves another model (the config moved on
       // while it ran). Adopting it would answer every turn with the
@@ -2722,6 +2830,7 @@ export class LocalModelsOrchestrator {
       this.scheduleBackendAutoUpdate(dataDir);
       return;
     }
+    if (this.operations.signal?.aborted) return;
     if (running.running) {
       // Already started by a previous TUI session; adopt it.
       this.daemonSupervised = true;
@@ -2819,11 +2928,9 @@ export class LocalModelsOrchestrator {
    * started is not pulled out from under the user mid-turn.
    */
   private scheduleBackendAutoUpdate(dataDir: string): void {
-    void this.applyBackendAutoUpdate(dataDir, {
+    this.operations.defer(() => this.applyBackendAutoUpdate(dataDir, {
       keepDaemonRunning: true,
-    }).catch(() => {
-      /* applyBackendAutoUpdate already reports failures on the bus */
-    });
+    }));
   }
 
   /**

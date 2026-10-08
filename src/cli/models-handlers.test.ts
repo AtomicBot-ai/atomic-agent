@@ -97,6 +97,17 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
+
+  it("bypasses the throughput benchmark only for an interactive start", async () => {
+    prepareManagedWindowsInstall();
+    // A failure after receipt is enough to inspect launch policy without a daemon.
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(new Error("test stop"));
+    await runLocalModelsStart({ interactive: true });
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.throughputProbe).toBe(false);
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockClear();
+    await runLocalModelsStart();
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.throughputProbe).toBeUndefined();
+  });
   it("retries once on the CPU device and persists the variant", async () => {
     const dataDir = prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons)

@@ -1384,10 +1384,10 @@ export class ChatOrchestrator {
     // behind a running pull is re-checked when it actually runs. With a
     // fallback chain of >1 link the turn still runs — failing over is
     // exactly what the chain is for — and the gate only leaves a notice.
-    const gate = evaluateLocalTurnGate(
-      (this.options.readGateFacts ?? readLocalTurnGateFacts)(),
-      this.chatPull.current,
-    );
+    const gateFacts = (this.options.readGateFacts ?? readLocalTurnGateFacts)();
+    const gate = gateFacts.activeProviderIsLocal && this.localModels.isSwitching
+      ? { kind: "block" as const, text: "The selected local model is still loading. You can keep typing or choose another model." }
+      : evaluateLocalTurnGate(gateFacts, this.chatPull.current);
     if (gate.kind === "block") {
       if (fromQueue) {
         // A drained queue message has no editor to go back to (the

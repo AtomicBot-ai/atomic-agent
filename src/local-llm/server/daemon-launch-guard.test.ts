@@ -101,6 +101,18 @@ describe("fetchServedModelIds", () => {
 });
 
 describe("waitForOwnDaemon", () => {
+  it("cancels a superseded loading wait without waiting for the health deadline", async () => {
+    const controller = new AbortController();
+    const child = fakeChild();
+    let probes = 0;
+    await expect(waitForOwnDaemon(opts({
+      child, port: await deadPort(), signal: controller.signal,
+      probeHealth: async () => { probes++; controller.abort(); return "loading"; },
+    }))).rejects.toMatchObject({ name: "AbortError" });
+    expect(probes).toBe(1);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
   it("ends the wait the moment the child exits on a bind failure — as PortTakenError", async () => {
     const child = fakeChild();
     const port = await llamaLike(["qwen-3.5-4b"]);

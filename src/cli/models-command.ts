@@ -71,7 +71,7 @@ const HELP =
     "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
     "  atomic-agent models use-embedding nomic-embed-text-v1.5",
     "  atomic-agent models update",
-    "  atomic-agent models start",
+    "  atomic-agent models start [--interactive]",
     "  atomic-agent models status",
   ].join("\n") + "\n";
 
@@ -99,7 +99,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "status":
         return runLocalModelsStatus();
       case "start":
-        return runLocalModelsStart();
+        return runLocalModelsStart({ interactive: args.includes("--interactive") });
       case "stop":
         return runLocalModelsStop();
       case "update":
