@@ -108,3 +108,17 @@ test('Stop while the engine choice saves its Fusion pin prevents the subsequent 
     assert.equal(f.up, false);
   });
 });
+
+test('Stop during a cloud model change prevents the local worker from restarting', { timeout: 5000 }, async () => {
+  const f = fixture();
+  await f.run(async () => {
+    const pick = selectFusionModel('orchestrator', 'new-cloud-model');
+    await f.entered.promise;
+    try { await stopDaemonNow(); } finally { f.resume.resolve(); }
+    const result = await pick;
+    assert.equal(result.daemon, 'superseded');
+    assert.equal(result.restart, false);
+    assert.equal(f.calls.includes('models start'), false);
+    assert.equal(f.up, false);
+  });
+});

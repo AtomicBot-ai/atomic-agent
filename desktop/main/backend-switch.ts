@@ -1165,7 +1165,7 @@ export async function selectFusionModel(leg: "orchestrator" | "worker", modelId:
     return { write: true, before: now, after: resolveRunMode(cfg), leg: now.orchestratorProviderId ?? undefined };
   });
   if (!stillWanted()) return superseded;
-  const settled = await afterRunModeWrite(changed, { daemonByCaller: local });
+  const settled = await afterRunModeWrite(changed, { daemonByCaller: local, stillWanted });
   if (!stillWanted()) return superseded;
   if (!settled.ok || !local) return settled;
   return { ...settled, ...await bringUpLocalDaemon(localChanged), modelId, restart: !!settled.restart || localChanged };

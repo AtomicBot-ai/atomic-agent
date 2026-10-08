@@ -59,9 +59,15 @@ function composerSeatModelRows() {
 async function composerPickEngine(row) {
   const held = restartStopsTurn();
   if (held) { restartRefusedToast(held); return; }
+  if (row.active) {
+    SEL.kind = row.leg === 'worker' ? 'workers' : 'model'; SEL.filter = ''; SEL.cursor = 0;
+    render(); selEnterModelPane(); return;
+  }
   SEL.busy = true; SEL.err = null; render();
-  const result = await swxRun('Changing inference engine…', {}, () => SWXBR.composerEngine(row.id, row.leg));
-  SEL.busy = false;
+  let result;
+  try { result = await swxRun('Changing inference engine…', {}, () => SWXBR.composerEngine(row.id, row.leg)); }
+  catch (err) { result = {ok:false, error:err && err.message ? err.message : String(err)}; }
+  finally { SEL.busy = false; }
   if (!result || !result.ok) { SEL.err = result && (result.error || result.refusal) || 'Could not change the engine'; render(); return; }
   SEL.kind = row.leg === 'worker' ? 'workers' : 'model'; SEL.filter = ''; SEL.cursor = 0;
   await refreshLiveConfig(); render(); selEnterModelPane();
