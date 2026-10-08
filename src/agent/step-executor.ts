@@ -233,6 +233,7 @@ async function executeStepInner(
         ? executeCallsInOrder
         : executeBatch;
   const batchOutcome = await runBatch(inputs, deps.registry, {
+    ...(completion.servedModelMode ?? deps.modelMode ? { modelMode: (completion.servedModelMode ?? deps.modelMode)!.mode } : {}),
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,

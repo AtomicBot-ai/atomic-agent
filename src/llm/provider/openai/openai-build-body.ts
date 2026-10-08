@@ -7,6 +7,7 @@ import { buildNativeMessages } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 import { nameEscape } from "./openai-tool-call-adapter.js";
 import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
+import { assertContextCapacity } from "../context-capacity.js";
 
 /**
  * Fields the caller owns unconditionally. `extraBody` is merged *under*
@@ -215,10 +216,11 @@ export function buildOpenAiChatBody(
   if (options.anthropicCacheControl) {
     body.messages = applyAnthropicCacheControl(
       body.messages as ReadonlyArray<Record<string, unknown>>,
+      { includeLastMessage: filtered.modelMode?.mode === "cloud" && filtered.messages?.tail === "" && resolveMessageShape(filtered, options) === "native" },
     );
   }
   const modelParams = options.modelParams;
-  if (!extraBody && !modelParams) return body;
+  if (!extraBody && !modelParams) return checkedBody(body, request);
   // Vendor passthrough, then the model's own parameters. Merged last so
   // they can reach fields this builder does not model, then reserved
   // keys are restored on top.
@@ -231,5 +233,16 @@ export function buildOpenAiChatBody(
     if (key in body) merged[key] = body[key];
     else delete merged[key];
   }
-  return merged;
+  return checkedBody(merged, request);
+}
+
+function checkedBody(body: Record<string, unknown>, request: CompletionRequest): Record<string, unknown> {
+  if (request.modelMode?.mode === "cloud" && request.contextBudget) {
+    const cap = body.max_completion_tokens ?? body.max_tokens;
+    assertContextCapacity({ messages: body.messages, tools: body.tools, response_format: body.response_format }, {
+      window: request.contextBudget.window,
+      replyReserve: typeof cap === "number" && Number.isFinite(cap) ? cap : request.contextBudget.replyReserve,
+    });
+  }
+  return body;
 }

@@ -17,6 +17,10 @@ import type { TokenBudgetLimits } from "./token-budget.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
+  /** Estimated cost of the actual native tool schemas, cloud only. */
+  toolSchemaTokens?: number;
+  /** Stage 1 metadata only: does not change rendering or budgets yet. */
+  modelMode?: import("../llm/model-mode.js").ResolvedModelMode;
   session: SessionState;
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;
@@ -192,6 +196,10 @@ export interface BuiltPromptTruncationFlags {
 }
 
 export interface BuiltPrompt {
+  cloudContext?: import("../session/cloud-context.js").CloudContext;
+  contextBudget?: { window: number | null; replyReserve: number };
+  /** Diagnostic only; never included in the model-visible text. */
+  modelMode?: import("../llm/model-mode.js").ResolvedModelMode;
   /** Untrimmed active history, used only to plan compaction before packing loses content. */
   compactionBudget?: { cap: number; activeTokens: number; activePairs: number };
   text: string;

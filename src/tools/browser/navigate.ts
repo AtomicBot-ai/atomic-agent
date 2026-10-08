@@ -59,7 +59,7 @@ export function buildBrowserNavigateTool(
         ...(waitUntil !== undefined ? { waitUntil } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
-      const worldSnapshot = await captureWorldSnapshot(backend);
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud");
       return compressToolResult({
         tool: "browser.navigate",
         status: "ok",

@@ -22,6 +22,7 @@
 import vm from "node:vm";
 import { basename, extname, isAbsolute, relative, sep } from "node:path";
 import type { CompressedToolResult } from "../../../compressor/result-compressor.js";
+import { retainToolOutput } from "../../../compressor/result-compressor.js";
 
 export type ParseCheck =
   | { readonly kind: "ok" }
@@ -310,10 +311,10 @@ export function withParseWarning(
   warning: string | null,
 ): CompressedToolResult {
   if (warning === null || warning.length === 0) return result;
-  return {
+  return retainToolOutput(result, {
     ...result,
     summary:
       result.summary.length > 0 ? `${warning}\n${result.summary}` : warning,
     details: { ...result.details, parseWarning: warning },
-  };
+  }, { prefix: `${warning}\n` });
 }

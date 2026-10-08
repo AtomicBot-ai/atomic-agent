@@ -16,6 +16,8 @@ import { SteeringInbox } from "../steering-inbox.js";
 import { createRuntimeTraces } from "./runtime-traces.js";
 import { connectRuntimeProviders } from "./runtime-inference.js";
 import { createRuntimeTurnService, prepareRuntimeTurnState, type RuntimeTurnDependencies } from "./runtime-turn-service.js";
+import { resolveModelMode } from "../../llm/model-mode.js";
+import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => { throw new Error("promise not initialized"); };
@@ -124,7 +126,7 @@ describe("runtime turn ownership recipes", () => {
     await fixture.service.executeTurn(session(), "request", { maxSteps: 17, taskMaxDurationMs: 200, reasoningEffort: "high", maxOutputTokens: 99, toolFilter: filter, signal: abort.signal });
     const options = fixture.loop.runTurn.mock.calls[0]?.[1];
     expect(options).toMatchObject({ maxSteps: 10, taskMaxSteps: 17, taskMaxDurationMs: 200, reasoningEffort: "high", maxOutputTokens: 99, toolFilter: filter, signal: abort.signal });
-    expect(Object.keys(options ?? {})).toEqual(["userMessage", "originalRequest", "reasoningEffort", "maxOutputTokens", "maxSteps", "taskMaxSteps", "taskMaxDurationMs", "toolFilter", "signal"]);
+    expect(Object.keys(options ?? {})).toEqual(["userMessage", "modelModePolicy", "originalRequest", "reasoningEffort", "maxOutputTokens", "maxSteps", "taskMaxSteps", "taskMaxDurationMs", "toolFilter", "signal"]);
     await fixture.service.executeTurn(session("other"), "request");
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("taskMaxSteps");
   });
@@ -185,6 +187,32 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.events).toEqual(["loop", `clear:${worker.id}`, `shell-session:${worker.id}`, `slot-release:${worker.id}`]);
     expect(fixture.rows.size).toBe(0);
     expect(fixture.turnRequests.size).toBe(0);
+  });
+
+  it("holds the parent's modes for workers created after a setting edit, then refreshes the next turn", async () => {
+    const providerId = fixture.providers.providerRegistry.activeText.id;
+    const llm = resolveLlmConfig(fixture.config);
+    fixture.config.llm = { ...llm, providers: llm.providers.map(p => ({ ...p, modelMode: "cloud" as const })) };
+    const started = deferred<RunTurnOptions>();
+    const resume = deferred<void>();
+    fixture.loop.runTurn.mockImplementationOnce(async (value, options) => {
+      started.resolve(options);
+      await resume.promise;
+      return result(value, options);
+    });
+    const parent = fixture.service.executeTurn(session("parent"), "request");
+    const options = await started.promise;
+    expect(resolveModelMode(options.modelModePolicy!, providerId).mode).toBe("cloud");
+    fixture.config.llm = { ...fixture.config.llm, providers: fixture.config.llm.providers.map(p => ({ ...p, modelMode: "local" as const })) };
+    const worker = createFusionWorkerSession({ workingDir: dir, meta: { parentSessionId: "parent", taskId: "task" } });
+    await fixture.service.executeTurn(worker, "brief", { providerId });
+    const workerOptions = fixture.loop.runTurn.mock.calls[1]![1];
+    expect(workerOptions.modelModePolicy).toBe(options.modelModePolicy);
+    expect(resolveModelMode(workerOptions.modelModePolicy!, providerId).mode).toBe("cloud");
+    resume.resolve();
+    await parent;
+    await fixture.service.executeTurn(session("parent"), "next");
+    expect(resolveModelMode(fixture.loop.runTurn.mock.calls[2]![1].modelModePolicy!, providerId).mode).toBe("local");
   });
 
   it("steering checks only the actual inbox acceptance gate", () => {

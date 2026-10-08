@@ -18,9 +18,10 @@ export interface CapturedWorldSnapshot {
  */
 export async function captureWorldSnapshot(
   backend: BrowserBackend,
+  full = false,
 ): Promise<CapturedWorldSnapshot | undefined> {
   try {
-    const snap = await backend.snapshot();
+    const snap = full ? await backend.snapshot({ full: true }) : await backend.snapshot();
     return {
       kind: "browser",
       digest: snap.digest,

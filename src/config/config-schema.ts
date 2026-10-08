@@ -147,6 +147,7 @@ import {
   type UserLlmFileConfig,
 } from "./llm-config.js";
 import type { UserLlmRunModeConfig } from "./llm-run-mode-config.js";
+import { defaultProviderModelMode } from "./model-mode.js";
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
@@ -415,6 +416,8 @@ export interface AtomicAgentConfig {
     providers: ReadonlyArray<{
       id: string;
       kind: string;
+      modelMode?: import("./model-mode.js").ModelMode;
+      modelModes?: Readonly<Record<string, import("./model-mode.js").ModelMode>>;
       url?: string;
       apiKey?: string;
       model?: string;
@@ -970,7 +973,10 @@ export interface UserConfigFile {
 // writes an OSC 9 notification plus a BEL to its own terminal when a
 // turn ends, so an operator who walked away finds out. Additive: an
 // older file has no block and takes the defaults.
-export const USER_CONFIG_VERSION = 74;
+// v75: known cloud providers without a saved modelMode adopt cloud context.
+// Explicit provider/model policies and local/unknown endpoints stay unchanged.
+// This one-time migration shares the classification used for new connections.
+export const USER_CONFIG_VERSION = 75;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1120,6 +1126,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   71,
   72,
   73,
+  74,
   USER_CONFIG_VERSION,
 ];
 
@@ -1428,7 +1435,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     mode: localModelsMode,
     url: localModelsUrl,
   } = preparedLocalModels;
-  const llmBlock: UserLlmFileConfig | undefined =
+  let llmBlock: UserLlmFileConfig | undefined =
     obj.llm === undefined || obj.llm === null
       ? undefined
       : parseUserLlmFileConfig(obj.llm, {
@@ -1447,6 +1454,16 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             },
           ],
         });
+
+  if (version < 75 && llmBlock) {
+    llmBlock = {
+      ...llmBlock,
+      providers: llmBlock.providers.map((provider) =>
+        provider.modelMode === undefined && defaultProviderModelMode(provider) === "cloud"
+          ? { ...provider, modelMode: "cloud" }
+          : provider),
+    };
+  }
 
   return {
     // Spread first so a known key can never be shadowed by a stray one.

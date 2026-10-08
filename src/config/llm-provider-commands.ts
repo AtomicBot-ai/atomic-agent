@@ -10,6 +10,7 @@ import {
   type UserLlmProviderEntry,
 } from "./llm-config.js";
 import { scrubRunModeProviderPins } from "./llm-run-mode-config.js";
+import { defaultProviderModelMode } from "./model-mode.js";
 
 /** Provider kinds accepted by credential persistence, independent of any UI. */
 export type ProviderCredentialKind =
@@ -163,16 +164,26 @@ function mergeProviderIntoBlock(
   return { ...base, providers };
 }
 
+/** Preserve saved policy on updates; assign a default only to new connections. */
 export function upsertLlmProvider(
   entry: UserLlmProviderEntry,
   opts?: {
     activateEmbeddingProviderId?: string | null;
   },
-): void {
+): UserLlmProviderEntry {
   const path = getConfig().paths.userConfigFile;
   const file = ensureUserConfigFileSync(path);
   const base = readLlmBlockOrDefault(file);
-  let nextLlm = mergeProviderIntoBlock(base, entry);
+  const existing = base.providers.find((provider) => provider.id === entry.id);
+  const modelMode = entry.modelMode ?? existing?.modelMode ??
+    (existing ? undefined : defaultProviderModelMode(entry));
+  const modelModes = entry.modelModes ?? existing?.modelModes;
+  const savedEntry = {
+    ...entry,
+    ...(modelMode !== undefined ? { modelMode } : {}),
+    ...(modelModes !== undefined ? { modelModes: { ...modelModes } } : {}),
+  };
+  let nextLlm = mergeProviderIntoBlock(base, savedEntry);
   if (opts?.activateEmbeddingProviderId) {
     if (
       !nextLlm.providers.some((p) => p.id === opts.activateEmbeddingProviderId)
@@ -188,6 +199,7 @@ export function upsertLlmProvider(
   }
   writeUserConfigFileSync(path, { ...file, llm: nextLlm });
   resetConfigCache();
+  return savedEntry;
 }
 
 /** @deprecated Prefer {@link upsertLlmProvider}. */

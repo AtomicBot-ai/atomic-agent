@@ -1,4 +1,4 @@
-import { compressToolResult } from "../../compressor/result-compressor.js";
+import { compressToolResult, retainToolOutput } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
 import { runSkillScript } from "../../skills/skill-script-runner.js";
@@ -202,10 +202,11 @@ export function buildSkillRunScriptTool(
       const status = outcome.exitCode === 0 ? "ok" : "error";
       const header = `# ${record.manifest.name}/${scriptName}\nexit: ${outcome.exitCode ?? "signal:" + outcome.signal}${outcome.timedOut ? " (timed out)" : ""}`;
       const note = outcome.truncated ? `\n${CAPTURE_LIMIT_NOTE}` : "";
-      const trimmed = tailScriptBody(
-        [outcome.stdout, outcome.stderr]
+      const fullBody = [outcome.stdout, outcome.stderr]
           .filter((s) => s.trim().length > 0)
-          .join("\n---\n"),
+          .join("\n---\n");
+      const trimmed = ctx.modelMode === "cloud" ? { text: fullBody, trimmed: false } : tailScriptBody(
+        fullBody,
         SCRIPT_COMPRESS_OPTIONS.maxSummaryLength -
           header.length -
           note.length -
@@ -234,7 +235,7 @@ export function buildSkillRunScriptTool(
       // it never sees what the runner dropped at capture: without this
       // a result missing most of its log would render as complete.
       const lost = trimmed.trimmed || outcome.truncated;
-      return lost ? { ...compressed, truncated: true } : compressed;
+      return lost ? retainToolOutput(compressed, { ...compressed, truncated: true }, { truncated: true }) : compressed;
     },
   };
 }

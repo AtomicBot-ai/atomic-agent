@@ -83,6 +83,7 @@ export interface BatchCallInput {
 }
 
 export interface BatchExecutionContext {
+  modelMode?: "local" | "cloud";
   workingDir: string;
   sessionId: string;
   stepIndex: number;

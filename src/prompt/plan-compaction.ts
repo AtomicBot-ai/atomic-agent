@@ -5,6 +5,7 @@ import { findCurrentMacroTurnStart, macroTurnBoundaries, renderTurnForPrompt } f
 import { renderPackedConversation } from "./build-prompt-world-conversation.js";
 import type { BuiltPrompt } from "./build-prompt-types.js";
 import { estimateTokens } from "./token-budget.js";
+import { cloudContextEntries, renderCloudTurn } from "../session/cloud-context.js";
 
 export interface CompactionPlan {
   reason: CompactionReason;
@@ -24,6 +25,17 @@ export function planCompaction(state: SessionState, prompt: BuiltPrompt, config:
   const targetTokens = Math.floor(config.targetRatio * (requested === "manual" ? Math.min(budget.cap, budget.activeTokens) : budget.cap));
   const summaryMaxTokens = Math.min(config.summaryMaxTokens, Math.floor(budget.cap * 0.2), Math.floor(targetTokens * 0.5));
   if (summaryMaxTokens < 64) return null;
+  if (prompt.cloudContext) {
+    for (const through of safeCompactionCuts(state.turns)) {
+      if (through <= projection.offset || through >= state.turns.length) continue;
+      const entries = cloudContextEntries(prompt.cloudContext, through);
+      const tokens = estimateTokens(entries.map((entry) => renderCloudTurn(entry.turn)).join("\n")) + entries.length * 12;
+      const pins = estimateTokens(renderCompactionContext("", compactionPins(state, through)));
+      if (tokens + pins + summaryMaxTokens + 12 > targetTokens) continue;
+      return { reason, from: projection.offset, through, summaryMaxTokens, targetTokens, tokensBefore: budget.activeTokens };
+    }
+    return null;
+  }
   const boundaries = macroTurnBoundaries(state.turns, state.macroTurnStarts);
   const pairsTarget = Math.max(1, Math.floor(prompt.conversationPairsCap * config.targetRatio));
   // Conservative suffix costs avoid rendering the entire remaining transcript
