@@ -1,3 +1,4 @@
+import { coreKeyForUrl } from "../core/core-state.js";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -190,6 +191,8 @@ export interface LocalLlamaApiKeyInputs {
  * will use. Any other external server gets no key it was not given.
  */
 export function resolveLocalLlamaApiKey(inputs: LocalLlamaApiKeyInputs): string | null {
+  const coreKey = coreKeyForUrl(inputs.dataDir, inputs.chatUrl);
+  if (coreKey) return coreKey;
   if (inputs.envKey) return inputs.envKey;
   const talksToManagedDaemon =
     inputs.mode === "managed" ||
@@ -210,6 +213,8 @@ export function resolveEmbeddingApiKey(inputs: {
   managedPorts: readonly number[];
   dataDir: string;
 }): string | null {
+  const coreKey = coreKeyForUrl(inputs.dataDir, inputs.embeddingsUrl);
+  if (coreKey) return coreKey;
   if (inputs.configuredKey) return inputs.configuredKey;
   return isLoopbackUrlOnPort(inputs.embeddingsUrl, inputs.managedPorts)
     ? readManagedApiKey(inputs.dataDir)
@@ -252,6 +257,8 @@ export function apiKeyForUrl(
   config: ApiKeyForUrlConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
+  const coreKey = config.paths?.localModelsDataDir ? coreKeyForUrl(config.paths.localModelsDataDir, url) : null;
+  if (coreKey) return coreKey;
   const envKey = env[OPERATOR_LLAMA_API_KEY_ENV];
   if (envKey) return envKey;
   if (stripTrailingSlashes(url) === stripTrailingSlashes(config.localModels.url)) {

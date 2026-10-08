@@ -273,7 +273,11 @@ export function prepareLocalModelsInputs(
 
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
+  if (rawManaged.engine !== undefined && rawManaged.engine !== "llama-server" && rawManaged.engine !== "atomic-core") {
+    throw new ConfigValidationError("localModels.managed.engine", "expected llama-server|atomic-core");
+  }
   const managed: UserManagedLocalLlmConfig = {
+    engine: rawManaged.engine ?? "llama-server",
     modelId: parseOptionalManagedModelId(
       rawManaged.modelId,
       "localModels.managed.modelId",

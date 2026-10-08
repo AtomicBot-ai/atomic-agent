@@ -70,7 +70,7 @@ describe("describeFusionIntro", () => {
     const text = describeFusionIntro(rm);
     expect(text).toMatch(/Either seat takes either kind/);
     expect(text).toMatch(/local model plans while cloud workers execute/);
-    expect(text).toMatch(/Two cloud models/);
+    expect(text).toMatch(/Two cloud providers/);
   });
 
   it("says what a worker is and what it cannot do", () => {

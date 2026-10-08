@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { readCoreBackend, type ManagedEngine } from "./core/core-state.js";
 
 export function resolveBackendDir(dataDir: string): string {
   return join(dataDir, "backend");
@@ -11,7 +12,13 @@ export function resolveModelsDir(dataDir: string): string {
 export function resolveServerBinPath(
   dataDir: string,
   binaryName: string,
+  engine?: ManagedEngine,
 ): string {
+  if (engine === "atomic-core") {
+    const backend = readCoreBackend(dataDir);
+    if (!backend) throw new Error("Atomic Core backend is not installed.");
+    return backend.binary;
+  }
   return join(resolveBackendDir(dataDir), binaryName);
 }
 

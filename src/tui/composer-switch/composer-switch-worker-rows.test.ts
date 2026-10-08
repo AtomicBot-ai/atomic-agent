@@ -74,9 +74,10 @@ describe("the workers switch", () => {
 
   it("is the switch's rows for the `workers` kind", () => {
     const state = fusionState();
-    expect(selectComposerSwitchRows(state, "workers")).toEqual(
-      selectWorkerRows(state),
-    );
+    const models = selectComposerSwitchRows(state, "workers");
+    expect(models.map(r => r.label)).toEqual(["qwen-3.5-4b", "Download more models…"]);
+    expect(models[0]?.intent).toEqual({kind: "fusionModel", leg: "worker", modelId: "qwen-3.5-4b"});
+    expect(selectComposerSwitchRows(state, "workerProvider").map(r => r.label)).toContain("Atomic Chat");
   });
 });
 

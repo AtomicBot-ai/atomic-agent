@@ -132,6 +132,7 @@ export interface EmbeddingDaemonInfo {
 }
 
 export interface LocalModelsBackendInfo {
+  engine?: "atomic-core" | "llama-server";
   currentTag: string | null;
   latestTag: string | null;
   updateAvailable: boolean | null;

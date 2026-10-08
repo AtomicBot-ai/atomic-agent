@@ -529,6 +529,60 @@ export class ChatOrchestrator {
    * running process is not restarted — the reducer's success message asks
    * the user to relaunch.
    */
+  private composerRoutePending = false;
+
+  async chooseComposerEngine(engine: "atomic-core" | "llama-server", leg?: "orchestrator" | "worker"): Promise<void> {
+    if (this.currentController || this.detachedTurns.size > 0 || this.runtime.turnController?.busySessionIds?.().length || this.composerRoutePending) {
+      this.bus.emit({ type: "composer_notice", text: "Wait for the current work or model change to finish." });
+      return;
+    }
+    const stillWanted = this.localModels.captureStopGuard();
+    this.composerRoutePending = true;
+    try {
+      const rm = this.runMode.current();
+      if (leg && (rm.effective !== "fusion" || (leg === "worker" ? rm.orchestratorProviderId : rm.workerProviderId) === "local-llama")) {
+        this.bus.emit({ type: "composer_notice", text: "The other role uses the local engine. Swap the roles to move it." });
+        return;
+      }
+      if (!await this.localModels.chooseEngine(engine) || !stillWanted()) return;
+      if (leg) await this.runMode.setMode("fusion", { stillWanted, fusion: {
+        orchestratorProvider: leg === "orchestrator" ? "local-llama" : rm.orchestratorProviderId!,
+        workerProvider: leg === "worker" ? "local-llama" : rm.workerProviderId!,
+      }});
+      if (!stillWanted()) return;
+      this.bus.emit({ type: "composer_switch_opened", kind: leg === "worker" ? "workers" : "model" });
+    } catch (err) {
+      this.bus.emit({ type: "composer_notice", text: err instanceof Error ? err.message : String(err) });
+    } finally { this.composerRoutePending = false; }
+  }
+
+  async chooseComposerFusionModel(leg: "orchestrator" | "worker", modelId: string): Promise<void> {
+    if (this.currentController || this.detachedTurns.size > 0 || this.runtime.turnController?.busySessionIds?.().length || this.composerRoutePending) {
+      this.bus.emit({ type: "composer_notice", text: "Wait for the current work or model change to finish." });
+      return;
+    }
+    const stillWanted = this.localModels.captureStopGuard();
+    this.composerRoutePending = true;
+    try {
+      const rm = this.runMode.current();
+      if (rm.effective !== "fusion") return;
+      const id = leg === "worker" ? rm.workerProviderId : rm.orchestratorProviderId;
+      if (id === "local-llama") {
+        if (getConfig().localModels.managed.modelId === modelId) {
+          if (!await this.localModels.startDaemon()) return;
+        }
+        else await this.localModels.setActive(modelId as import("../local-llm/index.js").LocalModelId);
+        if (!stillWanted() || getConfig().localModels.managed.modelId !== modelId) return;
+      }
+      await this.runMode.setMode("fusion", { stillWanted, fusion: {
+        orchestratorProvider: rm.orchestratorProviderId!, workerProvider: rm.workerProviderId!,
+        ...(leg === "worker" ? { workerModel: modelId } : { orchestratorModel: modelId }),
+      }});
+    } catch (err) {
+      this.bus.emit({ type: "composer_notice", text: err instanceof Error ? err.message : String(err) });
+    } finally { this.composerRoutePending = false; }
+  }
+
   runUpdate(): void {
     // Replacing the binary under a running turn is the one mid-run slash
     // command with no safe outcome — now reachable because the editor
@@ -1195,7 +1249,16 @@ export class ChatOrchestrator {
     for (const notice of notices) this.notify(notice);
   }
 
+  private holdComposerSubmission(text: string): boolean {
+    if (!this.composerRoutePending) return false;
+    this.emitQueue();
+    this.bus.emit({ type: "input_changed", value: text });
+    this.bus.emit({ type: "composer_notice", text: "The model is changing. Your message is kept here; send it when the change finishes." });
+    return true;
+  }
+
   sendMessage(text: string): void {
+    if (this.holdComposerSubmission(text)) return;
     if (this.quitting) return;
     this.ensureSession();
     if (this.currentController) {
@@ -1239,6 +1302,7 @@ export class ChatOrchestrator {
    * consulted — see ../runtime/docs/lifecycle.md.
    */
   steerMessage(text: string): void {
+    if (this.holdComposerSubmission(text)) return;
     if (this.quitting) return;
     const session = this.ensureSession();
     // Offered to the inbox unconditionally: `steer`'s return value is
@@ -1375,6 +1439,7 @@ export class ChatOrchestrator {
   }
 
   private async runOneTurn(text: string, fromQueue = false): Promise<void> {
+    if (this.holdComposerSubmission(text)) return;
     if (!this.session) return;
     this.announceHeapPressure();
     // Pre-turn gate: a managed local model that is not on disk cannot

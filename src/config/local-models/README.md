@@ -24,3 +24,5 @@ Disabled/external modes still validate their settings. Keep existing null, coerc
 ## Checks
 
 Run `npx vitest run src/config`, selected CLI/TUI persistence and local-llm/LLM profile seams, `npm run lint`, `npm run typecheck:tests`, `npm run imports:check` and `npm run docs:check`. [Adjacent tests](local-models-config.test.ts) cover the phase/default/migration seams; existing schema and custom-model suites retain whole-file coverage.
+
+Managed `engine` accepts `llama-server` or `atomic-core`. It is additive: absent values preserve the existing llama-server engine, while unknown values fail validation. Engine selection commands refuse to switch a running model; direct configuration edits take effect on the next launch. Core owns its own model-session keys and explicit update policy; the legacy `autoUpdate` setting does not authorize a Core installation. See [engine lifecycle](../../local-llm/docs/lifecycle.md).

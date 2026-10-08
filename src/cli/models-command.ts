@@ -1,3 +1,4 @@
+import { modelsEngineCommand, modelsStopEmbedding } from "./models-engine.js";
 import { getConfig } from "../config/index.js";
 import {
   runLocalModelsDevices,
@@ -39,7 +40,9 @@ const HELP =
     "  status                        Show mode, backend version, active model, daemon/health",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
     "  stop                          Stop daemon (SIGTERM → SIGKILL after 3s)",
-    "  update                        Download latest backend from GitHub Releases",
+    "  engine [status|check|atomic-core|llama-server]  Inspect or choose the local engine",
+    "  stop-embedding                Stop the embedding model through its engine",
+    "  update                        Install the supported engine and inference backend",
     "                                (stops daemon first; does not auto-restart)",
     "  remove <id>                   Delete a downloaded model (refuses if active + daemon running)",
     "",
@@ -82,8 +85,16 @@ export async function modelsCommand(args: string[]): Promise<number> {
     process.stdout.write(HELP);
     return 0;
   }
+  const cancel = new AbortController();
+  const cancelCore = () => cancel.abort();
+  const handlesCancellation = getConfig().localModels.managed.engine === "atomic-core" && ["start", "start-embedding", "update"].includes(sub);
+  if (handlesCancellation) { process.on("SIGINT", cancelCore); process.on("SIGTERM", cancelCore); }
   try {
     switch (sub) {
+      case "engine":
+        return await modelsEngineCommand(args.slice(1));
+      case "stop-embedding":
+        return await modelsStopEmbedding();
       case "search":
         return await runModelsSearch(args.slice(1));
       case "list":
@@ -99,11 +110,11 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "status":
         return runLocalModelsStatus();
       case "start":
-        return runLocalModelsStart();
+        return await runLocalModelsStart(cancel.signal);
       case "stop":
         return runLocalModelsStop();
       case "update":
-        return runLocalModelsUpdate();
+        return await runLocalModelsUpdate(cancel.signal);
       case "remove":
         return runLocalModelsRemove(args[1]);
       case "devices":
@@ -117,7 +128,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "use-embedding":
         return runLocalModelsUseEmbedding(args[1]);
       case "start-embedding":
-        return await runLocalModelsStartEmbedding();
+        return await runLocalModelsStartEmbedding(cancel.signal);
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);
@@ -127,5 +138,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`models ${sub} failed: ${message}\n`);
     return 1;
+  } finally {
+    if (handlesCancellation) { process.off("SIGINT", cancelCore); process.off("SIGTERM", cancelCore); }
   }
 }

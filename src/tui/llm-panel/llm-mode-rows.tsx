@@ -428,7 +428,7 @@ function renderRowText(row: LlmPanelRow, state: TuiState): string {
     case "localDaemon":
       return `llama.cpp daemon [${formatDaemon(state)}]`;
     case "localBackend":
-      return `llama.cpp backend [${state.localModelsPanel.backend.currentTag ?? "not installed"}]`;
+      return `Local engine [${state.localModelsPanel.backend.currentTag ?? "not installed"}]`;
     case "cloudProvider":
       return `${row.provider.id} [${row.provider.kind}] ${
         row.provider.kind === SUBSCRIPTION_CLI_KIND

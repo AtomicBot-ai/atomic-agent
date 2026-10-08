@@ -1,3 +1,4 @@
+import { coreKeyForUrl } from "../local-llm/core/core-state.js";
 import { ENV_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
@@ -1579,7 +1580,9 @@ export class LlamaServerClient {
       "content-type": "application/json",
       accept: stream ? "text/event-stream" : "application/json",
     };
-    const apiKey = this.apiKeyOverride ?? getConfig().localModels.apiKey;
+    const config = getConfig();
+    const coreKey = coreKeyForUrl(config.paths.localModelsDataDir, this.baseUrlOverride ?? config.localModels.url);
+    const apiKey = coreKey ?? this.apiKeyOverride ?? config.localModels.apiKey;
     if (apiKey) headers.authorization = `Bearer ${apiKey}`;
     return headers;
   }

@@ -65,8 +65,9 @@ export class RunModeOrchestrator {
 
   async setMode(
     mode: RunModeName,
-    opts: RunModeChangeOptions = {},
+    opts: RunModeChangeOptions & { stillWanted?: () => boolean } = {},
   ): Promise<void> {
+    if (opts.stillWanted && !opts.stillWanted()) return;
     const config = getConfig();
     const resolved = resolveLlmConfig(config);
     const rm = resolveRunMode(resolved);
@@ -169,6 +170,7 @@ export class RunModeOrchestrator {
         }`,
       });
     }
+    if (opts.stillWanted && !opts.stillWanted()) return;
     this.deps.providers.refresh();
     if (mode !== "local") void this.deps.providers.ensureInlineModels(leg);
     const now = this.current();
