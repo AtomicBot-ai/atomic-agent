@@ -590,3 +590,44 @@ function queueSnapshots(actions: readonly TuiAction[]): readonly string[][] {
     )
     .map((a) => [...a.queued]);
 }
+
+describe("messages accepted during model switching", () => {
+  function waitingChat() {
+    let release!: () => void;
+    const ready = new Promise<void>(r => { release = r; });
+    const run = vi.fn(async () => ({session:session(),reason:"reply",stepCount:1}));
+    const runtime = stubRuntime(run);
+    const bus = makeTuiEventBus(), actions: TuiAction[] = [];
+    bus.subscribe(a => actions.push(a));
+    const chat = new ChatOrchestrator(runtime, bus, {maxSteps:5,llamaUrl:"http://localhost:8080",readGateFacts:cloudGateFacts});
+    vi.spyOn(chat.localModels, "isSwitching", "get").mockReturnValue(true);
+    vi.spyOn(chat.localModels, "waitForSwitch").mockImplementation(signal => new Promise((resolve,reject) => {
+      ready.then(resolve); signal.addEventListener("abort",()=>reject(signal.reason),{once:true});
+    }));
+    return {chat, run, runtime, actions, release};
+  }
+  it("accepts once, shows the warning, then runs after the switch", async () => {
+    const {chat,run,actions,release} = waitingChat();
+    chat.sendMessage("hello");
+    expect(run).not.toHaveBeenCalled();
+    expect(actions).toContainEqual({type:"message_waiting_for_model",sessionId:"s1",text:"hello"});
+    expect(actions.some(a=>a.type==="system_message" && a.text.includes("reply may take longer"))).toBe(true);
+    release(); await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+  });
+  it("Escape cancels a waiting message without sending it later", async () => {
+    const {chat,run,actions,release} = waitingChat();
+    chat.sendMessage("cancel this"); chat.abortCurrentTurn(); release();
+    await vi.waitFor(()=>expect(actions).toContainEqual({type:"turn_gate_blocked",text:"Message cancelled."}));
+    expect(run).not.toHaveBeenCalled();
+  });
+  it("keeps the original session when another chat opens before readiness", async () => {
+    const {chat,runtime,release} = waitingChat();
+    runtime.approvals.denyPendingForSession = vi.fn(()=>0);
+    const run = vi.spyOn(runtime,"runTurn");
+    chat.sendMessage("for original");
+    vi.spyOn(runtime,"createSession").mockReturnValue(session("s2"));
+    chat.newSession(); release();
+    await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0].id).toBe("s1");
+  });
+});

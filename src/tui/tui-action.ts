@@ -119,6 +119,7 @@ export type TuiAction =
    * `user_message` agent event, so the action carries no payload.
    */
   | { type: "message_submitted" }
+  | { type: "message_waiting_for_model"; sessionId: string; text: string }
   /**
    * The operator pressed Enter while a turn was still running. Unlike
    * `message_submitted` this must NOT reset the run state — the turn in

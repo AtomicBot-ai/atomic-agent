@@ -347,9 +347,13 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         inputHistoryDraft: null,
       };
     }
+    case "message_waiting_for_model":
+      if (action.sessionId !== state.session.sessionId) return state;
+      return { ...appendUserMessage(state, action.text), pendingModelMessage: { sessionId: action.sessionId, text: action.text } };
     case "message_submitted":
       return startNewRun(state);
     case "turn_gate_blocked": {
+      state = { ...state, pendingModelMessage: null };
       const withMessage = appendChatMessage(
         appendFeed(state, {
           kind: "runtime_info",
@@ -461,8 +465,12 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
 
 function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
   switch (event.type) {
-    case "user_message":
-      return appendUserMessage(state, event.text);
+    case "user_message": {
+      const pending = state.pendingModelMessage;
+      const next = { ...state, pendingModelMessage: null };
+      return pending?.sessionId === state.session.sessionId && pending?.text === event.text
+        ? next : appendUserMessage(next, event.text);
+    }
     case "steer_applied":
       // A message the operator sent mid-turn, folded into the prompt of
       // the step named here. It renders INLINE in the running turn: same

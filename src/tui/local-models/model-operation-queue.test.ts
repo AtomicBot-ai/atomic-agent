@@ -89,3 +89,17 @@ describe("model operation ownership", () => {
   });
 
 });
+
+it("waiting messages follow the final choice and can cancel without stopping its load", async () => {
+  const q = new ModelOperationQueue(), first = deferred(), last = deferred();
+  const a = q.run(() => first.promise, undefined);
+  const controller = new AbortController();
+  let ready = false;
+  const waiting = q.waitForSwitch(controller.signal).then(() => { ready = true; });
+  const cancelled = new AbortController();
+  const abandoned = q.waitForSwitch(cancelled.signal);
+  cancelled.abort(); await expect(abandoned).rejects.toBeDefined();
+  const b = q.run(() => last.promise, undefined);
+  first.resolve(); await a; expect(ready).toBe(false);
+  last.resolve(); await b; await waiting; expect(ready).toBe(true);
+});

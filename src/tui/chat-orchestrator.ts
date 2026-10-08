@@ -994,6 +994,8 @@ export class ChatOrchestrator {
    * authoritative transcript then. Returns whether the replay was whole.
    */
   private replayTurnEvents(sessionId: string): boolean {
+    const waiting = this.waitingModelMessages.get(sessionId);
+    if (waiting !== undefined) this.bus.emit({ type: "message_waiting_for_model", sessionId, text: waiting });
     const buffered = this.turnEvents.snapshot(sessionId);
     if (!buffered) return false;
     this.replayingTurnEvents = true;
@@ -1374,6 +1376,8 @@ export class ChatOrchestrator {
     if (status?.message) this.notify(status.message);
   }
 
+  private readonly waitingModelMessages = new Map<string, string>();
+
   private async runOneTurn(text: string, fromQueue = false): Promise<void> {
     if (!this.session) return;
     this.announceHeapPressure();
@@ -1385,8 +1389,9 @@ export class ChatOrchestrator {
     // fallback chain of >1 link the turn still runs — failing over is
     // exactly what the chain is for — and the gate only leaves a notice.
     const gateFacts = (this.options.readGateFacts ?? readLocalTurnGateFacts)();
-    const gate = gateFacts.activeProviderIsLocal && this.localModels.isSwitching
-      ? { kind: "block" as const, text: "The selected local model is still loading. You can keep typing or choose another model." }
+    const waitingForModel = this.localModels.isSwitching;
+    const gate = waitingForModel
+      ? { kind: "run" as const }
       : evaluateLocalTurnGate(gateFacts, this.chatPull.current);
     if (gate.kind === "block") {
       if (fromQueue) {
@@ -1412,7 +1417,8 @@ export class ChatOrchestrator {
     // The operator can switch threads while this runs; every
     // this-session decision below re-checks against the id the turn
     // started on rather than trusting the live pointer.
-    const turnSessionId = this.session.id;
+    const turnSession = this.session;
+    const turnSessionId = turnSession.id;
     this.noteFirstPrompt(text);
     const controller = new AbortController();
     this.currentController = controller;
@@ -1428,8 +1434,23 @@ export class ChatOrchestrator {
     // notice at. Read from how the turn ended, not from the signal — a
     // reply that beat the abort to the finish is still a reply.
     let stopped = false;
+    let dispatched = false;
     try {
-      const result = await this.runtime.runTurn(this.session, text, {
+      if (waitingForModel) {
+        this.waitingModelMessages.set(turnSessionId, text);
+        this.bus.emit({ type: "message_waiting_for_model", sessionId: turnSessionId, text });
+        this.notify("The model is switching, so the reply may take longer.");
+        await this.localModels.waitForSwitch(controller.signal);
+        const readyGate = evaluateLocalTurnGate(
+          (this.options.readGateFacts ?? readLocalTurnGateFacts)(), this.chatPull.current,
+        );
+        if (readyGate.kind === "block") throw new Error(readyGate.text);
+        if (readyGate.kind === "notice" && this.session?.id === turnSessionId) this.notify(readyGate.text);
+      }
+      controller.signal.throwIfAborted();
+      this.waitingModelMessages.delete(turnSessionId);
+      dispatched = true;
+      const result = await this.runtime.runTurn(turnSession, text, {
         // Only an operator-given ceiling. Absent, the runtime takes the
         // leg length and the task ceiling from config.
         ...(this.options.maxSteps === undefined
@@ -1478,6 +1499,10 @@ export class ChatOrchestrator {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       stopped = controller.signal.aborted;
+      if (waitingForModel && !dispatched && this.session?.id === turnSessionId) {
+        this.bus.emit({ type: "turn_gate_blocked", text: stopped ? "Message cancelled." : msg });
+      }
+      if (stopped && !dispatched) return;
       if (this.session?.id === turnSessionId) {
         this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
         this.bus.emit({
@@ -1496,6 +1521,7 @@ export class ChatOrchestrator {
       }
       this.exitCode = 1;
     } finally {
+      this.waitingModelMessages.delete(turnSessionId);
       if (this.currentController === controller) this.currentController = null;
       // The turn saved its session, which answers for the transcript
       // now — the replay log has nothing left to add.

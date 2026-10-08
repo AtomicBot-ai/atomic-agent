@@ -260,8 +260,14 @@ export class LocalModelsOrchestrator {
   private readonly operations = new ModelOperationQueue();
   private selectionRevision = 0;
   private closing = false;
+  private chatReadyError: string | null = null;
   private selectedRequest: { id: LocalModelId; revision: number; done: Promise<void> } | null = null;
   get isSwitching(): boolean { return this.operations.switching; }
+  async waitForSwitch(signal: AbortSignal): Promise<void> {
+    await this.operations.waitForSwitch(signal);
+    signal.throwIfAborted();
+    if (this.chatReadyError) throw new Error(this.chatReadyError);
+  }
   /** Tells a wedged live daemon from a busy one (see `WedgeWatch`). */
   private readonly wedgeWatch = new WedgeWatch();
   /** Restarts a daemon this TUI owns when it dies or wedges (`autoRestart`). */
@@ -1426,6 +1432,7 @@ export class LocalModelsOrchestrator {
     if (this.closing) return;
     if (this.selectedRequest?.id === id && this.selectedRequest.revision === this.operations.revision) return this.selectedRequest.done;
     this.selectionRevision++;
+    this.chatReadyError = "The selected model is not ready. Choose a ready model and retry the message.";
     this.bus.emit({ type: "composer_notice", text: `Loading ${getLocalModelDef(id).name}… You can choose another model while it starts.` });
     const done = this.operations.run(signal => this.applySelectedModel(id, () => !signal.aborted), undefined);
     const request = { id, revision: this.operations.revision, done };
@@ -1655,7 +1662,12 @@ export class LocalModelsOrchestrator {
    * `backend.next` staging dir.
    */
   async startDaemon(opts?: { backendAlreadyChecked?: boolean; cpuFallbackAttempted?: boolean }): Promise<boolean> {
-    return this.operations.run(signal => this.startDaemonNow({ ...opts, signal }), false);
+    return this.operations.run(async signal => {
+      this.chatReadyError = "The model did not start. Choose a ready model and retry the message.";
+      const started = await this.startDaemonNow({ ...opts, signal });
+      if (started && !signal.aborted) this.chatReadyError = null;
+      return started;
+    }, false);
   }
 
   private async startDaemonNow(opts?: {
@@ -2002,6 +2014,7 @@ export class LocalModelsOrchestrator {
   }
 
   async stopDaemon(opts?: { silent?: boolean }): Promise<void> {
+    this.chatReadyError = "The model was stopped. Start a model and retry the message.";
     return this.operations.run(() => this.stopDaemonNow(opts), undefined);
   }
 
