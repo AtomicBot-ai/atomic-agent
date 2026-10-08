@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { captureModelModePolicy } from "../llm/model-mode.js";
 
 import { ProviderFallbackChain, readFailingLink } from "../llm/fallback/index.js";
 import { DEFAULT_FALLBACK_TIMING } from "../llm/fallback/fallback-config.js";
@@ -53,6 +54,30 @@ const baseParams = {
 } as const;
 
 describe("createFallbackCompleter (real bootstrap seam)", () => {
+  it.each([false, true])("selects each attempted link's frozen mode (stream=%s)", async streaming => {
+    const observed: Array<{ provider: string; mode: string | undefined }> = [];
+    const modelModePolicy = captureModelModePolicy({
+      activeTextProvider: "cloud", activeEmbeddingProvider: "local", toolTransport: "auto",
+      providers: [{ id: "cloud", kind: "openrouter", modelMode: "cloud" }, { id: "local", kind: "llama-server", modelMode: "local" }],
+    });
+    const providers = new Map<string, LlmProvider>([
+      ["cloud", fakeProvider("cloud", "native_tools", async request => {
+        observed.push({ provider: "cloud", mode: request.modelMode?.mode });
+        throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+      })],
+      ["local", fakeProvider("local", "grammar", async request => {
+        observed.push({ provider: "local", mode: request.modelMode?.mode });
+        return answer("local");
+      })],
+    ]);
+    const deps = seamDeps(providers);
+    if (streaming) {
+      for await (const _chunk of createFallbackStreamer(deps)({ ...baseParams, modelModePolicy })) { /* drain */ }
+    } else {
+      await createFallbackCompleter(deps)({ ...baseParams, modelModePolicy });
+    }
+    expect(observed).toEqual([{ provider: "cloud", mode: "cloud" }, { provider: "local", mode: "local" }]);
+  });
   it("stamps servedTransport with the primary's transport when it answers", async () => {
     const providers = new Map<string, LlmProvider>([
       [
@@ -102,8 +127,9 @@ describe("createFallbackCompleter (real bootstrap seam)", () => {
         fakeProvider("cloud", "native_tools", async () => ({
           ...answer("cloud"),
           usage: {
-            inputTokens: 10,
-            outputTokens: 5,
+            promptTokens: 10,
+            completionTokens: 5,
+            totalTokens: 15,
             cacheReadTokens: 0,
             cacheWriteTokens: 0,
           },

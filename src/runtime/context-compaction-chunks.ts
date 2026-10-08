@@ -1,8 +1,9 @@
 import { estimateTokens } from "../prompt/token-budget.js";
 import type { ConversationTurn } from "../session/conversation-turn.js";
+import type { CloudContextEntry } from "../session/cloud-context.js";
 
 /** Keep the owning tool call identifiable when a large result spans requests. */
-export function prepareCompactionSource(turns: readonly ConversationTurn[], from: number, through: number) {
+export function prepareCompactionSource(turns: readonly ConversationTurn[], from: number, through: number, contextEntries: readonly CloudContextEntry[] = []) {
   const pending: Array<{ index: number; turn: Extract<ConversationTurn, { kind: "assistant_tool_call" }> }> = [];
   const records: Array<{ text: string; context: string; end: number }> = [];
   let length = 0;
@@ -26,6 +27,12 @@ export function prepareCompactionSource(turns: readonly ConversationTurn[], from
     });
     length += text.length + (records.length ? 1 : 0);
     records.push({ text, context, end: length });
+    for (const entry of contextEntries) {
+      if (!entry.key || !entry.id.startsWith("state:") || entry.through !== index + 1) continue;
+      const update = `Context record ${entry.id}: ${JSON.stringify(entry.turn)}`;
+      length += update.length + 1;
+      records.push({ text: update, context: JSON.stringify({ record: entry.id, section: entry.key }), end: length });
+    }
   }
   return {
     text: records.map((record) => record.text).join("\n"),

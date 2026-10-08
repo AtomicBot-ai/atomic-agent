@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
+import { setModelModeInConfig } from "../../config/model-mode-commands.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
 import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
@@ -50,11 +51,13 @@ describe("saveProviderWizardToConfig", () => {
     const cfg = getConfig();
 
     expect(built.entry.id).toBe("aimlapi");
+    expect(built.entry.modelMode).toBe("cloud");
     expect(process.env.AIMLAPI_API_KEY).toBe("ai-test");
     expect(cfg.llm?.activeTextProvider).toBe("aimlapi");
     expect(cfg.llm?.activeEmbeddingProvider).toBe("local-llama");
     expect(cfg.llm?.providers.find((p) => p.id === "aimlapi")).toMatchObject({
       kind: "aimlapi",
+      modelMode: "cloud",
       defaultChatModel: "openai/gpt-5-2",
     });
   });
@@ -73,16 +76,22 @@ describe("saveProviderWizardToConfig", () => {
     const cfg = getConfig();
 
     expect(built.entry.id).toBe("openrouter");
+    expect(built.entry.modelMode).toBe("cloud");
     expect(process.env.OPENROUTER_API_KEY).toBe("sk-or-test");
     expect(cfg.llm?.activeTextProvider).toBe("openrouter");
     expect(cfg.llm?.activeEmbeddingProvider).toBe("local-llama");
     expect(cfg.llm?.providers.find((p) => p.id === "openrouter")).toMatchObject(
       {
         kind: "openrouter",
+        modelMode: "cloud",
         defaultChatModel: "openai/gpt-5.5",
       },
     );
     expect(cfg.llm?.providers.some((p) => p.id === "local-llama")).toBe(true);
+    setModelModeInConfig({ providerId: "openrouter", mode: "local" });
+    setModelModeInConfig({ providerId: "openrouter", modelId: "small", mode: "local" });
+    saveProviderWizardToConfig({ ...wizard, mode: "configure", providerId: "openrouter" });
+    expect(getConfig().llm?.providers.find(p => p.id === "openrouter")).toMatchObject({ modelMode: "local", modelModes: { small: "local" } });
   });
 
   it("accepts an existing environment API key when the wizard key is empty", () => {
@@ -120,6 +129,7 @@ describe("saveProviderWizardToConfig", () => {
       kind: "openai-compatible",
       // trailing slash normalized away — callers append `/v1/...`
       baseUrl: "https://api.venice.ai/api",
+      modelMode: "local",
       defaultChatModel: "venice-uncensored",
     });
   });
@@ -140,6 +150,7 @@ describe("saveProviderWizardToConfig", () => {
     const built = saveProviderWizardToConfig(groqWizard("gsk-groq"));
 
     expect(built.entry.id).toBe("groq");
+    expect(built.entry.modelMode).toBe("cloud");
     expect(built.entry.apiKeyEnvVar).toBe("GROQ_API_KEY");
     expect(process.env.GROQ_API_KEY).toBe("gsk-groq");
     // The shared compat variable stays free for hand-added endpoints.
@@ -193,6 +204,7 @@ describe("saveProviderWizardToConfig", () => {
     });
 
     expect(built.entry.id).toBe("lmstudio");
+    expect(built.entry.modelMode).toBe("local");
     // Empty key is the valid state for a local server: nothing lands in
     // the environment and the entry stores no key either.
     expect(process.env.LMSTUDIO_API_KEY).toBeUndefined();
@@ -213,6 +225,7 @@ describe("saveProviderWizardToConfig", () => {
     });
 
     expect(built.entry.id).toBe("openai-compatible");
+    expect(built.entry.modelMode).toBe("local");
     expect(built.entry.apiKey).toBeUndefined();
     expect(process.env.OPENAI_COMPAT_API_KEY).toBeUndefined();
     expect(getConfig().llm?.activeTextProvider).toBe("openai-compatible");
@@ -276,6 +289,7 @@ describe("saveProviderWizardToConfig", () => {
     // entry saves without retyping it — and lands next to the first
     // entry instead of on top of it.
     expect(second.entry.id).toBe("groq-2");
+    expect(second.entry.modelMode).toBe("cloud");
     const providers = getConfig().llm?.providers ?? [];
     expect(providers.find((p) => p.id === "groq")).toMatchObject({
       defaultChatModel: "llama-3.3-70b-versatile",
@@ -327,6 +341,7 @@ describe("saveProviderWizardToConfig", () => {
     const built = saveProviderWizardToConfig(wizard);
 
     expect(built.entry.kind).toBe("subscription-cli");
+    expect(built.entry.modelMode).toBe("cloud");
     expect(built.entry.subscriptionCli).toEqual({ cli: "claude" });
     expect(built.entry.defaultChatModel).toBe("opus");
 

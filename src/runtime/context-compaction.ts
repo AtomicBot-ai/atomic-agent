@@ -53,7 +53,9 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     diagnose(input.session);
     const config = deps.config();
     if (!request && !options.requested && (autoFailed.has(input.session.id) || !config.auto)) return undefined;
-    const plan = planCompaction(input.session, buildPrompt(input), config, request ? "manual" : options.requested);
+    const prompt = buildPrompt(input);
+    if (prompt.cloudContext) input = { ...input, session: { ...input.session, cloudContext: prompt.cloudContext } };
+    const plan = planCompaction(input.session, prompt, config, request ? "manual" : options.requested);
     if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: "No safe, useful reduction is available." }); return undefined; }
     const controller = request?.controller ?? new AbortController();
     active.set(input.session.id, controller);

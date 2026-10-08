@@ -15,6 +15,7 @@ import { ProfileStore } from "../profile-store.js";
 import { REFLECTION_GRAMMAR } from "./reflection-grammar.js";
 import { REFLECTION_STABLE_PREFIX } from "./reflection-prompt.js";
 import { createReflectionRunner } from "./reflection-runner.js";
+import { captureModelModePolicy } from "../../llm/model-mode.js";
 
 function completion(content: string, slotId = 7): CompletionResult {
   return {
@@ -110,6 +111,21 @@ describe("createReflectionRunner", () => {
   });
   afterEach(() => {
     h.dispose();
+  });
+
+  it.each(["grammar", "native_tools"] as const)("passes the originating turn's mode snapshot through %s reflection", async toolTransport => {
+    const policy = captureModelModePolicy({ activeTextProvider: "test", activeEmbeddingProvider: "test", toolTransport: "auto", providers: [{ id: "test", kind: "openrouter", modelMode: "cloud" }] });
+    let calls = 0;
+    const runner = createReflectionRunner({
+      toolTransport, profileStore: h.store, reflectionSlotId: 7, timeoutMs: 5000, maxFactsPerCall: 3,
+      llmComplete: async params => {
+        calls++;
+        expect(params.modelModePolicy).toBe(policy);
+        return completion(toolTransport === "grammar" ? "SKIP" : '{"facts":[],"notes":[]}');
+      },
+    });
+    await runner.reflect({ sessionId: "policy", userMessage: "I prefer detailed explanations with examples.", assistantReply: "I will include examples.", modelModePolicy: policy });
+    expect(calls).toBe(1);
   });
 
   it("writes parsed SET facts into the profile store and records an `ok` outcome", async () => {

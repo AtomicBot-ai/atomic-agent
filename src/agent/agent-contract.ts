@@ -27,6 +27,8 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
 export interface AgentLoopDependencies {
+  /** Save model-visible cloud messages before inference, under the turn owner. */
+  persistContext?: (state: SessionState) => void;
   compaction?: ContextCompactionControl;
   registry: ToolRegistry;
   /**
@@ -138,6 +140,8 @@ export interface AgentLoopDependencies {
    * falls back to the global fields (test / legacy wiring).
    */
   resolveLlmSlice?: (providerId: string) => ResolvedTurnLlmSlice;
+  /** Sticky fallback expected to serve this session; an explicit turn pin wins. */
+  contextProviderId?: (sessionId: string) => string | undefined;
   /**
    * Optional hot-swap supervisor. When provided, the loop re-probes
    * `/props` at the start of every turn and inspects the `modelId` of
@@ -390,6 +394,8 @@ export type TaskStopCause =
   "step_ceiling" | "time_ceiling" | "no_progress" | "credit_exhausted";
 
 export interface RunTurnOptions {
+  /** Frozen policy for this turn, its workers and background reflection. */
+  modelModePolicy?: import("../llm/model-mode.js").ModelModePolicy;
   /**
    * Steps in one leg — the checkpoint interval, not the end of the work.
    * The loop reports progress here and carries on; what ends a task is

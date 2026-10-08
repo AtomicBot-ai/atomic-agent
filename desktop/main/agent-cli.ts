@@ -22,6 +22,7 @@ export { managedDataDir } from "./local-llama-key.js";
 // r7 models — the description + RAM figures `atag models list` cannot print.
 import { curatedMeta } from "./model-catalog.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
+import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
 
 const run = promisify(execFile);
 
@@ -467,6 +468,8 @@ export interface ProviderEntry {
   defaultChatModel?: string;
   model?: string;
   subscriptionCli?: { cli?: string };
+  modelMode?: ModelMode;
+  modelModes?: Record<string, ModelMode>;
 }
 
 /**
@@ -677,7 +680,10 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
      up elsewhere (the terminal, a hand edit) may not be reading. */
   if (!clean.apiKey && at >= 0 && providers[at]!.apiKeyEnvVar) delete clean.apiKeyEnvVar;
   if (at >= 0) providers[at] = { ...providers[at], ...clean };
-  else providers.push(clean);
+  else {
+    clean.modelMode ??= defaultProviderModelMode(clean);
+    providers.push(clean);
+  }
   return writeWholeConfig(config);
 }
 

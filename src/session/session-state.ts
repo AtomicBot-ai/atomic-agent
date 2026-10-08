@@ -90,6 +90,8 @@ export interface WorldSnapshot {
 }
 
 export interface SessionState {
+  /** Immutable model-visible messages for cloud; independent of local packing. */
+  cloudContext?: import("./cloud-context.js").CloudContext;
   id: string;
   /** Working directory for OS tools and relative paths. */
   workingDir: string;

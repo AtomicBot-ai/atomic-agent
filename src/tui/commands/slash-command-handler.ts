@@ -11,6 +11,7 @@ import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
+import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -18,6 +19,7 @@ export interface SlashDispatchCallbacks {
 }
 
 export interface SlashDispatchResult {
+  readonly modelModeCommand?: ModelModeCommand;
   /**
    * Reducer actions the caller should dispatch in order. Empty when the
    * command was unknown or required no state change.
@@ -730,6 +732,13 @@ function dispatchMcpSub(rawArgs: string): SlashDispatchResult {
 
 function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   const argPart = rawArgs.trim();
+  const modelModeMatch = argPart.match(/^model-mode(?:\s+(.*))?$/i);
+  if (modelModeMatch) {
+    const command = parseModelModeCommand(modelModeMatch[1] ?? "");
+    return command
+      ? pureActions([], { modelModeCommand: command })
+      : pureActions([], { systemMessage: MODEL_MODE_USAGE });
+  }
   if (argPart.length === 0) {
     return pureActions([
       { type: "ui_mode_set", mode: "debug" },
@@ -789,7 +798,7 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage:
-      "usage: /llm | /llm provider <id> | /llm check | /llm fallback | /llm restart",
+      "usage: /llm | /llm provider <id> | /llm model-mode [local|cloud|inherit] [provider-id] [model-id] | /llm check | /llm fallback | /llm restart",
   });
 }
 

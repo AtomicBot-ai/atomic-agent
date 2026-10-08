@@ -20,6 +20,8 @@ Bootstrap orders construction phases, assembles AgentLoop dependencies and retur
 
 For a composer context preview, `previewPrompt` delegates to composition/runtime-prompt-preview.ts: it builds an in-memory prompt with live descriptors and the optional draft, without inference, recall prefetch or persistence. Unknown session IDs raise `SessionNotFoundError`.
 
+The turn service captures [model behavior settings](../llm/docs/model-mode.md) once per turn, shares that snapshot with Fusion workers and reflection, and passes it to each provider attempt. Preview describes the next turn's saved settings without writing. Cloud model-visible messages are persisted before inference under the turn owner. Each cloud/fallback transition rebuilds against the attempted policy and window; the serving policy also controls tool-output retention. Local-only requests retain their existing preparation.
+
 For tool integration read composition/runtime-tool-catalog.ts; for provider hot swap read composition/runtime-inference.ts and runtime-local-profile.ts. For sidecar locking read composition/runtime-turn-service.ts and turn-controller.ts. For memory sub-call cancellation read composition/runtime-memory-services.ts. For a channel/store shutdown race read composition/runtime-lifecycle.ts and docs/lifecycle.md. [Component routes and tests](composition/README.md) link each task to its owner.
 
 ## Task-specific reading
