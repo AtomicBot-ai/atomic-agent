@@ -18,7 +18,7 @@ test('rapid choices load only the running model and final target, with no unlock
   assert.ok(states.slice(0,-1).every(s=>s.pending===1));
   assert.deepEqual(q.snapshot(),{pending:0,want:null,label:''});
 });
-test('a coding mode choice survives a model change and holds Send through confirmation', async () => {
+test('a coding mode choice survives a model change and holds dispatch through confirmation', async () => {
   const hold=deferred(), mode=deferred(), states=[];
   const q=createSwitchQueue(s=>states.push(s));
   const a=q.submit('route','Loading A',{backend:'local',model:'A'},()=>hold.promise);

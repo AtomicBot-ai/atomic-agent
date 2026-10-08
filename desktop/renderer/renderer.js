@@ -1916,6 +1916,14 @@ let QUEUES_KEPT = null;
    one. */
 const FIRST_TURNS = new Map();
 const PENDING_CHATS = new Map();
+/** A local outbox chat remains reachable before its first HTTP turn exists. */
+function noteWaitingChat(id, text) {
+  if (PENDING_CHATS.has(id)) return;
+  PENDING_CHATS.set(id, {id, t:String(text).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
+    named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, waiting:true, endedAt:null});
+}
+for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) noteWaitingChat(id, q.queued[0]);
+
 /* 0.6.7 item 38: a chat opened again while its turn runs showed "this session
    has no turns yet" and "a turn is still running here", without the message
    just sent: the agent stores a turn when it ends, and the turn's live view
@@ -3263,12 +3271,12 @@ function composer() {
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
     // the operator needs this next to the button that was disabled. The
     // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
-    : SWX.err
+    : (SWX.err || SWX.sendError)
     ? '<div class="statusstrip gated">'
       + (/has not finished/.test(SWX.err)
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
-      + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
+      + '<span class="ss-text">' + esc(SWX.err || SWX.sendError) + '</span></div>'
     // ATO-244: the model runs on the processor; last, under every strip that carries a decision or a failure.
     : cpuNoticeShown()
     ? cpuNoticeHTML()
@@ -3278,7 +3286,7 @@ function composer() {
        strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
-      '<div class="qchip"><span class="qlb">Queued</span><span class="qtx">' + esc(t) + '</span>'
+      '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(t) + '</span>'
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
   return '<div class="composerwrap">' + status + fzLiveHTML() + q
@@ -3469,28 +3477,16 @@ function cchipOpen(kind) {
   return S.overlay === kind ? ' is-open' : '';
 }
 
-/**
- * r6 cloud item 4 — does a switch in flight have to hold the operator's
- * message?  ONE answer, read by the send button and by `submit()`, so the
- * control and the behaviour cannot drift apart.
- *
- * A coding-mode change is deliberately NOT one of these, and says so at
- * its own call site with `route:false`. It is a 1-5 ms POST that moves
- * neither the provider nor the model, so there is nothing for a message
- * to be sent "at the wrong configuration" of, and locking the composer
- * for it would only flicker the button. Every other switch — backend,
- * provider, model — moves the route the message would run on, and every
- * one of those holds it, which is why the exemption is opt-in at the one
- * place that qualifies rather than inferred from the want's shape.
- */
-function swxHoldsComposer() {
+/** A route switch delays dispatch; Send still accepts into the chat's outbox.
+ * A standalone coding-mode POST needs no engine restart. */
+function swxWaitsForRoute() {
   if (!SWX.pending || S.busy || S.pending) return false;
   return !(SWX.want && SWX.want.route === false);
 }
 
 /**
  * Backlog 24 — is the chat on screen still opening, or did it fail to open?
- * ONE answer for the send button and `submit()`, as swxHoldsComposer is.
+ * ONE answer for the send button and `submit()`, as swxWaitsForRoute is.
  *
  * Until openSession's answer lands, S.agentSession is still the PREVIOUS
  * chat's (or null), so a message sent from the "loading session…" view went
@@ -3520,34 +3516,10 @@ function sendButton() {
     return '<button class="sendbtn locked" data-act="send" disabled aria-busy="' + (OPENING.failed ? 'false' : 'true')
       + '" title="' + esc(say) + '" aria-label="' + esc(say) + '">' + ic('up') + '</button>';
   }
-  /* r5 item 10 — the switch lock. The chip has already painted the
-     operator's choice; the send button says, in the one place they are
-     about to click, that the choice is not live yet.
-
-     The `!S.busy && !S.pending` conjunct is deliberate and NOT redundant:
-     swxRun refuses to start while a turn runs, but S.busy is set
-     asynchronously elsewhere for the whole 3-11 s a switch lasts (opening
-     a chat whose turn is live adopts it). A turn adopted mid-switch must
-     keep its Stop and its steer arrow, so the two branches below win.
-
-     The spinner is withheld for the first SWX_SPINNER_DELAY_MS so a
-     coding-mode POST never flashes one.
-
-     r6 cloud item 4 — the lock and `submit()` now read the SAME
-     predicate, `swxHoldsComposer()`. The delay used to gate this whole
-     branch, so for the first 150 ms of a switch the button was the
-     ordinary enabled Send while submit() was already refusing on
-     `SWX.pending` and keeping the draft in the box. The comment above
-     promises the two "never disagree"; they disagreed exactly where an
-     operator lands, because the provider chip repaints to the new
-     provider the instant the switch starts: add a provider from the
-     composer chip, type at once, press Enter, and the message just sits
-     there under a button that says it is ready. */
-  if (swxHoldsComposer()) {
-    const spin = Date.now() - SWX.since >= SWX_SPINNER_DELAY_MS;
-    const say = SWX.label + ' — the send button unlocks when the new configuration is live';
-    return '<button class="sendbtn locked" data-act="send" disabled aria-busy="true" title="' + esc(say)
-      + '" aria-label="' + esc(say) + '">' + (spin ? '<span class="sspin"></span>' : ic('up')) + '</button>';
+  if (swxWaitsForRoute()) {
+    const say = 'Send — the model is switching, so the reply may take longer';
+    return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="' + say
+      + '" aria-label="' + say + '">' + ic('up') + '</button>';
   }
   if (S.busy || S.pending) {
     // Item 7C: this sends a steer into the running turn. It is parked as
@@ -5011,7 +4983,11 @@ async function refreshDiag(opts) {
   if (!id || SET.toolsBusy) return;
   if (SET.toolsFor === id && SET.tools) return;
   SET.toolsBusy = true;
-  const res = await BR.session(id);
+  let res = await BR.session(id);
+  if (res && res.ok && PENDING_CHATS.has(id)) PENDING_CHATS.get(id).waiting = false;
+  if ((!res || !res.ok) && id.startsWith('waiting-') && chatQueuedCount(id)) {
+    res = {ok:true, data:{id, turns:[]}};
+  }
   SET.toolsBusy = false;
   if (id !== S.agentSession) return;
   const turns = res && res.ok && res.data && Array.isArray(res.data.turns) ? res.data.turns : null;
@@ -6098,17 +6074,22 @@ function submit() {
     else toast('This chat is still loading', 'Your message is still in the box. Send it once the chat has loaded', 'bad');
     return;
   }
-  /* r5 item 10 — Enter while a switch is landing. The draft STAYS in the
-     box: the two lines that clear it are below this guard, and steering or
-     queueing is not offered either, because the message would run against
-     the configuration the operator has just moved away from. Gated the same
-     way sendButton's lock branch is, so the button and this never disagree:
-     a turn adopted mid-switch keeps its steer. */
-  /* r6 cloud item 4: the same predicate the send button draws itself
-     from, so the button can never say "ready" while this refuses. */
-  if (swxHoldsComposer()) {
-    toast(SWX.label, 'The message stays in the box until the new configuration is live');
-    return;
+  if (swxWaitsForRoute() || (!S.busy && !S.pending && (DRAIN_OWED || SWX.sendError))) {
+    if (S.queued.length >= MAX_QUEUED) {
+      toast('Message queue is full', 'Your message stays in the box', 'bad'); return;
+    }
+    // Give an unsaved chat an identity before accepting its first message.
+    // The HTTP API creates this session on the first dispatched turn.
+    if (!S.sessionId) {
+      S.sessionId = 'waiting-' + crypto.randomUUID();
+      S.agentSession = S.sessionId;
+      noteWaitingChat(S.sessionId, text);
+    }
+    S.queued.push(text); DRAIN_OWED = true;
+    S.draft = ''; if (e) { e.value = ''; autosize(e); }
+    ctxDraftChanged(); S.slash = false;
+    toast('Message sent', SWX.sendError || 'The model is switching, so the reply may take longer');
+    render(); drainOwed(); return;
   }
   /* A new message with no agent up — the app just opened (after a Force Quit
      the agent is respawned and takes seconds to answer /health), or the
@@ -6579,7 +6560,7 @@ document.addEventListener('click', (e) => {
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
   const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
-  const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); const at = +uq.dataset.unqueue; S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1; render(); return; }
+  const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); unqueueMessage(+uq.dataset.unqueue); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const selOpen = t.closest('[data-sel-open]');
@@ -7853,6 +7834,8 @@ function markSeen(id) {
 
 
 function startLiveTurn(text) {
+  const waitingRow = PENDING_CHATS.get(S.sessionId);
+  if (waitingRow) waitingRow.waiting = false;
   // Item 1 (plan hand-off): a new turn retires the offer — the TUI's
   // startNewRun does the same on `message_submitted`. This is also the path
   // the user's third clause takes: typing while idle lands here, so a revision
@@ -7958,6 +7941,7 @@ function settlePendingChats() {
   const running = new Set(RUNNING.values());
   const now = Date.now();
   for (const [id, row] of [...PENDING_CHATS]) {
+    if (chatQueuedCount(id)) { row.endedAt = null; continue; }
     if (SESSIONS.some((s) => s.id === id)) { PENDING_CHATS.delete(id); continue; }
     if (running.has(id)) { row.endedAt = null; continue; }
     if (row.endedAt === null) row.endedAt = now;   // its turn left RUNNING without a last frame
@@ -8906,19 +8890,18 @@ function onChatEvent(ev) {
 /** The next queued message, as the next turn of the chat on screen, whose
     queue S.queued is (Backlog 26). */
 function drainQueued() {
-  DRAIN_OWED = false;
-  if (!S.queued.length) return;
-  const q = S.queued.shift();
-  // Lane B — backend switch: the gate is judged at turn START, so a
-  // message parked behind a running turn is re-checked here. A drained
-  // message has no editor to go back to (the operator may be
-  // mid-draft), so the TUI drops it — announced with a preview, never
-  // silently — and stops draining (chat-orchestrator.ts fromQueue).
+  if (!S.queued.length) { DRAIN_OWED = false; return; }
+  if (swxWaitsForRoute() || S.live.state !== 'connected' || openHoldsComposer()) { DRAIN_OWED = true; return; }
+  if (SWX.sendError) { DRAIN_OWED = true; return; }
   const gate = localTurnGate();
+  if (gate.kind === 'pending') { DRAIN_OWED = true; bswSnapshot().then(() => { if (localTurnGate().kind !== 'pending') drainOwed(); }); return; }
   if (gate.kind === 'block') {
-    S.log.push({id:nid(), k:'system', text: esc(gate.text + '\n  dropped: ' + droppedPreview(q))});
+    DRAIN_OWED = true;
+    toast('Message is waiting', gate.text + ' Choose a ready model or cancel the message below.', 'bad');
     render(); return;
   }
+  DRAIN_OWED = false;
+  const q = S.queued.shift();
   if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q);
 }
@@ -9050,7 +9033,20 @@ function queueTurnEnded(sid, turnId) {
     (applyStatus) and when a switch is over (swxRun). */
 function drainOwed() {
   if (DRAIN_OWED && S.queued.length && !S.busy && !S.pending && !openHoldsComposer()
-      && S.live.state === 'connected' && !swxHoldsComposer()) drainQueued();
+      && S.live.state === 'connected' && !swxWaitsForRoute()) drainQueued();
+}
+/** Cancel a locally accepted message, including an unsaved chat's last one. */
+function unqueueMessage(at) {
+  S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1;
+  if (!S.queued.length) {
+    DRAIN_OWED = false;
+    const row = PENDING_CHATS.get(S.sessionId);
+    if (row && row.waiting && !queueChatRunning(S.sessionId) && !SESSIONS.some(s => s.id === S.sessionId)) {
+      PENDING_CHATS.delete(S.sessionId); QUEUES.delete(S.sessionId);
+      S.sessionId = ''; S.agentSession = null;
+    }
+  }
+  render();
 }
 /** A deleted chat's queue goes with it, sent nowhere. */
 function forgetQueue(sid) {
@@ -14660,8 +14656,9 @@ if (BR) {
     if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('#overlays .selpop .selpullline'); if (box) box.textContent = ev.line; }
     if (ev.done) {
       const id = SEL.pulling; SEL.pulling = null;
-      if (ev.ok) selActivate({type:'localModel', id, downloaded:true});
-      else { SEL.err = ev.error || 'the download failed'; render(); }
+      if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
+      else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
+      render();
     }
   });
 }
@@ -15037,10 +15034,27 @@ function restartStopsLine(held) {
 function restartRefusedToast(held) {
   toast('Not while a turn is running', restartStopsLine(held) || undefined);
 }
+/** A failed route or mode never releases messages into the previous choice. */
+function swxMessageOutcome(lane, ok) {
+  if (!SWX.sendErrors) SWX.sendErrors = {};
+  SWX.sendErrors[lane] = ok ? null : 'The ' + (lane === 'mode' ? 'mode' : 'model')
+    + ' switch did not finish. Your messages are waiting; choose again or cancel them.';
+  SWX.sendError = SWX.sendErrors.route || SWX.sendErrors.mode || null;
+  if (SWX.sendError) SWX.err = SWX.sendError;
+}
 async function swxRun(label, want, run, refuse) {
   const view = SEL.view || 0;
   const lane = want && want.route === false ? 'mode' : 'route';
-  const res = await SWX_QUEUE.submit(lane, label, want, (current) => swxExecute(label, want, run, refuse, current));
+  const res = await SWX_QUEUE.submit(lane, label, want, async (current) => {
+    try {
+      const result = await swxExecute(label, want, run, refuse, current);
+      if (current()) swxMessageOutcome(lane, swxLanded(result));
+      return result;
+    } catch (error) {
+      if (current()) swxMessageOutcome(lane, false);
+      throw error;
+    }
+  });
   return res ? Object.assign({}, res, {selectorView:view}) : res;
 }
 async function swxExecute(label, want, run, refuse, current) {
@@ -15128,7 +15142,7 @@ async function swxExecute(label, want, run, refuse, current) {
     if (mine && SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
     if (mine) { SWX.slow = false; swxTickStop(); }
     // The watchdog may already have zeroed this; never decrement past 0.
-    // The queue owns pending across hand-offs, so Send never unlocks between choices.
+    // The queue owns pending across hand-offs, so waiting messages only dispatch after the final choice.
     // Clearing `want` makes every chip read LIVE_CONFIG again — which, on a
     // failure, still names the old route, so the rollback is one frame and
     // costs nothing. That is only true because no call site mutates
@@ -15556,8 +15570,7 @@ async function selActivate(row) {
   }
   if (row.type === 'localModel') {
     if (!row.downloaded) { selPull(row.id); return; }
-    // The popup stays open until main answers: a daemon that fails to
-    // start has to be shown, and `models start` can take a while.
+    // Close immediately; progress and failures remain beside the composer.
     SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…';
     closeSelector();
     const res = await swxRun(BSW.line, {backend:'local', model: row.id},
@@ -15579,9 +15592,17 @@ async function selActivate(row) {
 }
 
 function selPull(id) {
-  SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null; render();
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
+  SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
+  closeSelector(); render();
+  toast('Downloading in the background', 'You can keep chatting and choose another model');
   BR.modelsPull(id, {trigger: 'selector'}).then((res) => {
-    if (res && res.ok === false) { SEL.pulling = null; SEL.err = res.error || 'could not start the download'; render(); }
+    if (res && res.ok === false && SEL.pulling === id) {
+      SEL.pulling = null; toast('Download could not start', res.error || 'Please try again', 'bad'); render();
+    }
+  }).catch((error) => {
+    if (SEL.pulling !== id) return;
+    SEL.pulling = null; toast('Download could not start', String(error), 'bad'); render();
   });
 }
 
@@ -15637,16 +15658,6 @@ function selectorHTML() {
      download card's "Set up a cloud model meanwhile" opens it while this
      popover's pull may still be running. */
   if (WIZ.phase) return wizardHTML();
-  if (SEL.pulling) {
-    /* `.selpullline` is the line the pull's progress events patch in place
-       (selPull's listener), and the only one. */
-    return selShell('Downloading ' + SEL.pulling,
-      '<div class="selbody selpull"><p class="cap selpullline">' + esc(SEL.pullLine) + '</p>'
-      + '<p class="cap">It is selected automatically when it lands.</p></div>',
-      '<span class="grow"></span><button class="btn btn-g xs" data-act="sel:cancelPull">Cancel</button>',
-      '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>');
-  }
-
   /* ATO-161: the quick "Add a provider" pane (a preset list with a key field,
      saved and activated without a key check) is gone: no provider yet opens
      the wizard's list (sel:add), which checks the key before it saves. */
@@ -16311,7 +16322,7 @@ async function setCodingMode(id, post, anxViaGiven) {
      r5 integration: item 1's `post` seam rides INSIDE the wrapper, so the
      plan hand-off's injected mode POST is measured and locked exactly like
      the operator's own click. */
-  // `route:false` — see swxHoldsComposer: a mode change moves no route, so
+  // `route:false` — see swxWaitsForRoute: a mode change moves no route, so
   // it must not lock the composer for the 1-5 ms it takes.
   const res = await swxRun('switching…', {mode:id, route:false}, () => { ++MODE.seq; return post ? post(id) : SWXBR.codingMode(id); });
   // A later click (or a re-assert fired after this one) already owns the
@@ -17455,7 +17466,11 @@ async function openSession(id) {
   render();
 
   const askedAt = Date.now();   // Q60 review: approvalOver below
-  const res = await BR.session(id);
+  let res = await BR.session(id);
+  if (res && res.ok && PENDING_CHATS.has(id)) PENDING_CHATS.get(id).waiting = false;
+  if ((!res || !res.ok) && id.startsWith('waiting-') && chatQueuedCount(id)) {
+    res = {ok:true, data:{id, turns:[]}};
+  }
   /* Backlog 24: this open is over, landed or not. A newer open (another chat,
      or this one again) owns OPENING by now and is left alone. A failed
      reload of the chat whose session the next message already goes with
@@ -23444,7 +23459,8 @@ async function llmRemoveLocalConfirm() {
   llmRefresh();
 }
 function llmPull(kind, id) {
-  if (!BR || LLMP.pulling) return;
+  if (!BR) return;
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
@@ -23454,7 +23470,6 @@ async function llmPrimary(row) {
   if (!row || !BR) return;
   if (row.kind === 'localTextModel') {
     const m = row.model;
-    if (LLMP.pulling) return;
     if (!m.downloaded) { llmPull('chat', m.id); return; }
     if (row.primaryAction === 'start') { await llmDaemon('start'); return; }
     if (row.primaryAction === 'current') { llmRefresh(); return; }
@@ -23897,6 +23912,10 @@ async function llmAfterPull(p) {
       + ' — the weights are on disk, but the model was not started: it would serve text only. Press s to start it anyway.'};
     llmRepaint();
     return {projector:'failed', activated:false, skipped:true};
+  }
+  if (p.kind === 'chat') {
+    DL.ready = {id:p.id}; bswSnapshot(); render();
+    return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
   }
   const row = llmRows('local').find((r) => r.model && r.model.id === p.id);
   if (row && LLMP.mode === 'local') { llmPrimary(row); return {projector: attempted ? 'ok' : 'none', activated:true, skipped:false}; }
