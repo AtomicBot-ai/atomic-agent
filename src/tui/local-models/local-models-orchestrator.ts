@@ -355,6 +355,13 @@ export class LocalModelsOrchestrator {
   }
 
   private startGeneration = 0;
+  private stopGeneration = 0;
+
+  /** Keep an entire composer change cancelled after Stop, across its own starts. */
+  captureStopGuard(): () => boolean {
+    const generation = this.stopGeneration;
+    return () => !this.closing && generation === this.stopGeneration;
+  }
   private closing = false;
   private backendAbort: AbortController | null = null;
   private readonly coreStarts = new Map<Promise<unknown>, AbortController>();
@@ -1997,6 +2004,7 @@ export class LocalModelsOrchestrator {
   }
 
   async stopDaemon(opts?: { silent?: boolean }): Promise<void> {
+    this.stopGeneration++;
     this.startGeneration++;
     if (getConfig().localModels.managed.engine === "atomic-core") {
       this.backendAbort?.abort();

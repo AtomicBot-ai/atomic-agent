@@ -536,6 +536,7 @@ export class ChatOrchestrator {
       this.bus.emit({ type: "composer_notice", text: "Wait for the current work or model change to finish." });
       return;
     }
+    const stillWanted = this.localModels.captureStopGuard();
     this.composerRoutePending = true;
     try {
       const rm = this.runMode.current();
@@ -543,11 +544,12 @@ export class ChatOrchestrator {
         this.bus.emit({ type: "composer_notice", text: "The other role uses the local engine. Swap the roles to move it." });
         return;
       }
-      if (!await this.localModels.chooseEngine(engine)) return;
-      if (leg) await this.runMode.setMode("fusion", { fusion: {
+      if (!await this.localModels.chooseEngine(engine) || !stillWanted()) return;
+      if (leg) await this.runMode.setMode("fusion", { stillWanted, fusion: {
         orchestratorProvider: leg === "orchestrator" ? "local-llama" : rm.orchestratorProviderId!,
         workerProvider: leg === "worker" ? "local-llama" : rm.workerProviderId!,
       }});
+      if (!stillWanted()) return;
       this.bus.emit({ type: "composer_switch_opened", kind: leg === "worker" ? "workers" : "model" });
     } catch (err) {
       this.bus.emit({ type: "composer_notice", text: err instanceof Error ? err.message : String(err) });
@@ -559,17 +561,20 @@ export class ChatOrchestrator {
       this.bus.emit({ type: "composer_notice", text: "Wait for the current work or model change to finish." });
       return;
     }
+    const stillWanted = this.localModels.captureStopGuard();
     this.composerRoutePending = true;
     try {
       const rm = this.runMode.current();
       if (rm.effective !== "fusion") return;
       const id = leg === "worker" ? rm.workerProviderId : rm.orchestratorProviderId;
       if (id === "local-llama") {
-        if (getConfig().localModels.managed.modelId === modelId) await this.localModels.startDaemon();
+        if (getConfig().localModels.managed.modelId === modelId) {
+          if (!await this.localModels.startDaemon()) return;
+        }
         else await this.localModels.setActive(modelId as import("../local-llm/index.js").LocalModelId);
-        if (getConfig().localModels.managed.modelId !== modelId) return;
+        if (!stillWanted() || getConfig().localModels.managed.modelId !== modelId) return;
       }
-      await this.runMode.setMode("fusion", { fusion: {
+      await this.runMode.setMode("fusion", { stillWanted, fusion: {
         orchestratorProvider: rm.orchestratorProviderId!, workerProvider: rm.workerProviderId!,
         ...(leg === "worker" ? { workerModel: modelId } : { orchestratorModel: modelId }),
       }});
