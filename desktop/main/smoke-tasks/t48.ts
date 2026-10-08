@@ -346,8 +346,8 @@ async function advanced(js: Js, check: Check): Promise<void> {
   );
   check(
     "T48 (Д35): llama.cpp's update, auto-update and device are one Engine card (with the way to the server log); the route's internals fold under Details",
-    show(r["engine"]) === show(["llama.cpp", "Update automatically", "Device", "Server log"])
-      && show(r["engineActs"]) === show(["llm:backend", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
+    show(r["engine"]) === show(["llama.cpp", "Engine choice", "Update automatically", "Device", "Server log"])
+      && show(r["engineActs"]) === show(["llm:backend", "llm:engine", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
       && r["routeInDetails"] === true && r["routeOutside"] === 0 && r["logsInAdv"] === false && r["logsInPane"] === false && r["faultAct"] === "diag:llmlogs",
     show({ engine: r["engine"], engineActs: r["engineActs"], routeInDetails: r["routeInDetails"], routeOutside: r["routeOutside"], logsInAdv: r["logsInAdv"], logsInPane: r["logsInPane"], faultAct: r["faultAct"] }),
   );

@@ -97,6 +97,8 @@ import {
   restartsAgent,
   selectCloudModel,
   selectFusionWorkerModel,
+  selectComposerEngine,
+  selectFusionModel,
   selectLocalModel,
   setFusionWorkers,
   runModeWantsDaemon,
@@ -145,6 +147,7 @@ import {
   skillInstall,
   // Item 7 part C (LLM / Telegram / Import tabs); modelsStop is imported above with lane B's set
   modelsStatus,
+  modelsEngine,
   modelsListEmbeddings,
   modelsRemove,
   modelsRemoveSafe,
@@ -2039,6 +2042,10 @@ function wireIpc(client: AgentClient): void {
 
   // --- Item 7 part C (LLM / Telegram / Import tabs) ---
   ipcMain.handle("cli:modelsStatus", () => modelsStatus());
+  ipcMain.handle("cli:modelsEngine", (_event, action: unknown) =>
+    typeof action !== "string" ? { ok: false, error: "Engine action required" }
+      : action === "status" || action === "check" ? modelsEngine(action)
+      : inDaemonTurn(() => modelsEngine(action), () => ({ ok: false, stdout: "", stderr: "", error: "The app is closing" })));
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
   // Item 11: at once — a start on its way is ended, not waited for.
   ipcMain.handle("cli:modelsStop", () => stopDaemonNow());
@@ -2263,6 +2270,15 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
     return switched(() => setFusionWorkers(workers), { action: "set_workers" });
+  });
+  ipcMain.handle("cli:composerEngine", async (_event, engine: unknown, leg: unknown) => {
+    if (engine !== "atomic-core" && engine !== "llama-server") return { ok: false, error: "Unknown inference engine" };
+    if (leg !== undefined && leg !== "worker" && leg !== "orchestrator") return { ok: false, error: "Unknown Fusion role" };
+    return switched(() => selectComposerEngine(engine, leg));
+  });
+  ipcMain.handle("cli:fusionModel", async (_event, leg: unknown, model: unknown) => {
+    if ((leg !== "worker" && leg !== "orchestrator") || typeof model !== "string") return { ok: false, error: "A role and model are required" };
+    return switched(() => selectFusionModel(leg, model));
   });
   ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
@@ -9126,6 +9142,26 @@ A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
 wireProcessErrorReporting();
 
+
+/** Core checks follow the app update cadence; they never install or stop a model. */
+function watchCoreUpdates(): void {
+  if (SMOKE || FIRST_RUN_PROBE) return;
+  let previous = "";
+  const check = async () => {
+    try {
+      const status = await modelsEngine("status");
+      if (!status.ok || (status.value as { engine?: string } | undefined)?.engine !== "atomic-core") return;
+      const result = await modelsEngine("check");
+      const value = result.value as { check?: { latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
+      if (!result.ok || !value?.check) return;
+      const signature = JSON.stringify(value.check);
+      if (signature !== previous) { previous = signature; send("core:update", value.check); }
+    } catch { /* Offline checks are retried at the next scheduled check or manually. */ }
+  };
+  setTimeout(() => { void check(); }, 10_000).unref();
+  setInterval(() => { void check(); }, 6 * 60 * 60_000).unref();
+}
+
 void app.whenReady().then(async () => {
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
@@ -9148,6 +9184,7 @@ void app.whenReady().then(async () => {
   buildMenu((command) => send("app:menu", command));
   wireIpc(agent);
   wireUpdater();
+  watchCoreUpdates();
   // ATO-229: the first update check waits for the window (then ~10 s more, updater.ts).
   if (!FIRST_RUN_PROBE) win.once("ready-to-show", () => appUpdater()?.start());
   /* ATO-123: armed for every real run. A smoke run leaves it off: its checks
