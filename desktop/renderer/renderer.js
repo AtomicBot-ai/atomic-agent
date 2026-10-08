@@ -9647,6 +9647,11 @@ if (BR) {
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
   // ATO-130: Settings' llama.cpp update, waiting for its turn or running.
   if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
+  if (BR.onCoreUpdate) BR.onCoreUpdate((check) => {
+    if (check && (check.updateAvailable || check.requiresAgentUpdate)) toast('Atomic Core update', check.requiresAgentUpdate
+      ? 'Core ' + check.latestVersion + ' needs support from a newer Agent build. Your current engine stays in use.'
+      : 'Open Settings › Models › Engine to install the update when you are ready.');
+  });
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
   if (BR.daemonWatch) BR.daemonWatch().then((st) => {
@@ -22489,10 +22494,14 @@ function llmAdvancedHTML(mode) {
     + (mode === 'local'
       ? '<div class="llm-adv-h">Engine</div>'
         + '<div class="llm-tune-card llm-engine">'
-          + llmTuneRowHTML('llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
-              btn('llm:backend', 'Update now', 'Fetch the newest llama.cpp now (B)'))
-          + llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
-              sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start (U)'))
+          + llmTuneRowHTML(managed.engine === 'atomic-core' ? 'Atomic Core' : 'llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
+              btn('llm:backend', 'Update now', 'Install the supported engine (B)'))
+          + llmTuneRowHTML('Engine choice', 'Stop local models before switching. Your downloaded models stay available.',
+              btn('llm:engine', managed.engine === 'atomic-core' ? 'Use llama.cpp' : 'Use Atomic Core', 'Change the local engine'))
+          + (managed.engine === 'atomic-core'
+              ? llmTuneRowHTML('Core updates', 'Checks never install or interrupt your models. Updates apply after you stop local models.', btn('llm:engineCheck', 'Check for updates', 'Check Atomic Core releases'))
+              : llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
+                  sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start (U)')))
           + llmTuneRowHTML('Device', 'Auto runs the model on the GPU when there is one. A change applies the next time the model server starts.',
               btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU (G)'))
           // The log itself is Diagnostics' (Д58: one place for it); this is the way there.
@@ -23275,8 +23284,8 @@ async function llmEmbToggle() {
 /* ATO-130: the update waits its turn behind a model start (or a switch) on its
    way; "updating…" said otherwise all that time. Main tells which it is
    (cli:updatePhase), and the line follows while this update is on. */
-const LLM_UPDATING = 'local-llm: updating the llama.cpp backend…';
-const LLM_UPDATE_WAITING = 'local-llm: llama.cpp update waiting for the model to start…';
+const LLM_UPDATING = 'local-llm: updating the local engine…';
+const LLM_UPDATE_WAITING = 'local-llm: engine update waiting for the model to start…';
 function llmUpdatePhase(p) {
   if (!p || !LLMP.updating || !LLMP.msg) return;
   if (LLMP.msg.text !== LLM_UPDATING && LLMP.msg.text !== LLM_UPDATE_WAITING) return;
@@ -23306,7 +23315,27 @@ function llmRunningWord(running) {
   const name = dlCardName({kind: running.kind, id: running.id});
   return running.kind === 'projector' ? 'the vision projector of ' + name : name;
 }
+async function llmEngineAction(action) {
+  if (!BR || LLMP.busy) return;
+  LLMP.busy = true; LLMP.msg = {text: action === 'check' ? 'Checking Atomic Core updates…' : 'Changing local engine…'}; llmRepaint();
+  try {
+    const res = await BR.modelsEngine(action);
+    if (!res || !res.ok) LLMP.msg = {text: '! ' + llmFail('Engine action failed', res)};
+    else if (action === 'check') {
+      const check = res.value && res.value.check;
+      LLMP.msg = {text: check ? (check.requiresAgentUpdate
+        ? 'Atomic Core ' + check.latestVersion + ' is available. A newer Agent build must support it before installation.'
+        : check.updateAvailable ? 'Atomic Core ' + check.compatibleVersion + ' is ready to install. Stop local models, then choose Update now.'
+        : 'Atomic Core is up to date (' + check.currentVersion + ').') : 'Engine status unavailable.'};
+    } else {
+      LLMP.msg = {text: 'Local engine: ' + (action === 'atomic-core' ? 'Atomic Core' : 'llama.cpp') + '. Choose Update now to install it.'};
+      await refreshLiveConfig();
+    }
+  } catch (err) { LLMP.msg = {text: '! ' + String(err)}; }
+  finally { LLMP.busy = false; llmRefresh(); }
+}
 async function llmAutoUpdateToggle() {
+  if (llmManaged().engine === 'atomic-core') { llmEngineAction('check'); return; }
   if (!BR) return;
   const next = !(llmManaged().autoUpdate !== false);
   const res = await BR.configSet('localModels.managed.autoUpdate', String(next));
@@ -23670,6 +23699,8 @@ function llmAct(what) {
     if (BR && BR.hostRam && !LLMHF.ram) BR.hostRam().then((n) => { LLMHF.ram = Number(n) || 0; if (LLMHF.open) llmRepaint(); });
     return;
   }
+  if (verb === 'engine') { llmEngineAction(llmManaged().engine === 'atomic-core' ? 'llama-server' : 'atomic-core'); return; }
+  if (verb === 'engineCheck') { llmEngineAction('check'); return; }
   if (verb === 'backend') { llmBackendUpdate(); return; }
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
   if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }

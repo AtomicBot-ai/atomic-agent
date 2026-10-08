@@ -2111,7 +2111,7 @@ export function managedDaemonPidAlive(cfg: UserConfigShape): boolean {
   const h = cliStandIns.getStore();
   if (h) return h.daemonPidAlive?.() ?? false;
   const override = (cfg.localModels?.managed as unknown as { dataDirOverride?: unknown } | undefined)?.dataDirOverride;
-  return daemonPidsIn(managedDataDir(typeof override === "string" ? override : null)).some((pid) => {
+  return daemonPidsIn(managedDataDir(typeof override === "string" ? override : null), true).some((pid) => {
     try {
       process.kill(pid, 0);
       return true;
@@ -2122,9 +2122,11 @@ export function managedDaemonPidAlive(cfg: UserConfigShape): boolean {
 }
 
 /** The pids the daemons' pid files name (`llama-server.pid`, `llama-embed.pid`, src/local-llm/backend-paths.ts). */
-export function daemonPidsIn(dataDir: string): number[] {
+export function daemonPidsIn(dataDir: string, includeCore = false): number[] {
   const pids: number[] = [];
   for (const file of ["llama-server.pid", "llama-embed.pid"]) {
+    // Core-owned children are stopped only through the authenticated Core API.
+    if (!includeCore && existsSync(join(dataDir, "core", file === "llama-server.pid" ? "chat.json" : "embedding.json"))) continue;
     try {
       const pid = Number(readFileSync(join(dataDir, file), "utf8").trim());
       if (Number.isInteger(pid) && pid > 1) pids.push(pid);
@@ -2764,7 +2766,7 @@ export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStat
       mode: fields["mode"]!,
       dataDir: fields["data dir"] || null,
       backend: fields["backend"] || null,
-      backendTag: fields["backend"] ? (fields["backend"].split(/\s+/)[0] ?? null) : null,
+      backendTag: fields["backend"]?.startsWith("Atomic Core") ? fields["backend"].split(" · ")[0]! : fields["backend"] ? (fields["backend"].split(/\s+/)[0] ?? null) : null,
       compute: fields["compute"] || null,
       activeModel: activeId && activeId !== "(none)" && activeId !== "none" ? activeId : null,
       activeDownloaded: active ? /downloaded/.test(active) && !/not downloaded/.test(active) : null,
@@ -3082,6 +3084,10 @@ export async function modelsRemoveSafe(kind: "chat" | "embedding", id: string): 
 export async function stopEmbeddingServer(): Promise<{ ok: boolean; error?: string }> {
   const status = await modelsStatus();
   const dataDir = (status.ok && status.status?.dataDir) || managedFactsFromFile().dataDir;
+  if (existsSync(join(dataDir, "core", "embedding.json"))) {
+    const result = await cli(["models", "stop-embedding"], 60_000);
+    return result.ok ? { ok: true } : { ok: false, error: result.error || result.stderr };
+  }
   const pidFile = join(dataDir, "llama-embed.pid");
   let pid: number;
   try {
@@ -3762,14 +3768,34 @@ export function updateTimedOutError(ms: number, keptBackend: boolean): string {
 /** Whether the managed data dir the desktop's config names holds a llama.cpp backend (`<data dir>/backend`). */
 export function backendInstalled(): boolean {
   let override: unknown = null;
+  let engine: unknown;
   try {
-    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"));
     override = cfg.localModels?.managed?.dataDirOverride;
-  } catch {
-    // no config yet: the default data dir
-  }
-  return existsSync(join(managedDataDir(typeof override === "string" ? override : null), "backend"));
+    engine = cfg.localModels?.managed?.engine;
+  } catch { /* legacy defaults */ }
+  const dir = managedDataDir(typeof override === "string" ? override : null);
+  if (engine !== "atomic-core") return existsSync(join(dir, "backend"));
+  try {
+    const active = JSON.parse(readFileSync(join(dir, "core", "active.json"), "utf8"));
+    if (!/^\d+\.\d+\.\d+$/.test(active.version)) return false;
+    const versionDir = join(dir, "core", "versions", active.version);
+    const record = JSON.parse(readFileSync(join(versionDir, "backend.json"), "utf8"));
+    return record.coreVersion === active.version && existsSync(record.binary)
+      && existsSync(join(versionDir, process.platform === "win32" ? "atomic-chat-core.exe" : "atomic-chat-core"));
+  } catch { return false; }
 }
+
+export async function modelsEngine(action: string): Promise<CliResult & { value?: unknown }> {
+  if (!["status", "check", "atomic-core", "llama-server"].includes(action)) return { ok: false, stdout: "", stderr: "", error: "Unknown engine action" };
+  const result = await withConfigLock(() => cli(["models", "engine", action], 30_000));
+  if (result.ok && (action === "status" || action === "check")) {
+    try { return { ...result, value: JSON.parse(result.stdout) }; }
+    catch { return { ...result, ok: false, error: "The agent returned invalid engine status" }; }
+  }
+  return result;
+}
+
 /**
  * ATO-129: the llama.cpp update downloads and unpacks into `<data dir>/backend.next`
  * and moves the old backend aside as `backend.old` for the moment of the swap

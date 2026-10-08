@@ -202,6 +202,7 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:memoryQuery", { stateDir, name, params: params ?? [] }),
 
   /** Item 7 part C: the LLM, Telegram and Import tabs. */
+  modelsEngine: (action: string) => ipcRenderer.invoke("cli:modelsEngine", action),
   modelsStatus: () => ipcRenderer.invoke("cli:modelsStatus"),
   modelsListEmbeddings: () => ipcRenderer.invoke("cli:modelsListEmbeddings"),
   modelsStop: () => ipcRenderer.invoke("cli:modelsStop"),
@@ -218,6 +219,7 @@ contextBridge.exposeInMainWorld("atomic", {
   queuesKeep: (snapshot: Record<string, string[]>) => ipcRenderer.send("app:queuesKeep", snapshot),
   queuesTake: (): unknown => ipcRenderer.sendSync("app:queuesTake"),
   /** ATO-130: Settings' llama.cpp update waiting for its turn behind a model start, or running. */
+  onCoreUpdate: (cb: (payload: unknown) => void) => on("core:update", cb),
   onUpdatePhase: (cb: (payload: unknown) => void) => on("cli:updatePhase", cb),
   modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
   modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),

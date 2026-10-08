@@ -69,6 +69,8 @@ export function pickLocalLlamaKey(inputs: {
   managedPorts: readonly number[];
   dataDir: string;
 }): string | null {
+  const coreKey = readCoreModelKey(inputs.dataDir, inputs.url);
+  if (coreKey) return coreKey;
   if (inputs.envKey) return inputs.envKey;
   if (!isLoopbackOnPort(inputs.url, inputs.managedPorts)) return null;
   return readManagedKeyFile(inputs.dataDir);
@@ -98,7 +100,25 @@ function managedSideFromFile(): { ports: number[]; dataDir: string } {
 /** The key to send to the llama-server at `url`, or null for none. */
 export function localLlamaKeyFor(url: string): string | null {
   const envKey = process.env["ATOMIC_AGENT_LLAMA_API_KEY"] || null;
-  if (envKey) return envKey;
   const { ports, dataDir } = managedSideFromFile();
-  return pickLocalLlamaKey({ url, envKey: null, managedPorts: ports, dataDir });
+  return pickLocalLlamaKey({ url, envKey, managedPorts: ports, dataDir });
+}
+
+/** Core owns model credentials; only its active local session may supply them. */
+export function readCoreModelKey(dataDir: string, url: string): string | null {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return null; }
+  if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) return null;
+  for (const role of ["chat", "embedding"]) {
+    try {
+      const record = JSON.parse(readFileSync(join(dataDir, "core", role + ".json"), "utf8"));
+      if (!/^\d+\.\d+\.\d+$/.test(record.coreVersion) || String(record.port) !== parsed.port || !Number.isInteger(record.pid) || record.pid < 1 || typeof record.api_key !== "string" || !record.api_key) continue;
+      const lock = JSON.parse(readFileSync(join(dataDir, "core", "versions", record.coreVersion, "data", "atomic-core", "instance.lock"), "utf8"));
+      if (lock.state !== "ready" || lock.instance_id !== record.instanceId || !Number.isInteger(lock.pid) || lock.pid < 1) continue;
+      process.kill(lock.pid, 0);
+      process.kill(record.pid, 0);
+      return record.api_key;
+    } catch { /* unavailable or stale owner */ }
+  }
+  return null;
 }
