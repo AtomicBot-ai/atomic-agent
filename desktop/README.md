@@ -1440,3 +1440,14 @@ The renderer is the design prototype, unbundled and unminified. `renderer.js`
 ends with a live-wiring section: with `window.atomic` present it clears the demo
 data and drives the real agent; without it, the file runs exactly as the
 prototype does in a browser.
+
+### Choosing while the engine starts
+
+The composer selectors remain available during a route change. Pending model or
+provider choices replace the waiting route, and a pending coding-mode choice is
+kept separately. Engine operations run one at a time; Send remains held across
+the hand-off until the final route and mode settle. An in-flight operation may
+finish before the newest choice starts, but its stale feedback cannot close a
+newly opened selector or overwrite the selected target. Interactive local starts
+use `models start --interactive` to avoid waiting for the optional throughput
+benchmark after health is ready.

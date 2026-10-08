@@ -429,6 +429,7 @@ export function reduceUiAction(
     case "chat_scroll_reset":
       return { ...state, chatScrollOffset: 0 };
     case "session_switched": {
+      state = { ...state, pendingModelMessage: null };
       // Any pending approval closes with the transcript it asked
       // about. The one the LEFT thread owned is denied at the gate by
       // the orchestrator on switch-away; one owned by the thread being

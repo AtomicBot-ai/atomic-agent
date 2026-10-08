@@ -8424,26 +8424,19 @@ async function isolationAndSwitchTest(
     JSON.stringify(busyFace),
   );
 
-  /* ---- r5 review fix: two switches at once ----
-     SWX is ONE slot. The lock disables only the send button, so the
-     coding-mode chip and its popover stay clickable for the whole length of a
-     backend switch; a mode click used to re-enter swxRun and overwrite `want`
-     (snapping the composer chip back to the old route — the very paint this
-     item exists to provide), `label`, `since`, and the single `timer` field,
-     whose inner `finally` then left the outer switch with NO watchdog. It is
-     refused in words now. */
+  /* A coding-mode choice survives a backend switch without taking over its
+     timer or releasing Send between the two operations. */
   const nested = await js<{
+    outer: { ok: boolean };
     inner: { ok: boolean; error?: string };
     mid: { want: { backend?: string; mode?: string } | null; timer: boolean; pending: number; label: string; toasts: Array<[string, string, string]> };
     after: { pending: number; want: unknown; timer: boolean };
   }>("window.__swxNested()");
   check(
-    "send button: a second switch started mid-switch is refused, and the first keeps its slot",
-    nested.inner.ok === false && nested.inner.error === "a switch is already running"
-      && !!nested.mid.want && nested.mid.want.backend === "local" && nested.mid.want.mode === undefined
+    "send button: a mode chosen during startup is applied before the queue unlocks",
+    nested.inner.ok === true && nested.outer.ok === true
+      && !!nested.mid.want && nested.mid.want.backend === "local" && nested.mid.want.mode === "plan"
       && nested.mid.timer === true && nested.mid.pending === 1
-      && nested.mid.label === "switching backend…"
-      && nested.mid.toasts.length === 1 && nested.mid.toasts[0]![0] === "One switch at a time"
       && nested.after.pending === 0 && nested.after.want === null && nested.after.timer === false,
     JSON.stringify(nested),
   );
@@ -8569,6 +8562,9 @@ async function backendSwitchTest(
       const afterEnter = {draft: document.querySelector('#entry').value,
                           users: counts.users - users0, queued: counts.queued,
                           toast: window.__lastToast()};
+      // The outbox acceptance is the assertion here; do not let this
+      // fixture start an unrelated model turn after the route settles.
+      document.querySelector('[data-unqueue="0"]')?.click();
       const res = await p;
       const b2 = document.querySelector('.sendbtn');
       const after = {disabled: !!(b2 && b2.disabled), spins: document.querySelectorAll('.sspin').length};
@@ -8606,17 +8602,18 @@ async function backendSwitchTest(
       `at ${lock.early.ms}ms the chip said ${JSON.stringify(lock.early.sel)} while the live route was still ${JSON.stringify(lock.early.live)}`,
     );
     check(
-      "send button: locks with a spinner, then unlocks because the agent came back",
-      lock.mid.disabled === true && lock.mid.aria === "true" && lock.mid.spins === 1
+      "send button: stays available while the route changes",
+      lock.mid.disabled === false && lock.mid.aria === null && lock.mid.spins === 0
         && lock.after.disabled === false && lock.after.spins === 0
         && stLocal === "connected",
       `switch took ${lock.ms}ms (renderer measured ${lock.state.lastMs}ms); at 350ms disabled=${lock.mid.disabled} aria-busy=${lock.mid.aria} spinners=${lock.mid.spins}; afterwards disabled=${lock.after.disabled} spinners=${lock.after.spins}; agent ${stLocal}`,
     );
     check(
-      "send button: Enter while locked keeps the draft and sends nothing",
-      lock.afterEnter.users === 0 && lock.afterEnter.queued === 0
-        && lock.afterEnter.draft === "hello while switching"
-        && !!lock.afterEnter.toast && lock.afterEnter.toast.t === lock.state.label,
+      "send button: Enter during switching accepts the message with a delay warning",
+      lock.afterEnter.users === 0 && lock.afterEnter.queued === 1
+        && lock.afterEnter.draft === ""
+        && !!lock.afterEnter.toast && lock.afterEnter.toast.t === "Message sent"
+        && /reply may take longer/.test(lock.afterEnter.toast.s),
       `user rows +${lock.afterEnter.users}, queued ${lock.afterEnter.queued}, draft ${JSON.stringify(lock.afterEnter.draft)}, toast ${JSON.stringify(lock.afterEnter.toast)}`,
     );
     check(
@@ -12448,8 +12445,7 @@ async function r5SeamTest(
       && coex.bar.bottom <= coex.entry.top && !coex.overlaps,
     `card=${JSON.stringify(coex.bar)} composer=${JSON.stringify(coex.entry)} card text="${coex.dl.text}"`,
   );
-  /* Now the lock, with the card still up: the send button has to reach its
-     locked face and come back, and the card has to be untouched by it. */
+  /* A switch keeps Send available while the background card reports. */
   type Sample = {
     disabled: boolean; aria: string | null; spins: number;
     dlVisible: boolean; dlText: string;
@@ -12461,9 +12457,9 @@ async function r5SeamTest(
       " return {mid, after: window.__seamSample(), dl: {percent: window.__dl().percent}}; })()",
   );
   check(
-    "seam: the switch lock paints on the send button while the download card keeps reporting",
-    !!locked.mid && locked.mid.disabled === true && locked.mid.aria === "true"
-      && locked.mid.spins === 1
+    "seam: Send stays available during switching while the download card reports",
+    !!locked.mid && locked.mid.disabled === false && locked.mid.aria === null
+      && locked.mid.spins === 0
       && locked.mid.dlVisible === true && /40%/.test(locked.mid.dlText)
       && locked.after.disabled === false && locked.after.spins === 0
       && locked.after.dlVisible === true && locked.dl.percent === 40,

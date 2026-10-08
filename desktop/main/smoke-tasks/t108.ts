@@ -14,9 +14,9 @@ import { ChatTurnTracker, type TurnSummary } from "../analytics/chat-turns.js";
  * runs past the 45 s watchdog, which let go of the switch: the chips rolled
  * back to the cloud and the composer said "has not finished — the agent may
  * still be restarting" while the model was still loading. Now a local start
- * past 45 s keeps its lock and its paint and says it is loading; it is given
- * up on only at 180 s, with words about the model; landing clears the line.
- * A late answer of a switch given up on does not take the next one's lock.
+ * past 45 s keeps the dispatch barrier and the selected model visible. After
+ * 180 s it still waits for the start to settle, while Send accepts messages.
+ * A superseded answer cannot clear the next queued switch's state.
  *
  * ATO-204 — "The model is answering again … The turn continues." stayed above
  * "turn failed"; it goes when the turn fails. The gate's refusal goes on every
@@ -79,6 +79,7 @@ class StandIn {
         return { ok: true, data: { error: { message: `approvalId not pending: ${id}`, type: "invalid_request_error" } } };
       }],
       ["agent:cancel", () => false],
+      ["agent:busyAnywhere", () => ({busy:false, answered:true, turns:0})],
       ["cli:providerKeyPresent", () => ({ ok: true, present: true })],
       ["cli:upsertProvider", (_e, entry) => { this.calls.push(`upsert ${String((entry as { id?: unknown } | null)?.id)}`); return { ok: true, stdout: "", stderr: "" }; }],
       ["cli:providerModels", (_e, p) => {
@@ -194,7 +195,7 @@ async function inMain(check: Check): Promise<void> {
 async function localStart(js: Js, check: Check): Promise<void> {
   type R = {
     started: { pending: number; tick: boolean; shown: boolean };
-    slow: { pending: number; slow: boolean; err: string | null; backend: string; timer: boolean; held: boolean; line: string; strip: string | null; composer: boolean };
+    slow: { pending: number; slow: boolean; err: string | null; backend: string; timer: boolean; held: boolean; sendEnabled: boolean; line: string; strip: string | null; composer: boolean };
     gaveUp: { pending: number; err: string | null; wantKept: boolean; tick: boolean };
     afterRead: { want: unknown };
     landed: { err: string | null; pending: number; want: unknown };
@@ -206,13 +207,16 @@ async function localStart(js: Js, check: Check): Promise<void> {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     // ATO-134: a switch asks the agent whether anything is running before its \`run\`; this waits for the run to have begun.
     const begun = async (get) => { for (let i = 0; i < 300 && !get(); i++) await tick(10); return get(); };
-    const keep = {err: SWX.err, times: Object.assign({}, SWX.times), lastMs: SWX.lastMs, cfg: LIVE_CONFIG, owed: DRAIN_OWED};
+    const keep = {err: SWX.err, sendError: SWX.sendError, sendErrors: Object.assign({}, SWX.sendErrors), times: Object.assign({}, SWX.times), lastMs: SWX.lastMs, cfg: LIVE_CONFIG, owed: DRAIN_OWED};
+    const owned = [], finish = []; let cleaning = false;
+    const defer = (assign) => new Promise((res) => { if (cleaning) res({ok:true}); else { finish.push(res); assign(res); } });
+    SWX.err = null; SWX.sendError = null; SWX.sendErrors = {};
     DRAIN_OWED = false;
     try {
       const label = 'starting ${PREFIX}model…';
       let land = null;
-      const p = swxRun(label, {backend: 'local', model: '${PREFIX}model'}, () => new Promise((res) => { land = res; }));
-      await tick(30);
+      const p = swxRun(label, {backend: 'local', model: '${PREFIX}model'}, () => defer((res) => { land = res; })); owned.push(p);
+      if (!await begun(() => land)) throw new Error('the staged local start did not begin');
       const seq = SWX.seq;
       const started = {pending: SWX.pending, tick: !!SWX.tick, shown: swxStartingShown()};
       SWX.since = Date.now() - 50000;   // as if 50 s had run
@@ -220,7 +224,7 @@ async function localStart(js: Js, check: Check): Promise<void> {
       render();
       const strip = document.querySelector('.statusstrip.swxstart');
       const slow = {pending: SWX.pending, slow: SWX.slow, err: SWX.err, backend: selBackend(), timer: !!SWX.timer,
-        held: swxHoldsComposer(), line: swxStartLine(), strip: strip ? strip.textContent : null, composer: !!document.getElementById('composer')};
+        held: swxWaitsForRoute(), sendEnabled: !/disabled/.test(sendButton()), line: swxStartLine(), strip: strip ? strip.textContent : null, composer: !!document.getElementById('composer')};
       clearTimeout(SWX.timer); swxWatchdog(label, seq);   // what the 180 s timer calls
       const gaveUp = {pending: SWX.pending, err: SWX.err, wantKept: !!SWX.want, tick: !!SWX.tick};
       await tick(150);   // the config read (a stand-in: could not read) lets go of the paint
@@ -231,10 +235,10 @@ async function localStart(js: Js, check: Check): Promise<void> {
 
       // A switch given up on, then another: the first one's late answer leaves the second's lock alone.
       let landA = null, landB = null;
-      const pA = swxRun('smoke t108 A…', {providerId: '${PREFIX}a'}, () => new Promise((res) => { landA = res; }));
+      const pA = swxRun('smoke t108 A…', {providerId: '${PREFIX}a'}, () => defer((res) => { landA = res; })); owned.push(pA);
       await tick(20);
       clearTimeout(SWX.timer); swxWatchdog('smoke t108 A…', SWX.seq);
-      const pB = swxRun('smoke t108 B…', {providerId: '${PREFIX}b'}, () => new Promise((res) => { landB = res; }));
+      const pB = swxRun('smoke t108 B…', {providerId: '${PREFIX}b'}, () => defer((res) => { landB = res; })); owned.push(pB);
       await tick(20);
       (await begun(() => landA))({ok: false, error: 'smoke t108: A failed late'});
       await pA;
@@ -244,7 +248,10 @@ async function localStart(js: Js, check: Check): Promise<void> {
       const end = {pending: SWX.pending, timer: !!SWX.timer, err: SWX.err};
       return {started, slow, gaveUp, afterRead, landed, mid, end};
     } finally {
-      SWX.err = keep.err; SWX.times = keep.times; SWX.lastMs = keep.lastMs; LIVE_CONFIG = keep.cfg; DRAIN_OWED = keep.owed;
+      cleaning = true; if (SWX.hold) SWX.hold.end('cancel');
+      for (const resolve of finish) resolve({ok:true});
+      await Promise.allSettled(owned);
+      SWX.err = keep.err; SWX.sendError = keep.sendError; SWX.sendErrors = keep.sendErrors; SWX.times = keep.times; SWX.lastMs = keep.lastMs; LIVE_CONFIG = keep.cfg; DRAIN_OWED = keep.owed;
       render();
     }
   })()`);
@@ -256,16 +263,16 @@ async function localStart(js: Js, check: Check): Promise<void> {
   );
   check(
     "T108 (ATO-194): past 45 s a local start keeps its lock and the Local route on the chips, with no \"has not finished\" — the composer says the model is still loading",
-    r.slow.pending === 1 && r.slow.slow && r.slow.err === null && r.slow.backend === "local" && r.slow.timer && r.slow.held
+    r.slow.pending === 1 && r.slow.slow && r.slow.err === null && r.slow.backend === "local" && r.slow.timer && r.slow.held && r.slow.sendEnabled
       && r.slow.line === `Starting ${PREFIX}model — still loading it into memory; a first start can take a few minutes`
       && (!r.slow.composer || (r.slow.strip ?? "").includes("still loading it into memory")),
     show(r.slow),
   );
   check(
-    "T108 (ATO-194): given up on at 180 s, the line names the model loading, not an agent restart; the paint waits for the config read",
-    r.gaveUp.pending === 0 && r.gaveUp.wantKept && !r.gaveUp.tick
+    "T108 (ATO-194): past 180 s the message wait and model choice remain until the start settles",
+    r.gaveUp.pending === 1 && r.gaveUp.wantKept && r.gaveUp.tick
       && r.gaveUp.err === `starting ${PREFIX}model… has not finished — the model may still be loading; Settings › Models says when it is ready`
-      && !/restarting/.test(r.gaveUp.err ?? "") && r.afterRead.want === null,
+      && !/restarting/.test(r.gaveUp.err ?? "") && !!r.afterRead.want,
     show({ gaveUp: r.gaveUp, afterRead: r.afterRead }),
   );
   check(
@@ -274,7 +281,7 @@ async function localStart(js: Js, check: Check): Promise<void> {
     show(r.landed),
   );
   check(
-    "T108 (ATO-194): a late answer of a switch given up on leaves the next switch's lock, timer, paint and line alone",
+    "T108 (ATO-194): a superseded answer releases the next queued switch without stale errors",
     r.mid.pending === 1 && r.mid.timer && r.mid.want === `${PREFIX}b` && r.mid.err === null
       && r.end.pending === 0 && !r.end.timer && r.end.err === null,
     show({ mid: r.mid, end: r.end }),

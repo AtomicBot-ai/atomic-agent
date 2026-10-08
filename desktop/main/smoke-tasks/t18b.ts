@@ -92,7 +92,7 @@ async function composerPull(js: Js, check: Check, w: BrowserWindow): Promise<voi
         alone: WIZ.alone, error: WIZ.error, forId: WIZ.forId},
       local: S.localModel, pick: SWXBR.selectLocalModel, drop: window.wizRemoveIfIncomplete, room: S.room, draft: S.draft};
     window.__t18bCalls = [];
-    // The landing selects the model: main's switch is a recorder, so nothing restarts.
+    // A download must not activate itself: record any attempted model switch.
     SWXBR.selectLocalModel = (id) => { window.__t18bCalls.push('select:' + id); return Promise.resolve({ok: true}); };
     // Leaving the setup drops the entry it wrote and never finished: recorded, not removed.
     window.wizRemoveIfIncomplete = (id) => { window.__t18bCalls.push('drop:' + id); return Promise.resolve(); };
@@ -109,7 +109,7 @@ async function composerPull(js: Js, check: Check, w: BrowserWindow): Promise<voi
     send({ id: ID, line: line1, kind: "weights", percent: 25, transferredBytes: 1073741824, totalBytes: 4294967296 });
     await wait(200);
     const own = await js<{ line: string }>(
-      "({line: ((document.querySelector('#overlays .selpop .selpullline') || {}).textContent || '')})");
+      "({line: ((document.querySelector('#dlcard .dlc-line') || {}).textContent || '')})");
     // Closed, the pull goes on in the card — whose cloud link opens the provider setup.
     await js<unknown>("(() => { const s = document.querySelector('#overlays .scrim'); if (s) s.click(); })()");
     await wait(150);
@@ -124,7 +124,7 @@ async function composerPull(js: Js, check: Check, w: BrowserWindow): Promise<voi
       anywhere: [...document.querySelectorAll('#overlays .popover *')].some((n) => n.children.length === 0 && n.textContent === ${JSON.stringify(line2)})})`);
     check(
       "T18-F2: a composer download's progress goes to its own line, never into the provider setup the card opens over it",
-      own.line === line1 && before.phase === "pick_kind" && before.caps.length > 0
+      own.line.includes("25%") && before.phase === "pick_kind" && before.caps.length > 0
         && JSON.stringify(after.caps) === JSON.stringify(before.caps) && !after.anywhere,
       JSON.stringify({ own: own.line, phase: before.phase, before: before.caps.slice(0, 2), after: after.caps.slice(0, 2), anywhere: after.anywhere }),
     );
@@ -147,15 +147,15 @@ async function composerPull(js: Js, check: Check, w: BrowserWindow): Promise<voi
       const u = document.getElementById('wiz-url');
       return {open: SEL.open, phase: WIZ.phase, pop: !!document.querySelector('#overlays .selpop'),
         url: u ? u.value : null, key: k ? k.value : null, focused: !!k && document.activeElement === k,
-        caret: k ? k.selectionStart : null, pulling: SEL.pulling, unfinished: WIZ.unfinishedId,
+        caret: k ? k.selectionStart : null, pulling: SEL.pulling, ready: DL.ready && DL.ready.id, unfinished: WIZ.unfinishedId,
         calls: window.__t18bCalls.slice()}; })()`);
     const calls = (landed["calls"] as string[]) ?? [];
     check(
-      "T18-F2: that download landing while a key is typed selects the model and leaves the setup up — fields, focus and caret kept",
+      "T18-F2: that download landing while a key is typed offers Switch and leaves the setup up — fields, focus and caret kept",
       landed["open"] === true && landed["pop"] === true && landed["phase"] === "configure"
         && landed["url"] === "https://smoke-t18b.invalid/v1" && landed["key"] === "sk-smoke-t18b"
         && landed["focused"] === true && landed["caret"] === 4 && landed["pulling"] === null
-        && calls.includes(`select:${ID}`) && !calls.some((c) => c.startsWith("drop:")) && landed["unfinished"] === HALF,
+        && landed["ready"] === ID && !calls.some((c) => c.startsWith("select:")) && !calls.some((c) => c.startsWith("drop:")) && landed["unfinished"] === HALF,
       JSON.stringify(landed),
     );
 

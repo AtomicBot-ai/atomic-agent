@@ -26,3 +26,17 @@ The local HF lookup owns its AbortController/identity guard and explicit Escape 
 Run `npx vitest run src/tui/local-models src/tui/llm-panel src/tui/onboarding src/tui/providers src/tui/components/manage-panel-fit.test.tsx src/tui/components/status-bar.test.tsx src/tui/components/debug-pane-budget.test.ts` for view consumers, widths, local activation, provider seams and orchestration. Existing daemon-wedge-watch fixtures need a local loopback HTTP listener; sandbox EPERM is not a behavioral pass. Run `npm run lint`, `npm run typecheck:tests`, `npm run imports:check`, `npm run docs:check` and full `npm run test:ci`.
 
 Source and dedicated notification/chip tests are adjacent. Local panel/HF branch/log view do not yet have individual component suites; existing measured-panel, LLM app, onboarding HF/mouse, reducer and orchestration tests cover portions of their composition. No exhaustive visual/platform or actual download/server verification is implied. Existing local-models test-type debt remains recorded separately from production lint.
+
+## Selection during startup
+
+Model choices stay available while a managed model loads. The orchestrator serializes
+owned start, stop and restart operations; a newer selection cancels the previous
+launch and skips intermediate queued choices. Cancellation waits for owned-process
+cleanup before another launch. A completed download cannot replace a newer model
+choice. Send accepts messages during a switch and shows them with a delay warning.
+Inference waits cancellably for the final choice; each accepted message keeps its
+original session. Successful activation leaves the current panel open.
+
+Interactive starts skip the optional throughput benchmark and reuse any cached
+measurement. Background backend checks share lifecycle ownership without blocking
+Send while the current daemon is healthy.
