@@ -36,3 +36,7 @@ the lifecycle removes only the child it spawned before returning. Interactive
 clients disable the optional throughput probe so readiness follows daemon health;
 `models start --interactive` exposes this policy to the desktop client. Ordinary
 `models start` keeps its existing benchmark behavior.
+
+Interactive chat launches allow up to 120 seconds for cold GPU shader compilation
+and weight loading, returning immediately when health is ready. The default CLI
+budget remains 30 seconds. A newer TUI selection can cancel this wait.

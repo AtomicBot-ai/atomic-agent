@@ -582,7 +582,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
   const startWithDevice = (dev: string | undefined) =>
     startChatAndEmbeddingDaemons({
       chat: {
-        ...(opts.interactive ? { throughputProbe: false } : {}),
+        ...(opts.interactive ? { throughputProbe: false, healthTimeoutMs: 120_000 } : {}),
         dataDir,
         modelId: mid,
         port: cfg.localModels.managed.port,
