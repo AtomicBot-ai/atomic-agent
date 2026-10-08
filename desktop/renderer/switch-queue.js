@@ -17,7 +17,7 @@ function createSwitchQueue(changed) {
         if (mode) want.mode = mode;
       } else want = Object.assign({}, want, entry.want);
     }
-    // A coding-mode choice queued behind a route still holds Send until
+    // A coding-mode choice queued behind a route still holds dispatch until
     // both have landed, even though a standalone mode change is immediate.
     if (routeBarrier && want) delete want.route;
     return {pending: entries.length ? 1 : 0, want, label: entries.length ? entries[entries.length - 1].label : ''};

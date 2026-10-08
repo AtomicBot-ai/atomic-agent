@@ -76,7 +76,7 @@ const asIs = (s: Seats | undefined) => !!s && s.provider === PLANS.provider && s
  */
 const scenario = (body: string) => `(async () => {
   const tick = (ms) => new Promise((res) => setTimeout(res, ms));
-  const keep = {cfg: LIVE_CONFIG, queued: FZ.swapQueued, swap: SWXBR.swapFusionLegs, busy: S.busy, err: SWX.err,
+  const keep = {cfg: LIVE_CONFIG, queued: FZ.swapQueued, swap: SWXBR.swapFusionLegs, busy: S.busy, err: SWX.err, sendError: SWX.sendError, sendErrors: Object.assign({}, SWX.sendErrors),
     times: Object.assign({}, SWX.times), lastMs: SWX.lastMs, pending: S.pending, msgs: S.queued.slice(),
     running: Array.from(RUNNING.entries()), log: S.log, logLen: S.log.length};
   const calls = [];
@@ -92,16 +92,16 @@ const scenario = (body: string) => `(async () => {
     else { const b = document.querySelector('#composer .cfoot .fzswap'); if (b) b.click(); }
     return seats();
   };
-  const lands = [];
+  const lands = [], owned = []; let cleaning = false;
   const startAhead = (want, viaRow) => {
     let landIt = null;
-    const run = () => new Promise((res) => { landIt = res; });
+    const run = () => new Promise((res) => { landIt = res; if (cleaning) res({ok:true}); });
     const label = 'starting qwen-3.5-4b…';
     const p = viaRow ? (async () => fzAfter(await swxRun(label, want, run), 'fusion'))() : swxRun(label, want, run);
     /* ATO-134: the switch asks the agent whether anything is running before
        its \`run\`, so the load is landed once it has begun. */
     const land = async (r) => { for (let i = 0; i < 300 && !landIt; i++) await tick(10); if (landIt) landIt(r); };
-    lands.push(land);
+    lands.push(land); owned.push(p);
     return {p, land};
   };
   try {
@@ -117,10 +117,13 @@ const scenario = (body: string) => `(async () => {
     ${body}
   } finally {
     FZ.swapQueued = false;
-    lands.forEach((land) => land({ok: true}));
+    cleaning = true; hold = false;
+    if (SWX.hold) SWX.hold.end('cancel');
     if (release) release({ok: true});
-    await tick(80);
-    SWXBR.swapFusionLegs = keep.swap; LIVE_CONFIG = keep.cfg; FZ.swapQueued = keep.queued; S.busy = keep.busy; SWX.err = keep.err;
+    await Promise.all(lands.map((land) => land({ok:true})));
+    await Promise.allSettled(owned);
+    for (let i = 0; i < 300 && SWX_QUEUE.snapshot().pending; i++) await tick(10);
+    SWXBR.swapFusionLegs = keep.swap; LIVE_CONFIG = keep.cfg; FZ.swapQueued = keep.queued; S.busy = keep.busy; SWX.err = keep.err; SWX.sendError = keep.sendError; SWX.sendErrors = keep.sendErrors;
     SWX.times = keep.times; SWX.lastMs = keep.lastMs; S.pending = keep.pending;
     S.queued.length = 0; S.queued.push.apply(S.queued, keep.msgs);
     RUNNING.clear(); keep.running.forEach(([k, v]) => RUNNING.set(k, v));
@@ -306,13 +309,13 @@ export async function checks11(js: Js, check: Check): Promise<void> {
       return {queued, fired, calls: calls.length, after: seats()};
     `));
     check(
-      "T11: when the 45 s watchdog gives up on the load, the queued swap goes with it and the seats read as the config has them",
-      traded(w.queued) && w.queued.queued && asIs(w.fired) && !w.fired.queued && w.fired.pending === 0
-        && /has not finished/.test(w.fired.err ?? "") && w.calls === 0 && asIs(w.after),
+      "T11: the watchdog keeps a queued swap until the load settles, then runs it once",
+      traded(w.queued) && w.queued.queued && traded(w.fired) && w.fired.queued && w.fired.pending === 1
+        && /has not finished/.test(w.fired.err ?? "") && w.calls === 1 && !w.after.queued,
       JSON.stringify(w),
     );
   } catch (err) {
-    check("T11: when the 45 s watchdog gives up on the load, the queued swap goes with it", false, threw(err));
+    check("T11: the watchdog keeps a queued swap until the load settles", false, threw(err));
   }
 
   try {

@@ -14707,8 +14707,8 @@ if (typeof window !== 'undefined') {
 
      · the chip paints the choice on the click (SWX.want, read by
        selBackend / selActiveProviderId / activeModel / currentMode);
-     · the send button locks, with a spinner that appears only after
-       150 ms so the 2 ms coding-mode path never flashes one;
+     · Send accepts messages immediately; dispatch waits for the final
+       model and mode to settle;
      · both clear in a `finally`, so a failure rolls the chip back in the
        same frame and the composer says why;
      · and the lock does NOT clear on the IPC reply — see swxSettle.
@@ -14913,8 +14913,8 @@ async function swxAgentBusy() {
 }
 /**
  * The switch's wait, with its lock and its paint kept, the way the update's
- * Restart waits for an answer: the send button stays locked (a message sent
- * now would land on the route being left, and end with it), the composer says
+ * Restart waits for an answer: accepted messages wait for the final route
+ * before dispatch, the composer says
  * what it waits for, and it goes on its own once the agent is idle. "Switch
  * now anyway" goes at once and ends that reply; Cancel switches nothing. Past
  * SWX_HOLD.maxMs it gives up and switches nothing, as a refusal does; an
@@ -15040,7 +15040,7 @@ function swxMessageOutcome(lane, ok) {
   SWX.sendErrors[lane] = ok ? null : 'The ' + (lane === 'mode' ? 'mode' : 'model')
     + ' switch did not finish. Your messages are waiting; choose again or cancel them.';
   SWX.sendError = SWX.sendErrors.route || SWX.sendErrors.mode || null;
-  if (SWX.sendError) SWX.err = SWX.sendError;
+  if (SWX.sendError && !SWX.err) SWX.err = SWX.sendError;
 }
 async function swxRun(label, want, run, refuse) {
   const view = SEL.view || 0;

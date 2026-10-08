@@ -24,7 +24,7 @@ const show = (s: unknown) => JSON.stringify(s);
 
 export async function checks103(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, unknown>>(`(() => {
-    if (S.turnId || S.streamId || S.busy || S.pending || RUNNING.size > 0 || BSW.gating || openHoldsComposer() || swxHoldsComposer()) {
+    if (S.turnId || S.streamId || S.busy || S.pending || RUNNING.size > 0 || BSW.gating || openHoldsComposer() || swxWaitsForRoute()) {
       return {skipped: true};
     }
     const e = document.getElementById('entry');

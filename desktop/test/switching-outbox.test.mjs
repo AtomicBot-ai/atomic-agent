@@ -82,3 +82,10 @@ test('a later successful mode does not clear a failed route, and failed mode hol
   c.swxMessageOutcome('mode',false);c.swxMessageOutcome('route',true);c.drainOwed();assert.equal(sent.length,0);
   c.swxMessageOutcome('mode',true);c.drainOwed();assert.equal(sent.length,1);
 });
+
+test('a failed switch retains its specific error alongside the dispatch barrier',()=>{
+  const {c,sent}=fixture();c.submit();c.SWX.pending=0;
+  c.SWX.err='Starting model — insufficient memory';c.swxMessageOutcome('route',false);
+  assert.equal(c.SWX.err,'Starting model — insufficient memory');
+  assert.match(c.SWX.sendError,/messages are waiting/);c.drainOwed();assert.equal(sent.length,0);
+});

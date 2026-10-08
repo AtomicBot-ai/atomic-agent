@@ -291,7 +291,7 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       await setCodingMode('plan', async () => ({ok:false, error:'smoke t08 refusal'}));
       await new Promise((res) => setTimeout(res, 150));
       const out = {log: S.log.length, empty: !!document.querySelector('.emptychat'), toast: (S.toasts.slice(toastsBefore).map((t) => t.t + ' / ' + t.s).pop()) || null};
-      SWX.err = null; render();
+      window.__swxReset();
       return out;
     })()`);
     check(
@@ -339,17 +339,22 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
     // 07c — the 45 s watchdog's line outlived a switch that landed.
     const c = await js<Record<string, unknown>>(`(async () => {
       if (S.busy || SWX.pending) return {skipped:'busy'};
-      const label = 'starting smoke-t07…';
-      const res = await swxRun(label, null, async () => { SWX.err = swxSlowLine(label); return {ok:true}; });
-      const cleared = SWX.err === null;
-      const res2 = await swxRun(label, null, async () => ({ok:false, error:'boom'}));
-      const failKept = /boom/.test(SWX.err || '');
-      SWX.err = null; render();
-      return {ok: res && res.ok, cleared, failKept, ok2: res2 && res2.ok};
+      const keep = {err: SWX.err, sendError: SWX.sendError, sendErrors: Object.assign({}, SWX.sendErrors), owed: DRAIN_OWED};
+      SWX.err = null; SWX.sendError = null; SWX.sendErrors = {}; DRAIN_OWED = false;
+      try {
+        const label = 'starting smoke-t07…';
+        const res = await swxRun(label, null, async () => { SWX.err = swxSlowLine(label); return {ok:true}; });
+        const cleared = SWX.err === null;
+        const res2 = await swxRun(label, null, async () => ({ok:false, error:'boom'}));
+        const failKept = /boom/.test(SWX.err || '');
+        return {ok: res && res.ok, cleared, failKept, ok2: res2 && res2.ok, held: !!SWX.sendError};
+      } finally {
+        SWX.err = keep.err; SWX.sendError = keep.sendError; SWX.sendErrors = keep.sendErrors; DRAIN_OWED = keep.owed; render();
+      }
     })()`);
     check(
       "T07c: a switch that lands clears the watchdog's has-not-finished line; a failure still shows",
-      c.cleared === true && c.failKept === true,
+      c.cleared === true && c.failKept === true && c.held === true,
       JSON.stringify(c),
     );
     // 07d — the context gauge read as a spinner that never stopped.
