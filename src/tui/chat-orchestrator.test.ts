@@ -57,6 +57,7 @@ function stubRuntime(
     steer: () => false,
     runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
       runTurn(text, opts),
+    turnController: {isBusy:()=>false},
     sessionStore: {
       listSummaryPage: () => [],
       countUnreadable: () => 0,
@@ -632,6 +633,29 @@ describe("messages accepted during model switching", () => {
     await (chat as unknown as {resumeModelQueue:()=>Promise<void>}).resumeModelQueue();
     await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
     expect(run).toHaveBeenCalledWith("second", expect.objectContaining({origin:"tui"}));
+  });
+  it("does not carry retained backlog into another session", async () => {
+    const {chat,run,runtime,actions} = waitingChat();
+    runtime.approvals.denyPendingForSession = vi.fn(()=>0);
+    runtime.approvals.pendingRequestForSession = vi.fn(()=>null);
+    vi.spyOn(runtime.sessionStore,"load").mockReturnValue(session("s2"));
+    vi.spyOn(chat.localModels,"waitForSwitch").mockRejectedValue(new Error("model failed"));
+    chat.sendMessage("first");chat.sendMessage("original backlog");
+    await vi.waitFor(()=>expect(actions.some(a=>a.type==="system_message" && a.text.includes("still queued"))).toBe(true));
+    chat.switchSession("s2");
+    vi.spyOn(chat.localModels,"waitForSwitch").mockResolvedValue();
+    await (chat as unknown as {resumeModelQueue:()=>Promise<void>}).resumeModelQueue();
+    expect(run).not.toHaveBeenCalled();
+    expect(queueSnapshots(actions).at(-1)).toEqual([]);
+  });
+  it("does not apply a stopped local model's readiness error to a cloud follow-up", async () => {
+    const first = deferred("s1"), second = deferred("s1");
+    const run = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const chat = new ChatOrchestrator(stubRuntime(run),makeTuiEventBus(),{maxSteps:5,llamaUrl:"http://localhost",readGateFacts:cloudGateFacts});
+    const wait = vi.spyOn(chat.localModels,"waitForSwitch").mockRejectedValue(new Error("local model stopped"));
+    chat.sendMessage("cloud first");chat.sendMessage("cloud second");first.resolve();
+    await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(2));
+    expect(wait).not.toHaveBeenCalled();second.resolve();
   });
   it("keeps the original session when another chat opens before readiness", async () => {
     const {chat,runtime,release} = waitingChat();
