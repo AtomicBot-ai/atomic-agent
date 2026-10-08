@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AgentLoop } from "./agent-loop.js";
+import { captureModelModePolicy, type ResolvedModelMode } from "../llm/model-mode.js";
 import type {
   LessonLifecycleHook,
   MemoryContextProvider,
@@ -107,9 +108,17 @@ describe("AgentLoop fusion seams", () => {
 
   it("a pinned turn is built for the resolved slice and forwards providerId to llmComplete", async () => {
     const seen: LlmStreamParams[] = [];
+    const modes: Array<ResolvedModelMode | undefined> = [];
+    const modelModePolicy = captureModelModePolicy({
+      activeTextProvider: "main", activeEmbeddingProvider: "main", toolTransport: "auto",
+      providers: [{ id: "main", kind: "openrouter", modelMode: "cloud" }, { id: "local-x", kind: "llama-server", modelMode: "local" }],
+    });
     const resolvedFor: string[] = [];
     const loop = new AgentLoop({
       registry: buildDefaultToolRegistry(),
+      onEvent: event => {
+        if (event.type === "llm_event" && event.event.type === "prompt_built") modes.push(event.event.prompt.modelMode);
+      },
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       // The ACTIVE provider is grammar with slot affinity; the pinned
@@ -137,13 +146,15 @@ describe("AgentLoop fusion seams", () => {
     const session = createEmptySessionState({ id: "s-w-pinned", workingDir });
     const result = await loop.runTurn(
       session,
-      turnOptions({ providerId: "local-x" }),
+      turnOptions({ providerId: "local-x", modelModePolicy }),
     );
     expect(result.reason).toBe("reply");
     expect(resolvedFor).toEqual(["local-x"]);
     expect(seen).toHaveLength(1);
     const params = seen[0]!;
     expect(params.providerId).toBe("local-x");
+    expect(params.modelModePolicy).toBe(modelModePolicy);
+    expect(modes).toEqual([{ mode: "local", source: "provider", providerId: "local-x", modelId: null }]);
     // Native wire shape from the slice, not the grammar-only global.
     expect(params.tools).toBeDefined();
     expect(params.tools!.length).toBeGreaterThan(0);

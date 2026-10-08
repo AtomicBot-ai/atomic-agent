@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { CompressedToolResult } from "../../../compressor/result-compressor.js";
+import { retainToolOutput } from "../../../compressor/result-compressor.js";
 import { RESTORE_MAX_BYTES, type FileRestoreStore } from "./fs-restore-store.js";
 
 /**
@@ -225,7 +226,7 @@ export function withReplaceNotes(
   if (noted.length === 0) return result;
   const notes = noted.map((o) => o.note).join("\n");
   const replaced = noted.map((o) => o.replaced);
-  return {
+  return retainToolOutput(result, {
     ...result,
     summary:
       result.summary.length > 0 ? `${notes}\n${result.summary}` : notes,
@@ -233,7 +234,7 @@ export function withReplaceNotes(
       ...result.details,
       replaced: replaced.length === 1 ? replaced[0] : replaced,
     },
-  };
+  }, { prefix: `${notes}\n` });
 }
 
 /** `2,401 lines → 10, header changed`, or `12.3 MB → 10 lines` when the file was never read. */

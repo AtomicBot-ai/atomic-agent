@@ -240,6 +240,7 @@ export function finalizeAgentTurn(
         void deps.reflectionRunner
           .reflect({
             sessionId: state.id,
+            ...(context.options.modelModePolicy ? { modelModePolicy: context.options.modelModePolicy } : {}),
             userMessage,
             assistantReply,
             // Memory-v2 phase 2. Surfaced ids for this turn — the

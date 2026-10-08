@@ -74,16 +74,22 @@ describe("pure next-turn prompt preview", () => {
     const resolveToolTransport = vi.fn((): ToolCallTransport => "native_tools");
     const resolveCatalogContextWindow = vi.fn(() => 32000);
     const profileWindowApplies = vi.fn(() => false);
+    const resolveModelMode = vi.fn(() => ({ mode: "cloud" as const, source: "provider" as const, providerId: "remote", modelId: "large" }));
     const preview = createRuntimePromptPreview(getConfig(), {
       workingDir: dir, sessionStore: { load: () => session }, profileStore: { listForPrompt: () => [] },
       capabilities: { platform: "darwin", arch: "arm64", browserChannel: "chrome", workingDir: dir, hasClipboard: false, hasWmctrl: false, hasNotifications: false },
       effectiveToolDescriptors: () => [], getSkillCatalog: () => [],
       getLiveProfile: () => ({ ...QWEN_THINK_PROFILE, contextWindow: 4096 }),
-      resolveToolTransport, resolveCatalogContextWindow, profileWindowApplies,
+      resolveToolTransport, resolveCatalogContextWindow, profileWindowApplies, resolveModelMode,
     });
-    expect(preview({ sessionId: session.id }).contextWindow).toBe(32000);
+    const built = preview({ sessionId: session.id });
+    expect(built.contextWindow).toBe(32000);
+    expect(built.modelMode).toEqual({ mode: "cloud", source: "provider", providerId: "remote", modelId: "large" });
+    expect(resolveModelMode).toHaveBeenCalledWith(session.id);
     expect(resolveToolTransport).toHaveBeenCalledWith(session.id);
     expect(resolveCatalogContextWindow).toHaveBeenCalledWith(session.id);
     expect(profileWindowApplies).toHaveBeenCalledWith(session.id);
+    expect(session.cloudContext).toBeUndefined();
+    expect(preview({ sessionId: session.id }).cloudContext).toEqual(built.cloudContext);
   });
 });

@@ -1,8 +1,10 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
+import { fullToolResult } from "../compressor/result-compressor.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
 import type { ToolRole } from "./tool-roles.js";
 
 export interface ToolContext {
+  modelMode?: "local" | "cloud";
   /** Working directory for OS tools and relative path resolution. */
   workingDir: string;
   sessionId: string;
@@ -105,6 +107,7 @@ export class ToolRegistry {
     // number as "200000", an array as "[\"a.png\"]"). Unwrap those
     // before dispatch; anything that cannot be coerced is passed
     // through untouched so the tool reports its own error.
-    return tool.run(coerceToolArgs(name, args), ctx);
+    const result = await tool.run(coerceToolArgs(name, args), ctx);
+    return ctx.modelMode === "cloud" ? fullToolResult(result) : result;
   }
 }

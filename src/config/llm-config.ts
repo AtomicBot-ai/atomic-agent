@@ -1,4 +1,5 @@
 import { ConfigValidationError } from "./config-validation-error.js";
+import { parseModelMode, parseModelModes, type ModelMode } from "./model-mode.js";
 import {
   parseLlmRunModeConfig,
   type UserLlmRunModeConfig,
@@ -36,6 +37,10 @@ export type UserSubscriptionCliOptions = {
 export type UserLlmProviderEntry = {
   id: string;
   kind: string;
+  /** Context/agent policy. Absent preserves legacy behavior (local). */
+  modelMode?: ModelMode;
+  /** Per-model policy overrides, independent of catalog metadata. */
+  modelModes?: Record<string, ModelMode>;
   url?: string;
   apiKey?: string;
   model?: string;
@@ -298,6 +303,8 @@ export function parseLlmProviderEntry(
   return {
     id,
     kind,
+    ...(obj.modelMode == null ? {} : { modelMode: parseModelMode(obj.modelMode, `${field}.modelMode`) }),
+    ...(obj.modelModes == null ? {} : { modelModes: parseModelModes(obj.modelModes, `${field}.modelModes`) }),
     url: parseOptionalString(obj.url, `${field}.url`),
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
     model: parseOptionalString(obj.model, `${field}.model`),

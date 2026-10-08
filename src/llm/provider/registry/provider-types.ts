@@ -1,4 +1,5 @@
 import type { AtomicAgentConfig } from "../../../config/index.js";
+import type { ModelMode } from "../../../config/model-mode.js";
 import type { UserSubscriptionCliOptions } from "../../../config/llm-config.js";
 import type { UserLlmRunModeConfig } from "../../../config/llm-run-mode-config.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
@@ -23,6 +24,8 @@ export type ProviderFactory = (
 export type LlmProviderConfigEntry = {
   id: string;
   kind: string;
+  modelMode?: ModelMode;
+  modelModes?: Readonly<Record<string, ModelMode>>;
   url?: string;
   apiKey?: string;
   model?: string;

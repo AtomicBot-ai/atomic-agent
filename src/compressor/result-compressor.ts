@@ -13,6 +13,9 @@ export interface CompressedToolResult {
   summary: string;
   details: Record<string, unknown>;
   truncated: boolean;
+  /** Ephemeral source, non-enumerable: local serialization stays unchanged. */
+  fullOutput?: string;
+  fullOutputTruncated?: boolean;
   /**
    * Prompted approvals answered while the call ran. Stamped by the batch
    * executor, never by a tool; see `approval-ledger.ts`.
@@ -63,13 +66,32 @@ export function compressToolResult(
     : merged.overflow === "tail"
       ? keepSummaryTail(signature, tail, merged.maxSummaryLength)
       : `${joined.slice(0, merged.maxSummaryLength - 15)}\n… [truncated]`;
-  return {
+  const result: CompressedToolResult = {
     tool: raw.tool,
     status: raw.status,
     summary,
     details: raw.details ?? {},
     truncated: tailTruncated || overLength,
   };
+  Object.defineProperty(result, "fullOutput", { value: raw.output, enumerable: false });
+  Object.defineProperty(result, "fullOutputTruncated", { value: raw.details?.truncated === true, enumerable: false });
+  return result;
+}
+
+/** Select before wrappers spread/serialize the result; never reconstruct lost text. */
+export function fullToolResult(result: CompressedToolResult): CompressedToolResult {
+  if (result.fullOutput === undefined) return result;
+  return { ...result, summary: result.fullOutput, truncated: result.fullOutputTruncated === true };
+}
+
+/** Keep the ephemeral source when a guard annotates a result. */
+export function retainToolOutput(from: CompressedToolResult, to: CompressedToolResult,
+  options: { prefix?: string; truncated?: boolean } = {}): CompressedToolResult {
+  if (from.fullOutput !== undefined) {
+    Object.defineProperty(to, "fullOutput", { value: `${options.prefix ?? ""}${from.fullOutput}`, enumerable: false });
+    Object.defineProperty(to, "fullOutputTruncated", { value: options.truncated ?? from.fullOutputTruncated, enumerable: false });
+  }
+  return to;
 }
 
 /**

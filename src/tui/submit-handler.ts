@@ -3,6 +3,7 @@ import {
   type SlashDispatchResult,
 } from "./commands/slash-command-handler.js";
 import { runRunModeVerb } from "./commands/run-mode-verb.js";
+import { runModelModeCommand } from "./commands/model-mode-command.js";
 import {
   parseSlashCommand,
   slashPrefix,
@@ -240,6 +241,7 @@ export function runSlashCommand(
     runQueueVerb(result.queueVerb, state, dispatch, callbacks);
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
+  if (result.modelModeCommand) runModelModeCommand(result.modelModeCommand, dispatch);
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }

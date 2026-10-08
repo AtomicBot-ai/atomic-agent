@@ -1,4 +1,5 @@
 import type { LlmStreamParams } from "../agent/step/step-contract.js";
+import { resolveModelMode } from "../llm/model-mode.js";
 import type {
   CompletionResult,
   StreamChunk,
@@ -114,7 +115,8 @@ export function createFallbackCompleter(
     }
     const { result, transport } = served;
     deps.recordUnaryUsage(params, result, providerId);
-    return { ...result, servedTransport: transport };
+    return { ...result, servedTransport: transport,
+      ...(params.modelModePolicy ? { servedModelMode: resolveModelMode(params.modelModePolicy, providerId) } : {}) };
   };
   return async (params) =>
     params.providerId !== undefined
@@ -179,7 +181,8 @@ export function createFallbackStreamer(
         throw err;
       }
       deps.recordStreamUsage(params.sessionId, result, providerId);
-      return { ...result, servedTransport: transport };
+      return { ...result, servedTransport: transport,
+        ...(params.modelModePolicy ? { servedModelMode: resolveModelMode(params.modelModePolicy, providerId) } : {}) };
     }
     return run();
   };

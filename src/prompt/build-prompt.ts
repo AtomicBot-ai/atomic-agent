@@ -1,4 +1,5 @@
 import { projectSessionConversation } from "../session/session-compaction.js";
+import { buildCloudPrompt } from "./build-cloud-prompt.js";
 import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
@@ -169,6 +170,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : {}),
     ...(input.toolRole !== undefined ? { toolRole: input.toolRole } : {}),
   });
+
+  if (input.modelMode?.mode === "cloud") return buildCloudPrompt(input, stablePrefix);
 
   const sessionParts = buildSessionSectionParts(input.session, limits.session);
   const loadedForTail = sessionParts.loaded;
@@ -513,6 +516,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     stablePrefix,
     tail,
     messages,
+    ...(input.modelMode ? { modelMode: input.modelMode } : {}),
     tokens: {
       stablePrefix: budgetResult.perSection.stablePrefix,
       loadedSkills: budgetResult.perSection.loadedSkills,

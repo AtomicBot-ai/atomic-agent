@@ -322,7 +322,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "llm",
       description:
-        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
+        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm model-mode [local|cloud|inherit] [provider-id] [model-id]` select context policy · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
       rank: 24,
     },
     section: "manage",

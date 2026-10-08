@@ -6,6 +6,7 @@ import type {
 } from "../llm/provider/completion-types.js";
 import type { LlmProvider } from "../llm/provider/llm-provider.js";
 import { primeStream, type PrimedStream } from "../llm/fallback/index.js";
+import { resolveModelMode } from "../llm/model-mode.js";
 
 /**
  * The `{ provider, transport }` slice for one chosen link. `bootstrap`
@@ -15,6 +16,7 @@ import { primeStream, type PrimedStream } from "../llm/fallback/index.js";
 export interface ResolvedLinkSlice {
   provider: LlmProvider;
   transport: ToolCallTransport;
+  contextWindow?: number | null;
 }
 
 /**
@@ -92,6 +94,7 @@ function grammarRequestFields(params: LlmStreamParams) {
  */
 function turnRequestFields(params: LlmStreamParams) {
   return {
+    ...(params.contextBudget ? { contextBudget: params.contextBudget } : {}),
     ...(typeof params.maxOutputTokens === "number"
       ? { maxOutputTokens: params.maxOutputTokens }
       : {}),
@@ -113,9 +116,11 @@ export async function completeOnLink(
   providerId: string,
 ): Promise<{ result: CompletionResult; transport: ToolCallTransport }> {
   await deps.prepareLink?.(providerId);
-  const { provider, transport } = deps.resolveSlice(providerId);
+  const { provider, transport, contextWindow } = deps.resolveSlice(providerId);
+  params = prepareParams(params, providerId, transport, contextWindow);
   const base = {
     prompt: promptFor(params, transport),
+    ...(params.modelModePolicy ? { modelMode: resolveModelMode(params.modelModePolicy, providerId) } : {}),
     sessionId: params.sessionId,
     ...(typeof params.maxTokens === "number"
       ? { maxTokens: params.maxTokens }
@@ -153,9 +158,11 @@ export async function openStreamOnLink(
   transport: ToolCallTransport;
 }> {
   await deps.prepareLink?.(providerId);
-  const { provider, transport } = deps.resolveSlice(providerId);
+  const { provider, transport, contextWindow } = deps.resolveSlice(providerId);
+  params = prepareParams(params, providerId, transport, contextWindow);
   const base = {
     prompt: promptFor(params, transport),
+    ...(params.modelModePolicy ? { modelMode: resolveModelMode(params.modelModePolicy, providerId) } : {}),
     sessionId: params.sessionId,
     // The per-request reply cap has to reach the wire on the streamed
     // path too — the unary seam always forwarded it, and a step that
@@ -171,4 +178,16 @@ export async function openStreamOnLink(
       ? provider.completeStream({ ...base, ...nativeRequestFields(params) })
       : provider.completeStream({ ...base, ...grammarRequestFields(params) });
   return { primed: await primeStream(stream), transport };
+}
+
+function prepareParams(params: LlmStreamParams, providerId: string, transport: ToolCallTransport, contextWindow?: number | null): LlmStreamParams {
+  if (!params.modelModePolicy || !params.prepareForLink) return params;
+  const modelMode = resolveModelMode(params.modelModePolicy, providerId);
+  if (modelMode.mode !== "cloud" && !params.contextBudget) return params;
+  const rebuilt = params.prepareForLink({ modelMode, transport,
+    contextWindow: contextWindow === undefined ? params.contextBudget?.window ?? null : contextWindow,
+    ...(params.maxTokens !== undefined ? { maxTokens: params.maxTokens } : {}),
+  });
+  // The rebuilt flat prompt already has the attempted transport's framing.
+  return { ...params, ...rebuilt, grammarPrompt: () => rebuilt.prompt };
 }
