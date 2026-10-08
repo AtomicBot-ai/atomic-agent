@@ -113,9 +113,9 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     await orchestrator.autoStartIfReady();
 
     expect(orchestrator.startDaemon).toHaveBeenCalledTimes(1);
-    expect(actions.map((a) => a.line).filter(Boolean)).toContain(
+    await vi.waitFor(() => expect(actions.map((a) => a.line).filter(Boolean)).toContain(
       "local-llm: backend update failed — starting current binary (socket hang up)",
-    );
+    ));
   });
 
   // `autoStartIfReady` starts the daemon and then runs one deferred
@@ -147,7 +147,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
 
     await orchestrator.autoStartIfReady();
 
-    expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1));
     expect(startDaemon).toHaveBeenCalledWith({ backendAlreadyChecked: true });
   });
 
@@ -341,6 +341,42 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       expect.any(String),
       expect.objectContaining({ enabled: false }),
     );
+  });
+
+
+  it("replaces an in-flight selection, skips an intermediate choice and bypasses the startup benchmark", async () => {
+    const dataDir = prepareManagedInstall();
+    const ids = ["qwen-3.5-4b", "qwen-3.5-9b", "gemma-4-12b"] as const;
+    for (const id of ids) {
+      const def = localLlm.getLocalModelDef(id);
+      mkdirSync(join(dataDir, "models", id), { recursive: true });
+      writeFileSync(resolveModelFilePath(dataDir, id, def.filename), "stub");
+    }
+    vi.mocked(localLlm.getDaemonStatus).mockResolvedValue({ running: false, healthy: false, loading: false, pid: null, port: 19091 });
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({ action: "skipped" });
+    let entered!: () => void;
+    const loading = new Promise<void>(resolve => { entered = resolve; });
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockImplementationOnce(async ({ chat }) => {
+      entered();
+      await new Promise<void>(resolve => chat.signal!.addEventListener("abort", () => resolve(), { once: true }));
+      throw new DOMException("Superseded", "AbortError");
+    });
+    const actions: Emitted[] = [];
+    const orchestrator = new LocalModelsOrchestrator({ emit(a) { actions.push(a as Emitted); }, subscribe: () => () => {} });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    const first = orchestrator.setActive(ids[0]);
+    await loading;
+    expect(orchestrator.isSwitching).toBe(true);
+    const second = orchestrator.setActive(ids[1]);
+    const third = orchestrator.setActive(ids[2]);
+    await Promise.all([first, second, third]);
+    const starts = vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls;
+    expect(starts.map(([opts]) => opts.chat.modelId)).toEqual([ids[0], ids[2]]);
+    expect(starts.every(([opts]) => opts.chat.throughputProbe === false)).toBe(true);
+    expect(getConfig().localModels.managed.modelId).toBe(ids[2]);
+    expect(orchestrator.isSwitching).toBe(false);
+    expect(actions.some(a => a.type === "ui_mode_set")).toBe(false);
+    await orchestrator.shutdown();
   });
 
   /** Managed mode with backend + chat model already on disk. */

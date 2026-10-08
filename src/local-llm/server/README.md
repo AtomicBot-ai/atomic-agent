@@ -30,3 +30,9 @@ Header/catalog information comes from [catalog](../catalog/README.md); installed
 Run `npx vitest run src/local-llm/server` after cross-owner imports are integrated. Include existing local-llm backend update/fallback suites and affected CLI models, TUI daemon restart/port clearance/wedge/hybrid recall, LLM health/profile, runtime local-probe/embedding-auth, memory embeddings and prompt/fusion seams when their interface is involved. Run `npm run lint`, `npm run typecheck:tests`, `npm run imports:check`, `npm run docs:check` and the full `npm run test:ci` for acceptance.
 
 The adjacent suites use existing mocks and disposable fixtures; launch-guard and port-reclaim tests need local loopback listeners. Passing these checks does not establish actual llama-server startup, GPU measurements, Windows ACL/process behavior on a Windows host, or external-mode manual operation. No real server/download or user data operation is a verification step for a mechanical move.
+
+Managed launch options accept an AbortSignal. A superseded health wait aborts and
+the lifecycle removes only the child it spawned before returning. Interactive
+clients disable the optional throughput probe so readiness follows daemon health;
+`models start --interactive` exposes this policy to the desktop client. Ordinary
+`models start` keeps its existing benchmark behavior.

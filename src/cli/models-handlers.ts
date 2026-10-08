@@ -440,7 +440,7 @@ export async function runLocalModelsStatus(): Promise<number> {
   return 0;
 }
 
-export async function runLocalModelsStart(): Promise<number> {
+export async function runLocalModelsStart(opts: { interactive?: boolean } = {}): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
     process.stderr.write("external mode — nothing to start\n");
@@ -582,6 +582,7 @@ export async function runLocalModelsStart(): Promise<number> {
   const startWithDevice = (dev: string | undefined) =>
     startChatAndEmbeddingDaemons({
       chat: {
+        ...(opts.interactive ? { throughputProbe: false } : {}),
         dataDir,
         modelId: mid,
         port: cfg.localModels.managed.port,
