@@ -1,6 +1,7 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction } from "./context-compaction.js";
+import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
@@ -52,6 +53,7 @@ import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
+import { SessionNotFoundError } from "./session-not-found-error.js";
 
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 
@@ -346,6 +348,7 @@ export async function createAgentRuntime(
   });
 
   const promptPreviewDeps = {
+    prepareWorkspace: createWorkspaceLoader(config),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,
@@ -403,6 +406,7 @@ export async function createAgentRuntime(
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
   const loopDeps = {
+    prepareWorkspace: promptPreviewDeps.prepareWorkspace,
     compaction: compaction.control,
     registry: toolRegistry,
     // A getter, so `runtime.setPlanMode` is observed by the next tool
@@ -620,6 +624,12 @@ export async function createAgentRuntime(
   consolidatorJob?.start();
 
   const runtime = {
+    getSessionWorkspace(input: SessionState | string) {
+      const session = typeof input === "string" ? sessionStore.load(input) : input;
+      if (!session) throw new SessionNotFoundError(String(input));
+      const mode = promptPreviewDeps.resolveModelMode(session.id);
+      return mode.mode === "cloud" ? promptPreviewDeps.prepareWorkspace(session, true) : null;
+    },
     config,
     loop,
     toolRegistry,

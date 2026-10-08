@@ -1,5 +1,6 @@
 import { projectSessionConversation } from "../session/session-compaction.js";
 import { buildCloudPrompt } from "./build-cloud-prompt.js";
+import { buildSkillCatalogSection } from "../skills/skill-catalog.js";
 import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
@@ -137,11 +138,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? getReasoningTurnFraming(input.profile)
       : undefined;
 
+  const workspaceCatalog = input.workspace ? buildSkillCatalogSection(
+    input.workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => e.record),
+    input.workspace.cloud ? { maxChars: Infinity } : { tokenBudget: config.skills.catalogTokenBudget },
+  ) : undefined;
   const stablePrefix = buildStablePrefix({
     toolDescriptors: input.toolDescriptors,
-    capabilities: input.capabilities,
-    skillCatalog: input.skillCatalog,
-    ...(input.skillCatalogDropped !== undefined
+    capabilities: input.workspace ? { ...input.capabilities, workingDir: input.session.workingDir } : input.capabilities,
+    skillCatalog: workspaceCatalog?.entries ?? input.skillCatalog,
+    ...(workspaceCatalog ? { skillCatalogDropped: workspaceCatalog.dropped } : input.skillCatalogDropped !== undefined
       ? { skillCatalogDropped: input.skillCatalogDropped }
       : {}),
     reasoningSystemToken: suppressPrefill

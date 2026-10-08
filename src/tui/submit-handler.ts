@@ -11,6 +11,7 @@ import {
 import {
   filterSlashCommands,
   resolveSlashCommand,
+  skillSlashCommands,
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
@@ -67,7 +68,7 @@ export function handleEditorSubmit(
   if (trimmed.startsWith("/")) {
     const parsed = parseSlashCommand(trimmed);
     if (parsed !== null) {
-      const resolved = resolveSlashCommand(parsed.name);
+      const resolved = resolveSlashCommand(parsed.name, skillSlashCommands(state.skillsPanel));
       if (resolved !== null) {
         runSlashCommand(trimmed, state, dispatch, callbacks);
         return;
@@ -81,7 +82,7 @@ export function handleEditorSubmit(
 
   if (state.slashPaletteOpen) {
     const query = slashPrefix(trimmed) ?? "";
-    const completions = filterSlashCommands(query);
+    const completions = filterSlashCommands(query, skillSlashCommands(state.skillsPanel));
     const maxRow = Math.max(0, completions.length - 1);
     const safeCursor = Math.min(state.slashPaletteCursor, maxRow);
     const chosen = completions[safeCursor];
@@ -182,7 +183,27 @@ export function runSlashCommand(
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
 ): void {
-  const result: SlashDispatchResult = dispatchSlashCommand(raw);
+  const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
+  if (result.skillInvocation) {
+    if (!canTypeMessage(state)) return;
+    try {
+      if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
+      const { name, input } = result.skillInvocation;
+      const text = callbacks.prepareSkillInvocation(name, input);
+      dispatch({ type: "slash_palette_closed" });
+      if (canAcceptMessage(state)) {
+        dispatch({ type: "message_submitted" });
+        callbacks.onMessageSubmitted(text);
+      } else {
+        submitWhileBusy(text, state.whileBusyMode, dispatch, callbacks);
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      dispatch({ type: "system_message", text });
+      callbacks.onSkillsRefreshRequested?.();
+    }
+    return;
+  }
   if (result.triggerDebugBundleDump) {
     callbacks.onDebugBundleExportRequested?.(state);
   }
@@ -241,7 +262,10 @@ export function runSlashCommand(
     runQueueVerb(result.queueVerb, state, dispatch, callbacks);
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
-  if (result.modelModeCommand) runModelModeCommand(result.modelModeCommand, dispatch);
+  if (result.modelModeCommand) {
+    runModelModeCommand(result.modelModeCommand, dispatch);
+    callbacks.onSkillsRefreshRequested?.();
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }

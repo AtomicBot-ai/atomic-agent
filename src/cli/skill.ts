@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { setSkillDisabled, setProjectSkillsEnabled } from "../config/skill-policy-commands.js";
+import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
 import {
   ensureUserConfigFileSync,
   getConfig,
@@ -45,6 +47,9 @@ const HELP =
     "  show <name>                Print SKILL.md for an installed skill",
     "  enable <name>              Re-enable a previously disabled skill (mutates config.json)",
     "  disable <name>             Hide a skill from the registry without removing files (mutates config.json)",
+    "  enable|disable <name> --workspace <dir>  Change cloud workspace policy only",
+    "  project on|off --workspace <dir>        Toggle all project skills in cloud",
+    "  list|show <name> --workspace <dir>      Inspect effective cloud workspace skills",
     "  browse [--source owner/repo]   Browse installable skills (ClawHub + configured GitHub taps)",
     "  search <query>             Search ClawHub + the configured GitHub taps",
     "  tap list|add <owner/repo>|remove <owner/repo>   Manage hub taps (mutates config.json)",
@@ -57,6 +62,13 @@ export async function skillCommand(args: string[]): Promise<number> {
     return 0;
   }
   try {
+    const workspaceIndex = args.indexOf("--workspace");
+    if (workspaceIndex >= 0) {
+      const workspace = args[workspaceIndex + 1];
+      if (!workspace || workspace.startsWith("--")) throw new Error("--workspace requires a directory");
+      const rest = args.filter((_, i) => i !== workspaceIndex && i !== workspaceIndex + 1);
+      return handleWorkspaceSkill(rest, workspace);
+    }
     switch (sub) {
       case "install":
         return await handleInstall(args.slice(1));
@@ -86,6 +98,36 @@ export async function skillCommand(args: string[]): Promise<number> {
     process.stderr.write(`skill ${sub} failed: ${message}\n`);
     return 1;
   }
+}
+
+function handleWorkspaceSkill(args: string[], workspace: string): number {
+  const [command, value] = args;
+  if (command === "enable" || command === "disable") {
+    if (!value || args.length !== 2) throw new Error("Expected skill enable|disable <name> --workspace <dir>");
+    setSkillDisabled(value, command === "disable", workspace);
+    process.stdout.write(`${command === "disable" ? "disabled" : "enabled"} in cloud workspace ${resolve(workspace)}: ${value}\n`);
+    return 0;
+  }
+  if (command === "project") {
+    if ((value !== "on" && value !== "off") || args.length !== 2) throw new Error("Expected skill project on|off --workspace <dir>");
+    setProjectSkillsEnabled(workspace, value === "on");
+    process.stdout.write(`project skills ${value}: ${resolve(workspace)}\n`);
+    return 0;
+  }
+  if (command !== "list" && command !== "show") throw new Error("--workspace supports list, show, enable, disable and project");
+  const config = getConfig();
+  const view = loadWorkspaceSkills(workspace, { globalDir: config.paths.globalSkillsDir, projectDirName: config.paths.projectSkillsDirName,
+    configFile: config.paths.userConfigFile, defaults: config.skills });
+  if (command === "show") {
+    const entry = view.entries.find(e => e.record.manifest.name === value);
+    if (!entry) throw new Error(`skill not installed: ${value}`);
+    process.stdout.write(`# path: ${entry.record.manifestPath}\n# state: ${entry.disabledReasons.join(", ") || "enabled"}\n${entry.body}\n`);
+  } else {
+    process.stdout.write(`workspace: ${view.workingDir}; project skills: ${view.projectSkillsEnabled ? "on" : "off"}\n`);
+    for (const entry of view.entries) process.stdout.write(`${entry.record.manifest.name}\t[${entry.record.source}]\t${entry.disabledReasons.join(", ") || "enabled"}\t${entry.record.manifestPath}\n`);
+    for (const message of view.diagnostics) process.stderr.write(`WARN: ${message}\n`);
+  }
+  return 0;
 }
 
 async function handleInstall(args: string[]): Promise<number> {

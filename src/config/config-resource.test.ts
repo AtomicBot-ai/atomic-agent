@@ -62,13 +62,13 @@ describe("resource configuration ownership", () => {
       taps: ["Owner/repo", "owner/repo", "Owner/repo"],
       clawhub: { enabled: false, apiBase: "ftp://source.local/path" },
     }, createSkillsDefaults)).toEqual({
+      cloudWorkspaces: [],
       catalogTokenBudget: 4096,
       disabled: ["one", "two"],
       taps: ["Owner/repo", "owner/repo"],
       clawhub: { enabled: false, apiBase: "ftp://source.local/path", browseLimit: 100, nonSuspiciousOnly: true },
     });
-    expect(validation(() => parseSkillsConfig({ disabled: ["x"] }, createSkillsDefaults)).field)
-      .toBe("skills.disabled[0]");
+    expect(parseSkillsConfig({ disabled: ["x"] }, createSkillsDefaults).disabled).toEqual(["x"]);
   });
 
   it("keeps skill normalization order and validates disabled source settings", () => {
@@ -79,6 +79,15 @@ describe("resource configuration ownership", () => {
       .toBe("skills.disabled[0]");
     expect(validation(() => parseSkillsConfig({ clawhub: { enabled: false, browseLimit: 0 } }, createSkillsDefaults)).field)
       .toBe("skills.clawhub.browseLimit");
+  });
+
+  it("defaults and validates per-workspace cloud skill policy", () => {
+    expect(parseSkillsConfig({ cloudWorkspaces: [{ workingDir: "/workspace" }] }, createSkillsDefaults).cloudWorkspaces)
+      .toEqual([{ workingDir: "/workspace", projectSkillsEnabled: true, disabled: [] }]);
+    expect(validation(() => parseSkillsConfig({ cloudWorkspaces: [{ workingDir: "/workspace" }, { workingDir: "/workspace" }] }, createSkillsDefaults)).field)
+      .toBe("skills.cloudWorkspaces[1]");
+    expect(validation(() => parseSkillsConfig({ cloudWorkspaces: [{ workingDir: "/workspace", disabled: ["bad name"] }] }, createSkillsDefaults)).field)
+      .toBe("skills.cloudWorkspaces[0].disabled[0]");
   });
 
   it("reads outer skill defaults separately after raw getters replace them", () => {

@@ -76,6 +76,11 @@ export function skillAlreadyLoadedResult(
     ?.name;
   if (typeof rawName !== "string" || rawName.length === 0) return null;
   if (!ctx.loadedSkillNames.has(rawName)) return null;
+  // A policy change after inference must also block the cached-body shortcut.
+  if (ctx.workspaceSkills) {
+    try { ctx.workspaceSkills.assertAvailable(rawName); }
+    catch (error) { return compressToolResult({ tool: "skill.view", status: "error", output: String(error) }); }
+  }
   return compressToolResult({
     tool: "skill.view",
     status: "ok",

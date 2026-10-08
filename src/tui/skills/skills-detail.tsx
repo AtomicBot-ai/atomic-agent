@@ -40,6 +40,9 @@ export function SkillsDetail(props: SkillsDetailProps): ReactElement {
           </Text>
         ) : null}
       </Box>
+      {row?.sourcePath ? <Text color={theme.colors.muted}>{row.sourcePath}</Text> : null}
+      {row?.disabledReasons?.map((reason) => <Text key={reason} color={theme.colors.warn}>{reason}</Text>)}
+      {(row?.sources?.length ?? 0) > 1 ? <Text color={theme.colors.muted}>Copies: {row!.sources!.join(", ")}</Text> : null}
       {row?.description ? (
         <Box marginTop={1}>
           <Text color={theme.colors.muted}>{row.description}</Text>
@@ -49,7 +52,7 @@ export function SkillsDetail(props: SkillsDetailProps): ReactElement {
         {renderBody(panel.detailBody, maxBodyLines)}
       </Box>
       <Box marginTop={1}>
-        <Text color={theme.colors.muted}>Esc back · e toggle · r refresh</Text>
+        <Text color={theme.colors.muted}>Esc back · e toggle globally · r refresh</Text>
       </Box>
     </Box>
   );

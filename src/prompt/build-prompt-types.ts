@@ -17,6 +17,7 @@ import type { TokenBudgetLimits } from "./token-budget.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
+  workspace?: import("../session/workspace-context.js").SessionWorkspace;
   /** Estimated cost of the actual native tool schemas, cloud only. */
   toolSchemaTokens?: number;
   /** Stage 1 metadata only: does not change rendering or budgets yet. */
