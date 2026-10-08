@@ -1068,6 +1068,11 @@ export class ChatOrchestrator {
       });
     }
     if (!this.currentController) {
+      const dropped = [...this.queue];
+      if (dropped.length) {
+        this.clearQueue();
+        notices.push({ text: formatDroppedQueueOnSwitchNotice(dropped) });
+      }
       this.runtime.approvals.clearSessionGrants(previous.id);
       return notices;
     }
@@ -1448,7 +1453,7 @@ export class ChatOrchestrator {
     let stopped = false;
     let dispatched = false;
     try {
-      if (waitingForModel || fromQueue) {
+      if (waitingForModel || (fromQueue && gateFacts.activeProviderIsLocal && gateFacts.managedMode)) {
         this.waitingModelMessages.set(turnSessionId, text);
         this.bus.emit({ type: "message_waiting_for_model", sessionId: turnSessionId, text });
         if (waitingForModel) this.notify("The model is switching, so the reply may take longer.");
