@@ -27,6 +27,7 @@ writeFileSync(join(home, ".atomic-agent", "config.json"), "{}");
 
 const require = createRequire(import.meta.url);
 const { importFromTui, IMPORT_AGENT_STILL_RUNNING } = require("../out/main/tui-import.js");
+const { withCliStandIn } = require("../out/main/agent-cli.js");
 
 const sessions = join(desktopState, "sessions.sqlite");
 const stage = () => {
@@ -60,4 +61,44 @@ test("with the agent gone, the database arm runs and the agent is started again"
   assert.equal(res.ok, true, res.error);
   assert.deepEqual(calls, ["stop", "start"]);
   assert.equal(existsSync(sessions + "-wal"), false);
+});
+
+test("provider import migrates old cloud entries without resetting desktop choices or current-format inherit", async () => {
+  for (const version of [74, 75, 76, undefined]) {
+    const source = {
+      llm: { providers: [
+        { id: "new-cloud", kind: "openrouter", modelModes: { exact: "local" } },
+        { id: "new-local", kind: "llama-server" },
+        { id: "manual", kind: "gemini", modelMode: "local" },
+        { id: "existing", kind: "openrouter" },
+        { id: "inherit", kind: "openrouter" },
+      ] },
+    };
+    if (version !== undefined) source.version = version;
+    const sourceText = JSON.stringify(source);
+    const sourcePath = join(home, ".atomic-agent", "config.json");
+    writeFileSync(sourcePath, sourceText);
+    let config = { version: 75, llm: { activeTextProvider: "local-llama", providers: [
+      { id: "local-llama", kind: "llama-server" },
+      { id: "existing", kind: "openrouter", modelMode: "local", modelModes: { exact: "cloud" } },
+      { id: "inherit", kind: "openrouter" },
+    ] } };
+    const result = await withCliStandIn(async (args, input) => {
+      if (args.join(" ") === "config get") return { ok: true, stdout: JSON.stringify(config), stderr: "" };
+      assert.deepEqual(args, ["config", "set", "-"]);
+      config = JSON.parse(input);
+      return { ok: true, stdout: "", stderr: "" };
+    }, () => importFromTui({ providers: true }));
+    assert.equal(result.ok, true, result.error);
+    const entry = (id) => config.llm.providers.find((p) => p.id === id);
+    assert.equal(entry("new-cloud").modelMode, version === 74 ? "cloud" : undefined);
+    assert.deepEqual(entry("new-cloud").modelModes, { exact: "local" });
+    assert.equal(entry("new-local").modelMode, undefined);
+    assert.equal(entry("manual").modelMode, "local");
+    assert.equal(entry("existing").modelMode, "local");
+    assert.deepEqual(entry("existing").modelModes, { exact: "cloud" });
+    assert.equal(entry("inherit").modelMode, undefined);
+    assert.equal(config.llm.activeTextProvider, "local-llama");
+    assert.equal(readFileSync(sourcePath, "utf8"), sourceText, "the terminal config stays read-only");
+  }
 });

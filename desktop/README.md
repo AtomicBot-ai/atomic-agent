@@ -580,6 +580,19 @@ Honestly degraded, and labelled as such in the UI:
   (`atag config set '<json>'`) that mirror the TUI's persist helpers. The
   desktop's `configSet` refuses `llm.*` outright so the dead path cannot
   return.
+- **Context policy follows the agent's `modelMode`**, independently of the
+  local/cloud/Fusion route. Cloud policy keeps full tool results in its
+  conversation journal and compacts near the model window; local policy
+  keeps the bounded prompt. The agent's v75 migration initializes existing
+  connections. New connections saved by the desktop use the same initial
+  classification as the TUI: known cloud services use cloud policy, local
+  and unknown/custom endpoints use local policy. New provider imports from
+  pre-v75 terminal configs receive the same cloud migration; importing a
+  current-format entry preserves its saved policy, including `inherit`.
+  Editing keys or selecting
+  a model preserves provider defaults, exact-model overrides and an absent
+  default (`inherit`). There is no desktop policy picker yet; manual
+  overrides use the [agent's config contract](../src/llm/docs/model-mode.md).
 - **Switching backend/provider/model restarts `atag serve`** — the running
   agent pins its provider at boot and 0.5.4 has no reload route; a switch is
   refused while a turn is running. The restart also happens when the file
