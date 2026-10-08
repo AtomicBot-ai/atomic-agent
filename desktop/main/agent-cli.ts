@@ -849,7 +849,7 @@ export async function modelsStart(
   /* ATO-157: a smoke's stand-in start — no port of the real server watched,
      nothing added to the starts quitting would end, no speed remembered. */
   if (cliStandIns.getStore()) {
-    const res = await cli(["models", "start", "--interactive"], 90_000, undefined, opts.signal);
+    const res = await cli(["models", "start", "--interactive"], 300_000, undefined, opts.signal);
     if (res.ok && !opts.signal?.aborted && (opts.stillWanted?.() ?? true)) tell("started");
     return res;
   }
@@ -860,7 +860,7 @@ export async function modelsStart(
   const port = managedPortFromFile();
   let gone = false;
   const watch = port === null ? null : watchStartedServer(port, () => { gone = true; abort.abort(); });
-  const run = cli(["models", "start", "--interactive"], 90_000, undefined, abort.signal);
+  const run = cli(["models", "start", "--interactive"], 300_000, undefined, abort.signal);
   const entry = { abort, done: run };
   startsOnTheirWay.add(entry);
   try {
