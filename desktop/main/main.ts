@@ -8424,26 +8424,19 @@ async function isolationAndSwitchTest(
     JSON.stringify(busyFace),
   );
 
-  /* ---- r5 review fix: two switches at once ----
-     SWX is ONE slot. The lock disables only the send button, so the
-     coding-mode chip and its popover stay clickable for the whole length of a
-     backend switch; a mode click used to re-enter swxRun and overwrite `want`
-     (snapping the composer chip back to the old route — the very paint this
-     item exists to provide), `label`, `since`, and the single `timer` field,
-     whose inner `finally` then left the outer switch with NO watchdog. It is
-     refused in words now. */
+  /* A coding-mode choice survives a backend switch without taking over its
+     timer or releasing Send between the two operations. */
   const nested = await js<{
+    outer: { ok: boolean };
     inner: { ok: boolean; error?: string };
     mid: { want: { backend?: string; mode?: string } | null; timer: boolean; pending: number; label: string; toasts: Array<[string, string, string]> };
     after: { pending: number; want: unknown; timer: boolean };
   }>("window.__swxNested()");
   check(
-    "send button: a second switch started mid-switch is refused, and the first keeps its slot",
-    nested.inner.ok === false && nested.inner.error === "a switch is already running"
-      && !!nested.mid.want && nested.mid.want.backend === "local" && nested.mid.want.mode === undefined
+    "send button: a mode chosen during startup is applied before the queue unlocks",
+    nested.inner.ok === true && nested.outer.ok === true
+      && !!nested.mid.want && nested.mid.want.backend === "local" && nested.mid.want.mode === "plan"
       && nested.mid.timer === true && nested.mid.pending === 1
-      && nested.mid.label === "switching backend…"
-      && nested.mid.toasts.length === 1 && nested.mid.toasts[0]![0] === "One switch at a time"
       && nested.after.pending === 0 && nested.after.want === null && nested.after.timer === false,
     JSON.stringify(nested),
   );
