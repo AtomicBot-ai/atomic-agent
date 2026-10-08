@@ -90,6 +90,10 @@ export interface WorldSnapshot {
 }
 
 export interface SessionState {
+  /** Bodies resolved for cloud workspace only; never projected into local prompts. */
+  cloudLoadedSkills?: import("./workspace-context.js").CloudLoadedSkill[];
+  /** Local Fusion workers of cloud parents inherit the parent's workspace binding. */
+  inheritedWorkspace?: boolean;
   /** Immutable model-visible messages for cloud; independent of local packing. */
   cloudContext?: import("./cloud-context.js").CloudContext;
   id: string;

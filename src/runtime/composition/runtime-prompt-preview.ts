@@ -11,8 +11,10 @@ import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
 import { SessionNotFoundError } from "../session-not-found-error.js";
 import type { ResolvedModelMode } from "../../llm/model-mode.js";
+import { reconcileCloudSkills } from "../../session/workspace-context.js";
 
 export interface RuntimePromptPreviewDependencies {
+  prepareWorkspace?: (session: SessionState, cloud: boolean) => import("../../session/workspace-context.js").SessionWorkspace;
   workingDir: string;
   sessionStore: Pick<SessionStore, "load">;
   profileStore: Pick<ProfileStore, "listForPrompt">;
@@ -64,8 +66,11 @@ export function createRuntimePromptPreview(config: AtomicAgentConfig, deps: Runt
 export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: RuntimePromptPreviewDependencies, session: SessionState, userMessage?: string): BuildPromptInput {
     const transport = deps.resolveToolTransport(session.id);
     const modelMode = deps.resolveModelMode?.(session.id);
+    const workspace = modelMode?.mode === "cloud" ? deps.prepareWorkspace?.(session, true) : undefined;
+    if (workspace) session = reconcileCloudSkills(session, workspace);
     const descriptors = deps.effectiveToolDescriptors();
     return {
+      ...(workspace ? { workspace } : {}),
       session,
       ...(modelMode ? { modelMode } : {}),
       ...(modelMode?.mode === "cloud" && transport === "native_tools" && deps.resolveToolSchemaTokens

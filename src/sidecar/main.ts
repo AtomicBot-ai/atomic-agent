@@ -455,6 +455,11 @@ export async function bootstrapSidecar(): Promise<{
 
   router.register("skill_list", () => {
     if (!active) return { skills: [] };
+    const workspace = active.runtime.getSessionWorkspace(active.session);
+    if (workspace) return { workingDir: workspace.workingDir, projectSkillsEnabled: workspace.skills.projectSkillsEnabled,
+      skills: workspace.skills.entries.map(e => ({ name: e.record.manifest.name, version: e.record.manifest.version,
+        description: e.record.manifest.description, source: e.record.source, rootDir: e.record.rootDir,
+        disabled: e.disabledReasons.length > 0, disabledReasons: e.disabledReasons, sources: e.sources })), errors: workspace.diagnostics };
     return {
       skills: active.runtime.skillRegistry.list().map((r) => ({
         name: r.manifest.name,

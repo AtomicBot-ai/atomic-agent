@@ -293,7 +293,7 @@ export class ChatOrchestrator {
       getCurrentSessionId: () => this.session?.id ?? null,
       switchSession: (id) => this.switchSession(id),
     });
-    this.skills = new SkillsOrchestrator(runtime, bus);
+    this.skills = new SkillsOrchestrator(runtime, bus, { currentSession: () => this.session });
     this.memory = new MemoryOrchestrator(runtime, bus);
     this.mcp = new McpOrchestrator(runtime, bus);
     this.import = new ImportOrchestrator(runtime, bus, {
@@ -352,6 +352,7 @@ export class ChatOrchestrator {
     this.stopWatchingRoute =
       runtime.providerRegistry?.onActiveTextChanged?.((id) => {
         this.localModels.adoptDaemonForRoute(id);
+        this.skills.refresh();
       }) ?? null;
     this.runMode = new RunModeOrchestrator({
       runtime,
@@ -488,6 +489,7 @@ export class ChatOrchestrator {
     if (this.session) return this.session;
     this.session = this.runtime.createSession({ persist: false });
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
+    this.skills.refresh();
     this.refreshRecentSessions();
     return this.session;
   }
@@ -888,6 +890,7 @@ export class ChatOrchestrator {
     }
     const notices = this.leaveCurrentSession();
     this.session = loaded;
+    this.skills.refresh();
     // Switching back into a thread whose turn we backgrounded earlier
     // re-attaches the abort handle: Esc aborts, Enter steers, exactly
     // as if the operator had never left.
@@ -1139,8 +1142,9 @@ export class ChatOrchestrator {
   /** Emit the installed skill catalog into chat + event feed (`/skills dump`). */
   dumpSkillCatalog(): void {
     try {
-      const catalog = this.runtime.skillCatalog;
-      const dropped = this.runtime.skillCatalogDropped;
+      const workspace = this.skills.workspace();
+      const catalog = workspace ? workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => ({ name: e.record.manifest.name, description: e.record.manifest.description, source: e.record.source })) : this.runtime.skillCatalog;
+      const dropped = workspace ? 0 : this.runtime.skillCatalogDropped;
       this.bus.emit({
         type: "system_message",
         text: formatSkillCatalogSystemMessage(catalog, dropped),
@@ -1187,6 +1191,7 @@ export class ChatOrchestrator {
     // the operator never types into leaves no row behind. The one left
     // here is dropped as soon as the next `+ new` or switch replaces it.
     this.session = this.runtime.createSession({ persist: false });
+    this.skills.refresh();
     this.clearQueue();
     clearTtyScreen(process.stdout);
     this.bus.emit({

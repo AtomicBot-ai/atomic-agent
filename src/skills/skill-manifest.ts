@@ -27,6 +27,7 @@ export interface SkillManifest {
 export interface ParsedSkillFile {
   manifest: SkillManifest;
   body: string;
+  disableModelInvocation?: boolean;
 }
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
@@ -68,7 +69,7 @@ export class SkillManifestError extends Error {
  * agentskills.io standard does not mandate it). The body is returned
  * verbatim so it can be streamed into the prompt on `skill.view`.
  */
-export function parseSkillFile(content: string): ParsedSkillFile {
+export function parseSkillFile(content: string, compatibility?: { fallbackName?: string }): ParsedSkillFile {
   const normalised = content.replace(/\r\n/g, "\n");
   if (!normalised.startsWith("---\n")) {
     throw new SkillManifestError(
@@ -90,11 +91,17 @@ export function parseSkillFile(content: string): ParsedSkillFile {
       `invalid YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  const manifest = validateManifest(raw);
-  return { manifest, body };
+  if (compatibility && raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const fields = raw as Record<string, unknown>;
+    if (fields.name === undefined && compatibility.fallbackName) fields.name = compatibility.fallbackName;
+  }
+  const manifest = validateManifest(raw, compatibility !== undefined);
+  const disabled = compatibility && raw && typeof raw === "object"
+    ? (raw as Record<string, unknown>)["disable-model-invocation"] : undefined;
+  return { manifest, body, ...(compatibility ? { disableModelInvocation: disabled === true || /^(true|yes|on|1)$/i.test(String(disabled)) } : {}) };
 }
 
-function validateManifest(raw: unknown): SkillManifest {
+function validateManifest(raw: unknown, compatible = false): SkillManifest {
   const issues: string[] = [];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new SkillManifestError("frontmatter must be a YAML mapping");
@@ -103,9 +110,9 @@ function validateManifest(raw: unknown): SkillManifest {
 
   const name = typeof obj.name === "string" ? obj.name.trim() : "";
   if (!name) issues.push("`name` is required and must be a non-empty string");
-  else if (!NAME_RE.test(name))
+  else if (!(compatible ? /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/ : NAME_RE).test(name))
     issues.push(
-      "`name` must be kebab-case (a-z, 0-9, '-'), 2-64 chars, not start/end with '-'",
+      `\`name\` must be kebab-case (a-z, 0-9, '-'), ${compatible ? "1" : "2"}-64 chars, not start/end with '-'`,
     );
 
   const description =

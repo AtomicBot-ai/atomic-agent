@@ -27,6 +27,7 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
 export interface AgentLoopDependencies {
+  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal) => import("../session/workspace-context.js").SessionWorkspace;
   /** Save model-visible cloud messages before inference, under the turn owner. */
   persistContext?: (state: SessionState) => void;
   compaction?: ContextCompactionControl;
