@@ -25753,7 +25753,7 @@ if (typeof window !== 'undefined') {
   /* item 10 — clears what a FAILED switch deliberately leaves on screen (the
      composer's reason line, the selector's add panel), so the check that
      drives one does not leak that state into whatever runs next. */
-  window.__swxReset = () => { SWX.err = null; SEL.addOpen = false; SEL.err = null; if (WIZ.phase === 'pick_kind') WIZ.phase = null; render(); };   // ATO-161: no provider now opens the wizard's list, not the quick pane
+  window.__swxReset = () => { SWX.err = null; SWX.sendError = null; SWX.sendErrors = {}; SEL.addOpen = false; SEL.err = null; if (WIZ.phase === 'pick_kind') WIZ.phase = null; render(); };   // ATO-161: no provider now opens the wizard's list, not the quick pane
 }
 
 /* ============================================================
