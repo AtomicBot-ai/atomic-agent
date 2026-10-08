@@ -2395,3 +2395,15 @@ describe("context compaction activity", () => {
     expect(end.messages).toEqual(initial.messages);
   });
 });
+
+it("shows a waiting message immediately and consumes the runtime echo only once", () => {
+  let state = createInitialTuiState(fakeSession({sessionId:"s1"}));
+  state = reduceTuiState(state,{type:"message_waiting_for_model",sessionId:"s1",text:"hello"});
+  expect(state.messages.filter(m=>m.role==="user")).toHaveLength(1);
+  state = reduceTuiState(state,{type:"agent_event",sessionId:"s1",event:{type:"user_message",text:"hello"}});
+  expect(state.messages.filter(m=>m.role==="user")).toHaveLength(1);
+  state = reduceTuiState(state,{type:"agent_event",sessionId:"s1",event:{type:"user_message",text:"hello"}});
+  expect(state.messages.filter(m=>m.role==="user")).toHaveLength(2);
+  const unchanged = reduceTuiState(state,{type:"message_waiting_for_model",sessionId:"other",text:"not here"});
+  expect(unchanged).toBe(state);
+});

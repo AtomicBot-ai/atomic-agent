@@ -10,6 +10,7 @@ export class ModelOperationQueue {
   private readonly controllers = new Set<AbortController>();
   private pending = 0;
   private blocking = 0;
+  private readonly ready = new Set<() => void>();
   private closed = false;
   private version = 0;
   get revision(): number { return this.version; }
@@ -17,6 +18,20 @@ export class ModelOperationQueue {
   get busy(): boolean { return this.pending > 0; }
   get switching(): boolean { return this.blocking > 0; }
   get signal(): AbortSignal | undefined { return this.scope.getStore()?.signal; }
+
+  /** Wait for the latest interactive choice, without reserving the engine. */
+  async waitForSwitch(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    while (this.switching) {
+      await new Promise<void>((resolve, reject) => {
+        const done = () => { this.ready.delete(done); signal.removeEventListener("abort", abort); resolve(); };
+        const abort = () => { this.ready.delete(done); reject(signal.reason); };
+        this.ready.add(done);
+        signal.addEventListener("abort", abort, { once: true });
+      });
+      signal.throwIfAborted();
+    }
+  }
 
   run<T>(body: (signal: AbortSignal) => Promise<T>, superseded: T, replace = true, blocking = true): Promise<T> {
     const parent = this.scope.getStore();
@@ -44,6 +59,7 @@ export class ModelOperationQueue {
     }).finally(() => {
       this.pending--;
       if (blocking) this.blocking--;
+      if (!this.switching) for (const done of this.ready) done();
       this.controllers.delete(controller);
       if (this.latest === controller) this.latest = null;
     });

@@ -33,8 +33,9 @@ Model choices stay available while a managed model loads. The orchestrator seria
 owned start, stop and restart operations; a newer selection cancels the previous
 launch and skips intermediate queued choices. Cancellation waits for owned-process
 cleanup before another launch. A completed download cannot replace a newer model
-choice. The composer retains typed text while local Send waits for the selected
-model; successful activation leaves the current panel open.
+choice. Send accepts messages during a switch and shows them with a delay warning.
+Inference waits cancellably for the final choice; each accepted message keeps its
+original session. Successful activation leaves the current panel open.
 
 Interactive starts skip the optional throughput benchmark and reuse any cached
 measurement. Background backend checks share lifecycle ownership without blocking
