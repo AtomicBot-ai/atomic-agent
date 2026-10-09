@@ -9734,16 +9734,22 @@ if (BR) {
     }
     if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); LLMP.tune.msg = null; BR.restart().then(applyStatus); return; }
     if (a === 'workspace' || a === 'workspace:choose') {
-      BR.chooseWorkspace().then((dir) => {
-        if (!dir) return;
-        WORKSPACE = dir;
-        S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
-        render();
-      });
+      BR.chooseWorkspace().then(applyWorkspaceChoice);
       return;
     }
     return originalAct(a);
   };
+  render();
+}
+
+/* A cloud conversation owns its original directory. Choosing a new startup
+   workspace must start a new chat rather than relabel that conversation. */
+function applyWorkspaceChoice(dir) {
+  if (!dir) return;
+  const cloud = !!SK.workingDir;
+  WORKSPACE = dir;
+  if (cloud) act('session:new');
+  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
   render();
 }
 

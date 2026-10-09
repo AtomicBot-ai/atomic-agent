@@ -445,7 +445,9 @@ Honestly degraded, and labelled as such in the UI:
   through HTTP, including `.agents`, `.claude`, `.cursor` and `.pi` skills,
   disabled reasons and the chosen source directory. Before the first message
   the API previews an unsaved session in the startup workspace. Late catalog
-  or detail responses cannot replace a newer session's view. Enabled skills
+  or detail responses cannot replace a newer session's view. Choosing another
+  startup folder in cloud mode opens a new chat; existing conversations keep
+  their original working directory. Enabled skills
   appear in slash completion and the command palette; submitting `/skill-name`
   rechecks availability before sending the normal `skill.view` instruction.
   The Skills detail offers workspace and global controls (`e` toggles the

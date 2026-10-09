@@ -101,3 +101,18 @@ test('default Enable in workspace never adds another ban to a globally disabled 
   await context.skpToggle('guide');
   assert.deepEqual(calls, [['guide',false,'workspace','session-A']]);
 });
+
+for (const cloud of [true,false]) test(`choosing another folder ${cloud ? 'starts a cloud chat' : 'preserves local behavior'}`, () => {
+  const calls=[], state={sessionId:'session-A',agentSession:'session-A',log:[]};
+  const context=createContext({WORKSPACE:'/A', SK:{workingDir:cloud ? '/A' : null}, S:state,
+    act:name=>{calls.push(name); if(name === 'session:new') { state.sessionId=''; state.agentSession=null; }},
+    nid:()=> 'notice', esc:text=>text, render:()=>{},
+  });
+  runInContext(actionSource('function applyWorkspaceChoice(dir)', '/* Hooks used by `electron . --smoke`'),context);
+  context.applyWorkspaceChoice(null);
+  assert.deepEqual(calls,[]); assert.equal(context.WORKSPACE,'/A');
+  context.applyWorkspaceChoice('/B');
+  assert.equal(context.WORKSPACE,'/B');
+  assert.deepEqual(calls, cloud ? ['session:new'] : []);
+  assert.equal(state.agentSession, cloud ? null : 'session-A');
+});
