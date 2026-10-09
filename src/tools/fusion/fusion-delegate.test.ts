@@ -111,6 +111,15 @@ function sixTasks(): Array<{
 }
 
 describe("fusion.delegate", () => {
+  it("passes a cloud parent's workspace into worker creation", async () => {
+    const create = vi.fn((meta, workingDir?: string) => createEmptySessionState({ id: `${FUSION_WORKER_ID_PREFIX}inherit`, workingDir: workingDir ?? "/boot", metadata: { fusionWorker: meta } }));
+    const runTurn = vi.fn(async session => {
+      expect(session.workingDir).toBe("/selected"); return turnResult({ session });
+    });
+    const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
+      { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "cloud" }));
+    expect(result.status).toBe("ok"); expect(create.mock.calls[0]?.[1]).toBe("/selected"); expect(runTurn).toHaveBeenCalledOnce();
+  });
   it("is not readonly and carries its own name", () => {
     const tool = buildFusionDelegateTool(deps());
     expect(tool.name).toBe("fusion.delegate");

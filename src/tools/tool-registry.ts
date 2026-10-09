@@ -4,6 +4,7 @@ import { coerceToolArgs } from "./coerce-tool-args.js";
 import type { ToolRole } from "./tool-roles.js";
 
 export interface ToolContext {
+  workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
   modelMode?: "local" | "cloud";
   /** Working directory for OS tools and relative path resolution. */
   workingDir: string;

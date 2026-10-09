@@ -887,9 +887,12 @@ export class AgentClient extends EventEmitter {
     return (await res.json()) as T;
   }
 
-  capabilities = () => this.json<unknown>("/api/capabilities");
+  private workspaceQuery(sessionId?: string | null): string {
+    return `?workspace=true${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ""}`;
+  }
+  capabilities = (sessionId?: string | null) => this.json<unknown>(`/api/capabilities${this.workspaceQuery(sessionId)}`);
   config = () => this.json<unknown>("/api/config");
-  skills = () => this.json<unknown>("/api/skills");
+  skills = (sessionId?: string | null) => this.json<unknown>(`/api/skills${this.workspaceQuery(sessionId)}`);
   // Item 7 (settings surface): the TUI lists with DEFAULT_LIST_LIMIT = 200
   // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500.
   // Review fix (item 6): the sidebar's Tasks list is EVERY task, not the rail's
@@ -991,7 +994,7 @@ export class AgentClient extends EventEmitter {
   // Item 7 part B (Skills tab): GET /api/skills/{name} (manifest + SKILL.md
   // body; 404 for a disabled skill — the registry's filtered view) and
   // POST /api/skills/uninstall, which also runs runtime.refreshSkills().
-  skill = (name: string) => this.json<unknown>(`/api/skills/${encodeURIComponent(name)}`);
+  skill = (name: string, sessionId?: string | null) => this.json<unknown>(`/api/skills/${encodeURIComponent(name)}${this.workspaceQuery(sessionId)}`);
   uninstallSkill = (name: string, source: "global" | "project" = "global") =>
     this.request<unknown>("POST", "/api/skills/uninstall", { name, source });
 

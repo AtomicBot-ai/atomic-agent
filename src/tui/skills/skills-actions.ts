@@ -17,6 +17,8 @@ export type SkillsAction =
   | { type: "skills_refresh_started" }
   | {
       type: "skills_refreshed";
+      workspace?: string;
+      projectSkillsEnabled?: boolean;
       rows: readonly SkillSummaryRow[];
       at: number;
     }

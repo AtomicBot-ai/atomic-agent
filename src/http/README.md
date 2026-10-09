@@ -26,3 +26,11 @@ Read README.md and ../runtime/docs/lifecycle.md for session/stream/steering chan
 `npx vitest run src/http`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
 
 [Compaction routes](route-compaction.ts) expose `POST /api/sessions/{id}/compact` and `GET /api/sessions/{id}/compaction`. The POST waits for runtime completion and cancels only its operation on disconnect. See [the shared contract](../runtime/docs/compaction.md).
+
+Skills and capabilities accept optional `sessionId` for the selected cloud
+workspace. `workspace=true` without an ID previews a new, unsaved session in
+the server's startup directory; it accepts no client filesystem path. Calls
+without either query retain the legacy registry. Cloud skill lists include
+disabled reasons, source paths and a content fingerprint for refreshing open
+details. These are operator views; disabled entries are excluded from model
+capabilities and dispatch still enforces the current policy.

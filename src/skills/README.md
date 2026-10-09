@@ -10,6 +10,7 @@ This area owns skill installation and discovery. Read [AGENTS.md](AGENTS.md) bef
 - [skill-manifest.ts](skill-manifest.ts)
 - [skill-registry.ts](skill-registry.ts)
 - [seed-starter-skills.ts](seed-starter-skills.ts)
+- [workspace-skills.ts](workspace-skills.ts): cloud source selection and live policy; [cloud workspace skills](docs/cloud-workspace.md).
 
 ## Ownership and dependencies
 

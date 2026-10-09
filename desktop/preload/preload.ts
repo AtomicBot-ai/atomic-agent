@@ -81,7 +81,7 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Read-only resources, each `{ok, data}` or `{ok:false, error}`. */
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),
   config: () => ipcRenderer.invoke("agent:config"),
-  skills: () => ipcRenderer.invoke("agent:skills"),
+  skills: (sessionId?: string | null) => ipcRenderer.invoke("agent:skills", sessionId),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
@@ -182,15 +182,18 @@ contextBridge.exposeInMainWorld("atomic", {
   taskPreview: (form: Record<string, string>, now?: number) =>
     ipcRenderer.invoke("app:taskPreview", { form, now }),
   quit: () => ipcRenderer.invoke("app:quit"),
-  skillList: () => ipcRenderer.invoke("cli:skillList"),
+  skillList: (sessionId?: string | null) => ipcRenderer.invoke("cli:skillList", sessionId),
   configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),
 
   /** Item 7 part B: the Skills, Memory and MCP tabs. */
-  skill: (name: string) => ipcRenderer.invoke("agent:skill", name),
+  skill: (name: string, sessionId?: string | null) => ipcRenderer.invoke("agent:skill", name, sessionId),
   uninstallSkill: (name: string, source?: string) => ipcRenderer.invoke("agent:uninstallSkill", { name, source }),
   configSetPath: (key: string, value: unknown) => ipcRenderer.invoke("cli:configSetPath", { key, value }),
   skillShow: (name: string) => ipcRenderer.invoke("cli:skillShow", name),
-  skillSetDisabled: (name: string, disabled: boolean) => ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled }),
+  skillSetDisabled: (name: string, disabled: boolean, scope?: "global" | "workspace", sessionId?: string | null) =>
+    ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled, scope, sessionId }),
+  skillProjectEnabled: (enabled: boolean, sessionId?: string | null) =>
+    ipcRenderer.invoke("cli:skillProjectEnabled", { enabled, sessionId }),
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
   /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
   skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),

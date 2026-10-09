@@ -52,6 +52,10 @@ function stubRuntime(
 ): AgentRuntime {
   return {
     createSession: () => session(),
+    capabilities: { workingDir: "/tmp" },
+    getSessionWorkspace: () => null,
+    skillRegistry: { listAll: () => [] },
+    skillCatalogDropped: 0,
     // The queue tests exercise the fallback path: a steer that is always
     // refused parks every mid-run submission in the orchestrator queue.
     steer: () => false,

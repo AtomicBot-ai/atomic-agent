@@ -2627,14 +2627,18 @@ export async function skillShow(
 /**
  * `atag skill disable|enable <name>` — the TUI's toggle writes
  * `skills.disabled` in config.json the same way (skills-orchestrator.ts
- * setSkillDisabled). The running `atag serve` keeps its boot-time
- * registry; the tab says so and offers a restart.
+ * setSkillDisabled). Workspace scope is cloud-only; that runtime reads the
+ * live policy on the next request. Local global toggles retain restart semantics.
  */
-export async function skillSetDisabled(name: string, disabled: boolean): Promise<CliResult> {
+export async function skillSetDisabled(name: string, disabled: boolean, workspace?: string): Promise<CliResult> {
   if (!SKILL_NAME_RE.test(name)) {
     return { ok: false, stdout: "", stderr: "", error: `not a skill name: ${name}` };
   }
-  return cli(["skill", disabled ? "disable" : "enable", name], 30_000);
+  return cli(["skill", disabled ? "disable" : "enable", name, ...(workspace ? ["--workspace", workspace] : [])], 30_000);
+}
+
+export async function skillProjectEnabled(enabled: boolean, workspace: string): Promise<CliResult> {
+  return cli(["skill", "project", enabled ? "on" : "off", "--workspace", workspace], 30_000);
 }
 
 export interface HubSkillRow {

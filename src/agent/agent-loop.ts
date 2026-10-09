@@ -1,6 +1,6 @@
 import { readContextLengthFromRejection } from "../llm/reliability/request-size-rejection.js";
 import { resolveModelMode } from "../llm/model-mode.js";
-import { prepareStepPrompt } from "./step/step-inference.js";
+import { prepareStepPrompt, refreshStepWorkspace } from "./step/step-inference.js";
 import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { contextCompactionRejection } from "./turn/compaction-recovery.js";
@@ -418,6 +418,7 @@ export class AgentLoop {
         const contextSlice = contextProviderId && (initialMode?.mode === "cloud" || modelMode?.mode === "cloud")
           ? this.deps.resolveLlmSlice?.(contextProviderId) ?? pinnedSlice : pinnedSlice;
         const stepDeps: StepDependencies = {
+            prepareWorkspace: this.deps.prepareWorkspace,
             registry: this.deps.registry,
             commitSession: (next) => {
               state = next;
@@ -524,6 +525,7 @@ export class AgentLoop {
             ...(this.deps.logger ? { logger: this.deps.logger } : {}),
             tracker: loopTracker,
           };
+        refreshStepWorkspace(stepContext, stepDeps);
         if (this.deps.compaction) {
           compactionInput = prepareStepPrompt(stepContext, stepDeps).promptInput;
           let maintenance = this.deps.compaction.beforeStep(compactionInput, {

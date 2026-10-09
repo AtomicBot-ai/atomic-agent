@@ -141,6 +141,7 @@ import {
   configSetPath,
   skillShow,
   skillSetDisabled,
+  skillProjectEnabled,
   skillBrowse,
   skillInstall,
   // Item 7 part C (LLM / Telegram / Import tabs); modelsStop is imported above with lane B's set
@@ -1075,7 +1076,12 @@ function wireIpc(client: AgentClient): void {
   };
   resource("capabilities", () => client.capabilities());
   resource("config", () => client.config());
-  resource("skills", () => client.skills());
+  const skillSession = (value: unknown): string | null => {
+    if (value == null || value === "") return null;
+    if (typeof value !== "string" || value.length > 256) throw new Error("invalid session id");
+    return value;
+  };
+  ipcMain.handle("agent:skills", (_event, sessionId: unknown) => wrap(() => client.skills(skillSession(sessionId))));
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());
@@ -1957,7 +1963,20 @@ function wireIpc(client: AgentClient): void {
       client.status.workingDir,
     ).then((res) => (A.taskCreated(kind, res), res));
   });
-  ipcMain.handle("cli:skillList", () => skillList(client.status.workingDir));
+  // Cloud uses the same live snapshot as inference. Local retains the CLI's
+  // installed/disabled list and its existing restart semantics.
+  ipcMain.handle("cli:skillList", async (_event, sessionId: unknown) => {
+    try {
+      const data = await client.skills(skillSession(sessionId)) as {
+        workingDir?: string; projectSkillsEnabled?: boolean; errors?: unknown[];
+        skills: Array<{ name: string; version?: string; source: string; description: string;
+          disabled?: boolean; disabledReasons?: string[]; rootDir?: string; sources?: string[] }>;
+      };
+      if (!data.workingDir) return skillList(client.status.workingDir);
+      return { ok: true, workingDir: data.workingDir, projectSkillsEnabled: data.projectSkillsEnabled,
+        errors: data.errors, rows: data.skills.map(row => ({ ...row, version: row.version || "—", enabled: !row.disabled })) };
+    } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
+  });
   ipcMain.handle("cli:configGetKey", (_event, key: unknown) =>
     typeof key === "string" ? configGetKey(key) : { ok: false, error: "key must be a string" },
   );
@@ -1985,9 +2004,9 @@ function wireIpc(client: AgentClient): void {
   // --- Item 7 part B (Skills / Memory / MCP tabs) ---
   const skillName = (v: unknown): string | null =>
     typeof v === "string" && /^[\w.-]{1,64}$/.test(v) ? v : null;
-  ipcMain.handle("agent:skill", (_event, name: unknown) => {
+  ipcMain.handle("agent:skill", (_event, name: unknown, sessionId: unknown) => {
     const clean = skillName(name);
-    return clean ? wrap(() => client.skill(clean)) : { ok: false, error: "skill name required" };
+    return clean ? wrap(() => client.skill(clean, skillSession(sessionId))) : { ok: false, error: "skill name required" };
   });
   ipcMain.handle("agent:uninstallSkill", (_event, payload: unknown) => {
     const { name, source } = (payload ?? {}) as { name?: unknown; source?: unknown };
@@ -2006,11 +2025,28 @@ function wireIpc(client: AgentClient): void {
     const clean = skillName(name);
     return clean ? skillShow(clean, client.status.workingDir) : { ok: false, error: "skill name required" };
   });
-  ipcMain.handle("cli:skillSetDisabled", (_event, payload: unknown) => {
-    const { name, disabled } = (payload ?? {}) as { name?: unknown; disabled?: unknown };
+  const skillWorkspace = async (sessionId: unknown): Promise<string> => {
+    const catalog = await client.skills(skillSession(sessionId)) as { workingDir?: string };
+    if (!catalog.workingDir) throw new Error("workspace skill settings require cloud mode");
+    return catalog.workingDir;
+  };
+  ipcMain.handle("cli:skillSetDisabled", async (_event, payload: unknown) => {
+    const { name, disabled, scope, sessionId } = (payload ?? {}) as { name?: unknown; disabled?: unknown; scope?: unknown; sessionId?: unknown };
     const clean = skillName(name);
-    if (!clean) return { ok: false, error: "skill name required" };
-    return skillSetDisabled(clean, disabled === true).then((res) => (A.skillAction(disabled === true ? "disable" : "enable", res), res));
+    if (!clean || typeof disabled !== "boolean") return { ok: false, error: "skill name and disabled boolean required" };
+    if (scope !== undefined && scope !== "global" && scope !== "workspace") return { ok: false, error: "invalid skill scope" };
+    try {
+      const workspace = scope === "workspace" ? await skillWorkspace(sessionId) : undefined;
+      const res = await skillSetDisabled(clean, disabled, workspace);
+      A.skillAction(disabled ? "disable" : "enable", res);
+      return res;
+    } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
+  });
+  ipcMain.handle("cli:skillProjectEnabled", async (_event, payload: unknown) => {
+    const { enabled, sessionId } = (payload ?? {}) as { enabled?: unknown; sessionId?: unknown };
+    if (typeof enabled !== "boolean") return { ok: false, error: "enabled boolean required" };
+    try { return await skillProjectEnabled(enabled, await skillWorkspace(sessionId)); }
+    catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
   });
   // Д45: the hub opens on its last answer (main/skills-hub-cache.ts); a browse keeps what it brings back.
   ipcMain.handle("cli:skillBrowseCached", (_event, query: unknown) =>
