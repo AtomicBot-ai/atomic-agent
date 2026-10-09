@@ -6,7 +6,7 @@
 
 ### A local-first AI agent that runs on your machine, with local or cloud models.
 
-Drives your browser, edits files, runs approved commands, and remembers context across sessions. Open source, running on our TurboQuant `llama.cpp` for +30-50% throughput on small local models.
+Drives your browser, edits files, runs approved commands, and remembers context across sessions. Open source, running on our TurboQuant `llama.cpp` so long sessions with small local models fit in less memory.
 
 [![GAIA L1 · 69.8%](https://img.shields.io/badge/GAIA%20L1-69.8%25-0b63f6)](#benchmarks)
 [![Release](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml/badge.svg)](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml)
@@ -191,7 +191,6 @@ We run local models on our own TurboQuant `llama.cpp` ([`AtomicBot-ai/atomic-lla
 
 - **TurboQuant KV-cache:** WHT-rotated low-bit quantization compresses the KV-cache up to ~6.4× versus F16, with a fused Metal decode kernel, so long-context sessions fit in far less memory.
 - **TurboQuant weights:** Lloyd-Max weight quantization with WHT rotation and fused Metal/Vulkan kernels keeps quality usable while small models fit on consumer hardware.
-- **Custom speculative decoding:** purpose-built Gemma 4 MTP and Qwen 3.6 NextN heads reuse the loaded model (no second context, tokenizer, or model load) for +30-50% throughput.
 - **Curated quantized models:** hand-picked GGUF quants that keep quality usable while fitting real VRAM budgets.
 - **Managed mode:** the CLI downloads, keeps up to date, and runs the backend and models for you, no manual `llama.cpp` setup. Set `localModels.managed.autoUpdate: false` to pin the backend.
 
