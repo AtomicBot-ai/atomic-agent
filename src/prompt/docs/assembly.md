@@ -33,6 +33,8 @@ An explicit `modelMode: cloud` selects [build-cloud-prompt.ts](../build-cloud-pr
 
 Assembly is pure. Runtime saves its journal candidate before inference, while preview discards the candidate. A checkpoint carries the latest active instructions/state in full ahead of the unchanged suffix. Local/cloud switching preserves the journal; content clipped before the first cloud request cannot be recovered.
 
+The [cloud workspace snapshot](../../runtime/docs/cloud-workspace.md) is an explicit input prepared before budget calculation. Its path and enabled descriptions determine capabilities/catalog; instruction blocks and `cloudLoadedSkills` enter the mutable journal. Body edits/removals never change the prefix, while catalog changes may. Disabled and source-switched skills are deactivated before compaction; local loaded state is independent. Cloud catalogs use the whole request budget instead of `skills.catalogTokenBudget`.
+
 The remaining history budget comes from the actual window minus stable prefix, native schemas, reply reserve and a 1024-token safety margin. With an unknown window no arbitrary history cap is substituted. Cloud compaction is driven by window pressure, never the local pair cap. The inference seam rebuilds on cloud/fallback transitions for the attempted policy/window, and the OpenAI builder checks the final messages, schemas and effective output reserve before sending. An oversized request fails without hidden clipping. These are heuristic estimates; provider rejection remains authoritative. [Cloud context tests](../cloud-context.test.ts) and [execution seam tests](../../agent/cloud-context-seam.test.ts) exercise retention and accounting.
 
 ## Sources and tests

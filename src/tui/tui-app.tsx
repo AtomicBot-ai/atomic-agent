@@ -123,7 +123,7 @@ import {
   selectMetaBarRows,
   selectRailVisible,
 } from "./select-chrome-rows.js";
-import { filterSlashCommands } from "./commands/slash-commands.js";
+import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
 import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
@@ -457,12 +457,16 @@ export interface TuiAppCallbacks {
   }): void;
   /** Skills tab: start the 5s registry-listing refresh loop on first entry. */
   onSkillsAutoRefreshStart?(): void;
-  /** Skills tab: one-shot refresh dispatched on `r` keypress. */
+  /** Revalidate a cloud skill and format its explicit request before normal submission. */
+  prepareSkillInvocation?(name: string, input: string): string;
+  /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
   /** Skills tab: load the SKILL.md body and open the detail view. */
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
   onSkillToggleRequested?(name: string): void;
+  onWorkspaceSkillToggleRequested?(name: string): void;
+  onProjectSkillsToggleRequested?(): void;
   /** Skills tab: open the uninstall confirmation for a global skill. */
   onSkillRemoveRequested?(name: string): void;
   /** Skills tab: delete the skill directory after confirmation. */
@@ -972,6 +976,10 @@ export function TuiApp({
       callbacks.onTasksAutoRefreshStart?.();
     }
   }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
+    callbacks.onSkillsRefreshRequested?.();
+  }, [state.session.sessionId, state.slashPaletteOpen, callbacks.onSkillsRefreshRequested]);
 
   useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "skills") {
@@ -1738,12 +1746,12 @@ export function TuiApp({
   // inserting a literal tab character — see `multi-line-editor.tsx`.
   const onTab = useCallback(() => {
     if (!state.slashPaletteOpen) return;
-    const completions = filterSlashCommands(state.slashQuery);
+    const completions = filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel));
     const chosen = completions[state.slashPaletteCursor];
     if (!chosen) return;
     dispatch({ type: "input_changed", value: `/${chosen.name} ` });
     dispatch({ type: "slash_palette_closed" });
-  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor]);
+  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor, state.skillsPanel]);
 
   // Live-preview: swap the active palette to the theme at `cursor` (clamped)
   // so the whole UI repaints as the operator moves through the list. The
@@ -2365,6 +2373,7 @@ export function TuiApp({
                   <SlashPalette
                     query={state.slashQuery}
                     cursor={state.slashPaletteCursor}
+                    commands={filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel))}
                   />
                 ) : null}
                 {state.tasksPanel.cancelConfirm ? (

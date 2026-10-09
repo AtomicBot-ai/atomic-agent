@@ -63,6 +63,8 @@ export function SkillsList(props: SkillsListProps): ReactElement {
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>
       ) : null}
+      {visibleRows[clamped]?.disabledReasons?.map((reason) => <Text key={reason} color={theme.colors.warn}>{reason}</Text>)}
+      {visibleRows[clamped]?.sourcePath ? <Text color={theme.colors.muted}>{visibleRows[clamped]!.sourcePath}</Text> : null}
       <HintsRow />
       <HubCta />
     </Box>
@@ -107,7 +109,7 @@ function HintsRow(): ReactElement {
   return (
     <Box marginTop={1}>
       <Text color={theme.colors.muted}>
-        j/k move · Enter detail · e toggle · d remove · r refresh · a auto · f
+        j/k move · Enter detail · e toggle globally · d remove · r refresh · a auto · f
         filter
       </Text>
     </Box>

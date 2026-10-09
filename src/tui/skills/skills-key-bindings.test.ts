@@ -85,6 +85,18 @@ function makeCtx(panel: Partial<SkillsPanelState> = {}) {
 }
 
 describe("handleSkillsTabKey — hub mode", () => {
+  it("keeps global, workspace and bulk actions separate in cloud list and detail", () => {
+    for (const mode of ["list", "detail"] as const) {
+      const ctx = makeCtx({ mode, workspace: "/selected", detailName: "example", rows: [{ name: "example", description: "d", source: "project", version: "1", disabled: false }] });
+      ctx.callbacks.onSkillToggleRequested = vi.fn(); ctx.callbacks.onWorkspaceSkillToggleRequested = vi.fn(); ctx.callbacks.onProjectSkillsToggleRequested = vi.fn();
+      for (const input of ["e", "w", "p"]) expect(handleSkillsTabKey(input, emptyKey(), ctx)).toBe(true);
+      expect(ctx.callbacks.onSkillToggleRequested).toHaveBeenCalledWith("example");
+      expect(ctx.callbacks.onWorkspaceSkillToggleRequested).toHaveBeenCalledWith("example");
+      expect(ctx.callbacks.onProjectSkillsToggleRequested).toHaveBeenCalledOnce();
+    }
+    const empty = makeCtx({ workspace: "/selected", rows: [] }); empty.callbacks.onProjectSkillsToggleRequested = vi.fn();
+    handleSkillsTabKey("p", emptyKey(), empty); expect(empty.callbacks.onProjectSkillsToggleRequested).toHaveBeenCalledOnce();
+  });
   it("ignores keys when not on the skills tab in debug mode", () => {
     const ctx = makeCtx();
     const state = { ...ctx.state, activeTab: "memory" as const };

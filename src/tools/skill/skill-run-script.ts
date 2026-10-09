@@ -2,6 +2,8 @@ import { compressToolResult, retainToolOutput } from "../../compressor/result-co
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
 import { runSkillScript } from "../../skills/skill-script-runner.js";
+import { realpathSync } from "node:fs";
+import { isWithinWorkspace } from "../../skills/workspace-files.js";
 import { DEFAULT_MAX_OUTPUT_BYTES } from "../../sandbox/command-runner.js";
 import {
   requireApproval,
@@ -165,7 +167,7 @@ export function buildSkillRunScriptTool(
           ? rawArgs.timeoutMs
           : 30_000;
 
-      const record = registry.get(skillName);
+      const record = ctx.workspaceSkills?.assertAvailable(skillName).record ?? registry.get(skillName);
       const preview = [
         `skill: ${record.manifest.name} (v${record.manifest.version})`,
         `script: ${scriptName}`,
@@ -174,6 +176,7 @@ export function buildSkillRunScriptTool(
       ].join("\n");
 
       const autoApprovedGogCheck =
+        !ctx.workspaceSkills &&
         record.manifest.name === "gog-workspace" &&
         scriptName === "check-gog.sh" &&
         scriptArgs.length === 0;
@@ -192,11 +195,16 @@ export function buildSkillRunScriptTool(
         );
       }
 
+      ctx.workspaceSkills?.assertAvailable(skillName);
       const outcome = await runSkillScript(record, {
         script: scriptName,
         args: scriptArgs,
         timeoutMs,
         signal: ctx.signal,
+        ...(ctx.workspaceSkills ? { beforeRun: (scriptPath: string) => {
+          ctx.workspaceSkills!.assertAvailable(skillName);
+          if (!isWithinWorkspace(record.rootDir, realpathSync(scriptPath))) throw new Error("Skill script resolves outside its selected source");
+        } } : {}),
       });
 
       const status = outcome.exitCode === 0 ? "ok" : "error";

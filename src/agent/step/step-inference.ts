@@ -27,6 +27,16 @@ import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
 import { estimateTokens } from "../../prompt/token-budget.js";
 import { assertContextCapacity } from "../../llm/provider/context-capacity.js";
+import { reconcileCloudSkills } from "../../session/workspace-context.js";
+
+export function refreshStepWorkspace(ctx: StepContext, deps: StepDependencies): void {
+  const cloud = deps.modelMode?.mode === "cloud";
+  ctx.workspace = (cloud || ctx.session.inheritedWorkspace) ? deps.prepareWorkspace?.(ctx.session, cloud, ctx.signal) : undefined;
+  if (cloud && ctx.workspace) {
+    const next = reconcileCloudSkills(ctx.session, ctx.workspace);
+    if (next !== ctx.session) { ctx.session = next; deps.commitSession?.(next); }
+  }
+}
 export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
   // Whether this step's local prompt goes through the model's own chat
   // template. The template supplies the turn markers and the reasoning
@@ -77,6 +87,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       ? narrowDescriptorsToToolSet(roleToolDescriptors, ctx.toolSet)
       : roleToolDescriptors;
   const promptInput: BuildPromptInput = {
+    ...(ctx.workspace ? { workspace: ctx.workspace } : {}),
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
     capabilities: ctx.capabilities,
@@ -133,6 +144,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
 }
 
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
+  if (!ctx.workspace) refreshStepWorkspace(ctx, deps);
   const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors } = prepareStepPrompt(ctx, deps);
   const prompt = buildPrompt(promptInput);
   if (prompt.cloudContext) ctx.session = { ...ctx.session, cloudContext: prompt.cloudContext };
@@ -268,17 +280,26 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   };
   if (deps.modelModePolicy) {
     llmParams.prepareForLink = (link) => {
+      const linkDeps = { ...deps, modelMode: link.modelMode, toolTransport: link.transport };
+      if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, linkDeps);
+      const linked = deps.prepareWorkspace ? prepareStepPrompt(ctx, linkDeps) : null;
+      const linkDescriptors = linked?.stepDescriptors ?? stepDescriptors;
+      const wire = linked ? buildLlmStreamParams({ promptText: "", deps: linkDeps,
+        grammar: resolveStepGrammar(ctx, linkDeps, linkDescriptors, linked.thinkingOff),
+        slotId: slot.slotId, sessionId: ctx.session.id, toolDescriptors: linkDescriptors,
+      }) : null;
       const template = link.transport === "native_tools" ? NO_SERVER_TEMPLATE
         : resolveServerTemplatePolicy(getConfig().localModels, deps.profile);
-      const next = buildPrompt({ ...promptInput, session: ctx.session, modelMode: link.modelMode,
+      const next = buildPrompt({ ...(linked?.promptInput ?? promptInput), session: ctx.session, modelMode: link.modelMode,
         toolTransport: link.transport, contextWindow: link.contextWindow, profileWindowApplies: false,
         suppressReasoningPrefill: link.transport === "native_tools" || template.useServerTemplate,
         completionMaxTokens: link.maxTokens ?? ctx.maxOutputTokens ?? getConfig().localModels.completionMaxTokens,
       });
       if (next.cloudContext) ctx.session = { ...ctx.session, cloudContext: next.cloudContext };
       deps.onEvent?.({ type: "prompt_built", prompt: next, slotId: slot.slotId });
-      if (next.contextBudget) assertContextCapacity(next.text + JSON.stringify(llmParams.tools ?? []), next.contextBudget);
+      if (next.contextBudget) assertContextCapacity(next.text + JSON.stringify(wire?.tools ?? llmParams.tools ?? []), next.contextBudget);
       return { prompt: next.text, messages: next.messages, contextBudget: next.contextBudget,
+        ...(wire ? { grammar: wire.grammar, tools: wire.tools, toolChoice: wire.toolChoice, parallelToolCalls: wire.parallelToolCalls } : {}),
         ...(template.useServerTemplate ? { chat: { system: next.stablePrefix, user: next.tail,
           prefixHash: hashPrefix(next.stablePrefix), enableThinking: template.enableThinking } } : { chat: undefined }) };
     };

@@ -65,6 +65,11 @@ function handleListKey(
     return true;
   }
   const selected = selectedVisibleRow(panel);
+  if (panel.workspace && input === "w") {
+    if (selected) callbacks.onWorkspaceSkillToggleRequested?.(selected.name);
+    return true;
+  }
+  if (panel.workspace && input === "p") { callbacks.onProjectSkillsToggleRequested?.(); return true; }
   if (key.return) {
     if (selected) callbacks.onSkillDetailRequested?.(selected.name);
     return true;
@@ -288,6 +293,8 @@ function handleDetailKey(
     return true;
   }
   if (!detailName) return false;
+  if (state.skillsPanel.workspace && input === "w") { callbacks.onWorkspaceSkillToggleRequested?.(detailName); return true; }
+  if (state.skillsPanel.workspace && input === "p") { callbacks.onProjectSkillsToggleRequested?.(); return true; }
   if (input === "e") {
     callbacks.onSkillToggleRequested?.(detailName);
     return true;

@@ -4,7 +4,14 @@ import { parsePositiveInt, parseBoundedPositiveInt, parseBool } from "./config-p
 
 import { parseUrl } from "./config-values.js";
 
+export interface CloudWorkspaceSkillsPolicy {
+  workingDir: string;
+  projectSkillsEnabled: boolean;
+  disabled: string[];
+}
+
 export interface RuntimeSkillsConfig {
+  cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
   /**
    * Soft budget for the `### skills` catalog in the stable prefix,
    * in tokens. `buildSkillCatalog` converts it to a char cap at
@@ -44,6 +51,7 @@ export interface RuntimeSkillsConfig {
 }
 
 export interface UserSkillsConfig {
+  cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
   catalogTokenBudget: number;
   disabled: string[];
   taps: string[];
@@ -63,7 +71,7 @@ export interface UserSkillsConfig {
  */
 export const DEFAULT_SKILLS_CATALOG_BUDGET = 512;
 
-const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
+const SKILL_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 const TAP_REPO_RE =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
@@ -183,6 +191,7 @@ export function createSkillsDefaults(): UserSkillsConfig {
   return {
     catalogTokenBudget: DEFAULT_SKILLS_CATALOG_BUDGET,
     disabled: [],
+    cloudWorkspaces: [],
     taps: ["anthropics/skills", "openai/skills", "vercel-labs/agent-skills"],
     clawhub: {
       enabled: true,
@@ -198,6 +207,7 @@ export function parseSkillsConfig(
   readDefaults: () => UserSkillsConfig,
 ): UserSkillsConfig {
   return {
+    cloudWorkspaces: parseCloudWorkspaces(skills.cloudWorkspaces),
     catalogTokenBudget: parseBoundedPositiveInt(
       skills.catalogTokenBudget ??
         readDefaults().catalogTokenBudget,
@@ -215,4 +225,20 @@ export function parseSkillsConfig(
     ),
     clawhub: parseClawHubConfigWithDefaults(skills.clawhub, () => readDefaults().clawhub),
   };
+}
+
+function parseCloudWorkspaces(raw: unknown): CloudWorkspaceSkillsPolicy[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new ConfigValidationError("skills.cloudWorkspaces", "expected an array");
+  const seen = new Set<string>();
+  return raw.map((entry, index) => {
+    const field = `skills.cloudWorkspaces[${index}]`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new ConfigValidationError(field, "expected an object");
+    const value = entry as Record<string, unknown>;
+    if (typeof value.workingDir !== "string" || !value.workingDir.trim()) throw new ConfigValidationError(`${field}.workingDir`, "expected a non-empty path");
+    if (seen.has(value.workingDir)) throw new ConfigValidationError(field, "duplicate workspace");
+    seen.add(value.workingDir);
+    return { workingDir: value.workingDir, projectSkillsEnabled: parseBool(value.projectSkillsEnabled ?? true, `${field}.projectSkillsEnabled`),
+      disabled: parseSkillNameArray(value.disabled, `${field}.disabled`) };
+  });
 }
