@@ -5636,7 +5636,7 @@ function act(a) {
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
-  if (a === 'palette') { close(); S.overlay = 'palette'; render(); refreshSkillList(); return; }
+  if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
@@ -6707,7 +6707,7 @@ document.addEventListener('input', (e) => {
     ctxDraftChanged();
     const wasSlash = S.slash;
     S.slash = S.draft.startsWith('/');
-    if (S.slash) { S.slashCur = 0; refreshSlash(); if (!wasSlash) refreshSkillList(); }
+    if (S.slash) { S.slashCur = 0; refreshSlash(); if (!wasSlash && SK.workingDir) refreshSkillList(); }
     else if (wasSlash) render();
     else refreshSend();
     return;
@@ -20105,7 +20105,7 @@ function skillsTabEntered() {
   // Item 09: the section opens on its skills; Built-in tools is picked (its segment, `/tools`, which enters through here first).
   if (SKP.view !== 'skills') { SKP.view = 'skills'; skpListTop(); render(); }
   ensureSkillsPoll();
-  refreshSkillList();
+  if (SK.workingDir) refreshSkillList();
   tpSkillsOmittedRefresh();
 }
 function skpRender() { paneRepaintKeepFocus(skillsTab()); }
@@ -20500,8 +20500,9 @@ async function skpToggle(name, scope) {
   if (!BR || SKP.busy) return;
   const row = (SK.rows || []).find((r) => r.name === name);
   if (!row) { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; }
+  const explicitScope = !!scope;
   scope = scope || (SK.workingDir ? 'workspace' : 'global');
-  const disable = SK.workingDir ? !(row.disabledReasons || []).includes(scope === 'global' ? 'disabled globally' : 'disabled in workspace') : row.enabled;
+  const disable = SK.workingDir && explicitScope ? !(row.disabledReasons || []).includes(scope === 'global' ? 'disabled globally' : 'disabled in workspace') : row.enabled;
   const key = skillContextKey(), cloud = !!SK.workingDir;
   const operation = SKP.operationSeq = (SKP.operationSeq || 0) + 1;
   SKP.busy = true; SKP.lastError = null; render();
@@ -20510,7 +20511,7 @@ async function skpToggle(name, scope) {
   SKP.busy = false;
   if (key !== skillContextKey()) return;
   if (!res || res.ok === false) SKP.lastError = 'toggle ' + name + ' failed: ' + ((res && res.error) || 'unknown error');
-  else SKP.msg = {text:(disable ? 'skill disabled: ' : 'skill enabled: ') + name + ' (' + scope + ')', restart:!cloud};
+  else SKP.msg = {text:(disable ? 'skill disabled: ' : 'skill enabled: ') + name + (cloud ? ' (' + scope + ')' : ''), restart:!cloud};
   await skpReloadRows();
   render();
 }

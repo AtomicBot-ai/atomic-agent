@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { launch, REPO_DIR } from './drive.mjs';
+import { launch, REPO_DIR, sleep } from './drive.mjs';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'atag-workspace-skills-')));
 const stateDir = join(root, 'state'), workspace = join(root, 'project-A'), other = join(root, 'project-B');
@@ -50,10 +50,26 @@ writeFileSync(configFile, JSON.stringify(config,null,2));
 stage(stateDir, 'skills', 'global-guide', 'GLOBAL BODY');
 const readConfig = () => JSON.parse(readFileSync(configFile,'utf8'));
 let app;
+async function openSkills() {
+  // Boot can still replace the first paint. Wait for the initial catalog and
+  // three identical UI observations before aiming a pointer at the window.
+  await app.waitFor(`window.__skills && window.__skills() > 0 && document.querySelector('#entry')`, 'initial resources ready', {timeout:90000});
+  let previous = '', stable = 0;
+  const deadline = Date.now() + 20000;
+  while (stable < 3) {
+    const current = JSON.stringify(await app.snap());
+    stable = current === previous ? stable + 1 : 0; previous = current;
+    if (Date.now() > deadline) throw Error('startup view did not settle');
+    await sleep(150);
+  }
+  await app.clickSel('[data-act="settings:open"]');
+  await app.waitFor(`!!document.querySelector('#settings')`, 'settings open');
+  await app.clickSel('[data-act="settings:skills"]');
+}
 try {
   app = await launch({port:Number(process.env.ATAG_SKILLS_PORT || 9487),stateDir,workspace,verbose:false});
   await app.waitFor(`document.querySelector('#entry') && document.querySelector('#toolbar')?.textContent`, 'composer ready', {timeout:90000});
-  await app.clickSel('[data-act="settings:open"]'); await app.clickSel('[data-act="settings:skills"]');
+  await openSkills();
   await app.waitFor(`document.querySelector('[data-skill-row="openspec-explore"]')`, 'project skill before first chat', {timeout:60000});
   assert.equal(await app.eval(`document.querySelectorAll('[data-skill-row="openspec-explore"]').length`), 1);
   await app.clickSel('[data-skill-row="openspec-explore"]');
@@ -111,7 +127,7 @@ try {
   execFileSync(process.execPath,[cli,'skill','disable','global-guide','--workspace',workspace],{env,stdio:'ignore'});
   app = await launch({port:Number(process.env.ATAG_SKILLS_PORT || 9487),stateDir,workspace:other,verbose:false});
   await app.waitFor(`document.querySelector('#entry')`, 'second workspace ready',{timeout:90000});
-  await app.clickSel('[data-act="settings:open"]'); await app.clickSel('[data-act="settings:skills"]');
+  await openSkills();
   await app.waitFor(`document.querySelector('[data-skill-row="other-project"]')`, 'Pi skill in second workspace',{timeout:60000});
   assert.equal(await app.eval(`!!document.querySelector('[data-skill-row="openspec-explore"]')`),false);
   assert.ok(await app.eval(`document.querySelector('[data-skill-row="global-guide"] [role="switch"]')?.getAttribute('aria-checked') === 'true'`));
