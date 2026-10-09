@@ -848,8 +848,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   // The frozen Win10 conhost scrolls under full-height frames — the
   // layout already reserves its bottom row (see `legacy-conhost.ts`);
-  // this is where the operator learns why, and that Windows Terminal
-  // does not need the workaround. Once per session, in the transcript,
+  // this is a plain tip that Windows Terminal renders the UI better,
+  // not an error. Once per session, in the transcript,
   // because anything printed before the alt screen is never seen.
   const conhostHint = legacyConhostStartupHint();
   if (conhostHint) {
