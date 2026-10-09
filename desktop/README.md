@@ -441,15 +441,20 @@ Honestly degraded, and labelled as such in the UI:
   `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
   cron-parser. The firings feed is not exposed by the HTTP API and the tab
   says so.
-- **Skills** list through `atag skill list` (the only surface that carries
-  disabled skills), toggle through `atag skill disable|enable` (the running
-  agent keeps its boot-time registry, so the tab offers a restart), remove
-  through `POST /api/skills/uninstall`, and read a detail body from
-  `GET /api/skills/{name}` — or `atag skill show` when the route answers 404
-  for a disabled skill. The Skills Hub browses through `atag skill browse` /
-  `skill search`, fetches a ClawHub card body from the registry's detail
-  endpoint, and installs through `atag skill install` (a `dangerous` scan
-  verdict shows the TUI's confirm with the CLI's line as its one finding).
+- **Skills** in cloud mode read the selected session's live workspace catalog
+  through HTTP, including `.agents`, `.claude`, `.cursor` and `.pi` skills,
+  disabled reasons and the chosen source directory. Before the first message
+  the API previews an unsaved session in the startup workspace. Late catalog
+  or detail responses cannot replace a newer session's view. Enabled skills
+  appear in slash completion and the command palette; submitting `/skill-name`
+  rechecks availability before sending the normal `skill.view` instruction.
+  The Skills detail offers workspace and global controls (`e` toggles the
+  workspace, `g` the global setting); `p` and the toolbar button toggle all
+  project sources. Cloud settings apply on the next request without restart.
+  Local mode retains `atag skill list`, global toggles and restart semantics.
+  Project skills are read in place. Remove project copies from the source
+  directory shown in the detail. Global uninstall and Skills Hub behavior
+  retain their existing HTTP/CLI paths.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.

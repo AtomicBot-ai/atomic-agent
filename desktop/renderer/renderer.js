@@ -1156,10 +1156,8 @@ const FOCUS = { entry: false };
    backdrop resolves its target to #settings, so without this a text selection
    dragged out of a panel would dismiss the window. */
 const SETDOWN = { outside: false };
-/* Installed skills incl. disabled ones, from `atag skill list` — the N in
-   the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
-   row; GET /api/skills never carries disabled skills). */
-const SK = { rows:null, busy:false, err:null, calls:0, at:null }; // at: when `atag skill list` last answered (Д26's status line)
+/* Operator catalog including disabled entries: cloud HTTP snapshot, local CLI. */
+const SK = { rows:null, busy:false, err:null, calls:0, at:null, for:null, workingDir:null, projectSkillsEnabled:true, errors:[] }; // at: when `atag skill list` last answered (Д26's status line)
 /* Tasks tab state — the TUI's TasksPanelState, minus the firings ring
    the HTTP API does not expose. */
 const TK = {
@@ -4133,7 +4131,7 @@ function palRows() {
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:'room:skills', badge:'skill'}));
+    .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:SK.workingDir ? 'skill:compose:' + s.t : 'room:skills', badge:'skill'}));
   return hits;
 }
 
@@ -4211,9 +4209,10 @@ function slashMatches() {
   // The command word only: with arguments typed (`/runmode status`) the list
   // keeps showing that command and its hint instead of "no matching command".
   const q = S.draft.replace(/^\//, '').toLowerCase().split(/\s+/)[0];
-  if (!q) return SLASH;
+  const commands = SLASH.concat(SK.workingDir ? workspaceSkillCommands(SK.rows, SLASH) : []);
+  if (!q) return commands;
   const starts = (row) => row[0].startsWith(q) || (row[3] || []).some((al) => al.startsWith(q));
-  return SLASH.filter(starts).concat(SLASH.filter((row) => !starts(row) && row[0].includes(q)));
+  return commands.filter(starts).concat(commands.filter((row) => !starts(row) && row[0].includes(q)));
 }
 function slashPopover() {
   const m = slashMatches();
@@ -5014,17 +5013,52 @@ async function refreshHealth() {
   SET.health = next;
   if (S.settings && changed && !tkTyping()) render(); // a late /health answer must not drop the caret in the Tasks form
 }
-/* `atag skill list` (cwd = workspace, so project skills count too). */
+/* Session identity and agent generation own every catalog answer. A fresh
+   chat explicitly previews the boot workspace without creating a DB row. */
+function skillSessionId() {
+  const id = S.sessionId || S.agentSession || null;
+  return id && !id.startsWith('waiting-') ? id : null;
+}
+function skillContextKey() { return JSON.stringify([AGENT_GEN, WORKSPACE, skillSessionId()]); }
+const SK_LOADER = createSkillCatalogLoader(id => { SK.calls++; return BR.skillList(id); });
 async function refreshSkillList() {
-  if (!BR || !BR.skillList || SK.busy) return;
-  SK.busy = true; SK.calls++;
-  const res = await BR.skillList();
+  if (!BR || !BR.skillList) return;
+  const key = skillContextKey();
+  if (SK.for !== key) {
+    SK.for = key; SK.rows = null; SK.err = null; SK.workingDir = null; SK.errors = []; SKILLS.length = 0;
+    SKP.detailSeq = (SKP.detailSeq || 0) + 1; SKP.operationSeq = (SKP.operationSeq || 0) + 1; SKP.busy = false;
+    SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null; SKP.msg = null; SKP.lastError = null;
+  }
+  SK.busy = true;
+  const answer = await SK_LOADER.load(key, skillSessionId());
+  if (!answer.current || key !== skillContextKey()) return;
   SK.busy = false;
-  const before = JSON.stringify([SK.rows, SK.err]);
-  if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; SK.at = Date.now(); }
-  else SK.err = (res && res.error) || 'skill list failed';
-  if ((S.settings || skillsVisible()) && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping() && !skpTyping()) render(); // same guard as refreshHealth (+ the hub search box and the Skills room (⌘3), which paints the same rows — Item 7 part B)
+  const res = answer.result, before = JSON.stringify([SK.rows, SK.err, SK.projectSkillsEnabled]);
+  const oldDetail = SK.rows && SK.rows.find(row => row.name === SKP.detailName);
+  if (res && res.ok && Array.isArray(res.rows)) {
+    SK.rows = res.rows; SK.err = null; SK.at = Date.now();
+    SK.workingDir = res.workingDir || null; SK.projectSkillsEnabled = res.projectSkillsEnabled !== false;
+    SK.errors = res.errors || [];
+    SKILLS.length = 0;
+    SK.rows.filter(row => row.enabled).forEach(row => SKILLS.push({t:row.name, s:row.description,
+      v:row.version || '—', on:true, src:row.source}));
+    if (LIVE_CAPS) LIVE_CAPS.skillsOmitted = SK.workingDir ? 0 : LIVE_CAPS.skillsOmitted;
+    if (SKP.mode === 'detail') {
+      const detail = SK.rows.find(row => row.name === SKP.detailName);
+      if (!detail) { SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null; }
+      else if (oldDetail && (detail.rootDir !== oldDetail.rootDir || detail.fingerprint !== oldDetail.fingerprint)) skpOpenDetail(detail.name);
+    }
+  } else {
+    SK.err = (res && res.error) || 'skill list failed';
+    SK.rows = null; SKILLS.length = 0; // never offer a stale catalog after a failed read
+  }
+  const changed = before !== JSON.stringify([SK.rows, SK.err, SK.projectSkillsEnabled]);
+  // A background read must not replace the textarea or move its caret.
+  if (changed && (S.settings || skillsVisible()) && !tkTyping() && !skpTyping()) render();
+  else if (changed && S.overlay === 'palette') refreshPalette();
+  else if (changed && S.slash) refreshSlash();
   else settingsStatusRepaint();
+  return res;
 }
 /* Everything a Manage tab needs when it comes into view: the diagnostics
    line, the Tasks list primed once (the TUI starts its tasks orchestrator
@@ -5602,7 +5636,7 @@ function act(a) {
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
-  if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
+  if (a === 'palette') { close(); S.overlay = 'palette'; render(); refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
@@ -5678,6 +5712,11 @@ function act(a) {
   }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
+  if (a.startsWith('skill:compose:')) {
+    const name = a.slice('skill:compose:'.length);
+    close(); S.settings = null; S.room = 'chat'; S.draft = '/' + name + ' '; S.slash = false;
+    FOCUS.entry = true; render(); return;
+  }
   if (a === 'session:new') { close();
                              stashQueue();   // Backlog 26: what was queued in the chat being left waits for it, read before the view goes
                              liveLeave();    // Item 38: and a turn running there keeps its view for when it is opened again
@@ -5694,7 +5733,7 @@ function act(a) {
                              FOCUS.entry = true;   // r5 item 6: afterChat focuses #entry after this render
                              render(); chatToast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
-                             refreshContext(); return; }
+                             refreshContext(); refreshSkillList(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
@@ -6036,7 +6075,27 @@ function pushSteerEntry(text) {
   else S.log.push(entry);
 }
 
-function submit() {
+let SK_SUBMITTING = false;
+async function submitSkillCommand(text) {
+  if (SK_SUBMITTING || openHoldsComposer()) return;
+  const key = skillContextKey(), draft = S.draft;
+  SK_SUBMITTING = true;
+  try {
+    const res = await refreshSkillList();
+    if (key !== skillContextKey() || draft !== S.draft || openHoldsComposer()) return;
+    const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+    const name = match && match[1];
+    const row = res && res.ok && SK.workingDir && (res.rows || []).find(row => row.name === name);
+    if (!row || !row.enabled) {
+      toast('Skill unavailable', row ? (row.disabledReasons || ['disabled']).join(', ') : (SK.err || 'Unknown command /' + name), 'bad');
+      return;
+    }
+    S.slash = false;
+    submit(workspaceSkillMessage(name, match[2] || ''));
+  } finally { SK_SUBMITTING = false; }
+}
+
+function submit(preparedSkillText) {
   // Item 2 (voice input): Enter, the Send button and Ctrl+Enter all land
   // here. While the microphone is open they stop the recording and insert
   // the text instead of sending — sending would post the draft as it stood
@@ -6050,7 +6109,7 @@ function submit() {
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
   const e = $('#entry');
-  const text = (e ? e.value : S.draft).trim();
+  const text = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
   if (!text) return;
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
@@ -6060,6 +6119,7 @@ function submit() {
      the model, so holding them for the 3-11 s of a switch (with a toast
      whose words are about a message staying in the box) was wrong copy for
      the wrong thing. They go through untouched. */
+  if (text.startsWith('/') && SK.workingDir && !preparedSkillText && !SLASH.some(row => row[0] === text.slice(1).split(/\s+/)[0] || (row[3] || []).includes(text.slice(1).split(/\s+/)[0]))) { submitSkillCommand(text); return; }
   if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* Backlog 24 — Enter while the chat on screen is still opening, or after
      it failed to. The draft STAYS in the box, as it does for a switch below:
@@ -6608,7 +6668,7 @@ document.addEventListener('click', (e) => {
   const modeRow = t.closest('[data-mode]');
   if (modeRow) { setCodingMode(modeRow.dataset.mode); return; }
   const sk = t.closest('[data-skill]');
-  if (sk) { const s = SKILLS.find((x) => x.t === sk.dataset.skill); if (s) { s.on = !s.on; render(); toast(s.t + (s.on ? ' enabled' : ' disabled')); } return; }
+  if (sk) { const s = SKILLS.find((x) => x.t === sk.dataset.skill); if (s) skpToggle(s.t); return; }
   if (t.closest('#composer') && !t.closest('button')) { const en = $('#entry'); if (en) en.focus(); }
 });
 
@@ -6647,7 +6707,7 @@ document.addEventListener('input', (e) => {
     ctxDraftChanged();
     const wasSlash = S.slash;
     S.slash = S.draft.startsWith('/');
-    if (S.slash) { S.slashCur = 0; refreshSlash(); }
+    if (S.slash) { S.slashCur = 0; refreshSlash(); if (!wasSlash) refreshSkillList(); }
     else if (wasSlash) render();
     else refreshSend();
     return;
@@ -7651,8 +7711,8 @@ async function loadResources() {
   if (!BR) return;
   loadCodingMode();
   const askedAt = Date.now();   // Q60 review: applySessions
-  const [caps, cfg, skills, tasks, sessions] = await Promise.all([
-    BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
+  const [caps, cfg, tasks, sessions] = await Promise.all([
+    BR.capabilities(), BR.config(), BR.tasks(), BR.sessions(),
   ]);
   if (caps && caps.ok && caps.data) {
     LIVE_CAPS = caps.data;
@@ -7678,13 +7738,7 @@ async function loadResources() {
       }
     }
   }
-  if (skills && skills.ok && skills.data && Array.isArray(skills.data.skills)) {
-    SKILLS.length = 0;
-    skills.data.skills.forEach((k) => SKILLS.push({
-      t:k.name, s:(k.requiresTools || []).join(' · ') || 'no tools declared',
-      v:k.version || '—', on:k.enabled !== false, src:k.source || 'local',
-    }));
-  }
+  refreshSkillList();
   // item 6: the sidebar's Tasks list is every task the agent holds.
   if (tasks && tasks.ok && tasks.data && Array.isArray(tasks.data.tasks)) {
     TASKS_ERR = null;
@@ -14610,7 +14664,7 @@ async function refreshLiveConfig() {
   llmRefreshKeyNames();
   extRefreshModel();
   llmNoteRoute();
-  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) refreshContext();
+  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) { refreshContext(); refreshSkillList(); }
 }
 
 /**
@@ -17446,6 +17500,7 @@ async function openSession(id) {
   liveLeave();   // Item 38: a turn whose rows are on screen keeps its view for when its chat is back
   if (S.sessionId !== id) dropChatToasts();   // ATO-186: "New session" and the like were about the chat being left
   S.sessionId = id;
+  refreshSkillList();
   // Backlog 24: and until the answer lands, the composer holds what is sent here.
   const opening = {id, failed:false};
   OPENING = opening;
@@ -17563,6 +17618,7 @@ async function openSession(id) {
   }
   render();
   refreshContext();
+  refreshSkillList();
   /* Backlog 24, 26: a turn of this chat ended while it was loading, or while
      the person was in another chat, with messages queued behind it. The next
      one runs now, here. Not over a turn this chat is still running (live):
@@ -20049,6 +20105,7 @@ function skillsTabEntered() {
   // Item 09: the section opens on its skills; Built-in tools is picked (its segment, `/tools`, which enters through here first).
   if (SKP.view !== 'skills') { SKP.view = 'skills'; skpListTop(); render(); }
   ensureSkillsPoll();
+  refreshSkillList();
   tpSkillsOmittedRefresh();
 }
 function skpRender() { paneRepaintKeepFocus(skillsTab()); }
@@ -20099,6 +20156,9 @@ function skillsTab() {
       + '</span>'
       + '</div></div>';
     view = bar
+      + (SK.workingDir ? '<div class="tk-notice set-softnote"><span class="grow">Workspace: <span class="mono">' + esc(SK.workingDir) + '</span></span>'
+        + '<button class="btn btn-s sm" data-act="skills:project"' + (SKP.busy ? ' disabled' : '') + '>' + (SK.projectSkillsEnabled ? 'Disable project skills' : 'Enable project skills') + '</button></div>' : '')
+      + (SK.errors.length && !tools ? '<details class="set-softnote"><summary>Skill diagnostics (' + SK.errors.length + ')</summary><pre>' + esc(SK.errors.join('\n')) + '</pre></details>' : '')
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
       + skpMessages()
@@ -20139,10 +20199,10 @@ function skpListHTML(visible) {
     + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
       return '<button class="tk-li set-skrow' + (sel ? ' on' : '') + (r.enabled ? '' : ' dim') + '" data-skill-row="' + esc(r.name) + '" data-act="skills:detail:' + esc(r.name) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
-        + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="e toggle" data-act="skills:toggle:' + esc(r.name) + '"></span>'
+        + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="' + (SK.workingDir ? 'Toggle in this workspace (e)' : 'Toggle globally (e)') + '" data-act="skills:toggle:' + esc(r.name) + '"></span>'
         + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
-        + '<span class="set-src">' + skpSourceChip(r.source) + '</span>'
-        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + '</span></button>';
+        + '<span class="set-src" title="' + esc(r.rootDir || r.source) + '">' + skpSourceChip(r.source) + '</span>'
+        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + (r.disabledReasons && r.disabledReasons.length ? '<br><small>' + esc(r.disabledReasons.join(', ')) + '</small>' : '') + '</span></button>';
     }).join('')
     + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
     + '</div>'
@@ -20248,6 +20308,13 @@ function skpDetailHTML() {
     + '</div>'
     + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(name) + '</h3>' + (row ? skpSourceChip(row.source) + '<span class="mono set-meta">v' + esc(row.version) + '</span>' : '') + '</div>'
     + (row && row.description ? '<p class="set-desc">' + esc(row.description) + '</p>' : '')
+    + (row && SK.workingDir ? '<p class="set-cap mono">' + esc(row.rootDir || '') + '</p>'
+      + '<p class="set-cap">' + esc((row.disabledReasons || []).join(', ') || 'Available to the model') + '</p>'
+      + '<div class="acts">' + ['workspace', 'global'].map(scope => {
+        const disabled = (row.disabledReasons || []).includes(scope === 'global' ? 'disabled globally' : 'disabled in workspace');
+        return '<button class="btn btn-s sm" data-act="skills:scope:' + scope + ':' + esc(name) + '"' + (SKP.busy ? ' disabled' : '') + '>'
+          + (disabled ? 'Enable' : 'Disable') + (scope === 'global' ? ' globally' : ' in this workspace') + '</button>';
+      }).join('') + '</div>' : '')
     + body
     + tuiHints([['Esc back', 'skills:back'], ['e toggle', 'skills:toggle:' + name], ['r refresh', 'skills:refresh']]);
 }
@@ -20415,35 +20482,53 @@ async function skpOpenDetail(name) {
   // GET /api/skills/{name} is the registry's filtered view: a disabled skill
   // answers 404, and the body then comes from `atag skill show` (the TUI's
   // openDetail reads the manifest path from listAll() for the same reason).
-  const res = SKP.routeOverride !== null ? SKP.routeOverride : await BR.skill(name);
+  const key = skillContextKey(), cloud = !!SK.workingDir, seq = SKP.detailSeq = (SKP.detailSeq || 0) + 1;
+  const res = SKP.routeOverride !== null ? SKP.routeOverride : await BR.skill(name, skillSessionId());
   let body = null, err = null, source = null;
   if (res && res.ok && res.data && typeof res.data.body === 'string') { body = res.data.body; source = 'route'; }
+  else if (cloud) err = (res && res.error) || 'skill detail unavailable';
   else {
     const shown = await BR.skillShow(name);
     if (shown && shown.ok && typeof shown.body === 'string') { body = shown.body; source = 'skillShow'; }
     else err = (shown && shown.error) || (res && res.error) || 'unknown error';
   }
-  if (SKP.detailName !== name || SKP.mode !== 'detail') return;
+  if (seq !== SKP.detailSeq || key !== skillContextKey() || SKP.detailName !== name || SKP.mode !== 'detail') return;
   if (err !== null) { SKP.msg = {text:'failed to open ' + name + ': ' + err}; SKP.mode = 'list'; SKP.detailSource = null; render(); return; }
   SKP.detailBody = body; SKP.detailSource = source; render();
 }
-async function skpToggle(name) {
+async function skpToggle(name, scope) {
   if (!BR || SKP.busy) return;
   const row = (SK.rows || []).find((r) => r.name === name);
   if (!row) { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; }
-  const disable = row.enabled;
+  scope = scope || (SK.workingDir ? 'workspace' : 'global');
+  const disable = SK.workingDir ? !(row.disabledReasons || []).includes(scope === 'global' ? 'disabled globally' : 'disabled in workspace') : row.enabled;
+  const key = skillContextKey(), cloud = !!SK.workingDir;
+  const operation = SKP.operationSeq = (SKP.operationSeq || 0) + 1;
   SKP.busy = true; SKP.lastError = null; render();
-  const res = await BR.skillSetDisabled(name, disable);
+  const res = await BR.skillSetDisabled(name, disable, scope, skillSessionId());
+  if (operation !== SKP.operationSeq) return;
   SKP.busy = false;
+  if (key !== skillContextKey()) return;
   if (!res || res.ok === false) SKP.lastError = 'toggle ' + name + ' failed: ' + ((res && res.error) || 'unknown error');
-  else SKP.msg = {text:(disable ? 'skill disabled: ' : 'skill enabled: ') + name, restart:true}; // skills-orchestrator.ts runtime_info; hot-apply needs the running agent's registry
+  else SKP.msg = {text:(disable ? 'skill disabled: ' : 'skill enabled: ') + name + ' (' + scope + ')', restart:!cloud};
   await skpReloadRows();
   render();
+}
+async function skpToggleProject() {
+  if (!BR || !SK.workingDir || SKP.busy) return;
+  const key = skillContextKey(), operation = SKP.operationSeq = (SKP.operationSeq || 0) + 1;
+  SKP.busy = true; render();
+  const res = await BR.skillProjectEnabled(!SK.projectSkillsEnabled, skillSessionId());
+  if (operation !== SKP.operationSeq) return;
+  SKP.busy = false;
+  if (key !== skillContextKey()) return;
+  if (!res || !res.ok) SKP.lastError = (res && res.error) || 'Could not change project skills';
+  await refreshSkillList(); render();
 }
 function skpRequestRemove(name) {
   const row = (SK.rows || []).find((r) => r.name === name);
   if (!row) { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; }
-  if (row.source === 'project') { SKP.msg = {text:name + ' is a project-local skill — remove it from .atomic-agent/skills instead'}; render(); return; }
+  if (row.source === 'project') { SKP.msg = {text:name + ' is a project-local skill — remove it from its source directory instead'}; render(); return; }
   if (row.source !== 'global') { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; } // a `[missing]` disable-list entry has no directory to delete
   SKP.removeConfirm = {name, source:row.source, wasDisabled:!row.enabled, submitting:false, error:null};
   render();
@@ -20595,6 +20680,8 @@ function skillsAct(what) {
   const arg = rest.join(':');
   const sel = () => arg || (SKP.mode === 'detail' ? SKP.detailName : (skpSelected() || {}).name);
   if (verb === 'detail') { const name = sel(); if (name) skpOpenDetail(name); return; }
+  if (verb === 'project') { skpToggleProject(); return; }
+  if (verb === 'scope') { const [scope, name] = rest; if (name) skpToggle(name, scope); return; }
   if (verb === 'toggle') { const name = sel(); if (name) skpToggle(name); return; }
   if (verb === 'remove') { const name = sel(); if (name) skpRequestRemove(name); return; }
   if (verb === 'removeConfirm') { skpConfirmRemove(); return; }
@@ -20674,6 +20761,8 @@ function skillsKey(e, k, inText) {
     if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
     return false;
   }
+  if (SK.workingDir && k === 'g') { e.preventDefault(); const name = SKP.mode === 'detail' ? SKP.detailName : (skpSelected() || {}).name; if (name) skpToggle(name, 'global'); return true; }
+  if (SK.workingDir && k === 'p') { e.preventDefault(); skpToggleProject(); return true; }
   if (SKP.mode === 'detail') {
     if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
     if (k === 'e') { e.preventDefault(); skillsAct('toggle'); return true; }

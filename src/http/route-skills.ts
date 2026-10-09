@@ -1,3 +1,4 @@
+import { requestWorkspace } from "./workspace-context.js";
 import { join } from "node:path";
 import { SessionNotFoundError } from "../runtime/session-not-found-error.js";
 
@@ -35,19 +36,27 @@ interface UninstallBody {
 export function createListSkillsHandler(): HttpHandler {
   return async (req, res, ctx) => {
     const { runtime } = ctx;
-    const sessionId = new URL(req.url ?? "/", "http://localhost").searchParams.get("sessionId");
-    if (sessionId) {
-      if (!runtime.sessionStore.load(sessionId)) { sendError(res, 404, openaiError("session not found")); return; }
-      const workspace = runtime.getSessionWorkspace(sessionId);
-      if (workspace) {
-        sendJson(res, 200, { workingDir: workspace.workingDir, projectSkillsEnabled: workspace.skills.projectSkillsEnabled,
-          skills: workspace.skills.entries.map(e => ({ name: e.record.manifest.name, description: e.record.manifest.description,
-            version: e.record.manifest.version, source: e.record.source, rootDir: e.record.rootDir,
-            disabled: e.disabledReasons.length > 0, disabledReasons: e.disabledReasons, sources: e.sources,
-            dangerous: e.record.manifest.dangerous, requiresTools: e.record.manifest.requiresTools, requiresScripts: e.record.manifest.requiresScripts })),
-          errors: workspace.diagnostics });
-        return;
-      }
+    let workspace;
+    try { workspace = requestWorkspace(req, runtime); }
+    catch (err) {
+      if (err instanceof SessionNotFoundError) { sendError(res, 404, openaiError("session not found")); return; }
+      throw err;
+    }
+    if (workspace) {
+      sendJson(res, 200, {
+        workingDir: workspace.workingDir,
+        projectSkillsEnabled: workspace.skills.projectSkillsEnabled,
+        skills: workspace.skills.entries.map(e => ({
+          name: e.record.manifest.name, description: e.record.manifest.description,
+          version: e.record.manifest.version, source: e.record.source, rootDir: e.record.rootDir,
+          fingerprint: e.fingerprint, disabled: e.disabledReasons.length > 0,
+          disabledReasons: e.disabledReasons, sources: e.sources,
+          dangerous: e.record.manifest.dangerous, requiresTools: e.record.manifest.requiresTools,
+          requiresScripts: e.record.manifest.requiresScripts,
+        })),
+        errors: workspace.diagnostics,
+      });
+      return;
     }
     const records = runtime.skillRegistry.list();
     sendJson(res, 200, {
@@ -80,8 +89,7 @@ export function createGetSkillHandler(): HttpHandler {
       return;
     }
     try {
-      const sessionId = new URL(req.url ?? "/", "http://localhost").searchParams.get("sessionId");
-      const workspace = sessionId ? ctx.runtime.getSessionWorkspace(sessionId) : null;
+      const workspace = requestWorkspace(req, ctx.runtime);
       if (workspace) {
         const entry = workspace.skills.entries.find(e => e.record.manifest.name === name);
         if (!entry) throw new SkillNotFoundError(name);
