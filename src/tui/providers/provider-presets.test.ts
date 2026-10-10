@@ -83,6 +83,7 @@ describe("PROVIDER_PRESETS", () => {
     // See the admission bar in `provider-presets.ts`.
     const expected: Record<string, string> = {
       anthropic: "https://api.anthropic.com",
+      "atlas-cloud": "https://api.atlascloud.ai",
       dashscope: "https://dashscope-intl.aliyuncs.com/compatible-mode",
       hyperbolic: "https://api.hyperbolic.xyz",
       moonshot: "https://api.moonshot.ai",
@@ -138,6 +139,7 @@ describe("PROVIDER_PRESETS", () => {
     const keyless = PROVIDER_PRESETS.filter((p) => p.listsModelsWithoutKey).map(
       (p) => p.id,
     );
+    expect(keyless).toContain("atlas-cloud");
     expect(keyless).toContain("nous");
     expect(keyless).toContain("ollama-cloud");
     expect(keyless).toContain("novita");

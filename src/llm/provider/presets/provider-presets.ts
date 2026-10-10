@@ -117,6 +117,14 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "Claude models through Anthropic's OpenAI-compatible endpoint",
   },
   {
+    id: "atlas-cloud",
+    label: "Atlas Cloud",
+    baseUrl: "https://api.atlascloud.ai",
+    envVar: "ATLASCLOUD_API_KEY",
+    listsModelsWithoutKey: true,
+    note: "100+ open-weight and frontier models, listed without a key",
+  },
+  {
     id: "atomic-chat",
     label: "Atomic Chat (local)",
     // The desktop app's Local API Server binds 127.0.0.1:1337 under `/v1`
