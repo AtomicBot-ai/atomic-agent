@@ -340,7 +340,7 @@ describe("the composer's route controls inside the app", () => {
     // was two trips through two different switches.
     const app = mountFusionApp();
     await waitUntil(
-      () => app.frame().includes("claude-o") && app.frame().includes("Local l") && app.frame().includes("qwen-3"),
+      () => app.frame().includes("claude-o") && app.frame().includes("Loc") && app.frame().includes("qwen-3"),
       "the fusion pair",
     );
     await clickUntil(
@@ -359,7 +359,7 @@ describe("the composer's route controls inside the app", () => {
   it("keeps the two halves apart: clicking a leg opens that leg's switch", async () => {
     const app = mountFusionApp();
     await waitUntil(
-      () => app.frame().includes("claude-o") && app.frame().includes("Local l") && app.frame().includes("qwen-3"),
+      () => app.frame().includes("claude-o") && app.frame().includes("Loc") && app.frame().includes("qwen-3"),
       "the fusion pair",
     );
     await clickUntil(

@@ -2,22 +2,14 @@ import type { Key } from "ink";
 import { describe, expect, it, vi } from "vitest";
 
 import { reduceTuiState } from "../agent-event-reducer.js";
+import { fakeSession } from "../test-fixtures.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "../tui-state.js";
 import { handleLocalModelsTabKey } from "./local-models-key-bindings.js";
 import { showsCoreFailureNotice, type LocalModelsCoreFailure } from "./local-models-panel-state.js";
 
-const SESSION: TuiSessionInfo = {
-  sessionId: null,
-  workingDir: "/tmp",
-  llamaUrl: "http://127.0.0.1:8080",
-  browserChannel: "chrome",
-  browserHeadless: true,
-  approvalLevel: 5,
-  maxSteps: 10,
-  skillCount: 0,
-};
+const SESSION: TuiSessionInfo = fakeSession({ workingDir: "/tmp" });
 const FAILURE: LocalModelsCoreFailure = {
   stage: "download",
   reasonCode: "network",
@@ -37,7 +29,7 @@ function snapshot(state: TuiState, engine: "atomic-core" | "llama-server"): TuiS
     type: "local_models_snapshot_loaded", rows: p.rows, backend: { ...p.backend, engine }, daemon: p.daemon,
     configMode: "managed", activeModelId: null, totalRamGb: null, gpuBudgetGb: null, dataDir: null,
     embeddingRows: [], embeddingDaemon: null, at: 1,
-  } as TuiAction);
+  } as unknown as TuiAction);
 }
 
 describe("Atomic Core failure notice", () => {
