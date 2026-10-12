@@ -1,5 +1,8 @@
+import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -98,6 +101,40 @@ describe("managed llama-server api key (#582)", () => {
     expect(key).toMatch(/^[0-9a-f]{64}$/);
     expect(readFileSync(path, "utf-8").trim()).toBe(key);
     expect(existsSync(lock)).toBe(false);
+  });
+
+  it("heals at once past a fresh heal lock whose holder has exited", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    writeFileSync(path, "", "utf-8");
+    const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+    const lock = `${path}.heal-lock`;
+    writeFileSync(lock, `${deadPid} 0123456789abcdef\n`, "utf-8");
+    const started = Date.now();
+    const key = ensureManagedApiKey(dataDir);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(readFileSync(path, "utf-8").trim()).toBe(key);
+    expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps a valid key it cannot read instead of replacing it",
+    () => {
+      const path = resolveApiKeyFilePath(dataDir);
+      writeFileSync(path, "running-daemon-key\n", "utf-8");
+      chmodSync(path, 0o000);
+      expect(ensureManagedApiKey(dataDir)).toBe("running-daemon-key");
+      expect(readFileSync(path, "utf-8")).toBe("running-daemon-key\n");
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it("never overwrites a key file that stays unreadable", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    mkdirSync(path);
+    expect(ensureManagedApiKey(dataDir)).toBeNull();
+    expect(statSync(path).isDirectory()).toBe(true);
+    expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
   });
 
   it("config and daemon launch agree on the healed key", () => {
