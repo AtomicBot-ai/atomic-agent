@@ -1918,6 +1918,11 @@ export function applyManagedMode(cfg: UserConfigShape): boolean {
   const lm = (cfg.localModels ??= {});
   if (lm.mode === "managed") return false;
   lm.mode = "managed";
+  /* A first switch to managed names the engine the agent would pick anyway
+     (Atomic Chat Core), so the file says what runs. An engine already named,
+     llama.cpp included, is the person's choice and stays. */
+  const managed = (lm.managed ??= {});
+  if (managed.engine !== "llama-server" && managed.engine !== "atomic-core") managed.engine = "atomic-core";
   syncLocalLlamaProviderUrl(cfg);
   return true;
 }
@@ -3776,32 +3781,35 @@ export function updateTimedOutError(ms: number, keptBackend: boolean): string {
     : `${stopped} — there is no llama.cpp installed yet to start the model on; try again once the connection is back`;
 }
 /**
- * Atomic Core is experimental and hidden by default. It is offered with
- * ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE=1, or once the saved config already
- * runs it (the same rule as the agent's `choiceEnabled`), so nobody is left
- * without the way back to llama.cpp.
+ * The managed engine a config names. Atomic Chat Core is the default local
+ * engine: the agent's config migration writes "atomic-core" for everyone and
+ * its schema default is the same, so a file with no engine named runs Core.
+ * Only an explicit "llama-server" is llama.cpp. Every desktop read of the
+ * engine goes through here, so the window, the setup and the agent agree.
  */
-export function atomicCoreChoiceEnabled(): boolean {
-  if (process.env["ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE"] === "1") return true;
-  try {
-    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"));
-    return cfg?.localModels?.managed?.engine === "atomic-core";
-  } catch {
-    return false;
-  }
+export type ManagedEngine = "atomic-core" | "llama-server";
+export function managedEngineOf(cfg: unknown): ManagedEngine {
+  const engine = (cfg as { localModels?: { managed?: { engine?: unknown } } } | null | undefined)?.localModels?.managed?.engine;
+  return engine === "llama-server" ? "llama-server" : "atomic-core";
 }
 
-/** Whether the managed data dir the desktop's config names holds a llama.cpp backend (`<data dir>/backend`). */
+/**
+ * Whether the managed data dir the desktop's config names holds a local
+ * engine ready to start a model: llama.cpp's `<data dir>/backend`, or for
+ * Atomic Core (the default) the active Core version with the backend it
+ * installed. A Core binary alone (the one the installer seeds) is not
+ * enough: the backend still has to come down through it.
+ */
 export function backendInstalled(): boolean {
   let override: unknown = null;
-  let engine: unknown;
+  let engine: ManagedEngine = "atomic-core";
   try {
     const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"));
     override = cfg.localModels?.managed?.dataDirOverride;
-    engine = cfg.localModels?.managed?.engine;
-  } catch { /* legacy defaults */ }
+    engine = managedEngineOf(cfg);
+  } catch { /* no config yet: the defaults, Core included */ }
   const dir = managedDataDir(typeof override === "string" ? override : null);
-  if (engine !== "atomic-core") return existsSync(join(dir, "backend"));
+  if (engine === "llama-server") return existsSync(join(dir, "backend"));
   try {
     const active = JSON.parse(readFileSync(join(dir, "core", "active.json"), "utf8"));
     if (!/^\d+\.\d+\.\d+$/.test(active.version)) return false;

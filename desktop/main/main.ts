@@ -149,7 +149,6 @@ import {
   // Item 7 part C (LLM / Telegram / Import tabs); modelsStop is imported above with lane B's set
   modelsStatus,
   modelsEngine,
-  atomicCoreChoiceEnabled,
   modelsListEmbeddings,
   modelsRemove,
   modelsRemoveSafe,
@@ -332,10 +331,6 @@ ipcMain.on("app:queuesKeep", (_event, snapshot: unknown) => {
 });
 ipcMain.on("app:queuesTake", (event) => {
   event.returnValue = keptQueues;
-});
-/* Atomic Core (experimental): whether the window offers it. Synchronous, so the first paint already knows. */
-ipcMain.on("app:atomicCoreChoice", (event) => {
-  event.returnValue = atomicCoreChoiceEnabled();
 });
 function queuedMessageCount(): number {
   return Object.values(keptQueues).reduce((n, list) => n + list.length, 0);
@@ -2087,7 +2082,6 @@ function wireIpc(client: AgentClient): void {
     typeof action !== "string" ? { ok: false, error: "Engine action required" }
       : action === "status" || action === "check" ? modelsEngine(action)
       // Settings' engine switch: in the daemon's turn and with the agent restart, as the composer's pick.
-      : action === "atomic-core" && !atomicCoreChoiceEnabled() ? { ok: false, error: "Atomic Core is not enabled in this build" }
       : action === "atomic-core" || action === "llama-server" ? switched(() => selectComposerEngine(action))
       : { ok: false, error: "Unknown engine action" });
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
@@ -2318,7 +2312,6 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:composerEngine", async (_event, engine: unknown, leg: unknown) => {
     if (engine !== "atomic-core" && engine !== "llama-server") return { ok: false, error: "Unknown inference engine" };
     if (leg !== undefined && leg !== "worker" && leg !== "orchestrator") return { ok: false, error: "Unknown Fusion role" };
-    if (engine === "atomic-core" && !atomicCoreChoiceEnabled()) return { ok: false, error: "Atomic Core is not enabled in this build" };
     return switched(() => selectComposerEngine(engine, leg));
   });
   ipcMain.handle("cli:fusionModel", async (_event, leg: unknown, model: unknown) => {
@@ -9187,8 +9180,8 @@ wireProcessErrorReporting();
 
 /** Core checks follow the app update cadence; they never install or stop a model. */
 function watchCoreUpdates(): void {
-  // Hidden (the default): no Core check at all, not even the local status read.
-  if (SMOKE || FIRST_RUN_PROBE || !atomicCoreChoiceEnabled()) return;
+  // Core is the default engine, so every launch checks; the status read below skips it on llama.cpp.
+  if (SMOKE || FIRST_RUN_PROBE) return;
   let previous = "";
   const check = async () => {
     try {

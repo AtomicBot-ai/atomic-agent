@@ -207,8 +207,12 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
       && /grok-4-6/.test(chip(pF, "model") ?? "") && /qwen3\.7-flash/.test(chip(pF, "workers") ?? "") && pF.swap
       && pF.rows.backend.find((r) => r.id === "fusion")?.active === true,
     JSON.stringify(pF.chips));
-  // Atomic Core is hidden by default (the probe offers it only when asked): llama.cpp is the one local engine row.
-  const localEngines = (seatIsLocal: boolean) => [["llama-server", "llama.cpp · runs on this machine", seatIsLocal]];
+  /* Both local engines are always offered, Atomic Chat Core (the default) first and llama.cpp as the way back.
+     These configs name no engine, so Core is the one that runs and the one marked when the seat is local. */
+  const localEngines = (seatIsLocal: boolean) => [
+    ["atomic-core", "Atomic Chat Core · runs on this machine", seatIsLocal],
+    ["llama-server", "llama.cpp · runs on this machine", false],
+  ];
   check("fusion: the orchestrator's engine rows are every cloud provider (the workers' too), then the local engines, then Add",
     same(triple(pF.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "Cloud provider", false], ...localEngines(false), ["add", "opens the wizard", false]]),
     JSON.stringify(triple(pF.rows.provider)));

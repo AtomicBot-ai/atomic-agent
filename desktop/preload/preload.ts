@@ -206,8 +206,6 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Item 7 part C: the LLM, Telegram and Import tabs. */
   modelsEngine: (action: string) => ipcRenderer.invoke("cli:modelsEngine", action),
-  /** Atomic Core (experimental): whether the engine choice is offered (main decides: env flag or a config already on Core). */
-  atomicCoreChoice: (): boolean => ipcRenderer.sendSync("app:atomicCoreChoice") === true,
   modelsStatus: () => ipcRenderer.invoke("cli:modelsStatus"),
   modelsListEmbeddings: () => ipcRenderer.invoke("cli:modelsListEmbeddings"),
   modelsStop: () => ipcRenderer.invoke("cli:modelsStop"),

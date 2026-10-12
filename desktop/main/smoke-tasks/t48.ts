@@ -302,13 +302,20 @@ async function advanced(js: Js, check: Check): Promise<void> {
     try {
       const lm = (keep.cfg && keep.cfg.localModels) || {};
       LIVE_CONFIG = Object.assign({}, keep.cfg || {}, {llm: {activeTextProvider: 'local-llama', providers: [{id: 'local-llama', kind: 'llama-server'}]},
-        localModels: Object.assign({}, lm, {mode: 'managed', managed: Object.assign({}, lm.managed || {}, {modelId: 'smoke-t48'})})});
+        localModels: Object.assign({}, lm, {mode: 'managed', managed: Object.assign({}, lm.managed || {}, {modelId: 'smoke-t48', engine: 'llama-server'})})});
       const running = {mode: 'managed', activeModel: 'smoke-t48', activeDownloaded: true, daemonRunning: true, daemonPid: 4848, health: 'ok',
         daemonUrl: 'http://127.0.0.1:19091', backendTag: 'b9999'};
       LLMP.status = running; LLMP.daemonPhase = null;
       LLMP.served = {chat: {answered: true, ids: ['smoke-t48']}, embedding: {answered: false, ids: []}};
       const div = (html) => { const d = document.createElement('div'); d.innerHTML = html; return d; };
       const now = div(llmNowHTML()), adv = div(llmAdvancedHTML('local'));
+      // The same card on a config that names no engine: Atomic Chat Core, the default.
+      const onCore = JSON.parse(JSON.stringify(LIVE_CONFIG));
+      delete onCore.localModels.managed.engine;
+      const llamaCfg = LIVE_CONFIG;
+      LIVE_CONFIG = onCore;
+      const advCore = div(llmAdvancedHTML('local'));
+      LIVE_CONFIG = llamaCfg;
       const stop = now.querySelector('[data-act="llm:daemon"]');
       LLMP.status = Object.assign({}, running, {daemonRunning: false, daemonPid: null, health: 'down'});
       LLMP.served = {chat: {answered: false, ids: []}, embedding: {answered: false, ids: []}};
@@ -318,6 +325,8 @@ async function advanced(js: Js, check: Check): Promise<void> {
       const out = {stop: stop ? stop.textContent.trim() : null, start: start ? start.textContent.trim() : null,
         engine: [...adv.querySelectorAll('.llm-engine .llm-tune-t')].map((t) => t.textContent),
         engineActs: [...adv.querySelectorAll('.llm-engine [data-act]')].map((b) => b.dataset.act),
+        engineCore: [...advCore.querySelectorAll('.llm-engine .llm-tune-t')].map((t) => t.textContent),
+        engineCoreActs: [...advCore.querySelectorAll('.llm-engine [data-act]')].map((b) => b.dataset.act),
         daemonInAdv: !!adv.querySelector('[data-act="llm:daemon"]'), logsInAdv: !!adv.querySelector('[data-act="llm:logs"]'),
         routeInDetails: !!adv.querySelector('details.llm-details .llm-route'),
         routeOutside: [...adv.querySelectorAll('.llm-route')].filter((x) => !x.closest('details.llm-details')).length,
@@ -346,11 +355,17 @@ async function advanced(js: Js, check: Check): Promise<void> {
   );
   check(
     "T48 (Д35): llama.cpp's update, auto-update and device are one Engine card (with the way to the server log); the route's internals fold under Details",
-    // Atomic Core is hidden by default (no ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE in a smoke run): no "Engine choice" row.
-    show(r["engine"]) === show(["llama.cpp", "Update automatically", "Device", "Server log"])
-      && show(r["engineActs"]) === show(["llm:backend", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
+    // The engine choice is always offered (Atomic Chat Core is the default, llama.cpp the way back).
+    show(r["engine"]) === show(["llama.cpp", "Engine choice", "Update automatically", "Device", "Server log"])
+      && show(r["engineActs"]) === show(["llm:backend", "llm:engine", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
       && r["routeInDetails"] === true && r["routeOutside"] === 0 && r["logsInAdv"] === false && r["logsInPane"] === false && r["faultAct"] === "diag:llmlogs",
     show({ engine: r["engine"], engineActs: r["engineActs"], routeInDetails: r["routeInDetails"], routeOutside: r["routeOutside"], logsInAdv: r["logsInAdv"], logsInPane: r["logsInPane"], faultAct: r["faultAct"] }),
+  );
+  check(
+    "T48: a config that names no engine runs Atomic Chat Core, the default: Core's card with Core updates and the way back to llama.cpp",
+    show(r["engineCore"]) === show(["Atomic Core", "Engine choice", "Core updates", "Device", "Server log"])
+      && show(r["engineCoreActs"]) === show(["llm:backend", "llm:engine", "llm:engineCheck", "llm:device", "diag:llmlogs"]),
+    show({ engine: r["engineCore"], engineActs: r["engineCoreActs"] }),
   );
   const facts = (r["facts"] ?? []) as string[];
   check(
