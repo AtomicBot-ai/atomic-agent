@@ -2,8 +2,10 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,6 +79,25 @@ describe("managed llama-server api key (#582)", () => {
     if (process.platform !== "win32") {
       expect(statSync(path).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("releases the heal lock and leaves no temp files behind", () => {
+    writeFileSync(resolveApiKeyFilePath(dataDir), "", "utf-8");
+    expect(ensureManagedApiKey(dataDir)).toMatch(/^[0-9a-f]{64}$/);
+    expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
+  });
+
+  it("heals past a heal lock left by a process that died holding it", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    writeFileSync(path, "", "utf-8");
+    const lock = `${path}.heal-lock`;
+    writeFileSync(lock, "999999\n", "utf-8");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    const key = ensureManagedApiKey(dataDir);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(readFileSync(path, "utf-8").trim()).toBe(key);
+    expect(existsSync(lock)).toBe(false);
   });
 
   it("config and daemon launch agree on the healed key", () => {

@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -129,37 +130,112 @@ export function ensureManagedApiKey(dataDir: string): string | null {
   return readWrittenKey(dataDir);
 }
 
+/** A heal lock older than this belongs to a process that died holding it. */
+const HEAL_LOCK_STALE_MS = 10_000;
+
+function healLockPath(dataDir: string): string {
+  return `${resolveApiKeyFilePath(dataDir)}.heal-lock`;
+}
+
+/** Exclusively create the heal lock; `false` when another process holds it. */
+function tryTakeHealLock(dataDir: string): boolean {
+  const lock = healLockPath(dataDir);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      writeFileSync(lock, `${process.pid}\n`, { encoding: "utf-8", flag: "wx" });
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") return false;
+    }
+    try {
+      if (Date.now() - statSync(lock).mtimeMs < HEAL_LOCK_STALE_MS) return false;
+      unlinkSync(lock);
+    } catch {
+      /* released meanwhile: retry the create */
+    }
+  }
+  return false;
+}
+
+/**
+ * Wait for the lock holder's key. The holder may run `icacls` on Windows,
+ * which takes far longer than the create path's grace, so wait for as
+ * long as the lock is live rather than a fixed 200ms.
+ */
+function waitForHealedKey(dataDir: string): string | null {
+  const deadline = Date.now() + HEAL_LOCK_STALE_MS;
+  while (Date.now() < deadline) {
+    const key = readManagedApiKey(dataDir);
+    if (key) return key;
+    if (!existsSync(healLockPath(dataDir))) return readManagedApiKey(dataDir);
+    sleepSync(25);
+  }
+  return readManagedApiKey(dataDir);
+}
+
+function releaseHealLock(dataDir: string): void {
+  try {
+    unlinkSync(healLockPath(dataDir));
+  } catch {
+    /* already gone */
+  }
+}
+
+/** Windows refuses to replace a file another process (an AV scan) has open. */
+function renameOverSync(from: string, to: string): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const transient = code === "EPERM" || code === "EACCES" || code === "EBUSY";
+      if (process.platform !== "win32" || !transient || attempt >= 4) throw err;
+      sleepSync(25);
+    }
+  }
+}
+
 /**
  * Overwrite a key file that exists but holds no usable key (empty,
- * whitespace, a value with commas, unreadable) with a fresh one. The new
- * key is written to a private temp file and renamed over the old one, so
- * a reader never sees a half-written file. What is on disk afterwards is
- * the answer: a concurrent healer may have renamed its own key in last.
+ * whitespace, a value with commas) with a fresh one. Healers take a lock
+ * and re-read under it, so two processes healing at once agree on one
+ * key: the second finds the first one's key and keeps it. A process that
+ * cannot take the lock waits for the holder's key. The new key is written
+ * to a private temp file (0600, and the restricted ACL on Windows) and
+ * renamed over the old one, so a reader never sees a half-written file.
  */
 function replaceUnusableKey(dataDir: string): string | null {
-  const path = resolveApiKeyFilePath(dataDir);
-  const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+  if (!tryTakeHealLock(dataDir)) return waitForHealedKey(dataDir);
   try {
-    writeFileSync(tmp, `${randomBytes(32).toString("hex")}\n`, {
-      encoding: "utf-8",
-      mode: SECRET_FILE_MODE,
-    });
-    renameSync(tmp, path);
-  } catch {
+    const existing = readManagedApiKey(dataDir);
+    if (existing) return existing;
+    const path = resolveApiKeyFilePath(dataDir);
+    const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
     try {
-      unlinkSync(tmp);
+      writeFileSync(tmp, `${randomBytes(32).toString("hex")}\n`, {
+        encoding: "utf-8",
+        mode: SECRET_FILE_MODE,
+      });
+      restrictWindowsAcl(tmp);
+      renameOverSync(tmp, path);
     } catch {
-      /* never created */
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* never created */
+      }
+      return readManagedApiKey(dataDir);
+    }
+    try {
+      chmodSync(path, SECRET_FILE_MODE);
+    } catch {
+      /* best-effort on Windows */
     }
     return readManagedApiKey(dataDir);
+  } finally {
+    releaseHealLock(dataDir);
   }
-  try {
-    chmodSync(path, SECRET_FILE_MODE);
-  } catch {
-    /* best-effort on Windows */
-  }
-  restrictWindowsAcl(path);
-  return readManagedApiKey(dataDir);
 }
 
 /**
