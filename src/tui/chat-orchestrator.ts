@@ -552,7 +552,8 @@ export class ChatOrchestrator {
         this.bus.emit({ type: "composer_notice", text: "The other role uses the local engine. Swap the roles to move it." });
         return;
       }
-      if (!await this.localModels.chooseEngine(engine) || !stillWanted()) return;
+      // The composer's local row carries the selected engine, so picking it is quiet when nothing changes.
+      if (!await this.localModels.chooseEngine(engine, { quietIfSelected: true }) || !stillWanted()) return;
       if (leg) await this.runMode.setMode("fusion", { stillWanted, fusion: {
         orchestratorProvider: leg === "orchestrator" ? "local-llama" : rm.orchestratorProviderId!,
         workerProvider: leg === "worker" ? "local-llama" : rm.workerProviderId!,

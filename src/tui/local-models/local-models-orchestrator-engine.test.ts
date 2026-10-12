@@ -76,3 +76,12 @@ it("offers Atomic Chat as the default and llama.cpp as the way back, with no opt
   await expect(orchestrator.chooseEngine("llama-server")).resolves.toBe(true);
   expect(persistUserLocalModelsConfig).toHaveBeenCalledWith({ managed: { engine: "llama-server" } });
 });
+
+it("picking the composer's local row with the engine already selected names no engine", async () => {
+  const emitted: Array<{ type: string; text?: string }> = [];
+  const orchestrator = new LocalModelsOrchestrator({ emit: (a: unknown) => { emitted.push(a as { type: string; text?: string }); }, subscribe: () => () => {} });
+  vi.spyOn(orchestrator as unknown as { refresh: () => Promise<void> }, "refresh").mockResolvedValue();
+  await expect(orchestrator.chooseEngine("atomic-core", { quietIfSelected: true })).resolves.toBe(true);
+  expect(emitted.some(a => a.type === "composer_notice")).toBe(false);
+  expect(persistUserLocalModelsConfig).not.toHaveBeenCalled();
+});

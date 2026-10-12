@@ -33,8 +33,8 @@ export function composerSwitchKindsFor(
   // its fourth control, `workers`, is the local half — the worker model
   // and how many run at once. Nowhere else draws it.
   if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workerProvider", "workers"];
-  // The local engine control exists only while Atomic Chat is offered;
-  // otherwise llama.cpp is the one engine and there is nothing to switch.
+  // The local engine is not a choice in normal UI (snapshots pass false): Core runs it, and
+  // llama.cpp is reached from the core failure notice or `/model engine`.
   if (backend === "local" && !engineChoice) return ["backend", "model"];
   return COMPOSER_SWITCH_KINDS;
 }

@@ -1,17 +1,17 @@
 "use strict";
 
 // Separate provider/engine and model choices on each composer seat.
-/* Atomic Chat Core is the default local engine, and llama.cpp stays offered beside it as the way back.
-   A config with no engine named runs Core (the agent's own default since the engine migration), so the
-   window reads it the same way: only an explicit llama-server is llama.cpp. */
+/* Atomic Chat Core is the local engine. A config with no engine named runs Core (the agent's own default
+   since the engine migration), so the window reads it the same way: only an explicit llama-server is llama.cpp. */
 function composerEngineId() { return llmManaged().engine === 'llama-server' ? 'llama-server' : 'atomic-core'; }
-function composerEngineName(id) { return id === 'atomic-core' ? 'Atomic Chat' : 'Local llama'; }
+/* The composer never names the engine: a local seat is "this computer" whichever engine runs it, as before Core
+   existed, and "Atomic Chat" stays the name of the Atomic Chat (local) provider preset alone. llama.cpp is reached
+   only from the recovery card when Core cannot run (or `models engine`); Settings › Models › Advanced leads back. */
+function composerEngineName() { return 'This computer'; }
 function composerSeatLocal(seat) { return seat.provider === 'local-llama'; }
 /* Why one seat at most: the managed engine loads one model, and a second local model would split the same memory and GPU. */
 const COMPOSER_ONE_LOCAL = 'Your computer runs one local model at a time, so the local engine can take only one role.';
-function composerEngineMark(id, size) {
-  return id === 'atomic-core' ? logoHTML('atomicchat', size, 'server') : providerMark('llama.cpp', size);
-}
+function composerEngineMark(_id, size) { return markFallbackHTML('laptop', size); }
 function composerEngineChip(kind, label, local, role) {
   const title = (role ? role + ': ' : 'Inference engine: ') + label;
   // data-id stays the seat's provider id (local-llama for the managed engine), as the provider chip carried before.
@@ -21,14 +21,15 @@ function composerEngineChip(kind, label, local, role) {
     + (local ? composerEngineMark(composerEngineId(), 'xs') : providerMark(label, 'xs'))
     + '<span class="cval">' + esc(local ? label : providerWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
 }
+/* One local row per seat: picking it keeps whichever engine is configured (Core, or llama.cpp after a recovery). */
 function composerLocalEngineRows(leg) {
   const rm = rmNow();
   const seat = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
-  return ['atomic-core', 'llama-server'].map((engine) => ({
-    type:'localEngine', id:engine, label:composerEngineName(engine), leg,
-    detail: engine === 'atomic-core' ? 'Atomic Chat Core · runs on this machine' : 'llama.cpp · runs on this machine',
-    active: (!leg || seat === 'local-llama') && composerEngineId() === engine,
-  }));
+  return [{
+    type:'localEngine', id:composerEngineId(), label:composerEngineName(), leg,
+    detail:'Local model \u00b7 runs on this machine',
+    active: !leg || seat === 'local-llama',
+  }];
 }
 function composerFusionEngineRows(leg) {
   const rm = rmNow();
@@ -45,7 +46,7 @@ function composerFusionEngineRows(leg) {
   // There is one managed local slot. The swap control moves it between roles; the seat that
   // does not hold it still lists it, greyed, with the reason, so it does not just vanish.
   const otherRole = leg === 'worker' ? 'orchestrator' : 'worker';
-  const busy = [{type:'localBusy', id:'local-llama', label:composerEngineName(composerEngineId()), otherRole,
+  const busy = [{type:'localBusy', id:'local-llama', label:composerEngineName(), otherRole,
     detail:'Busy as the ' + otherRole + ' \u00b7 \u21c4 swaps the roles', note:{text:COMPOSER_ONE_LOCAL}, active:false}];
   return cloud.concat(other === 'local-llama' ? busy : composerLocalEngineRows(leg),
     [{type:'action', id:'add', label:'Add a new provider', detail:'opens the wizard', active:false}]);

@@ -510,8 +510,9 @@ export class LocalModelsOrchestrator {
         rows,
         backend: {
           engine: cfg.localModels.managed.engine ?? "atomic-core",
-          // Atomic Chat is the default engine and llama.cpp the way back: both are always offered.
-          atomicCoreChoice: true,
+          // Core is the engine and the choice is not part of the normal UI: llama.cpp is offered by the
+          // core failure notice (R/L) and `/model engine`, so the composer draws no engine control.
+          atomicCoreChoice: false,
           currentTag: ver?.tag ?? null,
           latestTag,
           updateAvailable,
@@ -1712,21 +1713,22 @@ export class LocalModelsOrchestrator {
    * Choose the managed engine. Refused while a local model runs; never
    * stops a model or starts a download (`selectManagedEngine`).
    */
-  async chooseEngine(engine: "atomic-core" | "llama-server"): Promise<boolean> {
+  async chooseEngine(engine: "atomic-core" | "llama-server", opts: { quietIfSelected?: boolean } = {}): Promise<boolean> {
     // Queued behind any start or stop instead of racing it, and without
     // replacing it: a load in progress finishes, then the running check in
     // selectManagedEngine refuses the change. Choosing never cancels a model.
     // Stop does cancel the choice: not being the queue's latest operation, it
     // is not aborted by Stop, so it checks the Stop guard before saving.
     const wanted = this.captureStopGuard();
-    return this.operations.run(() => this.chooseEngineNow(engine, wanted), false, false);
+    return this.operations.run(() => this.chooseEngineNow(engine, wanted, opts.quietIfSelected === true), false, false);
   }
 
-  private async chooseEngineNow(engine: "atomic-core" | "llama-server", wanted: () => boolean): Promise<boolean> {
+  private async chooseEngineNow(engine: "atomic-core" | "llama-server", wanted: () => boolean, quietIfSelected: boolean): Promise<boolean> {
     if (!wanted()) return false;
     const cfg = getConfig();
     if ((cfg.localModels.managed.engine ?? "atomic-core") === engine) {
-      this.bus.emit({ type: "composer_notice", text: `${engine === "atomic-core" ? "Atomic Chat" : "Local llama"} is already selected.` });
+      // The composer's one local row carries the engine already selected: picking it names no engine.
+      if (!quietIfSelected) this.bus.emit({ type: "composer_notice", text: `${engine === "atomic-core" ? "Atomic Chat" : "Local llama"} is already selected.` });
       return true;
     }
     try {

@@ -12,7 +12,7 @@ import {
 import { handleComposerSwitchKey } from "./composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch-rows.js";
 
-/** The state with the Atomic Chat engine choice offered (`atomicCoreChoiceEnabled`). */
+/** The state with an engine control drawn (`atomicCoreChoice`), which snapshots no longer set. */
 function withEngineChoice(state: TuiState): TuiState {
   const panel = state.localModelsPanel;
   return { ...state, localModelsPanel: { ...panel, backend: { ...panel.backend, atomicCoreChoice: true } } };
@@ -118,7 +118,7 @@ describe("driving an open strip", () => {
   });
 
   it("←→ skip the provider switch on the managed-local route", () => {
-    // With Atomic Chat hidden the route draws no engine control: its
+    // The engine is not a choice in normal UI, so the route draws no engine control: its
     // second control is the model, so the walk must not stop on a popup
     // with no control under it.
     const app = driver(localState());
@@ -129,7 +129,7 @@ describe("driving an open strip", () => {
     expect(app.at().composerSwitch?.kind).toBe("backend");
   });
 
-  it("←→ reach the engine and model switches on the managed-local route when Atomic Chat is offered", () => {
+  it("←→ reach the engine and model switches on the managed-local route when an engine control is drawn", () => {
     const app = driver(withEngineChoice(localState()));
     app.press("r", { ctrl: true });
     app.press("", { rightArrow: true });

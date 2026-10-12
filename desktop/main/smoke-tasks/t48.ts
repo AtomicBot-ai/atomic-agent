@@ -332,6 +332,7 @@ async function advanced(js: Js, check: Check): Promise<void> {
         engineActs: [...adv.querySelectorAll('.llm-engine [data-act]')].map((b) => b.dataset.act),
         engineCore: [...advCore.querySelectorAll('.llm-engine .llm-tune-t')].map((t) => t.textContent),
         engineCoreActs: [...advCore.querySelectorAll('.llm-engine [data-act]')].map((b) => b.dataset.act),
+        engineBack: (adv.querySelector('.llm-engine [data-act="llm:engine"]') || {}).textContent || null,
         engfTitle: ((engf.querySelector('.llm-engfail b') || {}).textContent) || null,
         engfWhy: ((engf.querySelector('.llm-engfail .llm-note') || {}).textContent) || null,
         engfActs: [...engf.querySelectorAll('[data-act]')].map((b) => [b.dataset.act, b.textContent.trim()]),
@@ -363,16 +364,17 @@ async function advanced(js: Js, check: Check): Promise<void> {
   );
   check(
     "T48 (Д35): llama.cpp's update, auto-update and device are one Engine card (with the way to the server log); the route's internals fold under Details",
-    // The engine choice is always offered (Atomic Chat Core is the default, llama.cpp the way back).
+    // On llama.cpp (reached from the recovery card) the Engine choice row is the one quiet way back to Core.
     show(r["engine"]) === show(["llama.cpp", "Engine choice", "Update automatically", "Device", "Server log"])
       && show(r["engineActs"]) === show(["llm:backend", "llm:engine", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
+      && r["engineBack"] === "Use Atomic Chat engine"
       && r["routeInDetails"] === true && r["routeOutside"] === 0 && r["logsInAdv"] === false && r["logsInPane"] === false && r["faultAct"] === "diag:llmlogs",
-    show({ engine: r["engine"], engineActs: r["engineActs"], routeInDetails: r["routeInDetails"], routeOutside: r["routeOutside"], logsInAdv: r["logsInAdv"], logsInPane: r["logsInPane"], faultAct: r["faultAct"] }),
+    show({ engine: r["engine"], engineActs: r["engineActs"], engineBack: r["engineBack"], routeInDetails: r["routeInDetails"], routeOutside: r["routeOutside"], logsInAdv: r["logsInAdv"], logsInPane: r["logsInPane"], faultAct: r["faultAct"] }),
   );
   check(
-    "T48: a config that names no engine runs Atomic Chat Core, the default: Core's card with Core updates and the way back to llama.cpp",
-    show(r["engineCore"]) === show(["Atomic Core", "Engine choice", "Core updates", "Device", "Server log"])
-      && show(r["engineCoreActs"]) === show(["llm:backend", "llm:engine", "llm:engineCheck", "llm:device", "diag:llmlogs"]),
+    "T48: a config that names no engine runs Atomic Chat Core, the default: Core's card with Core updates and no engine choice",
+    show(r["engineCore"]) === show(["Atomic Core", "Core updates", "Device", "Server log"])
+      && show(r["engineCoreActs"]) === show(["llm:backend", "llm:engineCheck", "llm:device", "diag:llmlogs"]),
     show({ engine: r["engineCore"], engineActs: r["engineCoreActs"] }),
   );
   check(

@@ -17,15 +17,16 @@ function fixture(engine = 'atomic-core') {
   runInNewContext(source,context);
   return {context,rm};
 }
-test('Local engine picker has both engines with one accurate selected mark',()=>{
+test('the local seat is one neutral row, with no engine named',()=>{
   const {context:c}=fixture(); const rows=c.composerLocalEngineRows();
-  // Core is the default engine, so it is listed first; llama.cpp follows as the way back.
-  assert.equal(rows.length,2); assert.equal(rows[0].label,'Atomic Chat');
-  assert.equal(rows[1].label,'Local llama'); assert.equal(rows[0].active,true); assert.equal(rows[1].active,false);
+  // The engine is not a choice in the composer: one row, the configured engine, never "Atomic Chat".
+  assert.equal(rows.length,1); assert.equal(rows[0].label,'This computer'); assert.equal(rows[0].id,'atomic-core');
+  assert.equal(rows[0].detail,'Local model \u00b7 runs on this machine'); assert.equal(rows[0].active,true);
+  assert.equal(c.composerEngineName(),'This computer');
 });
 test('Fusion engine and model menus are separate, with catalogs scoped to each role',()=>{
   const {context:c,rm}=fixture();
-  assert.equal(c.composerFusionEngineRows('worker').filter(r=>r.type==='localEngine').length,2);
+  assert.equal(c.composerFusionEngineRows('worker').filter(r=>r.type==='localEngine').length,1);
   assert.equal(c.composerFusionEngineRows('orchestrator').some(r=>r.type==='localEngine'),false);
   let rows=c.composerSeatModelRows().filter(r=>r.type!=='action');
   assert.equal(rows.length,1); assert.equal(rows[0].id,'local-model'); assert.equal(rows[0].leg,'worker');
@@ -41,13 +42,13 @@ test('changing a worker keeps a local orchestrator and drops only the obsolete r
   assert.equal(cfg.llm.runMode.fusion.orchestratorModel,'local-model');
   assert.equal(cfg.llm.runMode.fusion.workerProvider,'second'); assert.equal(cfg.llm.runMode.fusion.workerModel,undefined);
 });
-test('each seat lists every cloud provider, the other seat\'s too, and the local engines only while the slot is free',()=>{
+test('each seat lists every cloud provider, the other seat\'s too, and the local row only while the slot is free',()=>{
   const {context:c,rm}=fixture();
   assert.deepEqual(c.composerFusionEngineRows('orchestrator').filter(r=>r.type==='fusionLeg').map(r=>r.id),['cloud','second']);
   rm.workerProviderId='cloud';
   const worker=c.composerFusionEngineRows('worker');
   assert.deepEqual(worker.filter(r=>r.type==='fusionLeg').map(r=>[r.id,r.active]),[['cloud',true],['second',false]]);
-  assert.equal(worker.filter(r=>r.type==='localEngine').length,2);
+  assert.equal(worker.filter(r=>r.type==='localEngine').length,1);
 });
 test('two cloud seats may share a provider; both seats on the one local slot are refused',()=>{
   const providers=[{id:'local-llama',kind:'llama-server'},{id:'cloud',kind:'openai-compatible'},{id:'second',kind:'openai-compatible'}];
@@ -59,17 +60,23 @@ test('two cloud seats may share a provider; both seats on the one local slot are
   const both=planEnterFusion(local,{workerProvider:'local-llama'},()=>true);
   assert.equal(both.write,false); assert.match(both.refusal,/one Fusion role at a time/);
 });
-test('both local engines are always offered, Atomic Chat first, whichever one runs',()=>{
+test('on llama.cpp (after a recovery) the one local row keeps llama.cpp and still names no engine',()=>{
   const {context:c}=fixture('llama-server');
-  assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.active]),[['atomic-core',false],['llama-server',true]]);
-  assert.equal(c.composerFusionEngineRows('worker').filter(r=>r.type==='localEngine').length,2);
+  assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.label,r.active]),[['llama-server','This computer',true]]);
+  assert.equal(c.composerFusionEngineRows('worker').filter(r=>r.type==='localEngine').length,1);
   assert.equal(typeof c.composerCoreChoice,'undefined');
+});
+test('the seat that does not hold the local slot shows it busy under the same neutral name',()=>{
+  const {context:c}=fixture();
+  const busy=c.composerFusionEngineRows('orchestrator').filter(r=>r.type==='localBusy');
+  assert.equal(busy.length,1); assert.equal(busy[0].label,c.composerEngineName());
+  assert.equal(busy[0].detail,'Busy as the worker \u00b7 \u21c4 swaps the roles');
 });
 test('a config with no engine named runs Atomic Chat Core, the default',()=>{
   for (const engine of [null, '', 'something-else']) {
     const {context:c}=fixture(engine);
     assert.equal(c.composerEngineId(),'atomic-core');
-    assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.active]),[['atomic-core',true],['llama-server',false]]);
+    assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.active]),[['atomic-core',true]]);
   }
   assert.equal(fixture('llama-server').context.composerEngineId(),'llama-server');
 });

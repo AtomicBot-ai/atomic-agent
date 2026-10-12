@@ -1,10 +1,8 @@
 import type { TuiState } from "../tui-state.js";
 import type { ComposerSwitchRow } from "./composer-switch-row-contracts.js";
 import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js";
+import { LOCAL_SEAT_LABEL } from "../llm-panel/llm-panel-selectors.js";
 
-export function localEngineLabel(state: TuiState): string {
-  return state.localModelsPanel.backend.engine === "atomic-core" ? "Atomic Chat" : "Local llama";
-}
 export function engineRows(state: TuiState, leg?: "orchestrator" | "worker"): readonly ComposerSwitchRow[] {
   const rm = state.providersPanel.runMode;
   const selected = leg === "worker" ? rm?.workerProviderId : rm?.orchestratorProviderId;
@@ -13,15 +11,13 @@ export function engineRows(state: TuiState, leg?: "orchestrator" | "worker"): re
     id: `engine:${leg}:${p.id}`, label: p.id, detail: p.hasApiKey ? "Cloud provider" : "No API key",
     active: selected === p.id, intent: { kind: "fusionLeg", leg, providerId: p.id },
   })) : [];
-  const engines: readonly ("llama-server" | "atomic-core")[] = state.localModelsPanel.backend.atomicCoreChoice === true
-    ? (["llama-server", "atomic-core"] as const)
-    : (["llama-server"] as const);
-  const local: ComposerSwitchRow[] = leg && other === "local-llama" ? [] : engines.map(engine => ({
-    id: `engine:${leg ?? "local"}:${engine}`, label: engine === "atomic-core" ? "Atomic Chat" : "Local llama",
-    detail: engine === "atomic-core" ? "Atomic Chat Core on this machine" : "llama.cpp on this machine",
-    active: (!leg || selected === "local-llama") && (state.localModelsPanel.backend.engine ?? "llama-server") === engine,
+  // One local row carrying the engine already selected (Core by default), so picking it never switches engines.
+  const engine = state.localModelsPanel.backend.engine ?? "atomic-core";
+  const local: ComposerSwitchRow[] = leg && other === "local-llama" ? [] : [{
+    id: `engine:${leg ?? "local"}:local`, label: LOCAL_SEAT_LABEL, detail: "Local model on this machine",
+    active: !leg || selected === "local-llama",
     intent: { kind: "localEngine", engine, ...(leg ? { leg } : {}) },
-  }));
+  }];
   return [...cloud, ...local, ...(leg ? [{id: "engine:add", label: "Add a new provider", detail: "opens the wizard", active: false, intent: {kind: "addProvider" as const}}] : [])];
 }
 export function fusionModelRows(state: TuiState, leg: "orchestrator" | "worker"): readonly ComposerSwitchRow[] {

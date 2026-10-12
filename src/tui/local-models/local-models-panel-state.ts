@@ -133,7 +133,8 @@ export interface EmbeddingDaemonInfo {
 
 export interface LocalModelsBackendInfo {
   engine?: "atomic-core" | "llama-server";
-  /** Atomic Chat is offered as an engine; every snapshot sets it. Absent (before the first snapshot) means hidden. */
+  /** The composer draws an engine control on the local route. Snapshots set it false: Core is the engine, and llama.cpp
+   *  is reached from the core failure notice or `/model engine`. Absent (before the first snapshot) means hidden. */
   atomicCoreChoice?: boolean;
   currentTag: string | null;
   latestTag: string | null;

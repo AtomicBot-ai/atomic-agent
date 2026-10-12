@@ -160,10 +160,11 @@ try {
   await until(async () => (await popTitle()) === 'Worker inference engine', 'the Workers popover', 10000);
   await until(async () => (await popRows()).length >= 3, 'the worker engine rows', 15000);
   const rowsC = await popRows();
-  // Both local engines are always offered: Atomic Chat Core (the default) and llama.cpp as the way back.
-  check('C: worker engine rows offer OpenRouter and both local engines, Atomic Chat first',
-    ['OpenRouter', 'Atomic Chat', 'Local llama'].every(label => rowsC.some(r => r[0] === label))
-      && rowsC.findIndex(r => r[0] === 'Atomic Chat') < rowsC.findIndex(r => r[0] === 'Local llama'), JSON.stringify(rowsC));
+  // The engine is not a choice in the composer: one neutral local row, no engine named.
+  check('C: worker engine rows offer OpenRouter and one local row, This computer, with no engine name',
+    ['OpenRouter', 'This computer'].every(label => rowsC.some(r => r[0] === label))
+      && rowsC.filter(r => r[0] === 'This computer').length === 1
+      && !rowsC.some(r => r[0] === 'Atomic Chat' || r[0] === 'Local llama'), JSON.stringify(rowsC));
   await shot('C-workers-popover');
   await app.clickSel('.selpop .modelrow[data-id="openrouter"]');
   await landed((c) => c.runMode && c.runMode.fusion && c.runMode.fusion.workerProvider === 'openrouter', 'the workers pinned to openrouter');
@@ -179,7 +180,7 @@ try {
   const rowsD = await popRows();
   check('D: orchestrator engine rows list the worker provider too and mark the current engine',
     rowsD.some(r => r[0] === 'AI/ML API' && r[2]) && rowsD.some(r => r[0] === 'OpenRouter' && !r[2])
-      && rowsD.some(r => r[0] === 'Local llama') && !rowsD.some(r => r[0] === 'Atomic Chat'), JSON.stringify(rowsD));
+      && rowsD.some(r => r[0] === 'This computer') && !rowsD.some(r => r[0] === 'Atomic Chat' || r[0] === 'Local llama'), JSON.stringify(rowsD));
   await shot('D-provider-popover');
   await closePopover();
 
