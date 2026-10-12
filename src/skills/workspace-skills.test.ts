@@ -30,14 +30,16 @@ describe("session workspace skills and live policy", () => {
     const c = getConfig(); return loadWorkspaceSkills(dir, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile, defaults: c.skills }, compatible);
   }
 
-  it("deduplicates all copies by name in source priority, with root-only discovery", () => {
+  it("deduplicates all copies by name, global first then project source priority, with root-only discovery", () => {
     const dirs = [".atomic-agent/skills", ".agents/skills", ".claude/skills", ".cursor/skills", ".pi/skills"].map(p => join(a, p));
     dirs.push(getConfig().paths.globalSkillsDir);
     const paths = dirs.map(d => put(d)); put(join(a, "nested/.agents/skills"), "nested");
     const found = load(); expect(found.entries).toHaveLength(1);
-    expect(found.entries[0]?.record.manifestPath).toBe(paths[0]);
+    expect(found.entries[0]?.record.manifestPath).toBe(paths[5]);
+    expect(found.entries[0]?.record.source).toBe("global");
     expect(found.entries[0]?.sources).toEqual(paths);
     expect(found.diagnostics.join()).toContain("shadowed");
+    rmSync(paths[5]!); expect(load().entries[0]?.record.manifestPath).toBe(paths[0]);
     rmSync(paths[0]!); expect(load().entries[0]?.record.manifestPath).toBe(paths[1]);
   });
 
@@ -72,7 +74,7 @@ describe("session workspace skills and live policy", () => {
   });
 
   it("rereads changed bodies, deactivates switched/deleted sources and never mutates local loads", () => {
-    const path = put(join(a, ".agents/skills"), "example", "old"); put(getConfig().paths.globalSkillsDir, "example", "global");
+    const path = put(join(a, ".agents/skills"), "example", "old");
     const loader = createWorkspaceLoader(getConfig());
     let session = createEmptySessionState({ id: "a", workingDir: a });
     session.loadedSkills = [{ name: "example", version: "1", body: "legacy", loadedAt: 1 }];
@@ -83,20 +85,21 @@ describe("session workspace skills and live policy", () => {
     session = reconcileCloudSkills(JSON.parse(JSON.stringify(session)), loader(session, true));
     expect(session.cloudLoadedSkills?.[0]?.body).toContain("new");
     expect(session.loadedSkills[0]?.body).toBe("legacy");
-    rmSync(path); session = reconcileCloudSkills(session, loader(session, true));
+    // A new global copy wins, which switches the source.
+    put(getConfig().paths.globalSkillsDir, "example", "global"); session = reconcileCloudSkills(session, loader(session, true));
     expect(session.cloudLoadedSkills).toEqual([]);
-    put(join(a, ".agents/skills")); expect(reconcileCloudSkills(session, loader(session, true)).cloudLoadedSkills).toEqual([]);
+    rmSync(path); put(join(a, ".agents/skills")); expect(reconcileCloudSkills(session, loader(session, true)).cloudLoadedSkills).toEqual([]);
   });
 
   it("binds view, references and scripts to the winner and rechecks after approval", async () => {
     const path = put(join(a, ".agents/skills"), "example", "Read references/data.md", "requires_scripts: [run.js]");
-    put(getConfig().paths.globalSkillsDir, "example", "wrong global");
+    put(join(a, ".claude/skills"), "example", "wrong lower-priority project copy");
     mkdirSync(join(dirname(path), "scripts"));
     writeFileSync(join(dirname(path), "scripts/run.js"), "process.stdout.write('PROJECT SCRIPT')");
     const registry = new SkillRegistry({ globalDir: getConfig().paths.globalSkillsDir, projectDir: null }); await registry.refresh();
     const ctx = { sessionId: "a", stepIndex: 0, workingDir: a, modelMode: "cloud" as const, workspaceSkills: load(), signal: new AbortController().signal };
     const view = await buildSkillViewTool(registry).run({ name: "example" }, ctx);
-    expect(view.summary).toContain(dirname(path)); expect(view.summary).not.toContain("wrong global");
+    expect(view.summary).toContain(dirname(path)); expect(view.summary).not.toContain("wrong lower-priority");
     let disableOnApproval = false;
     const gate = new ApprovalGate({ emit(req) {
       if (disableOnApproval) setSkillDisabled("example", true, a);
@@ -108,6 +111,32 @@ describe("session workspace skills and live policy", () => {
     await expect(tool.run({ skill: "example", script: "run.js" }, ctx)).rejects.toThrow(/disabled in workspace/);
     await expect(buildSkillViewTool(registry).run({ name: "example" }, ctx)).rejects.toThrow(/disabled in workspace/);
     setSkillDisabled("example", false, a); expect(load().assertAvailable("example").body).toContain("references/data.md");
+  });
+
+  it("lets a global skill win over a project copy of the same name", () => {
+    const project = put(join(a, ".agents/skills"), "example", "PROJECT BODY"); const global = put(getConfig().paths.globalSkillsDir, "example", "GLOBAL BODY");
+    const found = load();
+    expect(found.entries).toHaveLength(1);
+    expect(found.entries[0]?.record.source).toBe("global");
+    expect(found.entries[0]?.body).toContain("GLOBAL BODY");
+    expect(found.diagnostics.join("\n")).toContain(`using ${global}; shadowed ${project}`);
+    expect(found.assertAvailable("example").record.manifestPath).toBe(global);
+  });
+
+  it("reads a global skill symlinked to a folder elsewhere but keeps project skills confined", () => {
+    const globalDir = getConfig().paths.globalSkillsDir; mkdirSync(globalDir, { recursive: true });
+    const target = dirname(put(join(base, "elsewhere"), "linked", "LINKED BODY"));
+    symlinkSync(target, join(globalDir, "linked"));
+    const projectTarget = dirname(put(join(base, "outside-project"), "external", "EXTERNAL BODY"));
+    mkdirSync(join(a, ".agents/skills"), { recursive: true }); symlinkSync(projectTarget, join(a, ".agents/skills/external"));
+    const found = load();
+    const linked = found.entries.find(e => e.record.manifest.name === "linked");
+    expect(linked?.record.source).toBe("global");
+    expect(linked?.record.rootDir).toBe(target);
+    expect(linked?.body).toContain("LINKED BODY");
+    expect(found.entries.some(e => e.record.manifest.name === "external")).toBe(false);
+    expect(found.diagnostics.join("\n")).toMatch(/external.*outside workspace/);
+    expect(found.diagnostics.join("\n")).not.toMatch(/linked.*outside workspace/);
   });
 
   it("never imports project symlinks outside the workspace", () => {

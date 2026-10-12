@@ -10,6 +10,20 @@ export const CORE_VERSION = CORE_VERSIONS[CORE_VERSIONS.length - 1]!;
 export const CORE_PROTOCOL = 2;
 export const CORE_REPO = "AtomicBot-ai/atomic-chat-core";
 
+/**
+ * There is no automatic fallback: with atomic-core selected, a failed Core
+ * install or start leaves no working local engine. Every such failure ends
+ * with the way back, for both the CLI and the TUI.
+ */
+export const CORE_SWITCH_BACK_HINT = "Switch back with: atomic-agent models engine llama-server (TUI: /model engine llama-server).";
+
+/** Append the switch-back hint once. Cancellation is not a failure and stays untouched. */
+export function withSwitchBackHint(err: unknown, signal?: AbortSignal): unknown {
+  if (signal?.aborted || !(err instanceof Error) || err.name === "AbortError") return err;
+  if (!err.message.includes(CORE_SWITCH_BACK_HINT)) err.message = `${err.message.trimEnd()} ${CORE_SWITCH_BACK_HINT}`;
+  return err;
+}
+
 export interface CoreBackend {
   coreVersion: string;
   provider: "llamacpp";

@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DownloadFileOptions } from "../downloads/download-file.js";
-import { CORE_VERSION, activeCoreVersion, coreRoot, coreVersionDir, readCoreBackend, writeCoreJson, type CoreBackend } from "./core-state.js";
+import { CORE_VERSION, withSwitchBackHint, activeCoreVersion, coreRoot, coreVersionDir, readCoreBackend, writeCoreJson, type CoreBackend } from "./core-state.js";
 import { withCoreClient } from "./core-client.js";
 import { installCore, isCoreInstalled } from "./core-install.js";
 
@@ -25,8 +25,10 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
   if (current && (await current.snapshot()).sessions.length > 0) {
     throw new Error("Stop local models before updating the engine. Your running models are unchanged.");
   }
+  // The precondition above is not an install failure; everything below is.
+  try {
   await installCore(dataDir, version, opts);
-  return withCoreClient(dataDir, version, async client => {
+  return await withCoreClient(dataDir, version, async client => {
     const catalog = await client.call<Catalog>("/backends/llamacpp/catalog", { force: true }, { signal: opts.signal, timeoutMs: 60_000 });
     const selected = catalog.recommended ?? catalog.recommended_installed;
     if (!selected) throw new Error("Atomic Core found no compatible inference backend for this computer.");
@@ -52,5 +54,6 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
     writeCoreJson(join(coreRoot(dataDir), "active.json"), { version, previous });
     return { ok: true, tag: `Atomic Core ${version} · ${tag}` };
   }, opts.signal);
+  } catch (err) { throw withSwitchBackHint(err, opts.signal); }
   });
 }

@@ -88,7 +88,15 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
       const manifestPath = join(dir, name, "SKILL.md");
       try {
         if (bytesCapHit) continue;
-        const file = readWorkspaceFile(source.source === "project" ? root : dir, manifestPath);
+        // Project skills stay confined to the workspace. A global skill may be a symlink
+        // to a folder elsewhere (as the local registry allows), so it is confined to its
+        // own resolved folder instead of the global directory.
+        let skillRoot = root;
+        if (source.source === "global") {
+          try { skillRoot = realpathSync(join(dir, name)); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+        }
+        const file = readWorkspaceFile(skillRoot, manifestPath);
         if (!file) continue;
         if (bytes + Buffer.byteLength(file.content) > 8 * 1024 * 1024) {
           bytesCapHit = true;
@@ -115,7 +123,8 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
     }
   }
   const entries = [...byName.values()].map(copies => {
-    const chosen = (!enabled ? copies.find(e => e.record.source === "global") : undefined) ?? copies[0]!;
+    // A global copy wins: a checked-out repository cannot shadow a skill the user installed.
+    const chosen = copies.find(e => e.record.source === "global") ?? copies[0]!;
     const sources = copies.flatMap(e => e.sources);
     if (copies.some(e => e.fingerprint !== chosen.fingerprint)) diagnostics.push(`Skill ${chosen.record.manifest.name}: using ${chosen.record.manifestPath}; shadowed ${sources.filter(p => p !== chosen.record.manifestPath).join(", ")}`);
     return { ...chosen, sources };

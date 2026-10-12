@@ -15,6 +15,11 @@ export interface SessionWorkspace {
   diagnostics: readonly string[];
 }
 
+export interface WorkspacePrepareOptions {
+  /** The active model's context window in tokens, when known; caps project instructions to a share of it. */
+  contextWindow?: number | null;
+}
+
 /** Reconcile only previously requested bodies. New catalog entries remain lazy. */
 export function reconcileCloudSkills(session: SessionState, workspace: SessionWorkspace): SessionState {
   const previous = session.cloudLoadedSkills;

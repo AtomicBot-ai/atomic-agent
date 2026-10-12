@@ -4,7 +4,7 @@ import { selectManagedEngine } from "../local-llm/engine-selection.js";
 import { CORE_VERSION, activeCoreVersion, readCoreBackend } from "../local-llm/core/core-state.js";
 import { checkCoreUpdate } from "../local-llm/core/core-install.js";
 import { isCoreBackendInstalled } from "../local-llm/core/core-backend.js";
-import { atomicCoreChoiceEnabled } from "../local-llm/core/experimental.js";
+import { atomicCoreChoiceEnabled, ATOMIC_CORE_EXPERIMENTAL_ENV } from "../local-llm/core/experimental.js";
 
 /** A structured surface for both frontends; contains no model-session credentials. */
 export async function modelsEngineCommand(args: string[]): Promise<number> {
@@ -17,6 +17,11 @@ export async function modelsEngineCommand(args: string[]): Promise<number> {
     return 0;
   }
   if (action !== "atomic-core" && action !== "llama-server") throw new Error("Usage: models engine [status|check|atomic-core|llama-server]");
+  // Same gate as the TUI. Switching back to llama-server is never gated, so
+  // nobody can be stranded on the experimental engine.
+  if (action === "atomic-core" && !atomicCoreChoiceEnabled(cfg)) {
+    throw new Error(`Atomic Chat is experimental. Set ${ATOMIC_CORE_EXPERIMENTAL_ENV}=1 to select it.`);
+  }
   await selectManagedEngine(dataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port, () => {
     const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
     file.localModels.managed.engine = action;

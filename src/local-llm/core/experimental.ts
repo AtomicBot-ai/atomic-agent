@@ -8,10 +8,10 @@ interface EngineConfig {
 }
 
 /**
- * Whether the TUI offers Atomic Chat as an engine. True with the opt-in
- * variable set to "1", or when the saved config already selects
- * atomic-core, so nobody who chose it is stranded. The CLI
- * `models engine` command stays available either way.
+ * Whether Atomic Chat may be selected as an engine, in the TUI and in
+ * `models engine atomic-core`. True with the opt-in variable set to "1",
+ * or when the saved config already selects atomic-core, so nobody who
+ * chose it is stranded. Switching back to llama-server is never gated.
  */
 export function atomicCoreChoiceEnabled(
   config: EngineConfig = getConfig(),

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { readWorkspaceFile, isWithinWorkspace } from "../skills/workspace-files.js";
 
@@ -8,14 +9,32 @@ export interface GitResult { status: number | null; stdout?: string; stderr?: st
 export interface ProjectInstructionOptions {
   /** Test seam: runs git in the workspace with a cleaned environment. */
   runGit?: (root: string, args: string[], input?: string) => GitResult;
-  maxEntries?: number;
   maxFiles?: number;
+  /** Total instruction bytes; defaults to {@link DEFAULT_INSTRUCTION_BYTES}. */
   maxBytes?: number;
+  /** Active model window in tokens, when known: instructions take at most a modest share of it. */
+  contextWindow?: number | null;
+  /** Test seam: the home directory, which is never treated as a project tree. */
+  homeDir?: string;
 }
-const names = new Set(["AGENTS.md", "AGENT.md", "CLAUDE.md"]);
+export interface ProjectInstructionsResult {
+  instructions: ProjectInstruction[];
+  diagnostics: string[];
+  /** Files and directories whose stat signature decides whether a cached result is still current. */
+  watched: string[];
+}
+export const DEFAULT_INSTRUCTION_BYTES = 48 * 1024;
+const DEFAULT_INSTRUCTION_FILES = 64;
+/** Instructions never take more than this share of a known context window. */
+const WINDOW_SHARE = 0.1;
+/** Conservative bytes per token, so the share holds for dense text too. */
+const BYTES_PER_TOKEN = 3;
+/** A root file is truncated to the remaining budget rather than dropped when at least this much is left. */
+const MIN_TRUNCATED_BYTES = 256;
+const truncatedMarker = "\n[... truncated: project instruction budget reached]";
+const maxWatched = 2048;
+const rootNames = ["AGENTS.md", "AGENT.md", "CLAUDE.md", ".claude/CLAUDE.md"];
 const excluded = new Set([".git", "node_modules"]);
-// The fallback walk has no .gitignore, so it also skips common dependency/build trees.
-const walkExcluded = new Set([...excluded, ".venv", "venv", "vendor", "dist", "build", "target", ".next", "__pycache__"]);
 // Imports never pull credentials into the prompt, ignored by Git or not.
 const sensitiveName = /^(\.env(\..*)?|\.npmrc|\.netrc|\.pgpass|\.pypirc|\.git-credentials|credentials\.json|id_(rsa|dsa|ecdsa|ed25519)(\..*)?|.*\.(pem|key|p12|pfx|tfvars|kdbx))$/i;
 function isSensitive(relPath: string): boolean {
@@ -48,48 +67,115 @@ class Diagnostics {
   }
 }
 
+/** Byte budget for one load: the configured cap, scaled down to a share of a known context window. */
+export function instructionByteBudget(options: Pick<ProjectInstructionOptions, "maxBytes" | "contextWindow"> = {}): number {
+  const cap = options.maxBytes ?? DEFAULT_INSTRUCTION_BYTES;
+  const window = options.contextWindow;
+  if (!window || !Number.isFinite(window) || window <= 0) return cap;
+  return Math.max(0, Math.min(cap, Math.floor(window * WINDOW_SHARE * BYTES_PER_TOKEN)));
+}
+
 /**
  * Bounded, synchronous preparation preserves the existing pure/synchronous preview API.
  * Instruction problems never fail a step: bad files are skipped and caps truncate, with diagnostics.
  */
-export function loadProjectInstructions(workingDir: string, signal?: AbortSignal, options: ProjectInstructionOptions = {}): { instructions: ProjectInstruction[]; diagnostics: string[] } {
+export function loadProjectInstructions(workingDir: string, signal?: AbortSignal, options: ProjectInstructionOptions = {}): ProjectInstructionsResult {
   signal?.throwIfAborted();
   const diagnostics = new Diagnostics();
+  const watched = new Set<string>([resolve(workingDir)]);
   try {
-    return { instructions: loadInstructions(workingDir, diagnostics, signal, options), diagnostics: diagnostics.lines() };
+    return { instructions: loadInstructions(workingDir, diagnostics, signal, options, watched), diagnostics: diagnostics.lines(), watched: [...watched] };
   } catch (error) {
     if (signal?.aborted) throw signal.reason ?? error;
     diagnostics.add(`Project instructions unavailable: ${error instanceof Error ? error.message : String(error)}`);
-    return { instructions: [], diagnostics: diagnostics.lines() };
+    return { instructions: [], diagnostics: diagnostics.lines(), watched: [...watched] };
   }
 }
 
-function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: AbortSignal | undefined, options: ProjectInstructionOptions): ProjectInstruction[] {
+/**
+ * Per-workspace cache in front of {@link loadProjectInstructions}. A cached result is
+ * reused while every file it looked at keeps its stat signature, and for at most `ttlMs`,
+ * after which discovery runs again (new nested files appear within that interval).
+ */
+export function createProjectInstructionsCache(cacheOptions: { ttlMs?: number; now?: () => number; load?: typeof loadProjectInstructions; maxEntries?: number } = {}) {
+  const ttlMs = cacheOptions.ttlMs ?? 30_000;
+  const now = cacheOptions.now ?? Date.now;
+  const load = cacheOptions.load ?? loadProjectInstructions;
+  const maxEntries = cacheOptions.maxEntries ?? 32;
+  const entries = new Map<string, { result: ProjectInstructionsResult; signature: string; scannedAt: number }>();
+  return (workingDir: string, signal?: AbortSignal, options: ProjectInstructionOptions = {}): ProjectInstructionsResult => {
+    signal?.throwIfAborted();
+    const key = `${resolve(workingDir)}\0${instructionByteBudget(options)}\0${options.maxFiles ?? ""}`;
+    const cached = entries.get(key);
+    if (cached && now() - cached.scannedAt < ttlMs && statSignature(cached.result.watched) === cached.signature) return cached.result;
+    const result = load(workingDir, signal, options);
+    entries.delete(key);
+    entries.set(key, { result, signature: statSignature(result.watched), scannedAt: now() });
+    if (entries.size > maxEntries) entries.delete(entries.keys().next().value!);
+    return result;
+  };
+}
+
+function statSignature(paths: readonly string[]): string {
+  return paths.map(path => {
+    try {
+      const info = statSync(path, { throwIfNoEntry: false });
+      return info ? `${info.mtimeMs}:${info.ctimeMs}:${info.size}` : "-";
+    } catch (error) { return `!${(error as NodeJS.ErrnoException).code ?? ""}`; }
+  }).join("|");
+}
+
+function gitUnavailable(result: GitResult): boolean {
+  return (result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || /not a git repository/i.test(result.stderr ?? "");
+}
+
+function gitFailure(result: GitResult): string {
+  return (result.error?.message ?? result.stderr ?? "").trim().split("\n")[0] ?? "";
+}
+
+function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: AbortSignal | undefined, options: ProjectInstructionOptions, watched: Set<string>): ProjectInstruction[] {
   const root = realpathSync(workingDir);
   const runGit = options.runGit ?? runGitInWorkspace;
-  const maxFiles = options.maxFiles ?? 512;
-  const maxBytes = options.maxBytes ?? 1024 * 1024;
+  const maxFiles = options.maxFiles ?? DEFAULT_INSTRUCTION_FILES;
+  const maxBytes = instructionByteBudget(options);
   const rel = (path: string) => relative(root, path).split("\\").join("/") || ".";
-  const git = runGit(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "AGENTS.md", "AGENT.md", "CLAUDE.md", ":(glob)**/AGENTS.md", ":(glob)**/AGENT.md", ":(glob)**/CLAUDE.md"]);
-  const gitMode = git.status === 0;
-  let paths: string[];
-  if (gitMode) paths = (git.stdout ?? "").split("\0").filter(Boolean);
-  else {
-    // Not a repository, no git binary, or git refusing the folder (for example
-    // safe.directory ownership checks): the bounded filesystem walk still works.
-    const missing = (git.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || /not a git repository/i.test(git.stderr ?? "");
-    if (!missing) diagnostics.add(`Git instruction discovery failed, scanning files instead: ${(git.error?.message ?? git.stderr ?? "").trim().split("\n")[0]}`);
-    paths = walk(root, diagnostics, signal, options.maxEntries ?? 100_000);
+  const watch = (path: string) => { if (watched.size < maxWatched) watched.add(path); };
+  watch(root);
+  let home: string | null = null;
+  try { home = realpathSync(options.homeDir ?? homedir()); } catch { /* No home directory: nothing to protect. */ }
+  // The home directory (or an ancestor of it) is never a project tree: only its own root files load.
+  const coversHome = (dir: string) => home !== null && isWithinWorkspace(dir, home);
+  let gitMode = false;
+  let nested = false;
+  if (!coversHome(root)) {
+    const top = runGit(root, ["rev-parse", "--show-toplevel"]);
+    if (top.status === 0) {
+      gitMode = true;
+      let toplevel = root;
+      try { toplevel = realpathSync((top.stdout ?? "").trim() || root); } catch { /* Keep the workspace as the boundary. */ }
+      // A repository rooted at home (dotfiles) would list every untracked file below it.
+      nested = !coversHome(toplevel);
+    } else if (!gitUnavailable(top)) diagnostics.add(`Git instruction discovery failed; loading root instructions only: ${gitFailure(top)}`);
   }
+  let paths: string[] = [];
+  if (nested) {
+    const git = runGit(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "AGENTS.md", "AGENT.md", "CLAUDE.md", ":(glob)**/AGENTS.md", ":(glob)**/AGENT.md", ":(glob)**/CLAUDE.md"]);
+    if (git.status === 0) paths = (git.stdout ?? "").split("\0").filter(Boolean);
+    else diagnostics.add(`Git instruction discovery failed; loading root instructions only: ${gitFailure(git)}`);
+  }
+  // Outside Git (or at home) nothing below the workspace root is walked: a folder such
+  // as ~ holds unrelated projects and privacy-protected directories.
   // Root names are checked directly, even if ignored; absent ones take no file slot.
-  paths.push(...["AGENTS.md", "AGENT.md", "CLAUDE.md", ".claude/CLAUDE.md"].filter(p => existsSync(join(root, p))));
+  for (const name of rootNames) watch(join(root, name));
+  paths.push(...rootNames.filter(p => existsSync(join(root, p))));
   paths = [...new Set(paths)].filter(p => !p.split(/[\\/]/).some(part => excluded.has(part)));
   if (paths.length > maxFiles) {
     // Shallower scopes are the most general rules; keep those.
     paths.sort((a, b) => a.split(/[\\/]/).length - b.split(/[\\/]/).length || a.localeCompare(b));
-    diagnostics.add(`Project instructions exceed ${maxFiles} files; deeper files were not loaded. Narrow the workspace.`);
+    for (const dropped of paths.slice(maxFiles)) diagnostics.add(`Project instructions exceed ${maxFiles} files; deeper files were not loaded`, dropped.split("\\").join("/"));
     paths = paths.slice(0, maxFiles);
   }
+  for (const path of paths) watch(resolve(root, path));
   const contents = new Map<string, { path: string; content: string }>();
   /** Reads once per step; the import pre-pass and the real pass share it. */
   function readOnce(actual: string): { path: string; content: string } | null {
@@ -147,6 +233,8 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
   function read(path: string, label: string, scope: string, priority: number, depth: number, stack: Set<string>): void {
     signal?.throwIfAborted();
     if (!isWithinWorkspace(root, path)) { diagnostics.add("Skipped external instruction", label); return; }
+    // A created, edited or removed import changes the cache signature.
+    if (depth > 0) watch(path);
     let actual: string;
     try { actual = realpathSync(path); }
     catch (error) {
@@ -173,15 +261,23 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
     }
     if (!file) return;
     if (file.content.includes("\0")) { diagnostics.add("Skipped binary instruction", rel(actual)); return; }
-    const size = Buffer.byteLength(file.content);
+    let body = file.content;
+    const size = Buffer.byteLength(body);
     if (budgetHit || bytes + size > maxBytes || instructions.length >= maxFiles) {
+      const room = maxBytes - bytes - Buffer.byteLength(truncatedMarker);
+      // Deeper scopes are dropped first; a root file that does not fit keeps its beginning.
+      if (budgetHit || scope !== "." || depth > 0 || instructions.length >= maxFiles || room < MIN_TRUNCATED_BYTES) {
+        budgetHit = true;
+        diagnostics.add(`Project instructions exceed ${maxBytes} bytes or ${maxFiles} files; skipped`, rel(actual));
+        return;
+      }
       budgetHit = true;
-      diagnostics.add(`Project instructions exceed ${maxBytes} bytes or ${maxFiles} files; skipped`, rel(actual));
-      return;
+      body = truncateUtf8(body, room) + truncatedMarker;
+      diagnostics.add(`Project instructions exceed ${maxBytes} bytes; truncated`, rel(actual));
     }
-    bytes += size;
+    bytes += Buffer.byteLength(body);
     seen.add(key);
-    instructions.push({ path: actual, scope, body: file.content, priority });
+    instructions.push({ path: actual, scope, body, priority });
     if (basename(path) === "CLAUDE.md" || depth > 0) {
       const nextStack = new Set(stack).add(actual);
       for (const target of instructionImports(file.content)) {
@@ -204,32 +300,14 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
   return instructions;
 }
 
-function priorityOf(path: string): number {
-  return basename(path) === "AGENTS.md" ? 4 : basename(path) === "AGENT.md" ? 3 : basename(dirname(path)) === ".claude" ? 1 : 2;
+/** Cuts to at most `maxBytes` UTF-8 bytes without splitting a character. */
+function truncateUtf8(text: string, maxBytes: number): string {
+  const cut = Buffer.from(text, "utf8").subarray(0, Math.max(0, maxBytes)).toString("utf8");
+  return cut.endsWith("\uFFFD") && !text.startsWith(cut) ? cut.slice(0, -1) : cut;
 }
 
-function walk(root: string, diagnostics: Diagnostics, signal: AbortSignal | undefined, maxEntries: number): string[] {
-  const paths: string[] = [];
-  const pending = [root];
-  let count = 0;
-  while (pending.length) {
-    signal?.throwIfAborted();
-    const dir = pending.pop()!;
-    let entries: import("node:fs").Dirent[];
-    try { entries = readdirSync(dir, { withFileTypes: true }); }
-    catch (error) { diagnostics.add("Skipped unreadable directories", `${relative(root, dir).split("\\").join("/") || "."} (${(error as NodeJS.ErrnoException).code ?? String(error)})`); continue; }
-    for (const entry of entries) {
-      if (++count > maxEntries) {
-        diagnostics.add(`Project instruction scan stopped at ${maxEntries} entries; nested instructions beyond that point were not loaded. Narrow the workspace or use Git.`);
-        return paths;
-      }
-      if (walkExcluded.has(entry.name)) continue;
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) pending.push(path);
-      else if (names.has(entry.name)) paths.push(relative(root, path));
-    }
-  }
-  return paths;
+function priorityOf(path: string): number {
+  return basename(path) === "AGENTS.md" ? 4 : basename(path) === "AGENT.md" ? 3 : basename(dirname(path)) === ".claude" ? 1 : 2;
 }
 
 export function instructionImports(body: string): string[] {

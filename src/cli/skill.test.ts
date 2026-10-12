@@ -95,7 +95,7 @@ describe("skillCommand", () => {
     expect(await skillCommand(["disable", "alpha", "--workspace", workspace])).toBe(0);
     expect(readUserConfigFileSync(getUserConfigPath(stateDir))?.skills.disabled).toEqual([]);
     stdout = ""; expect(await skillCommand(["list", "--workspace", workspace])).toBe(0);
-    expect(stdout).toContain("disabled in workspace"); expect(stdout).toContain(".claude/skills/alpha/SKILL.md");
+    expect(stdout).toContain("disabled in workspace"); expect(stdout).toContain("[global]");
     expect(await skillCommand(["project", "off", "--workspace", workspace])).toBe(0);
     stdout = ""; await skillCommand(["list", "--workspace", workspace]);
     expect(stdout).toContain("[global]"); expect(stdout).toContain("disabled in workspace");

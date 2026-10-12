@@ -1,5 +1,6 @@
 import { selectManagedEngine } from "../../local-llm/engine-selection.js";
 import { atomicCoreChoiceEnabled, ATOMIC_CORE_EXPERIMENTAL_ENV } from "../../local-llm/core/experimental.js";
+import { stopIdleCore } from "../../local-llm/core/core-sessions.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
 import { totalmem } from "node:os";
 
@@ -2364,12 +2365,18 @@ export class LocalModelsOrchestrator {
    * phase 1B: stops both daemons atomically.
    */
   private async stopDaemonSilent(): Promise<void> {
+    const cfg = getConfig();
     try {
-      await stopChatAndEmbeddingDaemons(getConfig().paths.localModelsDataDir, {
+      await stopChatAndEmbeddingDaemons(cfg.paths.localModelsDataDir, {
         timeoutMs: 2000,
       });
     } catch {
       /* best-effort during shutdown */
+    }
+    // With the models unloaded, the idle Atomic Core daemon goes too. Core
+    // itself refuses while any model session or other client remains.
+    if (cfg.localModels.managed.engine === "atomic-core") {
+      await stopIdleCore(cfg.paths.localModelsDataDir).catch(() => false);
     }
   }
 

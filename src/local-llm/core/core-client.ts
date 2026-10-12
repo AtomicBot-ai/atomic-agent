@@ -2,7 +2,8 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync 
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { CORE_PROTOCOL, coreBinary, coreDataDir, coreVersionDir, readCoreJson, type CoreSession } from "./core-state.js";
+import { coreDaemonEnv } from "./core-env.js";
+import { CORE_PROTOCOL, withSwitchBackHint, coreBinary, coreDataDir, coreVersionDir, readCoreJson, type CoreSession } from "./core-state.js";
 
 export interface CoreSnapshot {
   instance_id: string;
@@ -106,6 +107,11 @@ export async function connectCore(dataDir: string, version: string): Promise<Cor
 
 /** The CLI-scoped daemon survives one-shot model commands; Core owns its lock and child journal. */
 export async function ensureCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient> {
+  try { return await startCore(dataDir, version, signal); }
+  catch (err) { throw withSwitchBackHint(err, signal); }
+}
+
+async function startCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient> {
   const existing = await connectCore(dataDir, version);
   if (existing) return existing;
   const binary = coreBinary(dataDir, version);
@@ -117,7 +123,8 @@ export async function ensureCore(dataDir: string, version: string, signal?: Abor
     // No public listener: Agent connects only to Core's authenticated control and model sessions.
     const child = spawn(binary, ["daemon", "--data-folder", coreDataDir(dataDir, version), "--control-port", "0", "--telemetry", "off"], {
       detached: true, windowsHide: true, stdio: ["ignore", log, log],
-      env: { ...process.env, ATOMIC_CORE_TELEMETRY: "off" },
+      // Core outlives the agent and needs no cloud credentials: never hand it provider keys.
+      env: coreDaemonEnv(),
     });
     child.once("error", err => { spawnError = err; });
     child.unref();
