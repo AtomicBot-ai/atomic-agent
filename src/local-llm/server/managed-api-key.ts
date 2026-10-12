@@ -1,12 +1,15 @@
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
   linkSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -192,10 +195,13 @@ const HEAL_WAIT_MS = 3_000;
  */
 const LOCK_ABANDONED_MS = 30_000;
 
-/** `false` only when the pid in a lock file (`<pid> <token>`) is gone. */
-function lockHolderAlive(contents: string): boolean {
-  const pid = Number.parseInt(contents, 10);
-  if (!Number.isInteger(pid) || pid <= 0) return true;
+/**
+ * A lock file that still holds no pid this long after it was created was
+ * left by a process that died between creating it and writing its pid.
+ */
+const LOCK_UNWRITTEN_MS = 2_000;
+
+function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -204,14 +210,60 @@ function lockHolderAlive(contents: string): boolean {
   }
 }
 
-function isAbandoned(lock: string): boolean {
+/**
+ * Judge the lock file open on `fd` (`<pid> <token>`): abandoned when it is
+ * old, when its pid is gone, or when it never got a pid. The contents and
+ * the age come from the same descriptor, so the verdict is about one inode.
+ */
+function judgeOpenLock(fd: number): { abandoned: boolean; ino: bigint; dev: bigint } {
+  const contents = readFileSync(fd, "utf-8");
+  const stat = fstatSync(fd, { bigint: true });
+  const age = Date.now() - Number(stat.mtimeMs);
+  const pid = Number.parseInt(contents, 10);
+  const abandoned =
+    age >= LOCK_ABANDONED_MS ||
+    (Number.isInteger(pid) && pid > 0 ? !pidAlive(pid) : age >= LOCK_UNWRITTEN_MS);
+  return { abandoned, ino: stat.ino, dev: stat.dev };
+}
+
+function withOpenLock(lock: string, judge: (fd: number) => boolean): boolean {
+  let fd: number;
   try {
-    const contents = readFileSync(lock, "utf-8");
-    const old = Date.now() - statSync(lock).mtimeMs >= LOCK_ABANDONED_MS;
-    return old || !lockHolderAlive(contents);
+    fd = openSync(lock, "r");
   } catch {
     return false;
   }
+  try {
+    return judge(fd);
+  } catch {
+    return false;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function isAbandoned(lock: string): boolean {
+  return withOpenLock(lock, (fd) => judgeOpenLock(fd).abandoned);
+}
+
+/**
+ * Remove `lock` only if the file it names is abandoned. The path is
+ * unlinked only while it still names the inode that was judged, so a fresh
+ * lock another process created there in the meantime is left alone; the
+ * descriptor stays open until after the unlink, so that inode number cannot
+ * be reused in between. What remains is the gap between the `lstat` and
+ * the `unlink` right after it (microseconds), which no portable file API
+ * closes.
+ */
+function unlinkIfAbandoned(lock: string): void {
+  withOpenLock(lock, (fd) => {
+    const judged = judgeOpenLock(fd);
+    if (!judged.abandoned) return false;
+    const now = lstatSync(lock, { bigint: true });
+    if (now.ino !== judged.ino || now.dev !== judged.dev) return false;
+    unlinkSync(lock);
+    return true;
+  });
 }
 
 function newLockToken(): string {
@@ -238,21 +290,20 @@ function releaseLock(lock: string, token: string): void {
 
 /**
  * Remove an abandoned heal lock. Breakers take `<lock>.break` first, so
- * exactly one at a time re-checks and unlinks: while the abandoned lock
- * exists nobody can create a new one in its place and its holder is gone,
- * so the unlink can only remove that abandoned lock, never a live one. A
- * breaker holds the guard for three syscalls; a guard whose own holder
- * died there is cleared the same way the lock is judged.
+ * one at a time re-checks and unlinks, and each unlink is tied to the
+ * inode it judged (`unlinkIfAbandoned`), never to whatever the path names
+ * by then. A breaker holds the guard for a few syscalls; a guard whose own
+ * holder died there is cleared the same way the lock is.
  */
 function breakAbandonedLock(lock: string): void {
   const guard = `${lock}.break`;
   const token = newLockToken();
   if (!createExclusive(guard, token)) {
-    if (isAbandoned(guard)) unlinkQuietly(guard);
+    unlinkIfAbandoned(guard);
     return;
   }
   try {
-    if (isAbandoned(lock)) unlinkQuietly(lock);
+    unlinkIfAbandoned(lock);
   } finally {
     releaseLock(guard, token);
   }
@@ -261,10 +312,14 @@ function breakAbandonedLock(lock: string): void {
 /** Take the heal lock: our token, or `null` while someone else holds it. */
 function tryTakeHealLock(lock: string): string | null {
   const token = newLockToken();
-  if (createExclusive(lock, token)) return token;
-  if (!isAbandoned(lock)) return null;
-  breakAbandonedLock(lock);
-  return createExclusive(lock, token) ? token : null;
+  if (!createExclusive(lock, token)) {
+    if (!isAbandoned(lock)) return null;
+    breakAbandonedLock(lock);
+    if (!createExclusive(lock, token)) return null;
+  }
+  // A guard left by a breaker that died after removing the lock it broke.
+  unlinkIfAbandoned(`${lock}.break`);
+  return token;
 }
 
 /** Windows refuses to replace a file another process (an AV scan) has open. */

@@ -117,6 +117,31 @@ describe("managed llama-server api key (#582)", () => {
     expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
   });
 
+  it("takes over a heal lock whose creator never wrote its pid", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    writeFileSync(path, "", "utf-8");
+    const lock = `${path}.heal-lock`;
+    writeFileSync(lock, "", "utf-8");
+    const created = new Date(Date.now() - 3_000);
+    utimesSync(lock, created, created);
+    const started = Date.now();
+    const key = ensureManagedApiKey(dataDir);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(readFileSync(path, "utf-8").trim()).toBe(key);
+    expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
+  });
+
+  it("clears a break guard left without a lock by a process that died breaking it", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    writeFileSync(path, "", "utf-8");
+    const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+    writeFileSync(`${path}.heal-lock.break`, `${deadPid} fedcba9876543210\n`, "utf-8");
+    const key = ensureManagedApiKey(dataDir);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
+  });
+
   it("clears a break guard left by a process that died while breaking a lock", () => {
     const path = resolveApiKeyFilePath(dataDir);
     writeFileSync(path, "", "utf-8");
