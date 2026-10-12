@@ -1,5 +1,3 @@
-import { requestWorkspace } from "./workspace-context.js";
-import { SessionNotFoundError } from "../runtime/session-not-found-error.js";
 import { sendJson, sendError, type HttpHandler } from "./request-context.js";
 import { openaiError } from "./openai-errors.js";
 
@@ -12,12 +10,9 @@ import { openaiError } from "./openai-errors.js";
 export function createCapabilitiesHandler(): HttpHandler {
   return async (req, res, ctx) => {
     const { runtime } = ctx;
-    let workspace;
-    try { workspace = requestWorkspace(req, runtime); }
-    catch (err) {
-      if (err instanceof SessionNotFoundError) { sendError(res, 404, openaiError("session not found")); return; }
-      throw err;
-    }
+    const sessionId = new URL(req.url ?? "/", "http://localhost").searchParams.get("sessionId");
+    if (sessionId && !runtime.sessionStore.load(sessionId)) { sendError(res, 404, openaiError("session not found")); return; }
+    const workspace = sessionId ? runtime.getSessionWorkspace(sessionId) : null;
     // The registry holds every tool bootstrap wired, including the ones
     // the config gates hide: `github.*` stays registered without a token,
     // `fusion.delegate` outside fusion (`filter-disabled-tools.ts`). What
