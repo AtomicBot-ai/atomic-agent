@@ -53,7 +53,7 @@ describe("OnboardingWaitOrJumpStep", () => {
     expect(weights).toContain("░");
     expect(weights).toContain("61%");
     expect(weights).toContain("2.6 GB / 4.2 GB");
-    expect(frame).toContain("llama.cpp runtime");
+    expect(frame).toContain("Local engine");
   });
 
   it("offers leaving and one more provider, and never offers waiting", () => {

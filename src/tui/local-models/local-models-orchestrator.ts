@@ -186,7 +186,7 @@ export interface LocalModelsOrchestratorHooks {
   onManagedModelActivated?: () => void;
   /**
    * Atomic Core could not be installed or started, and the panel now
-   * offers "download again" or "use llama.cpp". For `local_engine_failed`.
+   * offers "download again". For `local_engine_failed`.
    */
   onLocalEngineFailed?: (failure: CoreFailureInfo) => void;
   /**
@@ -1533,8 +1533,8 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * Show a CoreUnavailableError as the panel notice (R download again, L
-   * use llama.cpp), say it in the feed and report it. Anything else, and a
+   * Show a CoreUnavailableError as the panel notice (R download again),
+   * say it in the feed and report it. Anything else, and a
    * cancellation, is left to the caller's existing reporting.
    */
   private reportCoreFailure(err: unknown, info?: CoreFailureInfo): boolean {
@@ -1543,7 +1543,7 @@ export class LocalModelsOrchestrator {
     this.bus.emit({ type: "local_models_core_failure_set", failure });
     this.bus.emit({
       type: "runtime_info",
-      line: `local-llm: ${failure.reason} Press R in Models to download it again, or L to use llama.cpp instead.`,
+      line: `local-llm: ${failure.reason} Press R in Models to download it again.`,
     });
     this.hooks?.onLocalEngineFailed?.(failure);
     return true;

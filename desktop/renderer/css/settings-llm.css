@@ -256,7 +256,7 @@
 /* `fault:` from atag models status (tui-parity.js). */
 .llm-pane .llm-fault{margin-top:8px;align-items:flex-start}
 .llm-pane .llm-fault .grow{font-size:12.5px;line-height:1.45}
-/* The local engine is not ready (engfCardHTML): title, the plain why, the agent's own line, then the two ways out. */
+/* The local engine is not ready (engfCardHTML): title, the plain why, the agent's own line, then Download again. */
 .llm-pane .llm-engfail .grow{display:flex;flex-direction:column;gap:2px;min-width:0}
 .llm-pane .llm-engfail b{font-size:13.5px;font-weight:600}
 .llm-pane .llm-engfail-detail{overflow-wrap:anywhere;opacity:.8}

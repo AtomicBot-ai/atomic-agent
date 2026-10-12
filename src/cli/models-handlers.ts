@@ -531,7 +531,7 @@ export async function runLocalModelsStart(
       if (process.stderr.isTTY) process.stderr.write("\n");
       if (!auto.backendUsable && auto.coreFailure) {
         // First run of the default engine could not install it. The message
-        // already says what happened and both ways forward.
+        // already says what happened and how to retry.
         process.stderr.write(`${auto.error}\n`);
         await reportCoreFailure(auto.coreFailure);
         return 1;

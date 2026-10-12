@@ -4,25 +4,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureCore } from "./core-client.js";
 import { loadCoreSession } from "./core-sessions.js";
-import { CORE_RETRY_HINT, CORE_SWITCH_BACK_HINT, CoreUnavailableError, toCoreUnavailable, withSwitchBackHint } from "./core-errors.js";
+import { CORE_RETRY_HINT, CoreUnavailableError, toCoreUnavailable, withSwitchBackHint } from "./core-errors.js";
 import { CORE_VERSION } from "./core-state.js";
 
 const dirs: string[] = [];
 function fixture() { const dir = mkdtempSync(join(tmpdir(), "core-hint-")); dirs.push(dir); return dir; }
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-it("ends a failed Core start with both ways forward", async () => {
+it("ends a failed Core start with the retry hint only", async () => {
   const err = await ensureCore(fixture(), CORE_VERSION).catch((e: unknown) => e);
   expect(err).toBeInstanceOf(CoreUnavailableError);
   expect(err).toMatchObject({ stage: "start", reasonCode: "not_installed", retryable: true });
-  expect((err as Error).message).toBe(`The Atomic Chat engine could not start: it is not installed yet. ${CORE_RETRY_HINT} ${CORE_SWITCH_BACK_HINT}`);
+  expect((err as Error).message).toBe(`The Atomic Chat engine could not start: it is not installed yet. ${CORE_RETRY_HINT}`);
+  expect((err as Error).message).not.toMatch(/llama/i);
 });
 
-it("ends a missing backend with both ways forward", async () => {
+it("ends a missing backend with the retry hint and no llama.cpp", async () => {
   const err = await loadCoreSession(fixture(), { role: "chat", modelId: "m", modelPath: "/m.gguf", port: 19092, args: [] }).catch((e: unknown) => e);
   expect(err).toMatchObject({ stage: "start", reasonCode: "not_installed" });
   expect((err as Error).message).toContain(CORE_RETRY_HINT);
-  expect((err as Error).message).toContain(CORE_SWITCH_BACK_HINT);
+  expect((err as Error).message).not.toMatch(/llama/i);
 });
 
 it("wraps once, keeps the first stage and leaves cancellation alone", () => {

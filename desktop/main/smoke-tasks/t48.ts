@@ -315,7 +315,7 @@ async function advanced(js: Js, check: Check): Promise<void> {
       const llamaCfg = LIVE_CONFIG;
       LIVE_CONFIG = onCore;
       const advCore = div(llmAdvancedHTML('local'));
-      // The recovery card when Core did not download or start: one sentence and the two ways out.
+      // The recovery card when Core did not download or start: one sentence and the one way out.
       const keepF = ENGF.f;
       ENGF.f = {stage: 'download', why: 'The engine download failed. Check your connection and try again.', detail: 'Could not fetch Atomic Core checksums (503).', at: 1};
       const engf = div(engfCardHTML());
@@ -336,6 +336,7 @@ async function advanced(js: Js, check: Check): Promise<void> {
         engfTitle: ((engf.querySelector('.llm-engfail b') || {}).textContent) || null,
         engfWhy: ((engf.querySelector('.llm-engfail .llm-note') || {}).textContent) || null,
         engfActs: [...engf.querySelectorAll('[data-act]')].map((b) => [b.dataset.act, b.textContent.trim()]),
+        engfText: engf.textContent + ' ' + [...engf.querySelectorAll('[title]')].map((e) => e.getAttribute('title')).join(' '),
         daemonInAdv: !!adv.querySelector('[data-act="llm:daemon"]'), logsInAdv: !!adv.querySelector('[data-act="llm:logs"]'),
         routeInDetails: !!adv.querySelector('details.llm-details .llm-route'),
         routeOutside: [...adv.querySelectorAll('.llm-route')].filter((x) => !x.closest('details.llm-details')).length,
@@ -364,7 +365,7 @@ async function advanced(js: Js, check: Check): Promise<void> {
   );
   check(
     "T48 (Д35): llama.cpp's update, auto-update and device are one Engine card (with the way to the server log); the route's internals fold under Details",
-    // On llama.cpp (reached from the recovery card) the Engine choice row is the one quiet way back to Core.
+    // On llama.cpp (reached only through the support CLI) the Engine choice row is the one quiet way back to Core.
     show(r["engine"]) === show(["llama.cpp", "Engine choice", "Update automatically", "Device", "Server log"])
       && show(r["engineActs"]) === show(["llm:backend", "llm:engine", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
       && r["engineBack"] === "Use Atomic Chat engine"
@@ -378,10 +379,10 @@ async function advanced(js: Js, check: Check): Promise<void> {
     show({ engine: r["engineCore"], engineActs: r["engineCoreActs"] }),
   );
   check(
-    "T48: a Core that did not download or start gets the recovery card: the plain why, Download again and Use llama.cpp",
+    "T48: a Core that did not download or start gets the recovery card: the plain why and only Download again (no llama.cpp)",
     r["engfTitle"] === "The local engine isn\u2019t ready" && r["engfWhy"] === "The engine download failed. Check your connection and try again."
-      && show(r["engfActs"]) === show([["engf:retry", "Download again"], ["engf:llama", "Use llama.cpp"]]),
-    show({ title: r["engfTitle"], why: r["engfWhy"], acts: r["engfActs"] }),
+      && show(r["engfActs"]) === show([["engf:retry", "Download again"]]) && !/llama/i.test(String(r["engfText"])),
+    show({ title: r["engfTitle"], why: r["engfWhy"], acts: r["engfActs"], text: r["engfText"] }),
   );
   const facts = (r["facts"] ?? []) as string[];
   check(

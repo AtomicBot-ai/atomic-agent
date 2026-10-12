@@ -42,7 +42,7 @@
 .statusstrip.cpuonly{padding:4px 8px}
 .statusstrip.cpuonly .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}
 .statusstrip.cpuonly .ss-title{display:block;font-weight:500;color:var(--ink)}
-/* The local engine did not download or start (engfNoticeHTML): its sentence, then its two ways out. */
+/* The local engine did not download or start (engfNoticeHTML): its sentence, then Download again. */
 .statusstrip.engfail{padding:4px 8px;gap:6px}
 .statusstrip.engfail .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}
 .statusstrip.engfail .ss-title{display:block;font-weight:500;color:var(--ink)}

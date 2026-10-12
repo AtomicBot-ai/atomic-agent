@@ -325,7 +325,7 @@ atomic-agent tui --cwd /path/to/work
 
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
-The default engine is Atomic Chat Core, which installs and runs our TurboQuant `llama.cpp` build for your computer. The first start installs it with progress. If that fails, the error says what happened and gives two ways forward: retry with `atomic-agent models update` (TUI: `R` in Models), or use the standalone `llama.cpp` server with `atomic-agent models engine llama-server` (TUI: `/model engine llama-server`). `atomic-agent models engine atomic-core` switches back; both engines use the same model files.
+The default engine is Atomic Chat Core, which installs and runs our TurboQuant `llama.cpp` build for your computer. The first start installs it with progress. If that fails, the error says what happened and how to retry: `atomic-agent models update` (TUI: `R` in Models). The standalone `llama.cpp` server remains a support-only fallback that the app does not show: `atomic-agent models engine llama-server` selects it and `atomic-agent models engine atomic-core` switches back; both engines use the same model files.
 
 Big models can download in the background, detached from the terminal that started them:
 

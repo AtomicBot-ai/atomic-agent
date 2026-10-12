@@ -8,7 +8,7 @@ export const CORE_FAILURE_NOTICE_ROWS = 6;
 
 /**
  * Atomic Core could not be installed or started: what happened, and the
- * two ways forward. Never a dead end, never a silent failure.
+ * one way forward (download again). Never a dead end, never a silent failure.
  */
 export function CoreFailureNotice({ panel }: { panel: LocalModelsPanelState }): ReactElement | null {
   const failure = panel.coreFailure;
@@ -30,8 +30,7 @@ export function CoreFailureNotice({ panel }: { panel: LocalModelsPanelState }): 
         <Text bold color="green">
           (R)
         </Text>{" "}
-        download again{failure.retryable ? "" : " (may fail the same way)"} ·{" "}
-        <Text bold>(L)</Text> use llama.cpp instead
+        download again{failure.retryable ? "" : " (may fail the same way)"}
       </Text>
     </Box>
   );

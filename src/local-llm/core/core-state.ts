@@ -15,7 +15,7 @@ export const CORE_PROTOCOL = 2;
 export const CORE_REPO = "AtomicBot-ai/atomic-chat-core";
 
 // The failure text lives with the structured error; re-exported for existing importers.
-export { CORE_RETRY_HINT, CORE_SWITCH_BACK_HINT, CoreUnavailableError, withSwitchBackHint } from "./core-errors.js";
+export { CORE_RETRY_HINT, CoreUnavailableError, withSwitchBackHint } from "./core-errors.js";
 
 export interface CoreBackend {
   coreVersion: string;

@@ -1,15 +1,16 @@
 // Unit tests for main/engine-failure.ts, against the built output.
 // Run: npm run build && npm run test:unit
 // Atomic Chat Core is the default local engine; a Core failure the agent
-// reports (its switch-back hint, or a line naming Atomic Core) becomes one
-// plain sentence for the recovery card. Anything else is not a Core failure.
+// reports (its retry hint, an older hint, one of its stage sentences, or a
+// line naming Atomic Core) becomes one plain sentence for the recovery card.
+// Anything else is not a Core failure. The card never offers llama.cpp.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { engineFailureIn, engineFailureOf, CORE_SWITCH_BACK } = require("../out/main/engine-failure.js");
-const HINT = `${CORE_SWITCH_BACK} (TUI: /model engine llama-server).`;
+const { engineFailureIn, engineFailureOf, CORE_RETRY } = require("../out/main/engine-failure.js");
+const HINT = `${CORE_RETRY} (TUI: press R in Models).`;
 
 test("no hint and no Atomic Core: not a Core failure", () => {
   assert.equal(engineFailureIn(""), null);
@@ -59,18 +60,40 @@ test("an IPC answer is read through its error fields; a success is not a failure
   assert.equal(engineFailureOf(null), null);
 });
 
-test("the agent's current wording (retry, then the way back) and the older one both read", () => {
-  const now = engineFailureIn("Atomic Core could not be downloaded. Retry with: atomic-agent models update (TUI: press R in Models). Or use llama.cpp: atomic-agent models engine llama-server (TUI: /model engine llama-server).");
+test("the agent's current wording (retry only) and the older ones all read", () => {
+  const now = engineFailureIn("The Atomic Chat engine could not be downloaded: fetch failed. Retry with: atomic-agent models update (TUI: press R in Models).");
   assert.equal(now.stage, "download");
-  assert.equal(now.detail, "Atomic Core could not be downloaded.");
+  assert.equal(now.detail, "The Atomic Chat engine could not be downloaded: fetch failed.");
+  const withWayBack = engineFailureIn("Atomic Core could not be downloaded. Retry with: atomic-agent models update (TUI: press R in Models). Or use llama.cpp: atomic-agent models engine llama-server (TUI: /model engine llama-server).");
+  assert.equal(withWayBack.stage, "download");
+  assert.equal(withWayBack.detail, "Atomic Core could not be downloaded.");
   const old = engineFailureIn("Atomic Core did not become ready. Switch back with: atomic-agent models engine llama-server (TUI: /model engine llama-server).");
   assert.equal(old.stage, "start");
   assert.equal(old.detail, "Atomic Core did not become ready.");
 });
 
 test("the agent's CoreUnavailableError sentences map to their stages", () => {
-  const tail = " Retry with: atomic-agent models update (TUI: press R in Models). Or use llama.cpp: atomic-agent models engine llama-server (TUI: /model engine llama-server).";
+  const tail = " Retry with: atomic-agent models update (TUI: press R in Models).";
   assert.equal(engineFailureIn("The downloaded Atomic Chat engine did not pass verification." + tail).stage, "verify");
   assert.equal(engineFailureIn("Atomic Chat could not install its inference backend." + tail).stage, "backend");
   assert.equal(engineFailureIn("The Atomic Chat engine could not start." + tail).stage, "start");
+  // A start whose detail mentions the network is still a start.
+  assert.equal(engineFailureIn("The Atomic Chat engine could not start: fetch failed." + tail).stage, "start");
+});
+
+test("a stage sentence alone, without any hint, is still a Core failure", () => {
+  assert.equal(engineFailureIn("The Atomic Chat engine could not be downloaded: fetch failed.").stage, "download");
+  assert.equal(engineFailureIn("The downloaded Atomic Chat engine did not pass verification.").stage, "verify");
+  assert.equal(engineFailureIn("Atomic Chat could not install its inference backend.").stage, "backend");
+  assert.equal(engineFailureIn("The Atomic Chat engine could not start.").stage, "start");
+});
+
+test("the retry hint alone marks a Core failure, and no sentence names llama.cpp", () => {
+  const f = engineFailureIn("models start exited with code 1\nSomething went wrong. Retry with: atomic-agent models update (TUI: press R in Models).");
+  assert.equal(f.stage, "start");
+  assert.equal(f.detail, "Something went wrong.");
+  for (const stage of ["download", "verify", "backend", "blocked", "start"]) {
+    const sample = { download: "fetch failed", verify: "checksum mismatch", backend: "no compatible inference backend", blocked: "EACCES", start: "did not become ready" }[stage];
+    assert.doesNotMatch(engineFailureIn(`Atomic Core: ${sample}. ${HINT}`).why, /llama/i);
+  }
 });

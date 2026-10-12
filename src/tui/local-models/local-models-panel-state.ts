@@ -134,7 +134,7 @@ export interface EmbeddingDaemonInfo {
 export interface LocalModelsBackendInfo {
   engine?: "atomic-core" | "llama-server";
   /** The composer draws an engine control on the local route. Snapshots set it false: Core is the engine, and llama.cpp
-   *  is reached from the core failure notice or `/model engine`. Absent (before the first snapshot) means hidden. */
+   *  is reached only through the support command `/model engine llama-server`. Absent (before the first snapshot) means hidden. */
   atomicCoreChoice?: boolean;
   currentTag: string | null;
   latestTag: string | null;
@@ -244,8 +244,8 @@ export interface LocalModelsPanelState {
 
 /**
  * Atomic Core (the default engine) could not be installed or started. The
- * panel shows `reason` with two actions: `R` downloads it again, `L` uses
- * llama.cpp instead. Plain data copied from `CoreUnavailableError`.
+ * panel shows `reason` with one action: `R` downloads it again. Plain data
+ * copied from `CoreUnavailableError`.
  */
 export interface LocalModelsCoreFailure {
   stage: "download" | "verify" | "backend" | "start";

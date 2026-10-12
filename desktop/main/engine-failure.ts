@@ -2,24 +2,35 @@
  * Atomic Chat Core is the default local engine, and with it selected a failed
  * Core install or start leaves no local engine at all: the agent has no
  * automatic fallback (src/local-llm/core/core-state.ts). Every such failure
- * the agent reports ends with its switch-back hint, and its structured
+ * the agent reports ends with its retry hint, and its structured
  * CoreUnavailableError names a stage (download | verify | backend | start).
  *
  * The desktop reads that text, wherever a start, an install or a switch came
  * back with it, and turns it into one plain sentence for the recovery card
- * ("The local engine isn't ready", with Download again and Use llama.cpp).
+ * ("The local engine isn't ready", with Download again). llama.cpp is never
+ * offered in the app: it stays a support-only CLI command.
  * Text, not a type: it crosses a process boundary as stderr, and the window
  * must not be left on a spinner because a field it waited for never came.
  */
 
-/** The agent's own way back, printed at the end of every Core failure (CORE_SWITCH_BACK_HINT). */
-export const CORE_SWITCH_BACK = "Or use llama.cpp: atomic-agent models engine llama-server";
-/* Every hint the agent ends a Core failure with: the retry and the way back
-   (src/local-llm/core/core-errors.ts), and the older wording (Core 0.11 builds). */
+/** The agent's retry hint, printed at the end of every Core failure (CORE_RETRY_HINT). */
+export const CORE_RETRY = "Retry with: atomic-agent models update";
+/* Every hint the agent ends a Core failure with: the retry
+   (src/local-llm/core/core-errors.ts), and the older wordings still accepted
+   from earlier agents (the llama.cpp way back, and the Core 0.11 one). */
 const CORE_HINTS = [
-  "Retry with: atomic-agent models update",
-  CORE_SWITCH_BACK,
+  CORE_RETRY,
+  "Or use llama.cpp: atomic-agent models engine llama-server",
   "Switch back with: atomic-agent models engine llama-server",
+];
+
+/* The agent's CoreUnavailableError sentences, one per stage
+   (STAGE_TEXT in src/local-llm/core/core-errors.ts). */
+const STAGE_SENTENCES: ReadonlyArray<[RegExp, "download" | "verify" | "backend" | "start"]> = [
+  [/The Atomic Chat engine could not be downloaded/i, "download"],
+  [/The downloaded Atomic Chat engine did not pass verification/i, "verify"],
+  [/Atomic Chat could not install its inference backend/i, "backend"],
+  [/The Atomic Chat engine could not start/i, "start"],
 ];
 
 export type EngineFailureStage = "download" | "verify" | "backend" | "blocked" | "start";
@@ -34,7 +45,7 @@ export interface EngineFailure {
 const WHY: Record<EngineFailureStage, string> = {
   download: "The engine download failed. Check your connection and try again.",
   verify: "The downloaded engine did not pass its safety check, so it was not installed.",
-  backend: "The engine could not get llama.cpp for this computer.",
+  backend: "The engine could not get the parts it needs for this computer.",
   blocked: "This computer blocked the engine from running.",
   start: "The engine could not start on this computer.",
 };
@@ -45,13 +56,15 @@ const NOT_A_FAILURE = /Stop local models before (?:updating|switching) the engin
 
 /**
  * The engine failure a piece of agent output describes, or null. Only Core's
- * own failures count: the switch-back hint, or a line naming Atomic Core.
+ * own failures count: its retry hint (or an older hint), one of its stage
+ * sentences, or a line naming Atomic Core.
  */
 export function engineFailureIn(text: string | null | undefined): EngineFailure | null {
   const all = String(text ?? "");
   if (!all.trim()) return null;
   const hintAt = CORE_HINTS.map((h) => all.indexOf(h)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
-  if (hintAt === undefined && !/Atomic (?:Chat )?Core|atomic-chat-core|CoreUnavailable/i.test(all)) return null;
+  if (hintAt === undefined && !STAGE_SENTENCES.some(([re]) => re.test(all))
+    && !/Atomic (?:Chat )?Core|atomic-chat-core|CoreUnavailable/i.test(all)) return null;
   if (NOT_A_FAILURE.test(all)) return null;
   const stage = stageOf(all);
   const detail = (hintAt === undefined ? all : all.slice(0, hintAt))
@@ -66,6 +79,9 @@ function stageOf(text: string): EngineFailureStage {
   // Blocked first: a download or start the OS refused is that, whatever stage it was in.
   if (/\bEACCES\b|\bEPERM\b|not permitted|permission denied|quarantin|code signature|signature is invalid|SmartScreen|antivirus|blocked|killed: 9|SIGKILL/i.test(text)) return "blocked";
   if (named) return named as EngineFailureStage;
+  // The agent's own stage sentence says it next: "could not start: fetch failed" is a start.
+  const said = STAGE_SENTENCES.find(([re]) => re.test(text))?.[1];
+  if (said) return said;
   if (/failed checksum verification|checksum mismatch|does not match its release|did not pass verification/i.test(text)) return "verify";
   if (/no compatible inference backend|installed a backend without|invalid backend selection|could not install its inference backend/i.test(text)) return "backend";
   if (/download|fetch|network|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|offline|\(\d{3}\)/i.test(text)) return "download";

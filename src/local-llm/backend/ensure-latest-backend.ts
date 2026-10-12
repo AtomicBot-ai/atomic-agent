@@ -320,7 +320,7 @@ export async function maybeAutoUpdateBackend(
  * pinned Core moves to this build's pin when `enabled` (autoUpdate) allows
  * it and nothing has to be stopped; otherwise it keeps serving. A failure is
  * reported, not thrown, with the structured CoreUnavailableError fields, so
- * the caller can offer "download again" or "use llama.cpp". Cancellation
+ * the caller can offer "download again". Cancellation
  * propagates as an `update_failed` like the legacy path; the caller checks
  * its own signal.
  */

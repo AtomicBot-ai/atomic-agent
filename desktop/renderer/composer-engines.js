@@ -5,8 +5,8 @@
    since the engine migration), so the window reads it the same way: only an explicit llama-server is llama.cpp. */
 function composerEngineId() { return llmManaged().engine === 'llama-server' ? 'llama-server' : 'atomic-core'; }
 /* The composer never names the engine: a local seat is "this computer" whichever engine runs it, as before Core
-   existed, and "Atomic Chat" stays the name of the Atomic Chat (local) provider preset alone. llama.cpp is reached
-   only from the recovery card when Core cannot run (or `models engine`); Settings › Models › Advanced leads back. */
+   existed, and "Atomic Chat" stays the name of the Atomic Chat (local) provider preset alone. llama.cpp is never
+   offered in the app (support-only: `models engine llama-server`); Settings › Models › Advanced leads back. */
 function composerEngineName() { return 'This computer'; }
 function composerSeatLocal(seat) { return seat.provider === 'local-llama'; }
 /* Why one seat at most: the managed engine loads one model, and a second local model would split the same memory and GPU. */
@@ -21,7 +21,7 @@ function composerEngineChip(kind, label, local, role) {
     + (local ? composerEngineMark(composerEngineId(), 'xs') : providerMark(label, 'xs'))
     + '<span class="cval">' + esc(local ? label : providerWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
 }
-/* One local row per seat: picking it keeps whichever engine is configured (Core, or llama.cpp after a recovery). */
+/* One local row per seat: picking it keeps whichever engine is configured (Core, or llama.cpp set through the support CLI). */
 function composerLocalEngineRows(leg) {
   const rm = rmNow();
   const seat = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;

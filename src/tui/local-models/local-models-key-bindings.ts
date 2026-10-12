@@ -84,19 +84,13 @@ export function handleLocalModelsTabKey(
     return true;
   }
 
-  // Atomic Core could not be installed or started: R downloads it again,
-  // L switches to llama.cpp. While the notice shows, L means this rather
-  // than the logs tab; every other key keeps working.
-  if (panel.mode === "list" && showsCoreFailureNotice(panel)) {
-    if (input === "R") {
-      if (callbacks.onLocalModelsCoreRetryRequested) callbacks.onLocalModelsCoreRetryRequested();
-      else callbacks.onLocalModelsBackendPullRequested?.();
-      return true;
-    }
-    if (input === "L") {
-      callbacks.onLocalModelsEngineRequested?.("llama-server");
-      return true;
-    }
+  // Atomic Core could not be installed or started: R downloads it again.
+  // That is the only action the notice offers; every other key, L (logs)
+  // included, keeps its normal meaning.
+  if (panel.mode === "list" && showsCoreFailureNotice(panel) && input === "R") {
+    if (callbacks.onLocalModelsCoreRetryRequested) callbacks.onLocalModelsCoreRetryRequested();
+    else callbacks.onLocalModelsBackendPullRequested?.();
+    return true;
   }
 
   const ref = resolveRowAt(panel);
