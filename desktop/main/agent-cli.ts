@@ -3775,10 +3775,10 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
 export const UPDATE_FIRST_PROGRESS_MS = 90_000;
 export const UPDATE_STALL_MS = 300_000;
 export function updateTimedOutError(ms: number, keptBackend: boolean): string {
-  const stopped = `the llama.cpp update made no progress for ${Math.round(ms / 1000)} s and was stopped`;
+  const stopped = `the local engine update made no progress for ${Math.round(ms / 1000)} s and was stopped`;
   return keptBackend
-    ? `${stopped} — the model starts on the llama.cpp already installed; the update is tried again at the next start or from Settings › Models`
-    : `${stopped} — there is no llama.cpp installed yet to start the model on; try again once the connection is back`;
+    ? `${stopped} — the model starts on the local engine already installed; the update is tried again at the next start or from Settings › Models`
+    : `${stopped} — there is no local engine installed yet to start the model on; try again once the connection is back`;
 }
 /**
  * The managed engine a config names. Atomic Chat Core is the default local

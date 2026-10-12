@@ -482,7 +482,7 @@ function stopForQuit(): () => void {
    it does, and it does not begin under a start on its way. `stop` ends it:
    while it waits for its turn the wait ends at once and the turn does
    nothing; once it runs, `run` stops its child on the same signal. */
-const UPDATE_STOPPED = "the llama.cpp update was stopped before it began";
+const UPDATE_STOPPED = "the local engine update was stopped before it began";
 /* ATO-129: an update that ended without its new backend — stopped by Quit, a
    Cancel or its own time limit — leaves its half-downloaded staging folder
    behind; it goes here, still in the update's daemon turn, where no other
@@ -638,8 +638,8 @@ function send(channel: string, payload?: unknown): void {
 /* Atomic Chat Core is the default local engine, and a Core that will not
    download or start leaves no local engine at all (engine-failure.ts). Every
    start, install and switch answer passes through here: a Core failure is
-   kept and told to the window, which draws the recovery card (Download again,
-   Use llama.cpp) instead of leaving a spinner; the next success clears it. A
+   kept and told to the window, which draws the recovery card (Download again)
+   instead of leaving a spinner; the next success clears it. A
    window opened later asks for it (engine:failure). */
 let engineFailure: (EngineFailure & { at: number }) | null = null;
 function noteEngine(answer: unknown, opts: { clears?: boolean } = {}): void {
@@ -10062,9 +10062,9 @@ async function onboardingTest(
     );
     check(
       "wizard: a runtime phase queues in front of the weights and says so",
-      queued.label === "llama.cpp" && queued.kind === "runtime" && queued.queued === 1 &&
+      queued.label === "Local engine" && queued.kind === "runtime" && queued.queued === 1 &&
         // Backlog 18: the card draws the queued job as its own row.
-        /llama\.cpp runtime Starting…/.test(queued.text) && /Queued/.test(queued.text) &&
+        /Local engine Starting…/.test(queued.text) && /Queued/.test(queued.text) &&
         queued.phases.runtime === "waiting" && queued.phases.weights === "waiting" &&
         queued.measured === false &&
         moving.phases.runtime === "active" && moving.drove.runtime === true,

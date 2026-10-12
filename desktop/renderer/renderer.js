@@ -555,7 +555,8 @@ const OB_COPY = {
   skipOfferFailed: 'Start using the agent without a local model.',
   skipOfferKey: 'press s',
   // onboarding-download-progress.tsx:63-79
-  phaseRuntime: 'llama.cpp runtime',
+  // The engine the setup installs, named the same whichever one it is: the app never names llama.cpp.
+  phaseRuntime: 'Local engine',
   phaseWeights: 'model weights',
   starting: 'starting…',
   // onboarding-wait-or-jump-step.tsx / onboarding-screen.tsx:63
@@ -7332,12 +7333,13 @@ function cpuNoticeHTML() {
 }
 /* Atomic Chat Core is the default local engine, and a Core that will not
    download or start leaves no local engine at all: the agent has no automatic
-   fallback. Main reads the agent's switch-back hint wherever a start, an
-   install or a switch came back with it (main/engine-failure.ts) and sends
-   one plain sentence. The window says it once (a toast and the app line),
-   keeps a strip over the composer while the route needs the local engine, and
-   a card in Settings › Models, each with the two ways out: download the
-   engine again, or move to llama.cpp. Never a spinner left turning. */
+   fallback. Main reads the agent's failure wherever a start, an install or a
+   switch came back with it (main/engine-failure.ts) and sends one plain
+   sentence. The window says it once (a toast and the app line), keeps a strip
+   over the composer while the route needs the local engine, and a card in
+   Settings › Models, each with the one way out: download the engine again.
+   llama.cpp is never offered here (support-only CLI). Never a spinner left
+   turning. */
 const ENGF_TITLE = 'The local engine isn\u2019t ready';
 function engfApply(f) {
   ENGF.f = f && typeof f === 'object' && typeof f.why === 'string' ? f : null;
@@ -7360,14 +7362,11 @@ function engfRouteLocal() {
 function engfShown() {
   return !!ENGF.f && ENGF.dismissed !== ENGF.f.at && engfRouteLocal();
 }
-/** The two ways out. Download again runs the engine install; Use llama.cpp switches the engine. */
+/** The one way out: Download again runs the engine install. */
 function engfActsHTML(size) {
   const busy = typeof LLMP !== 'undefined' && (LLMP.busy || !!LLMP.pulling);
   const dis = busy ? ' disabled' : '';
-  // Already on llama.cpp (a failure kept from before the switch): only the retry makes sense.
-  const llama = composerEngineId() === 'llama-server' ? ''
-    : '<button class="btn btn-g ' + size + '" data-act="engf:llama"' + dis + ' title="Run local models on llama.cpp instead. Your downloaded models stay.">Use llama.cpp</button>';
-  return '<button class="btn btn-s ' + size + '" data-act="engf:retry"' + dis + ' title="Download and install the local engine again">Download again</button>' + llama;
+  return '<button class="btn btn-s ' + size + '" data-act="engf:retry"' + dis + ' title="Download and install the local engine again">Download again</button>';
 }
 function engfNoticeHTML() {
   const f = ENGF.f;
@@ -7395,14 +7394,7 @@ function engfSetupRuntime() {
 async function engfAct(verb) {
   if (verb === 'dismiss') { if (ENGF.f) ENGF.dismissed = ENGF.f.at; render(); return; }
   const setup = engfSetupRuntime();
-  if (verb === 'retry') { if (setup) dlRetry(setup.n); else llmEngineInstall(); return; }
-  if (verb === 'llama') {
-    await llmEngineAction('llama-server');
-    // On llama.cpp now: the setup's runtime comes down again, as llama.cpp's.
-    const again = engfSetupRuntime();
-    if (again && composerEngineId() === 'llama-server') dlRetry(again.n);
-    render();
-  }
+  if (verb === 'retry') { if (setup) dlRetry(setup.n); else llmEngineInstall(); }
 }
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
@@ -10947,7 +10939,7 @@ function dlCapLabel(label) {
   return s.length <= 30 ? s : s.slice(0, 29) + '…';
 }
 function dlJobLabel(job) {
-  return dlCapLabel(job.kind === 'runtime' ? 'llama.cpp' : job.id);
+  return dlCapLabel(job.kind === 'runtime' ? OB_COPY.phaseRuntime : job.id);
 }
 
 /** waitOrJumpPullStatus (onboarding-wait-or-jump-step.tsx:25-31). */
@@ -11014,7 +11006,7 @@ function dlNext() {
       if (job.kind === 'runtime') {
         // A runtime step that would not even start is still not the model
         // download failing: say so, and run the weights job behind it.
-        DL.runtimeError = res.error || 'could not start the llama.cpp runtime download';
+        DL.runtimeError = res.error || 'could not start the local engine download';
         dlFail(job, DL.runtimeError);
         dlNext();
         return;
@@ -11095,8 +11087,8 @@ function dlOnPull(ev) {
          the phase stays `waiting`, which is the truth about the bytes. */
       DL.runtime.drove = ev.sawProgress === true || DL.runtime.drove;
       if (ev.ok === false) {
-        DL.runtimeError = cancelled ? 'the llama.cpp runtime download was cancelled'
-          : (ev.error || 'the llama.cpp runtime download failed');
+        DL.runtimeError = cancelled ? 'the local engine download was cancelled'
+          : (ev.error || 'the local engine download failed');
         if (!cancelled) dlFail(finished, DL.runtimeError);
       } else {
         DL.runtime.state = 'done';
@@ -11562,7 +11554,7 @@ function dlCardAct(verb) {
          would fail with no binary. The switch waits for it, and happens once. */
       DL.switchAfter = id;
       const name = dlCardName({kind: 'weights', id});
-      toast(name + ' starts after the runtime', 'The llama.cpp runtime is still downloading. The switch happens as soon as it is in place.');
+      toast(name + ' starts after the local engine', 'The local engine is still downloading. The switch happens as soon as it is in place.');
       render();
       return;
     }
@@ -15361,7 +15353,7 @@ function selLocalRoute() { return selBackend() === 'local'; }
 function selKinds() {
   const b = selBackend();
   // composerSwitchKindsFor: `if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"]`.
-  // Local is backend and model only: the engine is not a choice in the composer (llama.cpp is the recovery card's way out).
+  // Local is backend and model only: the engine is not a choice in the composer (llama.cpp is support-only, via the CLI).
   return b === 'fusion' ? ['backend','provider','model','workerProvider','workers']
     : b === 'local' ? ['backend','model'] : ['backend','provider','model'];
 }
@@ -22729,8 +22721,8 @@ function llmAdvancedHTML(mode) {
         + '<div class="llm-tune-card llm-engine">'
           + llmTuneRowHTML(onCore ? 'Atomic Core' : 'llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
               btn('llm:backend', 'Update now', 'Install the supported engine (B)'))
-          /* Core is the engine, and choosing one is not part of the normal flow: llama.cpp is offered
-             only by the recovery card when Core cannot run. Once on llama.cpp, this one row is the quiet way back. */
+          /* Core is the engine, and choosing one is not part of the normal flow: llama.cpp is never offered
+             in the app (support-only: `models engine llama-server`). Once on llama.cpp, this one row is the quiet way back. */
           + (onCore ? ''
               : llmTuneRowHTML('Engine choice', 'llama.cpp runs your local models now. Stop local models before switching back. Your downloaded models stay available.',
                   btn('llm:engine', 'Use Atomic Chat engine', 'Switch back to the default local engine')))
@@ -23563,7 +23555,7 @@ async function llmBackendUpdate() {
      5 s status poll clears LLMP.statusErr), and replaces "updating…", which
      otherwise stayed on for good. */
   if (res && res.ok === false && res.running) {
-    LLMP.msg = {text:'! the llama.cpp backend was not updated: ' + llmRunningWord(res.running)
+    LLMP.msg = {text:'! the local engine was not updated: ' + llmRunningWord(res.running)
       + ' is downloading. Update it once that has finished.'};
   } else if (!res || res.ok === false) LLMP.msg = {text:'! ' + llmFail('models update failed', res)};
   else LLMP.msg = {text:'local-llm: backend update — ' + ((res.stdout || '').trim().split('\n').pop() || 'done')};
@@ -23601,7 +23593,7 @@ function llmEngineInstall() {
 }
 /** The download main's refusal names (downloadRunning), in words. */
 function llmRunningWord(running) {
-  if (running.kind === 'runtime' || running.kind === 'update') return 'the llama.cpp runtime';
+  if (running.kind === 'runtime' || running.kind === 'update') return 'the local engine';
   const name = dlCardName({kind: running.kind, id: running.id});
   return running.kind === 'projector' ? 'the vision projector of ' + name : name;
 }
@@ -23989,7 +23981,7 @@ function llmAct(what) {
     if (BR && BR.hostRam && !LLMHF.ram) BR.hostRam().then((n) => { LLMHF.ram = Number(n) || 0; if (LLMHF.open) llmRepaint(); });
     return;
   }
-  // Only the way back to Core: llama.cpp is reached from the recovery card or `models engine`.
+  // Only the way back to Core: llama.cpp is reached only through the support CLI (`models engine llama-server`).
   if (verb === 'engine') { if (composerEngineId() === 'llama-server') llmEngineAction('atomic-core'); return; }
   if (verb === 'engineCheck') { llmEngineAction('check'); return; }
   // On Core (the default) the install is a download with a bar; llama.cpp's update stays as it was.

@@ -190,7 +190,7 @@ async function handOverRun(js: Js, check: Check): Promise<void> {
   check(
     "T18a: the card in the corner shows the queued download — llama.cpp runtime, then the model by its own name",
     !!c && c.title === "Downloading" && c.count === "2" && c.rows.length === 2
-      && c.rows[0]!.name === "llama.cpp runtime" && /^Starting/.test(c.rows[0]!.line)
+      && c.rows[0]!.name === "Local engine" && /^Starting/.test(c.rows[0]!.line)
       && c.rows[1]!.name === "Smoke Model 9B" && c.rows[1]!.line === "Queued"
       && JSON.stringify(r["queue"]) === JSON.stringify(["runtime:llama.cpp", "weights:smoke-t18-9b"])
       && /Downloading Smoke Model 9B/.test(String(r["chip"])),
@@ -595,7 +595,7 @@ async function controls(js: Js, check: Check): Promise<void> {
   check(
     "T18e: a queued row's Cancel takes only that row; the running one carries on",
     dropped.head === "runtime" && dropped.queued === 0 && !!dropped.card && dropped.card.rows.length === 1
-      && dropped.card.rows[0]!.name === "llama.cpp runtime",
+      && dropped.card.rows[0]!.name === "Local engine",
     JSON.stringify(dropped),
   );
   const cloud = r["cloud"] as { sel: boolean; phase: string | null; title: string; rows: number };
