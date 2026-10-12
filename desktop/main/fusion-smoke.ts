@@ -225,12 +225,12 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
 
   const onDisk = [{ id: "qwen-3.5-4b", family: "qwen", size: "2.7 GB", context: "256K", downloaded: true, active: true }];
   const pL = await probe(cfgs.fusionLocalWorkers, { readyIds: ["aimlapi"], localLoaded: true, local: onDisk });
-  /* One managed local slot: the workers hold it here, so the orchestrator is offered no
-     local engine (the ⇄ moves it), and the workers' engine rows mark the local engine. */
-  check("fusion: with a model on disk the workers run it on the local engine, and the orchestrator is offered no second local slot",
+  /* One managed local slot: the workers hold it here, so the orchestrator lists the local engine
+     greyed with the reason (the ⇄ moves it), and the workers' engine rows mark the local engine. */
+  check("fusion: with a model on disk the workers run it on the local engine, and the orchestrator shows it busy, not as a second local slot",
     same(triple(pL.rows.workers), [["downloadMore", "opens Settings › Models", false], ["qwen-3.5-4b", "On this machine", true]])
       && same(triple(pL.rows.workerProvider), [["aimlapi", "Cloud provider", false], ["openrouter", "No API key", false], ...localEngines(true), ["add", "opens the wizard", false]])
-      && same(triple(pL.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "No API key", false], ["add", "opens the wizard", false]])
+      && same(triple(pL.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "No API key", false], ["local-llama", "Busy as the worker \u00b7 \u21c4 swaps the roles", false], ["add", "opens the wizard", false]])
       && chip(pL, "workerProvider") === "local-llama" && chip(pL, "workers") === "qwen-3.5-4b",
     JSON.stringify({ workers: triple(pL.rows.workers), workerProvider: triple(pL.rows.workerProvider), provider: triple(pL.rows.provider) }));
 

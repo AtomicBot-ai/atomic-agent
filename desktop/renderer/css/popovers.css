@@ -227,3 +227,6 @@
 @media (max-height:700px){
   .voicestrip .tk-vmenu .vsmfoot{max-height:78px;overflow-y:auto}
 }
+/* A row that is listed but cannot be picked here (the local engine busy in the other Fusion seat). */
+.selpop .modelrow.off{opacity:.55;cursor:default}
+.selpop .modelrow.off:hover{background:none}

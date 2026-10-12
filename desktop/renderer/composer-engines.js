@@ -11,11 +11,13 @@ function composerCoreChoice() { return CORE_CHOICE.enabled || composerEngineId()
 function composerEngineId() { return llmManaged().engine === 'atomic-core' ? 'atomic-core' : 'llama-server'; }
 function composerEngineName(id) { return id === 'atomic-core' ? 'Atomic Chat' : 'Local llama'; }
 function composerSeatLocal(seat) { return seat.provider === 'local-llama'; }
+/* Why one seat at most: the managed engine loads one model, and a second local model would split the same memory and GPU. */
+const COMPOSER_ONE_LOCAL = 'Your computer runs one local model at a time, so the local engine can take only one role.';
 function composerEngineMark(id, size) {
   return id === 'atomic-core' ? logoHTML('atomicchat', size, 'server') : providerMark('llama.cpp', size);
 }
 function composerEngineChip(kind, label, local, role) {
-  const title = (role ? role + ' inference engine: ' : 'Inference engine: ') + label;
+  const title = (role ? role + ': ' : 'Inference engine: ') + label;
   // data-id stays the seat's provider id (local-llama for the managed engine), as the provider chip carried before.
   const id = local ? 'local-llama' : label;
   return '<button class="cchip providerchip enginechip' + cchipOpen(kind) + '" data-sel-open="' + kind + '" data-id="' + esc(id) + '"'
@@ -44,8 +46,12 @@ function composerFusionEngineRows(leg) {
       : typeof savedKeyInvalid === 'function' && savedKeyInvalid(p) ? 'saved key is invalid · paste it again' : 'No API key',
     active:p.id === chosen,
   }));
-  // There is one managed local slot. The swap control moves it between roles.
-  return cloud.concat(other === 'local-llama' ? [] : composerLocalEngineRows(leg),
+  // There is one managed local slot. The swap control moves it between roles; the seat that
+  // does not hold it still lists it, greyed, with the reason, so it does not just vanish.
+  const otherRole = leg === 'worker' ? 'orchestrator' : 'worker';
+  const busy = [{type:'localBusy', id:'local-llama', label:composerEngineName(composerEngineId()), otherRole,
+    detail:'Busy as the ' + otherRole + ' \u00b7 \u21c4 swaps the roles', note:{text:COMPOSER_ONE_LOCAL}, active:false}];
+  return cloud.concat(other === 'local-llama' ? busy : composerLocalEngineRows(leg),
     [{type:'action', id:'add', label:'Add a new provider', detail:'opens the wizard', active:false}]);
 }
 function composerModelSeat() {

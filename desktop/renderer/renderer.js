@@ -1604,6 +1604,7 @@ const PROVIDER_LOGO_KEYS = {
   'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
   github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
   'atomic-chat':'atomicchat', 'atomic chat':'atomicchat', 'atomic chat (local)':'atomicchat',
+  dashscope:'qwen', 'qwen (dashscope)':'qwen',
 };
 /** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
 function providerLogoKey(p) {
@@ -1963,12 +1964,14 @@ const shortModel = (id) => id.replace(/-instruct$/, '');
    its id. */
 const BACKEND_WORDS = {cloud:'Cloud', local:'Local models', custom:'Custom server', fusion:'Fusion'};
 function backendWord(b) { return BACKEND_WORDS[b] || String(b || ''); }
+/* Presets the TUI offers and this window's wizard does not (provider-presets.ts): a provider added there keeps a name here. */
+const TUI_ONLY_PRESET_WORDS = {dashscope:'DashScope'};
 /** A provider id → its preset's name ("OpenRouter", "Atomic Chat"), qualifier dropped. */
 function providerWord(id) {
   const s = String(id || '');
   if (s === 'no provider') return 'No provider';
   const p = PRESETS.find((x) => x.id === s) || KIND_ROWS.find((x) => x.id === s && !x.custom);
-  return p ? p.label.split(' (')[0] : s;
+  return p ? p.label.split(' (')[0] : TUI_ONLY_PRESET_WORDS[s] || s;
 }
 /** A model id → the local catalogue's `name` without the file-format tail
     ("Gemma 4 E4B QAT GGUF" → "Gemma 4 E4B"); otherwise the id as before. */
@@ -15540,6 +15543,7 @@ function selRows() {
 async function selActivate(row) {
   if (!row) return;
   if (row.type === 'localEngine') return composerPickEngine(row);
+  if (row.type === 'localBusy') { toast(row.label + ' is the ' + row.otherRole, COMPOSER_ONE_LOCAL + ' Press \u21c4 to swap the roles, or pick a cloud provider here.'); return; }
   if (row.type === 'seatModel') return composerPickSeatModel(row);
   if (row.type === 'backend') {
     // The custom row has no switch behind it: pointing the route at a server
@@ -15692,7 +15696,7 @@ function selRowLead(r) {
     return '<span class="tk-ico tk-ico--sm' + (r.active ? ' tk-ico--blue' : '') + '">'
       + ic(r.id === 'cloud' ? 'cloud' : r.id === 'local' ? 'laptop' : r.id === 'fusion' ? 'fusion' : 'server') + '</span>';
   }
-  if (r.type === 'localEngine') return composerEngineMark(r.id, 'sm');
+  if (r.type === 'localEngine' || r.type === 'localBusy') return composerEngineMark(composerEngineId(), 'sm');
   if (r.type === 'provider' || r.type === 'fusionLeg') return providerMark(r.id, 'sm');
   if (r.type === 'action' && r.id === 'loading') return '<span class="selspin"><span class="tk-spin"></span></span>';
   if (r.type === 'action') return '<span class="tk-ico tk-ico--sm">' + ic(r.id === 'add' ? 'plus' : 'download') + '</span>';
@@ -15742,8 +15746,8 @@ function selectorHTML() {
      the wizard's list (sel:add), which checks the key before it saves. */
 
   const title = SEL.kind === 'backend' ? 'Where it runs'
-    : SEL.kind === 'workerProvider' ? 'Worker inference engine'
-    : SEL.kind === 'provider' ? (selBackend() === 'local' ? 'Inference engine' : selBackend() === 'fusion' ? 'Orchestrator inference engine' : 'Provider')
+    : SEL.kind === 'workerProvider' ? 'Worker'
+    : SEL.kind === 'provider' ? (selBackend() === 'local' ? 'Inference engine' : selBackend() === 'fusion' ? 'Orchestrator' : 'Provider')
     : SEL.kind === 'workers' ? 'Worker model' : selBackend() === 'fusion' ? 'Orchestrator model' : 'Model';
 
   // An empty list is not a list — it is one action. The provider and
@@ -15792,7 +15796,7 @@ function selectorHTML() {
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
         const name = selRowName(r);
         return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
-          + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
+          + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
           + selRowLead(r)
           + '<span class="col"><span class="nm">'
           + (model ? selHilite(name, SEL.filter) : esc(name)) + '</span><span class="cap">' + esc(r.detail || '') + '</span>'
