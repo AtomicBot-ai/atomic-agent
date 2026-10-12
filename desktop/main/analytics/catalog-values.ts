@@ -22,6 +22,10 @@ export const PROVIDER_PRESETS = [
 export const CONFIGURED_PROVIDERS = [...PROVIDER_PRESETS, "llama.cpp"] as const;
 
 export const RUN_MODES = ["local", "cloud", "fusion"] as const;
+/** The managed local engine (`localModels.managed.engine`): Atomic Chat Core is the default, llama.cpp the way back. */
+export const LOCAL_ENGINES = ["atomic-core", "llama-server"] as const;
+/** Why the local engine is not ready (main/engine-failure.ts EngineFailureStage). */
+export const ENGINE_FAILURE_STAGES = ["download", "verify", "backend", "blocked", "start"] as const;
 export const CODING_MODES = ["default", "plan", "auto", "bypass", "other"] as const;
 export const FIT = ["comfortable", "tight", "over"] as const;
 /** `model_picked.host_ram_gb`: ≤12 → 8, ≤24 → 16, ≤48 → 32, else 64 (renderer/analytics.js ramBucket). */

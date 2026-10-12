@@ -74,7 +74,7 @@ send `ui` events.
 |---|---|---|
 | Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
 | Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out), `custom_endpoint_tested` |
-| Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `backend_switched`, `fusion_configured` | |
+| Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_engine_failed`, `backend_switched`, `fusion_configured` | |
 | Chat | `chat_turn_ui` | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff` |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
 | App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
@@ -103,6 +103,12 @@ Notes on specific properties:
   under `atag serve`. `model_configured.provider` is `llama.cpp` for the
   managed local backend, a preset id for cloud, `custom` for a custom
   endpoint; `kind` is local / cloud / custom. Once per desktop state dir.
+- `engine` on `llama_runtime_updated`, `local_backend_started` and
+  `local_engine_failed`: the managed local engine, `atomic-core` (Atomic Chat
+  Core, the default, also when the config names none) or `llama-server`;
+  null without a readable config. `local_engine_failed.stage` is download /
+  verify / backend / blocked / start, read from the agent's own failure text
+  (main/engine-failure.ts); it fires when the recovery card goes up.
 
 Transport: PostHog `/batch/` over `fetch`, batched in memory, flushed every
 10 s; at quit up to five batches of 100, bounded at 2 s in total (also when

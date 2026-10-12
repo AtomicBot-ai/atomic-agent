@@ -64,6 +64,15 @@ test("numbers are clamped and nulls only pass where allowed", () => {
   assert.equal("ms" in V.validateEvent("llama_runtime_updated", { trigger: "setup", result: "ok", ms: null }, "main").props, false);
 });
 
+test("the local engine is a known value: Atomic Chat Core (the default) and llama.cpp", () => {
+  const up = V.validateEvent("llama_runtime_updated", { trigger: "settings", result: "ok", ms: 1200, engine: "atomic-core" }, "main").props;
+  assert.equal(up.engine, "atomic-core");
+  assert.equal(V.validateEvent("local_backend_started", { via: "launch", result: "started", model_id: "hf_custom", ms: 10, engine: "llama-server" }, "main").props.engine, "llama-server");
+  assert.deepEqual(V.validateEvent("local_engine_failed", { engine: "atomic-core", stage: "download" }, "main").props, { engine: "atomic-core", stage: "download" });
+  // An unknown stage is not invented: the property is dropped.
+  assert.equal(V.validateEvent("local_engine_failed", { engine: "atomic-core", stage: "melted" }, "main").props.stage, undefined);
+});
+
 test("tool lists keep built-in names; every MCP tool is `mcp`", () => {
   const p = V.validateEvent("chat_turn_ui", { outcome: "completed", ms_total: 5, tools_used: ["os.fs.read", "mcp.github.create_issue", "mcp.slack.post", "Bad Name", "os.fs.read"] }, "main").props;
   assert.deepEqual(p.tools_used, ["os.fs.read", "mcp"]);

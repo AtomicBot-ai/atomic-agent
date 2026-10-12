@@ -648,6 +648,7 @@ function noteEngine(answer: unknown, opts: { clears?: boolean } = {}): void {
     engineFailure = { ...failed, at: Date.now() };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
     send("engine:failure", engineFailure);
+    A.localEngineFailed(failed.stage);
     return;
   }
   const a = answer as { ok?: unknown; daemon?: unknown } | null;

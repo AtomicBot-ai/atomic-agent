@@ -23,7 +23,7 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
   NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SWITCH_REFUSALS, uiActionOk, UI_VIA,
@@ -170,11 +170,18 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   llama_runtime_updated: {
     owner: "main",
-    props: { trigger: en(["setup", "settings"]), result: en(["ok", "up_to_date", "failed", "cancelled"]), ms },
+    // `engine`: which local engine the update installed (Atomic Chat Core installs itself, then its llama.cpp).
+    props: { trigger: en(["setup", "settings"]), result: en(["ok", "up_to_date", "failed", "cancelled"]), ms, engine: en(LOCAL_ENGINES, { nullable: true }) },
   },
   local_backend_started: {
     owner: "main",
-    props: { via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }) },
+    props: { via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }), engine: en(LOCAL_ENGINES, { nullable: true }) },
+  },
+  /* The local engine did not download, verify or start (main/engine-failure.ts): the
+     recovery card is up. Counts how often the default (Atomic Chat Core) fails, and where. */
+  local_engine_failed: {
+    owner: "main",
+    props: { engine: en(LOCAL_ENGINES, { nullable: true }), stage: en(ENGINE_FAILURE_STAGES) },
   },
   backend_switched: {
     owner: "main",
