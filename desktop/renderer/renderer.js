@@ -881,6 +881,9 @@ let DWATCH = null;
    once per start: on the app line as it arrives, and as the composer's strip
    while the route is the local model, until dismissed or the next start. */
 const CPUW = {on: false, seq: 0, modelId: null, said: 0, dismissed: 0};
+/* The local engine (Atomic Chat Core, the default) did not download or start: main's
+   engine:failure, {stage, why, detail, at}, or null once a start or an install worked. */
+const ENGF = {f: null, said: 0, dismissed: 0};
 
 let BUILD = null;
 /* Provider ids whose key was saved without ever being checked. Read from
@@ -3280,6 +3283,9 @@ function composer() {
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
       + '<span class="ss-text">' + esc(SWX.err || SWX.sendError) + '</span></div>'
+    // The local engine did not download or start: its two ways out, before the CPU notice (no model runs at all).
+    : engfShown()
+    ? engfNoticeHTML()
     // ATO-244: the model runs on the processor; last, under every strip that carries a decision or a failure.
     : cpuNoticeShown()
     ? cpuNoticeHTML()
@@ -5844,6 +5850,7 @@ function act(a) {
   // ATO-244: the CPU strip's two ways out; either holds until the next model start.
   if (a === 'cpu:dismiss') { CPUW.dismissed = CPUW.seq; render(); return; }
   if (a === 'cpu:cloud') { CPUW.dismissed = CPUW.seq; render(); selChooseBackend('cloud'); return; }
+  if (k === 'engf') { engfAct(v || ''); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -7323,6 +7330,80 @@ function cpuNoticeHTML() {
     + '<span class="ss-text"><b class="ss-title">' + esc(CPU_TITLE) + '</b>' + esc(CPU_BODY) + '</span>'
     + '<button class="btn btn-g xs" data-act="cpu:cloud">Use a cloud model</button>'
     + '<button class="iconbtn sm" data-act="cpu:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
+}
+/* Atomic Chat Core is the default local engine, and a Core that will not
+   download or start leaves no local engine at all: the agent has no automatic
+   fallback. Main reads the agent's switch-back hint wherever a start, an
+   install or a switch came back with it (main/engine-failure.ts) and sends
+   one plain sentence. The window says it once (a toast and the app line),
+   keeps a strip over the composer while the route needs the local engine, and
+   a card in Settings › Models, each with the two ways out: download the
+   engine again, or move to llama.cpp. Never a spinner left turning. */
+const ENGF_TITLE = 'The local engine isn\u2019t ready';
+function engfApply(f) {
+  ENGF.f = f && typeof f === 'object' && typeof f.why === 'string' ? f : null;
+  if (ENGF.f && ENGF.said !== ENGF.f.at) {
+    ENGF.said = ENGF.f.at;
+    appSay('The local engine is not ready: ' + (ENGF.f.detail || ENGF.f.why), 'caution');
+    toast(ENGF_TITLE, ENGF.f.why, 'bad');
+  }
+  render();
+  if (llmVisible()) llmRepaint();
+}
+/** The route needs the local engine: Local, or Fusion with a local seat. */
+function engfRouteLocal() {
+  const b = selBackend();
+  if (b === 'local') return true;
+  if (b !== 'fusion') return false;
+  const seats = fzSeats();
+  return composerSeatLocal(seats.plans) || composerSeatLocal(seats.works);
+}
+function engfShown() {
+  return !!ENGF.f && ENGF.dismissed !== ENGF.f.at && engfRouteLocal();
+}
+/** The two ways out. Download again runs the engine install; Use llama.cpp switches the engine. */
+function engfActsHTML(size) {
+  const busy = typeof LLMP !== 'undefined' && (LLMP.busy || !!LLMP.pulling);
+  const dis = busy ? ' disabled' : '';
+  // Already on llama.cpp (a failure kept from before the switch): only the retry makes sense.
+  const llama = composerEngineId() === 'llama-server' ? ''
+    : '<button class="btn btn-g ' + size + '" data-act="engf:llama"' + dis + ' title="Run local models on llama.cpp instead. Your downloaded models stay.">Use llama.cpp</button>';
+  return '<button class="btn btn-s ' + size + '" data-act="engf:retry"' + dis + ' title="Download and install the local engine again">Download again</button>' + llama;
+}
+function engfNoticeHTML() {
+  const f = ENGF.f;
+  return '<div class="statusstrip engfail" role="alert">'
+    + '<span class="ss-ic err">' + ic('alert') + '</span>'
+    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(ENGF_TITLE) + '</b>' + esc(f.why) + '</span>'
+    + engfActsHTML('xs')
+    + '<button class="iconbtn sm" data-act="engf:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
+}
+/** Settings › Models: the same, as a card, whatever the route (the engine is Settings' to fix). */
+function engfCardHTML() {
+  const f = ENGF.f;
+  if (!f) return '';
+  return '<div class="tk-notice tk-notice--red llm-engfail" role="alert">' + ic('alert')
+    + '<span class="grow"><b>' + esc(ENGF_TITLE) + '</b><span class="llm-note">' + esc(f.why) + '</span>'
+    + (f.detail ? '<span class="llm-note llm-engfail-detail">' + esc(f.detail) + '</span>' : '') + '</span>'
+    + '<span class="llm-engfail-acts">' + engfActsHTML('sm') + '</span></div>';
+}
+/* The setup's own failed runtime row, when there is one: during the first run
+   the way out goes through the setup queue (its Retry), so the model held
+   behind the runtime still starts when it lands. */
+function engfSetupRuntime() {
+  return typeof DL !== 'undefined' ? DL.failed.find((f) => f.kind === 'runtime') || null : null;
+}
+async function engfAct(verb) {
+  if (verb === 'dismiss') { if (ENGF.f) ENGF.dismissed = ENGF.f.at; render(); return; }
+  const setup = engfSetupRuntime();
+  if (verb === 'retry') { if (setup) dlRetry(setup.n); else llmEngineInstall(); return; }
+  if (verb === 'llama') {
+    await llmEngineAction('llama-server');
+    // On llama.cpp now: the setup's runtime comes down again, as llama.cpp's.
+    const again = engfSetupRuntime();
+    if (again && composerEngineId() === 'llama-server') dlRetry(again.n);
+    render();
+  }
 }
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
@@ -9717,6 +9798,9 @@ if (BR) {
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
   // ATO-130: Settings' llama.cpp update, waiting for its turn or running.
   if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
+  if (BR.onEngineFailure) BR.onEngineFailure(engfApply);
+  // A window opened after the failure (a relaunch, the dock) hears it too.
+  if (BR.engineFailure) BR.engineFailure().then((f) => { if (f) engfApply(f); }).catch(() => {});
   if (BR.onCoreUpdate) BR.onCoreUpdate((check) => {
     if (check && (check.updateAvailable || check.requiresAgentUpdate)) toast('Atomic Core update', check.requiresAgentUpdate
       ? 'Core ' + check.latestVersion + ' needs support from a newer Agent build. Your current engine stays in use.'
@@ -11165,7 +11249,7 @@ function xpullOwner() {
   const p = LLMP.pulling;
   if (p) {
     return {key:'llm:' + p.kind + ':' + p.id + (p.phase ? ':' + p.phase : ''), src:'llm', id: p.id, llmKind: p.kind,
-      kind: p.phase === 'mmproj' ? 'projector' : p.kind === 'embedding' ? 'embedding' : 'weights', cancel:'llm:cancelPull'};
+      kind: p.phase === 'mmproj' ? 'projector' : p.kind === 'embedding' ? 'embedding' : p.kind === 'runtime' ? 'runtime' : 'weights', cancel:'llm:cancelPull'};
   }
   return null;
 }
@@ -11666,7 +11750,11 @@ function obProgressHTML() {
     : OB_COPY.starting;
   // The runtime step's own failure, said once and not folded into the
   // weights bar: the model download below it is still running.
-  const runtimeErr = DL.runtimeError
+  // A Core failure (main's engine:failure) is said plainly, with its two ways out.
+  const runtimeErr = DL.runtimeError && ENGF.f
+    ? '<div class="ob-err ob-engfail">' + ic('alert') + '<span><b>' + esc(ENGF_TITLE) + '</b> ' + esc(ENGF.f.why) + '</span>'
+      + '<span class="ob-engfail-acts">' + engfActsHTML('xs') + '</span></div>'
+    : DL.runtimeError
     ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.runtimeError) + '</span></div>' : '';
   return row(OB_COPY.phaseRuntime, DL.runtime) + runtimeErr + row(OB_COPY.phaseWeights, DL.weights)
     + '<div class="ob-rate">' + esc(rate) + '</div>';
@@ -22415,7 +22503,7 @@ function llmRunModeHTML(status, tone) {
           + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(need ? need.line : what) + '</span></span></button>';
       }).join('')
     + '</div>'
-    + llmNowHTML() + tpLlmFaultHTML()
+    + llmNowHTML() + engfCardHTML() + tpLlmFaultHTML()
     + (fusionShown ? '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
@@ -23480,6 +23568,36 @@ async function llmBackendUpdate() {
   else LLMP.msg = {text:'local-llm: backend update — ' + ((res.stdout || '').trim().split('\n').pop() || 'done')};
   llmRefresh();
 }
+/**
+ * The local engine's install as a download with a bar: `models update`
+ * streamed (cli:modelsUpdateStream, the setup's runtime path), drawn in
+ * Settings' download banner (llmPullView reads its "backend zip" lines as it
+ * reads a model's). With Atomic Chat Core it installs Core when it is missing
+ * and then the llama.cpp build Core picks for this computer, which is more
+ * than a minute on a slow line: a bar, not "updating…". The recovery card's
+ * Download again and, on Core, Update now come here; llama.cpp's Update now
+ * keeps its buffered update (llmBackendUpdate). How it ended comes as the
+ * stream's done frame (the LLMP pull subscriber), and a failure as main's
+ * engine:failure.
+ */
+function llmEngineInstall() {
+  if (!BR || LLMP.busy || LLMP.pulling) return;
+  if (!BR.modelsUpdateStream) { llmBackendUpdate(); return; }
+  if (ENGF.f) ENGF.dismissed = ENGF.f.at;   // the card's question is being answered; its result says the rest
+  LLMP.msg = null; LLMP.statusErr = null;
+  LLMP.pulling = {kind:'runtime', id: composerEngineId() === 'atomic-core' ? 'the local engine' : 'llama.cpp'};
+  LLMP.pullLog = ['starting…'];
+  if (!llmVisible()) toast('Downloading the local engine', 'Its progress is in Settings \u203a Models.');
+  render(); llmRepaint();
+  Promise.resolve(BR.modelsUpdateStream('settings')).then((res) => {
+    if (res && res.ok === false) {
+      LLMP.pulling = null;
+      LLMP.msg = {text: res.running ? '! the local engine was not downloaded: ' + llmRunningWord(res.running) + ' is downloading. Try again once that has finished.'
+        : '! ' + llmFail('engine download failed', res)};
+      render(); llmRepaint();
+    }
+  }, (err) => { LLMP.pulling = null; LLMP.msg = {text: '! ' + String((err && err.message) || err)}; render(); llmRepaint(); });
+}
 /** The download main's refusal names (downloadRunning), in words. */
 function llmRunningWord(running) {
   if (running.kind === 'runtime' || running.kind === 'update') return 'the llama.cpp runtime';
@@ -23872,7 +23990,8 @@ function llmAct(what) {
   }
   if (verb === 'engine') { llmEngineAction(composerEngineId() === 'atomic-core' ? 'llama-server' : 'atomic-core'); return; }
   if (verb === 'engineCheck') { llmEngineAction('check'); return; }
-  if (verb === 'backend') { llmBackendUpdate(); return; }
+  // On Core (the default) the install is a download with a bar; llama.cpp's update stays as it was.
+  if (verb === 'backend') { if (composerEngineId() === 'atomic-core') llmEngineInstall(); else llmBackendUpdate(); return; }
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
   if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
@@ -24122,6 +24241,13 @@ if (BR) {
     if (ev.line) { LLMP.pullLog.push(ev.line); llmPaintPull(ev.line); }
     if (ev.done) {
       const p = LLMP.pulling; LLMP.pulling = null;
+      // The engine install (llmEngineInstall): no model to activate; a failure is main's engine:failure card too.
+      if (p.kind === 'runtime') {
+        LLMP.msg = ev.ok ? {text: ev.upToDate ? 'local-llm: the local engine is already installed' : 'local-llm: the local engine is installed'}
+          : {text: '! ' + (ev.error || 'the local engine download failed')};
+        render(); llmRefresh();
+        return;
+      }
       if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmAfterPull(p); }
       else { LLMP.statusErr = ev.error || 'the download failed'; LLMHF.pendingMmproj = null; llmRepaint(); }
     }

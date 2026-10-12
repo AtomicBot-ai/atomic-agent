@@ -8,6 +8,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shoul
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { seedBundledCore } from "./core-seed.js";
+import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -632,6 +633,28 @@ async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null>
 
 function send(channel: string, payload?: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+/* Atomic Chat Core is the default local engine, and a Core that will not
+   download or start leaves no local engine at all (engine-failure.ts). Every
+   start, install and switch answer passes through here: a Core failure is
+   kept and told to the window, which draws the recovery card (Download again,
+   Use llama.cpp) instead of leaving a spinner; the next success clears it. A
+   window opened later asks for it (engine:failure). */
+let engineFailure: (EngineFailure & { at: number }) | null = null;
+function noteEngine(answer: unknown, opts: { clears?: boolean } = {}): void {
+  const failed = engineFailureOf(answer);
+  if (failed) {
+    engineFailure = { ...failed, at: Date.now() };
+    console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
+    send("engine:failure", engineFailure);
+    return;
+  }
+  const a = answer as { ok?: unknown; daemon?: unknown } | null;
+  if (engineFailure && a && a.ok === true && (opts.clears || a.daemon === "started" || a.daemon === "restarted")) {
+    engineFailure = null;
+    send("engine:failure", null);
+  }
 }
 
 /* --- Item 6 (sidebar): the viewer's own sidebar state ---------------------
@@ -1276,7 +1299,8 @@ function wireIpc(client: AgentClient): void {
      Backlog 18: in the daemon's turn, as Settings' update (updateInTurn).
      The slot is taken at once, and its × (cli:cancelPull) ends it even while
      it waits for that turn: it never begins, and the window is told now. */
-  ipcMain.handle("cli:modelsUpdateStream", () => {
+  // `via`: the setup's runtime phase (default), or Settings' engine install with its bar (llmEngineInstall).
+  ipcMain.handle("cli:modelsUpdateStream", (_event, via: unknown) => {
     const running = downloadRunning();
     if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
@@ -1304,7 +1328,8 @@ function wireIpc(client: AgentClient): void {
       /* ATO-128: one stopped by its own time limit left a llama.cpp in place
          as it was, so a server it stopped comes back on that one (keptBackend). */
       const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
-      A.runtimeUpdated("setup", updateStartedAt, res, own.signal.aborted);
+      A.runtimeUpdated(via === "settings" ? "settings" : "setup", updateStartedAt, res, own.signal.aborted);
+      if (!own.signal.aborted) noteEngine(res, { clears: true });
       send("cli:pull", {
         id,
         done: true,
@@ -1566,7 +1591,8 @@ function wireIpc(client: AgentClient): void {
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
-  ipcMain.handle("cli:modelsStart", () => startDaemonNow());
+  ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true }), res)));
+  ipcMain.handle("engine:failure", () => engineFailure);
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
     if (!ownDir(stateDir) || typeof sessionId !== "string") {
@@ -1670,13 +1696,15 @@ function wireIpc(client: AgentClient): void {
      Not a generation count: a newer switch can end without a restart (no key,
      a refused write), and then nothing restarts for it. */
   let switchesOnTheirWay = 0;
-  const switched = async (run: () => Promise<SwitchResult>, kind?: Parameters<typeof A.switchEnd>[2]) => {
+  const switched = async (run: () => Promise<SwitchResult>, kind?: Parameters<typeof A.switchEnd>[2], engine = false) => {
     switchesOnTheirWay++;
     const began = A.switchBegin();
     let answer: unknown = null;
     try {
       return (answer = await applySwitch(await run()));
     } finally {
+      // An engine pick that succeeded is a new start: the card about the old engine goes.
+      noteEngine(answer, { clears: engine });
       switchesOnTheirWay--;
       A.switchEnd(began, answer, kind);   // backend_switched (+ fusion_configured, model_configured)
     }
@@ -2083,7 +2111,7 @@ function wireIpc(client: AgentClient): void {
     typeof action !== "string" ? { ok: false, error: "Engine action required" }
       : action === "status" || action === "check" ? modelsEngine(action)
       // Settings' engine switch: in the daemon's turn and with the agent restart, as the composer's pick.
-      : action === "atomic-core" || action === "llama-server" ? switched(() => selectComposerEngine(action))
+      : action === "atomic-core" || action === "llama-server" ? switched(() => selectComposerEngine(action), undefined, true)
       : { ok: false, error: "Unknown engine action" });
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
   // Item 11: at once — a start on its way is ended, not waited for.
@@ -2183,6 +2211,7 @@ function wireIpc(client: AgentClient): void {
         },
       );
       A.runtimeUpdated("settings", updateStartedAt, res, own.signal.aborted);
+      if (!own.signal.aborted) noteEngine(res, { clears: true });
     } finally {
       if (settingsUpdate === own) settingsUpdate = null;
     }
@@ -2304,6 +2333,8 @@ function wireIpc(client: AgentClient): void {
     send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
+    // A Core that would not start at launch is told too: the window offers the way out, not a log line.
+    noteEngine(r);
     if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
@@ -2313,7 +2344,7 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:composerEngine", async (_event, engine: unknown, leg: unknown) => {
     if (engine !== "atomic-core" && engine !== "llama-server") return { ok: false, error: "Unknown inference engine" };
     if (leg !== undefined && leg !== "worker" && leg !== "orchestrator") return { ok: false, error: "Unknown Fusion role" };
-    return switched(() => selectComposerEngine(engine, leg));
+    return switched(() => selectComposerEngine(engine, leg), undefined, true);
   });
   ipcMain.handle("cli:fusionModel", async (_event, leg: unknown, model: unknown) => {
     if ((leg !== "worker" && leg !== "orchestrator") || typeof model !== "string") return { ok: false, error: "A role and model are required" };

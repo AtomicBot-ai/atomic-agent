@@ -476,3 +476,8 @@
    keep their 60px (platform class: preload.ts). */
 body.electron.platform-win32 #onboarding .ob-rail,
 body.electron.platform-linux #onboarding .ob-rail{padding-top:28px}
+
+/* A Core failure in the setup's runtime row (ob-engfail): the sentence, then Download again and Use llama.cpp. */
+#onboarding .ob-err.ob-engfail{flex-wrap:wrap}
+#onboarding .ob-err.ob-engfail b{font-weight:500}
+#onboarding .ob-engfail-acts{display:flex;gap:6px;margin-left:auto}

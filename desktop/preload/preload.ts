@@ -223,6 +223,10 @@ contextBridge.exposeInMainWorld("atomic", {
   queuesTake: (): unknown => ipcRenderer.sendSync("app:queuesTake"),
   /** ATO-130: Settings' llama.cpp update waiting for its turn behind a model start, or running. */
   onCoreUpdate: (cb: (payload: unknown) => void) => on("core:update", cb),
+  /** The local engine (Atomic Chat Core) failed to download or start: {stage, why, detail, at}, or null once it works again. */
+  onEngineFailure: (cb: (payload: unknown) => void) => on("engine:failure", cb),
+  /** The engine failure main keeps, for a window opened after it happened. */
+  engineFailure: () => ipcRenderer.invoke("engine:failure"),
   onUpdatePhase: (cb: (payload: unknown) => void) => on("cli:updatePhase", cb),
   modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
   modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),
@@ -315,7 +319,7 @@ contextBridge.exposeInMainWorld("atomic", {
   importFromTui: (opts: Record<string, boolean>) => ipcRenderer.invoke("app:importFromTui", opts),
   /** r5 item 7 — setup wizard: the streamed runtime phase, the custom-endpoint
    *  whole-file write, and the first-run import scan. */
-  modelsUpdateStream: () => ipcRenderer.invoke("cli:modelsUpdateStream"),
+  modelsUpdateStream: (via?: "setup" | "settings") => ipcRenderer.invoke("cli:modelsUpdateStream", via),
   setExternalLlamaUrls: (chatUrl: string, embeddingUrl?: string) =>
     ipcRenderer.invoke("cli:setExternalLlamaUrls", { chatUrl, embeddingUrl: embeddingUrl ?? "" }),
   detectImportAgents: () => ipcRenderer.invoke("app:detectImportAgents"),
