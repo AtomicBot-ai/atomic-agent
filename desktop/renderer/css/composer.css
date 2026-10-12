@@ -42,6 +42,10 @@
 .statusstrip.cpuonly{padding:4px 8px}
 .statusstrip.cpuonly .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}
 .statusstrip.cpuonly .ss-title{display:block;font-weight:500;color:var(--ink)}
+/* The local engine did not download or start (engfNoticeHTML): its sentence, then its two ways out. */
+.statusstrip.engfail{padding:4px 8px;gap:6px}
+.statusstrip.engfail .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}
+.statusstrip.engfail .ss-title{display:block;font-weight:500;color:var(--ink)}
 .ss-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 1.6s var(--ease) infinite}
 @media (prefers-reduced-motion:reduce){.ss-dot{animation:none}}
 

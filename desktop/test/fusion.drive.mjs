@@ -160,9 +160,10 @@ try {
   await until(async () => (await popTitle()) === 'Worker inference engine', 'the Workers popover', 10000);
   await until(async () => (await popRows()).length >= 3, 'the worker engine rows', 15000);
   const rowsC = await popRows();
-  // Atomic Core is hidden by default: llama.cpp is the one local engine offered.
-  check('C: worker engine rows offer OpenRouter and the local engine, and no Atomic Chat while it is hidden',
-    ['OpenRouter', 'Local llama'].every(label => rowsC.some(r => r[0] === label)) && !rowsC.some(r => r[0] === 'Atomic Chat'), JSON.stringify(rowsC));
+  // Both local engines are always offered: Atomic Chat Core (the default) and llama.cpp as the way back.
+  check('C: worker engine rows offer OpenRouter and both local engines, Atomic Chat first',
+    ['OpenRouter', 'Atomic Chat', 'Local llama'].every(label => rowsC.some(r => r[0] === label))
+      && rowsC.findIndex(r => r[0] === 'Atomic Chat') < rowsC.findIndex(r => r[0] === 'Local llama'), JSON.stringify(rowsC));
   await shot('C-workers-popover');
   await app.clickSel('.selpop .modelrow[data-id="openrouter"]');
   await landed((c) => c.runMode && c.runMode.fusion && c.runMode.fusion.workerProvider === 'openrouter', 'the workers pinned to openrouter');

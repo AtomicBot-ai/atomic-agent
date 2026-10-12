@@ -116,6 +116,16 @@ const config = {
       {
         "from": "out/native/atomic-speech",
         "to": "native/atomic-speech"
+      },
+      /* Atomic Chat Core, fetched and checked against the release's
+         SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: the
+         mac build is arm64 only, never universal. Under Resources, so the
+         Developer ID pass signs it with the hardened runtime and
+         entitlementsInherit like the agent, and notarization covers it. */
+      {
+        "from": "build/core/darwin-${arch}",
+        "to": "core",
+        "filter": ["atomic-chat-core"]
       }
     ]
   },
@@ -156,6 +166,17 @@ const config = {
       }
     ],
     "artifactName": "Atomic-Agent-Setup-${version}-${arch}.${ext}",
+    /* Atomic Chat Core (scripts/fetch-core.mjs). electron-builder's signtool
+       hook only signs what it builds (the app exe, the installer, the
+       uninstaller), so CI signs this file in desktop/build/core before
+       packaging, the same way it signs the agent bundle. */
+    "extraResources": [
+      {
+        "from": "build/core/win32-${arch}",
+        "to": "core",
+        "filter": ["atomic-chat-core.exe"]
+      }
+    ],
     "signtoolOptions": {
       "sign": "./scripts/win-sign.cjs",
       "signingHashAlgorithms": [
@@ -197,7 +218,15 @@ const config = {
       "AppImage",
       "deb"
     ],
-    "artifactName": "Atomic-Agent-${version}-${arch}.${ext}"
+    "artifactName": "Atomic-Agent-${version}-${arch}.${ext}",
+    /* Atomic Chat Core (scripts/fetch-core.mjs); Linux builds are unsigned. */
+    "extraResources": [
+      {
+        "from": "build/core/linux-${arch}",
+        "to": "core",
+        "filter": ["atomic-chat-core"]
+      }
+    ]
   },
   "deb": {
     "packageCategory": "devel",

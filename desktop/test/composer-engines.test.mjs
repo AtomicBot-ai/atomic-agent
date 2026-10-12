@@ -19,8 +19,9 @@ function fixture(engine = 'atomic-core') {
 }
 test('Local engine picker has both engines with one accurate selected mark',()=>{
   const {context:c}=fixture(); const rows=c.composerLocalEngineRows();
-  assert.equal(rows.length,2); assert.equal(rows[0].label,'Local llama');
-  assert.equal(rows[1].label,'Atomic Chat'); assert.equal(rows[1].active,true); assert.equal(rows[0].active,false);
+  // Core is the default engine, so it is listed first; llama.cpp follows as the way back.
+  assert.equal(rows.length,2); assert.equal(rows[0].label,'Atomic Chat');
+  assert.equal(rows[1].label,'Local llama'); assert.equal(rows[0].active,true); assert.equal(rows[1].active,false);
 });
 test('Fusion engine and model menus are separate, with catalogs scoped to each role',()=>{
   const {context:c,rm}=fixture();
@@ -58,10 +59,17 @@ test('two cloud seats may share a provider; both seats on the one local slot are
   const both=planEnterFusion(local,{workerProvider:'local-llama'},()=>true);
   assert.equal(both.write,false); assert.match(both.refusal,/one Fusion role at a time/);
 });
-test('Atomic Chat is hidden unless main offers it or the config already runs it',()=>{
+test('both local engines are always offered, Atomic Chat first, whichever one runs',()=>{
   const {context:c}=fixture('llama-server');
-  assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>r.id),['llama-server']);
-  assert.equal(c.composerFusionEngineRows('orchestrator').some(r=>r.id==='atomic-core'),false);
-  assert.equal(c.composerCoreChoice(),false);
-  assert.equal(fixture('atomic-core').context.composerCoreChoice(),true);
+  assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.active]),[['atomic-core',false],['llama-server',true]]);
+  assert.equal(c.composerFusionEngineRows('worker').filter(r=>r.type==='localEngine').length,2);
+  assert.equal(typeof c.composerCoreChoice,'undefined');
+});
+test('a config with no engine named runs Atomic Chat Core, the default',()=>{
+  for (const engine of [null, '', 'something-else']) {
+    const {context:c}=fixture(engine);
+    assert.equal(c.composerEngineId(),'atomic-core');
+    assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.active]),[['atomic-core',true],['llama-server',false]]);
+  }
+  assert.equal(fixture('llama-server').context.composerEngineId(),'llama-server');
 });

@@ -94,9 +94,8 @@ const TROUBLE = `[
 
 const kinds = (chips) => chips.map((c) => c.kind);
 /** composerSwitchKindsFor, restated here so the test owns the expectation.
-    Atomic Core is hidden by default, so the local route draws no engine control. */
-const expectedKinds = (backend) =>
-  backend === 'local' ? ['backend', 'model'] : ['backend', 'provider', 'model'];
+    Every route draws three controls: on Local the second is the engine (Atomic Chat Core or llama.cpp). */
+const expectedKinds = () => ['backend', 'provider', 'model'];
 
 async function open(app) {
   const ready = await app.waitFor(
@@ -218,7 +217,7 @@ async function main() {
     const localChips = await app.snap(CHIPS);
     t.say(`  controls on the local route: ${JSON.stringify(localChips)}`);
     await shot('02-local-composer');
-    t.check('local offers exactly backend + model',
+    t.check('local offers backend + engine + model',
       JSON.stringify(kinds(localChips)) === JSON.stringify(expectedKinds('local')),
       `saw ${JSON.stringify(kinds(localChips))}`);
 
@@ -296,7 +295,7 @@ async function main() {
     const backChips = await app.snap(CHIPS);
     t.say(`  controls after switching back: ${JSON.stringify(backChips)}`);
     await shot('08-local-again');
-    t.check('the provider control is gone again',
+    t.check('the engine control is back in the provider slot',
       JSON.stringify(kinds(backChips)) === JSON.stringify(expectedKinds('local')),
       `saw ${JSON.stringify(kinds(backChips))}`);
 

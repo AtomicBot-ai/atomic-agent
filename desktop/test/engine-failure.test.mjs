@@ -1,0 +1,60 @@
+// Unit tests for main/engine-failure.ts, against the built output.
+// Run: npm run build && npm run test:unit
+// Atomic Chat Core is the default local engine; a Core failure the agent
+// reports (its switch-back hint, or a line naming Atomic Core) becomes one
+// plain sentence for the recovery card. Anything else is not a Core failure.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { engineFailureIn, engineFailureOf, CORE_SWITCH_BACK } = require("../out/main/engine-failure.js");
+const HINT = `${CORE_SWITCH_BACK} (TUI: /model engine llama-server).`;
+
+test("no hint and no Atomic Core: not a Core failure", () => {
+  assert.equal(engineFailureIn(""), null);
+  assert.equal(engineFailureIn("models start exited with code 1"), null);
+  assert.equal(engineFailureIn("llama-server: failed to load model"), null);
+});
+
+test("a precondition or a stop on purpose earns no card", () => {
+  assert.equal(engineFailureIn(`Stop local models before updating the engine. Your running models are unchanged. ${HINT}`), null);
+  assert.equal(engineFailureIn("`atag models update` was stopped before it finished (Atomic Core)"), null);
+});
+
+test("download, verify, backend, blocked and start each read as their own sentence", () => {
+  const download = engineFailureIn(`Could not fetch Atomic Core checksums (503). ${HINT}`);
+  assert.equal(download.stage, "download");
+  assert.match(download.why, /download failed/);
+  assert.equal(download.detail, "Could not fetch Atomic Core checksums (503).");
+
+  assert.equal(engineFailureIn(`Atomic Core download failed checksum verification. The previous engine is unchanged. ${HINT}`).stage, "verify");
+  assert.equal(engineFailureIn(`Atomic Core found no compatible inference backend for this computer. ${HINT}`).stage, "backend");
+  assert.equal(engineFailureIn(`spawn /x/atomic-chat-core EACCES ${HINT}`).stage, "blocked");
+  assert.equal(engineFailureIn(`Atomic Core did not become ready. ${HINT}`).stage, "start");
+});
+
+test("a structured stage wins over the wording, but blocked wins over both", () => {
+  assert.equal(engineFailureIn(`CoreUnavailableError stage: backend, Atomic Core download stalled. ${HINT}`).stage, "backend");
+  assert.equal(engineFailureIn(`CoreUnavailableError stage=start operation not permitted ${HINT}`).stage, "blocked");
+});
+
+test("the detail is the agent's sentence, not a progress line or a stack frame", () => {
+  const f = engineFailureIn([
+    "current: none → latest: b9999",
+    "[==========          ] 50%  0.05 GB / 0.10 GB  backend zip",
+    "Atomic Core download failed: socket hang up",
+    "    at downloadFile (file:///x/download-file.js:10:5)",
+    HINT,
+  ].join("\n"));
+  assert.equal(f.stage, "download");
+  assert.equal(f.detail, "Atomic Core download failed: socket hang up");
+});
+
+test("an IPC answer is read through its error fields; a success is not a failure", () => {
+  assert.equal(engineFailureOf({ ok: true, stdout: "done" }), null);
+  assert.equal(engineFailureOf({ ok: false, stdout: "", stderr: `Atomic Core did not start. ${HINT}`, error: "models start exited with code 1" }).stage, "start");
+  assert.equal(engineFailureOf({ ok: true, daemon: "start-failed", daemonLine: `could not start: Atomic Core did not start. ${HINT}` }).stage, "start");
+  assert.equal(engineFailureOf({ ok: false, error: "the agent did not answer in time" }), null);
+  assert.equal(engineFailureOf(null), null);
+});

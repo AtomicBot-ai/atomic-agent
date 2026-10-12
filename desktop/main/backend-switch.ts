@@ -16,6 +16,7 @@ import {
   killDaemonLeftovers,
   localDaemonRunning,
   managedDaemonPidAlive,
+  managedEngineOf,
   modelsList,
   modelsEngine,
   modelsStart,
@@ -1114,7 +1115,8 @@ export async function selectComposerEngine(engine: "atomic-core" | "llama-server
       const other = leg === "worker" ? rm.orchestratorProviderId : rm.workerProviderId;
       if (other === LOCAL_ID) return { ok: false, error: "The other role uses the local engine. Swap the roles to move it." };
     }
-    const current = read.config.localModels?.managed?.engine ?? "llama-server";
+    // No engine named is Core, the default (managedEngineOf): picking it then changes nothing.
+    const current = managedEngineOf(read.config);
     if (current === engine) return { ok: true };
     const changed = await modelsEngine(engine);
     return { ok: changed.ok, error: changed.ok ? undefined : changed.error || changed.stderr, restart: changed.ok };
