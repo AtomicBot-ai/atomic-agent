@@ -45,7 +45,10 @@ import {
   isMmprojDownloaded,
   isModelDownloaded,
   buildCustomModelDef,
+  buildLocalGgufModelDef,
   listLocalModels,
+  looksLikeLocalGgufPath,
+  resolveLocalGgufFile,
   listVulkanDevices,
   AUTO_UPDATE_RECHECK_MS,
   checkForBackendUpdateForPanel,
@@ -551,6 +554,17 @@ export class LocalModelsOrchestrator {
         (mode === "with-mmproj" || mode === "mmproj-only");
       const needGguf = wantGguf && !isModelDownloaded(dataDir, def);
       const needMmproj = wantMmproj && !isMmprojDownloaded(dataDir, def);
+      // Added from disk: nothing to download, so a missing file is the
+      // whole story — say where it was expected rather than spawn a
+      // worker that can only fail.
+      if (needGguf && def.localPath) {
+        this.bus.emit({
+          type: "local_models_pull_failed",
+          kind: "chat",
+          error: `local file not found: ${def.localPath}`,
+        });
+        return;
+      }
 
       let projectorError: string | null = null;
       if (needGguf || needMmproj) {
@@ -1266,6 +1280,10 @@ export class LocalModelsOrchestrator {
    * sentence and is shown on the editor that asked for the reference.
    */
   async resolveHuggingFaceReference(raw: string): Promise<void> {
+    if (looksLikeLocalGgufPath(raw)) {
+      await this.addLocalGgufFile(raw);
+      return;
+    }
     const controller = new AbortController();
     this.hfLookup?.abort();
     this.hfLookup = controller;
@@ -1317,6 +1335,30 @@ export class LocalModelsOrchestrator {
       // Written before the pull starts: `pullModel` resolves the id
       // through the catalog registry, and the registry is loaded from
       // the file this call writes.
+      addCustomModel(def);
+      id = def.id;
+    } catch (err) {
+      this.bus.emit({
+        type: "local_models_hf_lookup_failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.bus.emit({ type: "local_models_hf_closed" });
+    await this.pullModel(id);
+  }
+
+  /**
+   * The reference was a path to a GGUF already on disk (issue #631):
+   * validate it, register it where it lies — no copy, no download — and
+   * hand it to the same pull the Hugging Face rows use. That pull finds
+   * the weights present and goes straight to activate-and-start. A bad
+   * path stays on the reference editor with the reason.
+   */
+  private async addLocalGgufFile(raw: string): Promise<void> {
+    let id: LocalModelId;
+    try {
+      const def = buildLocalGgufModelDef(resolveLocalGgufFile(raw));
       addCustomModel(def);
       id = def.id;
     } catch (err) {
@@ -1515,11 +1557,15 @@ export class LocalModelsOrchestrator {
       // A curated row survives its files' deletion — the catalog is the
       // product. A custom row exists only because the operator added it,
       // so deleting the model undoes the add too; otherwise the row
-      // would linger with no other way to drop it from the list.
+      // would linger with no other way to drop it from the list. A row
+      // added from disk only loses its entry: `removeModel` leaves the
+      // operator's own file alone.
       if (def.family === "custom") removeCustomModel(id);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: ${def.name} removed`,
+        line: def.localPath
+          ? `local-llm: ${def.name} removed from the list (file kept at ${def.localPath})`
+          : `local-llm: ${def.name} removed`,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

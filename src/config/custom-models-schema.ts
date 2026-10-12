@@ -9,6 +9,8 @@
  * and defaulted, so a hand-written entry can stay to four lines.
  */
 
+import { isAbsolute } from "node:path";
+
 import { ConfigValidationError } from "./config-validation-error.js";
 import type { LocalModelDef } from "../local-llm/catalog/models-catalog.js";
 
@@ -52,6 +54,24 @@ function requireUrl(raw: unknown, field: string): string {
   return str;
 }
 
+/**
+ * `localPath` of a model registered from disk (issue #631): an absolute
+ * path to a `.gguf`. Whether the file still exists is a launch-time
+ * question, not a config one — a moved file must not make the whole
+ * config unreadable.
+ */
+function optionalLocalPath(raw: unknown, field: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const str = requireString(raw, field);
+  if (!isAbsolute(str) || !/\.gguf$/i.test(str)) {
+    throw new ConfigValidationError(
+      field,
+      `expected an absolute path to a .gguf file, got ${JSON.stringify(str)}`,
+    );
+  }
+  return str;
+}
+
 function optionalNumber(raw: unknown, field: string, fallback: number): number {
   if (raw === undefined || raw === null) return fallback;
   const value = typeof raw === "number" ? raw : Number.NaN;
@@ -85,6 +105,7 @@ export function parseCustomLocalModel(
   }
   const fileSizeGb = optionalNumber(entry.fileSizeGb, `${field}.fileSizeGb`, 0);
   const supportsVision = entry.supportsVision === true;
+  const localPath = optionalLocalPath(entry.localPath, `${field}.localPath`);
   const def: LocalModelDef = {
     id: id as LocalModelDef["id"],
     name: optionalString(entry.name, id),
@@ -107,6 +128,7 @@ export function parseCustomLocalModel(
     ),
     family: "custom",
     supportsVision,
+    ...(localPath !== undefined ? { localPath } : {}),
   };
   if (!supportsVision) return def;
   return {

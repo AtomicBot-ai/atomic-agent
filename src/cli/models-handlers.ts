@@ -130,6 +130,15 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
   }
   const m = getLocalModelDef(idArg);
   const dataDir = getConfig().paths.localModelsDataDir;
+  if (m.localPath) {
+    // Added from disk: there is nothing to fetch, only a file to find.
+    if (isModelDownloaded(dataDir, m)) {
+      process.stderr.write(`${m.id} is a local file: ${m.localPath}\n`);
+      return 0;
+    }
+    process.stderr.write(`${m.id}: local file not found: ${m.localPath}\n`);
+    return 1;
+  }
   const mode: DownloadJobMode =
     flags.has("--mmproj") && m.supportsVision ? "with-mmproj" : "gguf-only";
   if (flags.has("--mmproj") && !m.supportsVision) {
@@ -1185,13 +1194,20 @@ export async function runLocalModelsRemove(
       return 1;
     }
   }
-  const wasCustom = getLocalModelDef(idArg).family === "custom";
+  const removedDef = getLocalModelDef(idArg);
+  const wasCustom = removedDef.family === "custom";
+  // A model added from disk keeps its file: `removeModel` deletes nothing
+  // for it, and only the catalog entry goes.
   await removeModel(dataDir, idArg);
   // A curated row survives its files' deletion — the catalog is the
   // product. A custom row exists only because the operator added it, so
   // removing the model undoes the add too; otherwise the row would
   // linger in `models list` with no other way to drop it.
   if (wasCustom) removeCustomModel(idArg);
-  process.stdout.write(`removed ${idArg}\n`);
+  process.stdout.write(
+    removedDef.localPath
+      ? `removed ${idArg} (file kept at ${removedDef.localPath})\n`
+      : `removed ${idArg}\n`,
+  );
   return 0;
 }

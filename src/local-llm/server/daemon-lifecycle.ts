@@ -15,6 +15,7 @@ import { totalmem } from "node:os";
 
 import { readBackendVersion } from "../backend/backend-version.js";
 import {
+  resolveChatModelWeightsPath,
   resolveEmbeddingLogFilePath,
   resolveEmbeddingPidFilePath,
   resolveLogFilePath,
@@ -894,14 +895,14 @@ export async function startDaemon(
   }
 
   const model = getLocalModelDef(opts.modelId);
-  const modelPath = resolveModelFilePath(
-    opts.dataDir,
-    model.id,
-    model.filename,
-  );
+  // A model registered from disk launches straight from the operator's
+  // own file; everything else from the managed per-model directory.
+  const modelPath = resolveChatModelWeightsPath(opts.dataDir, model);
   if (!existsSync(modelPath)) {
     throw new Error(
-      `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
+      model.localPath
+        ? `model ${opts.modelId} file not found: ${model.localPath}`
+        : `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
     );
   }
 

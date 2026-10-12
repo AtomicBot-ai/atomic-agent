@@ -28,6 +28,20 @@ export function resolveModelFilePath(
 }
 
 /**
+ * Where a chat model's weights are read from: the operator's own file
+ * for a model registered from disk (`localPath`), otherwise the managed
+ * per-model directory.
+ */
+export function resolveChatModelWeightsPath(
+  dataDir: string,
+  model: { id: string; filename: string; localPath?: string },
+): string {
+  return (
+    model.localPath ?? resolveModelFilePath(dataDir, model.id, model.filename)
+  );
+}
+
+/**
  * Resolve the on-disk path for a model's mmproj projector file. The
  * projector lives in the same per-model directory as the GGUF weights so
  * removal of a model also removes its projector.

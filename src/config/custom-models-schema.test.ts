@@ -1,3 +1,7 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -67,6 +71,16 @@ describe("parseCustomLocalModel", () => {
       field: /fileSizeGb/,
     },
     { name: "a bare string", entry: "custom-x", field: /^invalid config: e/ },
+    {
+      name: "a relative localPath",
+      entry: { ...MINIMAL, localPath: "models/x.gguf" },
+      field: /e\.localPath/,
+    },
+    {
+      name: "a localPath that is not a .gguf",
+      entry: { ...MINIMAL, localPath: join(tmpdir(), "x.bin") },
+      field: /e\.localPath/,
+    },
   ];
 
   for (const row of bad) {
@@ -87,6 +101,22 @@ describe("parseCustomLocalModel", () => {
         "e",
       ),
     ).toThrow(/e\.mmprojFilename/);
+  });
+
+  it("keeps the localPath of a model added from disk", () => {
+    const localPath = join(tmpdir(), "My Models", "model.gguf");
+    const def = parseCustomLocalModel(
+      {
+        id: "custom-local-model-0123abcd",
+        filename: "model.gguf",
+        huggingFaceUrl: pathToFileURL(localPath).href,
+        localPath,
+      },
+      "e",
+    );
+    expect(def.localPath).toBe(localPath);
+    // Entries added from Hugging Face carry no localPath at all.
+    expect("localPath" in parseCustomLocalModel(MINIMAL, "e")).toBe(false);
   });
 
   it("demands the projector fields once vision is claimed", () => {
