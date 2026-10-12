@@ -1183,7 +1183,7 @@ npm install
 npm run dist
 ```
 
-Output: `desktop/release/Atomic Agent-<version>-arm64.dmg` (Apple Silicon,
+Output: `desktop/release/Atomic-Agent-<version>-arm64.dmg` (Apple Silicon,
 about 121 MB).
 
 The build is **unsigned and un-notarised** — `mac.identity` is explicitly
@@ -1312,7 +1312,7 @@ the update files into `desktop/release/`. Everything a release uploads to
 
 | Platform | Files |
 |---|---|
-| macOS | `stable-mac.yml`, `Atomic Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. |
+| macOS | `stable-mac.yml`, `Atomic-Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. File names carry no space (`mac.artifactName`): GitHub renames a space in an uploaded asset to a dot, and `stable-mac.yml` would then point at a file that 404s (ATO-255). |
 | Windows | `stable.yml` (merged, below), `Atomic-Agent-Setup-<version>-x64.exe` and `Atomic-Agent-Setup-<version>-arm64.exe`; their `.blockmap`s are optional. |
 
 Linux is not updated from inside the app yet (the updater is off there and
@@ -1382,7 +1382,7 @@ which the terminal installers read. Each desktop release replaces its files
 
 ```bash
 gh release upload desktop-latest \
-  "Atomic Agent-<version>-arm64-mac.zip" "Atomic Agent-<version>-arm64-mac.zip.blockmap" \
+  "Atomic-Agent-<version>-arm64-mac.zip" "Atomic-Agent-<version>-arm64-mac.zip.blockmap" \
   "Atomic-Agent-Setup-<version>-x64.exe" "Atomic-Agent-Setup-<version>-x64.exe.blockmap" \
   "Atomic-Agent-Setup-<version>-arm64.exe" "Atomic-Agent-Setup-<version>-arm64.exe.blockmap" \
   --repo AtomicBot-ai/atomic-agent --clobber

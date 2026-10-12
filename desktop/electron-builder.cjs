@@ -96,6 +96,12 @@ const config = {
         ]
       }
     ],
+    /* ATO-255: no space in the file name. Without this electron-builder
+       uses the product name ("Atomic Agent-0.0.1-arm64-mac.zip"), GitHub
+       turns the space into a dot on upload, and the update feed's
+       stable-mac.yml then points at a name that 404s. Same pattern as win
+       and linux; the DMG overrides it under "dmg" below. */
+    "artifactName": "Atomic-Agent-${version}-${arch}-mac.${ext}",
     "identity": null,
     "hardenedRuntime": true,
     "entitlements": "build/entitlements.mac.plist",
@@ -115,6 +121,7 @@ const config = {
   },
   "dmg": {
     "title": "Atomic Agent",
+    "artifactName": "Atomic-Agent-${version}-${arch}.${ext}",
     "contents": [
       {
         "x": 170,
