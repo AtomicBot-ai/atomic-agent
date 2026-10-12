@@ -60,7 +60,7 @@ test('two cloud seats may share a provider; both seats on the one local slot are
 });
 test('Atomic Chat is hidden unless main offers it or the config already runs it',()=>{
   const {context:c}=fixture('llama-server');
-  assert.deepEqual(c.composerLocalEngineRows().map(r=>r.id),['llama-server']);
+  assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>r.id),['llama-server']);
   assert.equal(c.composerFusionEngineRows('orchestrator').some(r=>r.id==='atomic-core'),false);
   assert.equal(c.composerCoreChoice(),false);
   assert.equal(fixture('atomic-core').context.composerCoreChoice(),true);
