@@ -2081,7 +2081,9 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsEngine", (_event, action: unknown) =>
     typeof action !== "string" ? { ok: false, error: "Engine action required" }
       : action === "status" || action === "check" ? modelsEngine(action)
-      : inDaemonTurn(() => modelsEngine(action), () => ({ ok: false, stdout: "", stderr: "", error: "The app is closing" })));
+      // Settings' engine switch: in the daemon's turn and with the agent restart, as the composer's pick.
+      : action === "atomic-core" || action === "llama-server" ? switched(() => selectComposerEngine(action))
+      : { ok: false, error: "Unknown engine action" });
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
   // Item 11: at once — a start on its way is ended, not waited for.
   ipcMain.handle("cli:modelsStop", () => stopDaemonNow());
