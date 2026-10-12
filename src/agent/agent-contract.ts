@@ -787,6 +787,8 @@ export type AgentLoopEvent =
       from: string;
       to: string;
       reason: string;
+      /** The failure's kind, read off the error (`falloverCause`). */
+      cause?: "billing" | "auth" | "other";
     }
   /**
    * A memory sub-call (reflection, link generation, voting, query

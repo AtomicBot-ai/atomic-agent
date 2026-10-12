@@ -25,7 +25,7 @@ import { createFallbackCompleter, createFallbackStreamer } from "../runtime/llm-
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { buildPrompt, type BuildPromptInput } from "../prompt/build-prompt.js";
 import { executeStep } from "./step-executor.js";
-import { prepareStepInference } from "./step/step-inference.js";
+import { prepareStepInference, refreshStepWorkspace } from "./step/step-inference.js";
 import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import { AgentLoop } from "./agent-loop.js";
 
@@ -143,5 +143,18 @@ describe("cloud session workspace integration", () => {
     expect(inherited.prompt.text).toContain("NATIVE GUIDE"); expect(inherited.prompt.text).not.toContain("BETA GUIDE"); expect(inherited.prompt.text).not.toContain("BETA RULE");
     expect(inherited.prompt.stablePrefix).toContain(b); expect(inherited.prompt.stablePrefix).not.toContain("/boot");
     expect(reconcileCloudSkills(cb.session, loader(cb.session, true)).loadedSkills).toEqual([]);
+  });
+  it("never fails a cloud step when the workspace folder disappears", () => {
+    const ctx = context(a); rmSync(a, { recursive: true, force: true });
+    expect(() => refreshStepWorkspace(ctx, deps())).not.toThrow();
+    expect(ctx.workspace?.diagnostics.join("\n")).toMatch(/Workspace skills unavailable/);
+    expect(ctx.workspace?.diagnostics.join("\n")).toMatch(/Project instructions unavailable/);
+    ctx.workspace = undefined;
+    expect(prepareStepInference(ctx, deps()).prompt.text).not.toContain("ALPHA RULE");
+  });
+
+  it("rethrows cancellation from workspace preparation", () => {
+    const ctx = context(a); const controller = new AbortController(); controller.abort(new Error("stopped by user"));
+    expect(() => refreshStepWorkspace({ ...ctx, signal: controller.signal }, deps())).toThrow(/stopped by user/);
   });
 });

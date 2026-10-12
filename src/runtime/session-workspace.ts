@@ -4,6 +4,7 @@ import type { SessionWorkspace } from "../session/workspace-context.js";
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
 import { loadProjectInstructions } from "./project-instructions.js";
 
+/** Workspace preparation never fails a step except on cancellation; loaders degrade to diagnostics. */
 export function createWorkspaceLoader(config: AtomicAgentConfig) {
   return (session: Pick<SessionState, "workingDir">, cloud: boolean, signal?: AbortSignal): SessionWorkspace => {
     signal?.throwIfAborted();

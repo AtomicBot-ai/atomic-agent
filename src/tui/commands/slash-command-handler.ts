@@ -69,6 +69,7 @@ export interface SlashDispatchResult {
   readonly skillHubInstallId?: string;
   readonly localModelsPullModelId?: string;
   readonly localModelsUseModelId?: string;
+  readonly localModelsEngine?: "atomic-core" | "llama-server";
   readonly triggerLocalModelsStatus?: boolean;
   /**
    * Theme name the caller should activate via `setActiveTheme` before
@@ -626,6 +627,12 @@ function dispatchModelsSub(
       ]),
       localModelsUseModelId: bits[1],
     };
+  }
+  if (bits[0] === "engine") {
+    if (bits[1] !== "atomic-core" && bits[1] !== "llama-server") {
+      return pureActions([], { systemMessage: "usage: /model engine <engine> (stop models first)" });
+    }
+    return { ...pureActions([]), localModelsEngine: bits[1] };
   }
   if (bits[0] === "status") {
     return pureActions([], { triggerLocalModelsStatus: true });

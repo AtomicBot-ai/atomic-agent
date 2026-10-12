@@ -91,7 +91,7 @@ const CASES: Array<{
     name: "fusion route, whose backend word is a chip",
     props: {
       backend: healthy("fusion"),
-      provider: "openrouter",
+      provider: "openrouter ⇄ Atomic Chat",
       model: "anthropic/claude-opus-5 ⇄ qwen3-4b-instruct",
     },
   },

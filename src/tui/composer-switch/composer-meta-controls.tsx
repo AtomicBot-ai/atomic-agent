@@ -93,6 +93,7 @@ export function ComposerMetaControls({
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
   if (!backend && !provider && !model && !needsModelDownload) return null;
+  const enginePair = provider ? splitLegs(provider) : null;
   const pair = model && !needsModelDownload ? splitLegs(model) : null;
   return (
     <>
@@ -106,7 +107,7 @@ export function ComposerMetaControls({
       {provider ? (
         <Control
           kind="provider"
-          label={provider}
+          label={enginePair?.[0] ?? provider}
           lead={Boolean(backend)}
           shrink={1}
           fusion={fusion}
@@ -129,8 +130,10 @@ export function ComposerMetaControls({
             mouseLayer={mouseLayer}
           />
           <SwapLegsControl fusion={fusion} mouseLayer={mouseLayer} />
+          {enginePair ? <Control kind="workerProvider" label={enginePair[1]} shrink={1} fusion={fusion} mouseLayer={mouseLayer} /> : null}
           <Control
             kind="workers"
+            lead={Boolean(enginePair)}
             label={pair[1]}
             shrink={3}
             fusion={fusion}
@@ -180,7 +183,8 @@ export function composerRouteWidth(input: {
   const needsModelDownload = input.needsModelDownload ?? false;
   if (!backend && !provider && !model && !needsModelDownload) return 0;
   let width = backend ? backendControlWidth(backend) : 0;
-  if (provider) width += (backend ? LEAD_WIDTH : 0) + provider.length;
+  const enginePair = provider ? splitLegs(provider) : null;
+  if (provider) width += (backend ? LEAD_WIDTH : 0) + (enginePair?.[0] ?? provider).length;
   const lead = backend || provider ? LEAD_WIDTH : 0;
   if (needsModelDownload) return width + lead + DOWNLOAD_MODEL_LABEL.length;
   if (!model) return width;
@@ -188,6 +192,7 @@ export function composerRouteWidth(input: {
   if (pair) {
     return (
       width + lead + pair[0].length + LEG_SEPARATOR.length + pair[1].length
+      + (enginePair ? enginePair[1].length + LEAD_WIDTH : 0)
     );
   }
   return width + lead + model.length;

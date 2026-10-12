@@ -678,6 +678,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.pullModel(id, mode),
         onLocalModelsPullCancelRequested: (kind) =>
           void orchestrator.localModels.cancelPull(kind),
+        onComposerEngineRequested: (engine, leg) => { void orchestrator.chooseComposerEngine(engine, leg); },
+        onComposerFusionModelRequested: (leg, model) => { void orchestrator.chooseComposerFusionModel(leg, model); },
+        onLocalModelsEngineRequested: (engine) => { void orchestrator.localModels.chooseEngine(engine); },
         onLocalModelsSetActiveRequested: (id) =>
           void orchestrator.localModels.setActive(id),
         onLocalModelsUseManagedRequested: () =>
@@ -849,8 +852,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   // The frozen Win10 conhost scrolls under full-height frames — the
   // layout already reserves its bottom row (see `legacy-conhost.ts`);
-  // this is where the operator learns why, and that Windows Terminal
-  // does not need the workaround. Once per session, in the transcript,
+  // this is a plain tip that Windows Terminal renders the UI better,
+  // not an error. Once per session, in the transcript,
   // because anything printed before the alt screen is never seen.
   const conhostHint = legacyConhostStartupHint();
   if (conhostHint) {

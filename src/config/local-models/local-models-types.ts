@@ -12,6 +12,8 @@ export type LocalLlmMode = "external" | "managed";
 export type LocalTemplateSetting = "auto" | "on" | "off";
 
 export interface UserManagedLocalLlmConfig {
+  /** Managed process owner; absent in older files means the standalone server. */
+  engine?: "llama-server" | "atomic-core";
   modelId: string | null;
   port: number;
   dataDirOverride: string | null;

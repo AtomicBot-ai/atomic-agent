@@ -7,6 +7,13 @@ import {
 } from "./composer-switch-fixtures.js";
 import { selectComposerSwitchRows } from "./composer-switch-rows.js";
 import { selectWorkerRows } from "./composer-switch-worker-rows.js";
+import type { TuiState } from "../tui-state.js";
+
+/** The state with the Atomic Chat engine choice offered (`atomicCoreChoiceEnabled`). */
+function withEngineChoice(state: TuiState): TuiState {
+  const panel = state.localModelsPanel;
+  return { ...state, localModelsPanel: { ...panel, backend: { ...panel.backend, atomicCoreChoice: true } } };
+}
 
 describe("the workers switch", () => {
   it("offers both kinds for the worker slot, and no counts", () => {
@@ -74,9 +81,18 @@ describe("the workers switch", () => {
 
   it("is the switch's rows for the `workers` kind", () => {
     const state = fusionState();
-    expect(selectComposerSwitchRows(state, "workers")).toEqual(
-      selectWorkerRows(state),
-    );
+    const models = selectComposerSwitchRows(state, "workers");
+    expect(models.map(r => r.label)).toEqual(["qwen-3.5-4b", "Download more models…"]);
+    expect(models[0]?.intent).toEqual({kind: "fusionModel", leg: "worker", modelId: "qwen-3.5-4b"});
+    expect(selectComposerSwitchRows(state, "workerProvider").map(r => r.label)).toContain("Local llama");
+  });
+
+  it("offers Atomic Chat as a worker engine only when it is enabled", () => {
+    const hidden = selectComposerSwitchRows(fusionState(), "workerProvider").map(r => r.label);
+    expect(hidden).toContain("Local llama");
+    expect(hidden).not.toContain("Atomic Chat");
+    const offered = selectComposerSwitchRows(withEngineChoice(fusionState()), "workerProvider").map(r => r.label);
+    expect(offered).toContain("Atomic Chat");
   });
 });
 

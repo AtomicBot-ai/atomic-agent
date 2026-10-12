@@ -10,6 +10,8 @@ import {
   type CreditLimitRetryPlan,
 } from "./plan-credit-limit-retry.js";
 import {
+  CREDENTIAL_WORDING,
+  MODERATION_WORDING,
   parseProviderErrorBody,
   readProviderErrorReason,
   type ProviderErrorBody,
@@ -200,6 +202,13 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if ((err.status === 403 || err.status === 429) && isCreditExhausted(err)) {
     return billingRefusalSentence(err);
   }
+  if (err.status === 403 && isModerationRefusal(err)) {
+    // OpenRouter's 403 for input its moderation flagged read "rejected
+    // the API key", and sent the operator to a key that was fine. Say
+    // what it is, in the provider's own words.
+    const own = providerReason(err);
+    return `${who} refused the request (403): its moderation flagged the input, the key is fine.${own ? ` ${own}` : ""}`;
+  }
   if (err.status === 401 || err.status === 403) {
     return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
   }
@@ -243,6 +252,17 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   return reason
     ? `${who} rejected the request (${err.status}). ${reason}`
     : `${who} rejected the request (${err.status}).`;
+}
+
+/**
+ * A 403 whose provider says its moderation refused the input, and says
+ * nothing about the key: a plain 403 is still read as the key's, and a
+ * 401 is never a moderation refusal.
+ */
+export function isModerationRefusal(err: OpenAiHttpError): boolean {
+  if (err.status !== 403) return false;
+  const text = `${err.body?.text ?? ""}\n${err.message}`;
+  return MODERATION_WORDING.test(text) && !CREDENTIAL_WORDING.test(text);
 }
 
 /**

@@ -130,6 +130,15 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
   }
   const m = getLocalModelDef(idArg);
   const dataDir = getConfig().paths.localModelsDataDir;
+  if (m.localPath) {
+    // Added from disk: there is nothing to fetch, only a file to find.
+    if (isModelDownloaded(dataDir, m)) {
+      process.stderr.write(`${m.id} is a local file: ${m.localPath}\n`);
+      return 0;
+    }
+    process.stderr.write(`${m.id}: local file not found: ${m.localPath}\n`);
+    return 1;
+  }
   const mode: DownloadJobMode =
     flags.has("--mmproj") && m.supportsVision ? "with-mmproj" : "gguf-only";
   if (flags.has("--mmproj") && !m.supportsVision) {
@@ -397,8 +406,8 @@ export async function runLocalModelsStatus(): Promise<number> {
     return 0;
   }
   const dataDir = cfg.paths.localModelsDataDir;
-  const ver = readBackendVersion(dataDir);
-  const binOk = isBackendDownloaded(dataDir);
+  const ver = readBackendVersion(dataDir, getConfig().localModels.managed.engine);
+  const binOk = isBackendDownloaded(dataDir, getConfig().localModels.managed.engine);
   const mid = cfg.localModels.managed.modelId;
   let modelLine = "none";
   if (mid && isKnownLocalModelId(mid)) {
@@ -414,7 +423,7 @@ export async function runLocalModelsStatus(): Promise<number> {
     `backend:        ${ver?.tag ?? "(none)"} (installed ${ver?.downloadedAt ?? "n/a"}), binary ${binOk ? "ok" : "missing"}\n`,
   );
   process.stdout.write(
-    `compute:        ${describeComputeBackend(ver?.asset)}\n`,
+    `compute:        ${cfg.localModels.managed.engine === "atomic-core" ? (ver?.asset ?? "not installed") + " (selected by Atomic Core)" : describeComputeBackend(ver?.asset)}\n`,
   );
   process.stdout.write(`active model:   ${modelLine}\n`);
   process.stdout.write(
@@ -440,7 +449,10 @@ export async function runLocalModelsStatus(): Promise<number> {
   return 0;
 }
 
-export async function runLocalModelsStart(opts: { interactive?: boolean } = {}): Promise<number> {
+export async function runLocalModelsStart(
+  opts: { interactive?: boolean; signal?: AbortSignal } = {},
+): Promise<number> {
+  const { signal } = opts;
   const cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
     process.stderr.write("external mode — nothing to start\n");
@@ -456,6 +468,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
   const dataDir = cfg.paths.localModelsDataDir;
   try {
     const auto = await maybeAutoUpdateBackend(dataDir, {
+        engine: getConfig().localModels.managed.engine,
       enabled: cfg.localModels.managed.autoUpdate,
       // Unlike the TUI, `models start` is an explicit one-shot command:
       // updating before the daemon comes up is what the operator asked
@@ -550,7 +563,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
   const tensorSplit = cfg.localModels.managed.tensorSplit;
   const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(dataDir, binaryName);
+  const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
   // One `--list-devices` for the launch, run only when something asks:
   // an `auto` pick here, the context fit in startDaemon (`deviceTableOnce`).
   const listDevices = deviceTableOnce(binPath);
@@ -582,6 +595,8 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
   const startWithDevice = (dev: string | undefined) =>
     startChatAndEmbeddingDaemons({
       chat: {
+        engine: cfg.localModels.managed.engine,
+        signal,
         ...(opts.interactive ? { throughputProbe: false, healthTimeoutMs: 120_000 } : {}),
         dataDir,
         modelId: mid,
@@ -607,6 +622,8 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       ...(embRequested && embReady && embRunningPid === null
         ? {
             embedding: {
+              engine: cfg.localModels.managed.engine,
+              signal,
               dataDir,
               modelId: embCfg.modelId as never,
               port: embCfg.port,
@@ -627,7 +644,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       // CPU build the nightly also publishes and retry once.
       if (
         !shouldFallBackToCpuBackend({
-          installedAsset: readBackendVersion(dataDir)?.asset,
+          installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
           configuredVariant: getConfiguredBackendVariant(),
           error: e,
         })
@@ -707,7 +724,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
  * each said in one `embedding:` line on stdout; exit 1 when the start
  * failed. Never touches the chat daemon or the config.
  */
-export async function runLocalModelsStartEmbedding(): Promise<number> {
+export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
     process.stderr.write("external mode — nothing to start\n");
@@ -736,12 +753,14 @@ export async function runLocalModelsStartEmbedding(): Promise<number> {
   // The chat daemon's device, as `start` resolves it, so both land on the same one.
   const { binaryName } = resolvePlatformAsset();
   const device = await resolveManagedDevice(
-    resolveServerBinPath(dataDir, binaryName),
+    resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine),
     cfg.localModels.managed.device,
     { multiGpu: cfg.localModels.managed.tensorSplit.length > 0 },
   );
   try {
     const { pid } = await startEmbeddingDaemon({
+      engine: cfg.localModels.managed.engine,
+      signal,
       dataDir,
       modelId,
       port: emb.port,
@@ -841,14 +860,14 @@ const DEVICE_ID_RE = /^[A-Za-z]+\d+(,[A-Za-z]+\d+)*$/;
 export async function runLocalModelsDevices(): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
-  if (!isBackendDownloaded(dataDir)) {
+  if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
     process.stderr.write(
       "backend not downloaded; run 'atomic-agent models update' first\n",
     );
     return 1;
   }
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(dataDir, binaryName);
+  const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
   const configured = cfg.localModels.managed.device;
   const multiGpu = cfg.localModels.managed.tensorSplit.length > 0;
   const devices = await listVulkanDevices(binPath);
@@ -1101,7 +1120,7 @@ export async function runLocalModelsListEmbeddings(): Promise<number> {
   return 0;
 }
 
-export async function runLocalModelsUpdate(): Promise<number> {
+export async function runLocalModelsUpdate(signal?: AbortSignal): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
     process.stderr.write(
@@ -1112,8 +1131,8 @@ export async function runLocalModelsUpdate(): Promise<number> {
   const dataDir = cfg.paths.localModelsDataDir;
   try {
     const { updateAvailable, latestTag, currentTag } =
-      await checkForBackendUpdate(dataDir);
-    if (!updateAvailable) {
+      await checkForBackendUpdate(dataDir, getConfig().localModels.managed.engine);
+    if (!updateAvailable && cfg.localModels.managed.engine !== "atomic-core") {
       // ATO-252: on Windows on ARM "no release for this platform" with
       // nothing installed is not "unchanged": there is no engine to run
       // local models at all yet. Fail with the sentence the desktop shows
@@ -1121,7 +1140,7 @@ export async function runLocalModelsUpdate(): Promise<number> {
       if (
         latestTag === null &&
         isWindowsArm64() &&
-        !isBackendDownloaded(dataDir)
+        !isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)
       ) {
         process.stderr.write(`${WINDOWS_ARM64_NO_BACKEND_MESSAGE}\n`);
         return 1;
@@ -1140,9 +1159,14 @@ export async function runLocalModelsUpdate(): Promise<number> {
       `current: ${currentTag ?? "none"} → latest: ${latestTag}\n`,
     );
     const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (st.running && cfg.localModels.managed.engine === "atomic-core") {
+      throw new Error("Stop local models before updating the engine. Your running models are unchanged.");
+    }
     if (st.running) await stopChatAndEmbeddingDaemons(dataDir);
     const tty = process.stderr.isTTY;
     await downloadBackend(dataDir, {
+      engine: cfg.localModels.managed.engine,
+      signal,
       onProgress: (p, t, tot) => {
         const line = renderPullProgress("backend zip", p, t, tot);
         if (tty) process.stderr.write(`\r${line.padEnd(79)}`);
@@ -1185,13 +1209,20 @@ export async function runLocalModelsRemove(
       return 1;
     }
   }
-  const wasCustom = getLocalModelDef(idArg).family === "custom";
+  const removedDef = getLocalModelDef(idArg);
+  const wasCustom = removedDef.family === "custom";
+  // A model added from disk keeps its file: `removeModel` deletes nothing
+  // for it, and only the catalog entry goes.
   await removeModel(dataDir, idArg);
   // A curated row survives its files' deletion — the catalog is the
   // product. A custom row exists only because the operator added it, so
   // removing the model undoes the add too; otherwise the row would
   // linger in `models list` with no other way to drop it.
   if (wasCustom) removeCustomModel(idArg);
-  process.stdout.write(`removed ${idArg}\n`);
+  process.stdout.write(
+    removedDef.localPath
+      ? `removed ${idArg} (file kept at ${removedDef.localPath})\n`
+      : `removed ${idArg}\n`,
+  );
   return 0;
 }

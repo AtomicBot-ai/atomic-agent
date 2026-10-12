@@ -63,10 +63,10 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
       `provider "${args.activeTextProvider}" is not configured`,
     );
   }
-  const fusion: UserLlmFusionConfig = {
-    ...llm.runMode?.fusion,
-    ...args.fusion,
-  };
+  const fusion: UserLlmFusionConfig = repinFusionLegs(
+    llm.runMode?.fusion,
+    args.fusion,
+  );
   const next: UserConfigFile = {
     ...file,
     llm: {
@@ -92,6 +92,38 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
   };
   writeUserConfigFileSync(path, next);
   resetConfigCache();
+}
+
+/**
+ * Merge a fusion-block change over the stored one. A leg's model pin
+ * names a model of that leg's provider, so moving the leg to another
+ * provider drops the stored pin unless the change sets a new one —
+ * otherwise the new provider is displayed and priced as the old model.
+ * A model pin on a leg that was never pinned to a provider is left
+ * alone, the same rule `scrubRunModeProviderPins` follows.
+ */
+function repinFusionLegs(
+  stored: UserLlmFusionConfig | undefined,
+  change: Partial<UserLlmFusionConfig> | undefined,
+): UserLlmFusionConfig {
+  const fusion: UserLlmFusionConfig = { ...stored, ...change };
+  if (
+    stored?.orchestratorProvider !== undefined &&
+    change?.orchestratorProvider !== undefined &&
+    change.orchestratorProvider !== stored.orchestratorProvider &&
+    change.orchestratorModel === undefined
+  ) {
+    delete fusion.orchestratorModel;
+  }
+  if (
+    stored?.workerProvider !== undefined &&
+    change?.workerProvider !== undefined &&
+    change.workerProvider !== stored.workerProvider &&
+    change.workerModel === undefined
+  ) {
+    delete fusion.workerModel;
+  }
+  return fusion;
 }
 
 /**

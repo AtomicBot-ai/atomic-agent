@@ -976,7 +976,13 @@ export interface UserConfigFile {
 // v75: known cloud providers without a saved modelMode adopt cloud context.
 // Explicit provider/model policies and local/unknown endpoints stay unchanged.
 // This one-time migration shares the classification used for new connections.
-export const USER_CONFIG_VERSION = 75;
+// v76: `localModels.customModels[]` entries accept `localPath` — the
+// absolute path of a GGUF the operator already had on disk (issue #631),
+// launched where it lies and never downloaded or deleted. Additive: an
+// older file has no such entries. An older build that rewrites the list
+// drops `localPath` but keeps the entry's `file://` `huggingFaceUrl`; the
+// parser recovers the path from that URL, so the round trip loses nothing.
+export const USER_CONFIG_VERSION = 76;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1127,6 +1133,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   72,
   73,
   74,
+  75,
   USER_CONFIG_VERSION,
 ];
 

@@ -6,7 +6,7 @@
 
 ### A local-first AI agent that runs on your machine, with local or cloud models.
 
-Drives your browser, edits files, runs approved commands, and remembers context across sessions. Open source, running on our TurboQuant `llama.cpp` for +30-50% throughput on small local models.
+Drives your browser, edits files, runs approved commands, and remembers context across sessions. Open source, running on our TurboQuant `llama.cpp` so long sessions with small local models fit in less memory.
 
 [![GAIA L1 · 69.8%](https://img.shields.io/badge/GAIA%20L1-69.8%25-0b63f6)](#benchmarks)
 [![Release](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml/badge.svg)](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml)
@@ -191,7 +191,6 @@ We run local models on our own TurboQuant `llama.cpp` ([`AtomicBot-ai/atomic-lla
 
 - **TurboQuant KV-cache:** WHT-rotated low-bit quantization compresses the KV-cache up to ~6.4× versus F16, with a fused Metal decode kernel, so long-context sessions fit in far less memory.
 - **TurboQuant weights:** Lloyd-Max weight quantization with WHT rotation and fused Metal/Vulkan kernels keeps quality usable while small models fit on consumer hardware.
-- **Custom speculative decoding:** purpose-built Gemma 4 MTP and Qwen 3.6 NextN heads reuse the loaded model (no second context, tokenizer, or model load) for +30-50% throughput.
 - **Curated quantized models:** hand-picked GGUF quants that keep quality usable while fitting real VRAM budgets.
 - **Managed mode:** the CLI downloads, keeps up to date, and runs the backend and models for you, no manual `llama.cpp` setup. Set `localModels.managed.autoUpdate: false` to pin the backend.
 
@@ -757,11 +756,13 @@ Two things worth knowing before you switch a long-running agent onto either: eac
 </details>
 
 <details>
-<summary><b>Qwen / Tinker tagged tool calls</b> (opt-in compatibility provider)</summary>
+<summary><b>Tagged tool calls in text</b> (Qwen, Hermes, vLLM and similar backends)</summary>
 
-Some Qwen-serving OpenAI-compatible backends (Tinker, certain vLLM/llama.cpp front-ends) emit tool calls as inline `<tool_call><function=…>…</function></tool_call>` text instead of the native `tool_calls` field; they show up as assistant prose and never execute (#105).
+Some OpenAI-compatible backends (Tinker, certain vLLM/llama.cpp front-ends serving Qwen or Hermes-style models) emit tool calls as inline `<tool_call>…</tool_call>` text instead of the native `tool_calls` field. Atomic decodes these automatically on every OpenAI-compatible kind (`openai-compatible`, `openrouter`, `aimlapi`, `gemini`, `qwen-openai-compatible`); there is nothing to enable. Both block forms are accepted: Qwen's `<function=…><parameter=…>…</parameter></function>` and the Hermes JSON `{"name": …, "arguments": {…}}`.
 
-To enable the adapter, set the provider `kind` to **`qwen-openai-compatible`** in `config.json` (with `baseUrl` + `defaultChatModel`). Plain `openai-compatible` does **not** enable it; the generic kind is left untouched on purpose. There is no TUI wizard row for this kind yet; it is config-only for now.
+A reply counts as tool calls only when the request offered tools, the response has no native `tool_calls`, and the whole trimmed `content` is `<tool_call>` blocks. Prose around a block keeps it a normal reply.
+
+Qwen thinking models sometimes put the call in `reasoning_content` instead of `content` (#105). Reading that channel is the one Qwen-only part: set the provider `kind` to **`qwen-openai-compatible`** in `config.json` (with `baseUrl` + `defaultChatModel`) to enable it. Other kinds ignore calls quoted in the reasoning channel on purpose. There is no TUI wizard row for this kind yet; it is config-only for now.
 
 ```json
 {
@@ -779,11 +780,11 @@ To enable the adapter, set the provider `kind` to **`qwen-openai-compatible`** i
 ```
 
 Behavior:
-- The tagged call is read from `content`, or from `reasoning_content` when content is empty or holds unparseable tag noise.
+- The tagged call is read from `content`. With `qwen-openai-compatible` it is also read from `reasoning_content` when content is empty or holds unparseable tag noise.
 - Argument values are coerced against the offered tool's JSON schema; a call that does not match is dropped (fail-closed) rather than executed with guessed args.
 - Streaming stays live: text/reasoning deltas stream as usual and the buffered final message is adapted once the stream closes.
 
-**Limitation for MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP + tagged Qwen is therefore unsupported for now.
+**Limitation for MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP tools called through tagged text are therefore unsupported for now.
 </details>
 
 ## Development

@@ -34,12 +34,28 @@ export function workspaceSkillBody(entry: WorkspaceSkill): string {
   return `Skill directory: ${entry.record.rootDir}\nResolve this skill's relative scripts/references against that directory.\n${entry.body}`;
 }
 
+/** Skill discovery problems never fail a step: they degrade to diagnostics. */
 export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkillsOptions, compatibility = true): WorkspaceSkills {
+  try { return loadSkills(workingDir, options, compatibility); }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { workingDir: resolve(workingDir), projectSkillsEnabled: false, entries: [], diagnostics: [`Workspace skills unavailable: ${reason}`],
+      assertAvailable(name) { throw new Error(`Skill ${name} unavailable: workspace skills could not be loaded (${reason})`); } };
+  }
+}
+
+function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compatibility: boolean): WorkspaceSkills {
   const root = realpathSync(workingDir);
-  const config = readUserConfigFileSync(options.configFile)?.skills ?? options.defaults;
+  const diagnostics: string[] = [];
+  let config: RuntimeSkillsConfig;
+  try { config = readUserConfigFileSync(options.configFile)?.skills ?? options.defaults; }
+  catch (error) {
+    // Keep the policy loaded at startup rather than dropping every ban.
+    diagnostics.push(`Skill config unreadable, using the startup policy: ${error instanceof Error ? error.message : String(error)}`);
+    config = options.defaults;
+  }
   const policy = compatibility ? config.cloudWorkspaces?.find(p => p.workingDir === root) : undefined;
   const enabled = policy?.projectSkillsEnabled ?? true;
-  const diagnostics: string[] = [];
   let globalRoot = resolve(options.globalDir);
   try { globalRoot = realpathSync(globalRoot); } catch { /* Missing/error diagnostics are handled below. */ }
   const byName = new Map<string, WorkspaceSkill[]>();
@@ -49,7 +65,10 @@ export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkills
   const visited = new Set<string>();
   let bytes = 0;
   let count = 0;
+  let entryCapHit = false;
+  let bytesCapHit = false;
   for (const source of sources) {
+    if (entryCapHit) break;
     let dir: string;
     try { dir = realpathSync(source.dir); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") diagnostics.push(`${source.dir}: ${String(error)}`); continue; }
@@ -61,13 +80,22 @@ export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkills
     let names: string[];
     try { names = readdirSync(dir).sort(); } catch (error) { diagnostics.push(`${dir}: ${String(error)}`); continue; }
     for (const name of names) {
-      if (++count > 4096) throw new Error("Workspace skill discovery exceeded 4096 entries; narrow the skill directories.");
+      if (++count > 4096) {
+        entryCapHit = true;
+        diagnostics.push("Workspace skill discovery stopped at 4096 entries; later skills were not loaded. Narrow the skill directories.");
+        break;
+      }
       const manifestPath = join(dir, name, "SKILL.md");
       try {
+        if (bytesCapHit) continue;
         const file = readWorkspaceFile(source.source === "project" ? root : dir, manifestPath);
         if (!file) continue;
+        if (bytes + Buffer.byteLength(file.content) > 8 * 1024 * 1024) {
+          bytesCapHit = true;
+          diagnostics.push(`Skill manifests exceed 8 MiB; skipped ${manifestPath} and later skills.`);
+          continue;
+        }
         bytes += Buffer.byteLength(file.content);
-        if (bytes > 8 * 1024 * 1024) throw new Error("Skill manifests exceed 8 MiB.");
         const parsed = parseSkillFile(file.content, compatibility ? (source.claude ? { fallbackName: name } : {}) : undefined);
         if (!isSkillEligibleForPlatform(parsed.manifest, process.platform)) continue;
         if (parsed.disableModelInvocation) diagnostics.push(`Skill ${parsed.manifest.name} at ${file.path}: disable-model-invocation excludes automatic loading.`);
@@ -82,7 +110,6 @@ export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkills
         const copies = byName.get(parsed.manifest.name) ?? [];
         copies.push(entry); byName.set(parsed.manifest.name, copies);
       } catch (error) {
-        if (bytes > 8 * 1024 * 1024) throw error;
         if ((error as NodeJS.ErrnoException).code !== "ENOTDIR") diagnostics.push(`${manifestPath}: ${String(error)}`);
       }
     }
@@ -94,7 +121,7 @@ export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkills
     return { ...chosen, sources };
   }).sort((a, b) => a.record.manifest.name.localeCompare(b.record.manifest.name));
   return { workingDir: root, projectSkillsEnabled: enabled, entries, diagnostics,
-    assertAvailable(name) {
+    assertAvailable(name: string) {
       const original = entries.find(e => e.record.manifest.name === name);
       const current = loadWorkspaceSkills(root, options, compatibility).entries.find(e => e.record.manifest.name === name);
       if (!current || current.disabledReasons.length) throw new Error(`Skill ${name} unavailable: ${current?.disabledReasons.join(", ") ?? "not installed"}`);

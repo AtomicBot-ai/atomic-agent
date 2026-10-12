@@ -303,6 +303,7 @@ export function runSlashCommand(
       reportUnknownLocalModel(result.localModelsPullModelId, dispatch);
     }
   }
+  if (result.localModelsEngine) callbacks.onLocalModelsEngineRequested?.(result.localModelsEngine);
   if (result.localModelsUseModelId) {
     if (isKnownLocalModelId(result.localModelsUseModelId)) {
       callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);

@@ -83,6 +83,18 @@ describe("RunModeOrchestrator.setMode", () => {
     };
   }
 
+  it("Stop during a provider switch prevents Fusion from starting a local model afterward", async () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    let wanted = true;
+    let finish!: () => void;
+    app.setActive.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({} as never); }));
+    const pending = app.orchestrator.setMode("fusion", { stillWanted: () => wanted });
+    wanted = false; finish(); await pending;
+    expect(app.deps.localModels.startDaemon).not.toHaveBeenCalled();
+    expect(app.deps.localModels.adoptDaemonForRoute).not.toHaveBeenCalled();
+  });
+
   it("fusion over a daemon that is already up adopts it instead of starting a second one", async () => {
     seed(BOTH_LEGS);
     const app = harness();
@@ -260,6 +272,7 @@ describe("RunModeOrchestrator.setMode", () => {
           id: "keyless",
           kind: "openai-compatible",
           baseUrl: "https://a.invalid",
+          apiKeyEnvVar: "ATOMIC_TEST_MISSING_KEY",
         },
         {
           id: "openrouter",

@@ -134,4 +134,21 @@ describe("session workspace skills and live policy", () => {
     await expect(tool.run({ skill: "gog-workspace", script: "check-gog.sh" }, { sessionId: "a", stepIndex: 0, workingDir: a, modelMode: "cloud", workspaceSkills: load(), signal: new AbortController().signal })).rejects.toThrow();
     expect(approvals).toBe(1);
   });
+  it("degrades a missing workspace to a diagnostic instead of throwing", () => {
+    const skills = load(join(base, "gone"));
+    expect(skills.entries).toEqual([]);
+    expect(skills.diagnostics.join("\n")).toMatch(/unavailable/);
+    expect(() => skills.assertAvailable("example")).toThrow(/unavailable/);
+  });
+
+  it("keeps the startup policy when the config file becomes malformed", () => {
+    put(join(a, ".agents/skills"), "kept"); put(join(a, ".agents/skills"), "banned");
+    const c = getConfig();
+    mkdirSync(dirname(c.paths.userConfigFile), { recursive: true }); writeFileSync(c.paths.userConfigFile, "{ not json");
+    const skills = loadWorkspaceSkills(a, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName,
+      configFile: c.paths.userConfigFile, defaults: { ...c.skills, disabled: ["banned"] } });
+    expect(skills.entries.find(e => e.record.manifest.name === "kept")?.disabledReasons).toEqual([]);
+    expect(skills.entries.find(e => e.record.manifest.name === "banned")?.disabledReasons).toEqual(["disabled globally"]);
+    expect(skills.diagnostics.join("\n")).toMatch(/config unreadable/);
+  });
 });

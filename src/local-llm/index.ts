@@ -44,6 +44,7 @@ export {
   resolveServerBinPath,
   resolveModelDir,
   resolveModelFilePath,
+  resolveChatModelWeightsPath,
   resolveMmprojFilePath,
   resolveVersionFilePath,
   resolveBackendCheckFilePath,
@@ -282,6 +283,15 @@ export {
   formatGgufSize,
   ggufSizeGb,
 } from "./catalog/huggingface-model-def.js";
+export {
+  buildLocalGgufModelDef,
+  buildLocalGgufModelId,
+  describeMissingLocalGguf,
+  looksLikeLocalGgufPath,
+  MANAGED_GGUF_PATH_ERROR,
+  resolveLocalGgufFile,
+  type LocalGgufFile,
+} from "./catalog/local-gguf.js";
 export {
   parseHuggingFaceModelRef,
   type HuggingFaceModelRef,

@@ -9,7 +9,7 @@ Ordinary `SKILL.md` requires a name and description; version is optional. In `.c
 
 The model receives descriptions first, without the local catalog quota; the complete cloud request is checked against its context window. `skill.view` loads the body with its source directory. Loaded cloud state is reconciled before each step: body edits refresh, disappearance/disable/source change deactivate. A new source needs another view. Repeated-load shortcuts also check the current source and fingerprint. The [runtime workspace contract](../../runtime/docs/cloud-workspace.md) describes instruction discovery and persistence.
 
-Discovery is bounded to 4,096 skill-directory entries, 1 MiB per manifest and 8 MiB total manifest content. Invalid manifests and external project symlinks yield diagnostics. Exceeding the aggregate scan/content limits fails preparation. Project files are never installed or copied as part of discovery.
+Discovery is bounded to 4,096 skill-directory entries, 1 MiB per manifest and 8 MiB total manifest content. Invalid manifests and external project symlinks yield diagnostics. Exceeding the aggregate scan/content limits stops discovery at that point with a diagnostic. A missing or unreadable workspace, or a malformed config file, never fails a step: the workspace degrades to no skills, or to the startup policy, with a diagnostic. Project files are never installed or copied as part of discovery.
 
 ## Disable scopes
 

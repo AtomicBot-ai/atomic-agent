@@ -340,7 +340,7 @@ describe("the composer's route controls inside the app", () => {
     // was two trips through two different switches.
     const app = mountFusionApp();
     await waitUntil(
-      () => app.frame().includes("claude-opus-5 ⇄ qwen-3.5-4b"),
+      () => app.frame().includes("claude-o") && app.frame().includes("Local l") && app.frame().includes("qwen-3"),
       "the fusion pair",
     );
     await clickUntil(
@@ -359,18 +359,18 @@ describe("the composer's route controls inside the app", () => {
   it("keeps the two halves apart: clicking a leg opens that leg's switch", async () => {
     const app = mountFusionApp();
     await waitUntil(
-      () => app.frame().includes("claude-opus-5 ⇄ qwen-3.5-4b"),
+      () => app.frame().includes("claude-o") && app.frame().includes("Local l") && app.frame().includes("qwen-3"),
       "the fusion pair",
     );
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "qwen-3.5-4b"),
-      () => app.frame().includes("WORKERS"),
+      () => locate(app.frame(), "qwen-3"),
+      () => app.frame().includes("WORKER MODEL"),
       "click on the worker half",
     );
     // Not the orchestrator's model switch: the right-hand half names
     // the worker leg, so that is the list it opens.
-    expect(app.frame()).not.toContain("MODEL");
+    expect(app.frame()).not.toContain("ORCHESTRATOR MODEL");
     expect(app.swaps()).toBe(0);
     app.unmount();
   });

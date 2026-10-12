@@ -1,0 +1,38 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+
+import { resetConfigCache } from "../config/index.js";
+import { ATOMIC_CORE_EXPERIMENTAL_ENV } from "../local-llm/core/experimental.js";
+import { modelsEngineCommand } from "./models-engine.js";
+
+let stateDir: string;
+beforeEach(() => {
+  stateDir = mkdtempSync(join(tmpdir(), "models-engine-"));
+  process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+  delete process.env[ATOMIC_CORE_EXPERIMENTAL_ENV];
+  resetConfigCache();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete process.env.ATOMIC_AGENT_STATE_DIR;
+  delete process.env[ATOMIC_CORE_EXPERIMENTAL_ENV];
+  resetConfigCache();
+  rmSync(stateDir, { recursive: true, force: true });
+});
+
+async function status(): Promise<Record<string, unknown>> {
+  const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  expect(await modelsEngineCommand(["status"])).toBe(0);
+  const line = String(out.mock.calls.at(-1)?.[0]);
+  out.mockRestore();
+  return JSON.parse(line) as Record<string, unknown>;
+}
+
+it("reports whether frontends may offer Atomic Chat", async () => {
+  expect(await status()).toMatchObject({ engine: "llama-server", choiceEnabled: false });
+  process.env[ATOMIC_CORE_EXPERIMENTAL_ENV] = "1";
+  expect(await status()).toMatchObject({ engine: "llama-server", choiceEnabled: true });
+});

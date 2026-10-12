@@ -97,7 +97,7 @@ export function ComposerSwitchPopup({
       {showTitle ? (
         <Text color={chromeTheme.colors.railForeground} bold>
           {fitToWidth(
-            ` ${selectComposerSwitchTitle(open.kind).toUpperCase()} ${counter}`,
+            ` ${selectComposerSwitchTitle(open.kind, state).toUpperCase()} ${counter}`,
             inner,
           )}
         </Text>

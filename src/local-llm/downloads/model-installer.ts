@@ -2,13 +2,15 @@ import { existsSync, mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type {
-  EmbeddingModelDef,
-  EmbeddingModelId,
-  LocalModelDef,
-  LocalModelId,
+import {
+  listLocalModels,
+  type EmbeddingModelDef,
+  type EmbeddingModelId,
+  type LocalModelDef,
+  type LocalModelId,
 } from "../catalog/models-catalog.js";
 import {
+  resolveChatModelWeightsPath,
   resolveModelDir,
   resolveModelFilePath,
   resolveMmprojFilePath,
@@ -25,7 +27,7 @@ export function isModelDownloaded(
   dataDir: string,
   model: LocalModelDef,
 ): boolean {
-  return existsSync(resolveModelFilePath(dataDir, model.id, model.filename));
+  return existsSync(resolveChatModelWeightsPath(dataDir, model));
 }
 
 /**
@@ -45,18 +47,39 @@ export function isMmprojDownloaded(
 }
 
 /**
+ * A `file:` URL names a file on this machine, which no download can
+ * fetch. It reaches here only from an entry that lost its `localPath`
+ * and could not get it back from the URL (see `custom-models-schema.ts`);
+ * say what to do instead of letting `fetch` fail with a transport error.
+ */
+function refuseFileUrl(model: LocalModelDef, url: string): void {
+  if (!url.startsWith("file:")) return;
+  throw new Error(
+    `${model.name} points at a file on this machine (${url}), which cannot be downloaded; add the .gguf again by its path`,
+  );
+}
+
+/**
  * Download the GGUF weights for `model`. Idempotent — returns immediately
  * if the destination file already exists. Does **not** touch the mmproj
  * projector; call `downloadMmproj` separately when the caller wants
- * multimodal support.
+ * multimodal support. A model registered from disk (`localPath`) is
+ * never downloaded: its file is there, or the error says it moved.
  */
 export async function downloadModel(
   dataDir: string,
   model: LocalModelDef,
   opts?: ModelDownloadOptions,
 ): Promise<void> {
+  if (model.localPath) {
+    if (existsSync(model.localPath)) return;
+    throw new Error(
+      `local model file not found: ${model.localPath} (it was added from disk, so there is nothing to download)`,
+    );
+  }
   const dest = resolveModelFilePath(dataDir, model.id, model.filename);
   if (existsSync(dest)) return;
+  refuseFileUrl(model, model.huggingFaceUrl);
   mkdirSync(dirname(dest), { recursive: true });
   await downloadFile(model.huggingFaceUrl, dest, opts);
 }
@@ -78,6 +101,7 @@ export async function downloadMmproj(
   }
   const dest = resolveMmprojFilePath(dataDir, model.id, model.mmprojFilename);
   if (existsSync(dest)) return;
+  refuseFileUrl(model, model.mmprojUrl);
   mkdirSync(dirname(dest), { recursive: true });
   await downloadFile(model.mmprojUrl, dest, opts);
 }
@@ -86,11 +110,17 @@ export async function downloadMmproj(
  * Delete the on-disk directory for a model (GGUF + mmproj). Async so it
  * does not block the Ink event loop on multi-gigabyte models — `rmSync`
  * here used to freeze the TUI for several seconds on slower disks.
+ *
+ * A model registered from disk (`localPath`) owns no files: the GGUF is
+ * the operator's, so this deletes nothing and the caller only drops the
+ * catalog entry.
  */
 export async function removeModel(
   dataDir: string,
   modelId: LocalModelId,
 ): Promise<void> {
+  const def = listLocalModels().find((m) => m.id === modelId);
+  if (def?.localPath) return;
   await rm(resolveModelDir(dataDir, modelId), {
     recursive: true,
     force: true,

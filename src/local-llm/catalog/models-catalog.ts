@@ -49,6 +49,13 @@ export interface LocalModelDef {
   name: string;
   filename: string;
   huggingFaceUrl: string;
+  /**
+   * Absolute path of a GGUF the operator already had on disk (issue
+   * #631, `local-gguf.ts`). When set, the weights are launched from this
+   * path instead of `<dataDir>/models/<id>/<filename>`, are never
+   * downloaded, and are never deleted by `removeModel`.
+   */
+  localPath?: string;
   fileSizeGb: number;
   sizeLabel: string;
   description: string;

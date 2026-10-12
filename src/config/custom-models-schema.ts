@@ -9,6 +9,9 @@
  * and defaulted, so a hand-written entry can stay to four lines.
  */
 
+import { isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { ConfigValidationError } from "./config-validation-error.js";
 import type { LocalModelDef } from "../local-llm/catalog/models-catalog.js";
 
@@ -52,6 +55,45 @@ function requireUrl(raw: unknown, field: string): string {
   return str;
 }
 
+/**
+ * `localPath` of a model registered from disk (issue #631): an absolute
+ * path to a `.gguf`. Whether the file still exists is a launch-time
+ * question, not a config one — a moved file must not make the whole
+ * config unreadable.
+ */
+function optionalLocalPath(raw: unknown, field: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const str = requireString(raw, field);
+  if (!isAbsolute(str) || !/\.gguf$/i.test(str)) {
+    throw new ConfigValidationError(
+      field,
+      `expected an absolute path to a .gguf file, got ${JSON.stringify(str)}`,
+    );
+  }
+  return str;
+}
+
+/**
+ * An entry added from disk stores the file twice: `localPath`, and the
+ * matching `file://` URL in `huggingFaceUrl`. A build older than config
+ * v76 rewrites `customModels` from what it parsed and drops `localPath`
+ * on the way, leaving only the URL. Recover the path from it, so the
+ * entry keeps launching from the operator's file instead of turning
+ * into a "download" of a `file:` URL. Anything that does not come back
+ * as an absolute `.gguf` path is left alone; the download refuses
+ * `file:` URLs with its own message.
+ */
+function localPathFromFileUrl(url: string): string | undefined {
+  if (!url.startsWith("file:")) return undefined;
+  let path: string;
+  try {
+    path = fileURLToPath(url);
+  } catch {
+    return undefined;
+  }
+  return isAbsolute(path) && /\.gguf$/i.test(path) ? path : undefined;
+}
+
 function optionalNumber(raw: unknown, field: string, fallback: number): number {
   if (raw === undefined || raw === null) return fallback;
   const value = typeof raw === "number" ? raw : Number.NaN;
@@ -85,11 +127,21 @@ export function parseCustomLocalModel(
   }
   const fileSizeGb = optionalNumber(entry.fileSizeGb, `${field}.fileSizeGb`, 0);
   const supportsVision = entry.supportsVision === true;
+  const storedLocalPath = optionalLocalPath(
+    entry.localPath,
+    `${field}.localPath`,
+  );
+  const filename = requireSafeFilename(entry.filename, `${field}.filename`);
+  const huggingFaceUrl = requireUrl(
+    entry.huggingFaceUrl,
+    `${field}.huggingFaceUrl`,
+  );
+  const localPath = storedLocalPath ?? localPathFromFileUrl(huggingFaceUrl);
   const def: LocalModelDef = {
     id: id as LocalModelDef["id"],
     name: optionalString(entry.name, id),
-    filename: requireSafeFilename(entry.filename, `${field}.filename`),
-    huggingFaceUrl: requireUrl(entry.huggingFaceUrl, `${field}.huggingFaceUrl`),
+    filename,
+    huggingFaceUrl,
     fileSizeGb,
     sizeLabel: optionalString(entry.sizeLabel, `${fileSizeGb.toFixed(1)} GB`),
     description: optionalString(entry.description, "Custom model"),
@@ -107,6 +159,7 @@ export function parseCustomLocalModel(
     ),
     family: "custom",
     supportsVision,
+    ...(localPath !== undefined ? { localPath } : {}),
   };
   if (!supportsVision) return def;
   return {

@@ -25,7 +25,11 @@ import {
   writeUserConfigFileSync,
 } from "../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
-import { getConfig, resetConfigCache } from "../config/index.js";
+import {
+  addCustomModel,
+  getConfig,
+  resetConfigCache,
+} from "../config/index.js";
 import * as localLlm from "../local-llm/index.js";
 import {
   resetLatestReleaseCache,
@@ -271,6 +275,65 @@ describe("runLocalModelsPull — projector failure after the weights", () => {
     expect(stderrChunks.join("")).toMatch(
       /note: projector download failed \(Download failed: HTTP 404 Not Found\) — qwen-3.5-4b is usable text-only; 'models pull --mmproj qwen-3.5-4b'/,
     );
+  });
+});
+
+describe("runLocalModelsPull — a GGUF added from disk", () => {
+  let stateDir: string;
+  let userDir: string;
+  let stderrChunks: string[];
+  let previousFetch: typeof fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-models-pull-local-"));
+    userDir = mkdtempSync(join(tmpdir(), "atomic-models-pull-local-user-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+    stderrChunks = [];
+    previousFetch = globalThis.fetch;
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+    vi.restoreAllMocks();
+    localLlm.setCustomLocalModels([]);
+    rmSync(stateDir, { recursive: true, force: true });
+    rmSync(userDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+  });
+
+  function addFromDisk(): { id: string; path: string } {
+    const path = join(userDir, "model.gguf");
+    writeFileSync(path, Buffer.alloc(64, 1));
+    const def = localLlm.buildLocalGgufModelDef({ path, sizeBytes: 64 });
+    addCustomModel(def);
+    return { id: def.id, path };
+  }
+
+  it("finds the file and fetches nothing", async () => {
+    const { id, path } = addFromDisk();
+    expect(await runLocalModelsPull([id])).toBe(0);
+    expect(stderrChunks.join("")).toContain(`${id} is a local file: ${path}`);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a vanished file exits 1 with its path and fetches nothing", async () => {
+    const { id, path } = addFromDisk();
+    rmSync(path);
+    expect(await runLocalModelsPull([id])).toBe(1);
+    expect(stderrChunks.join("")).toContain(
+      `${id}: local file not found: ${path}`,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

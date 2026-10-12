@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { readCoreBackend, type ManagedEngine } from "./core/core-state.js";
 
 export function resolveBackendDir(dataDir: string): string {
   return join(dataDir, "backend");
@@ -11,7 +12,13 @@ export function resolveModelsDir(dataDir: string): string {
 export function resolveServerBinPath(
   dataDir: string,
   binaryName: string,
+  engine?: ManagedEngine,
 ): string {
+  if (engine === "atomic-core") {
+    const backend = readCoreBackend(dataDir);
+    if (!backend) throw new Error("Atomic Core backend is not installed.");
+    return backend.binary;
+  }
   return join(resolveBackendDir(dataDir), binaryName);
 }
 
@@ -25,6 +32,20 @@ export function resolveModelFilePath(
   filename: string,
 ): string {
   return join(resolveModelDir(dataDir, modelId), filename);
+}
+
+/**
+ * Where a chat model's weights are read from: the operator's own file
+ * for a model registered from disk (`localPath`), otherwise the managed
+ * per-model directory.
+ */
+export function resolveChatModelWeightsPath(
+  dataDir: string,
+  model: { id: string; filename: string; localPath?: string },
+): string {
+  return (
+    model.localPath ?? resolveModelFilePath(dataDir, model.id, model.filename)
+  );
 }
 
 /**

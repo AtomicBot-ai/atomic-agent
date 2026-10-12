@@ -81,8 +81,12 @@ describe("clampRowsForLegacyConhost", () => {
 describe("legacyConhostStartupHint", () => {
   it("recommends Windows Terminal on a legacy conhost", () => {
     const hint = legacyConhostStartupHint({ platform: "win32", env: {} });
-    expect(hint).toContain("Windows Terminal");
-    expect(hint).toContain("ATOMIC_AGENT_CONHOST_GUARD=0");
+    expect(hint).toBe(
+      "Tip: this is the classic Windows console. The UI works here, but " +
+        "looks better in Windows Terminal (run `wt`).",
+    );
+    expect(hint).not.toContain("ATOMIC_AGENT_CONHOST_GUARD");
+    expect(hint).not.toContain("\u2014");
   });
 
   it("stays silent on a modern host", () => {

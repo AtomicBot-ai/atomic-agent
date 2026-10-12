@@ -27,6 +27,10 @@ import {
   WINDOWS_BACKEND_ASSETS,
 } from "./windows-backend-variant.js";
 
+import { isCoreBackendInstalled, installCoreBackend } from "../core/core-backend.js";
+import { checkCoreUpdate } from "../core/core-install.js";
+import type { ManagedEngine } from "../core/core-state.js";
+
 const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant-nightly";
 
 /**
@@ -188,11 +192,15 @@ export class GithubRateLimitedError extends Error {
   }
 }
 
-export async function checkForBackendUpdate(dataDir: string): Promise<{
+export async function checkForBackendUpdate(dataDir: string, engine?: ManagedEngine): Promise<{
   updateAvailable: boolean;
   latestTag: string | null;
   currentTag: string | null;
 }> {
+  if (engine === "atomic-core") {
+    const core = await checkCoreUpdate(dataDir);
+    return { updateAvailable: core.updateAvailable || !isCoreBackendInstalled(dataDir), latestTag: core.requiresAgentUpdate ? `Atomic Core ${core.compatibleVersion}; ${core.latestVersion} needs a newer Agent build` : `Atomic Core ${core.compatibleVersion}`, currentTag: core.currentVersion ? `Atomic Core ${core.currentVersion}` : null };
+  }
   const current = readBackendVersion(dataDir);
   const release = await fetchLatestRelease();
   if (release === null) {
@@ -304,7 +312,8 @@ function isNewerRelease(
   return releaseAt > currentAt;
 }
 
-export function isBackendDownloaded(dataDir: string): boolean {
+export function isBackendDownloaded(dataDir: string, engine?: ManagedEngine): boolean {
+  if (engine === "atomic-core") return isCoreBackendInstalled(dataDir);
   try {
     const { binaryName } = resolvePlatformAsset();
     return existsSync(resolveServerBinPath(dataDir, binaryName));
@@ -325,8 +334,9 @@ type DownloadBackendOptions = Pick<
 
 export async function downloadBackend(
   dataDir: string,
-  opts?: DownloadBackendOptions,
+  opts?: DownloadBackendOptions & { engine?: ManagedEngine },
 ): Promise<{ ok: true; tag: string }> {
+  if (opts?.engine === "atomic-core") return installCoreBackend(dataDir, opts);
   const { assetName, binaryName } = resolveDownloadAsset();
   // Always hit GitHub for an actual install so we don't grab a stale
   // tag from the snapshot cache.
