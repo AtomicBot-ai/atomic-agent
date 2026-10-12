@@ -57,14 +57,32 @@ type KeyFile =
   | { state: "unreadable" }
   | { state: "read"; key: string | null };
 
+/**
+ * Windows refuses to open or replace a file another process (an AV scan,
+ * the indexer) briefly holds open; those errors pass in a moment.
+ */
+function isTransientWindowsError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  return (
+    process.platform === "win32" &&
+    (code === "EPERM" || code === "EACCES" || code === "EBUSY")
+  );
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function readKeyFile(dataDir: string): KeyFile {
-  try {
-    const key = readFileSync(resolveApiKeyFilePath(dataDir), "utf-8").trim();
-    return { state: "read", key: isUsableKey(key) ? key : null };
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "ENOENT"
-      ? { state: "missing" }
-      : { state: "unreadable" };
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const key = readFileSync(resolveApiKeyFilePath(dataDir), "utf-8").trim();
+      return { state: "read", key: isUsableKey(key) ? key : null };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { state: "missing" };
+      if (!isTransientWindowsError(err) || attempt >= 4) return { state: "unreadable" };
+      sleepSync(25);
+    }
   }
 }
 
@@ -72,10 +90,6 @@ function readKeyFile(dataDir: string): KeyFile {
 export function readManagedApiKey(dataDir: string): string | null {
   const file = readKeyFile(dataDir);
   return file.state === "read" ? file.key : null;
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /**
@@ -94,22 +108,18 @@ function readWrittenKey(dataDir: string): string | null {
 }
 
 /**
- * The persisted key, generating it on first use. Two processes racing
- * here agree on one key: the new key is written to a private temp file
- * and hard-linked into place, which fails for the loser, who then reads
- * the winner's. Best-effort: when the file cannot be written (read-only
- * data dir) this returns `null` and the launch stays as unprotected as
- * it was before, rather than failing.
+ * The persisted key, generating it on first use. Best-effort: when the
+ * file cannot be written (read-only data dir) this returns `null` and the
+ * launch stays as unprotected as it was before, rather than failing.
  */
 export function ensureManagedApiKey(dataDir: string): string | null {
-  const path = resolveApiKeyFilePath(dataDir);
   let file = readKeyFile(dataDir);
   if (file.state === "unreadable") {
     // The key may be fine and a running daemon may hold it: restore the
     // owner's read bit and look again, but never overwrite a key that
     // could not be read.
     try {
-      chmodSync(path, SECRET_FILE_MODE);
+      chmodSync(resolveApiKeyFilePath(dataDir), SECRET_FILE_MODE);
     } catch {
       /* not ours to change */
     }
@@ -119,8 +129,18 @@ export function ensureManagedApiKey(dataDir: string): string | null {
   if (file.state === "read") {
     // Present but not a key: give a racing writer the usual grace, then
     // replace what is still unusable instead of launching keyless.
-    return file.key ?? readWrittenKey(dataDir) ?? replaceUnusableKey(dataDir);
+    return file.key ?? readWrittenKey(dataDir) ?? healUnusableKey(dataDir);
   }
+  return createKeyFile(dataDir);
+}
+
+/**
+ * Create the missing key file. Two processes racing here agree on one
+ * key: the new key is written to a private temp file and hard-linked into
+ * place, which fails for the loser, who then reads the winner's.
+ */
+function createKeyFile(dataDir: string): string | null {
+  const path = resolveApiKeyFilePath(dataDir);
   const key = randomBytes(32).toString("hex");
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -138,11 +158,7 @@ export function ensureManagedApiKey(dataDir: string): string | null {
         });
       }
     } finally {
-      try {
-        unlinkSync(tmp);
-      } catch {
-        /* already gone */
-      }
+      unlinkQuietly(tmp);
     }
   } catch {
     // Lost an exclusive-create race, or the directory is not writable:
@@ -158,17 +174,25 @@ export function ensureManagedApiKey(dataDir: string): string | null {
   return readWrittenKey(dataDir);
 }
 
-/**
- * A heal lock older than this is stale even when its pid looks alive (the
- * pid may have been reused). A dead holder's lock is stale at once.
- */
-const HEAL_LOCK_STALE_MS = 3_000;
-
-function healLockPath(dataDir: string): string {
-  return `${resolveApiKeyFilePath(dataDir)}.heal-lock`;
+function unlinkQuietly(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    /* already gone */
+  }
 }
 
-/** `false` only when the pid in the lock (`<pid> <token>`) is gone. */
+/** How long a healer waits for a usable key (its own or another's). */
+const HEAL_WAIT_MS = 3_000;
+
+/**
+ * A lock file this old is abandoned even when its pid looks alive (the
+ * pid may have been reused). Holders keep a lock for a few syscalls, so
+ * this never catches a live one; a dead holder's lock is abandoned at once.
+ */
+const LOCK_ABANDONED_MS = 30_000;
+
+/** `false` only when the pid in a lock file (`<pid> <token>`) is gone. */
 function lockHolderAlive(contents: string): boolean {
   const pid = Number.parseInt(contents, 10);
   if (!Number.isInteger(pid) || pid <= 0) return true;
@@ -180,84 +204,67 @@ function lockHolderAlive(contents: string): boolean {
   }
 }
 
-/** The lock's contents when it is stale, `null` when it is live or gone. */
-function staleLockContents(lock: string): string | null {
+function isAbandoned(lock: string): boolean {
   try {
     const contents = readFileSync(lock, "utf-8");
-    const old = Date.now() - statSync(lock).mtimeMs >= HEAL_LOCK_STALE_MS;
-    return old || !lockHolderAlive(contents) ? contents : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Remove the lock only if it still holds `contents`. It is renamed to a
- * unique name first, so of two processes doing this only one gets it; a
- * lock that turns out to be someone else's is linked back into place
- * (unless a newer one already took it).
- */
-function removeLockIfHolds(lock: string, contents: string): boolean {
-  const grave = `${lock}.${process.pid}-${randomBytes(4).toString("hex")}`;
-  try {
-    renameSync(lock, grave);
+    const old = Date.now() - statSync(lock).mtimeMs >= LOCK_ABANDONED_MS;
+    return old || !lockHolderAlive(contents);
   } catch {
     return false;
   }
-  let ours = false;
+}
+
+function newLockToken(): string {
+  return `${process.pid} ${randomBytes(8).toString("hex")}\n`;
+}
+
+function createExclusive(path: string, contents: string): boolean {
   try {
-    ours = readFileSync(grave, "utf-8") === contents;
-    if (!ours) linkSync(grave, lock);
+    writeFileSync(path, contents, { encoding: "utf-8", flag: "wx" });
+    return true;
   } catch {
-    /* a newer lock is in place */
+    return false;
   }
+}
+
+/** Remove a lock file only while it still holds our token. */
+function releaseLock(lock: string, token: string): void {
   try {
-    unlinkSync(grave);
+    if (readFileSync(lock, "utf-8") === token) unlinkSync(lock);
   } catch {
     /* already gone */
   }
-  return ours;
-}
-
-/** Exclusively create the heal lock: its contents, or `null` when held. */
-function tryTakeHealLock(dataDir: string): string | null {
-  const lock = healLockPath(dataDir);
-  const contents = `${process.pid} ${randomBytes(8).toString("hex")}\n`;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      writeFileSync(lock, contents, { encoding: "utf-8", flag: "wx" });
-      return contents;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") return null;
-    }
-    const stale = staleLockContents(lock);
-    if (stale === null || !removeLockIfHolds(lock, stale)) {
-      if (existsSync(lock)) return null;
-    }
-  }
-  return null;
 }
 
 /**
- * Wait for the lock holder's key. The holder may run `icacls` on Windows,
- * which takes far longer than the create path's grace, so wait while the
- * lock is live rather than a fixed 200ms; stop early once it is released
- * or its holder has died.
+ * Remove an abandoned heal lock. Breakers take `<lock>.break` first, so
+ * exactly one at a time re-checks and unlinks: while the abandoned lock
+ * exists nobody can create a new one in its place and its holder is gone,
+ * so the unlink can only remove that abandoned lock, never a live one. A
+ * breaker holds the guard for three syscalls; a guard whose own holder
+ * died there is cleared the same way the lock is judged.
  */
-function waitForHealedKey(dataDir: string): string | null {
-  const lock = healLockPath(dataDir);
-  const deadline = Date.now() + HEAL_LOCK_STALE_MS;
-  while (Date.now() < deadline) {
-    const key = readManagedApiKey(dataDir);
-    if (key) return key;
-    if (!existsSync(lock) || staleLockContents(lock) !== null) break;
-    sleepSync(25);
+function breakAbandonedLock(lock: string): void {
+  const guard = `${lock}.break`;
+  const token = newLockToken();
+  if (!createExclusive(guard, token)) {
+    if (isAbandoned(guard)) unlinkQuietly(guard);
+    return;
   }
-  return readManagedApiKey(dataDir);
+  try {
+    if (isAbandoned(lock)) unlinkQuietly(lock);
+  } finally {
+    releaseLock(guard, token);
+  }
 }
 
-function releaseHealLock(dataDir: string, contents: string): void {
-  removeLockIfHolds(healLockPath(dataDir), contents);
+/** Take the heal lock: our token, or `null` while someone else holds it. */
+function tryTakeHealLock(lock: string): string | null {
+  const token = newLockToken();
+  if (createExclusive(lock, token)) return token;
+  if (!isAbandoned(lock)) return null;
+  breakAbandonedLock(lock);
+  return createExclusive(lock, token) ? token : null;
 }
 
 /** Windows refuses to replace a file another process (an AV scan) has open. */
@@ -267,59 +274,74 @@ function renameOverSync(from: string, to: string): void {
       renameSync(from, to);
       return;
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      const transient = code === "EPERM" || code === "EACCES" || code === "EBUSY";
-      if (process.platform !== "win32" || !transient || attempt >= 4) throw err;
+      if (!isTransientWindowsError(err) || attempt >= 4) throw err;
       sleepSync(25);
     }
   }
 }
 
+/** A fresh key in a private temp file (0600, restricted ACL), or `null`. */
+function writeTempKey(path: string): string | null {
+  const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+  try {
+    writeFileSync(tmp, `${randomBytes(32).toString("hex")}\n`, {
+      encoding: "utf-8",
+      mode: SECRET_FILE_MODE,
+      flag: "wx",
+    });
+  } catch {
+    return null;
+  }
+  restrictWindowsAcl(tmp);
+  return tmp;
+}
+
 /**
  * Overwrite a key file that exists but holds no usable key (empty,
- * whitespace, a value with commas) with a fresh one. Healers take a lock
- * and re-read under it, so two processes healing at once agree on one
- * key: the second finds the first one's key and keeps it. A process that
- * cannot take the lock waits for the holder's key. The new key is written
- * to a private temp file (0600, and the restricted ACL on Windows) and
- * renamed over the old one, so a reader never sees a half-written file.
+ * whitespace, a value with commas) with a fresh one, so that every
+ * process healing at once ends up with the same key.
+ *
+ * The slow part (writing the temp key, `icacls` on Windows) happens before
+ * the lock, so the lock is held only to re-read the file and, if it is
+ * still unusable, rename the temp key over it. A process that cannot take
+ * the lock keeps re-reading until a usable key appears (bounded), and
+ * every process returns what it finally reads from disk, never the key it
+ * generated.
  */
-function replaceUnusableKey(dataDir: string, waited = false): string | null {
-  const lock = tryTakeHealLock(dataDir);
-  if (!lock) {
-    if (waited) return readManagedApiKey(dataDir);
-    // Holder gone or done without a key: take the (now stale) lock and heal.
-    return waitForHealedKey(dataDir) ?? replaceUnusableKey(dataDir, true);
-  }
+function healUnusableKey(dataDir: string): string | null {
+  const path = resolveApiKeyFilePath(dataDir);
+  const lock = `${path}.heal-lock`;
+  const tmp = writeTempKey(path);
+  // Cannot write next to the key file, so cannot replace it either.
+  if (!tmp) return readManagedApiKey(dataDir);
+  const deadline = Date.now() + HEAL_WAIT_MS;
   try {
-    const file = readKeyFile(dataDir);
-    if (file.state === "read" && file.key) return file.key;
-    if (file.state === "unreadable") return null;
-    const path = resolveApiKeyFilePath(dataDir);
-    const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-    try {
-      writeFileSync(tmp, `${randomBytes(32).toString("hex")}\n`, {
-        encoding: "utf-8",
-        mode: SECRET_FILE_MODE,
-      });
-      restrictWindowsAcl(tmp);
-      renameOverSync(tmp, path);
-    } catch {
-      try {
-        unlinkSync(tmp);
-      } catch {
-        /* never created */
+    for (;;) {
+      const file = readKeyFile(dataDir);
+      if (file.state === "unreadable") return null;
+      if (file.state === "missing") return createKeyFile(dataDir);
+      if (file.key) return file.key;
+      const token = tryTakeHealLock(lock);
+      if (token) {
+        let replaced = false;
+        try {
+          const held = readKeyFile(dataDir);
+          if (held.state === "read" && !held.key) {
+            renameOverSync(tmp, path);
+            replaced = true;
+          }
+        } catch {
+          /* still unusable: retry until the deadline */
+        } finally {
+          releaseLock(lock, token);
+        }
+        if (replaced) return readManagedApiKey(dataDir);
       }
-      return readManagedApiKey(dataDir);
+      if (Date.now() >= deadline) return readManagedApiKey(dataDir);
+      sleepSync(25);
     }
-    try {
-      chmodSync(path, SECRET_FILE_MODE);
-    } catch {
-      /* best-effort on Windows */
-    }
-    return readManagedApiKey(dataDir);
   } finally {
-    releaseHealLock(dataDir, lock);
+    unlinkQuietly(tmp);
   }
 }
 

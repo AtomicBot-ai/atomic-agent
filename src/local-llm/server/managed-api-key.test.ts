@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -116,6 +116,58 @@ describe("managed llama-server api key (#582)", () => {
     expect(readFileSync(path, "utf-8").trim()).toBe(key);
     expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
   });
+
+  it("clears a break guard left by a process that died while breaking a lock", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    writeFileSync(path, "", "utf-8");
+    const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+    writeFileSync(`${path}.heal-lock`, `${deadPid} 0123456789abcdef\n`, "utf-8");
+    writeFileSync(`${path}.heal-lock.break`, `${deadPid} fedcba9876543210\n`, "utf-8");
+    const key = ensureManagedApiKey(dataDir);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(readFileSync(path, "utf-8").trim()).toBe(key);
+    expect(readdirSync(dataDir)).toEqual(["llama-server.key"]);
+  });
+
+  it("waits for a live lock holder and returns the key it writes", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    const lock = `${path}.heal-lock`;
+    writeFileSync(path, "", "utf-8");
+    // A holder in another process: it writes its key after 400ms, then
+    // releases the lock. This process blocks meanwhile, so it must be a child.
+    const holder = spawn(process.execPath, [
+      "-e",
+      `const fs = require("node:fs");
+       setTimeout(() => {
+         fs.writeFileSync(${JSON.stringify(`${path}.holder`)}, "holder-key\\n");
+         fs.renameSync(${JSON.stringify(`${path}.holder`)}, ${JSON.stringify(path)});
+         fs.unlinkSync(${JSON.stringify(lock)});
+       }, 400);`,
+    ]);
+    try {
+      writeFileSync(lock, `${holder.pid} 0123456789abcdef\n`, "utf-8");
+      const started = Date.now();
+      expect(ensureManagedApiKey(dataDir)).toBe("holder-key");
+      expect(Date.now() - started).toBeGreaterThanOrEqual(200);
+      expect(readFileSync(path, "utf-8")).toBe("holder-key\n");
+    } finally {
+      holder.kill();
+    }
+  });
+
+  it("never takes or removes a live holder's lock, and gives up after a bounded wait", () => {
+    const path = resolveApiKeyFilePath(dataDir);
+    const lock = `${path}.heal-lock`;
+    writeFileSync(path, "", "utf-8");
+    const contents = `${process.pid} 0123456789abcdef\n`;
+    writeFileSync(lock, contents, "utf-8");
+    const started = Date.now();
+    expect(ensureManagedApiKey(dataDir)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(readFileSync(path, "utf-8")).toBe("");
+    expect(readFileSync(lock, "utf-8")).toBe(contents);
+    expect(readdirSync(dataDir).sort()).toEqual(["llama-server.key", "llama-server.key.heal-lock"]);
+  }, 10_000);
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "keeps a valid key it cannot read instead of replacing it",
