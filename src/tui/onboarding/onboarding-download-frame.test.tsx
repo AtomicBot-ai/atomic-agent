@@ -33,7 +33,7 @@ const strip = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
 const TEMPLATE_WIDE_PULL = {
   kind: "backend",
   modelId: "_backend",
-  label: "llama.cpp runtime",
+  label: "Local engine",
   percent: 100,
   transferredBytes: 400_100_000_000,
   totalBytes: 999_900_000_000,
@@ -112,7 +112,7 @@ describe("the download screen's frame", () => {
       // pull's counters fill the measured template, so the drawn row IS
       // the measured width (clamped by the terminal at 80 columns).
       const bars =
-        lines.find((line) => line.includes("llama.cpp runtime")) ?? "";
+        lines.find((line) => line.includes("Local engine")) ?? "";
       const leading = bars.length - bars.trimStart().length;
       const width = bars.trimEnd().length - leading;
       expect(width).toBeGreaterThan(0);
@@ -201,7 +201,7 @@ describe("the download screen's frame", () => {
     const lines = strip(view.lastFrame() ?? "").split("\n");
     // Finished weights: no atoms, and the block has not moved for it.
     expect(lines.join("\n")).not.toContain(ATOM_GLYPH);
-    const bars = lines.find((line) => line.includes("llama.cpp runtime")) ?? "";
+    const bars = lines.find((line) => line.includes("Local engine")) ?? "";
     const leading = bars.length - bars.trimStart().length;
     expect(leading).toBeGreaterThan(0);
     expect(lines.length).toBe(30);

@@ -3,10 +3,11 @@ import { classifyDownloadError, DownloadGaveUpError } from "../downloads/downloa
 /**
  * There is no automatic fallback: with atomic-core selected, a failed Core
  * install or start leaves no working local engine. Every such failure ends
- * with both ways forward, for the CLI, the TUI and the desktop.
+ * with the one way forward people see: download again. llama.cpp stays
+ * reachable only through the support command `atomic-agent models engine
+ * llama-server`, which no failure message advertises.
  */
 export const CORE_RETRY_HINT = "Retry with: atomic-agent models update (TUI: press R in Models).";
-export const CORE_SWITCH_BACK_HINT = "Or use llama.cpp: atomic-agent models engine llama-server (TUI: /model engine llama-server).";
 
 /** Where Core became unavailable. */
 export type CoreFailureStage = "download" | "verify" | "backend" | "start";
@@ -43,7 +44,7 @@ const NOT_RETRYABLE: ReadonlySet<CoreFailureReason> = new Set(["unsupported", "v
 
 /**
  * Core is not available as the local engine. `reason` says what happened in
- * plain words; the message adds both ways forward (retry, or llama.cpp).
+ * plain words; the message adds the retry hint.
  */
 export class CoreUnavailableError extends Error {
   override readonly name = "CoreUnavailableError";
@@ -55,7 +56,7 @@ export class CoreUnavailableError extends Error {
   constructor(opts: { stage: CoreFailureStage; reasonCode: CoreFailureReason; detail?: string; retryable?: boolean; cause?: unknown }) {
     const detail = opts.detail?.trim().replace(/\.$/, "");
     const reason = detail ? `${STAGE_TEXT[opts.stage]}: ${detail}.` : `${STAGE_TEXT[opts.stage]}.`;
-    super(`${reason} ${CORE_RETRY_HINT} ${CORE_SWITCH_BACK_HINT}`, opts.cause === undefined ? undefined : { cause: opts.cause });
+    super(`${reason} ${CORE_RETRY_HINT}`, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.stage = opts.stage;
     this.reasonCode = opts.reasonCode;
     this.reason = reason;

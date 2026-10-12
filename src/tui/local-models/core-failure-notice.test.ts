@@ -53,15 +53,16 @@ describe("Atomic Core failure notice", () => {
     expect(showsCoreFailureNotice(state.localModelsPanel)).toBe(false);
   });
 
-  it("R downloads again and L switches to llama.cpp while the notice shows", () => {
+  it("R downloads again while the notice shows, and L still opens the logs tab", () => {
     const state = reduceTuiState(modelsTab(), { type: "local_models_core_failure_set", failure: FAILURE });
     const callbacks = { onLocalModelsCoreRetryRequested: vi.fn(), onLocalModelsEngineRequested: vi.fn() } as unknown as TuiAppCallbacks;
     const dispatch = vi.fn();
     expect(handleLocalModelsTabKey("R", KEY, { state, dispatch, callbacks })).toBe(true);
     expect(callbacks.onLocalModelsCoreRetryRequested).toHaveBeenCalledTimes(1);
-    expect(handleLocalModelsTabKey("L", KEY, { state, dispatch, callbacks })).toBe(true);
-    expect(callbacks.onLocalModelsEngineRequested).toHaveBeenCalledWith("llama-server");
     expect(dispatch).not.toHaveBeenCalled();
+    expect(handleLocalModelsTabKey("L", KEY, { state, dispatch, callbacks })).toBe(true);
+    expect(callbacks.onLocalModelsEngineRequested).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "llm-logs" });
   });
 
   it("leaves L on the logs tab when there is no notice", () => {

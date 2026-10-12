@@ -65,7 +65,7 @@ export function DownloadChip({
   const percent = Math.min(100, Math.max(0, Math.round(pull.percent)));
   const filled = Math.round((percent / 100) * BAR_WIDTH);
   const label = capLabel(
-    pull.kind === "backend" ? "llama.cpp" : String(pull.modelId),
+    pull.kind === "backend" ? "Local engine" : String(pull.modelId),
   );
   if (budget < MINIMAL_COLUMNS) return null;
   const waiting = pull.waiting ?? null;

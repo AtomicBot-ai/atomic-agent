@@ -69,7 +69,7 @@ describe("OnboardingDownloadStep", () => {
     const view = mount(step());
     const line = strip(view.lastFrame() ?? "")
       .split("\n")
-      .find((row) => row.includes("llama.cpp runtime"));
+      .find((row) => row.includes("Local engine"));
     expect(line).toContain("done");
   });
 

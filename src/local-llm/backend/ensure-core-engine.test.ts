@@ -64,7 +64,8 @@ it("reports a failed install with what to offer next instead of throwing", async
     backendUsable: false,
     coreFailure: { stage: "download", reasonCode: "network", retryable: true },
   });
-  expect(result.action === "update_failed" && result.error).toContain("atomic-agent models engine llama-server");
+  expect(result.action === "update_failed" && result.error).toContain("atomic-agent models update");
+  expect(result.action === "update_failed" && result.error).not.toMatch(/llama/i);
 });
 
 it("keeps an older install serving when its upgrade fails", async () => {
