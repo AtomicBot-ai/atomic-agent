@@ -58,3 +58,19 @@ test("an IPC answer is read through its error fields; a success is not a failure
   assert.equal(engineFailureOf({ ok: false, error: "the agent did not answer in time" }), null);
   assert.equal(engineFailureOf(null), null);
 });
+
+test("the agent's current wording (retry, then the way back) and the older one both read", () => {
+  const now = engineFailureIn("Atomic Core could not be downloaded. Retry with: atomic-agent models update (TUI: press R in Models). Or use llama.cpp: atomic-agent models engine llama-server (TUI: /model engine llama-server).");
+  assert.equal(now.stage, "download");
+  assert.equal(now.detail, "Atomic Core could not be downloaded.");
+  const old = engineFailureIn("Atomic Core did not become ready. Switch back with: atomic-agent models engine llama-server (TUI: /model engine llama-server).");
+  assert.equal(old.stage, "start");
+  assert.equal(old.detail, "Atomic Core did not become ready.");
+});
+
+test("the agent's CoreUnavailableError sentences map to their stages", () => {
+  const tail = " Retry with: atomic-agent models update (TUI: press R in Models). Or use llama.cpp: atomic-agent models engine llama-server (TUI: /model engine llama-server).";
+  assert.equal(engineFailureIn("The downloaded Atomic Chat engine did not pass verification." + tail).stage, "verify");
+  assert.equal(engineFailureIn("Atomic Chat could not install its inference backend." + tail).stage, "backend");
+  assert.equal(engineFailureIn("The Atomic Chat engine could not start." + tail).stage, "start");
+});

@@ -13,7 +13,14 @@
  */
 
 /** The agent's own way back, printed at the end of every Core failure (CORE_SWITCH_BACK_HINT). */
-export const CORE_SWITCH_BACK = "Switch back with: atomic-agent models engine llama-server";
+export const CORE_SWITCH_BACK = "Or use llama.cpp: atomic-agent models engine llama-server";
+/* Every hint the agent ends a Core failure with: the retry and the way back
+   (src/local-llm/core/core-errors.ts), and the older wording (Core 0.11 builds). */
+const CORE_HINTS = [
+  "Retry with: atomic-agent models update",
+  CORE_SWITCH_BACK,
+  "Switch back with: atomic-agent models engine llama-server",
+];
 
 export type EngineFailureStage = "download" | "verify" | "backend" | "blocked" | "start";
 export interface EngineFailure {
@@ -43,10 +50,11 @@ const NOT_A_FAILURE = /Stop local models before (?:updating|switching) the engin
 export function engineFailureIn(text: string | null | undefined): EngineFailure | null {
   const all = String(text ?? "");
   if (!all.trim()) return null;
-  if (!all.includes(CORE_SWITCH_BACK) && !/Atomic (?:Chat )?Core|atomic-chat-core|CoreUnavailable/i.test(all)) return null;
+  const hintAt = CORE_HINTS.map((h) => all.indexOf(h)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
+  if (hintAt === undefined && !/Atomic (?:Chat )?Core|atomic-chat-core|CoreUnavailable/i.test(all)) return null;
   if (NOT_A_FAILURE.test(all)) return null;
   const stage = stageOf(all);
-  const detail = (all.split(CORE_SWITCH_BACK)[0] ?? "")
+  const detail = (hintAt === undefined ? all : all.slice(0, hintAt))
     // The agent's own sentence: not a stack frame, not a progress bar line, not the update's "current → latest".
     .split(/\r?\n/).map((l) => l.trim()).reverse().find((l) => l && !/^at\s/.test(l) && !/^\[[= ]*\]/.test(l) && !/^current: /.test(l)) ?? "";
   return { stage, why: WHY[stage], detail: detail.replace(/\s*\(TUI:[^)]*\)\.?\s*$/, "").slice(0, 300) };
@@ -58,8 +66,8 @@ function stageOf(text: string): EngineFailureStage {
   // Blocked first: a download or start the OS refused is that, whatever stage it was in.
   if (/\bEACCES\b|\bEPERM\b|not permitted|permission denied|quarantin|code signature|signature is invalid|SmartScreen|antivirus|blocked|killed: 9|SIGKILL/i.test(text)) return "blocked";
   if (named) return named as EngineFailureStage;
-  if (/failed checksum verification|checksum mismatch|does not match its release/i.test(text)) return "verify";
-  if (/no compatible inference backend|installed a backend without|invalid backend selection/i.test(text)) return "backend";
+  if (/failed checksum verification|checksum mismatch|does not match its release|did not pass verification/i.test(text)) return "verify";
+  if (/no compatible inference backend|installed a backend without|invalid backend selection|could not install its inference backend/i.test(text)) return "backend";
   if (/download|fetch|network|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|offline|\(\d{3}\)/i.test(text)) return "download";
   return "start";
 }
