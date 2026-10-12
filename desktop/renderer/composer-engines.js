@@ -67,11 +67,15 @@ async function composerPickEngine(row) {
   }
   // The switch queue (switch-queue.js) clears SEL.busy once the last queued switch settles.
   SEL.busy = true; SEL.err = null; render();
-  let result;
-  try { result = await swxRun('Changing inference engine…', {}, () => SWXBR.composerEngine(row.id, row.leg)); }
+  let result, ran = false;
+  try { result = await swxRun('Changing inference engine…', {}, () => { ran = true; return SWXBR.composerEngine(row.id, row.leg); }); }
   catch (err) { result = {ok:false, error:err && err.message ? err.message : String(err)}; }
   // A newer choice replaced this one: it owns the selector and its feedback.
-  if (result && result.superseded) return;
+  // One replaced before it ran changed nothing, which is said, since the pick carried no route of its own.
+  if (result && result.superseded) {
+    if (!ran) toast('Engine not changed', 'A newer model or provider choice ran instead. Choose ' + row.label + ' again to use it.');
+    return;
+  }
   if (!result || !result.ok) { SEL.err = result && (result.error || result.refusal) || 'Could not change the engine'; render(); return; }
   await refreshLiveConfig();
   if (result.selectorView !== undefined && result.selectorView !== (SEL.view || 0)) { render(); return; }
