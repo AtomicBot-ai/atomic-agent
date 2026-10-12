@@ -3,6 +3,7 @@
 // pulls in react-reconciler, which picks its build at require time.
 // See src/cli/node-env-bootstrap.ts.
 import "./node-env-bootstrap.js";
+import { execSync } from "node:child_process";
 import { isSea } from "node:sea";
 import { argv, exit } from "node:process";
 import { runAgentCommand } from "./run-agent.js";
@@ -194,7 +195,39 @@ function userArgsFromArgv(): string[] {
 // `installTransportDeadlines`.
 installTransportDeadlines();
 
+/**
+ * Windows consoles default to an OEM code page (CP866 on Russian Windows),
+ * while Node speaks UTF-8, so Cyrillic input, output and copy/paste turn
+ * into mojibake. Switch the console to UTF-8 (65001) for the lifetime of
+ * the process and put the original page back on exit, because chcp changes
+ * the whole console session, not just this process. Only the console code
+ * page changes here; stdout/stderr streams are not touched, so ink and
+ * readline rendering are unaffected.
+ */
+function ensureUtf8Console(): void {
+  if (process.platform !== "win32") return;
+  let previous: string;
+  try {
+    // The chcp output text is localized ("Active code page" and friends);
+    // the trailing number is the only part worth reading.
+    previous = /\d+/.exec(execSync("chcp", { encoding: "utf8" }))?.[0] ?? "";
+    execSync("chcp 65001 >nul", { stdio: "ignore" });
+  } catch {
+    // Non-fatal: some hosts disallow reading or changing the code page.
+    return;
+  }
+  if (!previous || previous === "65001") return;
+  process.on("exit", () => {
+    try {
+      execSync(`chcp ${previous} >nul`, { stdio: "ignore" });
+    } catch {
+      // Best effort: the console may already be closing.
+    }
+  });
+}
+
 async function main(): Promise<number> {
+  ensureUtf8Console();
   const [command, ...rest] = userArgsFromArgv();
   if (command === "-h" || command === "--help") {
     printHelp();
