@@ -572,7 +572,7 @@ export function createRuntimeTurnService(
     }
     const startedAt = Date.now();
     turnUsageMeter.begin(session.id);
-    const localEngine = resolveTurnLocalEngine(getConfig(), providerRegistry.activeTextProviderId);
+    const localEngine = resolveTurnLocalEngine(getConfig(), providerRegistry.activeText.id);
     const engineTag = localEngine ? { localEngine } : {};
     try {
       const result = await turnController.enqueue(submission);

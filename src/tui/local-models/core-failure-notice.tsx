@@ -1,7 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { showsCoreFailureNotice, type LocalModelsPanelState } from "./local-models-panel-state.js";
-import { theme } from "../theme/theme.js";
 
 /** Rows the notice takes, for the panel's height budget. */
 export const CORE_FAILURE_NOTICE_ROWS = 6;
