@@ -65,14 +65,18 @@ async function composerPickEngine(row) {
     SEL.kind = row.leg === 'worker' ? 'workers' : 'model'; SEL.filter = ''; SEL.cursor = 0;
     render(); selEnterModelPane(); return;
   }
+  // The switch queue (switch-queue.js) clears SEL.busy once the last queued switch settles.
   SEL.busy = true; SEL.err = null; render();
   let result;
   try { result = await swxRun('Changing inference engine…', {}, () => SWXBR.composerEngine(row.id, row.leg)); }
   catch (err) { result = {ok:false, error:err && err.message ? err.message : String(err)}; }
-  finally { SEL.busy = false; }
+  // A newer choice replaced this one: it owns the selector and its feedback.
+  if (result && result.superseded) return;
   if (!result || !result.ok) { SEL.err = result && (result.error || result.refusal) || 'Could not change the engine'; render(); return; }
+  await refreshLiveConfig();
+  if (result.selectorView !== undefined && result.selectorView !== (SEL.view || 0)) { render(); return; }
   SEL.kind = row.leg === 'worker' ? 'workers' : 'model'; SEL.filter = ''; SEL.cursor = 0;
-  await refreshLiveConfig(); render(); selEnterModelPane();
+  render(); selEnterModelPane();
 }
 async function composerPickSeatModel(row) {
   const held = restartStopsTurn();

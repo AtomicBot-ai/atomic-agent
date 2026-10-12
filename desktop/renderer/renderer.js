@@ -15536,7 +15536,7 @@ function selRows() {
 }
 
 async function selActivate(row) {
-  if (!row || SEL.busy) return;
+  if (!row) return;
   if (row.type === 'localEngine') return composerPickEngine(row);
   if (row.type === 'seatModel') return composerPickSeatModel(row);
   if (row.type === 'backend') {
