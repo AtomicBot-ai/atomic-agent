@@ -3798,7 +3798,9 @@ export function backendInstalled(): boolean {
 
 export async function modelsEngine(action: string): Promise<CliResult & { value?: unknown }> {
   if (!["status", "check", "atomic-core", "llama-server"].includes(action)) return { ok: false, stdout: "", stderr: "", error: "Unknown engine action" };
-  const result = await withConfigLock(() => cli(["models", "engine", action], 30_000));
+  // status and check only read (check also asks GitHub): no config lock, so the background check never holds up a switch.
+  const readOnly = action === "status" || action === "check";
+  const result = readOnly ? await cli(["models", "engine", action], 30_000) : await withConfigLock(() => cli(["models", "engine", action], 30_000));
   if (result.ok && (action === "status" || action === "check")) {
     try { return { ...result, value: JSON.parse(result.stdout) }; }
     catch { return { ...result, ok: false, error: "The agent returned invalid engine status" }; }
