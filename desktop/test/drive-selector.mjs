@@ -94,8 +94,9 @@ const TROUBLE = `[
 
 const kinds = (chips) => chips.map((c) => c.kind);
 /** composerSwitchKindsFor, restated here so the test owns the expectation.
-    The local route's provider control is its inference engine (composer-engines.js). */
-const expectedKinds = () => ['backend', 'provider', 'model'];
+    Atomic Core is hidden by default, so the local route draws no engine control. */
+const expectedKinds = (backend) =>
+  backend === 'local' ? ['backend', 'model'] : ['backend', 'provider', 'model'];
 
 async function open(app) {
   const ready = await app.waitFor(
@@ -217,7 +218,7 @@ async function main() {
     const localChips = await app.snap(CHIPS);
     t.say(`  controls on the local route: ${JSON.stringify(localChips)}`);
     await shot('02-local-composer');
-    t.check('local offers exactly backend + engine + model',
+    t.check('local offers exactly backend + model',
       JSON.stringify(kinds(localChips)) === JSON.stringify(expectedKinds('local')),
       `saw ${JSON.stringify(kinds(localChips))}`);
 
@@ -295,7 +296,7 @@ async function main() {
     const backChips = await app.snap(CHIPS);
     t.say(`  controls after switching back: ${JSON.stringify(backChips)}`);
     await shot('08-local-again');
-    t.check('the engine control stands where the provider control was',
+    t.check('the provider control is gone again',
       JSON.stringify(kinds(backChips)) === JSON.stringify(expectedKinds('local')),
       `saw ${JSON.stringify(kinds(backChips))}`);
 

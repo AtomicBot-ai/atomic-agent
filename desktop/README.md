@@ -1474,6 +1474,8 @@ benchmark after health is ready.
 
 ## Atomic Core preview
 
+Atomic Core is experimental and hidden by default. The desktop offers it only when `ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE=1` is set for the app, or when the saved config already runs it (`localModels.managed.engine: "atomic-core"`), the same rule as the agent's `choiceEnabled`. Main decides (`atomicCoreChoiceEnabled`) and the window reads it once at load. Hidden, the Local route has no engine control (backend and model only), the Fusion engine rows offer llama.cpp as the one local engine, Settings shows no Engine choice row, and no Core release check runs.
+
 Settings → Models → Advanced → Engine offers Atomic Core and the existing llama.cpp engine. Stop local models before switching, choose Update now to install, then start the selected model. Model files are shared across engines. Core installation and model ownership are delegated to the agent's `models` commands; the desktop uses the same session credentials for native health/context probes and never force-kills Core-owned model processes.
 
 Core release checks run after startup and every six hours, like app checks. Check for updates also runs on demand. A check never downloads or stops a model. An unsupported newer Core is described as needing a newer Agent build. Update now refuses while local models run. The existing app updater remains responsible for the desktop app itself.

@@ -1,6 +1,13 @@
 "use strict";
 
 // Separate provider/engine and model choices on each composer seat.
+/* Atomic Core is experimental: main says whether it is offered (preload atomicCoreChoice).
+   A config already on Core keeps the choice, so the way back to llama.cpp stays. */
+const CORE_CHOICE = { enabled: false };
+try {
+  if (typeof window !== 'undefined' && window.atomic && window.atomic.atomicCoreChoice) CORE_CHOICE.enabled = !!window.atomic.atomicCoreChoice();
+} catch (_) { /* hidden */ }
+function composerCoreChoice() { return CORE_CHOICE.enabled || composerEngineId() === 'atomic-core'; }
 function composerEngineId() { return llmManaged().engine === 'atomic-core' ? 'atomic-core' : 'llama-server'; }
 function composerEngineName(id) { return id === 'atomic-core' ? 'Atomic Chat' : 'Local llama'; }
 function composerSeatLocal(seat) { return seat.provider === 'local-llama'; }
@@ -19,7 +26,7 @@ function composerEngineChip(kind, label, local, role) {
 function composerLocalEngineRows(leg) {
   const rm = rmNow();
   const seat = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
-  return ['llama-server', 'atomic-core'].map((engine) => ({
+  return ['llama-server'].concat(composerCoreChoice() ? ['atomic-core'] : []).map((engine) => ({
     type:'localEngine', id:engine, label:composerEngineName(engine), leg,
     detail: engine === 'atomic-core' ? 'Atomic Chat Core · runs on this machine' : 'llama.cpp · runs on this machine',
     active: (!leg || seat === 'local-llama') && composerEngineId() === engine,

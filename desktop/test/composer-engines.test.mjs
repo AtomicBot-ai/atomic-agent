@@ -6,9 +6,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { planEnterFusion } = require('../out/main/run-mode.js');
 const source = readFileSync(new URL('../renderer/composer-engines.js', import.meta.url), 'utf8');
-function fixture() {
+function fixture(engine = 'atomic-core') {
   const rm = {orchestratorProviderId:'cloud', workerProviderId:'local-llama'};
-  const context = {llmManaged:()=>({engine:'atomic-core'}), rmNow:()=>rm,
+  const context = {llmManaged:()=>({engine}), rmNow:()=>rm,
     selProviders:()=>[{id:'cloud'},{id:'second'}], BSW:{readyIds:['cloud','second']},
     selBackend:()=> 'fusion', SEL:{kind:'workers',models:[{id:'remote-model'}],filter:''},
     fzSeats:()=>({plans:{provider:rm.orchestratorProviderId,label:'remote-model'},works:{provider:rm.workerProviderId,label:'local-model'}}),
@@ -57,4 +57,11 @@ test('two cloud seats may share a provider; both seats on the one local slot are
   const local={llm:{activeTextProvider:'local-llama',providers:JSON.parse(JSON.stringify(providers)),runMode:{mode:'fusion',fusion:{orchestratorProvider:'local-llama',workerProvider:'cloud'}}}};
   const both=planEnterFusion(local,{workerProvider:'local-llama'},()=>true);
   assert.equal(both.write,false); assert.match(both.refusal,/one Fusion role at a time/);
+});
+test('Atomic Chat is hidden unless main offers it or the config already runs it',()=>{
+  const {context:c}=fixture('llama-server');
+  assert.deepEqual(c.composerLocalEngineRows().map(r=>r.id),['llama-server']);
+  assert.equal(c.composerFusionEngineRows('orchestrator').some(r=>r.id==='atomic-core'),false);
+  assert.equal(c.composerCoreChoice(),false);
+  assert.equal(fixture('atomic-core').context.composerCoreChoice(),true);
 });

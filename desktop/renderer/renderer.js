@@ -3415,7 +3415,7 @@ function routeChipsHtml(backend) {
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
         + (backend === 'fusion' ? '<span class="composer-seat" role="group" aria-label="Orchestrator">' : '')
-        + (backend === 'local' ? composerEngineChip('provider', composerEngineName(composerEngineId()), true)
+        + (backend === 'local' && composerCoreChoice() ? composerEngineChip('provider', composerEngineName(composerEngineId()), true)
           : backend === 'fusion' ? composerEngineChip('provider', composerSeatLocal(fzSeats().plans) ? composerEngineName(composerEngineId()) : fzSeats().plans.provider, composerSeatLocal(fzSeats().plans), 'Orchestrator')
           : selHasKind('provider')
             ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider" data-id="' + esc(selProviderLabel()) + '"'
@@ -15271,7 +15271,9 @@ function selLocalRoute() { return selBackend() === 'local'; }
 function selKinds() {
   const b = selBackend();
   // composerSwitchKindsFor: `if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"]`.
-  return b === 'fusion' ? ['backend','provider','model','workerProvider','workers'] : ['backend','provider','model'];
+  // Local draws its engine control only while Atomic Core is offered (composerCoreChoice); otherwise backend and model, as before.
+  return b === 'fusion' ? ['backend','provider','model','workerProvider','workers']
+    : b === 'local' && !composerCoreChoice() ? ['backend','model'] : ['backend','provider','model'];
 }
 /** True when the route offers `kind` — the chips and the switch read the same rule. */
 function selHasKind(kind) { return selKinds().indexOf(kind) >= 0; }
@@ -15464,7 +15466,7 @@ function selRows() {
        addProvider: !!fzBlocked, active: here === 'fusion'},
     ];
   }
-  if (SEL.kind === 'provider' && selBackend() === 'local') return composerLocalEngineRows();
+  if (SEL.kind === 'provider' && selBackend() === 'local' && composerCoreChoice()) return composerLocalEngineRows();
   if ((SEL.kind === 'provider' || SEL.kind === 'workerProvider') && selBackend() === 'fusion') return composerFusionEngineRows(SEL.kind === 'workerProvider' ? 'worker' : 'orchestrator');
   if ((SEL.kind === 'model' || SEL.kind === 'workers') && selBackend() === 'fusion') return composerSeatModelRows();
   if (SEL.kind === 'provider') {
@@ -17365,13 +17367,14 @@ if (typeof window !== 'undefined') {
   window.__approvalCat = (cat) => ({label: CATEGORY_LABEL[cat] || null, level: (CATS.find((c) => c[0] === cat) || [null, null, null])[2]});
   window.__fzProbe = (cfg, facts) => {
     const keep = {cfg: LIVE_CONFIG, ids: BSW.readyIds, rl: BSW.readyLoaded, ll: BSW.localLoaded, local: SEL.local, want: SWX.want, kind: SEL.kind,
-      queued: FZ.swapQueued, models: SEL.models, modelsFor: SEL.modelsFor, filter: SEL.filter};
+      queued: FZ.swapQueued, models: SEL.models, modelsFor: SEL.modelsFor, filter: SEL.filter, core: CORE_CHOICE.enabled};
     try {
       LIVE_CONFIG = cfg;
       BSW.readyIds = facts.readyIds || []; BSW.readyLoaded = true; BSW.localLoaded = facts.localLoaded !== false;
       SEL.local = facts.local || []; SWX.want = null; FZ.swapQueued = false;
       // A cloud seat's model rows are its provider's catalogue: the probe hands one in.
       SEL.models = facts.models || []; SEL.modelsFor = null; SEL.filter = '';
+      CORE_CHOICE.enabled = facts.coreChoice === true;
       const rows = (kind) => { SEL.kind = kind; return selRows().map((r) => ({type:r.type, id:r.id, label:r.label, detail:r.detail || '', active:!!r.active})); };
       const tpl = document.createElement('template');
       tpl.innerHTML = composer();
@@ -17394,7 +17397,7 @@ if (typeof window !== 'undefined') {
     } finally {
       LIVE_CONFIG = keep.cfg; BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll;
       SEL.local = keep.local; SWX.want = keep.want; SEL.kind = keep.kind; FZ.swapQueued = keep.queued;
-      SEL.models = keep.models; SEL.modelsFor = keep.modelsFor; SEL.filter = keep.filter;
+      SEL.models = keep.models; SEL.modelsFor = keep.modelsFor; SEL.filter = keep.filter; CORE_CHOICE.enabled = keep.core;
       render();
     }
   };
@@ -22635,8 +22638,10 @@ function llmAdvancedHTML(mode) {
         + '<div class="llm-tune-card llm-engine">'
           + llmTuneRowHTML(managed.engine === 'atomic-core' ? 'Atomic Core' : 'llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
               btn('llm:backend', 'Update now', 'Install the supported engine (B)'))
-          + llmTuneRowHTML('Engine choice', 'Stop local models before switching. Your downloaded models stay available.',
-              btn('llm:engine', managed.engine === 'atomic-core' ? 'Use llama.cpp' : 'Use Atomic Core', 'Change the local engine'))
+          + (composerCoreChoice()
+              ? llmTuneRowHTML('Engine choice', 'Stop local models before switching. Your downloaded models stay available.',
+                  btn('llm:engine', managed.engine === 'atomic-core' ? 'Use llama.cpp' : 'Use Atomic Core', 'Change the local engine'))
+              : '')
           + (managed.engine === 'atomic-core'
               ? llmTuneRowHTML('Core updates', 'Checks never install or interrupt your models. Updates apply after you stop local models.', btn('llm:engineCheck', 'Check for updates', 'Check Atomic Core releases'))
               : llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
@@ -23839,7 +23844,7 @@ function llmAct(what) {
     if (BR && BR.hostRam && !LLMHF.ram) BR.hostRam().then((n) => { LLMHF.ram = Number(n) || 0; if (LLMHF.open) llmRepaint(); });
     return;
   }
-  if (verb === 'engine') { llmEngineAction(llmManaged().engine === 'atomic-core' ? 'llama-server' : 'atomic-core'); return; }
+  if (verb === 'engine') { if (!composerCoreChoice()) return; llmEngineAction(llmManaged().engine === 'atomic-core' ? 'llama-server' : 'atomic-core'); return; }
   if (verb === 'engineCheck') { llmEngineAction('check'); return; }
   if (verb === 'backend') { llmBackendUpdate(); return; }
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }

@@ -3775,6 +3775,22 @@ export function updateTimedOutError(ms: number, keptBackend: boolean): string {
     ? `${stopped} — the model starts on the llama.cpp already installed; the update is tried again at the next start or from Settings › Models`
     : `${stopped} — there is no llama.cpp installed yet to start the model on; try again once the connection is back`;
 }
+/**
+ * Atomic Core is experimental and hidden by default. It is offered with
+ * ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE=1, or once the saved config already
+ * runs it (the same rule as the agent's `choiceEnabled`), so nobody is left
+ * without the way back to llama.cpp.
+ */
+export function atomicCoreChoiceEnabled(): boolean {
+  if (process.env["ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE"] === "1") return true;
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"));
+    return cfg?.localModels?.managed?.engine === "atomic-core";
+  } catch {
+    return false;
+  }
+}
+
 /** Whether the managed data dir the desktop's config names holds a llama.cpp backend (`<data dir>/backend`). */
 export function backendInstalled(): boolean {
   let override: unknown = null;
