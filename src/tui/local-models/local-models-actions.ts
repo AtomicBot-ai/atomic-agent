@@ -13,6 +13,7 @@ import type {
   LocalModelsPanelMode,
   LocalModelsPullState,
   LocalModelsNotifyPrompt,
+  LocalModelsCoreFailure,
 } from "./local-models-panel-state.js";
 
 export type LocalModelsAction =
@@ -108,6 +109,8 @@ export type LocalModelsAction =
   | { type: "local_models_daemon_restart_requested" }
   | { type: "local_models_daemon_phase_set"; phase: DaemonPhase }
   | { type: "local_models_daemon_error_set"; message: string | null }
+  /** Atomic Core failed to install or start (`null` clears the notice). */
+  | { type: "local_models_core_failure_set"; failure: LocalModelsCoreFailure | null }
   | {
       type: "local_llm_logs_loaded";
       text: string;

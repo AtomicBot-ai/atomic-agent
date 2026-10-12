@@ -982,7 +982,13 @@ export interface UserConfigFile {
 // older file has no such entries. An older build that rewrites the list
 // drops `localPath` but keeps the entry's `file://` `huggingFaceUrl`; the
 // parser recovers the path from that URL, so the round trip loses nothing.
-export const USER_CONFIG_VERSION = 76;
+// v77: Atomic Core is the default local engine (`localModels.managed.engine`
+// default `atomic-core`). The choice used to sit behind an opt-in variable,
+// so an older file's `llama-server` or missing engine is a default, not a
+// choice: it migrates to `atomic-core`. llama.cpp stays selectable, and an
+// explicit `llama-server` in a v77+ file is honoured. Other fields, external
+// mode included, are untouched.
+export const USER_CONFIG_VERSION = 77;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1134,6 +1140,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   73,
   74,
   75,
+  76,
   USER_CONFIG_VERSION,
 ];
 

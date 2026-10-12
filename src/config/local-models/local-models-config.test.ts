@@ -265,4 +265,34 @@ describe("local model configuration domain seams", () => {
     expect(error).toBeInstanceOf(OwnedValidationError);
     expect(error).toMatchObject({ field });
   });
+  it.each([
+    { version: 76, raw: undefined, expected: "atomic-core" },
+    { version: 76, raw: "llama-server", expected: "atomic-core" },
+    { version: 74, raw: "atomic-core", expected: "atomic-core" },
+    { version: 77, raw: "llama-server", expected: "llama-server" },
+    { version: 77, raw: undefined, expected: "atomic-core" },
+    { version: 78, raw: "llama-server", expected: "llama-server" },
+  ])("makes Atomic Core the default engine at v77 (v$version / $raw)", ({ version, raw, expected }) => {
+    const input = { mode: "external", url: "http://127.0.0.1:9999", managed: { engine: raw, port: 19555 } };
+    const parsed = schema.parseUserConfigFile({ version, localModels: input }).localModels;
+    expect(parsed.managed.engine).toBe(expected);
+    // The migration touches the engine only: external mode and every other field stay as written.
+    expect(parsed.mode).toBe("external");
+    expect(parsed.url).toBe("http://127.0.0.1:9999");
+    expect(parsed.managed.port).toBe(19555);
+  });
+
+  it("still rejects an unknown engine, before and after the migration", () => {
+    for (const version of [76, 77]) {
+      expect(thrownError(() => schema.parseUserConfigFile({ version, localModels: { managed: { engine: "ollama" } } })))
+        .toMatchObject({ field: "localModels.managed.engine" });
+    }
+  });
+
+  it("writes the current version so a later llama-server choice survives reloads", () => {
+    const migrated = schema.parseUserConfigFile({ version: 76, localModels: { managed: { engine: "llama-server" } } });
+    expect(migrated.version).toBe(schema.USER_CONFIG_VERSION);
+    migrated.localModels.managed.engine = "llama-server";
+    expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.managed.engine).toBe("llama-server");
+  });
 });

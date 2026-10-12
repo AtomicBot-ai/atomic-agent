@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { coreDaemonEnv } from "./core-env.js";
-import { CORE_PROTOCOL, withSwitchBackHint, coreBinary, coreDataDir, coreVersionDir, readCoreJson, type CoreSession } from "./core-state.js";
+import { shutdownIdleCoreClient } from "./core-idle.js";
+import { CoreUnavailableError, toCoreUnavailable } from "./core-errors.js";
+import { CORE_PROTOCOL, CORE_VERSION, CORE_VERSIONS, coreBinary, coreDataDir, coreVersionDir, readCoreJson, type CoreSession } from "./core-state.js";
 
 export interface CoreSnapshot {
   instance_id: string;
@@ -23,6 +25,12 @@ interface CoreLock {
   control_host: string;
   control_port: number;
 }
+/** Core answered a control request with an error status. */
+export class CoreRequestError extends Error {
+  override readonly name = "CoreRequestError";
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
 export class CoreControlClient {
   constructor(readonly base: string, private readonly token: string, readonly version: string,
     readonly instanceId: string, private readonly request: typeof fetch = fetch) {}
@@ -35,8 +43,10 @@ export class CoreControlClient {
       signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? 15_000)]) : AbortSignal.timeout(opts.timeoutMs ?? 15_000),
       redirect: "error",
     });
-    const value = await response.json() as T & { error?: { code?: string; message?: string } };
-    if (!response.ok) throw new Error(value.error?.message ?? `Atomic Core request failed (${response.status})`);
+    // A proxy or a crashed handler may answer a 5xx without JSON; the status still decides retries.
+    const value = await response.json().catch(() => null) as (T & { error?: { code?: string; message?: string } }) | null;
+    if (!response.ok) throw new CoreRequestError(response.status, value?.error?.message ?? `Atomic Core request failed (${response.status})`);
+    if (value === null) throw new Error("Atomic Core returned an unreadable answer.");
     return value;
   }
 
@@ -113,15 +123,39 @@ export async function connectCore(dataDir: string, version: string): Promise<Cor
 
 /** The CLI-scoped daemon survives one-shot model commands; Core owns its lock and child journal. */
 export async function ensureCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient> {
-  try { return await startCore(dataDir, version, signal); }
-  catch (err) { throw withSwitchBackHint(err, signal); }
+  let client: CoreControlClient;
+  try { client = await startCore(dataDir, version, signal); }
+  catch (err) { throw toCoreUnavailable(err, "start", signal); }
+  if (version === CORE_VERSION) await retireOlderCores(dataDir);
+  return client;
+}
+
+const retiredDataDirs = new Set<string>();
+
+/**
+ * Once per process and data folder, after this build's Core is up: ask an
+ * idle daemon of an older pinned version to shut down, so an upgrade does
+ * not leave the previous Core running beside it. Best effort; one that
+ * still serves a model or another client keeps running. Callers hold the
+ * engine operation lock (every ensureCore caller does).
+ */
+export async function retireOlderCores(dataDir: string, connect: typeof connectCore = connectCore): Promise<void> {
+  if (retiredDataDirs.has(dataDir)) return;
+  retiredDataDirs.add(dataDir);
+  for (const version of CORE_VERSIONS) {
+    if (version === CORE_VERSION) continue;
+    try {
+      const client = await connect(dataDir, version);
+      if (client) await shutdownIdleCoreClient(client);
+    } catch { /* best effort: an older Core that will not answer is left alone */ }
+  }
 }
 
 async function startCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient> {
   const existing = await connectCore(dataDir, version);
   if (existing) return existing;
   const binary = coreBinary(dataDir, version);
-  if (!existsSync(binary)) throw new Error("Atomic Core is not installed. Choose Update engine to install it.");
+  if (!existsSync(binary)) throw new CoreUnavailableError({ stage: "start", reasonCode: "not_installed", detail: "it is not installed yet" });
   mkdirSync(coreDataDir(dataDir, version), { recursive: true, mode: 0o700 });
   const log = openSync(join(coreVersionDir(dataDir, version), "core.log"), "a", 0o600);
   let spawnError: Error | undefined;
@@ -139,12 +173,12 @@ async function startCore(dataDir: string, version: string, signal?: AbortSignal)
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
-    if (spawnError) throw new Error(`Atomic Core could not start: ${spawnError.message}`);
+    if (spawnError) throw new CoreUnavailableError({ stage: "start", reasonCode: "spawn", detail: spawnError.message, cause: spawnError });
     const client = await connectCore(dataDir, version);
     if (client) return client;
     await delay(150, undefined, signal ? { signal } : {});
   }
-  throw new Error("Atomic Core did not become ready. See the engine log and retry.");
+  throw new CoreUnavailableError({ stage: "start", reasonCode: "not_ready", detail: `it did not become ready in time (log: ${join(coreVersionDir(dataDir, version), "core.log")})` });
 }
 
 /** Every operation keeps a lease until it settles, including long downloads and model loads. */

@@ -64,6 +64,34 @@ import {
   type DownloadJobMode,
   type DownloadNotifyChannel,
 } from "../local-llm/index.js";
+import { CoreUnavailableError, type CoreFailureInfo } from "../local-llm/core/core-errors.js";
+import { reportLocalEngineFailed } from "../analytics/index.js";
+import { getAppVersion } from "../version.js";
+
+/**
+ * Report an Atomic Core failure the command is about to print
+ * (`local_engine_failed`): fixed words only, bounded, never throws. The
+ * desktop drives local models through these commands, so this is where
+ * its failures are counted too.
+ */
+async function reportCoreFailure(failure: CoreFailureInfo | null | undefined): Promise<void> {
+  if (!failure) return;
+  const cfg = getConfig();
+  await reportLocalEngineFailed({
+    stateDir: cfg.paths.stateDir,
+    version: getAppVersion(),
+    enabled: cfg.analytics.enabled,
+    context: { engine: "atomic-core", stage: failure.stage, reasonCode: failure.reasonCode },
+  });
+}
+
+function coreFailureOf(err: unknown): CoreFailureInfo | null {
+  return err instanceof CoreUnavailableError ? err.info : null;
+}
+
+function backendProgressLabel(): string {
+  return getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Chat engine" : "backend zip";
+}
 
 export function readCliOption(
   args: string[],
@@ -481,7 +509,7 @@ export async function runLocalModelsStart(
       // recorded in the data dir, stands instead of a GitHub round trip.
       recheckAfterMs: AUTO_UPDATE_RECHECK_MS,
       onProgress: (p: number, t: number, tot: number) => {
-        const line = renderPullProgress("backend zip", p, t, tot);
+        const line = renderPullProgress(backendProgressLabel(), p, t, tot);
         if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
         else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
       },
@@ -501,6 +529,13 @@ export async function runLocalModelsStart(
       );
     } else if (auto.action === "update_failed") {
       if (process.stderr.isTTY) process.stderr.write("\n");
+      if (!auto.backendUsable && auto.coreFailure) {
+        // First run of the default engine could not install it. The message
+        // already says what happened and both ways forward.
+        process.stderr.write(`${auto.error}\n`);
+        await reportCoreFailure(auto.coreFailure);
+        return 1;
+      }
       if (!auto.backendUsable) {
         // The daemon was stopped for the update and there is no binary
         // left to fall back to — nothing can be started.
@@ -705,6 +740,7 @@ export async function runLocalModelsStart(
     return 0;
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    await reportCoreFailure(coreFailureOf(e));
     return 1;
   }
 }
@@ -750,6 +786,22 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     process.stdout.write(`embedding: already running pid ${now.pid} on port ${emb.port} (${modelId})\n`);
     return 0;
   }
+  // The default engine may not be installed yet (the desktop can start the
+  // embedding side on its own): install it first, as `start` does.
+  if (cfg.localModels.managed.engine === "atomic-core" && !isBackendDownloaded(dataDir, "atomic-core")) {
+    try {
+      await downloadBackend(dataDir, { engine: "atomic-core", signal, onProgress: (p, t, tot) => {
+        const line = renderPullProgress(backendProgressLabel(), p, t, tot);
+        if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+        else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+      } });
+      if (process.stderr.isTTY) process.stderr.write("\n");
+    } catch (e) {
+      process.stderr.write(`embedding: failed to start (${e instanceof Error ? e.message : String(e)})\n`);
+      await reportCoreFailure(coreFailureOf(e));
+      return 1;
+    }
+  }
   // The chat daemon's device, as `start` resolves it, so both land on the same one.
   const { binaryName } = resolvePlatformAsset();
   const device = await resolveManagedDevice(
@@ -770,6 +822,7 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     return 0;
   } catch (e) {
     process.stderr.write(`embedding: failed to start (${e instanceof Error ? e.message : String(e)})\n`);
+    await reportCoreFailure(coreFailureOf(e));
     return 1;
   }
 }
@@ -1130,8 +1183,13 @@ export async function runLocalModelsUpdate(signal?: AbortSignal): Promise<number
   }
   const dataDir = cfg.paths.localModelsDataDir;
   try {
-    const { updateAvailable, latestTag, currentTag } =
-      await checkForBackendUpdate(dataDir, getConfig().localModels.managed.engine);
+    const engine = getConfig().localModels.managed.engine;
+    // `models update` is the retry for Atomic Core: a release check that
+    // cannot reach GitHub must not stand between the operator and the
+    // install, which fetches the pinned version directly.
+    const { updateAvailable, latestTag, currentTag } = engine === "atomic-core"
+      ? await checkForBackendUpdate(dataDir, engine).catch(() => ({ updateAvailable: true, latestTag: "Atomic Core (pinned)", currentTag: null }))
+      : await checkForBackendUpdate(dataDir, engine);
     if (!updateAvailable && cfg.localModels.managed.engine !== "atomic-core") {
       // ATO-252: on Windows on ARM "no release for this platform" with
       // nothing installed is not "unchanged": there is no engine to run
@@ -1168,7 +1226,7 @@ export async function runLocalModelsUpdate(signal?: AbortSignal): Promise<number
       engine: cfg.localModels.managed.engine,
       signal,
       onProgress: (p, t, tot) => {
-        const line = renderPullProgress("backend zip", p, t, tot);
+        const line = renderPullProgress(backendProgressLabel(), p, t, tot);
         if (tty) process.stderr.write(`\r${line.padEnd(79)}`);
         else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
       },
@@ -1180,6 +1238,7 @@ export async function runLocalModelsUpdate(signal?: AbortSignal): Promise<number
     return 0;
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    await reportCoreFailure(coreFailureOf(e));
     return 1;
   }
 }

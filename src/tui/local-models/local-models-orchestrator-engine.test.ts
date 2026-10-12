@@ -11,7 +11,6 @@ vi.mock("../../local-llm/engine-selection.js", () => ({
 vi.mock("../persist-user-local-models-config.js", () => ({ persistUserLocalModelsConfig: vi.fn() }));
 
 import { resetConfigCache } from "../../config/index.js";
-import { ATOMIC_CORE_EXPERIMENTAL_ENV } from "../../local-llm/core/experimental.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
@@ -19,14 +18,11 @@ let stateDir: string;
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), "local-models-engine-"));
   process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
-  // The queue tests choose Atomic Chat, which is offered only on opt-in.
-  process.env[ATOMIC_CORE_EXPERIMENTAL_ENV] = "1";
   resetConfigCache();
   vi.mocked(persistUserLocalModelsConfig).mockReset();
 });
 afterEach(() => {
   delete process.env.ATOMIC_AGENT_STATE_DIR;
-  delete process.env[ATOMIC_CORE_EXPERIMENTAL_ENV];
   resetConfigCache();
   rmSync(stateDir, { recursive: true, force: true });
 });
@@ -51,18 +47,18 @@ function orchestratorWithSlowStart() {
 it("saves an engine choice queued behind a loading model once the load ends", async () => {
   const { orchestrator, finishStart } = orchestratorWithSlowStart();
   const starting = orchestrator.startDaemon();
-  const choosing = orchestrator.chooseEngine("atomic-core");
+  const choosing = orchestrator.chooseEngine("llama-server");
   await Promise.resolve();
   finishStart(true);
   await starting;
   await expect(choosing).resolves.toBe(true);
-  expect(persistUserLocalModelsConfig).toHaveBeenCalledWith({ managed: { engine: "atomic-core" } });
+  expect(persistUserLocalModelsConfig).toHaveBeenCalledWith({ managed: { engine: "llama-server" } });
 });
 
 it("Stop cancels an engine choice still queued behind the load it stops", async () => {
   const { orchestrator, finishStart } = orchestratorWithSlowStart();
   const starting = orchestrator.startDaemon();
-  const choosing = orchestrator.chooseEngine("atomic-core");
+  const choosing = orchestrator.chooseEngine("llama-server");
   const stopping = orchestrator.stopDaemon();
   finishStart(false);
   await Promise.all([starting, stopping]);
@@ -70,13 +66,13 @@ it("Stop cancels an engine choice still queued behind the load it stops", async 
   expect(persistUserLocalModelsConfig).not.toHaveBeenCalled();
 });
 
-it("refuses Atomic Chat without the opt-in and still switches back to llama.cpp", async () => {
-  delete process.env[ATOMIC_CORE_EXPERIMENTAL_ENV];
+it("offers Atomic Chat as the default and llama.cpp as the way back, with no opt-in", async () => {
   const emitted: Array<{ type: string; text?: string }> = [];
   const orchestrator = new LocalModelsOrchestrator({ emit: (a: unknown) => { emitted.push(a as { type: string; text?: string }); }, subscribe: () => () => {} });
   vi.spyOn(orchestrator as unknown as { refresh: () => Promise<void> }, "refresh").mockResolvedValue();
-  await expect(orchestrator.chooseEngine("atomic-core")).resolves.toBe(false);
+  await expect(orchestrator.chooseEngine("atomic-core")).resolves.toBe(true);
+  expect(emitted.some(a => a.type === "composer_notice" && a.text === "Atomic Chat is already selected.")).toBe(true);
   expect(persistUserLocalModelsConfig).not.toHaveBeenCalled();
-  expect(emitted.some(a => a.type === "composer_notice" && a.text?.includes(ATOMIC_CORE_EXPERIMENTAL_ENV))).toBe(true);
   await expect(orchestrator.chooseEngine("llama-server")).resolves.toBe(true);
+  expect(persistUserLocalModelsConfig).toHaveBeenCalledWith({ managed: { engine: "llama-server" } });
 });

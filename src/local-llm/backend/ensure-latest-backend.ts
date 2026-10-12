@@ -1,6 +1,7 @@
 import type { ManagedEngine } from "../core/core-state.js";
 import { isCoreBackendInstalled } from "../core/core-backend.js";
-import { activeCoreVersion } from "../core/core-state.js";
+import { activeCoreVersion, CORE_VERSION } from "../core/core-state.js";
+import { CoreUnavailableError, type CoreFailureInfo } from "../core/core-errors.js";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 import {
@@ -39,7 +40,13 @@ export type AutoUpdateBackendResult =
    * caller should start it. False means there is genuinely nothing to
    * run and the caller must fail.
    */
-  | { action: "update_failed"; error: string; backendUsable: boolean };
+  | {
+      action: "update_failed";
+      error: string;
+      backendUsable: boolean;
+      /** Set when Atomic Core could not be installed: what the UI offers next. */
+      coreFailure?: CoreFailureInfo;
+    };
 
 /**
  * How long a start trusts a release check that found nothing newer for
@@ -233,10 +240,7 @@ export async function maybeAutoUpdateBackend(
     now?: () => number;
   },
 ): Promise<AutoUpdateBackendResult> {
-  // Core upgrades require a deliberate Update action; startup reuses the verified install.
-  if (opts.engine === "atomic-core") return isCoreBackendInstalled(dataDir)
-    ? { action: "current", tag: `Atomic Core ${activeCoreVersion(dataDir)}` }
-    : { action: "skipped" };
+  if (opts.engine === "atomic-core") return ensureCoreEngine(dataDir, opts);
   if (!opts.enabled) return { action: "skipped" };
   const now = opts.now ?? Date.now;
   const remember = (opts.recheckAfterMs ?? 0) > 0;
@@ -305,6 +309,51 @@ export async function maybeAutoUpdateBackend(
       action: "update_failed",
       error: err instanceof Error ? err.message : String(err),
       backendUsable: isBackendDownloaded(dataDir),
+    };
+  }
+}
+
+/**
+ * The start-path check for Atomic Core. First run must just work: a missing
+ * Core or backend is installed now, with progress, whatever `enabled` says,
+ * because nothing else can serve the selected engine. An install of an older
+ * pinned Core moves to this build's pin when `enabled` (autoUpdate) allows
+ * it and nothing has to be stopped; otherwise it keeps serving. A failure is
+ * reported, not thrown, with the structured CoreUnavailableError fields, so
+ * the caller can offer "download again" or "use llama.cpp". Cancellation
+ * propagates as an `update_failed` like the legacy path; the caller checks
+ * its own signal.
+ */
+async function ensureCoreEngine(
+  dataDir: string,
+  opts: {
+    enabled: boolean;
+    onProgress?: DownloadProgressFn;
+    onWillDownload?: () => void;
+    signal?: AbortSignal;
+    keepDaemonRunning?: boolean;
+  },
+): Promise<AutoUpdateBackendResult> {
+  const installed = isCoreBackendInstalled(dataDir);
+  const active = activeCoreVersion(dataDir);
+  const currentTag = `Atomic Core ${active}`;
+  if (installed && (active === CORE_VERSION || !opts.enabled)) return { action: "current", tag: currentTag };
+  // Moving to a newer pin needs a Core with no model sessions; never while one serves.
+  if (installed && opts.keepDaemonRunning) return { action: "deferred", reason: "daemon_live" };
+  try {
+    opts.onWillDownload?.();
+    const done = await downloadBackend(dataDir, {
+      engine: "atomic-core",
+      onProgress: opts.onProgress,
+      signal: opts.signal,
+    });
+    return { action: "updated", from: installed ? currentTag : null, to: done.tag };
+  } catch (err) {
+    return {
+      action: "update_failed",
+      error: err instanceof Error ? err.message : String(err),
+      backendUsable: isCoreBackendInstalled(dataDir),
+      ...(err instanceof CoreUnavailableError ? { coreFailure: err.info } : {}),
     };
   }
 }

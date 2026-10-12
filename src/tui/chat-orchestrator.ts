@@ -334,6 +334,11 @@ export class ChatOrchestrator {
         // operator string.
         runtime.reportModelConfigured("llama.cpp", "local");
       },
+      // Atomic Core could not be installed or started: fixed words only
+      // (stage, reason code), never the message, which may hold a path.
+      onLocalEngineFailed: (failure) => {
+        runtime.reportLocalEngineFailed?.({ engine: "atomic-core", stage: failure.stage, reasonCode: failure.reasonCode });
+      },
       // "Set up Telegram to get pinged": the hub is synced first so the
       // row exists to land on, then the tab is opened on that row.
       openIntegration: (id, message) => {

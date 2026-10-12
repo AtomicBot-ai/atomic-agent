@@ -1,12 +1,12 @@
 import { withCoreOperation } from "./core-operation.js";
-import { connectCore } from "./core-client.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DownloadFileOptions } from "../downloads/download-file.js";
-import { CORE_VERSION, withSwitchBackHint, activeCoreVersion, coreRoot, coreVersionDir, readCoreBackend, writeCoreJson, type CoreBackend } from "./core-state.js";
-import { withCoreClient } from "./core-client.js";
-import { installCore, isCoreInstalled } from "./core-install.js";
+import { CoreUnavailableError, toCoreUnavailable } from "./core-errors.js";
+import { CORE_VERSION, activeCoreVersion, coreRoot, coreVersionDir, readCoreBackend, writeCoreJson, type CoreBackend } from "./core-state.js";
+import { connectCore, CoreRequestError, withCoreClient, type CoreControlClient } from "./core-client.js";
+import { installCore, isCoreInstalled, withCoreRetries } from "./core-install.js";
 
 interface Catalog {
   recommended: string | null;
@@ -18,6 +18,30 @@ export function isCoreBackendInstalled(dataDir: string): boolean {
   return isCoreInstalled(dataDir) && readCoreBackend(dataDir) !== null;
 }
 
+/** A dropped connection or a 5xx from Core is worth another install call; a refusal is not. */
+function isRetryableCoreCall(err: unknown): boolean {
+  if (err instanceof CoreRequestError) return err.status >= 500;
+  return err instanceof TypeError && /fetch failed/.test(err.message);
+}
+
+/**
+ * Ask Core to install one backend, retried up to three times with backoff on
+ * a network failure or a 5xx. Each attempt has its own task id, progress
+ * subscription and cancel hook; a cancelled install is never retried.
+ */
+async function installSelectedBackend(client: CoreControlClient, body: { version: string; backend: string; asset_name?: string }, opts: DownloadFileOptions): Promise<{ path: string }> {
+  return withCoreRetries(async () => {
+    const taskId = `agent-backend-${randomUUID()}`;
+    const cancel = () => { void client.call(`/downloads/${taskId}/cancel`, {}).catch(() => {}); };
+    const stopEvents = await client.downloadEvents(taskId, opts.onProgress ?? (() => {}), opts.signal);
+    opts.signal?.addEventListener("abort", cancel, { once: true });
+    opts.onProgress?.(0, 0, 0);
+    try {
+      return await client.call<{ path: string }>("/backends/llamacpp/install", { ...body, task_id: taskId }, { signal: opts.signal, timeoutMs: 15 * 60_000 });
+    } finally { opts.signal?.removeEventListener("abort", cancel); await stopEvents(); }
+  }, isRetryableCoreCall, opts.signal);
+}
+
 /** Core owns platform/hardware selection and backend acquisition, as in Atomic Chat. */
 export async function installCoreBackend(dataDir: string, opts: DownloadFileOptions = {}, version = CORE_VERSION): Promise<{ ok: true; tag: string }> {
   return withCoreOperation(dataDir, async () => {
@@ -26,24 +50,17 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
     throw new Error("Stop local models before updating the engine. Your running models are unchanged.");
   }
   // The precondition above is not an install failure; everything below is.
+  // Download/verify/start failures arrive already structured; the rest is the backend.
   try {
   await installCore(dataDir, version, opts);
   return await withCoreClient(dataDir, version, async client => {
     const catalog = await client.call<Catalog>("/backends/llamacpp/catalog", { force: true }, { signal: opts.signal, timeoutMs: 60_000 });
     const selected = catalog.recommended ?? catalog.recommended_installed;
-    if (!selected) throw new Error("Atomic Core found no compatible inference backend for this computer.");
+    if (!selected) throw new CoreUnavailableError({ stage: "backend", reasonCode: "no_backend", detail: "Atomic Core found no compatible inference backend for this computer" });
     const [tag, backend, extra] = selected.split("/");
     if (!tag || !backend || extra || /[\\]/.test(selected) || tag === ".." || backend === "..") throw new Error("Atomic Core returned an invalid backend selection.");
     const asset = catalog.releases?.find(r => r.tag === tag)?.variants.find(v => v.id === backend)?.asset;
-    const taskId = `agent-backend-${randomUUID()}`;
-    const cancel = () => { void client.call(`/downloads/${taskId}/cancel`, {}).catch(() => {}); };
-    const stopEvents = await client.downloadEvents(taskId, opts.onProgress ?? (() => {}), opts.signal);
-    opts.signal?.addEventListener("abort", cancel, { once: true });
-    opts.onProgress?.(0, 0, 0);
-    let installed: { path: string };
-    try {
-      installed = await client.call<{ path: string }>("/backends/llamacpp/install", { version: tag, backend, task_id: taskId, ...(asset ? { asset_name: asset } : {}) }, { signal: opts.signal, timeoutMs: 15 * 60_000 });
-    } finally { opts.signal?.removeEventListener("abort", cancel); await stopEvents(); }
+    const installed = await installSelectedBackend(client, { version: tag, backend, ...(asset ? { asset_name: asset } : {}) }, opts);
     const binaryName = process.platform === "win32" ? "llama-server.exe" : "llama-server";
     const binary = [join(installed.path, "build", "bin", binaryName), join(installed.path, "bin", binaryName), join(installed.path, binaryName)].find(existsSync);
     if (!binary) throw new Error("Atomic Core installed a backend without an executable.");
@@ -54,6 +71,6 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
     writeCoreJson(join(coreRoot(dataDir), "active.json"), { version, previous });
     return { ok: true, tag: `Atomic Core ${version} · ${tag}` };
   }, opts.signal);
-  } catch (err) { throw withSwitchBackHint(err, opts.signal); }
+  } catch (err) { throw toCoreUnavailable(err, "backend", opts.signal); }
   });
 }

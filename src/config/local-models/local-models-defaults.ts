@@ -11,7 +11,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
     thinking: "auto",
     reasoningBudgetTokens: 1500,
     managed: {
-      engine: "llama-server",
+      engine: "atomic-core",
       modelId: null,
       port: 19091,
       dataDirOverride: null,

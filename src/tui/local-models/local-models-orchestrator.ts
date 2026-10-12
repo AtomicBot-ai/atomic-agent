@@ -1,6 +1,6 @@
 import { selectManagedEngine } from "../../local-llm/engine-selection.js";
-import { atomicCoreChoiceEnabled, ATOMIC_CORE_EXPERIMENTAL_ENV } from "../../local-llm/core/experimental.js";
 import { stopIdleCore } from "../../local-llm/core/core-sessions.js";
+import { CoreUnavailableError, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
 import { totalmem } from "node:os";
 
@@ -184,6 +184,11 @@ export interface LocalModelsOrchestratorHooks {
    * `autoStartIfReady` adoption of a model configured long ago.
    */
   onManagedModelActivated?: () => void;
+  /**
+   * Atomic Core could not be installed or started, and the panel now
+   * offers "download again" or "use llama.cpp". For `local_engine_failed`.
+   */
+  onLocalEngineFailed?: (failure: CoreFailureInfo) => void;
   /**
    * Test seams for the download worker. The defaults launch a detached
    * copy of this program; a test substitutes an in-process runner so
@@ -504,8 +509,9 @@ export class LocalModelsOrchestrator {
         type: "local_models_snapshot_loaded",
         rows,
         backend: {
-          engine: cfg.localModels.managed.engine ?? "llama-server",
-          atomicCoreChoice: atomicCoreChoiceEnabled(cfg),
+          engine: cfg.localModels.managed.engine ?? "atomic-core",
+          // Atomic Chat is the default engine and llama.cpp the way back: both are always offered.
+          atomicCoreChoice: true,
           currentTag: ver?.tag ?? null,
           latestTag,
           updateAvailable,
@@ -1443,6 +1449,7 @@ export class LocalModelsOrchestrator {
     const controller = new AbortController();
     this.backendAbort = controller;
     const dataDir = getConfig().paths.localModelsDataDir;
+    this.clearCoreFailure();
     this.bus.emit({
       type: "local_models_pull_started",
       pull: {
@@ -1502,7 +1509,47 @@ export class LocalModelsOrchestrator {
         kind: "backend",
         error: msg,
       });
+      this.reportCoreFailure(e);
     }
+  }
+
+  /**
+   * `R` on the Core notice: download Atomic Core again, then start the
+   * configured model when it is ready to run, so one key gets the operator
+   * back to a working model.
+   */
+  async retryCoreEngine(): Promise<void> {
+    await this.pullBackend();
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    if (this.closing || cfg.localModels.managed.engine === "llama-server") return;
+    if (!isBackendDownloaded(dataDir, cfg.localModels.managed.engine)) return;
+    const mid = cfg.localModels.managed.modelId;
+    if (cfg.localModels.mode !== "managed" || !mid || !isKnownLocalModelId(mid)) return;
+    if (!isModelDownloaded(dataDir, getLocalModelDef(mid))) return;
+    if ((await getDaemonStatus(dataDir, cfg.localModels.managed.port)).running) return;
+    await this.startDaemon();
+  }
+
+  /**
+   * Show a CoreUnavailableError as the panel notice (R download again, L
+   * use llama.cpp), say it in the feed and report it. Anything else, and a
+   * cancellation, is left to the caller's existing reporting.
+   */
+  private reportCoreFailure(err: unknown, info?: CoreFailureInfo): boolean {
+    const failure = info ?? (err instanceof CoreUnavailableError ? err.info : null);
+    if (!failure || this.closing) return false;
+    this.bus.emit({ type: "local_models_core_failure_set", failure });
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: ${failure.reason} Press R in Models to download it again, or L to use llama.cpp instead.`,
+    });
+    this.hooks?.onLocalEngineFailed?.(failure);
+    return true;
+  }
+
+  private clearCoreFailure(): void {
+    this.bus.emit({ type: "local_models_core_failure_set", failure: null });
   }
 
   /**
@@ -1678,13 +1725,7 @@ export class LocalModelsOrchestrator {
   private async chooseEngineNow(engine: "atomic-core" | "llama-server", wanted: () => boolean): Promise<boolean> {
     if (!wanted()) return false;
     const cfg = getConfig();
-    if (engine === "atomic-core" && !atomicCoreChoiceEnabled(cfg)) {
-      const text = `Atomic Chat is experimental. Set ${ATOMIC_CORE_EXPERIMENTAL_ENV}=1 to offer it.`;
-      this.bus.emit({ type: "runtime_info", line: text });
-      this.bus.emit({ type: "composer_notice", text });
-      return false;
-    }
-    if ((cfg.localModels.managed.engine ?? "llama-server") === engine) {
+    if ((cfg.localModels.managed.engine ?? "atomic-core") === engine) {
       this.bus.emit({ type: "composer_notice", text: `${engine === "atomic-core" ? "Atomic Chat" : "Local llama"} is already selected.` });
       return true;
     }
@@ -1693,7 +1734,7 @@ export class LocalModelsOrchestrator {
       await selectManagedEngine(cfg.paths.localModelsDataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
         () => { if (!wanted()) return; persistUserLocalModelsConfig({ managed: { engine } }); saved = true; });
       if (!saved) return false;
-      this.bus.emit({ type: "runtime_info", line: `Local engine: ${engine}. Press B in Models to install it, then start your model.` });
+      this.bus.emit({ type: "runtime_info", line: `Local engine: ${engine}. Start your model; a missing engine is installed first (B in Models installs it now).` });
       this.bus.emit({ type: "composer_notice", text: `Inference engine: ${engine === "atomic-core" ? "Atomic Chat" : "Local llama"}.` });
       await this.refresh();
       return true;
@@ -1998,6 +2039,7 @@ export class LocalModelsOrchestrator {
       this.daemonSupervised = true;
       opts?.signal?.throwIfAborted();
       this.supervisor.noteStarted();
+      this.clearCoreFailure();
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${chatClear.port}${
@@ -2049,10 +2091,12 @@ export class LocalModelsOrchestrator {
         return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal);
       }
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
-      this.bus.emit({
-        type: "runtime_info",
-        line: `local-llm: start failed — ${msg}`,
-      });
+      if (!this.reportCoreFailure(e)) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: start failed — ${msg}`,
+        });
+      }
       return false;
     } finally {
       this.endActiveRefresh();
@@ -2937,7 +2981,9 @@ export class LocalModelsOrchestrator {
         this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
         this.bus.emit({
           type: "runtime_info",
-          line: `local-llm: updated llama.cpp ${result.from ?? "none"} → ${result.to}`,
+          line: getConfig().localModels.managed.engine === "atomic-core"
+            ? `local-llm: installed ${result.to}${result.from ? ` (was ${result.from})` : ""}`
+            : `local-llm: updated llama.cpp ${result.from ?? "none"} → ${result.to}`,
         });
       } else if (result.action === "check_failed") {
         this.bus.emit({
@@ -2959,10 +3005,12 @@ export class LocalModelsOrchestrator {
           error: result.error,
         });
         if (!result.backendUsable) {
-          this.bus.emit({
-            type: "runtime_info",
-            line: `local-llm: backend update failed and no usable backend remains — ${result.error}`,
-          });
+          if (!result.coreFailure || !this.reportCoreFailure(undefined, result.coreFailure)) {
+            this.bus.emit({
+              type: "runtime_info",
+              line: `local-llm: backend update failed and no usable backend remains — ${result.error}`,
+            });
+          }
           return false;
         }
         this.bus.emit({
@@ -3018,8 +3066,21 @@ export class LocalModelsOrchestrator {
     const mid = cfg.localModels.managed.modelId;
     if (!mid || !isKnownLocalModelId(mid)) return;
     const dataDir = cfg.paths.localModelsDataDir;
-    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
     const def = getLocalModelDef(mid);
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
+      // llama.cpp is never fetched at launch. Atomic Core is the default
+      // engine, and a model that served yesterday must not silently stay
+      // down because its engine changed: install it with progress, then
+      // start. A failure leaves the panel's retry / llama.cpp notice.
+      // A server still running from before the engine changed is adopted
+      // below as it is; the install waits for the next start.
+      if (getConfig().localModels.managed.engine !== "atomic-core" || !isModelDownloaded(dataDir, def)) return;
+      if (!(await getDaemonStatus(dataDir, cfg.localModels.managed.port)).running) {
+        this.bus.emit({ type: "runtime_info", line: "local-llm: installing the Atomic Chat engine…" });
+        await this.pullBackend();
+        if (this.operations.signal?.aborted || !isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
+      }
+    }
     if (!isModelDownloaded(dataDir, def)) return;
     const running = await getDaemonStatus(
       dataDir,
@@ -3162,7 +3223,9 @@ export class LocalModelsOrchestrator {
     if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
-        line: "local-llm: downloading llama.cpp backend…",
+        line: getConfig().localModels.managed.engine === "atomic-core"
+          ? "local-llm: installing the Atomic Chat engine…"
+          : "local-llm: downloading llama.cpp backend…",
       });
       await this.pullBackend();
     }

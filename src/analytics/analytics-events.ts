@@ -10,7 +10,15 @@ export const ANALYTICS_EVENTS = {
   messageSent: "message_sent",
   firstMessageSent: "first_message_sent",
   analyticsDisabled: "analytics_disabled",
+  localEngineFailed: "local_engine_failed",
 } as const;
+
+/**
+ * Which engine served a local turn: Atomic Core, our own managed
+ * llama-server, or a server the operator runs (external mode or a custom
+ * llama-server provider). A fixed word, never a URL or a path.
+ */
+export type LocalEngine = "atomic-core" | "llama-server" | "external";
 
 /** Where an analytics opt-out was made. */
 export type AnalyticsDisabledVia = "settings" | "slash" | "config";
@@ -48,6 +56,8 @@ export interface AppInstalledContext {
  *                    model carries no pricing, which is the normal case
  *                    for local runners — a free turn reports no cost
  *                    rather than a zero one.
+ *  - `localEngine` — for a local turn only, which engine served it
+ *                    (`LocalEngine`). Omitted for cloud turns.
  */
 export interface MessageEventContext {
   provider: string;
@@ -58,6 +68,7 @@ export interface MessageEventContext {
   promptTokens?: number;
   completionTokens?: number;
   costUsd?: number;
+  localEngine?: LocalEngine;
 }
 
 /**
@@ -210,5 +221,44 @@ export function captureMessageSent(
       ? { completion_tokens: context.completionTokens }
       : {}),
     ...(context.costUsd !== undefined ? { cost_usd: context.costUsd } : {}),
+    ...(context.localEngine !== undefined
+      ? { local_engine: context.localEngine }
+      : {}),
+  });
+}
+
+/**
+ * Context of `local_engine_failed`. `stage` and `reasonCode` come from
+ * the engine's closed vocabulary (`download` / `verify` / `backend` /
+ * `start`; `network`, `checksum`, …). Anything outside a short lowercase
+ * word is sent as `unknown`, so a path, a URL or an error message can
+ * never leave the machine through this event.
+ */
+export interface LocalEngineFailedContext {
+  engine: "atomic-core" | "llama-server";
+  stage: string;
+  reasonCode: string;
+}
+
+const FIXED_WORD = /^[a-z][a-z_]{0,23}$/;
+function fixedWord(value: string): string {
+  return FIXED_WORD.test(value) ? value : "unknown";
+}
+
+/**
+ * Emit `local_engine_failed` when the local engine could not be installed
+ * or started and the operator was shown the way forward (retry, or
+ * llama.cpp). Carries `{ engine, stage, reason_code }` only. No-ops when
+ * analytics is disabled.
+ */
+export function captureLocalEngineFailed(
+  client: AnalyticsClient | null,
+  context: LocalEngineFailedContext,
+): void {
+  if (!client) return;
+  client.capture(ANALYTICS_EVENTS.localEngineFailed, {
+    engine: context.engine === "llama-server" ? "llama-server" : "atomic-core",
+    stage: fixedWord(context.stage),
+    reason_code: fixedWord(context.reasonCode),
   });
 }

@@ -15,6 +15,7 @@ export {
   captureAnalyticsDisabled,
   captureAppInstalled,
   captureAppOpened,
+  captureLocalEngineFailed,
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
@@ -22,8 +23,11 @@ export {
 export type {
   AnalyticsDisabledVia,
   AppInstalledContext,
+  LocalEngine,
+  LocalEngineFailedContext,
   MessageEventContext,
 } from "./analytics-events.js";
+export { reportLocalEngineFailed } from "./report-local-engine-failed.js";
 export {
   parseSurface,
   resolveSurface,

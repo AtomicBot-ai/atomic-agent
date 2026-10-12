@@ -1,21 +1,16 @@
-import { getConfig } from "../../config/index.js";
-
-/** Opt-in for the Atomic Chat engine choice while Windows and Linux are unvalidated. */
+/**
+ * The opt-in variable that used to offer Atomic Chat as an engine. Atomic
+ * Core is now the default engine for everybody and the choice is always
+ * offered; the variable is ignored. Kept so existing importers compile.
+ * @deprecated No longer read.
+ */
 export const ATOMIC_CORE_EXPERIMENTAL_ENV = "ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE";
 
-interface EngineConfig {
-  localModels: { managed: { engine?: string } };
-}
-
 /**
- * Whether Atomic Chat may be selected as an engine, in the TUI and in
- * `models engine atomic-core`. True with the opt-in variable set to "1",
- * or when the saved config already selects atomic-core, so nobody who
- * chose it is stranded. Switching back to llama-server is never gated.
+ * Whether Atomic Chat may be selected as an engine. Always true: Atomic Core
+ * is the default engine, and llama.cpp (`llama-server`) stays selectable as
+ * the way back. The parameters are accepted and ignored for compatibility.
  */
-export function atomicCoreChoiceEnabled(
-  config: EngineConfig = getConfig(),
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env[ATOMIC_CORE_EXPERIMENTAL_ENV] === "1" || config.localModels.managed.engine === "atomic-core";
+export function atomicCoreChoiceEnabled(_config?: unknown, _env?: NodeJS.ProcessEnv): boolean {
+  return true;
 }

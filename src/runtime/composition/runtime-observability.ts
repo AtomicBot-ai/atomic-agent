@@ -9,12 +9,14 @@ import {
   buildRuntimeTelemetry,
   captureAppInstalled,
   captureAppOpened,
+  captureLocalEngineFailed,
   captureModelConfigured,
   captureOnboardingStep,
   createTelemetryToggle,
   detectOtherSurfaceInstalled,
   resolveAnalyticsDimensions,
   type AnalyticsDisabledVia,
+  type LocalEngineFailedContext,
 } from "../../analytics/index.js";
 import { getAppVersion } from "../../version.js";
 
@@ -132,7 +134,10 @@ export function createRuntimeObservability(
     ): void => {
       captureModelConfigured(analytics, analyticsStateStore, { provider, kind });
     };
-    return { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured };
+    const reportLocalEngineFailed = (context: LocalEngineFailedContext): void => {
+      captureLocalEngineFailed(analytics, context);
+    };
+    return { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed };
   };
 
   return {

@@ -21,6 +21,7 @@ import {
   type SpawnDownloadWorkerResult,
 } from "../../local-llm/index.js";
 import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
+import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
 /**
@@ -33,6 +34,8 @@ import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 type Emitted = { type: string; error?: string; line?: string };
 
 function stubBackendInstalled(dataDir: string): void {
+  // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+  persistUserLocalModelsConfig({ managed: { engine: "llama-server" } });
   mkdirSync(resolveBackendDir(dataDir), { recursive: true });
   const { binaryName } = resolvePlatformAsset();
   writeFileSync(resolveServerBinPath(dataDir, binaryName), "");

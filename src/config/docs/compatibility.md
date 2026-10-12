@@ -5,7 +5,7 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 76; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 77; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
@@ -18,6 +18,10 @@ Memory embeddings are off by default; query rewriting, links, evolution, lessons
 For input versions below 75, validated providers without `modelMode` receive `cloud` when the shared [provider classification](../model-mode.ts) recognizes a cloud service. This uses the same rule as adding a connection. Explicit `local`/`cloud` settings and per-model overrides remain intact; local and unknown endpoints are left as they were. Null is parsed as absent before migration. Provider IDs, models, credentials and numerical limits are not changed by this migration.
 
 [Config loading](../config-file.ts) persists the upgraded version through its existing atomic owner-only writer. Read-only parsing returns migrated values without writing. Version 75 or newer does not reapply classification: manual `local` or `inherit` choices survive later loads and provider edits. A missing version follows the existing current-version rule. [Mode tests](../model-mode.test.ts), [file IO tests](../config-file.test.ts) and [provider commands](../llm-provider-commands.test.ts) cover classification, persistence, restart and manual precedence.
+
+## Atomic Core default engine migration
+
+Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before it the Atomic Core choice sat behind an opt-in environment variable, so a stored `llama-server` was the written default rather than a decision: for input versions below 77 a missing or `llama-server` engine becomes `atomic-core`. Nothing else in the file changes, including external mode and every other managed field. From version 77 an explicit `llama-server` is honoured, so switching back with `models engine llama-server` survives later loads. Unknown engine values still fail validation. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
 ## Scalar validation
 

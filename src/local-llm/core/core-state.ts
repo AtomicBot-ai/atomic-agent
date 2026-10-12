@@ -4,25 +4,18 @@ import { randomUUID } from "node:crypto";
 import { restrictWindowsAcl } from "../../config/windows-acl.js";
 
 export type ManagedEngine = "llama-server" | "atomic-core";
-/** Exact releases exercised by the host's control-contract tests. */
-export const CORE_VERSIONS = ["0.11.2"] as const;
+/**
+ * Exact releases exercised by the host's control-contract tests. The last
+ * one is what this build installs; older entries stay readable so an
+ * existing install, its sessions and its daemon still stop cleanly.
+ */
+export const CORE_VERSIONS = ["0.11.2", "0.13.6"] as const;
 export const CORE_VERSION = CORE_VERSIONS[CORE_VERSIONS.length - 1]!;
 export const CORE_PROTOCOL = 2;
 export const CORE_REPO = "AtomicBot-ai/atomic-chat-core";
 
-/**
- * There is no automatic fallback: with atomic-core selected, a failed Core
- * install or start leaves no working local engine. Every such failure ends
- * with the way back, for both the CLI and the TUI.
- */
-export const CORE_SWITCH_BACK_HINT = "Switch back with: atomic-agent models engine llama-server (TUI: /model engine llama-server).";
-
-/** Append the switch-back hint once. Cancellation is not a failure and stays untouched. */
-export function withSwitchBackHint(err: unknown, signal?: AbortSignal): unknown {
-  if (signal?.aborted || !(err instanceof Error) || err.name === "AbortError") return err;
-  if (!err.message.includes(CORE_SWITCH_BACK_HINT)) err.message = `${err.message.trimEnd()} ${CORE_SWITCH_BACK_HINT}`;
-  return err;
-}
+// The failure text lives with the structured error; re-exported for existing importers.
+export { CORE_RETRY_HINT, CORE_SWITCH_BACK_HINT, CoreUnavailableError, withSwitchBackHint } from "./core-errors.js";
 
 export interface CoreBackend {
   coreVersion: string;

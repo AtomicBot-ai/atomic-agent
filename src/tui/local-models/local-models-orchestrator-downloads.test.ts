@@ -67,6 +67,8 @@ type EmittedAction =
   | { type: "runtime_info"; line: string };
 
 function stubBackendInstalled(dataDir: string): void {
+  // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+  persistUserLocalModelsConfig({ managed: { engine: "llama-server" } });
   const backendDir = resolveBackendDir(dataDir);
   mkdirSync(backendDir, { recursive: true });
   const { binaryName } = resolvePlatformAsset();

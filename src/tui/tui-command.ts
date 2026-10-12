@@ -687,6 +687,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.useManagedMode(),
         onLocalModelsBackendPullRequested: () =>
           void orchestrator.localModels.pullBackend(),
+        onLocalModelsCoreRetryRequested: () =>
+          void orchestrator.localModels.retryCoreEngine(),
         onLocalModelsRefreshRequested: () =>
           void orchestrator.localModels.refresh(),
         onLocalModelsHfResolveRequested: (reference) =>

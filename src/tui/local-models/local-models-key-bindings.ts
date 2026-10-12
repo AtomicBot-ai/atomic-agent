@@ -6,6 +6,7 @@ import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
 import { handleNotifyPromptKey } from "./local-models-notify-keys.js";
 import {
   resolveRowAt,
+  showsCoreFailureNotice,
   type EmbeddingModelRow,
   type LocalModelRow,
   type LocalModelsPanelState,
@@ -81,6 +82,21 @@ export function handleLocalModelsTabKey(
       return true;
     }
     return true;
+  }
+
+  // Atomic Core could not be installed or started: R downloads it again,
+  // L switches to llama.cpp. While the notice shows, L means this rather
+  // than the logs tab; every other key keeps working.
+  if (panel.mode === "list" && showsCoreFailureNotice(panel)) {
+    if (input === "R") {
+      if (callbacks.onLocalModelsCoreRetryRequested) callbacks.onLocalModelsCoreRetryRequested();
+      else callbacks.onLocalModelsBackendPullRequested?.();
+      return true;
+    }
+    if (input === "L") {
+      callbacks.onLocalModelsEngineRequested?.("llama-server");
+      return true;
+    }
   }
 
   const ref = resolveRowAt(panel);

@@ -371,6 +371,8 @@ export interface TuiAppCallbacks {
    */
   onLocalModelsUseManagedRequested?(): void | Promise<void>;
   onLocalModelsBackendPullRequested?(): void;
+  /** `R` on the Atomic Core notice: download the engine again, then start the configured model. */
+  onLocalModelsCoreRetryRequested?(): void;
   onLocalModelsRefreshRequested?(): void;
   /** Ask Hugging Face what GGUFs the typed reference names. */
   onLocalModelsHfResolveRequested?(reference: string): void;

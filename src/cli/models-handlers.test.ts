@@ -192,6 +192,8 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
         mode: "managed",
         managed: {
           ...USER_CONFIG_DEFAULTS.localModels.managed,
+          // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+          engine: "llama-server",
           modelId: "qwen-3.5-4b",
         },
       },
@@ -376,6 +378,7 @@ describe("runLocalModelsStartEmbedding", () => {
       localModels: {
         ...USER_CONFIG_DEFAULTS.localModels,
         mode: "managed",
+        managed: { ...USER_CONFIG_DEFAULTS.localModels.managed, engine: "llama-server" },
         embeddings: {
           ...USER_CONFIG_DEFAULTS.localModels.embeddings,
           enabled,
@@ -469,6 +472,7 @@ describe("runLocalModelsUpdate on Windows arm64 with no arm64 release", () => {
       localModels: {
         ...USER_CONFIG_DEFAULTS.localModels,
         mode: "managed",
+        managed: { ...USER_CONFIG_DEFAULTS.localModels.managed, engine: "llama-server" },
       },
     });
     resetConfigCache();

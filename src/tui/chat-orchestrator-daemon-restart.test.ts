@@ -166,7 +166,8 @@ describe("ChatOrchestrator: managed daemon restarts refresh the local model prof
   function prepareManagedInstall(): void {
     persistUserLocalModelsConfig({
       mode: "managed",
-      managed: { modelId: "qwen-3.5-4b" },
+      // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+      managed: { engine: "llama-server", modelId: "qwen-3.5-4b" },
     });
     resetConfigCache();
     const dataDir = getConfig().paths.localModelsDataDir;
