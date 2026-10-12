@@ -9,7 +9,9 @@ function composerEngineMark(id, size) {
 }
 function composerEngineChip(kind, label, local, role) {
   const title = (role ? role + ' inference engine: ' : 'Inference engine: ') + label;
-  return '<button class="cchip providerchip enginechip' + cchipOpen(kind) + '" data-sel-open="' + kind + '" data-id="' + esc(label) + '"'
+  // data-id stays the seat's provider id (local-llama for the managed engine), as the provider chip carried before.
+  const id = local ? 'local-llama' : label;
+  return '<button class="cchip providerchip enginechip' + cchipOpen(kind) + '" data-sel-open="' + kind + '" data-id="' + esc(id) + '"'
     + ' title="' + esc(title) + '" aria-label="' + esc(title) + '">'
     + (local ? composerEngineMark(composerEngineId(), 'xs') : providerMark(label, 'xs'))
     + '<span class="cval">' + esc(local ? label : providerWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
