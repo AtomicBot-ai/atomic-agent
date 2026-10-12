@@ -63,9 +63,13 @@
   gap:22px;padding:24px 28px 64px}
 /* Calm (S3): a greeting and one quiet line, on the page — no card, no rows. */
 .emptyplate{width:min(560px,100%);display:grid;justify-items:center;gap:8px;text-align:center}
-.emptyhead{display:flex;align-items:center;gap:12px;font-size:20px;line-height:1.3;letter-spacing:-.02em;color:var(--ink)}
-.emptyhead b{font-weight:600}
-.emptyhead svg{width:30px;height:30px;flex:none}
+/* 13.10 (owner's review): 1.3× — 26px type and a 39px mark (was 20 / 30).
+   The mark and the gap are in em so they stay in proportion with the type;
+   the type clamps down to the old 20px on a narrow column, and the line may
+   wrap (balanced) rather than overflow. */
+.emptyhead{display:flex;align-items:center;gap:.6em;font-size:clamp(20px,3.4vw,26px);line-height:1.25;letter-spacing:-.02em;color:var(--ink);min-width:0;max-width:100%}
+.emptyhead b{font-weight:600;min-width:0;text-wrap:balance}
+.emptyhead svg{width:1.5em;height:1.5em;flex:none}
 .emptymeta{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px 8px;min-width:0;
   font-size:13px;line-height:20px;color:var(--ink-2)}
 .emptymeta .em-it{display:inline-flex;align-items:center;gap:6px;min-width:0}

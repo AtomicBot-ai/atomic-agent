@@ -233,10 +233,16 @@ Real, driven by the running agent:
   than 1000px — the two lists stay as a column of dots, each row's tooltip
   naming it, so the rail is still a way back into a chat; the two list headers
   stay too, stripped to their **+**, because 52px does not hold a label or the
-  counter and the rail would otherwise have no way to start anything. The
-  toolbar's sidebar button glows in the accent (`.iconbtn.on`, the same
-  treatment the Inspector and Console buttons use) while the sidebar is
-  expanded, and *expanded* is the conjunction of both facts — the flag and the
+  counter and the rail would otherwise have no way to start anything.
+  Expanded, the sidebar reaches up into the 52px title band (the Atomic Chat
+  layout): its top row (`.sb-top`) has the macOS traffic lights on the left
+  and two 32px icon buttons on the right, Search (the palette, ⌘ K) and the
+  sidebar toggle; the row is the drag handle, the buttons are not, and the
+  toolbar starts past the sidebar (`#toolbar.sb-open`). Collapsed, both
+  buttons stand in the toolbar next to the lights; there is no Search pill.
+  Smoke task 114 covers the layout. The sidebar button glows in the accent
+  (`.iconbtn.on`, the same treatment the Inspector and Console buttons use)
+  while the sidebar is expanded, and *expanded* is the conjunction of both facts — the flag and the
   breakpoint — so the glow cannot lie on a narrow window. Below 1000px the
   media query pins 52px whatever the flag says, so the button is **disabled**
   there rather than left as a live control that does nothing, its tooltip
