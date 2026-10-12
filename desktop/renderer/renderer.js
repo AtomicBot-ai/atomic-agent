@@ -17363,11 +17363,13 @@ if (typeof window !== 'undefined') {
   window.__approvalCat = (cat) => ({label: CATEGORY_LABEL[cat] || null, level: (CATS.find((c) => c[0] === cat) || [null, null, null])[2]});
   window.__fzProbe = (cfg, facts) => {
     const keep = {cfg: LIVE_CONFIG, ids: BSW.readyIds, rl: BSW.readyLoaded, ll: BSW.localLoaded, local: SEL.local, want: SWX.want, kind: SEL.kind,
-      queued: FZ.swapQueued};
+      queued: FZ.swapQueued, models: SEL.models, modelsFor: SEL.modelsFor, filter: SEL.filter};
     try {
       LIVE_CONFIG = cfg;
       BSW.readyIds = facts.readyIds || []; BSW.readyLoaded = true; BSW.localLoaded = facts.localLoaded !== false;
       SEL.local = facts.local || []; SWX.want = null; FZ.swapQueued = false;
+      // A cloud seat's model rows are its provider's catalogue: the probe hands one in.
+      SEL.models = facts.models || []; SEL.modelsFor = null; SEL.filter = '';
       const rows = (kind) => { SEL.kind = kind; return selRows().map((r) => ({type:r.type, id:r.id, label:r.label, detail:r.detail || '', active:!!r.active})); };
       const tpl = document.createElement('template');
       tpl.innerHTML = composer();
@@ -17379,7 +17381,9 @@ if (typeof window !== 'undefined') {
       return {
         backend: selBackend(), kinds: selKinds(), chips,
         swap: !!tpl.content.querySelector('.cfoot [data-act="runmode:swap"]'),
-        rows: {backend: rows('backend'), provider: rows('provider'), workers: selHasKind('workers') ? rows('workers') : null},
+        rows: {backend: rows('backend'), provider: rows('provider'),
+          workerProvider: selHasKind('workerProvider') ? rows('workerProvider') : null,
+          workers: selHasKind('workers') ? rows('workers') : null},
         settings: {active: on ? on.dataset.act : null,
           status: (set.content.querySelector('.llm-rm-status') || {}).textContent || '',
           workersOn: (set.content.querySelector('.llm-workerseg .on') || {}).textContent || '',
@@ -17388,6 +17392,7 @@ if (typeof window !== 'undefined') {
     } finally {
       LIVE_CONFIG = keep.cfg; BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll;
       SEL.local = keep.local; SWX.want = keep.want; SEL.kind = keep.kind; FZ.swapQueued = keep.queued;
+      SEL.models = keep.models; SEL.modelsFor = keep.modelsFor; SEL.filter = keep.filter;
       render();
     }
   };
