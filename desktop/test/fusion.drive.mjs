@@ -147,7 +147,7 @@ try {
   const ch1 = await chips();
   const has = (list, kind, re) => list.some(([k, t]) => k === kind && re.test(t));
   check('B: the chips are fusion · aimlapi · its model ⇄ workers',
-    has(ch1, 'backend', /^fusion$/) && has(ch1, 'provider', /^aimlapi$/) && has(ch1, 'model', /grok-4-6/) && has(ch1, 'workerProvider', /Local llama|Atomic Chat/) && has(ch1, 'workers', /qwen-3\.5-4b/)
+    has(ch1, 'backend', /^fusion$/) && has(ch1, 'provider', /^aimlapi$/) && has(ch1, 'model', /grok-4-6/) && has(ch1, 'workerProvider', /^local-llama$/) && has(ch1, 'workers', /qwen-3\.5-4b/)
       && await app.eval(`!!document.querySelector('#composer .cfoot .fzswap')`), JSON.stringify(ch1));
   const intro = await app.eval(`[...document.querySelectorAll('.sysrow .fz-intro')].map((n) => n.textContent)`);
   check('B: the intro is in the transcript once, naming both legs',
@@ -175,8 +175,8 @@ try {
   await until(async () => (await popTitle()) === 'Orchestrator inference engine' && (await popRows()).length >= 3, 'the Provider popover', 10000);
   await until(async () => (await popRows()).every((r) => r[1] !== 'checking keys…'), 'the key facts', 15000);
   const rowsD = await popRows();
-  check('D: orchestrator engine rows exclude the worker provider and mark the current engine',
-    rowsD.some(r => r[0] === 'AI/ML API' && r[2]) && !rowsD.some(r => r[0] === 'OpenRouter')
+  check('D: orchestrator engine rows list the worker provider too and mark the current engine',
+    rowsD.some(r => r[0] === 'AI/ML API' && r[2]) && rowsD.some(r => r[0] === 'OpenRouter' && !r[2])
       && rowsD.some(r => r[0] === 'Local llama') && rowsD.some(r => r[0] === 'Atomic Chat'), JSON.stringify(rowsD));
   await shot('D-provider-popover');
   await closePopover();

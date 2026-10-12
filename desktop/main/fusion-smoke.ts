@@ -211,11 +211,11 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
     ["llama-server", "llama.cpp · runs on this machine", seatIsLocal],
     ["atomic-core", "Atomic Chat Core · runs on this machine", false],
   ];
-  check("fusion: the orchestrator's engine rows are every cloud provider but the workers', then the local engines, then Add",
-    same(triple(pF.rows.provider), [["aimlapi", "Cloud provider", true], ...localEngines(false), ["add", "opens the wizard", false]]),
+  check("fusion: the orchestrator's engine rows are every cloud provider (the workers' too), then the local engines, then Add",
+    same(triple(pF.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "Cloud provider", false], ...localEngines(false), ["add", "opens the wizard", false]]),
     JSON.stringify(triple(pF.rows.provider)));
-  check("fusion: the workers' engine rows are every cloud provider but the orchestrator's, then the local engines, then Add",
-    same(triple(pF.rows.workerProvider), [["openrouter", "Cloud provider", true], ...localEngines(false), ["add", "opens the wizard", false]]),
+  check("fusion: the workers' engine rows are every cloud provider (the orchestrator's too), then the local engines, then Add",
+    same(triple(pF.rows.workerProvider), [["aimlapi", "Cloud provider", false], ["openrouter", "Cloud provider", true], ...localEngines(false), ["add", "opens the wizard", false]]),
     JSON.stringify(triple(pF.rows.workerProvider)));
   check("fusion: the workers' model rows are their own provider's catalogue, the pinned model marked",
     same(triple(pF.rows.workers), workerCatalogue.map((m) => [m.id, "", m.id === chip(pF, "workers")])),
@@ -231,7 +231,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
      local engine (the ⇄ moves it), and the workers' engine rows mark the local engine. */
   check("fusion: with a model on disk the workers run it on the local engine, and the orchestrator is offered no second local slot",
     same(triple(pL.rows.workers), [["downloadMore", "opens Settings › Models", false], ["qwen-3.5-4b", "On this machine", true]])
-      && same(triple(pL.rows.workerProvider), [["openrouter", "No API key", false], ...localEngines(true), ["add", "opens the wizard", false]])
+      && same(triple(pL.rows.workerProvider), [["aimlapi", "Cloud provider", false], ["openrouter", "No API key", false], ...localEngines(true), ["add", "opens the wizard", false]])
       && same(triple(pL.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "No API key", false], ["add", "opens the wizard", false]])
       && chip(pL, "workerProvider") === "local-llama" && chip(pL, "workers") === "qwen-3.5-4b",
     JSON.stringify({ workers: triple(pL.rows.workers), workerProvider: triple(pL.rows.workerProvider), provider: triple(pL.rows.provider) }));

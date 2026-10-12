@@ -40,3 +40,21 @@ test('changing a worker keeps a local orchestrator and drops only the obsolete r
   assert.equal(cfg.llm.runMode.fusion.orchestratorModel,'local-model');
   assert.equal(cfg.llm.runMode.fusion.workerProvider,'second'); assert.equal(cfg.llm.runMode.fusion.workerModel,undefined);
 });
+test('each seat lists every cloud provider, the other seat\'s too, and the local engines only while the slot is free',()=>{
+  const {context:c,rm}=fixture();
+  assert.deepEqual(c.composerFusionEngineRows('orchestrator').filter(r=>r.type==='fusionLeg').map(r=>r.id),['cloud','second']);
+  rm.workerProviderId='cloud';
+  const worker=c.composerFusionEngineRows('worker');
+  assert.deepEqual(worker.filter(r=>r.type==='fusionLeg').map(r=>[r.id,r.active]),[['cloud',true],['second',false]]);
+  assert.equal(worker.filter(r=>r.type==='localEngine').length,2);
+});
+test('two cloud seats may share a provider; both seats on the one local slot are refused',()=>{
+  const providers=[{id:'local-llama',kind:'llama-server'},{id:'cloud',kind:'openai-compatible'},{id:'second',kind:'openai-compatible'}];
+  const shared={llm:{activeTextProvider:'cloud',providers:JSON.parse(JSON.stringify(providers)),runMode:{mode:'fusion',fusion:{orchestratorProvider:'cloud',workerProvider:'second'}}}};
+  const same=planEnterFusion(shared,{orchestratorProvider:'cloud',workerProvider:'cloud'},()=>true);
+  assert.equal(same.refusal,undefined); assert.equal(same.write,true);
+  assert.equal(shared.llm.runMode.fusion.orchestratorProvider,'cloud'); assert.equal(shared.llm.runMode.fusion.workerProvider,'cloud');
+  const local={llm:{activeTextProvider:'local-llama',providers:JSON.parse(JSON.stringify(providers)),runMode:{mode:'fusion',fusion:{orchestratorProvider:'local-llama',workerProvider:'cloud'}}}};
+  const both=planEnterFusion(local,{workerProvider:'local-llama'},()=>true);
+  assert.equal(both.write,false); assert.match(both.refusal,/one Fusion role at a time/);
+});

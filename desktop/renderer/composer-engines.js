@@ -29,7 +29,8 @@ function composerFusionEngineRows(leg) {
   const rm = rmNow();
   const chosen = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
   const other = leg === 'worker' ? rm.orchestratorProviderId : rm.workerProviderId;
-  const cloud = selProviders().filter((p) => p.id !== other).map((p) => ({
+  // Both seats may use one cloud provider (two of its models).
+  const cloud = selProviders().map((p) => ({
     type:'fusionLeg', leg, id:p.id, label:p.id,
     detail: BSW.readyIds.includes(p.id) ? 'Cloud provider' : 'No API key', active:p.id === chosen,
   }));

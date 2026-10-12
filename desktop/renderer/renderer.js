@@ -15579,6 +15579,8 @@ async function selActivate(row) {
   if (row.type === 'fusionLeg') {
     if (row.id !== 'local-llama' && !BSW.readyIds.includes(row.id)) { bswOpenKey(row.id); return; }
     const pins = row.leg === 'orchestrator' ? {orchestratorProvider: row.id} : {workerProvider: row.id};
+    // The workers' provider for the orchestrator too: both seats on one provider (two of its models), not a reshuffle.
+    if (row.leg === 'orchestrator' && row.id === rmNow().workerProviderId) pins.workerProvider = row.id;
     const before = fzBefore('switching…');
     fzAfter(await swxRun(BSW.line, row.leg === 'orchestrator' ? {backend:'fusion', providerId: row.id} : {backend:'fusion'},
       () => SWXBR.enterFusion(pins)), before);
@@ -17096,7 +17098,7 @@ function fzIntroParagraphs(rm) {
     'Right now — ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
       + ' ' + worker + ' executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.',
     'How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.',
-    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud providers work as well, a careful model directing a fast one. This setup has one managed local engine, which can serve either role.',
+    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one, even from the same provider. This setup has one managed local engine, which can serve either role.',
     'Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.',
     'Each seat has separate inference engine and model controls. Use the swap button to trade the seats. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.',
   ];
