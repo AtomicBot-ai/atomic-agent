@@ -58,6 +58,19 @@ describe("LocalModelsOrchestrator", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
+  it("does not release waiting messages into a failed or stopped model", async () => {
+    const orchestrator = new LocalModelsOrchestrator({emit() {}, subscribe: () => () => {}});
+    const internals = orchestrator as unknown as {startDaemonNow: () => Promise<boolean>; stopDaemonNow: () => Promise<void>};
+    const start = vi.spyOn(internals, "startDaemonNow").mockResolvedValue(false);
+    const signal = new AbortController().signal;
+    await orchestrator.startDaemon();
+    await expect(orchestrator.waitForSwitch(signal)).rejects.toThrow("did not start");
+    start.mockResolvedValue(true); await orchestrator.startDaemon();
+    await expect(orchestrator.waitForSwitch(signal)).resolves.toBeUndefined();
+    vi.spyOn(internals, "stopDaemonNow").mockResolvedValue(); await orchestrator.stopDaemon();
+    await expect(orchestrator.waitForSwitch(signal)).rejects.toThrow("was stopped");
+  });
+
   function writeUserConfig(overrides: Record<string, unknown>): void {
     writeFileSync(
       join(stateDir, "config.json"),

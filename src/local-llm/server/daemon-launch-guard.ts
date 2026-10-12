@@ -96,6 +96,7 @@ export interface WaitForOwnDaemonOptions {
   /** Built by the caller so the Windows fallback keeps its error class. */
   makeHealthError: (message: string) => Error;
   pollMs?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -119,9 +120,11 @@ export async function waitForOwnDaemon(
     const pollMs = opts.pollMs ?? 250;
     const start = Date.now();
     while (Date.now() - start < opts.timeoutMs) {
+      opts.signal?.throwIfAborted();
       if (exited) break;
       if ((await opts.probeHealth(opts.port)) === "ok" && !exited) {
         await assertServesAlias(opts);
+        opts.signal?.throwIfAborted();
         return;
       }
       await new Promise((r) => setTimeout(r, pollMs));

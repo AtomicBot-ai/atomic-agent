@@ -255,7 +255,7 @@ describe("LocalModelsOrchestrator.restartDaemon", () => {
     expect(stopBoth).not.toHaveBeenCalled();
   });
 
-  it("does not narrate the stop as a switch to an external server", () => {
+  it("does not narrate the stop as a switch to an external server", async () => {
     // `stopChatDaemonOnly`'s default line was written for the one caller
     // it had — saving an external URL. Mid-restart it claims a server
     // that is not in play, one line before "starting …" contradicts it.
@@ -273,7 +273,7 @@ describe("LocalModelsOrchestrator.restartDaemon", () => {
     );
     vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
 
-    void orchestrator.restartDaemon();
+    await orchestrator.restartDaemon();
 
     expect(stoppedLine).toBeDefined();
     expect(stoppedLine).not.toContain("external URL");

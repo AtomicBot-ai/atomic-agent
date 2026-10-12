@@ -1,4 +1,6 @@
+import { requestWorkspace } from "./workspace-context.js";
 import { join } from "node:path";
+import { SessionNotFoundError } from "../runtime/session-not-found-error.js";
 
 import {
   installSkill,
@@ -32,8 +34,30 @@ interface UninstallBody {
  * an admin surface shows exactly what the model will see.
  */
 export function createListSkillsHandler(): HttpHandler {
-  return async (_req, res, ctx) => {
+  return async (req, res, ctx) => {
     const { runtime } = ctx;
+    let workspace;
+    try { workspace = requestWorkspace(req, runtime); }
+    catch (err) {
+      if (err instanceof SessionNotFoundError) { sendError(res, 404, openaiError("session not found")); return; }
+      throw err;
+    }
+    if (workspace) {
+      sendJson(res, 200, {
+        workingDir: workspace.workingDir,
+        projectSkillsEnabled: workspace.skills.projectSkillsEnabled,
+        skills: workspace.skills.entries.map(e => ({
+          name: e.record.manifest.name, description: e.record.manifest.description,
+          version: e.record.manifest.version, source: e.record.source, rootDir: e.record.rootDir,
+          fingerprint: e.fingerprint, disabled: e.disabledReasons.length > 0,
+          disabledReasons: e.disabledReasons, sources: e.sources,
+          dangerous: e.record.manifest.dangerous, requiresTools: e.record.manifest.requiresTools,
+          requiresScripts: e.record.manifest.requiresScripts,
+        })),
+        errors: workspace.diagnostics,
+      });
+      return;
+    }
     const records = runtime.skillRegistry.list();
     sendJson(res, 200, {
       skills: records.map((r) => ({
@@ -58,13 +82,21 @@ export function createListSkillsHandler(): HttpHandler {
  * `skill.view`.
  */
 export function createGetSkillHandler(): HttpHandler {
-  return async (_req, res, ctx) => {
+  return async (req, res, ctx) => {
     const name = ctx.params.name;
     if (!name) {
       sendError(res, 400, openaiError("skill name is required"));
       return;
     }
     try {
+      const workspace = requestWorkspace(req, ctx.runtime);
+      if (workspace) {
+        const entry = workspace.skills.entries.find(e => e.record.manifest.name === name);
+        if (!entry) throw new SkillNotFoundError(name);
+        sendJson(res, 200, { manifest: entry.record.manifest, rootDir: entry.record.rootDir, source: entry.record.source,
+          body: entry.body, disabledReasons: entry.disabledReasons, sources: entry.sources });
+        return;
+      }
       const record = ctx.runtime.skillRegistry.get(name);
       const body = await ctx.runtime.skillRegistry.readBody(name);
       sendJson(res, 200, {
@@ -74,7 +106,7 @@ export function createGetSkillHandler(): HttpHandler {
         body,
       });
     } catch (err) {
-      if (err instanceof SkillNotFoundError) {
+      if (err instanceof SkillNotFoundError || err instanceof SessionNotFoundError) {
         sendError(res, 404, openaiError(err.message, "invalid_request_error"));
         return;
       }

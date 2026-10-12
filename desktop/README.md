@@ -441,15 +441,22 @@ Honestly degraded, and labelled as such in the UI:
   `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
   cron-parser. The firings feed is not exposed by the HTTP API and the tab
   says so.
-- **Skills** list through `atag skill list` (the only surface that carries
-  disabled skills), toggle through `atag skill disable|enable` (the running
-  agent keeps its boot-time registry, so the tab offers a restart), remove
-  through `POST /api/skills/uninstall`, and read a detail body from
-  `GET /api/skills/{name}` — or `atag skill show` when the route answers 404
-  for a disabled skill. The Skills Hub browses through `atag skill browse` /
-  `skill search`, fetches a ClawHub card body from the registry's detail
-  endpoint, and installs through `atag skill install` (a `dangerous` scan
-  verdict shows the TUI's confirm with the CLI's line as its one finding).
+- **Skills** in cloud mode read the selected session's live workspace catalog
+  through HTTP, including `.agents`, `.claude`, `.cursor` and `.pi` skills,
+  disabled reasons and the chosen source directory. Before the first message
+  the API previews an unsaved session in the startup workspace. Late catalog
+  or detail responses cannot replace a newer session's view. Choosing another
+  startup folder in cloud mode opens a new chat; existing conversations keep
+  their original working directory. Enabled skills
+  appear in slash completion and the command palette; submitting `/skill-name`
+  rechecks availability before sending the normal `skill.view` instruction.
+  The Skills detail offers workspace and global controls (`e` toggles the
+  workspace, `g` the global setting); `p` and the toolbar button toggle all
+  project sources. Cloud settings apply on the next request without restart.
+  Local mode retains `atag skill list`, global toggles and restart semantics.
+  Project skills are read in place. Remove project copies from the source
+  directory shown in the detail. Global uninstall and Skills Hub behavior
+  retain their existing HTTP/CLI paths.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.
@@ -580,6 +587,19 @@ Honestly degraded, and labelled as such in the UI:
   (`atag config set '<json>'`) that mirror the TUI's persist helpers. The
   desktop's `configSet` refuses `llm.*` outright so the dead path cannot
   return.
+- **Context policy follows the agent's `modelMode`**, independently of the
+  local/cloud/Fusion route. Cloud policy keeps full tool results in its
+  conversation journal and compacts near the model window; local policy
+  keeps the bounded prompt. The agent's v75 migration initializes existing
+  connections. New connections saved by the desktop use the same initial
+  classification as the TUI: known cloud services use cloud policy, local
+  and unknown/custom endpoints use local policy. New provider imports from
+  pre-v75 terminal configs receive the same cloud migration; importing a
+  current-format entry preserves its saved policy, including `inherit`.
+  Editing keys or selecting
+  a model preserves provider defaults, exact-model overrides and an absent
+  default (`inherit`). There is no desktop policy picker yet; manual
+  overrides use the [agent's config contract](../src/llm/docs/model-mode.md).
 - **Switching backend/provider/model restarts `atag serve`** — the running
   agent pins its provider at boot and 0.5.4 has no reload route; a switch is
   refused while a turn is running. The restart also happens when the file
@@ -1440,6 +1460,17 @@ The renderer is the design prototype, unbundled and unminified. `renderer.js`
 ends with a live-wiring section: with `window.atomic` present it clears the demo
 data and drives the real agent; without it, the file runs exactly as the
 prototype does in a browser.
+
+### Choosing while the engine starts
+
+The composer selectors remain available during a route change. Pending model or
+provider choices replace the waiting route, and a pending coding-mode choice is
+kept separately. Engine operations run one at a time; Send remains held across
+the hand-off until the final route and mode settle. An in-flight operation may
+finish before the newest choice starts, but its stale feedback cannot close a
+newly opened selector or overwrite the selected target. Interactive local starts
+use `models start --interactive` to avoid waiting for the optional throughput
+benchmark after health is ready.
 
 ## Atomic Core preview
 

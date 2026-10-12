@@ -5,7 +5,7 @@ import {
 import { CODING_MODES, cycleCodingMode } from "./coding-mode/coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { clampMenuCursor } from "./menu/menu-selectors.js";
-import { filterSlashCommands } from "./commands/slash-commands.js";
+import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
 import type { TuiAction } from "./tui-action.js";
@@ -162,7 +162,7 @@ export function reduceUiAction(
         slashPaletteCursor: 0,
       };
     case "slash_palette_cursor_moved": {
-      const max = Math.max(0, filterSlashCommands(state.slashQuery).length - 1);
+      const max = Math.max(0, filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel)).length - 1);
       const next = Math.min(
         max,
         Math.max(0, state.slashPaletteCursor + action.delta),
@@ -170,7 +170,7 @@ export function reduceUiAction(
       return { ...state, slashPaletteCursor: next };
     }
     case "slash_palette_cursor_set": {
-      const max = Math.max(0, filterSlashCommands(state.slashQuery).length - 1);
+      const max = Math.max(0, filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel)).length - 1);
       return {
         ...state,
         slashPaletteCursor: Math.min(max, Math.max(0, action.row)),
@@ -429,6 +429,7 @@ export function reduceUiAction(
     case "chat_scroll_reset":
       return { ...state, chatScrollOffset: 0 };
     case "session_switched": {
+      state = { ...state, pendingModelMessage: null };
       // Any pending approval closes with the transcript it asked
       // about. The one the LEFT thread owned is denied at the gate by
       // the orchestrator on switch-away; one owned by the thread being

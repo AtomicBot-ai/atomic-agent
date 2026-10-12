@@ -1,4 +1,7 @@
-import { sendJson, type HttpHandler } from "./request-context.js";
+import { requestWorkspace } from "./workspace-context.js";
+import { SessionNotFoundError } from "../runtime/session-not-found-error.js";
+import { sendJson, sendError, type HttpHandler } from "./request-context.js";
+import { openaiError } from "./openai-errors.js";
 
 /**
  * `GET /api/capabilities` — summary of the host environment and
@@ -7,8 +10,14 @@ import { sendJson, type HttpHandler } from "./request-context.js";
  * loop directly.
  */
 export function createCapabilitiesHandler(): HttpHandler {
-  return async (_req, res, ctx) => {
+  return async (req, res, ctx) => {
     const { runtime } = ctx;
+    let workspace;
+    try { workspace = requestWorkspace(req, runtime); }
+    catch (err) {
+      if (err instanceof SessionNotFoundError) { sendError(res, 404, openaiError("session not found")); return; }
+      throw err;
+    }
     // The registry holds every tool bootstrap wired, including the ones
     // the config gates hide: `github.*` stays registered without a token,
     // `fusion.delegate` outside fusion (`filter-disabled-tools.ts`). What
@@ -19,7 +28,7 @@ export function createCapabilitiesHandler(): HttpHandler {
     const offered = new Set(runtime.toolDescriptors.map((d) => d.name));
     sendJson(res, 200, {
       runtime: "atomic-agent",
-      capabilities: runtime.capabilities,
+      capabilities: workspace ? { ...runtime.capabilities, workingDir: workspace.workingDir } : runtime.capabilities,
       paths: {
         stateDir: runtime.config.paths.stateDir,
         globalSkillsDir: runtime.config.paths.globalSkillsDir,
@@ -72,7 +81,7 @@ export function createCapabilitiesHandler(): HttpHandler {
           description: t.description,
           readonly: t.readonly,
         })),
-      skills: runtime.skillCatalog.map((s) => ({
+      skills: (workspace ? workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => ({ ...e.record.manifest, source: e.record.source })) : runtime.skillCatalog).map((s) => ({
         name: s.name,
         description: s.description,
         source: s.source,
@@ -90,7 +99,7 @@ export function createCapabilitiesHandler(): HttpHandler {
       // dropped" and "server too old to know", which is exactly the
       // guess this field exists to remove. The `skills` array itself is
       // untouched at zero.
-      skillsOmitted: runtime.skillCatalogDropped,
+      skillsOmitted: workspace ? 0 : runtime.skillCatalogDropped,
     });
   };
 }

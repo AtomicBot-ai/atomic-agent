@@ -8,6 +8,8 @@ Skills are locally installed "playbooks": a markdown task description plus optio
 
 ## On-disk format
 
+This page describes Atomic's native/local registry. Cloud additionally supports [project skill compatibility and scoped controls](cloud-workspace.md), with separate loaded state and source-aware revalidation.
+
 ```
 <skill-root>/
   SKILL.md           # required: YAML frontmatter + markdown body

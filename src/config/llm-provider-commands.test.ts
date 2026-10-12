@@ -10,6 +10,11 @@ import {
 } from "./config-file.js";
 import { USER_CONFIG_DEFAULTS } from "./config-schema.js";
 import { getConfig } from "./index.js";
+import type { UserLlmProviderEntry } from "./llm-config.js";
+import { setModelModeInConfig } from "./model-mode-commands.js";
+import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
+import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
+import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import {
   dotenvKeyForProviderKind,
   LlmRemoveActiveProviderError,
@@ -17,6 +22,7 @@ import {
   removeLlmProvider,
   restoreProviderDefaultChatModelInConfig,
   setProviderDefaultChatModelInConfig,
+  upsertLlmProvider,
 } from "./llm-provider-commands.js";
 
 describe("llm-provider-commands", () => {
@@ -69,6 +75,121 @@ describe("llm-provider-commands", () => {
       }),
     );
     expect(entry.id).toBe("cloud");
+  });
+});
+
+describe("upsertLlmProvider model mode defaults", () => {
+  let stateDir: string;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-provider-mode-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+  });
+
+  function savedProvider(id: string): UserLlmProviderEntry | undefined {
+    const file = JSON.parse(readFileSync(getUserConfigPath(stateDir), "utf8")) as {
+      llm: { providers: UserLlmProviderEntry[] };
+    };
+    return file.llm.providers.find((provider) => provider.id === id);
+  }
+
+  const cloudEntries: UserLlmProviderEntry[] = [
+    ...["openrouter", "aimlapi", "gemini"].map(kind => ({ id: kind, kind })),
+    ...(["claude", "codex"] as const).map(cli => ({
+      id: cli, kind: "subscription-cli", subscriptionCli: { cli },
+    })),
+    { id: "openai", kind: "openai-compatible", baseUrl: "https://API.OPENAI.COM:443/v1/" },
+    ...PROVIDER_PRESETS.filter(preset => !preset.local).map(preset => ({
+      id: `${preset.id}-2`, kind: "openai-compatible", baseUrl: `${preset.baseUrl}/v1/`,
+    })),
+  ];
+
+  it.each(cloudEntries)("persists cloud for a new $id connection and exposes it to runtime", entry => {
+    expect(upsertLlmProvider(entry)).toMatchObject({ modelMode: "cloud" });
+    expect(savedProvider(entry.id)).toMatchObject({ modelMode: "cloud" });
+    resetConfigCache();
+    expect(resolveModelMode(captureModelModePolicy(resolveLlmConfig(getConfig())), entry.id))
+      .toMatchObject({ mode: "cloud", source: "provider" });
+  });
+
+  it.each([
+    { id: "local", kind: "llama-server", url: "http://127.0.0.1:8080" },
+    ...PROVIDER_PRESETS.filter(preset => preset.local).map(preset => ({
+      id: preset.id, kind: "openai-compatible", baseUrl: preset.baseUrl,
+    })),
+    { id: "lan", kind: "openai-compatible", baseUrl: "http://192.168.1.5:8080" },
+    { id: "groq", kind: "openai-compatible", baseUrl: "https://custom.example.com" },
+    { id: "lookalike", kind: "openai-compatible", baseUrl: "https://api.openai.com.example.com" },
+    { id: "custom-kind", kind: "extension-provider" },
+  ])("keeps a new local or unknown $id connection local", entry => {
+    expect(upsertLlmProvider(entry)).toMatchObject({ modelMode: "local" });
+    expect(savedProvider(entry.id)).toMatchObject({ modelMode: "local" });
+  });
+
+  it("honors explicit modes in both directions and exact model overrides", () => {
+    upsertLlmProvider({ id: "remote", kind: "openrouter", modelMode: "local" });
+    upsertLlmProvider({ id: "local", kind: "llama-server", modelMode: "cloud" });
+    upsertLlmProvider({ id: "mixed", kind: "gemini", modelModes: { small: "local" } });
+    const policy = captureModelModePolicy(resolveLlmConfig(getConfig()));
+    expect(resolveModelMode(policy, "remote").mode).toBe("local");
+    expect(resolveModelMode(policy, "local").mode).toBe("cloud");
+    expect(resolveModelMode(policy, "mixed", "small"))
+      .toMatchObject({ mode: "local", source: "model" });
+    expect(resolveModelMode(policy, "mixed", "large").mode).toBe("cloud");
+  });
+
+  it("preserves current-version absence and stored overrides while reconfiguring", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      llm: {
+        activeTextProvider: "old", activeEmbeddingProvider: "old", toolTransport: "auto",
+        providers: [
+          { id: "old", kind: "openrouter" },
+          { id: "manual", kind: "gemini", modelMode: "local", modelModes: { big: "cloud" } },
+        ],
+      },
+    });
+    upsertLlmProvider({ id: "new", kind: "openrouter" });
+    upsertLlmProvider({ id: "old", kind: "openrouter", defaultChatModel: "new-model" });
+    upsertLlmProvider({ id: "manual", kind: "gemini", defaultChatModel: "big" });
+    expect(savedProvider("old")).not.toHaveProperty("modelMode");
+    expect(savedProvider("manual")).toMatchObject({ modelMode: "local", modelModes: { big: "cloud" } });
+    expect(resolveModelMode(captureModelModePolicy(resolveLlmConfig(getConfig())), "old"))
+      .toMatchObject({ mode: "local", source: "legacy" });
+  });
+
+  it("migrates an existing installation on load and allows manual local or inherit afterward", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS, version: 74,
+      llm: {
+        activeTextProvider: "remote", activeEmbeddingProvider: "remote", toolTransport: "auto",
+        providers: [{ id: "remote", kind: "openrouter" }],
+      },
+    });
+    const currentMode = () => resolveModelMode(captureModelModePolicy(resolveLlmConfig(getConfig()))).mode;
+    expect(currentMode()).toBe("cloud");
+    expect(savedProvider("remote")?.modelMode).toBe("cloud");
+    for (const mode of ["local", null] as const) {
+      setModelModeInConfig({ providerId: "remote", mode });
+      resetConfigCache();
+      expect(currentMode()).toBe("local");
+      expect(savedProvider("remote")?.modelMode).toBe(mode ?? undefined);
+    }
+  });
+
+  it("does not reapply automatic selection after the operator chooses inherit", () => {
+    upsertLlmProvider({ id: "remote", kind: "openrouter" });
+    setModelModeInConfig({ providerId: "remote", mode: null });
+    upsertLlmProvider({ id: "remote", kind: "openrouter", defaultChatModel: "other" });
+    expect(savedProvider("remote")).not.toHaveProperty("modelMode");
+    expect(resolveModelMode(captureModelModePolicy(resolveLlmConfig(getConfig())), "remote").mode).toBe("local");
   });
 });
 

@@ -15,7 +15,9 @@ Both reply and finish have static descriptors and schemas. The native adapter su
 
 The hash wire enum advertises lowercase algorithms; runtime replay/direct invocation retains uppercase algorithm normalization and null defaults. Encoding is case-sensitive and empty paths fail at runtime. Shared metadata does not turn JSON Schema into a replacement for domain/security validators.
 
-Roles builder/orchestrator/full shape prompt descriptions, native schemas and grammar membership. A rare or out-of-role tool can be loaded through tool.view; loaded-tools belongs in the tail. A session load does not authorize bypassing dispatch policy. Static catalog order affects prompt bytes.
+Roles builder/orchestrator/full shape prompt descriptions, native schemas and grammar membership. A rare or out-of-role tool can be loaded through tool.view; its description belongs outside the stable prefix (local tail or cloud context update). A session load does not authorize bypassing dispatch policy. Static catalog order affects prompt bytes.
+
+`ToolContext.modelMode` is resolved from the serving inference link. The registry preserves complete obtained text in cloud results; local compressor and batch caps remain unchanged. Browser cloud snapshots omit presentation clipping/noise filtering, MCP projectors omit text caps, and web fetch omits its default character preview cap while respecting an explicit requested cap. Process capture, transport/body limits, file ranges, timeouts, approvals and read scope remain enforced at their existing boundaries. This does not fetch an entire filesystem or memory database automatically. [The compressor](../../compressor/README.md) and [cloud seam tests](../../agent/cloud-context-seam.test.ts) describe the output path.
 
 ## Guards and file safety
 

@@ -49,7 +49,7 @@ function input(session: SessionState): BuildPromptInput {
     contextWindow: 12000, conversationMaxTokens: 4000, conversationMaxPairs: 200,
     capabilities: { platform: "darwin", arch: "arm64", browserChannel: "chrome", workingDir: dir, hasClipboard: false, hasWmctrl: false, hasNotifications: false } };
 }
-function fixture(state = history()) {
+function fixture(state = history(), promptInput = input) {
   let stored = state;
   const config = { ...createCompactionDefaults(), summaryMaxTokens: 250 };
   const events: CompactionEvent[] = [];
@@ -59,7 +59,7 @@ function fixture(state = history()) {
   const turnController = new TurnController();
   const service = createContextCompaction({
     config: () => config, sessionStore: { load: (id) => id === state.id ? stored : null }, turnController,
-    complete, route, persist, emit: (event) => events.push(event), sideCallSlotId: () => 3, promptInput: input,
+    complete, route, persist, emit: (event) => events.push(event), sideCallSlotId: () => 3, promptInput,
   });
   return { ...service, complete, persist, events, config, route, turnController, stored: () => stored };
 }
@@ -112,6 +112,32 @@ describe("compaction configuration and projection", () => {
 });
 
 describe("atomic compaction", () => {
+  it("carries complete cloud instructions through a real checkpoint and summarizes state updates", async () => {
+    const cloudInput = (session: SessionState): BuildPromptInput => ({ ...input(session),
+      modelMode: { mode: "cloud", source: "provider", providerId: "remote", modelId: "large" },
+      profileWindowApplies: false, completionMaxTokens: 1000, contextWindow: 16000 });
+    let state = history(0);
+    const body = "Complete rule\n".repeat(400) + "FINAL RULE";
+    state.loadedSkills = [{ name: "guide", version: "1", body, loadedAt: 1 }];
+    state.worldSnapshot = { kind: "browser", text: "EARLIER PAGE STATE", digest: "old", capturedAt: 1 };
+    state.cloudContext = buildPrompt(cloudInput(state)).cloudContext;
+    for (const turn of history().turns.slice(1)) state = recordTurn(state, turn);
+    state.worldSnapshot = { kind: "browser", text: "CURRENT PAGE STATE", digest: "new", capturedAt: 2 };
+    const f = fixture(state, cloudInput);
+    expect((await f.compactSession(state.id)).status).toBe("compacted");
+    const saved = f.stored();
+    expect(saved.turns).toEqual(state.turns);
+    expect(f.complete.mock.calls.map(([request]) => request.prompt).join("\n")).toContain("EARLIER PAGE STATE");
+    const restored = normalizeSessionState(JSON.parse(JSON.stringify(saved)));
+    const prompt = buildPrompt(cloudInput(restored));
+    expect(prompt.text).toContain(body);
+    expect(prompt.text).toContain("CURRENT PAGE STATE");
+    expect(prompt.text.split(body)).toHaveLength(2);
+    expect(prompt.truncated).toBe(false);
+    expect(JSON.stringify(buildNativeMessages(prompt.messages, { nameEscape: s => s }))).not.toContain("no result recorded");
+    expect(prompt.compactionBudget!.activeTokens).toBeLessThan(planCompaction(state, buildPrompt(cloudInput(state)), f.config, "manual")!.targetTokens);
+  });
+
   it("preserves transcript and task request, shares flat/native projection, and keeps prefix stable", async () => {
     const state = history();
     const before = structuredClone(state);

@@ -17,8 +17,8 @@ import type { PromptMessages, PromptTurn } from "../completion-types.js";
  * Shape rules, all of which exist because the API rejects the request
  * otherwise:
  *  - a `tool` message must answer a `tool_calls` entry by id. Ids are
- *    `call_<n>` with `n` the row's index in the packed turns, so the
- *    same history renders the same ids on every step between cuts;
+ *    durable transcript-based IDs in cloud, or `call_<n>` with `n` the
+ *    packed row's index in local. Grouped cloud calls share one assistant message;
  *  - a call the history has no result for gets a synthesised
  *    `(no result recorded)` answer before anything else follows it;
  *  - a result whose call the packer cut away has nothing to answer, so
@@ -78,9 +78,16 @@ export function buildNativeMessages(
         out.push({ role: "assistant", content: turn.text });
         break;
       case "assistant_tool_call": {
+        if (turn.callId && pending.length > 0 && out[out.length - 1]?.role === "assistant") {
+          const previous = out[out.length - 1]!;
+          (previous.tool_calls as unknown[]).push({ id: turn.callId, type: "function",
+            function: { name: options.nameEscape(turn.tool), arguments: JSON.stringify(turn.args) } });
+          pending.push(turn.callId);
+          break;
+        }
         answerPending();
         flushOrphans();
-        const id = `call_${index}`;
+        const id = turn.callId ?? `call_${index}`;
         out.push({
           role: "assistant",
           content: null,
@@ -99,7 +106,8 @@ export function buildNativeMessages(
         break;
       }
       case "tool_result": {
-        const id = pending.shift();
+        const match = turn.callId ? pending.indexOf(turn.callId) : 0;
+        const id = match >= 0 ? pending.splice(match, 1)[0] : undefined;
         if (id === undefined) {
           orphanLines.push(renderOrphanResultLine(turn));
           break;
@@ -116,7 +124,7 @@ export function buildNativeMessages(
   });
   answerPending();
   flushOrphans();
-  out.push({ role: "user", content: prompt.tail });
+  if (prompt.tail.length > 0) out.push({ role: "user", content: prompt.tail });
   return out;
 }
 

@@ -23,6 +23,7 @@ import { TurnsInFlight } from "../turns-in-flight.js";
 import type { createRuntimeTraces } from "./runtime-traces.js";
 import type { createRuntimeObservability } from "./runtime-observability.js";
 import type { RuntimeProviders } from "./runtime-inference.js";
+import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -98,6 +99,8 @@ export function createRuntimeTurnService(
   const { ensureRecorder } = traces;
   const { observability, analyticsStateStore, turnUsageMeter } = deps.telemetry;
   const { pendingSessionNamings, turnsInFlight } = deps.state;
+  // Owned by this runtime, bounded by active turns; workers share their parent's snapshot.
+  const turnModelModes = new Map<string, ModelModePolicy>();
   /**
    * The loop-side budget for one turn. An explicit `maxSteps` from a
    * caller (a durable task that pins its own budget, `run --max-steps`)
@@ -315,6 +318,12 @@ export function createRuntimeTurnService(
     // memory, and — at the end — no save. The parent session's turn
     // owns the durable record of what the worker did.
     const worker = readFusionWorkerMeta(session.metadata);
+    const modelModePolicy = (worker ? turnModelModes.get(worker.parentSessionId) : undefined)
+      ?? captureModelModePolicy(resolveLlmConfig(getConfig()), resolveActiveModelName);
+    logger.debug("model mode selected for turn", {
+      sessionId: session.id,
+      ...resolveModelMode(modelModePolicy, runOptions.providerId),
+    });
     if (worker) {
       return turnContext.run({ sessionId: session.id }, async () => {
         try {
@@ -324,6 +333,7 @@ export function createRuntimeTurnService(
           turnRequests.set(session.id, userMessage);
           return await loop.runTurn(session, {
             userMessage,
+            modelModePolicy,
             ephemeral: true,
             ...buildLoopTurnBudget(runOptions),
           });
@@ -402,6 +412,7 @@ export function createRuntimeTurnService(
       const inFlight = turnsInFlight.begin(runOptions.signal);
       markTurnRunning(session.id);
       try {
+        turnModelModes.set(session.id, modelModePolicy);
         // Recorded for `fusion.delegate`, which quotes it to the workers.
         const turnRequest = pickOriginalRequest({
           current: userMessage,
@@ -418,6 +429,7 @@ export function createRuntimeTurnService(
         // at the first checkpoint.
         const result = await loop.runTurn(session, {
           userMessage,
+          modelModePolicy,
           // The same record the workers' briefs quote, pinned into the
           // orchestrator's own prompt once the packer drops its carrier.
           ...(turnRequest !== undefined
@@ -464,6 +476,7 @@ export function createRuntimeTurnService(
         throw err;
       } finally {
         inFlight.end();
+        turnModelModes.delete(session.id);
         // The turn is over, however it ended: the shell jobs it started
         // and did not `keep` are stopped here — the one choke point
         // every turn passes through (§"A turn is a task, not a step

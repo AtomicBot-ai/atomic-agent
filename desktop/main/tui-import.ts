@@ -41,6 +41,7 @@ import { promisify } from "node:util";
 
 import { configGet, configSetWhole, dotenvSet, keyNamesAvailable, providerHasKey, type ProviderEntry } from "./agent-cli.js";
 import { DESKTOP_STATE_DIR, TUI_STATE_DIR } from "./state-dir.js";
+import { defaultProviderModelMode } from "./provider-model-mode.js";
 
 const run = promisify(execFile);
 
@@ -427,6 +428,13 @@ export async function importFromTui(opts: TuiImportOptions, hooks?: TuiImportHoo
         // port; the terminal agent's names its own. Keep ours.
         if (p["id"] === "local-llama") continue;
         const at = byId.get(p["id"] as string);
+        // The destination is already v75, so writing an older source entry
+        // there would bypass the agent's v75 migration. Apply its cloud
+        // default only to new imports; current-format inherit and existing
+        // desktop choices must not be reclassified.
+        if (!at && typeof src["version"] === "number" && src["version"] < 75 && p["modelMode"] === undefined) {
+          if (defaultProviderModelMode(p as unknown as ProviderEntry) === "cloud") p["modelMode"] = "cloud";
+        }
         byId.set(p["id"] as string, at ? { ...at, ...p } : p);
         copied.providers++;
       }

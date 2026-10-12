@@ -66,6 +66,10 @@ import {
 } from "./managed-api-key.js";
 
 export interface DaemonStartOptions {
+  /** Interactive callers allow cold GPU compilation while keeping selection available. */
+  healthTimeoutMs?: number;
+  /** Cancel an owned launch while its model is loading. */
+  signal?: AbortSignal;
   dataDir: string;
   modelId: LocalModelId;
   port: number;
@@ -1019,6 +1023,7 @@ export async function startDaemon(
         "",
       ].join("\n"),
     );
+    opts.signal?.throwIfAborted();
     const child = spawn(binPath, args, {
       stdio: ["ignore", logFd, logFd],
       detached: true,
@@ -1036,10 +1041,11 @@ export async function startDaemon(
     writeFileSync(pidPath, String(child.pid), "utf-8");
     try {
       await waitForOwnDaemon({
+        signal: opts.signal,
         child,
         port: opts.port,
         alias: model.id,
-        timeoutMs: 30_000,
+        timeoutMs: opts.healthTimeoutMs ?? 30_000,
         label: "llama-server",
         probeHealth: probeLlamaHealth,
         readLog: () => readFileSync(resolveLogFilePath(opts.dataDir), "utf-8"),
@@ -1225,6 +1231,7 @@ export async function getDaemonStatus(
 // ---------------------------------------------------------------------
 
 export interface EmbeddingDaemonStartOptions {
+  signal?: AbortSignal;
   dataDir: string;
   modelId: EmbeddingModelId;
   port: number;
@@ -1313,6 +1320,7 @@ export async function startEmbeddingDaemon(
 
   const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
   try {
+    opts.signal?.throwIfAborted();
     const child = spawn(binPath, args, {
       stdio: ["ignore", logFd, logFd],
       detached: true,
@@ -1330,6 +1338,7 @@ export async function startEmbeddingDaemon(
     writeFileSync(pidPath, String(child.pid), "utf-8");
     try {
       await waitForOwnDaemon({
+        signal: opts.signal,
         child,
         port: opts.port,
         alias: model.id,
@@ -1489,6 +1498,7 @@ export async function startChatAndEmbeddingDaemons(opts: {
   embedding?: EmbeddingDaemonStartOptions;
 }): Promise<StartBothResult> {
   const chatResult = await startDaemon(opts.chat);
+  opts.chat.signal?.throwIfAborted();
   if (!opts.embedding) {
     return {
       chat: chatResult,
@@ -1496,12 +1506,13 @@ export async function startChatAndEmbeddingDaemons(opts: {
     };
   }
   try {
-    const embResult = await startEmbeddingDaemon(opts.embedding);
+    const embResult = await startEmbeddingDaemon({ ...opts.embedding, signal: opts.chat.signal ?? opts.embedding.signal });
     return {
       chat: chatResult,
       embedding: embResult,
     };
   } catch (e) {
+    opts.chat.signal?.throwIfAborted();
     return {
       chat: chatResult,
       embedding: { error: e instanceof Error ? e.message : String(e) },

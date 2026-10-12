@@ -200,3 +200,12 @@ a socket error from a daemon they never started. Both halves are fixed in
 `src/llm/`, and step 16 is what keeps them fixed: it accepts an answer or a
 refusal, but never a bare transport error that names neither provider nor
 reason.
+
+`node test/workspace-skills.drive.mjs` checks cloud skill discovery before
+first chat, deduplication/source selection, workspace/global/bulk controls,
+a stale slash invocation after a config edit, actual runtime `skill.view`,
+and isolation after switching the startup workspace. Build root and desktop
+first, then run with Node >=25.7 matching the agent's native dependencies.
+It uses fresh temporary state, trusted keyboard/pointer actions and a
+loopback scripted model; it makes no paid inference calls. Screenshots remain
+in the printed temporary artifact directory.

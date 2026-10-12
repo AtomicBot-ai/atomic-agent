@@ -12,6 +12,8 @@ export interface RunSkillScriptParams {
   args?: string[];
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Revalidate live workspace policy after asynchronous file checks, before spawn. */
+  beforeRun?: (scriptPath: string) => void;
 }
 
 export interface SkillScriptOutcome extends CommandResult {
@@ -110,6 +112,7 @@ export async function runSkillScript(
 
   let result: CommandResult;
   try {
+    params.beforeRun?.(scriptPath);
     result = await runCommand(cmd, args, {
       cwd: skill.rootDir,
       timeoutMs: params.timeoutMs ?? 30_000,

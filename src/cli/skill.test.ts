@@ -89,6 +89,22 @@ describe("skillCommand", () => {
     expect(stdout).toMatch(/beta\t.*\tenabled/);
   });
 
+  it("manages cloud workspace controls without changing the global denylist", async () => {
+    const workspace = join(stateDir, "workspace");
+    writeSkill(join(workspace, ".claude/skills"), "alpha"); writeSkill(globalSkillsDir, "alpha");
+    expect(await skillCommand(["disable", "alpha", "--workspace", workspace])).toBe(0);
+    expect(readUserConfigFileSync(getUserConfigPath(stateDir))?.skills.disabled).toEqual([]);
+    stdout = ""; expect(await skillCommand(["list", "--workspace", workspace])).toBe(0);
+    expect(stdout).toContain("disabled in workspace"); expect(stdout).toContain(".claude/skills/alpha/SKILL.md");
+    expect(await skillCommand(["project", "off", "--workspace", workspace])).toBe(0);
+    stdout = ""; await skillCommand(["list", "--workspace", workspace]);
+    expect(stdout).toContain("[global]"); expect(stdout).toContain("disabled in workspace");
+    expect(await skillCommand(["enable", "alpha", "--workspace", workspace])).toBe(0);
+    stdout = ""; await skillCommand(["show", "alpha", "--workspace", workspace]);
+    expect(stdout).toContain("# state: enabled");
+    expect(await skillCommand(["project", "on", "--workspace", workspace])).toBe(0);
+  });
+
   it("disable persists the name into config.json and shows disabled state on next list", async () => {
     writeSkill(globalSkillsDir, "alpha");
     writeSkill(globalSkillsDir, "beta");

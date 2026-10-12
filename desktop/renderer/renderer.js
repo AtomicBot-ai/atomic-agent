@@ -930,6 +930,17 @@ const SWX = { pending:0, since:0, label:'', want:null, err:null, timer:null, pai
    An object, so the smoke (t112) can shorten them. */
 const SWX_HOLD = { pollMs: 2000, maxMs: 10 * 60 * 1000, unansweredMs: 30000 };
 /* Below this, a switch is over before the eye can see a spinner start. */
+const SWX_QUEUE = createSwitchQueue((state) => {
+  SWX.pending = state.pending;
+  SWX.want = state.want;
+  if (state.pending) SWX.label = state.label;
+  else {
+    SEL.busy = false; BSW.line = "";
+    if (DRAIN_OWED) setTimeout(drainOwed, 0);
+  }
+  render();
+});
+
 const SWX_SPINNER_DELAY_MS = 150;
 /* The agent client's own health deadline is 30 s and always resolves
    (agent-client.ts HEALTH_TIMEOUT_MS), and the CLI budget in front of it is
@@ -1147,10 +1158,8 @@ const FOCUS = { entry: false };
    backdrop resolves its target to #settings, so without this a text selection
    dragged out of a panel would dismiss the window. */
 const SETDOWN = { outside: false };
-/* Installed skills incl. disabled ones, from `atag skill list` — the N in
-   the Skills tab's ` (N)` suffix (debug-pane.tsx:162 counts every loaded
-   row; GET /api/skills never carries disabled skills). */
-const SK = { rows:null, busy:false, err:null, calls:0, at:null }; // at: when `atag skill list` last answered (Д26's status line)
+/* Operator catalog including disabled entries: cloud HTTP snapshot, local CLI. */
+const SK = { rows:null, busy:false, err:null, calls:0, at:null, for:null, workingDir:null, projectSkillsEnabled:true, errors:[] }; // at: when `atag skill list` last answered (Д26's status line)
 /* Tasks tab state — the TUI's TasksPanelState, minus the firings ring
    the HTTP API does not expose. */
 const TK = {
@@ -1907,6 +1916,14 @@ let QUEUES_KEPT = null;
    one. */
 const FIRST_TURNS = new Map();
 const PENDING_CHATS = new Map();
+/** A local outbox chat remains reachable before its first HTTP turn exists. */
+function noteWaitingChat(id, text) {
+  if (PENDING_CHATS.has(id)) return;
+  PENDING_CHATS.set(id, {id, t:String(text).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
+    named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, waiting:true, endedAt:null});
+}
+for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) noteWaitingChat(id, q.queued[0]);
+
 /* 0.6.7 item 38: a chat opened again while its turn runs showed "this session
    has no turns yet" and "a turn is still running here", without the message
    just sent: the agent stores a turn when it ends, and the turn's live view
@@ -3254,12 +3271,12 @@ function composer() {
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
     // the operator needs this next to the button that was disabled. The
     // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
-    : SWX.err
+    : (SWX.err || SWX.sendError)
     ? '<div class="statusstrip gated">'
       + (/has not finished/.test(SWX.err)
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
-      + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
+      + '<span class="ss-text">' + esc(SWX.err || SWX.sendError) + '</span></div>'
     // ATO-244: the model runs on the processor; last, under every strip that carries a decision or a failure.
     : cpuNoticeShown()
     ? cpuNoticeHTML()
@@ -3269,7 +3286,7 @@ function composer() {
        strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
-      '<div class="qchip"><span class="qlb">Queued</span><span class="qtx">' + esc(t) + '</span>'
+      '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(t) + '</span>'
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
   return '<div class="composerwrap">' + status + fzLiveHTML() + q
@@ -3464,28 +3481,16 @@ function cchipOpen(kind) {
   return S.overlay === kind ? ' is-open' : '';
 }
 
-/**
- * r6 cloud item 4 — does a switch in flight have to hold the operator's
- * message?  ONE answer, read by the send button and by `submit()`, so the
- * control and the behaviour cannot drift apart.
- *
- * A coding-mode change is deliberately NOT one of these, and says so at
- * its own call site with `route:false`. It is a 1-5 ms POST that moves
- * neither the provider nor the model, so there is nothing for a message
- * to be sent "at the wrong configuration" of, and locking the composer
- * for it would only flicker the button. Every other switch — backend,
- * provider, model — moves the route the message would run on, and every
- * one of those holds it, which is why the exemption is opt-in at the one
- * place that qualifies rather than inferred from the want's shape.
- */
-function swxHoldsComposer() {
+/** A route switch delays dispatch; Send still accepts into the chat's outbox.
+ * A standalone coding-mode POST needs no engine restart. */
+function swxWaitsForRoute() {
   if (!SWX.pending || S.busy || S.pending) return false;
   return !(SWX.want && SWX.want.route === false);
 }
 
 /**
  * Backlog 24 — is the chat on screen still opening, or did it fail to open?
- * ONE answer for the send button and `submit()`, as swxHoldsComposer is.
+ * ONE answer for the send button and `submit()`, as swxWaitsForRoute is.
  *
  * Until openSession's answer lands, S.agentSession is still the PREVIOUS
  * chat's (or null), so a message sent from the "loading session…" view went
@@ -3515,34 +3520,10 @@ function sendButton() {
     return '<button class="sendbtn locked" data-act="send" disabled aria-busy="' + (OPENING.failed ? 'false' : 'true')
       + '" title="' + esc(say) + '" aria-label="' + esc(say) + '">' + ic('up') + '</button>';
   }
-  /* r5 item 10 — the switch lock. The chip has already painted the
-     operator's choice; the send button says, in the one place they are
-     about to click, that the choice is not live yet.
-
-     The `!S.busy && !S.pending` conjunct is deliberate and NOT redundant:
-     swxRun refuses to start while a turn runs, but S.busy is set
-     asynchronously elsewhere for the whole 3-11 s a switch lasts (opening
-     a chat whose turn is live adopts it). A turn adopted mid-switch must
-     keep its Stop and its steer arrow, so the two branches below win.
-
-     The spinner is withheld for the first SWX_SPINNER_DELAY_MS so a
-     coding-mode POST never flashes one.
-
-     r6 cloud item 4 — the lock and `submit()` now read the SAME
-     predicate, `swxHoldsComposer()`. The delay used to gate this whole
-     branch, so for the first 150 ms of a switch the button was the
-     ordinary enabled Send while submit() was already refusing on
-     `SWX.pending` and keeping the draft in the box. The comment above
-     promises the two "never disagree"; they disagreed exactly where an
-     operator lands, because the provider chip repaints to the new
-     provider the instant the switch starts: add a provider from the
-     composer chip, type at once, press Enter, and the message just sits
-     there under a button that says it is ready. */
-  if (swxHoldsComposer()) {
-    const spin = Date.now() - SWX.since >= SWX_SPINNER_DELAY_MS;
-    const say = SWX.label + ' — the send button unlocks when the new configuration is live';
-    return '<button class="sendbtn locked" data-act="send" disabled aria-busy="true" title="' + esc(say)
-      + '" aria-label="' + esc(say) + '">' + (spin ? '<span class="sspin"></span>' : ic('up')) + '</button>';
+  if (swxWaitsForRoute()) {
+    const say = 'Send — the model is switching, so the reply may take longer';
+    return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="' + say
+      + '" aria-label="' + say + '">' + ic('up') + '</button>';
   }
   if (S.busy || S.pending) {
     // Item 7C: this sends a steer into the running turn. It is parked as
@@ -4156,7 +4137,7 @@ function palRows() {
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:'room:skills', badge:'skill'}));
+    .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:SK.workingDir ? 'skill:compose:' + s.t : 'room:skills', badge:'skill'}));
   return hits;
 }
 
@@ -4234,9 +4215,10 @@ function slashMatches() {
   // The command word only: with arguments typed (`/runmode status`) the list
   // keeps showing that command and its hint instead of "no matching command".
   const q = S.draft.replace(/^\//, '').toLowerCase().split(/\s+/)[0];
-  if (!q) return SLASH;
+  const commands = SLASH.concat(SK.workingDir ? workspaceSkillCommands(SK.rows, SLASH) : []);
+  if (!q) return commands;
   const starts = (row) => row[0].startsWith(q) || (row[3] || []).some((al) => al.startsWith(q));
-  return SLASH.filter(starts).concat(SLASH.filter((row) => !starts(row) && row[0].includes(q)));
+  return commands.filter(starts).concat(commands.filter((row) => !starts(row) && row[0].includes(q)));
 }
 function slashPopover() {
   const m = slashMatches();
@@ -5006,7 +4988,11 @@ async function refreshDiag(opts) {
   if (!id || SET.toolsBusy) return;
   if (SET.toolsFor === id && SET.tools) return;
   SET.toolsBusy = true;
-  const res = await BR.session(id);
+  let res = await BR.session(id);
+  if (res && res.ok && PENDING_CHATS.has(id)) PENDING_CHATS.get(id).waiting = false;
+  if ((!res || !res.ok) && id.startsWith('waiting-') && chatQueuedCount(id)) {
+    res = {ok:true, data:{id, turns:[]}};
+  }
   SET.toolsBusy = false;
   if (id !== S.agentSession) return;
   const turns = res && res.ok && res.data && Array.isArray(res.data.turns) ? res.data.turns : null;
@@ -5033,17 +5019,52 @@ async function refreshHealth() {
   SET.health = next;
   if (S.settings && changed && !tkTyping()) render(); // a late /health answer must not drop the caret in the Tasks form
 }
-/* `atag skill list` (cwd = workspace, so project skills count too). */
+/* Session identity and agent generation own every catalog answer. A fresh
+   chat explicitly previews the boot workspace without creating a DB row. */
+function skillSessionId() {
+  const id = S.sessionId || S.agentSession || null;
+  return id && !id.startsWith('waiting-') ? id : null;
+}
+function skillContextKey() { return JSON.stringify([AGENT_GEN, WORKSPACE, skillSessionId()]); }
+const SK_LOADER = createSkillCatalogLoader(id => { SK.calls++; return BR.skillList(id); });
 async function refreshSkillList() {
-  if (!BR || !BR.skillList || SK.busy) return;
-  SK.busy = true; SK.calls++;
-  const res = await BR.skillList();
+  if (!BR || !BR.skillList) return;
+  const key = skillContextKey();
+  if (SK.for !== key) {
+    SK.for = key; SK.rows = null; SK.err = null; SK.workingDir = null; SK.errors = []; SKILLS.length = 0;
+    SKP.detailSeq = (SKP.detailSeq || 0) + 1; SKP.operationSeq = (SKP.operationSeq || 0) + 1; SKP.busy = false;
+    SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null; SKP.msg = null; SKP.lastError = null;
+  }
+  SK.busy = true;
+  const answer = await SK_LOADER.load(key, skillSessionId());
+  if (!answer.current || key !== skillContextKey()) return;
   SK.busy = false;
-  const before = JSON.stringify([SK.rows, SK.err]);
-  if (res && res.ok && Array.isArray(res.rows)) { SK.rows = res.rows; SK.err = null; SK.at = Date.now(); }
-  else SK.err = (res && res.error) || 'skill list failed';
-  if ((S.settings || skillsVisible()) && before !== JSON.stringify([SK.rows, SK.err]) && !tkTyping() && !skpTyping()) render(); // same guard as refreshHealth (+ the hub search box and the Skills room (⌘3), which paints the same rows — Item 7 part B)
+  const res = answer.result, before = JSON.stringify([SK.rows, SK.err, SK.projectSkillsEnabled]);
+  const oldDetail = SK.rows && SK.rows.find(row => row.name === SKP.detailName);
+  if (res && res.ok && Array.isArray(res.rows)) {
+    SK.rows = res.rows; SK.err = null; SK.at = Date.now();
+    SK.workingDir = res.workingDir || null; SK.projectSkillsEnabled = res.projectSkillsEnabled !== false;
+    SK.errors = res.errors || [];
+    SKILLS.length = 0;
+    SK.rows.filter(row => row.enabled).forEach(row => SKILLS.push({t:row.name, s:row.description,
+      v:row.version || '—', on:true, src:row.source}));
+    if (LIVE_CAPS) LIVE_CAPS.skillsOmitted = SK.workingDir ? 0 : LIVE_CAPS.skillsOmitted;
+    if (SKP.mode === 'detail') {
+      const detail = SK.rows.find(row => row.name === SKP.detailName);
+      if (!detail) { SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null; }
+      else if (oldDetail && (detail.rootDir !== oldDetail.rootDir || detail.fingerprint !== oldDetail.fingerprint)) skpOpenDetail(detail.name);
+    }
+  } else {
+    SK.err = (res && res.error) || 'skill list failed';
+    SK.rows = null; SKILLS.length = 0; // never offer a stale catalog after a failed read
+  }
+  const changed = before !== JSON.stringify([SK.rows, SK.err, SK.projectSkillsEnabled]);
+  // A background read must not replace the textarea or move its caret.
+  if (changed && (S.settings || skillsVisible()) && !tkTyping() && !skpTyping()) render();
+  else if (changed && S.overlay === 'palette') refreshPalette();
+  else if (changed && S.slash) refreshSlash();
   else settingsStatusRepaint();
+  return res;
 }
 /* Everything a Manage tab needs when it comes into view: the diagnostics
    line, the Tasks list primed once (the TUI starts its tasks orchestrator
@@ -5621,7 +5642,7 @@ function act(a) {
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
-  if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
+  if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
@@ -5697,6 +5718,11 @@ function act(a) {
   }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
+  if (a.startsWith('skill:compose:')) {
+    const name = a.slice('skill:compose:'.length);
+    close(); S.settings = null; S.room = 'chat'; S.draft = '/' + name + ' '; S.slash = false;
+    FOCUS.entry = true; render(); return;
+  }
   if (a === 'session:new') { close();
                              stashQueue();   // Backlog 26: what was queued in the chat being left waits for it, read before the view goes
                              liveLeave();    // Item 38: and a turn running there keeps its view for when it is opened again
@@ -5713,7 +5739,7 @@ function act(a) {
                              FOCUS.entry = true;   // r5 item 6: afterChat focuses #entry after this render
                              render(); chatToast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
-                             refreshContext(); return; }
+                             refreshContext(); refreshSkillList(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
@@ -6055,7 +6081,27 @@ function pushSteerEntry(text) {
   else S.log.push(entry);
 }
 
-function submit() {
+let SK_SUBMITTING = false;
+async function submitSkillCommand(text) {
+  if (SK_SUBMITTING || openHoldsComposer()) return;
+  const key = skillContextKey(), draft = S.draft;
+  SK_SUBMITTING = true;
+  try {
+    const res = await refreshSkillList();
+    if (key !== skillContextKey() || draft !== S.draft || openHoldsComposer()) return;
+    const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+    const name = match && match[1];
+    const row = res && res.ok && SK.workingDir && (res.rows || []).find(row => row.name === name);
+    if (!row || !row.enabled) {
+      toast('Skill unavailable', row ? (row.disabledReasons || ['disabled']).join(', ') : (SK.err || 'Unknown command /' + name), 'bad');
+      return;
+    }
+    S.slash = false;
+    submit(workspaceSkillMessage(name, match[2] || ''));
+  } finally { SK_SUBMITTING = false; }
+}
+
+function submit(preparedSkillText) {
   // Item 2 (voice input): Enter, the Send button and Ctrl+Enter all land
   // here. While the microphone is open they stop the recording and insert
   // the text instead of sending — sending would post the draft as it stood
@@ -6069,7 +6115,7 @@ function submit() {
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
   const e = $('#entry');
-  const text = (e ? e.value : S.draft).trim();
+  const text = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
   if (!text) return;
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
@@ -6079,6 +6125,7 @@ function submit() {
      the model, so holding them for the 3-11 s of a switch (with a toast
      whose words are about a message staying in the box) was wrong copy for
      the wrong thing. They go through untouched. */
+  if (text.startsWith('/') && SK.workingDir && !preparedSkillText && !SLASH.some(row => row[0] === text.slice(1).split(/\s+/)[0] || (row[3] || []).includes(text.slice(1).split(/\s+/)[0]))) { submitSkillCommand(text); return; }
   if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* Backlog 24 — Enter while the chat on screen is still opening, or after
      it failed to. The draft STAYS in the box, as it does for a switch below:
@@ -6093,17 +6140,22 @@ function submit() {
     else toast('This chat is still loading', 'Your message is still in the box. Send it once the chat has loaded', 'bad');
     return;
   }
-  /* r5 item 10 — Enter while a switch is landing. The draft STAYS in the
-     box: the two lines that clear it are below this guard, and steering or
-     queueing is not offered either, because the message would run against
-     the configuration the operator has just moved away from. Gated the same
-     way sendButton's lock branch is, so the button and this never disagree:
-     a turn adopted mid-switch keeps its steer. */
-  /* r6 cloud item 4: the same predicate the send button draws itself
-     from, so the button can never say "ready" while this refuses. */
-  if (swxHoldsComposer()) {
-    toast(SWX.label, 'The message stays in the box until the new configuration is live');
-    return;
+  if (swxWaitsForRoute() || (!S.busy && !S.pending && (DRAIN_OWED || SWX.sendError))) {
+    if (S.queued.length >= MAX_QUEUED) {
+      toast('Message queue is full', 'Your message stays in the box', 'bad'); return;
+    }
+    // Give an unsaved chat an identity before accepting its first message.
+    // The HTTP API creates this session on the first dispatched turn.
+    if (!S.sessionId) {
+      S.sessionId = 'waiting-' + crypto.randomUUID();
+      S.agentSession = S.sessionId;
+      noteWaitingChat(S.sessionId, text);
+    }
+    S.queued.push(text); DRAIN_OWED = true;
+    S.draft = ''; if (e) { e.value = ''; autosize(e); }
+    ctxDraftChanged(); S.slash = false;
+    toast('Message sent', SWX.sendError || 'The model is switching, so the reply may take longer');
+    render(); drainOwed(); return;
   }
   /* A new message with no agent up — the app just opened (after a Force Quit
      the agent is respawned and takes seconds to answer /health), or the
@@ -6574,7 +6626,7 @@ document.addEventListener('click', (e) => {
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
   const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
-  const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); const at = +uq.dataset.unqueue; S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1; render(); return; }
+  const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); unqueueMessage(+uq.dataset.unqueue); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const selOpen = t.closest('[data-sel-open]');
@@ -6622,7 +6674,7 @@ document.addEventListener('click', (e) => {
   const modeRow = t.closest('[data-mode]');
   if (modeRow) { setCodingMode(modeRow.dataset.mode); return; }
   const sk = t.closest('[data-skill]');
-  if (sk) { const s = SKILLS.find((x) => x.t === sk.dataset.skill); if (s) { s.on = !s.on; render(); toast(s.t + (s.on ? ' enabled' : ' disabled')); } return; }
+  if (sk) { const s = SKILLS.find((x) => x.t === sk.dataset.skill); if (s) skpToggle(s.t); return; }
   if (t.closest('#composer') && !t.closest('button')) { const en = $('#entry'); if (en) en.focus(); }
 });
 
@@ -6661,7 +6713,7 @@ document.addEventListener('input', (e) => {
     ctxDraftChanged();
     const wasSlash = S.slash;
     S.slash = S.draft.startsWith('/');
-    if (S.slash) { S.slashCur = 0; refreshSlash(); }
+    if (S.slash) { S.slashCur = 0; refreshSlash(); if (!wasSlash && SK.workingDir) refreshSkillList(); }
     else if (wasSlash) render();
     else refreshSend();
     return;
@@ -7665,8 +7717,8 @@ async function loadResources() {
   if (!BR) return;
   loadCodingMode();
   const askedAt = Date.now();   // Q60 review: applySessions
-  const [caps, cfg, skills, tasks, sessions] = await Promise.all([
-    BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
+  const [caps, cfg, tasks, sessions] = await Promise.all([
+    BR.capabilities(), BR.config(), BR.tasks(), BR.sessions(),
   ]);
   if (caps && caps.ok && caps.data) {
     LIVE_CAPS = caps.data;
@@ -7692,13 +7744,7 @@ async function loadResources() {
       }
     }
   }
-  if (skills && skills.ok && skills.data && Array.isArray(skills.data.skills)) {
-    SKILLS.length = 0;
-    skills.data.skills.forEach((k) => SKILLS.push({
-      t:k.name, s:(k.requiresTools || []).join(' · ') || 'no tools declared',
-      v:k.version || '—', on:k.enabled !== false, src:k.source || 'local',
-    }));
-  }
+  refreshSkillList();
   // item 6: the sidebar's Tasks list is every task the agent holds.
   if (tasks && tasks.ok && tasks.data && Array.isArray(tasks.data.tasks)) {
     TASKS_ERR = null;
@@ -7848,6 +7894,8 @@ function markSeen(id) {
 
 
 function startLiveTurn(text) {
+  const waitingRow = PENDING_CHATS.get(S.sessionId);
+  if (waitingRow) waitingRow.waiting = false;
   // Item 1 (plan hand-off): a new turn retires the offer — the TUI's
   // startNewRun does the same on `message_submitted`. This is also the path
   // the user's third clause takes: typing while idle lands here, so a revision
@@ -7953,6 +8001,7 @@ function settlePendingChats() {
   const running = new Set(RUNNING.values());
   const now = Date.now();
   for (const [id, row] of [...PENDING_CHATS]) {
+    if (chatQueuedCount(id)) { row.endedAt = null; continue; }
     if (SESSIONS.some((s) => s.id === id)) { PENDING_CHATS.delete(id); continue; }
     if (running.has(id)) { row.endedAt = null; continue; }
     if (row.endedAt === null) row.endedAt = now;   // its turn left RUNNING without a last frame
@@ -8901,19 +8950,18 @@ function onChatEvent(ev) {
 /** The next queued message, as the next turn of the chat on screen, whose
     queue S.queued is (Backlog 26). */
 function drainQueued() {
-  DRAIN_OWED = false;
-  if (!S.queued.length) return;
-  const q = S.queued.shift();
-  // Lane B — backend switch: the gate is judged at turn START, so a
-  // message parked behind a running turn is re-checked here. A drained
-  // message has no editor to go back to (the operator may be
-  // mid-draft), so the TUI drops it — announced with a preview, never
-  // silently — and stops draining (chat-orchestrator.ts fromQueue).
+  if (!S.queued.length) { DRAIN_OWED = false; return; }
+  if (swxWaitsForRoute() || S.live.state !== 'connected' || openHoldsComposer()) { DRAIN_OWED = true; return; }
+  if (SWX.sendError) { DRAIN_OWED = true; return; }
   const gate = localTurnGate();
+  if (gate.kind === 'pending') { DRAIN_OWED = true; bswSnapshot().then(() => { if (localTurnGate().kind !== 'pending') drainOwed(); }); return; }
   if (gate.kind === 'block') {
-    S.log.push({id:nid(), k:'system', text: esc(gate.text + '\n  dropped: ' + droppedPreview(q))});
+    DRAIN_OWED = true;
+    toast('Message is waiting', gate.text + ' Choose a ready model or cancel the message below.', 'bad');
     render(); return;
   }
+  DRAIN_OWED = false;
+  const q = S.queued.shift();
   if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q);
 }
@@ -9045,7 +9093,20 @@ function queueTurnEnded(sid, turnId) {
     (applyStatus) and when a switch is over (swxRun). */
 function drainOwed() {
   if (DRAIN_OWED && S.queued.length && !S.busy && !S.pending && !openHoldsComposer()
-      && S.live.state === 'connected' && !swxHoldsComposer()) drainQueued();
+      && S.live.state === 'connected' && !swxWaitsForRoute()) drainQueued();
+}
+/** Cancel a locally accepted message, including an unsaved chat's last one. */
+function unqueueMessage(at) {
+  S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1;
+  if (!S.queued.length) {
+    DRAIN_OWED = false;
+    const row = PENDING_CHATS.get(S.sessionId);
+    if (row && row.waiting && !queueChatRunning(S.sessionId) && !SESSIONS.some(s => s.id === S.sessionId)) {
+      PENDING_CHATS.delete(S.sessionId); QUEUES.delete(S.sessionId);
+      S.sessionId = ''; S.agentSession = null;
+    }
+  }
+  render();
 }
 /** A deleted chat's queue goes with it, sent nowhere. */
 function forgetQueue(sid) {
@@ -9684,16 +9745,22 @@ if (BR) {
     }
     if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); LLMP.tune.msg = null; BR.restart().then(applyStatus); return; }
     if (a === 'workspace' || a === 'workspace:choose') {
-      BR.chooseWorkspace().then((dir) => {
-        if (!dir) return;
-        WORKSPACE = dir;
-        S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
-        render();
-      });
+      BR.chooseWorkspace().then(applyWorkspaceChoice);
       return;
     }
     return originalAct(a);
   };
+  render();
+}
+
+/* A cloud conversation owns its original directory. Choosing a new startup
+   workspace must start a new chat rather than relabel that conversation. */
+function applyWorkspaceChoice(dir) {
+  if (!dir) return;
+  const cloud = !!SK.workingDir;
+  WORKSPACE = dir;
+  if (cloud) act('session:new');
+  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
   render();
 }
 
@@ -13048,6 +13115,7 @@ async function obActivateLocal(id) {
   const res = await swxRun('starting ' + id + '…', {backend:'local', model:id},
     () => SWXBR.selectLocalModel(id),
     () => { DL.deferred = id; toast('Not while a turn is running', id + ' is downloaded — it starts when the turn ends'); render(); });
+  if (res && res.superseded) return;
   if (!res || !res.ok) {
     if (res && res.error === 'a turn is running') return;   // re-parked above
     DL.error = (res && res.error) || 'could not select the model';
@@ -14613,7 +14681,7 @@ async function refreshLiveConfig() {
   llmRefreshKeyNames();
   extRefreshModel();
   llmNoteRoute();
-  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) refreshContext();
+  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) { refreshContext(); refreshSkillList(); }
 }
 
 /**
@@ -14659,8 +14727,9 @@ if (BR) {
     if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('#overlays .selpop .selpullline'); if (box) box.textContent = ev.line; }
     if (ev.done) {
       const id = SEL.pulling; SEL.pulling = null;
-      if (ev.ok) selActivate({type:'localModel', id, downloaded:true});
-      else { SEL.err = ev.error || 'the download failed'; render(); }
+      if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
+      else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
+      render();
     }
   });
 }
@@ -14709,8 +14778,8 @@ if (typeof window !== 'undefined') {
 
      · the chip paints the choice on the click (SWX.want, read by
        selBackend / selActiveProviderId / activeModel / currentMode);
-     · the send button locks, with a spinner that appears only after
-       150 ms so the 2 ms coding-mode path never flashes one;
+     · Send accepts messages immediately; dispatch waits for the final
+       model and mode to settle;
      · both clear in a `finally`, so a failure rolls the chip back in the
        same frame and the composer says why;
      · and the lock does NOT clear on the IPC reply — see swxSettle.
@@ -14866,6 +14935,11 @@ function swxWatchdog(label, seq) {
     render();
     return;
   }
+  if (SWX_QUEUE.snapshot().pending) {
+    SWX.err = swxSlowLine(label, SWX.want);
+    render();
+    return;
+  }
   const want = SWX.want;
   if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
   SWX.pending = 0;
@@ -14910,8 +14984,8 @@ async function swxAgentBusy() {
 }
 /**
  * The switch's wait, with its lock and its paint kept, the way the update's
- * Restart waits for an answer: the send button stays locked (a message sent
- * now would land on the route being left, and end with it), the composer says
+ * Restart waits for an answer: accepted messages wait for the final route
+ * before dispatch, the composer says
  * what it waits for, and it goes on its own once the agent is idle. "Switch
  * now anyway" goes at once and ends that reply; Cancel switches nothing. Past
  * SWX_HOLD.maxMs it gives up and switches nothing, as a refusal does; an
@@ -15031,7 +15105,30 @@ function restartStopsLine(held) {
 function restartRefusedToast(held) {
   toast('Not while a turn is running', restartStopsLine(held) || undefined);
 }
+/** A failed route or mode never releases messages into the previous choice. */
+function swxMessageOutcome(lane, ok) {
+  if (!SWX.sendErrors) SWX.sendErrors = {};
+  SWX.sendErrors[lane] = ok ? null : 'The ' + (lane === 'mode' ? 'mode' : 'model')
+    + ' switch did not finish. Your messages are waiting; choose again or cancel them.';
+  SWX.sendError = SWX.sendErrors.route || SWX.sendErrors.mode || null;
+  if (SWX.sendError && !SWX.err) SWX.err = SWX.sendError;
+}
 async function swxRun(label, want, run, refuse) {
+  const view = SEL.view || 0;
+  const lane = want && want.route === false ? 'mode' : 'route';
+  const res = await SWX_QUEUE.submit(lane, label, want, async (current) => {
+    try {
+      const result = await swxExecute(label, want, run, refuse, current);
+      if (current()) swxMessageOutcome(lane, swxLanded(result));
+      return result;
+    } catch (error) {
+      if (current()) swxMessageOutcome(lane, false);
+      throw error;
+    }
+  });
+  return res ? Object.assign({}, res, {selectorView:view}) : res;
+}
+async function swxExecute(label, want, run, refuse, current) {
   // Every switch below writes config and restarts `atag serve`, which
   // would abort a running turn.
   /* Backlog 28: a running turn in ANY chat (restartStopsTurn), and the chat
@@ -15042,28 +15139,6 @@ async function swxRun(label, want, run, refuse) {
     if (refuse) refuse(held); else restartRefusedToast(held);
     return {ok:false, error:'a turn is running'};
   }
-  /* r5 review fix (item 10) — one SWX slot, so one switch at a time.
-     The lock only disables the SEND button; the coding-mode chip and its
-     popover stay clickable for the whole 3-11 s of a backend switch, and
-     setCodingMode had no guard of its own. A mode click mid-switch re-entered
-     here and overwrote the single shared slot: SWX.want became {mode}, so
-     selBackend() stopped returning the backend the operator had just clicked
-     and the composer chip visibly snapped back to the old route — the exact
-     paint this item exists to provide — while SWX.label and SWX.since were
-     overwritten under the running switch. Worse, SWX.timer is one field: the
-     inner call cleared and re-armed it, and the inner `finally` then cleared
-     it for good, leaving the still-running outer switch with no 45 s watchdog
-     at all. Refused in words rather than queued: a second route chosen while
-     the first is still landing is a decision the operator should re-make once
-     they can see where they are. `refuse` is NOT used — it is the call site's
-     idiom for a running TURN, and printing "Not while a turn is running" here
-     would name the wrong reason. */
-  if (SWX.pending > 0) {
-    toast('One switch at a time',
-      String(SWX.label || 'the switch').replace(/[…\.\s]+$/, '')
-        + (SWX.hold ? ' is waiting for the agent to finish. Cancel it, or switch now anyway' : ' has not finished yet'), 'bad');
-    return {ok:false, error:'a switch is already running'};
-  }
   let t0 = Date.now();
   /* r5 review (blocker): the agent generation the switch STARTED on. A
      restart advances AGENT_GEN, and swxSettle holds the lock until a mode
@@ -15072,10 +15147,8 @@ async function swxRun(label, want, run, refuse) {
   const gen0 = AGENT_GEN;
   const seq = ++SWX.seq;
   SWX.route = null;
-  SWX.pending++;
   SWX.since = t0;
   SWX.label = label;
-  SWX.want = want || null;
   SWX.err = null;
   SWX.slow = false;
   if (SWX.timer) clearTimeout(SWX.timer);
@@ -15113,8 +15186,8 @@ async function swxRun(label, want, run, refuse) {
     res = await run();
     // The IPC has resolved. That is one of three things, not the end.
     await swxSettle(res, gen0);
-    // ATO-194: a switch begun since this one was given up on owns the line.
-    if (seq !== SWX.seq) return res;
+    // A newer choice owns all completion feedback.
+    if (seq !== SWX.seq || !current()) return {ok:false, superseded:true, cancelled:true};
     if (res && res.ok === false) SWX.err = swxFailLine(label, res);
     /* The watchdog's line is a wait, not a verdict. A first local model
        load runs past 45 s, and the line stayed up for minutes after the
@@ -15122,7 +15195,7 @@ async function swxRun(label, want, run, refuse) {
     else if (SWX.err === swxSlowLine(label, want) || SWX.err === swxSlowLine(label)) SWX.err = null;
     return res;
   } catch (err) {
-    if (seq === SWX.seq) SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
+    if (seq === SWX.seq && current()) SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
     throw err;
   } finally {
     /* ATO-194: only this switch's own lock. One given up on (the watchdog let
@@ -15140,19 +15213,18 @@ async function swxRun(label, want, run, refuse) {
     if (mine && SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
     if (mine) { SWX.slow = false; swxTickStop(); }
     // The watchdog may already have zeroed this; never decrement past 0.
-    if (mine && SWX.pending > 0) SWX.pending--;
+    // The queue owns pending across hand-offs, so waiting messages only dispatch after the final choice.
     // Clearing `want` makes every chip read LIVE_CONFIG again — which, on a
     // failure, still names the old route, so the rollback is one frame and
     // costs nothing. That is only true because no call site mutates
     // LIVE_CONFIG in place any more (the cloud-model row used to).
-    if (SWX.pending === 0) SWX.want = null;
+    // The queue clears the optimistic choice only after its final operation.
     /* Item 11: a ⇄ pressed while this switch was landing (fzSwap) goes with
        this switch's failure — it was painted on top of it, so it rolls back
        with it. Otherwise the render below lets it run, on the next tick so
        the caller is done with this result first (fzFlushSoon). */
-    if (SWX.pending === 0 && FZ.swapQueued && !swxLanded(res)) FZ.swapQueued = false;
+    if (mine && current() && FZ.swapQueued && !swxLanded(res)) FZ.swapQueued = false;
     // Backlog 26: a queue owed while the switch landed, once the caller is done with this result.
-    if (SWX.pending === 0 && DRAIN_OWED) setTimeout(drainOwed, 0);
     render();
   }
 }
@@ -15236,6 +15308,7 @@ function openSelector(kind) {
      rendered — but a deep link or a stale call can, and the provider pane on
      a managed-local route is a switch over a list that route has no use for. */
   const want = kind || 'backend';
+  SEL.view = (SEL.view || 0) + 1;
   SEL.open = true; SEL.kind = selHasKind(want) ? want : 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
   render();
   if (SEL.kind === 'model' || SEL.kind === 'workers') selEnterModelPane();
@@ -15264,7 +15337,8 @@ function closeSelector() {
  * up a cloud model meanwhile", Settings › Models) is the person's: it stays
  * up, with the key being typed, until they finish or leave it.
  */
-function closeSelectorUnlessSetup() {
+function closeSelectorUnlessSetup(view) {
+  if (view !== undefined && view !== (SEL.view || 0)) return;
   if (SEL.open && WIZ.phase && !OB.open) { render(); return; }
   closeSelector();
 }
@@ -15527,6 +15601,7 @@ async function selActivate(row) {
     // model comes with it, because activating a provider selects its own.
     const res = await swxRun(BSW.line, {providerId: row.id, model: row.defaultChatModel || row.model || ''},
       () => SWXBR.activateProvider(row.id));
+    if (res && res.superseded) return;
     SEL.busy = false; BSW.line = '';
     if (swxSaid(res)) { render(); return; }
     if (!res || !res.ok) {
@@ -15538,8 +15613,10 @@ async function selActivate(row) {
     bswReport(res);
     // r5 item 10: swxRun has already re-read the live config — it is one of
     // the three things the composer lock waits for.
-    SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
-    selLoadModels(row.id);
+    if (res.selectorView === (SEL.view || 0)) {
+      SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
+      selLoadModels(row.id);
+    }
     return;
   }
   if (row.type === 'cloudModel') {
@@ -15558,21 +15635,21 @@ async function selActivate(row) {
        is what the chip falls back to. */
     S.cloudModel = row.id;
     closeSelector();
-    await swxRun('switching…', {providerId: pid, model: row.id}, async () => {
-      const res = await SWXBR.selectCloudModel(pid, row.id);
-      if (!res || !res.ok) toast('Could not select the model', res && res.needsKey && res.keyInvalid ? savedKeyLine(pid) : res && res.needsKey ? 'no API key for ' + pid : ((res && res.error) || ''));
-      else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
-      return res;
-    });
+    const res = await swxRun('switching…', {providerId: pid, model: row.id},
+      () => SWXBR.selectCloudModel(pid, row.id));
+    if (res && res.superseded) return;
+    if (!res || !res.ok) toast('Could not select the model', (res && res.error) || '');
+    else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
     return;
   }
   if (row.type === 'localModel') {
     if (!row.downloaded) { selPull(row.id); return; }
-    // The popup stays open until main answers: a daemon that fails to
-    // start has to be shown, and `models start` can take a while.
-    SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…'; render();
+    // Close immediately; progress and failures remain beside the composer.
+    SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…';
+    closeSelector();
     const res = await swxRun(BSW.line, {backend:'local', model: row.id},
       () => SWXBR.selectLocalModel(row.id));
+    if (res && res.superseded) return;
     SEL.busy = false; BSW.line = '';
     if (swxSaid(res)) { render(); return; }
     if (!res || !res.ok) {
@@ -15581,7 +15658,7 @@ async function selActivate(row) {
     }
     S.localModel = row.id;
     // A composer download lands here (selPull's listener), maybe under a provider setup opened meanwhile.
-    closeSelectorUnlessSetup();
+    closeSelectorUnlessSetup(res.selectorView);
     bswReport(res);
     if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
     // r5 item 10: the live config is already re-read inside swxRun.
@@ -15589,9 +15666,17 @@ async function selActivate(row) {
 }
 
 function selPull(id) {
-  SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null; render();
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
+  SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
+  closeSelector(); render();
+  toast('Downloading in the background', 'You can keep chatting and choose another model');
   BR.modelsPull(id, {trigger: 'selector'}).then((res) => {
-    if (res && res.ok === false) { SEL.pulling = null; SEL.err = res.error || 'could not start the download'; render(); }
+    if (res && res.ok === false && SEL.pulling === id) {
+      SEL.pulling = null; toast('Download could not start', res.error || 'Please try again', 'bad'); render();
+    }
+  }).catch((error) => {
+    if (SEL.pulling !== id) return;
+    SEL.pulling = null; toast('Download could not start', String(error), 'bad'); render();
   });
 }
 
@@ -15648,16 +15733,6 @@ function selectorHTML() {
      download card's "Set up a cloud model meanwhile" opens it while this
      popover's pull may still be running. */
   if (WIZ.phase) return wizardHTML();
-  if (SEL.pulling) {
-    /* `.selpullline` is the line the pull's progress events patch in place
-       (selPull's listener), and the only one. */
-    return selShell('Downloading ' + SEL.pulling,
-      '<div class="selbody selpull"><p class="cap selpullline">' + esc(SEL.pullLine) + '</p>'
-      + '<p class="cap">It is selected automatically when it lands.</p></div>',
-      '<span class="grow"></span><button class="btn btn-g xs" data-act="sel:cancelPull">Cancel</button>',
-      '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>');
-  }
-
   /* ATO-161: the quick "Add a provider" pane (a preset list with a key field,
      saved and activated without a key check) is gone: no provider yet opens
      the wizard's list (sel:add), which checks the key before it saves. */
@@ -16251,7 +16326,7 @@ function loadCodingMode() {
   const seq = ++MODE.seq;
   return BR.codingMode().then((res) => {
     if (!res) return;
-    if (seq !== MODE.seq) return;
+    if (seq !== MODE.seq || (res && res.superseded)) return;
     MODE.supported = res.supported;
     // Only an `ok` answer moves the stance. A failed GET leaves `current`
     // where it was and `known` false, so the chip keeps the blank rather than
@@ -16289,7 +16364,7 @@ function reassertCodingMode(id) {
     // this is the same guard for one already in flight. An explicit click
     // that landed while this POST was travelling owns the stance now, and
     // its reply is the one the chip and the diagnostics level must show.
-    if (seq !== MODE.seq) return;
+    if (seq !== MODE.seq || (res && res.superseded)) return;
     if (!res || !res.ok) { if (res) MODE.supported = res.supported; render(); return; }
     MODE.supported = true; MODE.current = res.mode; MODE.known = true; MODE.confirmedGen = AGENT_GEN;
     MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
@@ -16316,7 +16391,7 @@ async function setCodingMode(id, post, anxViaGiven) {
   // ends and quietly put the stance back to what the window had before.
   cancelModeReassert();
   S.overlay = null; render();
-  const seq = ++MODE.seq;
+  const choice = MODE.choice = (MODE.choice || 0) + 1;
   /* r5 item 10: the chip now repaints on the CLICK rather than on the
      reply. This route is 1-3 ms, so the send button's spinner (150 ms) is
      never reached — the wrapper is here for the paint and for the single
@@ -16324,12 +16399,12 @@ async function setCodingMode(id, post, anxViaGiven) {
      r5 integration: item 1's `post` seam rides INSIDE the wrapper, so the
      plan hand-off's injected mode POST is measured and locked exactly like
      the operator's own click. */
-  // `route:false` — see swxHoldsComposer: a mode change moves no route, so
+  // `route:false` — see swxWaitsForRoute: a mode change moves no route, so
   // it must not lock the composer for the 1-5 ms it takes.
-  const res = await swxRun('switching…', {mode:id, route:false}, () => (post ? post(id) : SWXBR.codingMode(id)));
+  const res = await swxRun('switching…', {mode:id, route:false}, () => { ++MODE.seq; return post ? post(id) : SWXBR.codingMode(id); });
   // A later click (or a re-assert fired after this one) already owns the
   // stance: drop this reply rather than repainting the chip backwards.
-  if (seq !== MODE.seq) return;
+  if (choice !== MODE.choice || (res && res.superseded)) return;
   if (!res || !res.ok) {
     MODE.supported = res ? res.supported : true;
     const why = res && res.supported === false
@@ -16721,6 +16796,7 @@ async function selChooseBackend(id) {
   const predicted = bswPredictedModel(id);
   const want = predicted ? {backend:id, model:predicted} : {backend:id};
   const res = await swxRun(BSW.line, want, () => SWXBR.switchBackend(id));
+  if (res && res.superseded) return res;
   SEL.busy = false; BSW.line = '';
   if (swxSaid(res)) { render(); return res; }
   if (!res || !res.ok) {
@@ -16744,7 +16820,7 @@ async function selChooseBackend(id) {
     selLoadLocal();
     return res;
   }
-  closeSelectorUnlessSetup();
+  closeSelectorUnlessSetup(res.selectorView);
   return res;
 }
 
@@ -17071,6 +17147,7 @@ function fzBefore(label) {
   return rmNow().effective;
 }
 function fzAfter(res, before) {
+  if (res && res.superseded) return res;
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
     if (res && res.needsKey) { bswOpenKey(res.providerId, res.keyInvalid); return res; }
@@ -17086,7 +17163,7 @@ function fzAfter(res, before) {
   const now = rmNow();
   const entered = res.runMode ? !!res.runMode.enteredFusion : (now.effective === 'fusion' && before !== 'fusion');
   if (entered) fzIntro(now);
-  closeSelectorUnlessSetup();
+  closeSelectorUnlessSetup(res.selectorView);
   return res;
 }
 
@@ -17448,6 +17525,7 @@ async function openSession(id) {
   liveLeave();   // Item 38: a turn whose rows are on screen keeps its view for when its chat is back
   if (S.sessionId !== id) dropChatToasts();   // ATO-186: "New session" and the like were about the chat being left
   S.sessionId = id;
+  refreshSkillList();
   // Backlog 24: and until the answer lands, the composer holds what is sent here.
   const opening = {id, failed:false};
   OPENING = opening;
@@ -17468,7 +17546,11 @@ async function openSession(id) {
   render();
 
   const askedAt = Date.now();   // Q60 review: approvalOver below
-  const res = await BR.session(id);
+  let res = await BR.session(id);
+  if (res && res.ok && PENDING_CHATS.has(id)) PENDING_CHATS.get(id).waiting = false;
+  if ((!res || !res.ok) && id.startsWith('waiting-') && chatQueuedCount(id)) {
+    res = {ok:true, data:{id, turns:[]}};
+  }
   /* Backlog 24: this open is over, landed or not. A newer open (another chat,
      or this one again) owns OPENING by now and is left alone. A failed
      reload of the chat whose session the next message already goes with
@@ -17561,6 +17643,7 @@ async function openSession(id) {
   }
   render();
   refreshContext();
+  refreshSkillList();
   /* Backlog 24, 26: a turn of this chat ended while it was loading, or while
      the person was in another chat, with messages queued behind it. The next
      one runs now, here. Not over a turn this chat is still running (live):
@@ -18218,6 +18301,7 @@ async function wizNextStep() {
   const sel = await swxRun('switching…', {providerId: id, model},
     () => SWXBR.selectCloudModel(id, model),
     () => { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); });
+  if (sel && sel.superseded) return;
   if (sel && sel.cancelled) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, not activated: the switch was cancelled'; render(); refreshLiveConfig(); return; }
   if (swxSaid(sel)) { refreshLiveConfig(); return; }
   if (!sel || !sel.ok) {
@@ -20046,6 +20130,7 @@ function skillsTabEntered() {
   // Item 09: the section opens on its skills; Built-in tools is picked (its segment, `/tools`, which enters through here first).
   if (SKP.view !== 'skills') { SKP.view = 'skills'; skpListTop(); render(); }
   ensureSkillsPoll();
+  if (SK.workingDir) refreshSkillList();
   tpSkillsOmittedRefresh();
 }
 function skpRender() { paneRepaintKeepFocus(skillsTab()); }
@@ -20096,6 +20181,9 @@ function skillsTab() {
       + '</span>'
       + '</div></div>';
     view = bar
+      + (SK.workingDir ? '<div class="tk-notice set-softnote"><span class="grow">Workspace: <span class="mono">' + esc(SK.workingDir) + '</span></span>'
+        + '<button class="btn btn-s sm" data-act="skills:project"' + (SKP.busy ? ' disabled' : '') + '>' + (SK.projectSkillsEnabled ? 'Disable project skills' : 'Enable project skills') + '</button></div>' : '')
+      + (SK.errors.length && !tools ? '<details class="set-softnote"><summary>Skill diagnostics (' + SK.errors.length + ')</summary><pre>' + esc(SK.errors.join('\n')) + '</pre></details>' : '')
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
       + skpMessages()
@@ -20136,10 +20224,10 @@ function skpListHTML(visible) {
     + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
       return '<button class="tk-li set-skrow' + (sel ? ' on' : '') + (r.enabled ? '' : ' dim') + '" data-skill-row="' + esc(r.name) + '" data-act="skills:detail:' + esc(r.name) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
-        + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="e toggle" data-act="skills:toggle:' + esc(r.name) + '"></span>'
+        + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="' + (SK.workingDir ? 'Toggle in this workspace (e)' : 'Toggle globally (e)') + '" data-act="skills:toggle:' + esc(r.name) + '"></span>'
         + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
-        + '<span class="set-src">' + skpSourceChip(r.source) + '</span>'
-        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + '</span></button>';
+        + '<span class="set-src" title="' + esc(r.rootDir || r.source) + '">' + skpSourceChip(r.source) + '</span>'
+        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + (r.disabledReasons && r.disabledReasons.length ? '<br><small>' + esc(r.disabledReasons.join(', ')) + '</small>' : '') + '</span></button>';
     }).join('')
     + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
     + '</div>'
@@ -20245,6 +20333,13 @@ function skpDetailHTML() {
     + '</div>'
     + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(name) + '</h3>' + (row ? skpSourceChip(row.source) + '<span class="mono set-meta">v' + esc(row.version) + '</span>' : '') + '</div>'
     + (row && row.description ? '<p class="set-desc">' + esc(row.description) + '</p>' : '')
+    + (row && SK.workingDir ? '<p class="set-cap mono">' + esc(row.rootDir || '') + '</p>'
+      + '<p class="set-cap">' + esc((row.disabledReasons || []).join(', ') || 'Available to the model') + '</p>'
+      + '<div class="acts">' + ['workspace', 'global'].map(scope => {
+        const disabled = (row.disabledReasons || []).includes(scope === 'global' ? 'disabled globally' : 'disabled in workspace');
+        return '<button class="btn btn-s sm" data-act="skills:scope:' + scope + ':' + esc(name) + '"' + (SKP.busy ? ' disabled' : '') + '>'
+          + (disabled ? 'Enable' : 'Disable') + (scope === 'global' ? ' globally' : ' in this workspace') + '</button>';
+      }).join('') + '</div>' : '')
     + body
     + tuiHints([['Esc back', 'skills:back'], ['e toggle', 'skills:toggle:' + name], ['r refresh', 'skills:refresh']]);
 }
@@ -20412,35 +20507,54 @@ async function skpOpenDetail(name) {
   // GET /api/skills/{name} is the registry's filtered view: a disabled skill
   // answers 404, and the body then comes from `atag skill show` (the TUI's
   // openDetail reads the manifest path from listAll() for the same reason).
-  const res = SKP.routeOverride !== null ? SKP.routeOverride : await BR.skill(name);
+  const key = skillContextKey(), cloud = !!SK.workingDir, seq = SKP.detailSeq = (SKP.detailSeq || 0) + 1;
+  const res = SKP.routeOverride !== null ? SKP.routeOverride : await BR.skill(name, skillSessionId());
   let body = null, err = null, source = null;
   if (res && res.ok && res.data && typeof res.data.body === 'string') { body = res.data.body; source = 'route'; }
+  else if (cloud) err = (res && res.error) || 'skill detail unavailable';
   else {
     const shown = await BR.skillShow(name);
     if (shown && shown.ok && typeof shown.body === 'string') { body = shown.body; source = 'skillShow'; }
     else err = (shown && shown.error) || (res && res.error) || 'unknown error';
   }
-  if (SKP.detailName !== name || SKP.mode !== 'detail') return;
+  if (seq !== SKP.detailSeq || key !== skillContextKey() || SKP.detailName !== name || SKP.mode !== 'detail') return;
   if (err !== null) { SKP.msg = {text:'failed to open ' + name + ': ' + err}; SKP.mode = 'list'; SKP.detailSource = null; render(); return; }
   SKP.detailBody = body; SKP.detailSource = source; render();
 }
-async function skpToggle(name) {
+async function skpToggle(name, scope) {
   if (!BR || SKP.busy) return;
   const row = (SK.rows || []).find((r) => r.name === name);
   if (!row) { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; }
-  const disable = row.enabled;
+  const explicitScope = !!scope;
+  scope = scope || (SK.workingDir ? 'workspace' : 'global');
+  const disable = SK.workingDir && explicitScope ? !(row.disabledReasons || []).includes(scope === 'global' ? 'disabled globally' : 'disabled in workspace') : row.enabled;
+  const key = skillContextKey(), cloud = !!SK.workingDir;
+  const operation = SKP.operationSeq = (SKP.operationSeq || 0) + 1;
   SKP.busy = true; SKP.lastError = null; render();
-  const res = await BR.skillSetDisabled(name, disable);
+  const res = await BR.skillSetDisabled(name, disable, scope, skillSessionId());
+  if (operation !== SKP.operationSeq) return;
   SKP.busy = false;
+  if (key !== skillContextKey()) return;
   if (!res || res.ok === false) SKP.lastError = 'toggle ' + name + ' failed: ' + ((res && res.error) || 'unknown error');
-  else SKP.msg = {text:(disable ? 'skill disabled: ' : 'skill enabled: ') + name, restart:true}; // skills-orchestrator.ts runtime_info; hot-apply needs the running agent's registry
+  else SKP.msg = {text:(disable ? 'skill disabled: ' : 'skill enabled: ') + name + (cloud ? ' (' + scope + ')' : ''), restart:!cloud};
   await skpReloadRows();
   render();
+}
+async function skpToggleProject() {
+  if (!BR || !SK.workingDir || SKP.busy) return;
+  const key = skillContextKey(), operation = SKP.operationSeq = (SKP.operationSeq || 0) + 1;
+  SKP.busy = true; render();
+  const res = await BR.skillProjectEnabled(!SK.projectSkillsEnabled, skillSessionId());
+  if (operation !== SKP.operationSeq) return;
+  SKP.busy = false;
+  if (key !== skillContextKey()) return;
+  if (!res || !res.ok) SKP.lastError = (res && res.error) || 'Could not change project skills';
+  await refreshSkillList(); render();
 }
 function skpRequestRemove(name) {
   const row = (SK.rows || []).find((r) => r.name === name);
   if (!row) { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; }
-  if (row.source === 'project') { SKP.msg = {text:name + ' is a project-local skill — remove it from .atomic-agent/skills instead'}; render(); return; }
+  if (row.source === 'project') { SKP.msg = {text:name + ' is a project-local skill — remove it from its source directory instead'}; render(); return; }
   if (row.source !== 'global') { SKP.msg = {text:'skill ' + name + ' not found'}; render(); return; } // a `[missing]` disable-list entry has no directory to delete
   SKP.removeConfirm = {name, source:row.source, wasDisabled:!row.enabled, submitting:false, error:null};
   render();
@@ -20592,6 +20706,8 @@ function skillsAct(what) {
   const arg = rest.join(':');
   const sel = () => arg || (SKP.mode === 'detail' ? SKP.detailName : (skpSelected() || {}).name);
   if (verb === 'detail') { const name = sel(); if (name) skpOpenDetail(name); return; }
+  if (verb === 'project') { skpToggleProject(); return; }
+  if (verb === 'scope') { const [scope, name] = rest; if (name) skpToggle(name, scope); return; }
   if (verb === 'toggle') { const name = sel(); if (name) skpToggle(name); return; }
   if (verb === 'remove') { const name = sel(); if (name) skpRequestRemove(name); return; }
   if (verb === 'removeConfirm') { skpConfirmRemove(); return; }
@@ -20671,6 +20787,8 @@ function skillsKey(e, k, inText) {
     if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
     return false;
   }
+  if (SK.workingDir && k === 'g') { e.preventDefault(); const name = SKP.mode === 'detail' ? SKP.detailName : (skpSelected() || {}).name; if (name) skpToggle(name, 'global'); return true; }
+  if (SK.workingDir && k === 'p') { e.preventDefault(); skpToggleProject(); return true; }
   if (SKP.mode === 'detail') {
     if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
     if (k === 'e') { e.preventDefault(); skillsAct('toggle'); return true; }
@@ -23236,6 +23354,7 @@ async function llmUseLocalModel(id) {
     () => SWXBR.selectLocalModel(id),
     (held) => { LLMP.msg = {text:'! ' + llmRestartRefusal(held)}; llmRepaint(); });
   LLMP.busy = false;
+  if (res && res.superseded) return false;
   if (!res || !res.ok) {
     if (!(res && res.error === 'a turn is running')) LLMP.msg = {text:'! ' + ((res && res.error) || 'could not switch to ' + id)};
     llmRefresh();
@@ -23479,7 +23598,8 @@ async function llmRemoveLocalConfirm() {
   llmRefresh();
 }
 function llmPull(kind, id) {
-  if (!BR || LLMP.pulling) return;
+  if (!BR) return;
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
@@ -23489,7 +23609,6 @@ async function llmPrimary(row) {
   if (!row || !BR) return;
   if (row.kind === 'localTextModel') {
     const m = row.model;
-    if (LLMP.pulling) return;
     if (!m.downloaded) { llmPull('chat', m.id); return; }
     if (row.primaryAction === 'start') { await llmDaemon('start'); return; }
     if (row.primaryAction === 'current') { llmRefresh(); return; }
@@ -23934,6 +24053,10 @@ async function llmAfterPull(p) {
       + ' — the weights are on disk, but the model was not started: it would serve text only. Press s to start it anyway.'};
     llmRepaint();
     return {projector:'failed', activated:false, skipped:true};
+  }
+  if (p.kind === 'chat') {
+    DL.ready = {id:p.id}; bswSnapshot(); render();
+    return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
   }
   const row = llmRows('local').find((r) => r.model && r.model.id === p.id);
   if (row && LLMP.mode === 'local') { llmPrimary(row); return {projector: attempted ? 'ok' : 'none', activated:true, skipped:false}; }
@@ -25771,7 +25894,7 @@ if (typeof window !== 'undefined') {
   /* item 10 — clears what a FAILED switch deliberately leaves on screen (the
      composer's reason line, the selector's add panel), so the check that
      drives one does not leak that state into whatever runs next. */
-  window.__swxReset = () => { SWX.err = null; SEL.addOpen = false; SEL.err = null; if (WIZ.phase === 'pick_kind') WIZ.phase = null; render(); };   // ATO-161: no provider now opens the wizard's list, not the quick pane
+  window.__swxReset = () => { SWX.err = null; SWX.sendError = null; SWX.sendErrors = {}; SEL.addOpen = false; SEL.err = null; if (WIZ.phase === 'pick_kind') WIZ.phase = null; render(); };   // ATO-161: no provider now opens the wizard's list, not the quick pane
 }
 
 /* ============================================================
@@ -26937,29 +27060,16 @@ if (typeof window !== 'undefined') {
     }
   };
 
-  /* Item 10 — two switches at once. The inner one must be refused in words:
-     one SWX slot means a second swxRun would overwrite `want` (rolling the
-     optimistic chip back to the old route), `label`, `since`, and — worst —
-     the single `timer` field, leaving the outer switch with no watchdog. */
-  window.__swxNested = () => {
-    const keepToasts = S.toasts.slice();
-    let inner = null, mid = null;
-    const outer = swxRun('switching backend…', {backend: 'local'}, () => new Promise((resolve) => {
-      setTimeout(() => {
-        S.toasts = [];
-        Promise.resolve(swxRun('switching…', {mode: 'plan'}, () => Promise.resolve({ok: true}))).then((r) => {
-          inner = r;
-          mid = {want: SWX.want ? Object.assign({}, SWX.want) : null, timer: !!SWX.timer,
-                 pending: SWX.pending, label: SWX.label, toasts: window.__toasts()};
-          resolve({ok: true});
-        });
-      }, 60);
-    }));
-    return Promise.resolve(outer).then((res) => {
-      const after = {pending: SWX.pending, want: SWX.want, timer: !!SWX.timer};
-      S.toasts = keepToasts; renderToasts();
-      return {inner: inner, mid: mid, after: after, outer: res};
-    });
+  /* A mode can be selected while the engine wakes, without overwriting its lock. */
+  window.__swxNested = async () => {
+    let release;
+    const outer = swxRun('switching backend…', {backend:'local'}, () => new Promise(r => { release = r; }));
+    while (!release) await new Promise(r => setTimeout(r, 1));
+    const inner = swxRun('switching…', {mode:'plan', route:false}, () => Promise.resolve({ok:true}));
+    const mid = {want: Object.assign({}, SWX.want), timer:!!SWX.timer, pending:SWX.pending};
+    release({ok:true});
+    const results = await Promise.all([outer, inner]);
+    return {outer:results[0], inner:results[1], mid, after:{pending:SWX.pending, want:SWX.want, timer:!!SWX.timer}};
   };
 }
 

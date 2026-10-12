@@ -61,6 +61,10 @@ function makeHarness(): Harness {
 
   const runtime = {
     createSession: () => session,
+    getSessionWorkspace: () => null,
+    skillRegistry: { listAll: () => [] },
+    skillCatalog: [],
+    skillCatalogDropped: 0,
     sessionStore: {
       listSummaryPage: () => [],
       countUnreadable: () => 0,

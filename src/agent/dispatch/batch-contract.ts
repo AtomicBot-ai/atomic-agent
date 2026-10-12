@@ -83,6 +83,8 @@ export interface BatchCallInput {
 }
 
 export interface BatchExecutionContext {
+  workspaceSkills?: import("../../skills/workspace-skills.js").WorkspaceSkills;
+  modelMode?: "local" | "cloud";
   workingDir: string;
   sessionId: string;
   stepIndex: number;

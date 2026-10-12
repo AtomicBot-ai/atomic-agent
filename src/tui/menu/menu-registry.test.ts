@@ -135,7 +135,7 @@ const V0_2_2_SLASH_COMMANDS = [
     // handler answers has to be reachable from here, or it exists only
     // for whoever types an invalid one and reads the usage line.
     description:
-      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
+      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm model-mode [local|cloud|inherit] [provider-id] [model-id]` select context policy · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
   },
   {
     name: "mcp",

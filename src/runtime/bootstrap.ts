@@ -1,6 +1,7 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction } from "./context-compaction.js";
+import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
@@ -20,6 +21,8 @@ import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
 import { resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
+import type { SessionState } from "../session/session-state.js";
+import { estimateTokens } from "../prompt/token-budget.js";
 
 import { TurnController } from "./turn-controller.js";
 import { SteeringInbox } from "./steering-inbox.js";
@@ -48,7 +51,9 @@ import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
+import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
+import { SessionNotFoundError } from "./session-not-found-error.js";
 
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 
@@ -334,7 +339,7 @@ export async function createAgentRuntime(
 
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
-    costAccumulator, turnUsageMeter, resolveModelPricing,
+    costAccumulator, turnUsageMeter, resolveModelPricing, resolveCatalogContextWindow,
   });
   const { taskStore, webhookSessionStore } = createRuntimeTaskStores({ config, logger });
   const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
@@ -343,10 +348,19 @@ export async function createAgentRuntime(
   });
 
   const promptPreviewDeps = {
+    prepareWorkspace: createWorkspaceLoader(config),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,
+    resolveModelMode: (id?: string) => resolveModelMode(
+      captureModelModePolicy(resolveLlmConfig(getConfig()), resolveActiveModelName),
+      id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined,
+    ),
     resolveToolTransport: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).transport,
+    resolveToolSchemaTokens: (id: string, descriptors: readonly ToolDescriptor[]) => {
+      const slice = resolveActiveLlmSlice(fallbackChain.standingOverrideFor(id) ?? undefined);
+      return estimateTokens(JSON.stringify(slice.adapter?.descriptorsToTools(descriptors, { strict: slice.strictTools }) ?? []));
+    },
     profileWindowApplies: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).isLlamaServer,
     resolveCatalogContextWindow: (id?: string) => resolveCatalogContextWindow(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined),
   };
@@ -377,7 +391,7 @@ export async function createAgentRuntime(
     warn: (sessionId, message) => logger.warn(message, { sessionId }),
     emit: (event) => {
       if (event.type === "compaction_failed" && event.result.status === "failed") {
-        logger.warn("context compaction failed; continuing with history trimming", { sessionId: event.sessionId, reason: event.result.message });
+        logger.warn("context compaction failed", { sessionId: event.sessionId, reason: event.result.message });
       }
       emitAgentLoopEventFor(event.sessionId, event);
     },
@@ -392,6 +406,7 @@ export async function createAgentRuntime(
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
   const loopDeps = {
+    prepareWorkspace: promptPreviewDeps.prepareWorkspace,
     compaction: compaction.control,
     registry: toolRegistry,
     // A getter, so `runtime.setPlanMode` is observed by the next tool
@@ -412,6 +427,11 @@ export async function createAgentRuntime(
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
     grammar: getGrammar(),
+    persistContext: (state: SessionState) => {
+      const existed = sessionStore.load(state.id) !== null;
+      sessionStore.save(state);
+      if (!existed) sessionStore.beginTurn(state.id);
+    },
     llmComplete,
     // Mid-turn steering: the loop drains this at every step boundary.
     steeringInbox,
@@ -428,6 +448,7 @@ export async function createAgentRuntime(
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
+    contextProviderId: (sessionId: string) => fallbackChain.standingOverrideFor(sessionId) ?? undefined,
     resolveLlmSlice: (providerId: string) => {
       const slice = resolveActiveLlmSlice(providerId);
       return {
@@ -603,6 +624,12 @@ export async function createAgentRuntime(
   consolidatorJob?.start();
 
   const runtime = {
+    getSessionWorkspace(input: SessionState | string) {
+      const session = typeof input === "string" ? sessionStore.load(input) : input;
+      if (!session) throw new SessionNotFoundError(String(input));
+      const mode = promptPreviewDeps.resolveModelMode(session.id);
+      return mode.mode === "cloud" ? promptPreviewDeps.prepareWorkspace(session, true) : null;
+    },
     config,
     loop,
     toolRegistry,

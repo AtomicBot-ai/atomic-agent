@@ -183,7 +183,7 @@ export function buildOsWebFetchTool(
         url: outcome.finalUrl,
         mode: args.mode,
       });
-      const capped = extracted.text.length > args.maxChars;
+      const capped = (ctx.modelMode !== "cloud" || rawArgs.maxChars !== undefined) && extracted.text.length > args.maxChars;
       const text = capped
         ? `${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
         : extracted.text;

@@ -4958,6 +4958,9 @@ describe("executeStep per-request grammar (F17)", () => {
         },
         grammar,
         profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: true,
         ...depsExtra,
       },
     );
@@ -5186,6 +5189,9 @@ describe("executeStep tool roles (F18)", () => {
         },
         grammar,
         profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: true,
         ...depsExtra,
       },
     );

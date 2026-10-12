@@ -124,6 +124,62 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
+  it("persists v75 cloud policies once and respects subsequent local or inherit choices", () => {
+    const path = getUserConfigPath(dir);
+    const raw = JSON.stringify({
+      ...USER_CONFIG_DEFAULTS,
+      version: 74,
+      agent: { ...USER_CONFIG_DEFAULTS.agent, tokenBudget: 6789 },
+      llm: {
+        activeTextProvider: "remote", activeEmbeddingProvider: "local", toolTransport: "auto",
+        providers: [
+          { id: "remote", kind: "openrouter", apiKey: "fixture-key", defaultChatModel: "large", modelModes: { small: "local" } },
+          { id: "manual", kind: "gemini", modelMode: "local" },
+          { id: "local", kind: "llama-server", url: "http://127.0.0.1:8080" },
+        ],
+      },
+    });
+    writeFileSync(path, raw, "utf8");
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      // Read-only loading returns migrated values without rewriting the old file.
+      expect(readUserConfigFileSync(path)?.llm?.providers[0]?.modelMode).toBe("cloud");
+      expect(readFileSync(path, "utf8")).toBe(raw);
+      const migrated = ensureUserConfigFileSync(path);
+      const stored = JSON.parse(readFileSync(path, "utf8"));
+      expect(stored.version).toBe(USER_CONFIG_VERSION);
+      expect(stored.agent.tokenBudget).toBe(6789);
+      expect(stored.llm).toEqual({
+        activeTextProvider: "remote", activeEmbeddingProvider: "local", toolTransport: "auto",
+        providers: [
+          { id: "remote", kind: "openrouter", apiKey: "fixture-key", defaultChatModel: "large", modelMode: "cloud", modelModes: { small: "local" } },
+          { id: "manual", kind: "gemini", modelMode: "local" },
+          { id: "local", kind: "llama-server", url: "http://127.0.0.1:8080" },
+        ],
+      });
+      if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(String(warn.mock.calls[0]?.[0])).toContain(`migrated config v74 → v${USER_CONFIG_VERSION}`);
+
+      const afterMigration = readFileSync(path, "utf8");
+      expect(ensureUserConfigFileSync(path)).toEqual(migrated);
+      expect(readFileSync(path, "utf8")).toBe(afterMigration);
+      for (const modelMode of ["local", undefined] as const) {
+        const changed = { ...migrated, llm: { ...migrated.llm!,
+          providers: migrated.llm!.providers.map(entry =>
+            entry.id === "remote" ? { ...entry, modelMode } : entry),
+        } };
+        writeUserConfigFileSync(path, changed);
+        const beforeRestart = readFileSync(path, "utf8");
+        expect(ensureUserConfigFileSync(path).llm?.providers[0]?.modelMode).toBe(modelMode);
+        expect(readFileSync(path, "utf8")).toBe(beforeRestart);
+      }
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("ensureUserConfigFileSync migrates v15 → v16 by filling memory.voting defaults", () => {
     const path = getUserConfigPath(dir);
     const memoryWithoutV16 = {

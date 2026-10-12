@@ -57,7 +57,7 @@ export function buildNotesRecallTool(
           entries.length === 0
             ? "(no matches)"
             : entries
-                .map((e) => `- #${e.id} ${truncatePreview(e.content, 240)}`)
+                .map((e) => `- #${e.id} ${ctx.modelMode === "cloud" ? e.content : truncatePreview(e.content, 240)}`)
                 .join("\n");
         return compressToolResult(
           {

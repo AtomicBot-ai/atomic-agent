@@ -16,8 +16,8 @@
  *    step's worth of messages each step, and a breakpoint at its end
  *    lets the next request read everything up to here from the cache.
  *
- * A breakpoint inside the changing tail would cache nothing and pay the
- * cache-write premium, so the final message is never marked. Marks land
+ * Local prompts exclude the changing final tail. Cloud's append-only
+ * history has no separate mutable tail and includes its final message. Marks land
  * on text parts only: an assistant message that is nothing but
  * `tool_calls` has no part to carry one, so the walk skips back to the
  * nearest message with text.
@@ -75,6 +75,7 @@ type Message = Record<string, unknown>;
  */
 export function applyAnthropicCacheControl(
   messages: ReadonlyArray<Message>,
+  options: { includeLastMessage?: boolean } = {},
 ): Message[] {
   const out = messages.map((message) => ({ ...message }));
   if (out.length === 0) return out;
@@ -85,7 +86,7 @@ export function applyAnthropicCacheControl(
   // The last history message: everything before the final (tail)
   // message, and after the system message. Walk back over messages that
   // cannot carry a marker.
-  for (let i = out.length - 2; i >= 1; i -= 1) {
+  for (let i = out.length - (options.includeLastMessage ? 1 : 2); i >= 1; i -= 1) {
     const marked = withCacheControl(out[i]!);
     if (marked !== null) {
       out[i] = marked;

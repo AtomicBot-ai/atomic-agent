@@ -83,7 +83,7 @@ export interface BrowserBackend {
   /** Tear down (close the persistent context / disconnect CDP). */
   shutdown(): Promise<void>;
 
-  snapshot(options?: { depth?: number }): Promise<AriaSnapshot>;
+  snapshot(options?: { depth?: number; full?: boolean }): Promise<AriaSnapshot>;
   /**
    * Cheap synchronous-ish check: does the current DOM carry an
    * `aria-ref=<ref>` attribute? Used by tools that act on refs (click,

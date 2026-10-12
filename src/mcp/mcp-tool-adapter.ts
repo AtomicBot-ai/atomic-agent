@@ -133,7 +133,7 @@ export function createMcpToolDefinition(
           {
             tool: meta.qualifiedName,
             status: "ok",
-            output: projectMcpResponseToText(res),
+            output: projectMcpResponseToText(res, ctx.modelMode === "cloud"),
             details: extractStructuredDetails(res),
           },
           MCP_COMPRESSOR_OPTIONS,
@@ -222,22 +222,24 @@ function buildApprovalPreview(args: Record<string, unknown>): string {
  * suffix so a verbose MCP server cannot blow the compressor's
  * single-call ceiling.
  */
-export function projectMcpResponseToText(res: unknown): string {
+export function projectMcpResponseToText(res: unknown, full = false): string {
   if (!res || typeof res !== "object") return "";
 
   const obj = res as Record<string, unknown>;
   // Legacy SDK shape: `{ toolResult: <anything> }`. Render JSON.
   if ("toolResult" in obj && !("content" in obj)) {
     try {
-      return clipOutput(JSON.stringify(obj.toolResult, null, 2));
+      return clipOutput(JSON.stringify(obj.toolResult, null, 2), full);
     } catch {
-      return clipOutput(String(obj.toolResult));
+      return clipOutput(String(obj.toolResult), full);
     }
   }
 
+  let structured: string | undefined;
   if (obj.structuredContent && typeof obj.structuredContent === "object") {
     try {
-      return clipOutput(JSON.stringify(obj.structuredContent, null, 2));
+      structured = JSON.stringify(obj.structuredContent, null, 2);
+      if (!full) return clipOutput(structured);
     } catch {
       // Cyclic / unserialisable structuredContent — fall through to
       // the content-blocks path so the agent still sees something.
@@ -246,12 +248,13 @@ export function projectMcpResponseToText(res: unknown): string {
 
   const content = obj.content;
   if (!Array.isArray(content) || content.length === 0) {
-    return "";
+    return structured ?? "";
   }
-  const parts: string[] = [];
+  const parts: string[] = structured ? [structured] : [];
   for (const block of content as Array<Record<string, unknown>>) {
     const type = typeof block.type === "string" ? block.type : "";
     if (type === "text" && typeof block.text === "string") {
+      if (full && structured && (block.text === structured || block.text === JSON.stringify(obj.structuredContent))) continue;
       parts.push(block.text);
     } else if (type === "image" && typeof block.mimeType === "string") {
       parts.push(`[image ${block.mimeType}]`);
@@ -262,6 +265,7 @@ export function projectMcpResponseToText(res: unknown): string {
       if (r && typeof r === "object") {
         const uri = (r as { uri?: unknown }).uri;
         parts.push(`[resource ${typeof uri === "string" ? uri : "(unknown)"}]`);
+        if (full && typeof (r as { text?: unknown }).text === "string") parts.push((r as { text: string }).text);
       } else {
         parts.push("[resource]");
       }
@@ -271,7 +275,7 @@ export function projectMcpResponseToText(res: unknown): string {
       parts.push(`[${type || "unknown"}]`);
     }
   }
-  return clipOutput(parts.join("\n"));
+  return clipOutput(parts.join("\n"), full);
 }
 
 /**
@@ -295,7 +299,7 @@ export function extractStructuredDetails(
   return details;
 }
 
-function clipOutput(text: string): string {
-  if (text.length <= MAX_PROJECTED_OUTPUT_CHARS) return text;
+function clipOutput(text: string, full = false): string {
+  if (full || text.length <= MAX_PROJECTED_OUTPUT_CHARS) return text;
   return `${text.slice(0, MAX_PROJECTED_OUTPUT_CHARS - 14)}…[truncated]`;
 }

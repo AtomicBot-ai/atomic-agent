@@ -12,6 +12,7 @@ import {
   type TurnFinalizationDependencies,
 } from "./turn-finalization.js";
 import { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn-memory-context.js";
+import { captureModelModePolicy } from "../../llm/model-mode.js";
 
 function context(reason: AgentLoopReason): TurnFinalizationContext {
   const options: RunTurnOptions = { maxSteps: 3, signal: new AbortController().signal, userMessage: "question" };
@@ -66,9 +67,11 @@ describe("turn finalization seam", () => {
     });
     const input = context("reply");
     input.surfacedNoteIds = new Set(Array.from({ length: 35 }, (_, i) => i + 1));
+    input.options.modelModePolicy = captureModelModePolicy({ activeTextProvider: "test", activeEmbeddingProvider: "test", toolTransport: "auto", providers: [{ id: "test", kind: "openrouter", modelMode: "cloud" }] });
     const result = finalizeAgentTurn(input, { reflectionRunner: { reflect, abortPending() {} } }, () => []);
     expect(result.reason).toBe("reply");
     expect(reflect).toHaveBeenCalledTimes(1);
+    expect(reflect.mock.calls[0]![0].modelModePolicy).toBe(input.options.modelModePolicy);
     settle();
     await Promise.resolve();
   });

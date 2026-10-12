@@ -10,14 +10,14 @@ export function buildBrowserReadAriaTool(
     description:
       "Capture a compact ARIA snapshot of the active page with stable `ref` identifiers.",
     readonly: true,
-    async run(rawArgs) {
+    async run(rawArgs, ctx) {
       const depth =
         typeof rawArgs.depth === "number" && Number.isFinite(rawArgs.depth)
           ? Math.max(1, Math.floor(rawArgs.depth))
           : undefined;
       await backend.ensureReady();
       const snapshot = await backend.snapshot(
-        depth !== undefined ? { depth } : {},
+        { ...(depth !== undefined ? { depth } : {}), ...(ctx.modelMode === "cloud" ? { full: true } : {}) },
       );
       // The ARIA tree is deliberately NOT duplicated in the tool_result
       // summary: it already lands in `session.worldSnapshot` through

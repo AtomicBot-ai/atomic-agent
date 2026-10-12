@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import type { UserLlmProviderEntry } from "../../config/llm-config.js";
 import { loadConfig } from "../../config/load-config.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
@@ -399,7 +400,7 @@ describe("ProvidersOrchestrator.completeWizard", () => {
         await importOriginal<typeof import("../../config/llm-provider-commands.js")>();
       return {
         ...original,
-        upsertLlmProvider: vi.fn(),
+        upsertLlmProvider: vi.fn((entry: UserLlmProviderEntry) => entry),
         writeProviderApiKeyToDotenv: vi.fn(),
         setActiveTextProviderInConfig: vi.fn(),
       };

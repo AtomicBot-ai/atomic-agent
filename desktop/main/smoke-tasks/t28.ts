@@ -64,7 +64,7 @@ const KEEP = `(() => {
     fz: FZ.live, stamp: CTX055.stamp, unverified: UNVERIFIED,
     plan: {on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId, startedMode: PLAN.startedMode},
     dl: {deferred: DL.deferred, error: DL.error},
-    swx: {err: SWX.err, times: Object.assign({}, SWX.times), lastMs: SWX.lastMs},
+    swx: {err: SWX.err, sendError: SWX.sendError, sendErrors: Object.assign({}, SWX.sendErrors), times: Object.assign({}, SWX.times), lastMs: SWX.lastMs},
     sel: {err: SEL.err, busy: SEL.busy, open: SEL.open}, bswLine: BSW.line};
   // A finished turn's 'done' would mark the active provider's key as working; no provider is marked here.
   UNVERIFIED = [];
@@ -82,7 +82,7 @@ const RESTORE = `(async () => { ${H}
     STEER.ahead = k.steerAhead; STEER.mine.length = 0; STEER.mine.push.apply(STEER.mine, k.steerMine);
     FZ.live = k.fz; CTX055.stamp = k.stamp; UNVERIFIED = k.unverified; Object.assign(PLAN, k.plan);
     DL.deferred = k.dl.deferred; DL.error = k.dl.error;
-    SWX.err = k.swx.err; SWX.times = k.swx.times; SWX.lastMs = k.swx.lastMs;
+    SWX.err = k.swx.err; SWX.sendError = k.swx.sendError; SWX.sendErrors = k.swx.sendErrors; SWX.times = k.swx.times; SWX.lastMs = k.swx.lastMs;
     SEL.err = k.sel.err; SEL.busy = k.sel.busy; SEL.open = k.sel.open; BSW.line = k.bswLine;
   }
   if (DL.deferTimer) { clearTimeout(DL.deferTimer); DL.deferTimer = 0; }

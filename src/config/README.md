@@ -61,6 +61,8 @@ agent/ owns the full agent runtime/user policy around the existing execution lea
 
 Read [compatibility](docs/compatibility.md) for schema/default/migration changes; [user defaults](docs/user-defaults.md) and [operational defaults](docs/operational-defaults.md) contain checked values. Read ../approval/AGENTS.md for approval settings.
 
+[Model behavior mode](../llm/docs/model-mode.md) documents provider defaults, per-model overrides and the v75 migration of existing cloud connections without a policy. [model-mode-commands.ts](model-mode-commands.ts) owns manual changes and cache invalidation for this setting. [Provider commands](llm-provider-commands.ts) assign and return an initial saved default for new connections, sharing classification with the schema migration through [model-mode.ts](model-mode.ts). After migration, updates preserve omitted policy fields without reclassifying entries.
+
 ## Validation
 
 `npx vitest run src/config`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).

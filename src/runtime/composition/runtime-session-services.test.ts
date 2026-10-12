@@ -96,6 +96,10 @@ describe("runtime session phases", () => {
     expect(deferred.workingDir).toBe(dir);
     expect(sessions.readFusionWorkerMeta(worker.metadata)).toEqual({ parentSessionId: deferred.id, taskId: "task" });
     expect(worker.id).not.toBe(deferred.id);
+    const inherited = factories.createEphemeralSession({ parentSessionId: deferred.id, taskId: "inherited" }, join(dir, "other"));
+    expect(inherited.workingDir).toBe(join(dir, "other"));
+    expect(inherited.inheritedWorkspace).toBe(true);
+    expect(worker.inheritedWorkspace).toBeUndefined();
     expect(calls).toEqual([]);
     const persistent = factories.createSession();
     expect(calls).toEqual([`save:${persistent.id}`, `trace:${persistent.id}`]);

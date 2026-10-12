@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
+import { getConfig } from "../config/index.js";
 
 function stageSkill(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), "atomic-skill-src-"));
@@ -117,4 +118,54 @@ describe("/api/skills", () => {
     const response = await fetch(`${harness.baseUrl}/api/skills/missing-skill`);
     expect(response.status).toBe(404);
   });
+
+  it("selects a cloud session's workspace for list, detail and capabilities without changing legacy calls", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "http-session-workspace-"))); stagedDirs.push(root);
+    const skillDir = join(root, ".agents/skills/session-guide"); mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: session-guide\ndescription: Session guide\n---\nSELECTED BODY");
+    const config = getConfig();
+    config.llm = { activeTextProvider: "local-llama", activeEmbeddingProvider: "local-llama", toolTransport: "auto",
+      providers: [{ id: "local-llama", kind: "llama-server", url: config.localModels.url, modelMode: "cloud" }] };
+    const session = { ...harness.runtime.createSession({ persist: false }), workingDir: root }; harness.runtime.sessionStore.save(session);
+    const query = `?sessionId=${session.id}`;
+    const list = await (await fetch(`${harness.baseUrl}/api/skills${query}`)).json() as { workingDir: string; skills: Array<{ name: string }> };
+    expect(list.workingDir).toBe(root); expect(list.skills.some((s: { name: string }) => s.name === "session-guide")).toBe(true);
+    const detail = await (await fetch(`${harness.baseUrl}/api/skills/session-guide${query}`)).json() as { body: string }; expect(detail.body).toBe("SELECTED BODY");
+    const caps = await (await fetch(`${harness.baseUrl}/api/capabilities${query}`)).json() as { capabilities: { workingDir: string } }; expect(caps.capabilities.workingDir).toBe(root);
+    const legacy = await (await fetch(`${harness.baseUrl}/api/skills`)).json() as { skills: Array<{ name: string }> }; expect(legacy.skills.some((s: { name: string }) => s.name === "session-guide")).toBe(false);
+    expect((await fetch(`${harness.baseUrl}/api/skills?sessionId=missing`)).status).toBe(404);
+    expect(harness.runtime.capabilities.workingDir).toBe(harness.workingDir);
+  });
+  it("previews a new cloud chat without saving it, and rechecks live files and policy", async () => {
+    const config = getConfig();
+    const dir = join(harness.workingDir, ".agents/skills/before-chat");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "SKILL.md");
+    writeFileSync(file, "---\nname: before-chat\ndescription: New chat skill\n---\nFIRST BODY");
+    const count = harness.runtime.sessionStore.listRecent(100).length;
+    const url = `${harness.baseUrl}/api/skills?workspace=true`;
+    const read = async () => await (await fetch(url)).json() as {
+      workingDir?: string; skills: Array<{ name: string; disabled: boolean; disabledReasons: string[]; fingerprint: string }>;
+    };
+    // Local and context-free reads retain the old registry.
+    expect((await read()).skills.some(row => row.name === "before-chat")).toBe(false);
+    config.llm = { activeTextProvider: "local-llama", activeEmbeddingProvider: "local-llama", toolTransport: "auto",
+      providers: [{ id: "local-llama", kind: "llama-server", url: config.localModels.url, modelMode: "cloud" }] };
+    const first = await read();
+    expect(first.workingDir).toBe(realpathSync(harness.workingDir));
+    const selected = first.skills.find(row => row.name === "before-chat")!;
+    expect(selected.disabled).toBe(false);
+    writeFileSync(file, "---\nname: before-chat\ndescription: Updated\n---\nSECOND BODY");
+    const changed = (await read()).skills.find(row => row.name === "before-chat")!;
+    expect(changed.fingerprint).not.toBe(selected.fingerprint);
+    const detail = await (await fetch(`${harness.baseUrl}/api/skills/before-chat?workspace=true`)).json() as { body: string };
+    expect(detail.body).toBe("SECOND BODY");
+    writeFileSync(config.paths.userConfigFile, JSON.stringify({ skills: { ...config.skills, disabled: ["before-chat"] } }));
+    expect((await read()).skills.find(row => row.name === "before-chat")?.disabledReasons).toContain("disabled globally");
+    const caps = await (await fetch(`${harness.baseUrl}/api/capabilities?workspace=true`)).json() as { skills: Array<{name: string}> };
+    expect(caps.skills.some(row => row.name === "before-chat")).toBe(false);
+    expect(harness.runtime.sessionStore.listRecent(100).length).toBe(count);
+    expect((await fetch(`${harness.baseUrl}/api/skills/before-chat?sessionId=missing`)).status).toBe(404);
+  });
+
 });

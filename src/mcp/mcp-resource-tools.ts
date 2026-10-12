@@ -231,7 +231,7 @@ export function buildMcpResourceReadTool(manager: McpManager): ToolDefinition {
       }
       try {
         const res = await client.readResource(uri, ctx.signal);
-        const projected = projectResourceContents(res);
+        const projected = projectResourceContents(res, ctx.modelMode === "cloud");
         const compressed = compressToolResult(
           {
             tool: "mcp.resource.read",
@@ -269,7 +269,7 @@ interface ProjectedResource {
   clipped: boolean;
 }
 
-function projectResourceContents(res: unknown): ProjectedResource {
+function projectResourceContents(res: unknown, full = false): ProjectedResource {
   const empty = { text: "", clipped: false };
   if (!res || typeof res !== "object") return empty;
   const contents = (res as { contents?: unknown }).contents;
@@ -286,7 +286,7 @@ function projectResourceContents(res: unknown): ProjectedResource {
     }
   }
   const joined = parts.join("\n");
-  if (joined.length <= MAX_READ_CHARS) {
+  if (full || joined.length <= MAX_READ_CHARS) {
     return { text: joined, clipped: false };
   }
   return {

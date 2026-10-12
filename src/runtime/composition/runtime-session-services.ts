@@ -131,8 +131,10 @@ export function createRuntimeSessionFactories(
 
   // In memory only: no `sessionStore.save`, no `ensureRecorder`. The
   // worker stamp is what `executeTurn` keys its skips on.
-  const createEphemeralSession = (meta: FusionWorkerMeta): SessionState =>
-    createFusionWorkerSession({ workingDir, meta });
+  const createEphemeralSession = (meta: FusionWorkerMeta, inheritedDir?: string): SessionState => ({
+    ...createFusionWorkerSession({ workingDir: inheritedDir ?? workingDir, meta }),
+    ...(inheritedDir !== undefined ? { inheritedWorkspace: true } : {}),
+  });
 
   return { createSession, createEphemeralSession };
 }

@@ -66,8 +66,8 @@ export function saveProviderWizardToConfig(
   // Reconfiguring must not wipe what the wizard has no screen for: a
   // subscription-cli entry can carry a hand-set binPath / extraArgs /
   // streaming flag / spend ceiling, and any entry a request timeout.
-  // `upsertLlmProvider` replaces the row wholesale, so carry them over
-  // the same way the stored apiKey is carried below.
+  // `upsertLlmProvider` preserves model policy but replaces other fields,
+  // so carry them over the same way the stored apiKey is carried below.
   if (existing?.subscriptionCli && entry.subscriptionCli) {
     entry = {
       ...entry,
@@ -115,7 +115,7 @@ export function saveProviderWizardToConfig(
     throw new Error("API key is empty — paste a key or set it in .env first");
   }
 
-  upsertLlmProvider(entry, {
+  entry = upsertLlmProvider(entry, {
     activateEmbeddingProviderId: built.activateEmbeddingProviderId,
   });
   setActiveTextProviderInConfig(entry.id);

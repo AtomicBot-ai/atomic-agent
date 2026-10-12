@@ -49,7 +49,14 @@ The current task's opening request and latest user message are retained verbatim
 when covered. Earlier complete steps of that task can therefore be compacted.
 The checkpoint text/boundary stay fixed until the next successful compaction.
 `conversationPackStart` remains a distinct mechanical cut, reset on successful
-compaction. Disabling auto or failing to summarize retains the packer fallback.
+compaction. In `local`, disabling auto or failing to summarize retains the packer fallback.
+
+In `cloud`, both prompts project the saved message journal through that checkpoint.
+Active loaded instructions and state are carried in full; older state updates also
+enter the summarizer source. Neither transcript nor journal is rewritten. There is
+no mechanical packer fallback: an oversized cloud request fails without hidden
+clipping if no useful checkpoint can be made. The journal candidate is committed
+before inference, including when there is no compaction to perform.
 
 Checkpoint and corresponding transcript are saved before the next inference,
 without ending the turn or clearing its owner. A deferred first session receives
@@ -68,7 +75,9 @@ Older configs receive these defaults.
 The pure planner checks projected history **before** mechanical trimming against
 the prompt builder's remaining history budget, including non-history sections
 and reply reserve. Token pressure at the trigger ratio or impending
-`conversationMaxPairs` eviction triggers auto compaction. The target is the
+`conversationMaxPairs` eviction triggers auto compaction in `local`. Cloud uses
+window pressure after schemas, message overhead, reply reserve and safety margin;
+the local pair/section caps do not trigger it. The target is the
 target ratio of that allowance; manual requests use the smaller of allowance and
 current volume. Summary reserve is bounded by the configured maximum, 20% of the
 history allowance, and half the target so small manual operations remain useful.

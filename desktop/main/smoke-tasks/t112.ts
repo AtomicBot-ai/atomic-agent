@@ -66,17 +66,19 @@ class BusyStandIn {
 
 const KEEP = `(() => {
   if (S.busy || S.pending || RUNNING.size > 0 || SWX.pending || SWX.hold || OPENING) return false;
-  window.__t112keep = {err: SWX.err, times: Object.assign({}, SWX.times), lastMs: SWX.lastMs, hold: Object.assign({}, SWX_HOLD),
+  window.__t112keep = {err: SWX.err, sendError: SWX.sendError, sendErrors: Object.assign({}, SWX.sendErrors), times: Object.assign({}, SWX.times), lastMs: SWX.lastMs, hold: Object.assign({}, SWX_HOLD),
     toasts: S.toasts.slice(), cfg: LIVE_CONFIG, queued: FZ.swapQueued, swap: SWXBR.swapFusionLegs, owed: DRAIN_OWED, settings: S.settings};
   SWX_HOLD.pollMs = 60; SWX_HOLD.maxMs = 60000; DRAIN_OWED = false;
   return true;
 })()`;
 
-const RESTORE = `(() => {
+const RESTORE = `(async () => {
+  const t = window.__t112;
   const k = window.__t112keep; delete window.__t112keep; delete window.__t112;
   if (SWX.hold) SWX.hold.end('cancel');
+  if (t && t.p) await t.p.catch(() => {});
   if (k) {
-    SWX.err = k.err; SWX.times = k.times; SWX.lastMs = k.lastMs; Object.assign(SWX_HOLD, k.hold);
+    SWX.err = k.err; SWX.sendError = k.sendError; SWX.sendErrors = k.sendErrors; SWX.times = k.times; SWX.lastMs = k.lastMs; Object.assign(SWX_HOLD, k.hold);
     S.toasts = k.toasts; renderToasts(); LIVE_CONFIG = k.cfg; FZ.swapQueued = k.queued; SWXBR.swapFusionLegs = k.swap;
     DRAIN_OWED = k.owed; S.settings = k.settings;
   }
@@ -94,7 +96,7 @@ const START = (want: string) => `(() => {
 const LOOK = `(() => {
   const t = window.__t112 || {runs: 0, results: []};
   const strip = document.querySelector('.statusstrip.swxhold');
-  return {runs: t.runs, results: t.results, hold: !!SWX.hold, pending: SWX.pending, timer: !!SWX.timer, err: SWX.err,
+  return {runs: t.runs, results: t.results, hold: !!SWX.hold, pending: SWX.pending, timer: !!SWX.timer, err: SWX.err, sendError: SWX.sendError, sendErrors: Object.assign({}, SWX.sendErrors),
     line: swxHoldLine(), strip: strip ? strip.textContent : null,
     acts: strip ? [...strip.querySelectorAll('button[data-act]')].map((b) => b.dataset.act) : [],
     toasts: S.toasts.map((x) => x.t + (x.s ? ' / ' + x.s : ''))};

@@ -229,6 +229,8 @@ export async function executeBatch(
   ): Promise<CompressedToolResult> => {
     try {
       return await registry.invoke(input.call.tool, input.call.args, {
+        ...(ctx.workspaceSkills ? { workspaceSkills: ctx.workspaceSkills } : {}),
+        ...(ctx.modelMode ? { modelMode: ctx.modelMode } : {}),
         workingDir: ctx.workingDir,
         sessionId: ctx.sessionId,
         stepIndex: ctx.stepIndex,

@@ -22,6 +22,17 @@ import type { BatchLoopSignal } from "../dispatch/batch-contract.js";
 
 
 export interface LlmStreamParams {
+  contextBudget?: { window: number | null; replyReserve: number };
+  /** Rebuild and commit context for the actual attempted policy/window, including fallback. */
+  prepareForLink?: (options: {
+    modelMode: import("../../llm/model-mode.js").ResolvedModelMode;
+    transport: ToolCallTransport;
+    contextWindow: number | null;
+    maxTokens?: number;
+  }) => Pick<LlmStreamParams, "prompt" | "messages" | "chat" | "contextBudget"> &
+    Partial<Pick<LlmStreamParams, "tools" | "toolChoice" | "parallelToolCalls" | "grammar" | "maxTokens" | "slotId">>;
+  /** Internal policy metadata; never serialized to the provider API. */
+  modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
   prompt: string;
   /**
    * The same prompt as structure — stable prefix, packed turns, tail —
@@ -118,6 +129,11 @@ export type LlmCompleteStream = (
 
 
 export interface StepDependencies {
+  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal) => import("../../session/workspace-context.js").SessionWorkspace;
+  /** Publish completed cloud tool pairs even if the batch then cancels. */
+  commitSession?: (state: SessionState) => void;
+  modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
+  modelMode?: import("../../llm/model-mode.js").ResolvedModelMode;
   registry: ToolRegistry;
   /**
    * Plan mode, read per call rather than captured once — same contract
@@ -265,6 +281,7 @@ export interface StepApprovalPostureSource {
 
 
 export interface StepContext {
+  workspace?: import("../../session/workspace-context.js").SessionWorkspace;
   session: SessionState;
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;

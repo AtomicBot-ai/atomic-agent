@@ -27,6 +27,7 @@ import { groundingTextsOf, type ChatLine } from "../name-grounding.js";
 import { findDuplicateFact } from "../profile-duplicates.js";
 
 export interface ReflectionInput {
+  modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
   sessionId: string;
   userMessage: string;
   assistantReply: string;
@@ -394,6 +395,7 @@ export function createReflectionRunner(
               grammar: "",
               slotId: -1,
               sessionId: `reflection:${input.sessionId}`,
+              ...(input.modelModePolicy ? { modelModePolicy: input.modelModePolicy } : {}),
               signal: controller.signal,
             })
           : await deps.llmComplete({
@@ -401,6 +403,7 @@ export function createReflectionRunner(
               grammar: REFLECTION_GRAMMAR,
               slotId: resolveSlotId(deps.reflectionSlotId),
               sessionId: `reflection:${input.sessionId}`,
+              ...(input.modelModePolicy ? { modelModePolicy: input.modelModePolicy } : {}),
               signal: controller.signal,
             });
       if (controller.signal.aborted) {

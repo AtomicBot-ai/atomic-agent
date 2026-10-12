@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ChildProcess } from "node:child_process";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertPortFree,
@@ -101,6 +101,42 @@ describe("fetchServedModelIds", () => {
 });
 
 describe("waitForOwnDaemon", () => {
+  it("allows cold startup beyond 30 seconds and still accepts cancellation", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [{ id: "qwen-3.8-27b-uncensored" }] }))));
+    try {
+      const began = Date.now();
+      const ready = waitForOwnDaemon(opts({
+        child: fakeChild(), port: 19091, timeoutMs: 120_000, pollMs: 1_000,
+        probeHealth: async () => Date.now() - began >= 31_000 ? "ok" : "loading",
+      }));
+      const accepted = expect(ready).resolves.toBeUndefined();
+      await vi.advanceTimersByTimeAsync(31_000); await accepted;
+      const controller = new AbortController();
+      const cancelled = waitForOwnDaemon(opts({
+        child: fakeChild(), port: 19091, timeoutMs: 120_000, pollMs: 1_000,
+        signal: controller.signal, probeHealth: async () => "loading",
+      }));
+      const rejected = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+      await vi.advanceTimersByTimeAsync(31_000);
+      controller.abort(); await vi.advanceTimersByTimeAsync(1_000); await rejected;
+    } finally {
+      vi.unstubAllGlobals(); vi.useRealTimers();
+    }
+  });
+
+  it("cancels a superseded loading wait without waiting for the health deadline", async () => {
+    const controller = new AbortController();
+    const child = fakeChild();
+    let probes = 0;
+    await expect(waitForOwnDaemon(opts({
+      child, port: await deadPort(), signal: controller.signal,
+      probeHealth: async () => { probes++; controller.abort(); return "loading"; },
+    }))).rejects.toMatchObject({ name: "AbortError" });
+    expect(probes).toBe(1);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
   it("ends the wait the moment the child exits on a bind failure — as PortTakenError", async () => {
     const child = fakeChild();
     const port = await llamaLike(["qwen-3.5-4b"]);

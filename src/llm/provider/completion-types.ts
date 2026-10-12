@@ -38,13 +38,14 @@ export interface CompletionUsage {
 export type PromptTurn =
   | { kind: "user"; text: string }
   | { kind: "assistant_reply"; text: string }
-  | { kind: "assistant_tool_call"; tool: string; args: Record<string, unknown> }
+  | { kind: "assistant_tool_call"; tool: string; args: Record<string, unknown>; callId?: string }
   | {
       kind: "tool_result";
       tool: string;
       status: "ok" | "error";
       body: string;
       truncated: boolean;
+      callId?: string;
     };
 
 /**
@@ -84,6 +85,10 @@ export interface ChatPromptParts {
 }
 
 export interface CompletionRequest {
+  /** Full-context capacity check; internal, never serialized as an API field. */
+  contextBudget?: { window: number | null; replyReserve: number };
+  /** Internal policy of the attempted link; never part of the API request body. */
+  modelMode?: import("../model-mode.js").ResolvedModelMode;
   prompt: string;
   /**
    * The same prompt as structure. Set only for main-turn requests built
@@ -188,6 +193,7 @@ export interface CompletionEarlyStop {
 }
 
 export interface CompletionResult {
+  servedModelMode?: import("../model-mode.js").ResolvedModelMode;
   content: string;
   reasoningContent: string;
   stop: boolean;

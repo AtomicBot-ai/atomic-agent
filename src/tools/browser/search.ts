@@ -11,7 +11,7 @@ export function buildBrowserSearchTool(
     description:
       "Run a web search in the live browser: opens the engine's results page and refreshes the world snapshot. Engine defaults to google. Use only when the user explicitly asks to search via the browser, or when you then need to click/scroll/read the live results page.",
     readonly: false,
-    async run(rawArgs) {
+    async run(rawArgs, ctx) {
       const query = rawArgs.query;
       if (typeof query !== "string" || query.length === 0) {
         throw new Error("browser.search: `query` must be a non-empty string");
@@ -23,7 +23,7 @@ export function buildBrowserSearchTool(
         ...(engine !== undefined ? { engine } : {}),
       };
       const result = await backend.search(payload);
-      const worldSnapshot = await captureWorldSnapshot(backend);
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud");
       return compressToolResult({
         tool: "browser.search",
         status: "ok",

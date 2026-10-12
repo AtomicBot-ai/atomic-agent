@@ -293,7 +293,7 @@ export class ChatOrchestrator {
       getCurrentSessionId: () => this.session?.id ?? null,
       switchSession: (id) => this.switchSession(id),
     });
-    this.skills = new SkillsOrchestrator(runtime, bus);
+    this.skills = new SkillsOrchestrator(runtime, bus, { currentSession: () => this.session });
     this.memory = new MemoryOrchestrator(runtime, bus);
     this.mcp = new McpOrchestrator(runtime, bus);
     this.import = new ImportOrchestrator(runtime, bus, {
@@ -315,6 +315,7 @@ export class ChatOrchestrator {
       onManagedDaemonRestarted: () => {
         void this.llmHealth.refreshModelLabel();
         void runtime.refreshLocalModelProfile?.();
+        void this.resumeModelQueue();
       },
       onManagedPortMoved: async (url) => {
         // Same three steps as saving a URL by hand: the provider's base
@@ -351,6 +352,7 @@ export class ChatOrchestrator {
     this.stopWatchingRoute =
       runtime.providerRegistry?.onActiveTextChanged?.((id) => {
         this.localModels.adoptDaemonForRoute(id);
+        this.skills.refresh();
       }) ?? null;
     this.runMode = new RunModeOrchestrator({
       runtime,
@@ -487,6 +489,7 @@ export class ChatOrchestrator {
     if (this.session) return this.session;
     this.session = this.runtime.createSession({ persist: false });
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
+    this.skills.refresh();
     this.refreshRecentSessions();
     return this.session;
   }
@@ -887,6 +890,7 @@ export class ChatOrchestrator {
     }
     const notices = this.leaveCurrentSession();
     this.session = loaded;
+    this.skills.refresh();
     // Switching back into a thread whose turn we backgrounded earlier
     // re-attaches the abort handle: Esc aborts, Enter steers, exactly
     // as if the operator had never left.
@@ -994,6 +998,8 @@ export class ChatOrchestrator {
    * authoritative transcript then. Returns whether the replay was whole.
    */
   private replayTurnEvents(sessionId: string): boolean {
+    const waiting = this.waitingModelMessages.get(sessionId);
+    if (waiting !== undefined) this.bus.emit({ type: "message_waiting_for_model", sessionId, text: waiting });
     const buffered = this.turnEvents.snapshot(sessionId);
     if (!buffered) return false;
     this.replayingTurnEvents = true;
@@ -1065,6 +1071,11 @@ export class ChatOrchestrator {
       });
     }
     if (!this.currentController) {
+      const dropped = [...this.queue];
+      if (dropped.length) {
+        this.clearQueue();
+        notices.push({ text: formatDroppedQueueOnSwitchNotice(dropped) });
+      }
       this.runtime.approvals.clearSessionGrants(previous.id);
       return notices;
     }
@@ -1131,8 +1142,9 @@ export class ChatOrchestrator {
   /** Emit the installed skill catalog into chat + event feed (`/skills dump`). */
   dumpSkillCatalog(): void {
     try {
-      const catalog = this.runtime.skillCatalog;
-      const dropped = this.runtime.skillCatalogDropped;
+      const workspace = this.skills.workspace();
+      const catalog = workspace ? workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => ({ name: e.record.manifest.name, description: e.record.manifest.description, source: e.record.source })) : this.runtime.skillCatalog;
+      const dropped = workspace ? 0 : this.runtime.skillCatalogDropped;
       this.bus.emit({
         type: "system_message",
         text: formatSkillCatalogSystemMessage(catalog, dropped),
@@ -1179,6 +1191,7 @@ export class ChatOrchestrator {
     // the operator never types into leaves no row behind. The one left
     // here is dropped as soon as the next `+ new` or switch replaces it.
     this.session = this.runtime.createSession({ persist: false });
+    this.skills.refresh();
     this.clearQueue();
     clearTtyScreen(process.stdout);
     this.bus.emit({
@@ -1374,6 +1387,19 @@ export class ChatOrchestrator {
     if (status?.message) this.notify(status.message);
   }
 
+  /** A failed load keeps the remaining backlog until a successful model start. */
+  private async resumeModelQueue(): Promise<void> {
+    if (!this.queue.length || this.currentController || this.quitting) return;
+    const sessionId = this.session?.id;
+    try { await this.localModels.waitForSwitch(new AbortController().signal); } catch { return; }
+    if (this.quitting || this.currentController || this.session?.id !== sessionId) return;
+    const next = this.queue.shift();
+    this.emitQueue();
+    if (next !== undefined) void this.runOneTurn(next, true);
+  }
+
+  private readonly waitingModelMessages = new Map<string, string>();
+
   private async runOneTurn(text: string, fromQueue = false): Promise<void> {
     if (!this.session) return;
     this.announceHeapPressure();
@@ -1384,10 +1410,11 @@ export class ChatOrchestrator {
     // behind a running pull is re-checked when it actually runs. With a
     // fallback chain of >1 link the turn still runs — failing over is
     // exactly what the chain is for — and the gate only leaves a notice.
-    const gate = evaluateLocalTurnGate(
-      (this.options.readGateFacts ?? readLocalTurnGateFacts)(),
-      this.chatPull.current,
-    );
+    const gateFacts = (this.options.readGateFacts ?? readLocalTurnGateFacts)();
+    const waitingForModel = this.localModels.isSwitching;
+    const gate = waitingForModel
+      ? { kind: "run" as const }
+      : evaluateLocalTurnGate(gateFacts, this.chatPull.current);
     if (gate.kind === "block") {
       if (fromQueue) {
         // A drained queue message has no editor to go back to (the
@@ -1412,7 +1439,8 @@ export class ChatOrchestrator {
     // The operator can switch threads while this runs; every
     // this-session decision below re-checks against the id the turn
     // started on rather than trusting the live pointer.
-    const turnSessionId = this.session.id;
+    const turnSession = this.session;
+    const turnSessionId = turnSession.id;
     this.noteFirstPrompt(text);
     const controller = new AbortController();
     this.currentController = controller;
@@ -1428,8 +1456,23 @@ export class ChatOrchestrator {
     // notice at. Read from how the turn ended, not from the signal — a
     // reply that beat the abort to the finish is still a reply.
     let stopped = false;
+    let dispatched = false;
     try {
-      const result = await this.runtime.runTurn(this.session, text, {
+      if (waitingForModel || (fromQueue && gateFacts.activeProviderIsLocal && gateFacts.managedMode)) {
+        this.waitingModelMessages.set(turnSessionId, text);
+        this.bus.emit({ type: "message_waiting_for_model", sessionId: turnSessionId, text });
+        if (waitingForModel) this.notify("The model is switching, so the reply may take longer.");
+        await this.localModels.waitForSwitch(controller.signal);
+        const readyGate = evaluateLocalTurnGate(
+          (this.options.readGateFacts ?? readLocalTurnGateFacts)(), this.chatPull.current,
+        );
+        if (readyGate.kind === "block") throw new Error(readyGate.text);
+        if (readyGate.kind === "notice" && this.session?.id === turnSessionId) this.notify(readyGate.text);
+      }
+      controller.signal.throwIfAborted();
+      this.waitingModelMessages.delete(turnSessionId);
+      dispatched = true;
+      const result = await this.runtime.runTurn(turnSession, text, {
         // Only an operator-given ceiling. Absent, the runtime takes the
         // leg length and the task ceiling from config.
         ...(this.options.maxSteps === undefined
@@ -1478,6 +1521,10 @@ export class ChatOrchestrator {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       stopped = controller.signal.aborted;
+      if (!dispatched && this.session?.id === turnSessionId) {
+        this.bus.emit({ type: "turn_gate_blocked", text: stopped ? "Message cancelled." : msg });
+      }
+      if (stopped && !dispatched) return;
       if (this.session?.id === turnSessionId) {
         this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
         this.bus.emit({
@@ -1495,7 +1542,14 @@ export class ChatOrchestrator {
         });
       }
       this.exitCode = 1;
+      if (!dispatched) {
+        if (this.session?.id === turnSessionId && this.queue.length) {
+          this.notify("The remaining messages are still queued. Choose a ready model to continue.");
+        }
+        return;
+      }
     } finally {
+      this.waitingModelMessages.delete(turnSessionId);
       if (this.currentController === controller) this.currentController = null;
       // The turn saved its session, which answers for the transcript
       // now — the replay log has nothing left to add.

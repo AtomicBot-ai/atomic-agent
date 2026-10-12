@@ -22,6 +22,7 @@ export { managedDataDir } from "./local-llama-key.js";
 // r7 models — the description + RAM figures `atag models list` cannot print.
 import { curatedMeta } from "./model-catalog.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
+import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
 
 const run = promisify(execFile);
 
@@ -467,6 +468,8 @@ export interface ProviderEntry {
   defaultChatModel?: string;
   model?: string;
   subscriptionCli?: { cli?: string };
+  modelMode?: ModelMode;
+  modelModes?: Record<string, ModelMode>;
 }
 
 /**
@@ -677,7 +680,10 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
      up elsewhere (the terminal, a hand edit) may not be reading. */
   if (!clean.apiKey && at >= 0 && providers[at]!.apiKeyEnvVar) delete clean.apiKeyEnvVar;
   if (at >= 0) providers[at] = { ...providers[at], ...clean };
-  else providers.push(clean);
+  else {
+    clean.modelMode ??= defaultProviderModelMode(clean);
+    providers.push(clean);
+  }
   return writeWholeConfig(config);
 }
 
@@ -849,7 +855,7 @@ export async function modelsStart(
   /* ATO-157: a smoke's stand-in start — no port of the real server watched,
      nothing added to the starts quitting would end, no speed remembered. */
   if (cliStandIns.getStore()) {
-    const res = await cli(["models", "start"], 90_000, undefined, opts.signal);
+    const res = await cli(["models", "start", "--interactive"], 300_000, undefined, opts.signal);
     if (res.ok && !opts.signal?.aborted && (opts.stillWanted?.() ?? true)) tell("started");
     return res;
   }
@@ -860,7 +866,7 @@ export async function modelsStart(
   const port = managedPortFromFile();
   let gone = false;
   const watch = port === null ? null : watchStartedServer(port, () => { gone = true; abort.abort(); });
-  const run = cli(["models", "start"], 90_000, undefined, abort.signal);
+  const run = cli(["models", "start", "--interactive"], 300_000, undefined, abort.signal);
   const entry = { abort, done: run };
   startsOnTheirWay.add(entry);
   try {
@@ -2623,14 +2629,18 @@ export async function skillShow(
 /**
  * `atag skill disable|enable <name>` — the TUI's toggle writes
  * `skills.disabled` in config.json the same way (skills-orchestrator.ts
- * setSkillDisabled). The running `atag serve` keeps its boot-time
- * registry; the tab says so and offers a restart.
+ * setSkillDisabled). Workspace scope is cloud-only; that runtime reads the
+ * live policy on the next request. Local global toggles retain restart semantics.
  */
-export async function skillSetDisabled(name: string, disabled: boolean): Promise<CliResult> {
+export async function skillSetDisabled(name: string, disabled: boolean, workspace?: string): Promise<CliResult> {
   if (!SKILL_NAME_RE.test(name)) {
     return { ok: false, stdout: "", stderr: "", error: `not a skill name: ${name}` };
   }
-  return cli(["skill", disabled ? "disable" : "enable", name], 30_000);
+  return cli(["skill", disabled ? "disable" : "enable", name, ...(workspace ? ["--workspace", workspace] : [])], 30_000);
+}
+
+export async function skillProjectEnabled(enabled: boolean, workspace: string): Promise<CliResult> {
+  return cli(["skill", "project", enabled ? "on" : "off", "--workspace", workspace], 30_000);
 }
 
 export interface HubSkillRow {
