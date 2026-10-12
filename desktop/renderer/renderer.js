@@ -23203,13 +23203,36 @@ function llmHfRamWarning(fileSizeGb, hostRamGb) {
   if (fileSizeGb <= hostRamGb) return null;
   return fileSizeGb.toFixed(1) + ' GB model, ' + hostRamGb + ' GB of RAM — it will run from disk, slowly.';
 }
-/* llm-panel.tsx DownloadBanner: the CLI streams lines, not a byte count, so the last line stands where the TUI draws its bar. */
+/* llm-panel.tsx DownloadBanner: the CLI streams text lines ("[===   ] 48%  6.40 GB / 13.27 GB  file.gguf (14.2 GB)").
+   The banner reads the percent and sizes out of the last line and draws a real bar; a line without them stays as text. */
+function llmPullView(line) {
+  const text = String(line || 'starting…');
+  const pctM = text.match(/(\d{1,3})%/);
+  const gbM = text.match(/([\d.]+)\s*GB\s*\/\s*([\d.]+)\s*GB\s*(.*)$/);
+  const pct = pctM ? Math.max(0, Math.min(100, Number(pctM[1]))) : null;
+  if (!gbM) return {pct, meta: text.replace(/^\[[=\s>-]*\]\s*/, ''), file: ''};
+  const file = gbM[3].replace(/\s*\([\d.]+\s*GB\)\s*$/, '').trim();
+  const size = (gb) => gb < 1 ? Math.round(gb * 1024) + ' MB' : gb.toFixed(1) + ' GB';
+  const meta = size(Number(gbM[1])) + ' of ' + size(Number(gbM[2])) + (pct === null ? '' : ' · ' + pct + '%');
+  return {pct, meta, file};
+}
+function llmPaintPull(line) {
+  const v = llmPullView(line);
+  const meta = document.getElementById('llm-pull-meta'); if (meta) meta.textContent = v.meta;
+  const file = document.getElementById('llm-pull-file'); if (file) { file.textContent = v.file; file.title = v.file; }
+  const bar = document.getElementById('llm-pull-bar');
+  if (bar) { const w = v.pct === null ? 0 : v.pct; bar.setAttribute('aria-valuenow', String(w)); bar.firstElementChild.style.width = w + '%'; }
+}
 function llmDownloadBannerHTML() {
   const p = LLMP.pulling;
-  // ST-21: a blue notice; the last CLI line keeps #llm-pull-line, which the pull subscriber writes into directly.
+  const v = llmPullView(LLMP.pullLog[LLMP.pullLog.length - 1]);
+  const w = v.pct === null ? 0 : v.pct;
+  // ST-21: a blue notice; the pull subscriber repaints #llm-pull-meta and #llm-pull-bar in place.
   return '<div class="tk-notice tk-notice--blue llm-dl"><span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>'
-    + '<span class="grow llm-dl-body"><b>downloading — ' + esc(p.id) + '</b><span class="llm-note">model: ' + esc(p.id) + '</span>'
-    + '<span class="llm-dl-line" id="llm-pull-line">' + esc(LLMP.pullLog[LLMP.pullLog.length - 1] || 'starting…') + '</span></span>'
+    + '<span class="grow llm-dl-body"><b>Downloading ' + esc(p.id) + '</b>'
+    + '<span class="tk-prog llm-dl-prog" id="llm-pull-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + w + '"><i style="width:' + w + '%"></i></span>'
+    + '<span class="llm-note llm-dl-meta" id="llm-pull-meta">' + esc(v.meta) + '</span>'
+    + '<span class="llm-note llm-dl-file" id="llm-pull-file" title="' + esc(v.file) + '">' + esc(v.file) + '</span></span>'
     + '<button class="btn btn-g sm" data-act="llm:cancelPull">Cancel</button></div>';
 }
 
@@ -24093,7 +24116,7 @@ if (BR) {
 if (BR) {
   BR.onPull((ev) => {
     if (!ev || !LLMP.pulling) return;
-    if (ev.line) { LLMP.pullLog.push(ev.line); const box = document.getElementById('llm-pull-line'); if (box) box.textContent = ev.line; }
+    if (ev.line) { LLMP.pullLog.push(ev.line); llmPaintPull(ev.line); }
     if (ev.done) {
       const p = LLMP.pulling; LLMP.pulling = null;
       if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmAfterPull(p); }

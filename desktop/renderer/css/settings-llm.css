@@ -43,8 +43,10 @@
 .llm-pane .llm-start b,.llm-pane .llm-dl-body b{font-size:13.5px;font-weight:600}
 .llm-pane .llm-dl .tk-ico{margin-top:-2px}
 .llm-pane .llm-dl .btn{margin:-4px -2px 0 0}
-.llm-pane .llm-dl-line{display:block;margin-top:6px;padding:7px 11px;border-radius:var(--r-well);background:var(--lift);
-  font:400 12px/1.5 var(--font-mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.llm-pane .llm-dl-prog{flex:none;width:100%;margin:8px 0 4px}
+.llm-pane .llm-dl-meta{font-variant-numeric:tabular-nums}
+.llm-pane .llm-dl-file{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.llm-pane .llm-dl-file:empty{display:none}
 
 /* ---- Route card: what answers now ---- */
 .llm-pane .llm-route{display:flex;flex-direction:column;gap:3px;min-width:0;padding:13px 18px 14px;border-radius:var(--r-block);background:var(--well)}
