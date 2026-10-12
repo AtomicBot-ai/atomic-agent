@@ -121,6 +121,22 @@ describe("evaluateLocalTurnGate — chain length 1 blocks", () => {
     expect(decision.text).toContain("press Enter");
   });
 
+  it("a model added from disk whose file is gone: names the path, offers no download", () => {
+    const decision = evaluateLocalTurnGate(
+      facts({
+        modelId: "custom-local-model-0123abcd",
+        modelLocalPath: "/models/model.gguf",
+      }),
+      null,
+    );
+    expect(decision.kind).toBe("block");
+    if (decision.kind !== "block") return;
+    expect(decision.text).toContain("custom-local-model-0123abcd");
+    expect(decision.text).toContain("local file is missing at /models/model.gguf");
+    expect(decision.text).not.toContain("press Enter");
+    expect(decision.text).not.toContain("downloading now");
+  });
+
   it("pull in flight: live percent + bytes instead of 'not downloaded'", () => {
     const decision = evaluateLocalTurnGate(facts(), pull());
     expect(decision.kind).toBe("block");

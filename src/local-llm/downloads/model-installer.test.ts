@@ -174,17 +174,12 @@ describe("model-installer: a GGUF added from disk (issue #631)", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it("removal keeps the original file", async () => {
-    const { def, path } = addFromDisk();
-    await removeModel(dir, def.id);
-    expect(existsSync(path)).toBe(true);
-    expect(readFileSync(path).length).toBe(256);
-  });
-
   it("removal deletes nothing, even inside the managed directory", async () => {
-    // The guard is on the entry, not on where the file happens to be:
-    // a GGUF the operator keeps under `<dataDir>/models/<id>/` is still
-    // theirs.
+    // The one setup where the guard matters: without it `removeModel`
+    // would `rm -r <dataDir>/models/<id>/`, which here holds the file.
+    // Adding such a path is refused up front (`resolveLocalGgufFile`),
+    // so this is a hand-edited entry — the guard is on the entry, not on
+    // where the file happens to be.
     const base = buildLocalGgufModelDef({
       path: join(userDir, "model.gguf"),
       sizeBytes: 64,
@@ -195,6 +190,26 @@ describe("model-installer: a GGUF added from disk (issue #631)", () => {
     setCustomLocalModels([{ ...base, localPath: path }]);
     await removeModel(dir, base.id);
     expect(existsSync(path)).toBe(true);
+  });
+
+  it("refuses a file:// URL that lost its localPath instead of fetching it", async () => {
+    // What an older build leaves behind after rewriting the list, when
+    // the URL does not name a .gguf the parser could recover.
+    const def: LocalModelDef = {
+      ...buildLocalGgufModelDef({
+        path: join(userDir, "model.gguf"),
+        sizeBytes: 64,
+      }),
+      huggingFaceUrl: "file:///nowhere/model.bin",
+    };
+    delete def.localPath;
+    const fn = vi.fn();
+    globalThis.fetch = fn as unknown as typeof fetch;
+    await expect(downloadModel(dir, def)).rejects.toThrow(
+      /points at a file on this machine \(file:\/\/\/nowhere\/model\.bin\), which cannot be downloaded/,
+    );
+    expect(fn).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, "models", def.id))).toBe(false);
   });
 });
 

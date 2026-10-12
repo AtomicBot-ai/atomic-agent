@@ -286,7 +286,9 @@ export {
 export {
   buildLocalGgufModelDef,
   buildLocalGgufModelId,
+  describeMissingLocalGguf,
   looksLikeLocalGgufPath,
+  MANAGED_GGUF_PATH_ERROR,
   resolveLocalGgufFile,
   type LocalGgufFile,
 } from "./catalog/local-gguf.js";

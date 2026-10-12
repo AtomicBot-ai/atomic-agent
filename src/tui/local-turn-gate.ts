@@ -1,5 +1,6 @@
 import { getConfig } from "../config/index.js";
 import {
+  describeMissingLocalGguf,
   getLocalModelDef,
   isKnownLocalModelId,
   isModelDownloaded,
@@ -46,6 +47,12 @@ export interface LocalTurnGateFacts {
   modelId: string | null;
   /** GGUF on disk? Only meaningful when the gate is in scope. */
   modelDownloaded: boolean;
+  /**
+   * The model's file when it was added from disk (issue #631). Such a
+   * model has nothing to download, so a missing file is reported by
+   * where it was expected, not with "press Enter to download".
+   */
+  modelLocalPath?: string | null;
   /** Links a turn can actually walk: `servingChainLength` (1 = no fallback). */
   fallbackChainLength: number;
 }
@@ -77,19 +84,19 @@ export function readLocalTurnGateFacts(): LocalTurnGateFacts {
   const managedMode = cfg.localModels.mode === "managed";
   const inScope = activeProviderIsLocal && managedMode;
   const modelId = cfg.localModels.managed.modelId;
+  const def =
+    inScope && modelId !== null && isKnownLocalModelId(modelId)
+      ? getLocalModelDef(modelId)
+      : null;
   const modelDownloaded =
     !inScope ||
-    (modelId !== null &&
-      isKnownLocalModelId(modelId) &&
-      isModelDownloaded(
-        cfg.paths.localModelsDataDir,
-        getLocalModelDef(modelId),
-      ));
+    (def !== null && isModelDownloaded(cfg.paths.localModelsDataDir, def));
   return {
     activeProviderIsLocal,
     managedMode,
     modelId,
     modelDownloaded,
+    modelLocalPath: def?.localPath ?? null,
     fallbackChainLength:
       inScope && !modelDownloaded ? servingChainLength(llm) : 1,
   };
@@ -138,8 +145,10 @@ export function evaluateLocalTurnGate(
   const status =
     facts.modelId === null
       ? "no local model is selected — open Models (/local) to pick and download one"
-      : (downloadProgressFor(pull, facts.modelId) ??
-        "not downloaded — open Models (/local) and press Enter on it to download");
+      : facts.modelLocalPath
+        ? `unavailable: ${describeMissingLocalGguf(facts.modelLocalPath)}`
+        : (downloadProgressFor(pull, facts.modelId) ??
+          "not downloaded — open Models (/local) and press Enter on it to download");
   const subject =
     facts.modelId === null
       ? status

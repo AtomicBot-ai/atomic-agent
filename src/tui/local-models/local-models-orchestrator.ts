@@ -46,9 +46,11 @@ import {
   isModelDownloaded,
   buildCustomModelDef,
   buildLocalGgufModelDef,
+  describeMissingLocalGguf,
   listLocalModels,
   looksLikeLocalGgufPath,
   resolveLocalGgufFile,
+  resolveModelsDir,
   listVulkanDevices,
   AUTO_UPDATE_RECHECK_MS,
   checkForBackendUpdateForPanel,
@@ -538,6 +540,22 @@ export class LocalModelsOrchestrator {
       return;
     }
 
+    // Added from disk: nothing to download, so a missing file is the
+    // whole story — say where it was expected rather than spawn a worker
+    // that can only fail (or fetch a backend for a model that cannot run).
+    if (
+      mode !== "mmproj-only" &&
+      def.localPath &&
+      !isModelDownloaded(dataDir, def)
+    ) {
+      this.bus.emit({
+        type: "local_models_pull_failed",
+        kind: "chat",
+        error: describeMissingLocalGguf(def.localPath),
+      });
+      return;
+    }
+
     if (mode !== "mmproj-only" && !isBackendDownloaded(dataDir)) {
       this.bus.emit({
         type: "runtime_info",
@@ -554,17 +572,6 @@ export class LocalModelsOrchestrator {
         (mode === "with-mmproj" || mode === "mmproj-only");
       const needGguf = wantGguf && !isModelDownloaded(dataDir, def);
       const needMmproj = wantMmproj && !isMmprojDownloaded(dataDir, def);
-      // Added from disk: nothing to download, so a missing file is the
-      // whole story — say where it was expected rather than spawn a
-      // worker that can only fail.
-      if (needGguf && def.localPath) {
-        this.bus.emit({
-          type: "local_models_pull_failed",
-          kind: "chat",
-          error: `local file not found: ${def.localPath}`,
-        });
-        return;
-      }
 
       let projectorError: string | null = null;
       if (needGguf || needMmproj) {
@@ -1281,6 +1288,10 @@ export class LocalModelsOrchestrator {
    */
   async resolveHuggingFaceReference(raw: string): Promise<void> {
     if (looksLikeLocalGgufPath(raw)) {
+      // A path supersedes whatever was being looked up before it: drop
+      // that socket so a late answer cannot land over the local add.
+      this.hfLookup?.abort();
+      this.hfLookup = null;
       await this.addLocalGgufFile(raw);
       return;
     }
@@ -1358,7 +1369,12 @@ export class LocalModelsOrchestrator {
   private async addLocalGgufFile(raw: string): Promise<void> {
     let id: LocalModelId;
     try {
-      const def = buildLocalGgufModelDef(resolveLocalGgufFile(raw));
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = buildLocalGgufModelDef(
+        resolveLocalGgufFile(raw, {
+          managedModelsDir: resolveModelsDir(dataDir),
+        }),
+      );
       addCustomModel(def);
       id = def.id;
     } catch (err) {
@@ -1490,7 +1506,17 @@ export class LocalModelsOrchestrator {
     this.hooks?.onManagedModelSelected?.(id);
     await this.refresh();
     if (!current()) return;
-    if (!isModelDownloaded(dataDir, getLocalModelDef(id))) {
+    const selectedDef = getLocalModelDef(id);
+    if (!isModelDownloaded(dataDir, selectedDef)) {
+      if (selectedDef.localPath) {
+        // Nothing to download for a file added from disk; the honest
+        // message is where it was expected.
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: ${selectedDef.name}: ${describeMissingLocalGguf(selectedDef.localPath)}`,
+        });
+        return;
+      }
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: model ${id} not downloaded — downloading now…`,
@@ -1752,6 +1778,13 @@ export class LocalModelsOrchestrator {
       await this.pullBackend();
       if (!isBackendDownloaded(dataDir)) return false;
       justPulledBackend = true;
+    }
+    if (!isModelDownloaded(dataDir, def) && def.localPath) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${def.name} cannot start — ${describeMissingLocalGguf(def.localPath)}`,
+      });
+      return false;
     }
     if (!isModelDownloaded(dataDir, def)) {
       // With a pull already in flight the honest message is the live

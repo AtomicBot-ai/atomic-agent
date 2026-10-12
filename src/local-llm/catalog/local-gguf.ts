@@ -7,9 +7,16 @@
  */
 
 import { createHash } from "node:crypto";
-import { accessSync, constants, statSync, type Stats } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  realpathSync,
+  statSync,
+  type Stats,
+} from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { formatGgufSize, ggufSizeGb } from "./huggingface-model-def.js";
@@ -62,12 +69,45 @@ export function looksLikeLocalGgufPath(raw: string): boolean {
 }
 
 /**
+ * What a screen says about a model added from disk whose file is gone.
+ * There is nothing to download, so no "press Enter to download" — only
+ * where the file was expected and how to point at it again.
+ */
+export function describeMissingLocalGguf(path: string): string {
+  return `local file is missing at ${path} — it was added from disk, so there is nothing to download; add it again by its path from Models (/local)`;
+}
+
+/** Message for a file inside the managed store (see `resolveLocalGgufFile`). */
+export const MANAGED_GGUF_PATH_ERROR =
+  "That file belongs to a model Atomic Agent already manages; pick it from the list instead.";
+
+function realOrResolved(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/** Whether `path` is `dir` itself or lies anywhere beneath it. */
+function isInside(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
  * Validate a pasted path. Every failure throws a sentence meant for the
  * screen that asked for the reference.
+ *
+ * `managedModelsDir` is `<dataDir>/models/`: a file in there already
+ * belongs to a curated or Hugging Face entry, and removing that entry
+ * deletes its directory — the file a local entry pointed at with it.
+ * Compared after resolving symlinks on both sides, so a link into the
+ * store is caught too.
  */
 export function resolveLocalGgufFile(
   raw: string,
-  opts?: { homeDir?: string },
+  opts?: { homeDir?: string; managedModelsDir?: string },
 ): LocalGgufFile {
   const ref = expandHome(unquote(raw), opts?.homeDir ?? homedir());
   if (!isAbsolute(ref)) {
@@ -78,6 +118,21 @@ export function resolveLocalGgufFile(
   const path = resolve(ref);
   if (!/\.gguf$/i.test(path)) {
     throw new Error(`Not a .gguf file: ${path}`);
+  }
+  // The stored entry keeps the bare filename, and the config refuses a
+  // name that starts with a dot or carries a backslash (it would be
+  // read as a path). Say so here, in words, rather than let the save
+  // fail with a config-validation message.
+  const name = basename(path);
+  if (name.startsWith(".")) {
+    throw new Error(
+      `File names starting with a dot are not supported: ${name}. Rename the file and try again.`,
+    );
+  }
+  if (name.includes("\\")) {
+    throw new Error(
+      `File names containing a backslash are not supported: ${name}. Rename the file and try again.`,
+    );
   }
   let stat: Stats;
   try {
@@ -92,6 +147,13 @@ export function resolveLocalGgufFile(
     accessSync(path, constants.R_OK);
   } catch {
     throw new Error(`Cannot read ${path} (permission denied)`);
+  }
+  if (
+    opts?.managedModelsDir !== undefined &&
+    existsSync(opts.managedModelsDir) &&
+    isInside(realOrResolved(path), realOrResolved(opts.managedModelsDir))
+  ) {
+    throw new Error(MANAGED_GGUF_PATH_ERROR);
   }
   return { path, sizeBytes: stat.size };
 }

@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,7 +13,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildLocalGgufModelDef,
   buildLocalGgufModelId,
+  describeMissingLocalGguf,
   looksLikeLocalGgufPath,
+  MANAGED_GGUF_PATH_ERROR,
   resolveLocalGgufFile,
 } from "./local-gguf.js";
 
@@ -81,10 +89,57 @@ describe("resolveLocalGgufFile", () => {
     expect(() => resolveLocalGgufFile(path)).toThrow(`Not a file: ${path}`);
   });
 
+  it("says in words that a leading-dot file name is not supported", () => {
+    const path = join(dir, ".model.gguf");
+    writeFileSync(path, "x");
+    expect(() => resolveLocalGgufFile(path)).toThrow(
+      "File names starting with a dot are not supported: .model.gguf. Rename the file and try again.",
+    );
+  });
+
+  it("refuses a file inside the managed models directory", () => {
+    const managed = join(dir, "data", "models");
+    mkdirSync(join(managed, "qwen-3.5-4b"), { recursive: true });
+    const path = join(managed, "qwen-3.5-4b", "model.gguf");
+    writeFileSync(path, "x");
+    expect(() =>
+      resolveLocalGgufFile(path, { managedModelsDir: managed }),
+    ).toThrow(MANAGED_GGUF_PATH_ERROR);
+    // Outside the store the same option lets the file through.
+    const outside = join(dir, "model.gguf");
+    writeFileSync(outside, "x");
+    expect(
+      resolveLocalGgufFile(outside, { managedModelsDir: managed }).path,
+    ).toBe(outside);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a symlink that leads into the managed models directory",
+    () => {
+      const managed = join(dir, "data", "models");
+      mkdirSync(join(managed, "qwen-3.5-4b"), { recursive: true });
+      const target = join(managed, "qwen-3.5-4b", "model.gguf");
+      writeFileSync(target, "x");
+      const link = join(dir, "link.gguf");
+      symlinkSync(target, link);
+      expect(() =>
+        resolveLocalGgufFile(link, { managedModelsDir: managed }),
+      ).toThrow(MANAGED_GGUF_PATH_ERROR);
+    },
+  );
+
   it("rejects a relative path", () => {
     expect(() => resolveLocalGgufFile("models/qwen.gguf")).toThrow(
       /absolute path/,
     );
+  });
+});
+
+describe("describeMissingLocalGguf", () => {
+  it("names the path and offers no download", () => {
+    const text = describeMissingLocalGguf("/models/model.gguf");
+    expect(text).toContain("local file is missing at /models/model.gguf");
+    expect(text).not.toMatch(/press Enter|downloading now/);
   });
 });
 

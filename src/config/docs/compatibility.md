@@ -5,7 +5,7 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 75; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 76; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
@@ -70,6 +70,8 @@ Outputs and nested objects are fresh. Permissive field lookup, discarded unknown
 Current defaults are read separately at each old fallback expression, retaining short-circuiting and within-call nested/whole-default replacements. Pre-v41 auto-update returns true without reading a default, including malformed supplied values. Explicit parallel auto also bypasses defaults; only the historical pre-v63 pinned value follows its existing migration. Tensor split/custom-model arrays ignore mutated defaults, and absent embedding URL uses the validated embedding port. Unknown nonempty embedding model IDs remain accepted; managed IDs use the catalog or parsed same-file custom definitions.
 
 User/runtime shapes remain separate. Outputs/default factories have fresh nested objects and arrays. Disabled/external modes still validate all settings; positive ports retain their current bounds, URLs retain general scheme acceptance, and Hugging Face normalization retains path prefixes. No new network/process/filesystem operation, trimming policy, migration or default is introduced. Environment precedence, catalog publication after loading and live server ownership stay with their existing owners.
+
+Custom model entries accept `localPath` (v76): an absolute `.gguf` path added from disk, launched in place and never downloaded or deleted. An entry without it whose `huggingFaceUrl` is a `file:` URL naming an absolute `.gguf` takes the path back from that URL, because an older build rewriting the list drops `localPath` but keeps the URL. Whether the file still exists is checked at launch, not at parse time.
 
 ## Frontend, channel and integration settings
 

@@ -119,6 +119,32 @@ describe("parseCustomLocalModel", () => {
     expect("localPath" in parseCustomLocalModel(MINIMAL, "e")).toBe(false);
   });
 
+  it("recovers localPath from the file:// URL an older build left behind", () => {
+    // An older build rewrites customModels from what it parsed, and it
+    // never knew `localPath`: only the file:// URL survives.
+    const localPath = join(tmpdir(), "My Models", "model.gguf");
+    const def = parseCustomLocalModel(
+      {
+        id: "custom-local-model-0123abcd",
+        filename: "model.gguf",
+        huggingFaceUrl: pathToFileURL(localPath).href,
+      },
+      "e",
+    );
+    expect(def.localPath).toBe(localPath);
+  });
+
+  it("leaves a file:// URL that names no .gguf without a localPath", () => {
+    const def = parseCustomLocalModel(
+      {
+        ...MINIMAL,
+        huggingFaceUrl: pathToFileURL(join(tmpdir(), "model.bin")).href,
+      },
+      "e",
+    );
+    expect("localPath" in def).toBe(false);
+  });
+
   it("demands the projector fields once vision is claimed", () => {
     expect(() =>
       parseCustomLocalModel({ ...MINIMAL, supportsVision: true }, "e"),

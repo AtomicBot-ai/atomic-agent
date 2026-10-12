@@ -263,9 +263,11 @@ export function LocalModelDetail({
       ? `downloading… ${rowPull.percent}% · x cancel`
       : "downloading… · x cancel"
     : !row.downloaded
-      ? row.def.supportsVision
-        ? "Enter — download (gguf + mmproj)"
-        : "Enter — download"
+      ? row.def.localPath
+        ? "local file missing — add it again by its path"
+        : row.def.supportsVision
+          ? "Enter — download (gguf + mmproj)"
+          : "Enter — download"
       : row.mmprojStatus === "missing"
         ? "Enter — download mmproj"
         : !row.active
@@ -282,7 +284,12 @@ export function LocalModelDetail({
       <Text color={theme.colors.muted}>{m.id}</Text>
       <Text>{m.description}</Text>
       <Text color={row.downloaded ? "green" : theme.colors.muted}>
-        status: {row.downloaded ? "downloaded" : "not downloaded"}
+        status:{" "}
+        {row.downloaded
+          ? "downloaded"
+          : row.def.localPath
+            ? `local file missing at ${row.def.localPath}`
+            : "not downloaded"}
         {row.active ? " · active" : ""}
       </Text>
       {row.def.supportsVision ? (

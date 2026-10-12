@@ -47,6 +47,19 @@ export function isMmprojDownloaded(
 }
 
 /**
+ * A `file:` URL names a file on this machine, which no download can
+ * fetch. It reaches here only from an entry that lost its `localPath`
+ * and could not get it back from the URL (see `custom-models-schema.ts`);
+ * say what to do instead of letting `fetch` fail with a transport error.
+ */
+function refuseFileUrl(model: LocalModelDef, url: string): void {
+  if (!url.startsWith("file:")) return;
+  throw new Error(
+    `${model.name} points at a file on this machine (${url}), which cannot be downloaded; add the .gguf again by its path`,
+  );
+}
+
+/**
  * Download the GGUF weights for `model`. Idempotent — returns immediately
  * if the destination file already exists. Does **not** touch the mmproj
  * projector; call `downloadMmproj` separately when the caller wants
@@ -66,6 +79,7 @@ export async function downloadModel(
   }
   const dest = resolveModelFilePath(dataDir, model.id, model.filename);
   if (existsSync(dest)) return;
+  refuseFileUrl(model, model.huggingFaceUrl);
   mkdirSync(dirname(dest), { recursive: true });
   await downloadFile(model.huggingFaceUrl, dest, opts);
 }
@@ -87,6 +101,7 @@ export async function downloadMmproj(
   }
   const dest = resolveMmprojFilePath(dataDir, model.id, model.mmprojFilename);
   if (existsSync(dest)) return;
+  refuseFileUrl(model, model.mmprojUrl);
   mkdirSync(dirname(dest), { recursive: true });
   await downloadFile(model.mmprojUrl, dest, opts);
 }
