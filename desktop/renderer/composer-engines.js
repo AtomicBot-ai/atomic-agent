@@ -32,7 +32,10 @@ function composerFusionEngineRows(leg) {
   // Both seats may use one cloud provider (two of its models).
   const cloud = selProviders().map((p) => ({
     type:'fusionLeg', leg, id:p.id, label:p.id,
-    detail: BSW.readyIds.includes(p.id) ? 'Cloud provider' : 'No API key', active:p.id === chosen,
+    // A saved key the provider turned down says so, as the provider rows do (T32).
+    detail: BSW.readyIds.includes(p.id) ? 'Cloud provider'
+      : typeof savedKeyInvalid === 'function' && savedKeyInvalid(p) ? 'saved key is invalid · paste it again' : 'No API key',
+    active:p.id === chosen,
   }));
   // There is one managed local slot. The swap control moves it between roles.
   return cloud.concat(other === 'local-llama' ? [] : composerLocalEngineRows(leg),
