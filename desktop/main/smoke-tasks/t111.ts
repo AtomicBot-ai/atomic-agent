@@ -341,8 +341,8 @@ export async function checks111(js: Js, check: Check): Promise<void> {
     })()`);
     check(
       "T111 (ATO-130): Settings read \"waiting for the model to start\" while the update waits its turn, \"updating\" once it runs, and nothing else is overwritten",
-      phase.waiting === "local-llm: llama.cpp update waiting for the model to start…"
-        && phase.running === "local-llm: updating the llama.cpp backend…" && phase.off === "local-llm: something else",
+      phase.waiting === "local-llm: engine update waiting for the model to start…"
+        && phase.running === "local-llm: updating the local engine…" && phase.off === "local-llm: something else",
       show(phase),
     );
 

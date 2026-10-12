@@ -1471,3 +1471,17 @@ finish before the newest choice starts, but its stale feedback cannot close a
 newly opened selector or overwrite the selected target. Interactive local starts
 use `models start --interactive` to avoid waiting for the optional throughput
 benchmark after health is ready.
+
+## Atomic Core preview
+
+Atomic Core is experimental and hidden by default. The desktop offers it only when `ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE=1` is set for the app, or when the saved config already runs it (`localModels.managed.engine: "atomic-core"`), the same rule as the agent's `choiceEnabled`. Main decides (`atomicCoreChoiceEnabled`) and the window reads it once at load. Hidden, the Local route has no engine control (backend and model only), the Fusion engine rows offer llama.cpp as the one local engine, Settings shows no Engine choice row, and no Core release check runs.
+
+Settings → Models → Advanced → Engine offers Atomic Core and the existing llama.cpp engine. Stop local models before switching, choose Update now to install, then start the selected model. Model files are shared across engines. Core installation and model ownership are delegated to the agent's `models` commands; the desktop uses the same session credentials for native health/context probes and never force-kills Core-owned model processes.
+
+Core release checks run after startup and every six hours, like app checks. Check for updates also runs on demand. A check never downloads or stops a model. An unsupported newer Core is described as needing a newer Agent build. Update now refuses while local models run. The existing app updater remains responsible for the desktop app itself.
+
+These controls require the companion agent build with `models engine` support. Old agent builds report the unsupported command instead of pretending an engine was switched. The existing engine remains the default for old configurations.
+
+### Composer inference engines
+
+Local mode shows separate inference-engine and model pickers, with Local llama and Atomic Chat as engine choices. Fusion shows an engine/provider and model pair for each role, separated by the swap control. Model catalogs and model pins follow their own role; changing a worker does not activate it as the orchestrator. The managed runtime has one local slot, which can move between roles with swap. A loaded local model must be stopped before its engine changes. Route changes keep the existing busy-turn and Stop guards.

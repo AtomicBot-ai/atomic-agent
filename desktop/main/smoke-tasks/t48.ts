@@ -346,6 +346,7 @@ async function advanced(js: Js, check: Check): Promise<void> {
   );
   check(
     "T48 (Д35): llama.cpp's update, auto-update and device are one Engine card (with the way to the server log); the route's internals fold under Details",
+    // Atomic Core is hidden by default (no ATOMIC_AGENT_EXPERIMENTAL_ATOMIC_CORE in a smoke run): no "Engine choice" row.
     show(r["engine"]) === show(["llama.cpp", "Update automatically", "Device", "Server log"])
       && show(r["engineActs"]) === show(["llm:backend", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
       && r["routeInDetails"] === true && r["routeOutside"] === 0 && r["logsInAdv"] === false && r["logsInPane"] === false && r["faultAct"] === "diag:llmlogs",

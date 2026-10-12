@@ -58,7 +58,7 @@ interface Probe {
   kinds: string[];
   chips: Array<[string, string]>;
   swap: boolean;
-  rows: { backend: ProbeRow[]; provider: ProbeRow[]; workers: ProbeRow[] | null };
+  rows: { backend: ProbeRow[]; provider: ProbeRow[]; workerProvider: ProbeRow[] | null; workers: ProbeRow[] | null };
   settings: { active: string | null; status: string; workersOn: string; workerButtons: number };
 }
 
@@ -197,19 +197,27 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
     pReady.rows.backend.find((r) => r.id === "fusion")?.detail === "cloud plans · 2 local workers",
     pReady.rows.backend.find((r) => r.id === "fusion")?.detail);
 
-  const pF = await probe(cfgs.fusion, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [] });
-  check("fusion: chips follow the effective mode — fusion · orchestrator · its model ⇄ workers",
-    pF.backend === "fusion" && same(pF.kinds, ["backend", "provider", "model", "workers"])
-      && chip(pF, "backend") === "fusion" && chip(pF, "provider") === "aimlapi"
+  // The workers seat's provider catalogue, as BR.providerModels would hand it in.
+  const workerCatalogue = [{ id: "qwen/qwen3.7-flash" }, { id: "qwen/qwen3.7-plus" }];
+  const pF = await probe(cfgs.fusion, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [], models: workerCatalogue });
+  const triple = (rows: ProbeRow[] | null) => rows?.map((r) => [r.id, r.detail, r.active]);
+  check("fusion: chips follow the effective mode — fusion · orchestrator engine · its model ⇄ worker engine · its model",
+    pF.backend === "fusion" && same(pF.kinds, ["backend", "provider", "model", "workerProvider", "workers"])
+      && chip(pF, "backend") === "fusion" && chip(pF, "provider") === "aimlapi" && chip(pF, "workerProvider") === "openrouter"
       && /grok-4-6/.test(chip(pF, "model") ?? "") && /qwen3\.7-flash/.test(chip(pF, "workers") ?? "") && pF.swap
       && pF.rows.backend.find((r) => r.id === "fusion")?.active === true,
     JSON.stringify(pF.chips));
-  check("fusion: provider rows under Fusion are the orchestrator seat",
-    same(pF.rows.provider.map((r) => [r.id, r.detail, r.active]), [["aimlapi", "orchestrator", true], ["openrouter", "orchestrator", false], ["add", "opens the wizard", false]]),
-    JSON.stringify(pF.rows.provider.map((r) => [r.id, r.detail, r.active])));
-  check("fusion: workers rows — every cloud provider but the orchestrator, then the download link",
-    same(pF.rows.workers?.map((r) => [r.id, r.detail, r.active]), [["openrouter", "workers · in the cloud", true], ["downloadMore", "opens the local models pane", false]]),
-    JSON.stringify(pF.rows.workers?.map((r) => [r.id, r.detail, r.active])));
+  // Atomic Core is hidden by default (the probe offers it only when asked): llama.cpp is the one local engine row.
+  const localEngines = (seatIsLocal: boolean) => [["llama-server", "llama.cpp · runs on this machine", seatIsLocal]];
+  check("fusion: the orchestrator's engine rows are every cloud provider (the workers' too), then the local engines, then Add",
+    same(triple(pF.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "Cloud provider", false], ...localEngines(false), ["add", "opens the wizard", false]]),
+    JSON.stringify(triple(pF.rows.provider)));
+  check("fusion: the workers' engine rows are every cloud provider (the orchestrator's too), then the local engines, then Add",
+    same(triple(pF.rows.workerProvider), [["aimlapi", "Cloud provider", false], ["openrouter", "Cloud provider", true], ...localEngines(false), ["add", "opens the wizard", false]]),
+    JSON.stringify(triple(pF.rows.workerProvider)));
+  check("fusion: the workers' model rows are their own provider's catalogue, the pinned model marked",
+    same(triple(pF.rows.workers), workerCatalogue.map((m) => [m.id, "", m.id === chip(pF, "workers")])),
+    JSON.stringify(triple(pF.rows.workers)));
   check("fusion: Settings › LLM marks Fusion active, states it, and offers workers 1–8 on the stored count",
     pF.settings.active === "runmode:fusion" && pF.settings.status === status.fusion
       && pF.settings.workersOn === "3" && pF.settings.workerButtons === 8,
@@ -217,11 +225,14 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
 
   const onDisk = [{ id: "qwen-3.5-4b", family: "qwen", size: "2.7 GB", context: "256K", downloaded: true, active: true }];
   const pL = await probe(cfgs.fusionLocalWorkers, { readyIds: ["aimlapi"], localLoaded: true, local: onDisk });
-  check("fusion: with a model on disk the workers run it and local-llama may orchestrate",
-    same(pL.rows.workers?.map((r) => [r.id, r.detail, r.active]), [["qwen-3.5-4b", "workers · on this machine", true], ["openrouter", "no API key", false], ["downloadMore", "opens the local models pane", false]])
-      && pL.rows.provider.some((r) => r.id === "local-llama" && r.detail === "orchestrator · runs on this machine" && !r.active)
-      && chip(pL, "workers") === "qwen-3.5-4b",
-    JSON.stringify(pL.rows.workers?.map((r) => [r.id, r.detail, r.active])));
+  /* One managed local slot: the workers hold it here, so the orchestrator is offered no
+     local engine (the ⇄ moves it), and the workers' engine rows mark the local engine. */
+  check("fusion: with a model on disk the workers run it on the local engine, and the orchestrator is offered no second local slot",
+    same(triple(pL.rows.workers), [["downloadMore", "opens Settings › Models", false], ["qwen-3.5-4b", "On this machine", true]])
+      && same(triple(pL.rows.workerProvider), [["aimlapi", "Cloud provider", false], ["openrouter", "No API key", false], ...localEngines(true), ["add", "opens the wizard", false]])
+      && same(triple(pL.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "No API key", false], ["add", "opens the wizard", false]])
+      && chip(pL, "workerProvider") === "local-llama" && chip(pL, "workers") === "qwen-3.5-4b",
+    JSON.stringify({ workers: triple(pL.rows.workers), workerProvider: triple(pL.rows.workerProvider), provider: triple(pL.rows.provider) }));
 
   const pH = await probe(cfgs.fusionHandSwitched, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [] });
   const pD = await probe(cfgs.cloud, { readyIds: ["aimlapi"], localLoaded: true, local: [] });

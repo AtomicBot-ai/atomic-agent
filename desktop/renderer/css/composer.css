@@ -330,3 +330,10 @@
 
 /* ---- Narrow windows ------------------------------------------------------ */
 @media (max-width:820px){.composerwrap{padding:0 16px 12px}.composerwrap > .slash{left:16px;right:16px}}
+
+/* Each Fusion role keeps its engine and model together when the row wraps. */
+.cfoot.is-fusion{flex-wrap:wrap}
+.cfoot .composer-seat{display:inline-flex;align-items:center;min-width:0;flex:1 1 190px}
+.cfoot .composer-seat .cchip{flex:1 1 0;min-width:0}
+.cfoot .composer-seat .cval{overflow:hidden;text-overflow:ellipsis}
+.cfoot .composer-seat .enginechip{flex:0 1 auto}

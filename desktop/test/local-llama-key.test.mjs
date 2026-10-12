@@ -4,7 +4,7 @@
 // else the managed daemon's key file for its own loopback port, else none.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -61,4 +61,20 @@ test("loopback check needs both a loopback host and a managed port", () => {
   assert.equal(isLoopbackOnPort("http://127.0.0.1:19191", PORTS), true);
   assert.equal(isLoopbackOnPort("http://127.0.0.1", PORTS), false);
   assert.equal(isLoopbackOnPort("not a url", PORTS), false);
+});
+
+test("Core session credentials beat the legacy key only for their live owner and port", () => {
+  const dir = mkdtempSync(join(tmpdir(), "core-key-"));
+  const root = join(dir, "core");
+  const owner = join(root, "versions", "0.11.2", "data", "atomic-core");
+  mkdirSync(owner, { recursive: true });
+  writeFileSync(join(root, "chat.json"), JSON.stringify({ coreVersion: "0.11.2", instanceId: "owned", pid: process.pid, port: 19091, api_key: "session-key" }));
+  writeFileSync(join(owner, "instance.lock"), JSON.stringify({ instance_id: "owned", state: "ready", pid: process.pid }));
+  const pick = (url) => pickLocalLlamaKey({ url, envKey: "legacy-key", managedPorts: [19091], dataDir: dir });
+  try {
+    assert.equal(pick("http://127.0.0.1:19091"), "session-key");
+    assert.equal(pick("http://external.example:19091"), "legacy-key");
+    writeFileSync(join(owner, "instance.lock"), JSON.stringify({ instance_id: "foreign", state: "ready", pid: process.pid }));
+    assert.equal(pick("http://127.0.0.1:19091"), "legacy-key");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

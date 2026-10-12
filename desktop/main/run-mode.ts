@@ -50,7 +50,7 @@ export interface RunModeConfig {
   };
   localModels?: {
     mode?: string;
-    managed?: { modelId?: string | null; parallel?: number | string };
+    managed?: { engine?: "atomic-core" | "llama-server"; modelId?: string | null; parallel?: number | string };
   };
 }
 
@@ -226,8 +226,8 @@ export const FUSION_MARK = [
 /**
  * describeFusionIntro, as paragraphs after the mark. One sentence is the
  * desktop's: the TUI's last paragraph names `ctrl+r`, a terminal chord this
- * window does not have — the seats are picked with the Provider and Workers
- * controls here.
+ * window does not have; here each seat has its own engine and model controls.
+ * Paragraphs 4 and 6 match fzIntroParagraphs in renderer.js word for word.
  */
 export function describeFusionIntro(rm: ResolvedRunMode): string[] {
   const orchestrator = rm.orchestratorModel ?? rm.orchestratorProviderId ?? "your cloud provider";
@@ -237,9 +237,9 @@ export function describeFusionIntro(rm: ResolvedRunMode): string[] {
     `Right now — ${orchestrator} plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.`
       + ` ${worker} executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.`,
     "How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.",
-    "Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one; so does a big local model directing a small one.",
+    "Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one, even from the same provider. This setup has one managed local engine, which can serve either role.",
     "Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.",
-    "The Provider and Workers controls pick both seats — each row says whether it runs local or in the cloud. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.",
+    "Each seat has separate inference engine and model controls. Use the swap button to trade the seats. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.",
   ];
 }
 
@@ -318,7 +318,7 @@ export function planEnterFusion(
   const cloud = providers.filter((p) => !isLocalKind(p));
   const firstUsableCloud = (cloud.find(isKeyed) ?? cloud[0])?.id ?? null;
   // Cloud orchestrator is the default, not the rule: an explicit pin wins whatever its kind.
-  const leg = pins.orchestratorProvider ?? (activeIsCloud ? active : null) ?? firstUsableCloud
+  const leg = pins.orchestratorProvider ?? (before.effective === "fusion" ? before.orchestratorProviderId : null) ?? (activeIsCloud ? active : null) ?? firstUsableCloud
     ?? before.orchestratorProviderId ?? active;
   const workerLeg = pins.workerProvider
     ?? (before.workerProviderId !== leg ? before.workerProviderId : null)
@@ -330,7 +330,11 @@ export function planEnterFusion(
   if (!Array.isArray(llm.providers) || !llm.providers.some((p) => p.id === leg)) {
     return { write: false, before, refusal: `provider "${leg}" is not configured` };
   }
+  // One managed local slot: it serves one seat at a time. Two cloud seats may share a provider.
+  if (leg === workerLeg && leg === LOCAL_PROVIDER_ID) return { write: false, before, refusal: "The local engine can serve one Fusion role at a time. Choose a cloud provider for the other role." };
   const fusion = withoutUndefined({ ...llm.runMode?.fusion, ...pins, orchestratorProvider: leg, workerProvider: workerLeg });
+  if (leg !== before.orchestratorProviderId && pins.orchestratorModel === undefined) delete fusion.orchestratorModel;
+  if (workerLeg !== before.workerProviderId && pins.workerModel === undefined) delete fusion.workerModel;
   cfg.llm = {
     ...llm,
     activeTextProvider: leg,

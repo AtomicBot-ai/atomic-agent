@@ -93,7 +93,8 @@ const TROUBLE = `[
 ]`;
 
 const kinds = (chips) => chips.map((c) => c.kind);
-/** composerSwitchKindsFor, restated here so the test owns the expectation. */
+/** composerSwitchKindsFor, restated here so the test owns the expectation.
+    Atomic Core is hidden by default, so the local route draws no engine control. */
 const expectedKinds = (backend) =>
   backend === 'local' ? ['backend', 'model'] : ['backend', 'provider', 'model'];
 
