@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoreControlClient } from "./core-client.js";
@@ -19,6 +19,14 @@ describe("Core host contract", () => {
     const client = new CoreControlClient("http://127.0.0.1:19000", "secret", CORE_VERSION, "owned", request);
     await expect(client.snapshot("/test")).rejects.toThrow("ownership changed");
     expect(request.mock.calls[0]?.[1]).toMatchObject({ redirect: "error", headers: { Authorization: "Bearer secret" } });
+  });
+  it("accepts its own data folder reported through a symlinked path", async () => {
+    const dir = fixture(), real = join(dir, "real"), link = join(dir, "link");
+    mkdirSync(real);
+    symlinkSync(real, link, "dir");
+    const request = vi.fn<typeof fetch>(async () => Response.json({ ...snapshot, data_folder: link }));
+    const client = new CoreControlClient("http://127.0.0.1:19000", "secret", CORE_VERSION, "owned", request);
+    await expect(client.snapshot(realpathSync(real))).resolves.toMatchObject({ data_folder: link });
   });
   it("checks releases without installing or treating an untested newer Core as compatible", async () => {
     const dir = fixture();

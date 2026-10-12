@@ -80,11 +80,17 @@ export class CoreControlClient {
     const snapshot = await this.call<CoreSnapshot>("/snapshot");
     if (snapshot.protocol !== CORE_PROTOCOL || snapshot.version !== this.version ||
         snapshot.instance_id !== this.instanceId || snapshot.owner_scope !== "cli" ||
-        (dataFolder && snapshot.data_folder !== dataFolder)) {
+        (dataFolder && !sameFolder(snapshot.data_folder, dataFolder))) {
       throw new Error("Atomic Core version, protocol or ownership changed. Reconnect before continuing.");
     }
     return snapshot;
   }
+}
+
+/** Core reports the folder as it was passed (`/tmp/...`), the agent compares a realpath (`/private/tmp/...`). */
+function sameFolder(a: string, b: string): boolean {
+  const canonical = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  return a === b || canonical(a) === canonical(b);
 }
 
 export async function connectCore(dataDir: string, version: string): Promise<CoreControlClient | null> {
