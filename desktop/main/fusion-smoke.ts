@@ -207,16 +207,15 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
       && /grok-4-6/.test(chip(pF, "model") ?? "") && /qwen3\.7-flash/.test(chip(pF, "workers") ?? "") && pF.swap
       && pF.rows.backend.find((r) => r.id === "fusion")?.active === true,
     JSON.stringify(pF.chips));
-  /* Both local engines are always offered, Atomic Chat Core (the default) first and llama.cpp as the way back.
-     These configs name no engine, so Core is the one that runs and the one marked when the seat is local. */
+  /* The engine is not a choice in the composer: one neutral local row, carrying the engine that runs.
+     These configs name no engine, so that is Core, marked when the seat is local. */
   const localEngines = (seatIsLocal: boolean) => [
-    ["atomic-core", "Atomic Chat Core · runs on this machine", seatIsLocal],
-    ["llama-server", "llama.cpp · runs on this machine", false],
+    ["atomic-core", "Local model · runs on this machine", seatIsLocal],
   ];
-  check("fusion: the orchestrator's engine rows are every cloud provider (the workers' too), then the local engines, then Add",
+  check("fusion: the orchestrator's engine rows are every cloud provider (the workers' too), then the local row, then Add",
     same(triple(pF.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "Cloud provider", false], ...localEngines(false), ["add", "opens the wizard", false]]),
     JSON.stringify(triple(pF.rows.provider)));
-  check("fusion: the workers' engine rows are every cloud provider (the orchestrator's too), then the local engines, then Add",
+  check("fusion: the workers' engine rows are every cloud provider (the orchestrator's too), then the local row, then Add",
     same(triple(pF.rows.workerProvider), [["aimlapi", "Cloud provider", false], ["openrouter", "Cloud provider", true], ...localEngines(false), ["add", "opens the wizard", false]]),
     JSON.stringify(triple(pF.rows.workerProvider)));
   check("fusion: the workers' model rows are their own provider's catalogue, the pinned model marked",
@@ -237,6 +236,11 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
       && same(triple(pL.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "No API key", false], ["local-llama", "Busy as the worker \u00b7 \u21c4 swaps the roles", false], ["add", "opens the wizard", false]])
       && chip(pL, "workerProvider") === "local-llama" && chip(pL, "workers") === "qwen-3.5-4b",
     JSON.stringify({ workers: triple(pL.rows.workers), workerProvider: triple(pL.rows.workerProvider), provider: triple(pL.rows.provider) }));
+  // The local row, the busy row and the seat chip all read one neutral name (composerEngineName), never the engine's.
+  const localLabels = [...(pL.rows.workerProvider ?? []), ...pL.rows.provider]
+    .filter((r) => r.type === "localEngine" || r.type === "localBusy").map((r) => r.label);
+  check("fusion: the local seat is named \"This computer\" in both seats' rows, with no engine name",
+    same(localLabels, ["This computer", "This computer"]), JSON.stringify(localLabels));
 
   const pH = await probe(cfgs.fusionHandSwitched, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [] });
   const pD = await probe(cfgs.cloud, { readyIds: ["aimlapi"], localLoaded: true, local: [] });

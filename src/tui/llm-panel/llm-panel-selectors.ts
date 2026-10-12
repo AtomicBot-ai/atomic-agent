@@ -12,6 +12,10 @@ import {
 } from "./llm-panel-row-builders.js";
 import { cursorFieldFor } from "./llm-panel-state.js";
 
+/** The composer's neutral name for the local seat. The engine is not named: Core runs it, and llama.cpp
+ *  is reached only from the core failure notice or `/model engine`. */
+export const LOCAL_SEAT_LABEL = "Local";
+
 export type LlmPanelRow =
   | {
       kind: "localTextModel";
@@ -230,7 +234,8 @@ export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
         "cloud");
     return {
       model: `${orchestrator} ⇄ ${worker}`,
-      provider: `${orchestratorIsLocal ? (state.localModelsPanel.backend.engine === "atomic-core" ? "Atomic Chat" : "Local llama") : runMode.orchestratorProviderId ?? "Choose engine"} ⇄ ${workerIsLocal ? (state.localModelsPanel.backend.engine === "atomic-core" ? "Atomic Chat" : "Local llama") : runMode.workerProviderId ?? "Choose engine"}`,
+      // The local seat is named neutrally, never by its engine.
+      provider: `${orchestratorIsLocal ? LOCAL_SEAT_LABEL : runMode.orchestratorProviderId ?? "Choose engine"} ⇄ ${workerIsLocal ? LOCAL_SEAT_LABEL : runMode.workerProviderId ?? "Choose engine"}`,
     };
   }
   if (active && active.kind !== "llama-server") {
@@ -243,10 +248,8 @@ export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
     // while the daemon restarts) rather than a GGUF file name.
     return {
       model: state.localModelsPanel.activeModelId ?? state.llmHealth.model,
-      // The engine control is drawn only while Atomic Chat is offered.
-      provider: state.localModelsPanel.backend.atomicCoreChoice === true
-        ? (state.localModelsPanel.backend.engine === "atomic-core" ? "Atomic Chat" : "Local llama")
-        : null,
+      // No engine control on the managed-local route (snapshots hide it); if one is drawn it names no engine.
+      provider: state.localModelsPanel.backend.atomicCoreChoice === true ? LOCAL_SEAT_LABEL : null,
     };
   }
   return {

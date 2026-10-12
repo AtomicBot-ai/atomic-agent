@@ -3424,8 +3424,7 @@ function routeChipsHtml(backend) {
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
         + (backend === 'fusion' ? '<span class="composer-seat" role="group" aria-label="Orchestrator">' : '')
-        + (backend === 'local' ? composerEngineChip('provider', composerEngineName(composerEngineId()), true)
-          : backend === 'fusion' ? composerEngineChip('provider', composerSeatLocal(fzSeats().plans) ? composerEngineName(composerEngineId()) : fzSeats().plans.provider, composerSeatLocal(fzSeats().plans), 'Orchestrator')
+        + (backend === 'fusion' ? composerEngineChip('provider', composerSeatLocal(fzSeats().plans) ? composerEngineName(composerEngineId()) : fzSeats().plans.provider, composerSeatLocal(fzSeats().plans), 'Orchestrator')
           : selHasKind('provider')
             ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider" data-id="' + esc(selProviderLabel()) + '"'
               + ' title="' + (backend === 'fusion' ? 'Plans the work: ' : 'Provider: ') + esc(providerWord(selProviderLabel())) + '"'
@@ -15362,8 +15361,9 @@ function selLocalRoute() { return selBackend() === 'local'; }
 function selKinds() {
   const b = selBackend();
   // composerSwitchKindsFor: `if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"]`.
-  // Local draws its engine control too: Atomic Chat Core is the default and llama.cpp is the way back, so both are always offered.
-  return b === 'fusion' ? ['backend','provider','model','workerProvider','workers'] : ['backend','provider','model'];
+  // Local is backend and model only: the engine is not a choice in the composer (llama.cpp is the recovery card's way out).
+  return b === 'fusion' ? ['backend','provider','model','workerProvider','workers']
+    : b === 'local' ? ['backend','model'] : ['backend','provider','model'];
 }
 /** True when the route offers `kind` — the chips and the switch read the same rule. */
 function selHasKind(kind) { return selKinds().indexOf(kind) >= 0; }
@@ -15556,7 +15556,6 @@ function selRows() {
        addProvider: !!fzBlocked, active: here === 'fusion'},
     ];
   }
-  if (SEL.kind === 'provider' && selBackend() === 'local') return composerLocalEngineRows();
   if ((SEL.kind === 'provider' || SEL.kind === 'workerProvider') && selBackend() === 'fusion') return composerFusionEngineRows(SEL.kind === 'workerProvider' ? 'worker' : 'orchestrator');
   if ((SEL.kind === 'model' || SEL.kind === 'workers') && selBackend() === 'fusion') return composerSeatModelRows();
   if (SEL.kind === 'provider') {
@@ -22730,9 +22729,11 @@ function llmAdvancedHTML(mode) {
         + '<div class="llm-tune-card llm-engine">'
           + llmTuneRowHTML(onCore ? 'Atomic Core' : 'llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
               btn('llm:backend', 'Update now', 'Install the supported engine (B)'))
-          // Always offered: Core is the default, and llama.cpp is the way back when Core will not run here.
-          + llmTuneRowHTML('Engine choice', 'Stop local models before switching. Your downloaded models stay available.',
-              btn('llm:engine', onCore ? 'Use llama.cpp' : 'Use Atomic Core', 'Change the local engine'))
+          /* Core is the engine, and choosing one is not part of the normal flow: llama.cpp is offered
+             only by the recovery card when Core cannot run. Once on llama.cpp, this one row is the quiet way back. */
+          + (onCore ? ''
+              : llmTuneRowHTML('Engine choice', 'llama.cpp runs your local models now. Stop local models before switching back. Your downloaded models stay available.',
+                  btn('llm:engine', 'Use Atomic Chat engine', 'Switch back to the default local engine')))
           + (onCore
               ? llmTuneRowHTML('Core updates', 'Checks never install or interrupt your models. Updates apply after you stop local models.', btn('llm:engineCheck', 'Check for updates', 'Check Atomic Core releases'))
               : llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
@@ -23988,7 +23989,8 @@ function llmAct(what) {
     if (BR && BR.hostRam && !LLMHF.ram) BR.hostRam().then((n) => { LLMHF.ram = Number(n) || 0; if (LLMHF.open) llmRepaint(); });
     return;
   }
-  if (verb === 'engine') { llmEngineAction(composerEngineId() === 'atomic-core' ? 'llama-server' : 'atomic-core'); return; }
+  // Only the way back to Core: llama.cpp is reached from the recovery card or `models engine`.
+  if (verb === 'engine') { if (composerEngineId() === 'llama-server') llmEngineAction('atomic-core'); return; }
   if (verb === 'engineCheck') { llmEngineAction('check'); return; }
   // On Core (the default) the install is a download with a bar; llama.cpp's update stays as it was.
   if (verb === 'backend') { if (composerEngineId() === 'atomic-core') llmEngineInstall(); else llmBackendUpdate(); return; }

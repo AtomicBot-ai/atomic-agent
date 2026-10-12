@@ -9,7 +9,7 @@ import { selectComposerSwitchRows } from "./composer-switch-rows.js";
 import { selectWorkerRows } from "./composer-switch-worker-rows.js";
 import type { TuiState } from "../tui-state.js";
 
-/** The state with the Atomic Chat engine choice offered (`atomicCoreChoiceEnabled`). */
+/** The state with an engine control drawn (`atomicCoreChoice`), which snapshots no longer set. */
 function withEngineChoice(state: TuiState): TuiState {
   const panel = state.localModelsPanel;
   return { ...state, localModelsPanel: { ...panel, backend: { ...panel.backend, atomicCoreChoice: true } } };
@@ -84,15 +84,20 @@ describe("the workers switch", () => {
     const models = selectComposerSwitchRows(state, "workers");
     expect(models.map(r => r.label)).toEqual(["qwen-3.5-4b", "Download more models…"]);
     expect(models[0]?.intent).toEqual({kind: "fusionModel", leg: "worker", modelId: "qwen-3.5-4b"});
-    expect(selectComposerSwitchRows(state, "workerProvider").map(r => r.label)).toContain("Local llama");
+    expect(selectComposerSwitchRows(state, "workerProvider").map(r => r.label)).toContain("Local");
   });
 
-  it("offers Atomic Chat as a worker engine only when it is enabled", () => {
-    const hidden = selectComposerSwitchRows(fusionState(), "workerProvider").map(r => r.label);
-    expect(hidden).toContain("Local llama");
-    expect(hidden).not.toContain("Atomic Chat");
-    const offered = selectComposerSwitchRows(withEngineChoice(fusionState()), "workerProvider").map(r => r.label);
-    expect(offered).toContain("Atomic Chat");
+  it("offers one neutral local worker row carrying the selected engine, never an engine choice", () => {
+    for (const state of [fusionState(), withEngineChoice(fusionState())]) {
+      const local = selectComposerSwitchRows(state, "workerProvider").filter(r => r.intent.kind === "localEngine");
+      expect(local.map(r => r.label)).toEqual(["Local"]);
+      expect(local[0]?.intent).toEqual({ kind: "localEngine", engine: state.localModelsPanel.backend.engine ?? "atomic-core", leg: "worker" });
+    }
+    const onLlama = fusionState();
+    const llama = { ...onLlama, localModelsPanel: { ...onLlama.localModelsPanel, backend: { ...onLlama.localModelsPanel.backend, engine: "llama-server" as const } } };
+    const row = selectComposerSwitchRows(llama, "workerProvider").find(r => r.intent.kind === "localEngine");
+    expect(row?.label).toBe("Local");
+    expect(row?.intent).toEqual({ kind: "localEngine", engine: "llama-server", leg: "worker" });
   });
 });
 

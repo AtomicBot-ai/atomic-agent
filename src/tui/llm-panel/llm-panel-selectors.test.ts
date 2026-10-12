@@ -186,7 +186,7 @@ describe("llm-panel selectors", () => {
     };
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "openai/gpt-4o-mini ⇄ qwen-3.5-4b",
-      provider: "openrouter ⇄ Local llama",
+      provider: "openrouter ⇄ Local",
     });
   });
 
@@ -247,7 +247,7 @@ describe("llm-panel selectors", () => {
     };
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "openai/gpt-4o-mini ⇄ qwen-3.5-4b",
-      provider: "openrouter ⇄ Local llama",
+      provider: "openrouter ⇄ Local",
     });
   });
 
@@ -273,7 +273,7 @@ describe("llm-panel selectors", () => {
     });
   });
 
-  it("names the local engine as a control only while Atomic Chat is offered", () => {
+  it("never names the engine: a drawn local control reads the neutral seat name", () => {
     const base = createInitialTuiState(fakeSession());
     const panel = {
       ...base.localModelsPanel,
@@ -284,8 +284,8 @@ describe("llm-panel selectors", () => {
       ...base,
       localModelsPanel: { ...panel, backend: { ...panel.backend, engine, atomicCoreChoice: true } },
     });
-    expect(selectPromptLlmMeta(offered("llama-server")).provider).toBe("Local llama");
-    expect(selectPromptLlmMeta(offered("atomic-core")).provider).toBe("Atomic Chat");
+    expect(selectPromptLlmMeta(offered("llama-server")).provider).toBe("Local");
+    expect(selectPromptLlmMeta(offered("atomic-core")).provider).toBe("Local");
   });
 
   it("falls back to the probe's label while no catalog id is chosen", () => {
@@ -509,7 +509,7 @@ describe("local model rows during a pull", () => {
     };
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "qwen-3.5-4b ⇄ openai/gpt-4o-mini",
-      provider: "Local llama ⇄ openrouter",
+      provider: "Local ⇄ openrouter",
     });
   });
 });
