@@ -1482,6 +1482,15 @@ Core release checks run after startup and every six hours, like app checks. Chec
 
 These controls require the companion agent build with `models engine` support. Old agent builds report the unsupported command instead of pretending an engine was switched. The existing engine remains the default for old configurations.
 
+### Bundled Atomic Chat Core
+
+The installer carries Atomic Chat Core, so the first local model needs no Core download.
+
+- **Where it comes from.** `npm run fetch-core` (`scripts/fetch-core.mjs`) downloads the release asset for the target (`--platform darwin|win32|linux --arch x64|arm64`, or `--slug win32-arm64`) from `AtomicBot-ai/atomic-chat-core` into `build/core/<platform>-<arch>/`. The version is `BUNDLED_CORE_VERSION` in `main/core-bundle.ts`, the one place to bump it, and it must be a version the agent lists in `CORE_VERSIONS`. The `dist*` scripts and every job in `.github/workflows/desktop.yml` run it before electron-builder.
+- **Verification.** The asset must match exactly one line of the release's `SHA256SUMS`, or the build fails. A file that already matches is not downloaded again. `afterPack` fails the build when `resources/core/` has no binary.
+- **Signing.** macOS: electron-builder signs `Contents/Resources/core/atomic-chat-core` with the app (Developer ID, hardened runtime, `entitlementsInherit`), and notarization covers it. Windows: the workflow signs `build/core/<slug>/atomic-chat-core.exe` with signtool before packaging, like the agent binaries (both x64 and the arm64 job on the x64 runner). Without the secrets the build still succeeds, unsigned.
+- **First launch.** `seedBundledCore(dataDir)` (`main/core-seed.ts`) copies the binary to `<dataDir>/core/versions/<version>/` and writes `verified.json` with the sha256 of the copy on disk. That is not the release hash: signing changes the bytes, and the release hash was already checked at build time. A valid install is never overwritten, and `active.json` stays the agent's.
+
 ### Composer inference engines
 
 Local mode shows separate inference-engine and model pickers, with Local llama and Atomic Chat as engine choices. Fusion shows an engine/provider and model pair for each role, separated by the swap control. Model catalogs and model pins follow their own role; changing a worker does not activate it as the orchestrator. The managed runtime has one local slot, which can move between roles with swap. A loaded local model must be stopped before its engine changes. Route changes keep the existing busy-turn and Stop guards.

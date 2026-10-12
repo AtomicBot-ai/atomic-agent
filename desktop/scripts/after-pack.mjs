@@ -5,7 +5,8 @@
  *   1. copy the matching agent bundle into <resources>/agent  (every target)
  *   2. prove the copy can open its own database                (host == target;
  *      win32-arm64 packed on x64 is probed in CI's agent-win32-arm64 job)
- *   3. ad-hoc sign the .app under its own identifier            (macOS only)
+ *   3. check Atomic Chat Core is in <resources>/core            (every target)
+ *   4. ad-hoc sign the .app under its own identifier            (macOS only)
  *
  * The agent comes from `../bundle/<slug>` at the repo root, where the
  * release pipeline stages it (`npm run bundle:package <slug>`). The slugs are
@@ -35,7 +36,7 @@
  * the README says so rather than pretending otherwise.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -180,6 +181,27 @@ function probeDatabase(agentBin, target) {
   }
 }
 
+/*
+ * Atomic Chat Core arrives through extraResources (electron-builder.cjs),
+ * from desktop/build/core/<slug>, where scripts/fetch-core.mjs put it after
+ * checking it against the release's SHA256SUMS. electron-builder skips a
+ * missing `from` without a word, and an app without it would quietly fall
+ * back to downloading Core on first run, so a missing file fails the build.
+ * The exec bit is set here, before any signature is made over the file.
+ */
+function checkCore(context, target) {
+  const name = target.platform === "win32" ? "atomic-chat-core.exe" : "atomic-chat-core";
+  const file = join(resourcesDir(context, target.platform), "core", name);
+  if (!existsSync(file) || statSync(file).size === 0) {
+    throw new Error(
+      `Atomic Chat Core is missing from the ${target.slug} app: ${file}\n`
+      + `Fetch it first (desktop/): node scripts/fetch-core.mjs --slug ${target.slug}`,
+    );
+  }
+  if (target.platform !== "win32") chmodSync(file, 0o755);
+  return file;
+}
+
 function signAdhoc(context) {
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const id = context.packager.appInfo.id; // io.atomicagent.desktop
@@ -198,6 +220,7 @@ export default async function afterPack(context) {
   const target = targetOf(context);
   const dest = copyAgent(context, target);
   console.log(`agent (${target.slug}) → ${dest}`);
+  console.log(`atomic-chat-core (${target.slug}) → ${checkCore(context, target)}`);
   // electron-builder.cjs keeps `mac.identity: null`, so a local `npm run dist` is
   // ad-hoc signed here. CI overrides the identity with the Developer ID
   // certificate (.github/workflows/desktop.yml); electron-builder then signs

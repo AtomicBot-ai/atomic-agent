@@ -22,3 +22,6 @@ CLAW-LOOT.md
 desktop/node_modules/
 desktop/out/
 desktop/release/
+
+# Atomic Chat Core fetched for the installer (desktop/scripts/fetch-core.mjs)
+desktop/build/core/

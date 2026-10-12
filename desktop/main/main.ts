@@ -7,6 +7,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shoul
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
+import { seedBundledCore } from "./core-seed.js";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -9188,8 +9189,13 @@ function watchCoreUpdates(): void {
       const status = await modelsEngine("status");
       if (!status.ok || (status.value as { engine?: string } | undefined)?.engine !== "atomic-core") return;
       const result = await modelsEngine("check");
-      const value = result.value as { check?: { latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
+      const value = result.value as { check?: { currentVersion: string | null; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
       if (!result.ok || !value?.check) return;
+      /* Nothing installed yet is a fresh machine on the default engine, not an
+         update: Core comes down with the first model start (or the installer
+         placed it). An "update" toast there would be the first thing a new
+         person sees about an engine they never chose. */
+      if (value.check.currentVersion === null && !value.check.requiresAgentUpdate) return;
       const signature = JSON.stringify(value.check);
       if (signature !== previous) { previous = signature; send("core:update", value.check); }
     } catch { /* Offline checks are retried at the next scheduled check or manually. */ }
@@ -9246,10 +9252,21 @@ void app.whenReady().then(async () => {
     const sweepAtLaunch = () => sweepBackendStaging(managedDataDirNow(), { minAgeMs: STAGING_STALE_MS })
       .then((swept) => { if (swept.length) console.error(`[desktop] local-llm: tidied what an earlier llama.cpp update left behind (${swept.join(", ")})`); })
       .catch(() => undefined);
+    /* Atomic Chat Core is the default local engine, and the installer carries
+       it signed by our own certificate (scripts/fetch-core.mjs). It is put where
+       the agent looks for it before anything can start Core, so the first local
+       model needs no Core download and no GitHub; an install already there is
+       left alone (core-seed.ts). A dev run has no bundled copy and seeds nothing. */
+    const seedCore = () => (app.isPackaged && !SMOKE ? seedBundledCore(managedDataDirNow()) : Promise.resolve({ seeded: false, reason: "not a packaged app" }))
+      .then((r) => {
+        if (r.seeded) console.error("[desktop] local-llm: Atomic Core placed from the installer");
+        else if (r.reason && !/already installed|not a packaged app/.test(r.reason)) console.error(`[desktop] local-llm: Atomic Core not placed (${r.reason})`);
+      })
+      .catch(() => undefined);
     /* ATO-126: the embedding server before `atag serve` boots, which is the
        only moment serve looks for it (a smoke run starts no model server). */
     const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(embeddingsFirst).then(() => {
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(embeddingsFirst).then(() => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
