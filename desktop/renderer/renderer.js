@@ -886,7 +886,7 @@ let DWATCH = null;
 const CPUW = {on: false, seq: 0, modelId: null, said: 0, dismissed: 0};
 /* The local engine (Atomic Chat Core, the default) did not download or start: main's
    engine:failure, {stage, why, detail, at}, or null once a start or an install worked. */
-const ENGF = {f: null, said: 0, dismissed: 0};
+const ENGF = {f: null, said: 0, dismissed: 0, fresh: false};
 
 let BUILD = null;
 /* Provider ids whose key was saved without ever being checked. Read from
@@ -7509,8 +7509,9 @@ function engfRouteLocal() {
 function engfShown() {
   return !!ENGF.f && ENGF.dismissed !== ENGF.f.at && engfRouteLocal();
 }
-/** The one way out: Download again runs the engine install. */
+/** The one way out: Download again runs the engine install. None when the failure is one it cannot change (main's `retryable: false`): `why` says what to do instead. */
 function engfActsHTML(size) {
+  if (ENGF.f && ENGF.f.retryable === false) return '';
   const busy = typeof LLMP !== 'undefined' && (LLMP.busy || !!LLMP.pulling);
   const dis = busy ? ' disabled' : '';
   return '<button class="btn btn-s ' + size + '" data-act="engf:retry"' + dis + ' title="Download and install the local engine again">Download again</button>';
@@ -7540,8 +7541,10 @@ function engfSetupRuntime() {
 }
 async function engfAct(verb) {
   if (verb === 'dismiss') { if (ENGF.f) ENGF.dismissed = ENGF.f.at; render(); return; }
+  if (verb === 'retry' && ENGF.f && ENGF.f.retryable === false) return;
   const setup = engfSetupRuntime();
-  if (verb === 'retry') { if (setup) dlRetry(setup.n); else llmEngineInstall(); }
+  // `fresh`: main forgets the active Core's install record first, so a broken copy is downloaded again rather than kept.
+  if (verb === 'retry') { if (setup) { ENGF.fresh = true; dlRetry(setup.n); } else llmEngineInstall({fresh: true}); }
 }
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
@@ -11304,7 +11307,12 @@ function dlSpawn(job) {
  * this is where a check stands in for it.
  */
 function dlPullStart(job) {
-  return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id, {trigger: OB.open ? 'onboarding' : 'other'});
+  if (job.kind === 'runtime') {
+    // The recovery card's Download again through the setup queue (engfAct): a fresh install, once.
+    const fresh = ENGF.fresh; ENGF.fresh = false;
+    return fresh ? BR.modelsUpdateStream(undefined, {fresh: true}) : BR.modelsUpdateStream();
+  }
+  return BR.modelsPull(job.id, {trigger: OB.open ? 'onboarding' : 'other'});
 }
 
 /**
@@ -23973,8 +23981,9 @@ async function llmBackendUpdate() {
  * stream's done frame (the LLMP pull subscriber), and a failure as main's
  * engine:failure.
  */
-function llmEngineInstall() {
+function llmEngineInstall(opts) {
   if (!BR || LLMP.busy || LLMP.pulling) return;
+  const fresh = !!(opts && opts.fresh);
   if (!BR.modelsUpdateStream) { llmBackendUpdate(); return; }
   if (ENGF.f) ENGF.dismissed = ENGF.f.at;   // the card's question is being answered; its result says the rest
   LLMP.msg = null; LLMP.statusErr = null;
@@ -23982,7 +23991,7 @@ function llmEngineInstall() {
   LLMP.pullLog = ['starting…'];
   if (!llmVisible()) toast('Downloading the local engine', 'Its progress is in Settings \u203a Models.');
   render(); llmRepaint();
-  Promise.resolve(BR.modelsUpdateStream('settings')).then((res) => {
+  Promise.resolve(fresh ? BR.modelsUpdateStream('settings', {fresh: true}) : BR.modelsUpdateStream('settings')).then((res) => {
     if (res && res.ok === false) {
       LLMP.pulling = null;
       LLMP.msg = {text: res.running ? '! the local engine was not downloaded: ' + llmRunningWord(res.running) + ' is downloading. Try again once that has finished.'

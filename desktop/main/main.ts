@@ -7,7 +7,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shoul
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
-import { seedBundledCore } from "./core-seed.js";
+import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
@@ -180,6 +180,7 @@ import {
   // whole-file write, and the four import sources the flow's last step offers.
   modelsUpdateStream,
   managedDataDirNow,
+  managedEngineNow,
   STAGING_STALE_MS,
   sweepBackendStaging,
   setExternalLlamaUrls,
@@ -1295,7 +1296,12 @@ function wireIpc(client: AgentClient): void {
      The slot is taken at once, and its × (cli:cancelPull) ends it even while
      it waits for that turn: it never begins, and the window is told now. */
   // `via`: the setup's runtime phase (default), or Settings' engine install with its bar (llmEngineInstall).
-  ipcMain.handle("cli:modelsUpdateStream", (_event, via: unknown) => {
+  /* `fresh`: the recovery card's Download again. Under Core the active
+     version's verified.json goes first (and a binary that does not run),
+     or the agent's install would find it "installed" and do nothing: a
+     broken seeded copy is replaced, not kept (core-seed.ts resetCoreForRedownload). */
+  ipcMain.handle("cli:modelsUpdateStream", (_event, via: unknown, opts: unknown) => {
+    const fresh = !!(opts && typeof opts === "object" && (opts as { fresh?: unknown }).fresh === true);
     const running = downloadRunning();
     if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
@@ -1308,8 +1314,14 @@ function wireIpc(client: AgentClient): void {
     const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>(
       own.signal,
       (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
-      () => {
+      async () => {
         held.hold = updateBegins();
+        // In the daemon's turn: nothing is starting Core while its record goes.
+        if (fresh && managedEngineNow() === "atomic-core") {
+          const reset = await resetCoreForRedownload(managedDataDirNow());
+          console.error(`[desktop] local-llm: Download again: Atomic Core ${reset.version}${reset.removedRecord ? ", its install record removed" : ""}${reset.removedBinary ? ", its binary (it did not run) removed" : ""}`);
+        }
+        if (own.signal.aborted) return { ok: false, stdout: "", stderr: "", error: UPDATE_STOPPED, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false };
         const started = modelsUpdateStream((line) =>
           pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
         );

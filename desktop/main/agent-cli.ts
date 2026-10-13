@@ -3928,6 +3928,11 @@ function newestMtime(dir: string): number {
   }
   return newest;
 }
+/** The managed engine the desktop's config names; Atomic Chat Core when it names none or cannot be read. */
+export function managedEngineNow(): ManagedEngine {
+  try { return managedEngineOf(JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"))); }
+  catch { return "atomic-core"; }
+}
 /** The managed data dir the desktop's config names (its `dataDirOverride`, or the default). */
 export function managedDataDirNow(): string {
   try {
