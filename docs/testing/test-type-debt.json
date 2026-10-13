@@ -5264,14 +5264,6 @@
       "count": 1
     },
     {
-      "path": "src/tui/onboarding/onboarding-reducer.test.ts",
-      "code": 2322,
-      "message": "Type '\"embeddinggemma-300m\"' is not assignable to type 'EmbeddingModelId'.",
-      "anchor": "modelId",
-      "line": 140,
-      "count": 2
-    },
-    {
       "path": "src/tui/onboarding/star-field.test.ts",
       "code": 2532,
       "message": "Object is possibly 'undefined'.",

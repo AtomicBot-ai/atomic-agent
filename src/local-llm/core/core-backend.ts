@@ -19,10 +19,17 @@ export function isCoreBackendInstalled(dataDir: string, version = activeCoreVers
   return isCoreInstalled(dataDir, version) && readCoreBackend(dataDir, version) !== null;
 }
 
-/** The active Core serves no model session (or is not running at all). */
+/**
+ * The active Core serves no model session and no enabled embedding module
+ * (or is not running at all). An older Core without the module answers
+ * 404 there: not busy.
+ */
 async function activeCoreIdle(dataDir: string): Promise<boolean> {
   const current = await connectCore(dataDir, activeCoreVersion(dataDir));
-  return !current || (await current.snapshot()).sessions.length === 0;
+  if (!current) return true;
+  if ((await current.snapshot()).sessions.length > 0) return false;
+  const embedding = await current.call<{ enabled?: boolean }>("/embedding/status").catch(() => null);
+  return !embedding?.enabled;
 }
 
 function writeActiveVersion(dataDir: string, version: string): void {
@@ -53,11 +60,13 @@ function isRetryableCoreCall(err: unknown): boolean {
 }
 
 /**
- * Ask Core to install one backend, retried up to three times with backoff on
- * a network failure or a 5xx. Each attempt has its own task id, progress
- * subscription and cancel hook; a cancelled install is never retried.
+ * Ask Core to install one `provider` backend (the TurboQuant fork that runs
+ * chat, or stock llama.cpp for the embedding module), retried up to three
+ * times with backoff on a network failure or a 5xx. Each attempt has its own
+ * task id, progress subscription and cancel hook; a cancelled install is
+ * never retried.
  */
-async function installSelectedBackend(client: CoreControlClient, body: { version: string; backend: string; asset_name?: string }, opts: DownloadFileOptions): Promise<{ path: string }> {
+export async function installSelectedBackend(client: CoreControlClient, provider: "llamacpp" | "llamacpp-upstream", body: { version: string; backend: string; asset_name?: string }, opts: DownloadFileOptions): Promise<{ path: string }> {
   return withCoreRetries(async () => {
     const taskId = `agent-backend-${randomUUID()}`;
     const cancel = () => { void client.call(`/downloads/${taskId}/cancel`, {}).catch(() => {}); };
@@ -65,7 +74,7 @@ async function installSelectedBackend(client: CoreControlClient, body: { version
     opts.signal?.addEventListener("abort", cancel, { once: true });
     opts.onProgress?.(0, 0, 0);
     try {
-      return await client.call<{ path: string }>("/backends/llamacpp/install", { ...body, task_id: taskId }, { signal: opts.signal, timeoutMs: 15 * 60_000 });
+      return await client.call<{ path: string }>(`/backends/${provider}/install`, { ...body, task_id: taskId }, { signal: opts.signal, timeoutMs: 15 * 60_000 });
     } finally { opts.signal?.removeEventListener("abort", cancel); await stopEvents(); }
   }, isRetryableCoreCall, opts.signal);
 }
@@ -96,7 +105,7 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
     const [tag, backend, extra] = selected.split("/");
     if (!tag || !backend || extra || /[\\]/.test(selected) || tag === ".." || backend === "..") throw new Error("Atomic Core returned an invalid backend selection.");
     const asset = catalog.releases?.find(r => r.tag === tag)?.variants.find(v => v.id === backend)?.asset;
-    const installed = await installSelectedBackend(client, { version: tag, backend, ...(asset ? { asset_name: asset } : {}) }, opts);
+    const installed = await installSelectedBackend(client, "llamacpp", { version: tag, backend, ...(asset ? { asset_name: asset } : {}) }, opts);
     const binaryName = process.platform === "win32" ? "llama-server.exe" : "llama-server";
     const binary = [join(installed.path, "build", "bin", binaryName), join(installed.path, "bin", binaryName), join(installed.path, binaryName)].find(existsSync);
     if (!binary) throw new Error("Atomic Core installed a backend without an executable.");

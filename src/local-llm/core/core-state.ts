@@ -76,6 +76,27 @@ export function readCoreBackend(dataDir: string, version = activeCoreVersion(dat
   const record = readCoreJson<CoreBackend>(join(coreVersionDir(dataDir, version), "backend.json"));
   return record?.coreVersion === version && typeof record.binary === "string" && existsSync(record.binary) ? record : null;
 }
+/**
+ * What this agent turned on in Core's embedding module, so status and stop
+ * find it without starting Core (`core/embedding-module.json`). The module
+ * has no pid or port file of its own: Core owns its process.
+ * `disablePending`: a stop found Core down (or Core refused the change), so
+ * Core's settings still say enabled; the next Core start turns it off.
+ */
+export interface CoreEmbeddingRecord {
+  coreVersion: string;
+  modelId: string;
+  modelPath: string;
+  disablePending?: boolean;
+}
+export function coreEmbeddingRecordPath(dataDir: string): string {
+  return join(coreRoot(dataDir), "embedding-module.json");
+}
+export function readCoreEmbeddingRecord(dataDir: string): CoreEmbeddingRecord | null {
+  const record = readCoreJson<CoreEmbeddingRecord>(coreEmbeddingRecordPath(dataDir));
+  if (!record || typeof record.modelId !== "string" || typeof record.modelPath !== "string") return null;
+  return CORE_VERSIONS.includes(record.coreVersion as typeof CORE_VERSIONS[number]) ? record : null;
+}
 export function coreSessionPath(dataDir: string, role: "chat" | "embedding"): string {
   return join(coreRoot(dataDir), `${role}.json`);
 }

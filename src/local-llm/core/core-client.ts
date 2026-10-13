@@ -1,11 +1,11 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { coreDaemonEnv } from "./core-env.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
 import { CoreUnavailableError, toCoreUnavailable } from "./core-errors.js";
-import { CORE_PROTOCOL, CORE_VERSION, CORE_VERSIONS, coreBinary, coreDataDir, coreVersionDir, readCoreJson, type CoreSession } from "./core-state.js";
+import { CORE_PROTOCOL, CORE_VERSION, CORE_VERSIONS, coreBinary, coreDataDir, coreEmbeddingRecordPath, coreVersionDir, readCoreEmbeddingRecord, readCoreJson, type CoreSession } from "./core-state.js";
 
 export interface CoreSnapshot {
   instance_id: string;
@@ -28,7 +28,8 @@ interface CoreLock {
 /** Core answered a control request with an error status. */
 export class CoreRequestError extends Error {
   override readonly name = "CoreRequestError";
-  constructor(readonly status: number, message: string) { super(message); }
+  /** Core's error code (`EMBEDDING_ENGINE_UNSUPPORTED`, ...), when the answer carried one. */
+  constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
 }
 
 export class CoreControlClient {
@@ -45,7 +46,7 @@ export class CoreControlClient {
     });
     // A proxy or a crashed handler may answer a 5xx without JSON; the status still decides retries.
     const value = await response.json().catch(() => null) as (T & { error?: { code?: string; message?: string } }) | null;
-    if (!response.ok) throw new CoreRequestError(response.status, value?.error?.message ?? `Atomic Core request failed (${response.status})`);
+    if (!response.ok) throw new CoreRequestError(response.status, value?.error?.message ?? `Atomic Core request failed (${response.status})`, value?.error?.code);
     if (value === null) throw new Error("Atomic Core returned an unreadable answer.");
     return value;
   }
@@ -127,7 +128,24 @@ export async function ensureCore(dataDir: string, version: string, signal?: Abor
   try { client = await startCore(dataDir, version, signal); }
   catch (err) { throw toCoreUnavailable(err, "start", signal); }
   if (version === CORE_VERSION) await retireOlderCores(dataDir);
+  await applyPendingEmbeddingDisable(dataDir, version, client);
   return client;
+}
+
+/**
+ * A stop of Core's embedding module that found Core down (or that Core
+ * refused) left its settings enabled, so Core started the module again at
+ * launch: turn it off now. Best effort; on failure it stays pending for
+ * the next start. The caller holds the engine operation lock.
+ */
+export async function applyPendingEmbeddingDisable(dataDir: string, version: string, client: CoreControlClient): Promise<void> {
+  if (!existsSync(coreEmbeddingRecordPath(dataDir))) return;
+  const record = readCoreEmbeddingRecord(dataDir);
+  if (!record?.disablePending || record.coreVersion !== version) return;
+  try {
+    await client.call("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 });
+    unlinkSync(coreEmbeddingRecordPath(dataDir));
+  } catch { /* still pending */ }
 }
 
 const retiredDataDirs = new Set<string>();

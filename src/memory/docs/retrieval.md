@@ -5,7 +5,7 @@ Owner: src/memory/
 
 ## Read path
 
-MemoryStore owns bounded SQLite notes and FTS5 recall. The context provider retrieves notes and an index before the turn's steps, filters index entries already recalled, and can expand linked neighbors without duplicating note ids. Optional vector recall is gated by embedding configuration; unavailable optional components must retain the intended fallback.
+MemoryStore owns bounded SQLite notes and FTS5 recall. The context provider retrieves notes and an index before the turn's steps, filters index entries already recalled, and can expand linked neighbors without duplicating note ids. Optional vector recall is gated by embedding configuration; unavailable optional components must retain the intended fallback. Every embed call names its purpose: `document` when a note is written, `query` for recall, `similarity` for the rewriter's embedding gate. A model with task prompts in its catalog entry (EmbeddingGemma 2) gets the matching prefix; other models receive the text unchanged. A model served by Atomic Core's embedding module is reached through Core's control API and attached only when Core reports it on with the catalog's dimension.
 
 The query rewriter is enabled by default and heuristic-gated. Its sub-call uses separate runner/slot/provider posture; it must not change the main turn's sticky provider. Index and recalled previews are bounded prompt slices, not a dump of the durable store.
 

@@ -137,9 +137,9 @@ describe("onboarding reducer", () => {
     it("keeps the embedding offer out of the first run", () => {
       const state = reduceTuiState(withFlow("local_download"), {
         type: "local_models_embedding_onboarding_opened",
-        modelId: "embeddinggemma-300m",
-        name: "EmbeddingGemma 300M",
-        sizeLabel: "~84 MB",
+        modelId: "embeddinggemma-2",
+        name: "EmbeddingGemma 2",
+        sizeLabel: "310 MB",
       });
       expect(state.localModelsPanel.embeddingOnboardingPrompt).toBeNull();
       expect(state.onboarding?.step).toBe("local_download");
@@ -149,9 +149,9 @@ describe("onboarding reducer", () => {
       const base = createInitialTuiState(fakeSession(), 50);
       const state = reduceTuiState(base, {
         type: "local_models_embedding_onboarding_opened",
-        modelId: "embeddinggemma-300m",
-        name: "EmbeddingGemma 300M",
-        sizeLabel: "~84 MB",
+        modelId: "embeddinggemma-2",
+        name: "EmbeddingGemma 2",
+        sizeLabel: "310 MB",
       });
       expect(state.localModelsPanel.embeddingOnboardingPrompt).not.toBeNull();
     });

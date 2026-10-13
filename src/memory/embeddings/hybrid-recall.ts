@@ -89,6 +89,7 @@ export async function recallHybrid(
     const r = await deps.embeddingClient.embed({
       text: opts.query,
       signal: opts.signal,
+      purpose: "query",
     });
     queryVec = r.vector;
   } catch (err) {

@@ -3265,7 +3265,7 @@ export async function modelsStartEmbedding(
   }
   const read = (res: CliResult) => {
     const started = /^embedding: started pid/m.test(res.stdout);
-    return { ...res, started, up: started || /^embedding: already running/m.test(res.stdout) };
+    return { ...res, started, up: started || /^embedding: already (?:running|starting)/m.test(res.stdout) };
   };
   if (cliStandIns.getStore()) return read(await cli(["models", "start-embedding"], 60_000));
   /* Under Atomic Core with its backend not on disk, `models start-embedding`

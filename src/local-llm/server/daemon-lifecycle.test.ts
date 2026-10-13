@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 const execSyncMock = vi.hoisted(() => vi.fn());
@@ -26,6 +26,23 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, totalmem: totalmemMock };
 });
 
+const startCoreEmbeddingMock = vi.hoisted(() => vi.fn());
+const stopCoreEmbeddingMock = vi.hoisted(() => vi.fn());
+const coreEmbeddingStatusMock = vi.hoisted(() => vi.fn());
+vi.mock("../core/core-embedding.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../core/core-embedding.js")>();
+  // Spies over the real stop/status, so every other test keeps their behaviour.
+  stopCoreEmbeddingMock.mockImplementation(actual.stopCoreEmbedding);
+  coreEmbeddingStatusMock.mockImplementation(actual.coreEmbeddingStatus);
+  return {
+    ...actual,
+    startCoreEmbedding: startCoreEmbeddingMock,
+    stopCoreEmbedding: stopCoreEmbeddingMock,
+    coreEmbeddingStatus: coreEmbeddingStatusMock,
+  };
+});
+import { coreEmbeddingRecordPath, CORE_VERSION, readCoreEmbeddingRecord, writeCoreJson } from "../core/core-state.js";
+
 import {
   resolveEmbeddingPidFilePath,
   resolveLogFilePath,
@@ -40,6 +57,7 @@ import {
   DaemonHealthError,
   ForeignDaemonError,
   getDaemonStatus,
+  getEmbeddingDaemonStatus,
   probeThroughput,
   readLaunchRecord,
   readReusableThroughput,
@@ -444,6 +462,92 @@ describe("buildEmbeddingServerArgs (memory-v2 phase 1B)", () => {
     );
     expect(args[args.indexOf("-ngl") + 1]).toBe("0");
     expect(args).not.toContain("--device");
+  });
+});
+
+describe("embedding models that run in Atomic Core's module", () => {
+  const dirs: string[] = [];
+  beforeEach(() => {
+    spawnMock.mockReset();
+    stopCoreEmbeddingMock.mockClear();
+    coreEmbeddingStatusMock.mockClear();
+  });
+  afterEach(() => {
+    startCoreEmbeddingMock.mockReset();
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  function dataDirWithGemma(): string {
+    const dataDir = mkdtempSync(join(tmpdir(), "core-module-embed-"));
+    dirs.push(dataDir);
+    const modelPath = resolveModelFilePath(dataDir, "embeddinggemma-2", "embeddinggemma-2-Q8_0.gguf");
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, "gguf");
+    return dataDir;
+  }
+
+  it.each(["llama-server", undefined] as const)("fails at once on engine %s, naming the switch", async (engine) => {
+    const dataDir = dataDirWithGemma();
+    await expect(
+      startEmbeddingDaemon({ dataDir, modelId: "embeddinggemma-2", port: 19092, ...(engine ? { engine } : {}) }),
+    ).rejects.toThrow("EmbeddingGemma 2 runs on the Atomic Core engine; switch with `atomic-agent models engine atomic-core`");
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(startCoreEmbeddingMock).not.toHaveBeenCalled();
+  });
+
+  it("starts in Core's module with no pid file and reports Core's process", async () => {
+    const dataDir = dataDirWithGemma();
+    startCoreEmbeddingMock.mockResolvedValue({ state: "ready", dims: 768, pid: 77, port: 39001 });
+    await expect(
+      startEmbeddingDaemon({ engine: "atomic-core", dataDir, modelId: "embeddinggemma-2", port: 19092 }),
+    ).resolves.toEqual({ pid: 77, port: 39001 });
+    expect(startCoreEmbeddingMock).toHaveBeenCalledWith(dataDir, expect.objectContaining({
+      modelId: "embeddinggemma-2",
+      modelPath: resolveModelFilePath(dataDir, "embeddinggemma-2", "embeddinggemma-2-Q8_0.gguf"),
+    }));
+    expect(existsSync(resolveEmbeddingPidFilePath(dataDir))).toBe(false);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  const gemmaRecord = (dataDir: string, change: object = {}) =>
+    writeCoreJson(coreEmbeddingRecordPath(dataDir), { coreVersion: CORE_VERSION, modelId: "embeddinggemma-2", modelPath: "/m.gguf", ...change });
+
+  it("a leftover module record of another model neither hides nor stands in for the configured model", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir);
+    await expect(getEmbeddingDaemonStatus(dataDir, 19092, "nomic-embed-text-v1.5")).resolves.toMatchObject({ running: false, pid: null, port: 19092 });
+    expect(coreEmbeddingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("reports Core's module for the model it was started for", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir);
+    coreEmbeddingStatusMock.mockResolvedValueOnce({ state: "starting", enabled: true, pid: null, port: null });
+    await expect(getEmbeddingDaemonStatus(dataDir, 19092, "embeddinggemma-2")).resolves.toEqual({ running: true, pid: null, port: 19092, healthy: false, loading: true });
+  });
+
+  it("does not ask Core about a module whose stop is still pending", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir, { disablePending: true });
+    await expect(getEmbeddingDaemonStatus(dataDir, 19092, "embeddinggemma-2")).resolves.toMatchObject({ running: false });
+    expect(coreEmbeddingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("turns a leftover module off before starting another embedding model", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir);
+    // No backend here, so the start itself fails after the cleanup.
+    await startEmbeddingDaemon({ engine: "llama-server", dataDir, modelId: "nomic-embed-text-v1.5", port: 19092 }).catch(() => {});
+    expect(stopCoreEmbeddingMock).toHaveBeenCalledWith(dataDir, { retire: false });
+    // Core is not running: never started for this, the disable waits for its next start.
+    expect(readCoreEmbeddingRecord(dataDir)).toMatchObject({ disablePending: true });
+  });
+
+  it("refuses a module that answers another vector length", async () => {
+    const dataDir = dataDirWithGemma();
+    startCoreEmbeddingMock.mockResolvedValue({ state: "ready", dims: 1024, pid: 77, port: 39001 });
+    await expect(
+      startEmbeddingDaemon({ engine: "atomic-core", dataDir, modelId: "embeddinggemma-2", port: 19092 }),
+    ).rejects.toThrow("1024-dim vectors, expected 768");
   });
 });
 
