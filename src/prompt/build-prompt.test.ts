@@ -9,6 +9,7 @@ import {
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
 import { buildPrompt } from "./build-prompt.js";
+import { PROFILE_SECTION_CAPTION } from "../memory/profile-renderer.js";
 import { FUSION_GUIDANCE } from "./fusion-guidance.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 import { createEmptySessionState } from "../session/session-state.js";
@@ -1582,6 +1583,31 @@ describe("buildPrompt profile section", () => {
     expect(prompt.tail).toContain("- language: ru");
   });
 
+  it("captions the facts so a key does not read as a skill or tool name (ATO-320)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [
+        {
+          key: "hobby_builder",
+          value: "true",
+          updatedAt: 1,
+          pinned: true,
+          keywords: [],
+        },
+      ],
+    });
+    expect(prompt.tail).toContain(
+      `### profile\n${PROFILE_SECTION_CAPTION}\n- hobby_builder: true\n`,
+    );
+    // The caption is part of the section, so the budget pays for it.
+    expect(prompt.tokens.profile).toBe(
+      estimateTokens(`${PROFILE_SECTION_CAPTION}\n- hobby_builder: true`),
+    );
+  });
+
   it("keeps the stable prefix byte-stable across profile edits", () => {
     const empty = buildPrompt({
       session: mkSession(),
@@ -1736,7 +1762,7 @@ describe("buildPrompt profile clip (issue #407)", () => {
         },
       ],
       userMessage: "deploy now",
-      profileMaxTokens: 40,
+      profileMaxTokens: 56,
     });
     const start = prompt.tail.indexOf("### profile\n") + "### profile\n".length;
     const section = prompt.tail.slice(
@@ -1745,6 +1771,7 @@ describe("buildPrompt profile clip (issue #407)", () => {
     );
     expect(section).toBe(
       [
+        PROFILE_SECTION_CAPTION,
         "- z_consent: never share the owner's files without asking",
         "… [truncated] 1 more profile fact not shown (memory.profile.maxTokens)",
       ].join("\n"),
@@ -1754,9 +1781,9 @@ describe("buildPrompt profile clip (issue #407)", () => {
       rendered: 1,
       dropped: 1,
       pinnedDropped: 0,
-      maxTokens: 40,
+      maxTokens: 56,
     });
-    expect(prompt.tokens.profile).toBeLessThanOrEqual(40);
+    expect(prompt.tokens.profile).toBeLessThanOrEqual(56);
   });
 
   it("reports no clip when the profile fits", () => {

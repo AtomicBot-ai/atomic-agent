@@ -4,6 +4,7 @@ import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
 import { clipProfileSection } from "./clip-profile-section.js";
+import { PROFILE_SECTION_CAPTION } from "../memory/profile-renderer.js";
 import {
   renderMemoryIndexSection,
   renderRecalledSection,
@@ -214,6 +215,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
           contextualKeywordGate,
           profileFilterThreshold,
           maxTokens: profileMaxTokens,
+          caption: PROFILE_SECTION_CAPTION,
         })
       : null;
   const profile = profileSection?.text ?? null;

@@ -32,6 +32,13 @@ export interface ClippedProfileSection {
 
 export interface ClipProfileSectionOptions extends RenderProfileOptions {
   maxTokens: number;
+  /**
+   * A line rendered above the facts and paid for out of `maxTokens`.
+   * Shown only together with at least one fact: the empty sentinel and
+   * a marker-only section go out without it. Omitted, the output is
+   * byte-for-byte what it was before the option existed.
+   */
+  caption?: string;
 }
 
 /**
@@ -62,16 +69,23 @@ export function clipProfileSection(
     const empty = fits(PROFILE_SECTION_EMPTY, maxTokens);
     return { text: empty ? PROFILE_SECTION_EMPTY : "" };
   }
+  const head = options.caption !== undefined ? [options.caption] : [];
   const lines = selected.map(renderProfileLine);
-  const full = lines.join("\n");
+  const full = [...head, ...lines].join("\n");
   if (estimateTokens(full) <= maxTokens) return { text: full };
 
   // Room for the marker at its longest: the count it will print can
   // only be smaller, and its word count never changes.
   const reserve = measure(omittedMarker(lines.length));
-  const kept: string[] = [];
+  // The caption is priced like a kept line, so every fact pays for it.
+  const kept: string[] = [...head];
   let chars = 0;
   let words = 0;
+  for (const line of head) {
+    const size = measure(line);
+    chars += size.chars;
+    words += size.words;
+  }
   let dropped = 0;
   let pinnedDropped = 0;
   for (let i = 0; i < lines.length; i += 1) {
@@ -93,16 +107,17 @@ export function clipProfileSection(
       if (selected[i]!.pinned) pinnedDropped += 1;
     }
   }
+  const rendered = kept.length - head.length;
   const marker = omittedMarker(dropped);
   const text =
-    kept.length > 0
+    rendered > 0
       ? [...kept, marker].join("\n")
       : fits(marker, maxTokens)
         ? marker
         : "";
   return {
     text,
-    clip: { rendered: kept.length, dropped, pinnedDropped, maxTokens },
+    clip: { rendered, dropped, pinnedDropped, maxTokens },
   };
 }
 
