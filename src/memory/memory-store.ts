@@ -16,6 +16,12 @@ import {
 
 export type MemorySource = "agent" | "user";
 
+/**
+ * Most vectors one hybrid recall scans; matches the config default
+ * `memory.embeddings.bruteForceCeiling`.
+ */
+const DEFAULT_BRUTE_FORCE_CEILING = 2000;
+
 export interface MemoryEntry {
   id: number;
   content: string;
@@ -102,7 +108,7 @@ export interface MemoryStoreOptions {
     fts5Weight?: number;
     /** 0..1 weight for cosine. Defaults to 0.5. */
     vectorWeight?: number;
-    /** Brute-force cosine ceiling. Default 200 — matches MEMORY_FABRIC_V2.md §13.7.1. */
+    /** Most vectors one recall scans (see `recallHybrid`). Default 2000. */
     bruteForceCeiling?: number;
   };
 }
@@ -249,9 +255,11 @@ export class MemoryStore {
   private readonly metrics: AgentMetrics | undefined;
   private embeddingWriter: EmbeddingWriter | undefined;
   private embeddingStore: EmbeddingStore | undefined;
-  private readonly embeddingFts5Weight: number;
-  private readonly embeddingVectorWeight: number;
-  private readonly embeddingBruteForceCeiling: number;
+  // Set at construction or by `attachEmbeddings` (the runtime attaches
+  // after its embedding probe, with the configured values).
+  private embeddingFts5Weight: number;
+  private embeddingVectorWeight: number;
+  private embeddingBruteForceCeiling: number;
   private readonly now: () => number;
   private readonly insertStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
@@ -305,7 +313,7 @@ export class MemoryStore {
     this.embeddingFts5Weight = options.embeddings?.fts5Weight ?? 0.5;
     this.embeddingVectorWeight = options.embeddings?.vectorWeight ?? 0.5;
     this.embeddingBruteForceCeiling =
-      options.embeddings?.bruteForceCeiling ?? 200;
+      options.embeddings?.bruteForceCeiling ?? DEFAULT_BRUTE_FORCE_CEILING;
     this.now = options.now ?? Date.now;
     this.insertStmt = this.db.prepare(
       `INSERT INTO memories
@@ -997,9 +1005,16 @@ export class MemoryStore {
   attachEmbeddings(args: {
     writer: EmbeddingWriter;
     store: EmbeddingStore;
+    /** `memory.embeddings.*`; omitted values keep the current ones. */
+    fts5Weight?: number;
+    vectorWeight?: number;
+    bruteForceCeiling?: number;
   }): void {
     this.embeddingWriter = args.writer;
     this.embeddingStore = args.store;
+    if (args.fts5Weight !== undefined) this.embeddingFts5Weight = args.fts5Weight;
+    if (args.vectorWeight !== undefined) this.embeddingVectorWeight = args.vectorWeight;
+    if (args.bruteForceCeiling !== undefined) this.embeddingBruteForceCeiling = args.bruteForceCeiling;
   }
 
   detachEmbeddings(): void {
@@ -1073,6 +1088,9 @@ export class MemoryStore {
       fts5Weight: this.embeddingFts5Weight,
       vectorWeight: this.embeddingVectorWeight,
       ...(this.metrics ? { metrics: this.metrics } : {}),
+      // Notes found by meaning alone come back as full entries, the same
+      // shape (and the same recall_count bump below) as keyword hits.
+      hydrate: (ids) => this.getMany(ids),
     };
     const blended = await recallHybrid(deps, {
       k,
@@ -1083,6 +1101,19 @@ export class MemoryStore {
     });
     if (blended.length > 0) this.touchOnRecall(blended);
     return blended;
+  }
+
+  /** Entries by id, in no particular order; ids that do not exist are left out. */
+  private getMany(ids: readonly number[]): MemoryEntry[] {
+    if (ids.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT id, content, created_at, updated_at, source, session_id, working_dir, tags,
+                recall_count, last_recalled_at
+           FROM memories WHERE id IN (${ids.map(() => "?").join(", ")})`,
+      )
+      .all(...ids) as MemoryRow[];
+    return rows.map(rowToEntry);
   }
 
   /**

@@ -78,7 +78,11 @@ export function createMemoryDefaults(): UserMemoryConfig {
       // bootstrap pins this invariant in phase 1B onwards.
       fts5Weight: 0.5,
       vectorWeight: 0.5,
-      bruteForceCeiling: 200,
+      // Most vectors one recall scans (above it: the newest this many
+      // plus the keyword hits'). Reading and decoding 2 000 × 768 floats
+      // and as many dot products is a few milliseconds per recall; it
+      // bounds a scan, it no longer turns cosine off.
+      bruteForceCeiling: 2000,
       backfill: true,
     },
     links: {

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { endianness } from "node:os";
 
 /**
  * Memory-v2 phase 1B. Read/write surface for the `memory_embeddings`
@@ -31,6 +32,7 @@ export class EmbeddingStore {
   private readonly upsertStmt: Database.Statement;
   private readonly getStmt: Database.Statement;
   private readonly listByModelStmt: Database.Statement;
+  private readonly listNewestByModelStmt: Database.Statement;
   private readonly countByModelStmt: Database.Statement;
   private readonly countPerModelStmt: Database.Statement;
   private readonly deleteByIdStmt: Database.Statement;
@@ -59,6 +61,18 @@ export class EmbeddingStore {
          FROM memory_embeddings e
          JOIN memories m ON m.id = e.memory_id
         WHERE e.model = ?`,
+    );
+    // Newest by note id (insertion order); the `(memory_id, model)` key
+    // and the model index keep this a bounded read.
+    this.listNewestByModelStmt = this.db.prepare(
+      `SELECT e.memory_id AS memory_id, e.model AS model, e.dim AS dim,
+              e.embedding AS embedding, e.created_at AS created_at,
+              m.working_dir AS working_dir, m.tags AS tags
+         FROM memory_embeddings e
+         JOIN memories m ON m.id = e.memory_id
+        WHERE e.model = ?
+        ORDER BY e.memory_id DESC
+        LIMIT ?`,
     );
     this.countByModelStmt = this.db.prepare(
       `SELECT COUNT(*) AS count FROM memory_embeddings WHERE model = ?`,
@@ -149,11 +163,21 @@ export class EmbeddingStore {
     }));
   }
 
+  /** The newest `limit` notes' vectors for `model`, newest first; same shape as `listByModel`. */
+  listNewestByModel(model: string, limit: number): Array<
+    EmbeddingRow & {
+      workingDir: string | null;
+      tags: string[];
+    }
+  > {
+    return (this.listNewestByModelStmt.all(model, limit) as ListedRow[]).map(listedRowToEmbedding);
+  }
+
   /**
    * The given notes' vectors for `model`, with the same metadata as
-   * `listByModel`. Hybrid recall uses it above the brute-force ceiling:
-   * cosine only re-ranks the BM25 candidates, so their vectors are all it
-   * needs, whatever the corpus size. Ids without a vector are absent.
+   * `listByModel`. Hybrid recall adds them to the newest vectors above
+   * the brute-force ceiling, so every keyword hit keeps its re-rank. Ids
+   * without a vector are absent.
    */
   listByModelForMemories(model: string, memoryIds: readonly number[]): Array<
     EmbeddingRow & {
@@ -162,15 +186,6 @@ export class EmbeddingStore {
     }
   > {
     if (memoryIds.length === 0) return [];
-    type Row = {
-      memory_id: number;
-      model: string;
-      dim: number;
-      embedding: Buffer;
-      created_at: number;
-      working_dir: string | null;
-      tags: string | null;
-    };
     // One statement per call: the candidate set is a few dozen ids at
     // most (k * 4 BM25 hits), far under SQLite's bound-parameter limit.
     const rows = this.db
@@ -182,16 +197,8 @@ export class EmbeddingStore {
            JOIN memories m ON m.id = e.memory_id
           WHERE e.model = ? AND e.memory_id IN (${memoryIds.map(() => "?").join(", ")})`,
       )
-      .all(model, ...memoryIds) as Row[];
-    return rows.map((r) => ({
-      memoryId: r.memory_id,
-      model: r.model,
-      dim: r.dim,
-      vector: bufferToFloat32(r.embedding, r.dim),
-      createdAt: r.created_at,
-      workingDir: r.working_dir,
-      tags: parseTags(r.tags),
-    }));
+      .all(model, ...memoryIds) as ListedRow[];
+    return rows.map(listedRowToEmbedding);
   }
 
   countByModel(model: string): number {
@@ -217,6 +224,28 @@ export class EmbeddingStore {
   }
 }
 
+type ListedRow = {
+  memory_id: number;
+  model: string;
+  dim: number;
+  embedding: Buffer;
+  created_at: number;
+  working_dir: string | null;
+  tags: string | null;
+};
+
+function listedRowToEmbedding(r: ListedRow): EmbeddingRow & { workingDir: string | null; tags: string[] } {
+  return {
+    memoryId: r.memory_id,
+    model: r.model,
+    dim: r.dim,
+    vector: bufferToFloat32(r.embedding, r.dim),
+    createdAt: r.created_at,
+    workingDir: r.working_dir,
+    tags: parseTags(r.tags),
+  };
+}
+
 function float32ToBuffer(v: Float32Array): Buffer {
   // Copy into a fresh buffer so the SQLite binding does not retain a
   // reference to a possibly-mutated ArrayBuffer.
@@ -231,12 +260,20 @@ function bufferToFloat32(buf: Buffer, dim: number): Float32Array {
       `EmbeddingStore: corrupt blob — expected ${dim * 4} bytes, got ${buf.length}`,
     );
   }
+  // Recall decodes up to `bruteForceCeiling` blobs per query: one copy
+  // of the bytes beats `dim` `readFloatLE` calls. The blob is little-
+  // endian; a big-endian host keeps the portable per-float read.
+  if (LITTLE_ENDIAN_HOST) {
+    return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + dim * 4));
+  }
   const out = new Float32Array(dim);
   for (let i = 0; i < dim; i += 1) {
     out[i] = buf.readFloatLE(i * 4);
   }
   return out;
 }
+
+const LITTLE_ENDIAN_HOST = endianness() === "LE";
 
 function parseTags(raw: string | null): string[] {
   if (!raw) return [];

@@ -177,6 +177,15 @@ describe("embedding backfill wiring", () => {
     await expect(stores.embeddingBackfill?.done).resolves.toBeNull();
   });
 
+  it("attaches embeddings with the configured weights and scan ceiling", async () => {
+    config.memory.embeddings.fts5Weight = 0.2;
+    config.memory.embeddings.vectorWeight = 0.8;
+    config.memory.embeddings.bruteForceCeiling = 123;
+    const attach = vi.spyOn(MemoryStore.prototype, "attachEmbeddings");
+    stores = await bootWithClient();
+    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ fts5Weight: 0.2, vectorWeight: 0.8, bruteForceCeiling: 123 }));
+  });
+
   it("does not start when memory.embeddings.backfill is off", async () => {
     seedNotes("an older note");
     config.memory.embeddings.backfill = false;

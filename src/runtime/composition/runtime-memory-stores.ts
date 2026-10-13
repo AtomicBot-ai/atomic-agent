@@ -95,7 +95,15 @@ export async function createRuntimeMemoryStores(args: {
         store: embStore,
         metrics,
       });
-      notesStore.attachEmbeddings({ writer, store: embStore });
+      notesStore.attachEmbeddings({
+        writer,
+        store: embStore,
+        // Parsed from config but, before ATO-366, never passed on: recall
+        // ran with the store's built-in weights and ceiling.
+        fts5Weight: config.memory.embeddings.fts5Weight,
+        vectorWeight: config.memory.embeddings.vectorWeight,
+        bruteForceCeiling: config.memory.embeddings.bruteForceCeiling,
+      });
       embeddingHealth = "ok";
       if (config.memory.embeddings.backfill) {
         embeddingBackfill = startEmbeddingBackfill({
