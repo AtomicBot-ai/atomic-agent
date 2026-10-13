@@ -152,6 +152,27 @@ describe("tool_result over SSE", () => {
     expect(String(frame.summary).endsWith("…")).toBe(true);
   });
 
+  it("carries a tool's keyRequired as key_required, and nothing for a malformed one (ATO-327)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const keyRequired = {
+      provider: "exa",
+      reason: "rate_limited",
+      getKeyUrl: "https://dashboard.exa.ai/api-keys",
+      envVar: "EXA_API_KEY",
+    };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "os.web.search", status: "error", summary: "Web search is unavailable", details: { keyRequired } }), 0));
+    hook(executed(result({ tool: "os.web.search", details: { keyRequired: { provider: "exa", reason: 7 } } }), 1));
+    hook(executed(result({ tool: "os.web.search" }), 2));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.key_required).toEqual(keyRequired);
+    expect(sent[1]).not.toHaveProperty("key_required");
+    expect(sent[2]).not.toHaveProperty("key_required");
+  });
+
   it("sends nothing to an OpenAI-compatible client", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(false));
