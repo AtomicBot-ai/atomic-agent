@@ -510,6 +510,7 @@ export function loadConfig(): AtomicAgentConfig {
         fts5Weight: user.memory.embeddings.fts5Weight,
         vectorWeight: user.memory.embeddings.vectorWeight,
         bruteForceCeiling: user.memory.embeddings.bruteForceCeiling,
+        backfill: user.memory.embeddings.backfill,
       },
       links: {
         enabled: user.memory.links.enabled,

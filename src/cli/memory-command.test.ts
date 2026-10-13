@@ -5,8 +5,14 @@ import { join } from "node:path";
 
 import { resetConfigCache } from "../config/index.js";
 import { MemoryStore } from "../memory/memory-store.js";
+import {
+  EmbeddingUnavailableError,
+  type EmbeddingClient,
+} from "../memory/embeddings/embedding-client.js";
+import { EmbeddingStore } from "../memory/embeddings/embedding-store.js";
+import type { MemoryEmbeddingConnection } from "../memory/embeddings/memory-embedding-connection.js";
 
-import { memoryCommand } from "./memory-command.js";
+import { handleReindex, memoryCommand } from "./memory-command.js";
 
 describe("memoryCommand", () => {
   let stateDir: string;
@@ -120,5 +126,121 @@ describe("memoryCommand", () => {
     const code = await memoryCommand(["export", "--vault", vaultDir]);
     expect(code).toBe(1);
     expect(stderr()).toMatch(/memory export failed: no memory database/);
+  });
+  describe("reindex", () => {
+    const dbFile = () => join(stateDir, "memory.sqlite");
+    function seedNotes(...contents: string[]): number[] {
+      const store = new MemoryStore({ dbFile: dbFile(), maxEntries: 100 });
+      try {
+        return contents.map((content) => store.store({ content }).id);
+      } finally {
+        store.close();
+      }
+    }
+    function withVectors<T>(fn: (vectors: EmbeddingStore) => T): T {
+      const store = new MemoryStore({ dbFile: dbFile(), maxEntries: 100 });
+      try {
+        return fn(new EmbeddingStore({ db: store.getDatabaseHandleForEmbeddings() }));
+      } finally {
+        store.close();
+      }
+    }
+    function fakeClient(model: string, embed?: EmbeddingClient["embed"]): EmbeddingClient {
+      return {
+        dim: 2,
+        model,
+        embed: embed ?? (async () => ({ vector: new Float32Array([1, 0]), model })),
+      };
+    }
+    const reachable = (client: EmbeddingClient) => async (): Promise<MemoryEmbeddingConnection> => ({
+      state: "reachable",
+      modelId: client.model,
+      createClient: () => client,
+    });
+    const noSignal = { onInterrupt: () => () => {} };
+
+    it("exits 1 with a hint when embeddings are off", async () => {
+      const code = await memoryCommand(["reindex"]);
+      expect(code).toBe(1);
+      expect(stderr()).toMatch(/memory embeddings are off/);
+    });
+
+    it("exits 1 and says how to start the model when it does not answer", async () => {
+      const code = await handleReindex([], {
+        ...noSignal,
+        connect: async () => ({ state: "unreachable", modelId: "m", why: "embedding daemon at http://127.0.0.1:1 is unreachable" }),
+      });
+      expect(code).toBe(1);
+      expect(stderr()).toMatch(/is unreachable; start it with: atomic-agent models start-embedding/);
+    });
+
+    it("embeds the notes missing a vector and exits 0", async () => {
+      seedNotes("first", "second");
+      const code = await handleReindex([], { ...noSignal, connect: reachable(fakeClient("fake")) });
+      expect(code).toBe(0);
+      expect(stdout()).toMatch(/embedded 2 notes with fake; 0 left without a vector/);
+      expect(withVectors((v) => v.countByModel("fake"))).toBe(2);
+    });
+
+    it("prints the result as JSON with --json", async () => {
+      seedNotes("first");
+      const code = await handleReindex(["--json"], { ...noSignal, connect: reachable(fakeClient("fake")) });
+      expect(code).toBe(0);
+      expect(JSON.parse(stdout())).toEqual({ model: "fake", embedded: 1, skipped: 0, remaining: 0 });
+    });
+
+    it("exits 1 when the model stops answering mid-run, keeping what was done", async () => {
+      seedNotes("first", "second");
+      let calls = 0;
+      const client = fakeClient("fake", async () => {
+        calls += 1;
+        if (calls > 1) throw new EmbeddingUnavailableError("down");
+        return { vector: new Float32Array([1, 0]), model: "fake" };
+      });
+      const code = await handleReindex([], { ...noSignal, connect: reachable(client) });
+      expect(code).toBe(1);
+      expect(stdout()).toMatch(/embedded 1 notes with fake; 1 left without a vector/);
+      expect(stderr()).toMatch(/atomic-agent models start-embedding/);
+    });
+
+    it("exits 130 when interrupted", async () => {
+      seedNotes("first", "second");
+      let abort: () => void = () => {};
+      const client = fakeClient("fake", async () => {
+        abort();
+        return { vector: new Float32Array([1, 0]), model: "fake" };
+      });
+      const code = await handleReindex([], {
+        connect: reachable(client),
+        onInterrupt: (fn) => { abort = fn; return () => {}; },
+      });
+      expect(code).toBe(130);
+      expect(stderr()).toMatch(/interrupted/);
+    });
+
+    it("keeps other models' vectors unless --prune, and prunes them once the new model covers every note", async () => {
+      const [id] = seedNotes("first");
+      withVectors((v) => v.upsert({ memoryId: id!, model: "old", dim: 2, vector: new Float32Array([0, 1]), createdAt: 1 }));
+      expect(await handleReindex([], { ...noSignal, connect: reachable(fakeClient("fake")) })).toBe(0);
+      expect(withVectors((v) => v.countByModel("old"))).toBe(1);
+      stdoutChunks.length = 0;
+      expect(await handleReindex(["--prune", "--json"], { ...noSignal, connect: reachable(fakeClient("fake")) })).toBe(0);
+      expect(JSON.parse(stdout())).toMatchObject({ embedded: 0, remaining: 0, pruned: [{ model: "old", deleted: 1 }] });
+      expect(withVectors((v) => v.countPerModel())).toEqual([{ model: "fake", count: 1 }]);
+    });
+
+    it("does not prune while notes still lack a vector for the current model", async () => {
+      const [id] = seedNotes("first", "second");
+      withVectors((v) => v.upsert({ memoryId: id!, model: "old", dim: 2, vector: new Float32Array([0, 1]), createdAt: 1 }));
+      const client = fakeClient("fake", async () => { throw new EmbeddingUnavailableError("down"); });
+      expect(await handleReindex(["--prune"], { ...noSignal, connect: reachable(client) })).toBe(1);
+      expect(withVectors((v) => v.countByModel("old"))).toBe(1);
+      expect(stdout()).toMatch(/nothing pruned/);
+    });
+
+    it("rejects an unknown option", async () => {
+      expect(await handleReindex(["--all"], noSignal)).toBe(2);
+      expect(stderr()).toMatch(/unknown option: --all/);
+    });
   });
 });

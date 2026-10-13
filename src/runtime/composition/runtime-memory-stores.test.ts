@@ -8,10 +8,12 @@ import type { AtomicAgentConfig } from "../../config/config-schema.js";
 import { AgentMetrics, METRIC_NAMES } from "../../tracing/agent-metrics.js";
 import { MetricsCollector, type MetricSample } from "../../tracing/metrics-collector.js";
 import * as health from "../../llm/llama-server-health.js";
-import * as embeddings from "../../memory/embeddings/index.js";
-import { LlamaEmbeddingClient } from "../../memory/embeddings/embedding-client.js";
+import * as embeddings from "../../memory/embeddings/local-embedding-client.js";
+import { LlamaEmbeddingClient, type EmbeddingClient } from "../../memory/embeddings/embedding-client.js";
+import { EmbeddingStore } from "../../memory/embeddings/embedding-store.js";
+import { EmbeddingWriter } from "../../memory/embeddings/embedding-writer.js";
 import { MemoryStore } from "../../memory/memory-store.js";
-import { createRuntimeMemoryStores, probeCoreEmbedding, type RuntimeMemoryStores } from "./runtime-memory-stores.js";
+import { createRuntimeMemoryStores, probeCoreEmbedding, startEmbeddingBackfill, type RuntimeMemoryStores } from "./runtime-memory-stores.js";
 import type { CoreEmbeddingStatus } from "../../local-llm/core/core-embedding.js";
 
 let dir: string;
@@ -34,8 +36,9 @@ beforeEach(() => {
   config.localModels.embeddings.enabled = false;
   samples.length = 0; stores = undefined;
 });
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  await stores?.embeddingBackfill?.stop();
   if (stores) {
     // Four connections have runtime ownership; wrappers borrow notesStore's connection.
     stores.profileStore.close(); stores.lessonStore.close(); stores.procedureStore.close(); stores.notesStore.close();
@@ -147,6 +150,70 @@ describe("runtime memory stores construction", () => {
     context.run({ sessionId: "first" }, () => stores?.profileStore.set("first", "one", { pinned: false }));
     context.run({ sessionId: "second" }, () => stores?.profileStore.set("second", "two", { pinned: false }));
     expect(events).toEqual([{ sessionId: "second", count: 1 }]);
+  });
+});
+
+describe("embedding backfill wiring", () => {
+  function seedNotes(...contents: string[]): void {
+    const seed = new MemoryStore({ dbFile: config.paths.memoryDbFile, maxEntries: 100 });
+    try { for (const content of contents) seed.store({ content }); } finally { seed.close(); }
+  }
+  async function bootWithClient(): Promise<RuntimeMemoryStores> {
+    enabledEmbedding();
+    vi.spyOn(health, "checkLlamaServer").mockResolvedValue({ reachable: true, status: 200, kind: "llama-server", error: null, latencyMs: 1 });
+    const client = new LlamaEmbeddingClient({ model: "nomic-embed-text-v1.5", dim: 768, url: "http://127.0.0.1:1" });
+    vi.spyOn(client, "embed").mockImplementation(async () => unexpected());
+    vi.spyOn(embeddings, "createLocalEmbeddingClient").mockReturnValue(client);
+    return createRuntimeMemoryStores({ config, metrics, onProfileEvicted: unexpected });
+  }
+
+  it("starts in the background when notes lack a vector, and stops before its first embed when shut down early", async () => {
+    seedNotes("an older note");
+    stores = await bootWithClient();
+    expect(stores.embeddingHealth).toBe("ok");
+    expect(stores.embeddingBackfill).not.toBeNull();
+    // A short-lived runtime (`run`, `task run`) shuts down inside the start delay: nothing is embedded.
+    await stores.embeddingBackfill?.stop();
+    await expect(stores.embeddingBackfill?.done).resolves.toBeNull();
+  });
+
+  it("does not start when memory.embeddings.backfill is off", async () => {
+    seedNotes("an older note");
+    config.memory.embeddings.backfill = false;
+    stores = await bootWithClient();
+    expect(stores.embeddingHealth).toBe("ok");
+    expect(stores.embeddingBackfill).toBeNull();
+  });
+
+  it("does not start when every note already has a vector, nor without embeddings", async () => {
+    stores = await bootWithClient();
+    expect(stores.embeddingBackfill).toBeNull();
+    stores.profileStore.close(); stores.lessonStore.close(); stores.procedureStore.close(); stores.notesStore.close();
+    vi.restoreAllMocks();
+    seedNotes("a note");
+    config.memory.embeddings.enabled = false;
+    stores = await createRuntimeMemoryStores({ config, metrics, onProfileEvicted: unexpected });
+    expect(stores.embeddingBackfill).toBeNull();
+  });
+
+  it("embeds the pending notes after the delay and logs one line at start and one at the end", async () => {
+    seedNotes("first", "second");
+    const notes = new MemoryStore({ dbFile: config.paths.memoryDbFile, maxEntries: 100 });
+    try {
+      const db = notes.getDatabaseHandleForEmbeddings();
+      const client: EmbeddingClient = { dim: 2, model: "fake", embed: async () => ({ vector: new Float32Array([1, 0]), model: "fake" }) };
+      const writer = new EmbeddingWriter({ client, store: new EmbeddingStore({ db }) });
+      const lines: Array<[string, unknown]> = [];
+      const handle = startEmbeddingBackfill({ db, writer, logger: { info: (message, context) => lines.push([message, context]) }, startDelayMs: 0, pauseMs: 0 });
+      await expect(handle?.done).resolves.toEqual({ model: "fake", embedded: 2, skipped: 0, remaining: 0 });
+      expect(lines).toEqual([
+        ["memory embeddings backfill started", { model: "fake", pending: 2 }],
+        ["memory embeddings backfill finished", { model: "fake", embedded: 2, skipped: 0, remaining: 0 }],
+      ]);
+      expect(startEmbeddingBackfill({ db, writer, startDelayMs: 0 })).toBeNull();
+    } finally {
+      notes.close();
+    }
   });
 });
 

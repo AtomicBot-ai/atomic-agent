@@ -32,6 +32,7 @@ export class EmbeddingStore {
   private readonly getStmt: Database.Statement;
   private readonly listByModelStmt: Database.Statement;
   private readonly countByModelStmt: Database.Statement;
+  private readonly countPerModelStmt: Database.Statement;
   private readonly deleteByIdStmt: Database.Statement;
   private readonly deleteByModelStmt: Database.Statement;
 
@@ -61,6 +62,10 @@ export class EmbeddingStore {
     );
     this.countByModelStmt = this.db.prepare(
       `SELECT COUNT(*) AS count FROM memory_embeddings WHERE model = ?`,
+    );
+    this.countPerModelStmt = this.db.prepare(
+      `SELECT model, COUNT(*) AS count FROM memory_embeddings
+        GROUP BY model ORDER BY model`,
     );
     this.deleteByIdStmt = this.db.prepare(
       `DELETE FROM memory_embeddings WHERE memory_id = ?`,
@@ -147,6 +152,11 @@ export class EmbeddingStore {
   countByModel(model: string): number {
     const row = this.countByModelStmt.get(model) as { count: number };
     return row.count;
+  }
+
+  /** Vector counts per model, for pruning the models no longer in use. */
+  countPerModel(): Array<{ model: string; count: number }> {
+    return this.countPerModelStmt.all() as Array<{ model: string; count: number }>;
   }
 
   /** Delete every embedding for a single `memoryId` across all models. */

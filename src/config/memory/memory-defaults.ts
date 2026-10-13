@@ -79,6 +79,7 @@ export function createMemoryDefaults(): UserMemoryConfig {
       fts5Weight: 0.5,
       vectorWeight: 0.5,
       bruteForceCeiling: 200,
+      backfill: true,
     },
     links: {
       // Phase 2 — reactive link graph + recall BFS expansion.

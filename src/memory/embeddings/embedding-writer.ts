@@ -20,6 +20,8 @@ import type { EmbeddingStore } from "./embedding-store.js";
  * elsewhere, route it through here so the metric/log contract stays
  * uniform.
  */
+export type EmbeddingWriteOutcome = "stored" | "unavailable" | "failed";
+
 export interface EmbeddingWriterDeps {
   client: EmbeddingClient;
   store: EmbeddingStore;
@@ -52,9 +54,28 @@ export class EmbeddingWriter {
    * Never throws — see module doc.
    */
   async writeFor(memoryId: number, content: string): Promise<boolean> {
+    return (await this.write(memoryId, content)) === "stored";
+  }
+
+  /**
+   * `writeFor` that says why a write did not land: `unavailable` is the
+   * client's typed transport error (the model is down or the request
+   * was aborted), `failed` anything else. The backfill stops on either
+   * instead of walking the rest of the corpus into the same error.
+   * Never throws.
+   */
+  async write(
+    memoryId: number,
+    content: string,
+    signal?: AbortSignal,
+  ): Promise<EmbeddingWriteOutcome> {
     const started = this.now();
     try {
-      const result = await this.client.embed({ text: content, purpose: "document" });
+      const result = await this.client.embed({
+        text: content,
+        purpose: "document",
+        ...(signal ? { signal } : {}),
+      });
       this.store.upsert({
         memoryId,
         model: result.model,
@@ -66,21 +87,15 @@ export class EmbeddingWriter {
         model: result.model,
         durationMs: this.now() - started,
       });
-      return true;
+      return "stored";
     } catch (err) {
-      if (err instanceof EmbeddingUnavailableError) {
-        this.metrics?.recordMemoryEmbeddingsFallback({
-          reason: "embed_failed",
-        });
-        return false;
-      }
-      // Anything else (programmer error, bug in EmbeddingStore) we
-      // also swallow but tag the fallback reason narrowly so the
-      // counter does not pretend it was the daemon's fault.
+      // Both branches count as `embed_failed`; only the returned outcome
+      // tells a daemon outage from a programmer error (a bug in
+      // EmbeddingStore, a dimension mismatch).
       this.metrics?.recordMemoryEmbeddingsFallback({
         reason: "embed_failed",
       });
-      return false;
+      return err instanceof EmbeddingUnavailableError ? "unavailable" : "failed";
     }
   }
 }
