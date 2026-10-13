@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
+import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { describeFailedAttempts } from "../llm/fallback/index.js";
 import {
   contextUsageFromPrompt,
@@ -935,6 +936,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         ? "Context compaction cancelled."
         : `Context compaction failed: ${(event.result.message ?? "unknown error").replace(/[.!?]+$/, "")}. Existing context retained; history trimming remains available.`,
       });
+    case "history_trimmed":
+      // ATO-295: the packer left older history out of the prompt. The
+      // loop says so once per cut, so this cannot fill the transcript.
+      return appendChatMessage(state, { role: "system", text: HISTORY_TRIMMED_NOTICE });
     case "profile_clipped": {
       // Issue #407: the clip used to show only as a `[truncated]` inside
       // a prompt nobody reads. The loop fires this once per session, and

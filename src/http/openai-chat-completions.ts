@@ -31,6 +31,7 @@ import {
   type SseWriter,
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
+import { maintenanceFrame } from "./stream-maintenance-frames.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
@@ -344,6 +345,8 @@ async function handleStream(
  *    else.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
+ *  - compaction lifecycle and `history_trimmed` → named frames of the
+ *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
  *    whether extensions are opted in)
  *
@@ -585,6 +588,13 @@ export function buildStreamEventHook(
             : {}),
         });
       }
+      return;
+    }
+    /* ATO-259 / ATO-295: compaction status and the packer's cut, so a
+       host can say why the turn is quiet and what the model lost. */
+    const maintenance = maintenanceFrame(event, env.session.id);
+    if (maintenance) {
+      if (env.request.extensionsEnabled) sse.writeEvent(maintenance.name, maintenance.payload);
       return;
     }
     if (event.type === "loop_failed") {
