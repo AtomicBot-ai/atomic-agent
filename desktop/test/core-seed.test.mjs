@@ -12,13 +12,15 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { seedBundledCore } = require("../out/main/core-seed.js");
+const { seedBundledCore, coreBinaryRuns, resetCoreForRedownload } = require("../out/main/core-seed.js");
 const { BUNDLED_CORE_VERSION, bundledCoreFileName } = require("../out/main/core-bundle.js");
 
 const WIN = process.platform === "win32";
 const NAME = bundledCoreFileName();
 const BUNDLED = Buffer.from("bundled core binary, signed\n");
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
+// The fixture binary is not a program: the probe stands in for `<binary> --version`.
+const runs = async () => ({ version: BUNDLED_CORE_VERSION });
 
 const roots = [];
 after(() => { for (const d of roots) rmSync(d, { recursive: true, force: true }); });
@@ -36,7 +38,7 @@ function fixture({ bundled = true } = {}) {
 
 test("an empty data dir gets the binary and a verified.json the agent accepts", async () => {
   const f = fixture();
-  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources });
+  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources, probe: runs });
   assert.deepEqual(res, { seeded: true });
   assert.deepEqual(readFileSync(f.binary), BUNDLED);
   const text = readFileSync(f.record, "utf8");
@@ -58,7 +60,7 @@ test("a valid install is left exactly as it is", async () => {
   const record = JSON.stringify({ version: BUNDLED_CORE_VERSION, sha256: "a".repeat(64) }) + "\n";
   writeFileSync(f.binary, theirs);
   writeFileSync(f.record, record);
-  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources });
+  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources, probe: runs });
   assert.equal(res.seeded, false);
   assert.match(res.reason, /already installed/);
   assert.deepEqual(readFileSync(f.binary), theirs);
@@ -69,7 +71,7 @@ test("a binary without verified.json is not an install: it is re-seeded", async 
   const f = fixture();
   mkdirSync(f.versionDir, { recursive: true });
   writeFileSync(f.binary, "half an install\n");
-  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources });
+  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources, probe: runs });
   assert.deepEqual(res, { seeded: true });
   assert.deepEqual(readFileSync(f.binary), BUNDLED);
   assert.equal(JSON.parse(readFileSync(f.record, "utf8")).sha256, sha(BUNDLED));
@@ -80,15 +82,73 @@ test("a verified.json for another version does not count", async () => {
   mkdirSync(f.versionDir, { recursive: true });
   writeFileSync(f.binary, "old\n");
   writeFileSync(f.record, JSON.stringify({ version: "0.0.1", sha256: "b".repeat(64) }) + "\n");
-  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources });
+  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources, probe: runs });
   assert.deepEqual(res, { seeded: true });
   assert.equal(JSON.parse(readFileSync(f.record, "utf8")).version, BUNDLED_CORE_VERSION);
 });
 
 test("no bundled binary: nothing is written and it says why", async () => {
   const f = fixture({ bundled: false });
-  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources });
+  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources, probe: runs });
   assert.equal(res.seeded, false);
   assert.match(res.reason, /no bundled Core/);
   assert.equal(existsSync(join(f.dataDir, "core")), false);
+});
+
+test("a copy that does not run is not seeded: no verified.json, so the agent downloads Core itself", async () => {
+  const f = fixture();
+  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources, probe: async () => ({ error: "spawn EACCES" }) });
+  assert.equal(res.seeded, false);
+  assert.match(res.reason, /would not run \(spawn EACCES\)/);
+  assert.equal(existsSync(f.record), false);
+  assert.equal(existsSync(f.binary), false);
+  // No staged copy left behind either.
+  assert.deepEqual(readdirSync(f.versionDir), []);
+});
+
+test("a copy that prints another version is not seeded", async () => {
+  const f = fixture();
+  const res = await seedBundledCore(f.dataDir, { resourcesPath: f.resources, probe: async () => ({ version: "0.0.1" }) });
+  assert.equal(res.seeded, false);
+  assert.match(res.reason, /reported version "0\.0\.1"/);
+  assert.equal(existsSync(f.record), false);
+});
+
+test("the default probe really runs the binary (a script that prints the version)", { skip: WIN }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "core-probe-"));
+  roots.push(dir);
+  const good = join(dir, "good");
+  writeFileSync(good, `#!/bin/sh\necho ${BUNDLED_CORE_VERSION}\n`, { mode: 0o755 });
+  assert.deepEqual(await coreBinaryRuns(good, BUNDLED_CORE_VERSION), { ok: true });
+  const bad = join(dir, "bad");
+  writeFileSync(bad, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+  assert.equal((await coreBinaryRuns(bad, BUNDLED_CORE_VERSION)).ok, false);
+});
+
+test("Download again: verified.json goes, a binary that runs stays, one that does not goes too", async () => {
+  const f = fixture();
+  mkdirSync(f.versionDir, { recursive: true });
+  writeFileSync(f.binary, "seeded\n");
+  writeFileSync(f.record, JSON.stringify({ version: BUNDLED_CORE_VERSION, sha256: "c".repeat(64) }) + "\n");
+  let res = await resetCoreForRedownload(f.dataDir, { probe: runs });
+  assert.equal(res.version, BUNDLED_CORE_VERSION);
+  assert.equal(existsSync(f.record), false);
+  assert.equal(existsSync(f.binary), true);
+
+  writeFileSync(f.record, JSON.stringify({ version: BUNDLED_CORE_VERSION, sha256: "c".repeat(64) }) + "\n");
+  res = await resetCoreForRedownload(f.dataDir, { probe: async () => ({ error: "bad CPU type in executable" }) });
+  assert.equal(existsSync(f.record), false);
+  assert.equal(existsSync(f.binary), false);
+  assert.equal(res.removedBinary, true);
+});
+
+test("Download again resets the version active.json names, not only the bundled one", async () => {
+  const f = fixture();
+  const other = join(f.dataDir, "core", "versions", "0.11.2");
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(f.dataDir, "core", "active.json"), JSON.stringify({ version: "0.11.2" }) + "\n");
+  writeFileSync(join(other, "verified.json"), "{}\n");
+  const res = await resetCoreForRedownload(f.dataDir, { probe: runs });
+  assert.equal(res.version, "0.11.2");
+  assert.equal(existsSync(join(other, "verified.json")), false);
 });
