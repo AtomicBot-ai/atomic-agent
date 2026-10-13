@@ -44,6 +44,28 @@ export function bundledCoreVersion() {
   return m[1];
 }
 
+/**
+ * The agent's own Core version: the last entry of CORE_VERSIONS in
+ * src/local-llm/core/core-state.ts (its CORE_VERSION), read as text. The
+ * installer must carry exactly that one: a seeded Core the agent does not
+ * install by default means a first start that downloads another Core anyway.
+ */
+export function agentCoreVersion(srcText = readFileSync(join(DESKTOP, "..", "src", "local-llm", "core", "core-state.ts"), "utf8")) {
+  const m = srcText.match(/export const CORE_VERSIONS\s*=\s*\[([^\]]*)\]/);
+  if (!m) throw new Error("fetch-core: CORE_VERSIONS not found in src/local-llm/core/core-state.ts");
+  const versions = [...m[1].matchAll(/"(\d+\.\d+\.\d+)"/g)].map((v) => v[1]);
+  if (!versions.length) throw new Error("fetch-core: CORE_VERSIONS in src/local-llm/core/core-state.ts lists no version");
+  return versions[versions.length - 1];
+}
+
+/** Fails when the desktop's bundled Core is not the agent's CORE_VERSION. */
+export function assertCoreVersionsMatch(bundled = bundledCoreVersion(), agent = agentCoreVersion()) {
+  if (bundled !== agent) {
+    throw new Error(`fetch-core: desktop/main/core-bundle.ts BUNDLED_CORE_VERSION is ${bundled}, but the agent's CORE_VERSION (last of CORE_VERSIONS in src/local-llm/core/core-state.ts) is ${agent}. Bump both together.`);
+  }
+  return bundled;
+}
+
 const PLATFORMS = { darwin: "darwin", mac: "darwin", macos: "darwin", osx: "darwin", win32: "win32", win: "win32", windows: "win32", linux: "linux" };
 const ARCHES = { x64: "x64", x86_64: "x64", amd64: "x64", arm64: "arm64", aarch64: "arm64" };
 
@@ -174,6 +196,8 @@ async function main() {
   let arch = args.arch ?? process.env.ATAG_CORE_ARCH;
   if (args.slug) [platform, arch] = args.slug.split("-", 2);
   const target = normalizeTarget(platform ?? process.platform, arch ?? process.arch);
+  // Before any download: an installer carrying another Core than the agent installs is a build error.
+  assertCoreVersionsMatch();
   await fetchCore(target);
 }
 
