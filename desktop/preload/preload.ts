@@ -123,7 +123,7 @@ contextBridge.exposeInMainWorld("atomic", {
   upsertProvider: (entry: Record<string, unknown>) => ipcRenderer.invoke("cli:upsertProvider", entry),
   setProviderModel: (id: string, model: string) =>
     ipcRenderer.invoke("cli:setProviderModel", { id, model }),
-  providerModels: (id: string, kind: string) => ipcRenderer.invoke("cli:providerModels", { id, kind }),
+  providerModels: (id: string, kind: string, live?: boolean) => ipcRenderer.invoke("cli:providerModels", { id, kind, live: live === true }),
   // r6 cloud item 2: a real one-token completion, the only check that can fail.
   verifyProviderKey: (entry: Record<string, unknown>, model: string) =>
     ipcRenderer.invoke("cli:verifyProviderKey", { entry, model }),

@@ -151,7 +151,7 @@ try {
       && await app.eval(`!!document.querySelector('#composer .cfoot .fzswap')`), JSON.stringify(ch1));
   const intro = await app.eval(`[...document.querySelectorAll('.sysrow .fz-intro')].map((n) => n.textContent)`);
   check('B: the intro is in the transcript once, naming both legs',
-    intro.length === 1 && intro[0].includes('orchestrator') && intro[0].includes('x-ai/grok-4-6 plans') && intro[0].includes('qwen-3.5-4b executes'),
+    intro.length === 1 && intro[0].includes('orchestrator') && intro[0].includes('x-ai/grok-4-6 plans') && !intro[0].includes('\u2014') && intro[0].includes('qwen-3.5-4b executes'),
     intro.length + ' intro(s)');
   await shot('B-fusion-chips-intro');
 
@@ -193,6 +193,9 @@ try {
     c3.runMode.mode === 'fusion' && c3.runMode.fusion.workerProvider === 'aimlapi'
       && (await app.eval(`document.querySelectorAll('.sysrow .fz-intro').length`)) === 1,
     `${JSON.stringify({ active: c3.active, runMode: c3.runMode })} · ${JSON.stringify(await chips())}`);
+  // ATO-261: the one intro now says the swapped pairing ("Right now, <the new orchestrator> plans").
+  const introE = await until(() => app.eval(`(() => { const n = document.querySelector('.sysrow .fz-intro'); const t = n ? n.textContent : ''; return /Right now, qwen\/qwen3\.7-flash plans/.test(t) ? t : null; })()`), 'the intro follows the swap', 10000).catch(() => null);
+  check('E: after ⇄ the intro names the new orchestrator and workers', !!introE && introE.includes('x-ai/grok-4-6 executes'), String(introE).slice(0, 120));
 
   /* F — /runmode status and /runmode workers N, typed. */
   await slash('/runmode status');
@@ -213,7 +216,7 @@ try {
     n: document.querySelectorAll('#settings .llm-workerseg button').length,
     status: (document.querySelector('#settings .llm-rm-status') || {}).textContent})`);
   check('G: Settings › LLM — Fusion active, 3 of workers 1–8, the resolved status',
-    card.on === 'runmode:fusion' && card.workers === '3' && card.n === 8 && /^Fusion — orchestrator openrouter/.test(card.status), JSON.stringify(card));
+    card.on === 'runmode:fusion' && card.workers === '3' && card.n === 8 && /^Fusion\. Orchestrator: OpenRouter \(/.test(card.status) && !card.status.includes('\u2014'), JSON.stringify(card));
   await app.eval(`(() => { const n = document.querySelector('#settings .llm-runmode'); if (n) n.scrollIntoView({block:'start'}); return true; })()`);
   await shot('G-settings-llm-run-mode');
   await app.clickSel('#settings .llm-workerseg button', { nth: 1 });

@@ -1267,6 +1267,7 @@ const LLMP = {
   emb:null, embDaemon:null, // `atag models list-embeddings` rows + its trailer
   served:null, // ATO-125: {chat, embedding} — what the managed servers say they run, asked on their ports (cli:modelsServed)
   models:[], modelsFor:null, modelsBusy:false, modelsErr:null, // `atag models search --json` for the Cloud text-models block
+  modelsStale:false, modelsRetry:null, // ATO-318: the list is the app's built-in one (the live fetch did not come back); the one timed retry
   filter:'', filterFocused:false, pricing:'all',
   health:null, // /health.llama for the External row's status
   envKeys:null, dotenvKeys:null, // key NAMES present (never values)
@@ -4817,6 +4818,8 @@ function renderSettings() {
   // Item 36: the nav scrolls when the window is too short for its rows, and
   // the same rebuild would put it back at the top on every poll.
   const keepNav = old ? ((old.querySelector('.setmenu') || {}).scrollTop || 0) : 0;
+  // ATO-318: a field or button the operator is on inside the pane keeps the focus (and a field its caret) through the rebuild.
+  const keepFocus = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane) ? paneFocusKeep(old.querySelector('.setbody')) : null;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -4856,6 +4859,7 @@ function renderSettings() {
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
+  if (keepFocus && !MENUFOCUS.want) paneFocusRestore(el.querySelector('.setbody'), keepFocus);
   // Calm (S5): the ring goes on the section the window opened on.
   // preventScroll: the row is in view already (revealed above), and a focus that scrolled would undo the nav's kept scroll.
   if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus({preventScroll: true}); }
@@ -17008,6 +17012,28 @@ function rmDegradationLine(d) {
   }
   return 'Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).';
 }
+/* ATO-261 / ATO-305: the resolved run mode as Settings › Models states it
+   under the run-mode cards: the seats in words (fzSeatWord), models as their
+   ids, and no dashes. `/runmode status` keeps the TUI's body (rmDescribe). */
+function rmSettingsLine(rm) {
+  const seat = (id, model) => fzSeatWord(id) + (model ? ' (' + model + ')' : '');
+  const undash = (t) => String(t).replace(/\s+\u2014\s+/g, ': ');
+  const parts = [];
+  if (rm.effective === 'fusion') {
+    // A seat's name leads its clause ("This computer" is a name, not a phrase to fold into a sentence).
+    parts.push('Fusion. Orchestrator: ' + seat(rm.orchestratorProviderId, rm.orchestratorModel)
+      + '. Workers (' + rm.workers + '): ' + seat(rm.workerProviderId, rm.workerModel));
+  } else {
+    parts.push((rm.effective === 'cloud' ? 'Cloud' : 'Local') + ': ' + fzSeatWord(rm.primaryProviderId));
+  }
+  if (rm.degraded) parts.push(undash(rmDegradationLine(rm.degraded)));
+  else if (rm.stored !== null && rm.stored !== rm.effective) {
+    const word = (m) => m === 'fusion' ? 'Fusion' : m === 'cloud' ? 'Cloud' : 'Local';
+    parts.push(word(rm.stored) + ' is saved, but ' + word(rm.effective) + ' is in effect: the '
+      + (rm.stored === 'fusion' ? 'orchestrator' : rm.stored) + ' provider is not the active one. Pick the mode again to apply it');
+  }
+  return parts.join('. ');
+}
 /** run-mode-summary.ts describeRunMode — the body of `/runmode status`. */
 function rmDescribe(rm) {
   const label = rm.effective === 'fusion' ? 'Fusion' : rm.effective === 'cloud' ? 'Cloud' : 'Local';
@@ -17199,25 +17225,50 @@ function fzSeatId(label) {
   return at >= 0 && at < s.length - 1 ? s.slice(at + 1) : s;
 }
 
-/** fusion-intro.ts describeFusionIntro — one paragraph is the desktop's (see main/run-mode.ts). */
+/* ATO-261: a Fusion seat in words. The local seat is "This computer", as the
+   composer's seat chip says (composer-engines.js), never `local-llama`; a
+   cloud seat is its preset's name ("AI/ML API", "DashScope"), never its id. */
+function fzSeatWord(providerId) {
+  if (!providerId) return null;
+  return providerId === 'local-llama' ? composerEngineName() : providerWord(providerId);
+}
+/** fusion-intro.ts describeFusionIntro — one paragraph is the desktop's (see main/run-mode.ts).
+    A seat with no model pinned is named in words (fzSeatWord). ATO-305: no dashes in the copy. */
 function fzIntroParagraphs(rm) {
-  const orchestrator = rm.orchestratorModel ?? rm.orchestratorProviderId ?? 'your cloud provider';
-  const worker = rm.workerModel ?? rm.workerProviderId ?? 'the local model';
+  const orchestrator = rm.orchestratorModel ?? fzSeatWord(rm.orchestratorProviderId) ?? 'your cloud provider';
+  const worker = rm.workerModel ?? fzSeatWord(rm.workerProviderId) ?? 'the local model';
   return [
     'Fusion splits the work between two models: one decides, the other does.',
-    'Right now — ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
+    'Right now, ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
       + ' ' + worker + ' executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.',
     'How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.',
-    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one, even from the same provider. This setup has one managed local engine, which can serve either role.',
+    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute: your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one, even from the same provider. This setup has one managed local engine, which can serve either role.',
     'Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.',
     'Each seat has separate inference engine and model controls. Use the swap button to trade the seats. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.',
   ];
 }
 /** Only on the way IN — re-applying Fusion (another orchestrator) is not a moment to explain it again. */
 function fzIntro(rm) {
-  S.log.push({id:nid(), k:'system', note:true, fusionIntro:true,
-    text: '<span class="fz-intro"><span class="fz-mark">' + esc(FUSION_MARK) + '</span>'
-      + fzIntroParagraphs(rm).map((p) => '<span class="fz-p">' + esc(p) + '</span>').join('') + '</span>'});
+  S.log.push({id:nid(), k:'system', note:true, fusionIntro:true, text: fzIntroHTML(rm)});
+}
+function fzIntroHTML(rm) {
+  return '<span class="fz-intro"><span class="fz-mark">' + esc(FUSION_MARK) + '</span>'
+    + fzIntroParagraphs(rm).map((p) => '<span class="fz-p">' + esc(p) + '</span>').join('') + '</span>';
+}
+/* ATO-261: the intro says who plans and who executes "right now", so after ⇄
+   (or a seat changed under Fusion) this chat's intro says the new pairing
+   instead of the one it was written with. Only the latest intro: it is the
+   one that describes the present. true when it changed. */
+function fzIntroRefresh(rm) {
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const m = S.log[i];
+    if (!m || !m.fusionIntro) continue;
+    const html = fzIntroHTML(rm);
+    if (m.text === html) return false;
+    m.text = html;
+    return true;
+  }
+  return false;
 }
 
 /** dispatch-run-mode.ts parseRunModeCommand. */
@@ -17275,6 +17326,7 @@ function fzAfter(res, before) {
   const now = rmNow();
   const entered = res.runMode ? !!res.runMode.enteredFusion : (now.effective === 'fusion' && before !== 'fusion');
   if (entered) fzIntro(now);
+  else if (now.effective === 'fusion' && fzIntroRefresh(now)) render();
   closeSelectorUnlessSetup(res.selectorView);
   return res;
 }
@@ -17469,6 +17521,7 @@ if (typeof window !== 'undefined') {
   window.__rmDescribe = (cfg) => rmDescribe(rmResolve(cfg));
   window.__fzBlocker = (cfg, facts) => fzBlockerFor(cfg, facts);
   window.__fzIntro = (cfg) => fzIntroParagraphs(rmResolve(cfg));
+  window.__rmSettingsLine = (cfg) => rmSettingsLine(rmResolve(cfg));
   window.__fzParse = (args) => fzParse(args);
   window.__fzWorkerLine = (e) => fzWorkerLine(e);
   window.__slashNames = () => SLASH.map((s) => s[0]);
@@ -19670,13 +19723,13 @@ async function tasksRefresh(quiet) {
    data-act) the user was on. With nothing focused inside the window a full
    render() also refreshes the tab suffix and the sidebar count. */
 function tkRepaintKeepFocus() {
-  const el = document.activeElement;
   const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
-  const focused = el && box && box.contains(el) && el.dataset ? el.dataset.act : null;
-  if (!focused) { render(); return; }
+  const keep = paneFocusKeep(box);
+  if (!keep) { render(); return; }
+  const top = box.scrollTop;
   tkRepaint();
-  const again = box.querySelector('[data-act="' + focused.replace(/"/g, '\\"') + '"]');
-  if (again) again.focus();
+  box.scrollTop = top;
+  paneFocusRestore(box, keep);
 }
 
 function tasksTab() {
@@ -20107,10 +20160,13 @@ function tkRenderKeepCaret() {
   if (!tkTyping()) { render(); return; }
   const id = el.id, field = el.dataset ? el.dataset.tkField : null;
   const at = el.selectionStart, end = el.selectionEnd;
+  const box = S.settings ? document.querySelector('#settings .setbody') : null;
+  const top = box ? box.scrollTop : 0;
   tkRepaint();
+  if (box) box.scrollTop = top;
   const n = id ? document.getElementById(id) : (field ? document.querySelector('[data-tk-field="' + field + '"]') : null);
   if (!n) return;
-  n.focus();
+  n.focus({preventScroll: true});
   if (typeof at === 'number') { try { n.setSelectionRange(at, end); } catch (e) { /* select/checkbox: no caret */ } }
 }
 
@@ -20180,16 +20236,45 @@ if (typeof window !== 'undefined') {
 function paneBox() {
   return S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
 }
+/* ATO-318: what holds the focus inside a pane, by what a repaint draws again
+   (its data-act, its id, a Tasks form field, an Import field), with the caret
+   of a text field. null when the focus is elsewhere or names nothing. */
+function paneFocusKeep(box) {
+  const el = document.activeElement;
+  if (!el || !box || el === box || !box.contains(el)) return null;
+  const attr = (k, v) => '[' + k + '="' + String(v).replace(/["\\]/g, '\\$&') + '"]';
+  const d = el.dataset || {};
+  const sel = d.act ? attr('data-act', d.act) : el.id ? '#' + CSS.escape(el.id)
+    : d.tkField ? attr('data-tk-field', d.tkField) : d.impFocus ? attr('data-imp-focus', d.impFocus) : null;
+  if (!sel) return null;
+  let start = null, end = null;
+  try { if (typeof el.selectionStart === 'number') { start = el.selectionStart; end = el.selectionEnd; } } catch (e) { /* type without a caret */ }
+  return {sel, start, end};
+}
+/* Put the focus back where paneFocusKeep found it. preventScroll: a focus
+   that scrolls brings its element into view, and the element is very often
+   at the top of the pane (the mode tabs, Refresh), so the pane jumped back up
+   on the next 5 s poll after any scroll (ATO-318). */
+function paneFocusRestore(box, keep) {
+  if (!keep || !box) return;
+  const again = box.querySelector(keep.sel);
+  if (!again || again === document.activeElement) return;
+  again.focus({preventScroll: true});
+  if (keep.start !== null) { try { again.setSelectionRange(keep.start, keep.end); } catch (e) { /* type without a caret */ } }
+}
+/* Repaint a pane in place. With nothing focused in it, a whole render() (which
+   keeps the pane's scroll, renderSettings); with something focused, the pane
+   alone, its scroll, the focus and a field's caret kept. */
 function paneRepaintKeepFocus(html) {
   const box = paneBox();
   if (!box) { render(); return; }
-  const el = document.activeElement;
-  const focused = el && box.contains(el) && el.dataset ? el.dataset.act : null;
-  if (!focused) { render(); return; }
+  const keep = paneFocusKeep(box);
+  if (!keep) { render(); return; }
+  const top = box.scrollTop;
   box.innerHTML = html;
   settingsStatusRepaint();
-  const again = box.querySelector('[data-act="' + focused.replace(/"/g, '\\"') + '"]');
-  if (again) again.focus();
+  box.scrollTop = top;
+  paneFocusRestore(box, keep);
 }
 function tuiTrunc(text, max) { text = String(text == null ? '' : text); return text.length <= max ? text : text.slice(0, max - 1) + '…'; }
 /* Body lines as the TUI's renderBody draws them (an empty line keeps its height). */
@@ -22155,15 +22240,42 @@ async function llmEnsureModels() {
   const p = llmCloudSectionProvider();
   if (!p || !BR) return;
   if (LLMP.modelsFor === p.id && (LLMP.modelsBusy || LLMP.models.length || LLMP.modelsErr)) return;
-  LLMP.modelsFor = p.id; LLMP.models = []; LLMP.modelsBusy = true; LLMP.modelsErr = null;
+  if (LLMP.modelsRetry) { clearTimeout(LLMP.modelsRetry); LLMP.modelsRetry = null; }
+  LLMP.modelsFor = p.id; LLMP.models = []; LLMP.modelsBusy = true; LLMP.modelsErr = null; LLMP.modelsStale = false;
   llmRepaint();
-  const res = await BR.providerModels(p.id, p.kind || '');
+  await llmFetchModels(p);
+}
+/* ATO-318: Settings asks for the provider's whole LIVE list (`live`): AI/ML
+   API and OpenRouter used to answer from the snapshot built into the agent
+   (32 AI/ML API models of the hundreds it serves), and the filter could only
+   search those. Main says `stale` when the live fetch did not come back and
+   the list is that snapshot: the pane says so, asks once more by itself, and
+   carries a Retry. A list already on screen stays while it is asked again. */
+async function llmFetchModels(p) {
+  const res = await BR.providerModels(p.id, p.kind || '', true);
   if (LLMP.modelsFor !== p.id) return;
   LLMP.modelsBusy = false;
-  if (!res || !res.ok) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
-  else LLMP.models = res.models || [];
+  if (!res || !res.ok) {
+    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
+  } else {
+    LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
+    if (LLMP.modelsStale && !LLMP.modelsRetry) {
+      LLMP.modelsRetry = setTimeout(() => {
+        const q = llmCloudSectionProvider();
+        if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
+      }, 15000);
+    }
+  }
   llmClampCursors();
   llmRepaint();
+}
+/* Ask for the live list again (the Retry under a built-in list, or the one timed retry). */
+function llmRetryModels() {
+  const p = llmCloudSectionProvider();
+  if (!p || !BR || LLMP.modelsBusy) return;
+  LLMP.modelsFor = p.id; LLMP.modelsBusy = true; LLMP.modelsErr = null;
+  llmRepaintList();
+  llmFetchModels(p);
 }
 function llmRepaint() {
   if (llmVisible()) paneRepaintKeepFocus(llmTab());
@@ -22521,7 +22633,7 @@ function llmRunModeHTML(status, tone) {
       }).join('')
     + '</div>'
     + llmNowHTML() + engfCardHTML() + tpLlmFaultHTML()
-    + (fusionShown ? '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>' : '')
+    + (fusionShown ? '<p class="llm-rm-status">' + esc(rmSettingsLine(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
     + '</section>';
@@ -22982,7 +23094,11 @@ function llmCloudModelListHTML() {
     : rows.length > visible.length || rows.length !== section.models.length
       ? 'Showing ' + (start + 1) + '–' + (start + visible.length) + ' of ' + rows.length + (rows.length !== section.models.length ? ' (filtered from ' + section.models.length + ')' : '') + '. Filter to find the rest.'
       : '';
+  const who = esc(providerWord(section.provider ? section.provider.id : ''));
   return (section.status === 'loading' ? '<div class="llm-loading"><span class="tk-spin"></span><span>Fetching the model list…</span></div>' : '')
+    // ATO-318: the snapshot built into the app is not the provider's list; say so, with the way to ask again.
+    + (section.status === 'ready' && LLMP.modelsStale ? '<div class="llm-counter llm-stale">The live list from ' + who + ' did not load, so this is the list built into the app. '
+      + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')
     + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span></div>' : '')
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
     + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');
@@ -23074,7 +23190,10 @@ function llmFallbackHTML() {
           const p = llmProvider(id);
           return '<button class="tuirow tk-li llm-row' + (i === c ? ' on' : '') + '" data-llm-row="fb-pick:' + esc(id) + '" data-act="llm:fb:pick:' + esc(id) + '">'
             + llmProviderMark(p || {id, kind:''}, 'sm')
-            + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(id) + '</span></span>' + (p && p.kind ? '<span class="d">' + esc(p.kind) + '</span>' : '') + '</span></button>';
+            // ATO-318: the provider's name ("DashScope", "AI/ML API"), its id beside it as on the Cloud rows.
+            + '<span class="body"><span class="t"><span class="llm-name">' + esc(providerWord(id)) + '</span>'
+            + (providerWord(id) !== id ? ' <span class="llm-id mono">' + esc(id) + '</span>' : '') + '</span>'
+            + (p && p.kind ? '<span class="d">' + esc(p.kind) + '</span>' : '') + '</span></button>';
         }).join('') + '</div>'
         : '<div class="llm-empty">Every configured provider is already in the chain.</div>')
       + '</section>';
@@ -23104,7 +23223,8 @@ function llmFallbackHTML() {
       return '<button class="tuirow tk-li llm-row llm-fb-row' + (sel ? ' on' : '') + '" data-llm-row="fb:' + esc(l.providerId) + '" data-act="llm:fb:select:' + i + '">'
         + '<span class="body"><span class="t"><span class="llm-idx">' + (r.index + 1) + '</span>'
           + llmProviderMark(p || {id:l.providerId, kind:l.kind}, 'sm')
-          + '<span class="llm-id mono">' + esc(l.providerId + (l.modelLabel ? '/' + l.modelLabel : '')) + '</span></span>'
+          + '<span class="llm-name">' + esc(providerWord(l.providerId)) + '</span>'
+          + (l.modelLabel ? ' <span class="llm-id mono">' + esc(l.modelLabel) + '</span>' : '') + '</span>'
           + '<span class="d">' + esc(l.kind) + '</span></span>'
         + '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(note) + '</span>'
         + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="Local models, as the last resort">' + ic('lock') + '</span>'
@@ -23129,7 +23249,7 @@ function llmModalHTML() {
     // While it works Cancel waits (a removal half-done is worse than one finished or refused).
     const acts = (label, yes) => '<div class="acts"><button class="btn btn-s sm" data-act="llm:cancel"' + (c.submitting ? ' disabled' : '') + '>Cancel</button>'
       + '<button class="btn btn-df sm" data-act="llm:confirm"' + (yes.disabled ? ' disabled' : '') + (yes.title ? ' title="' + esc(yes.title) + '"' : '') + '>' + esc(label) + '</button></div>';
-    if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + c.id + '?')
+    if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + providerWord(c.id) + '?')
       + err + busy + acts('Remove', {disabled:c.submitting}) + '</div>';
     /* ATO-119: any model on disk, the one in use and the embedding models
        included. A model a server has loaded is never deleted under it: the
@@ -23971,6 +24091,7 @@ function llmAct(what) {
   if (verb === 'select') { LLMP.cursor[LLMP.mode] = +arg; llmRepaint(); return; }
   if (verb === 'enter') { if (LLMP.mode === 'fallback') { llmFallbackEnter(); return; } llmPrimary(llmRowAt()); return; }
   if (verb === 'refresh') { llmRefresh(); return; }
+  if (verb === 'modelsRetry') { llmRetryModels(); return; }
   if (verb === 'filter') { llmSetMode('cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
   if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }

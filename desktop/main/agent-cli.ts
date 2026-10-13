@@ -1046,6 +1046,9 @@ async function certificateAt(baseUrl: string | undefined, timeoutMs = 5_000): Pr
   }
 }
 
+/** How many rows a full list asks for: past any provider's catalogue, so a filter searches all of it. */
+const LIVE_LIST_LIMIT = 5000;
+
 /**
  * A provider's model list.
  *
@@ -1055,17 +1058,43 @@ async function certificateAt(baseUrl: string | undefined, timeoutMs = 5_000): Pr
  *    before the user types;
  *  - only `openrouter` and `aimlapi` ship bundled catalogues, so every
  *    other kind needs `--refresh` to fetch a live list.
+ *
+ * `live` (Settings › Models): the bundled kinds are asked with `--refresh`
+ * too, and every kind with a limit past its catalogue, so the list is the
+ * provider's whole live one (AI/ML API advertises hundreds of chat models;
+ * its bundled snapshot is a few dozen). `models search` keeps the snapshot
+ * silently when the live fetch fails, so the snapshot is read beside it and
+ * a refreshed list with exactly its ids comes back `stale: true`: the pane
+ * says it is the built-in list and asks again.
  */
 export async function providerModels(
   providerId: string,
   kind: string,
-): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string } & ModelListFailure> {
+  opts: { live?: boolean } = {},
+): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string; stale?: boolean } & ModelListFailure> {
   if (!/^[\w.-]{1,48}$/.test(providerId)) return { ok: false, error: "bad provider id" };
   const bundled = kind === "openrouter" || kind === "aimlapi";
-  const args = ["models", "search", " ", "--provider", providerId, "--limit", "200", "--json"];
-  if (!bundled) args.push("--refresh");
-  const res = await cli(args, 90_000);
+  const live = opts.live === true;
+  const limit = live ? String(LIVE_LIST_LIMIT) : "200";
+  const args = ["models", "search", " ", "--provider", providerId, "--limit", limit, "--json"];
+  if (!bundled || live) args.push("--refresh");
+  const parse = (stdout: string): SearchedModel[] | null => {
+    try {
+      const parsed = JSON.parse(stdout) as SearchedModel[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return null;
+    }
+  };
+  // The bundled snapshot is local and quick; it is only read to tell a live list from the fallback.
+  const [res, snap] = await Promise.all([
+    cli(args, 90_000),
+    bundled && live ? cli(["models", "search", " ", "--provider", providerId, "--limit", limit, "--json"], 30_000) : Promise.resolve(null),
+  ]);
+  const snapModels = snap && snap.ok ? parse(snap.stdout) : null;
   if (!res.ok) {
+    // A bundled kind still has its snapshot when the refreshed call itself failed.
+    if (snapModels && snapModels.length) return { ok: true, models: snapModels, stale: true };
     const why = modelListFailure(res.error ?? "", providerId);
     if (why.unreachable && !cliStandIns.getStore()) {
       const read = await readWholeConfig().catch(() => null);
@@ -1075,12 +1104,15 @@ export async function providerModels(
     }
     return { ok: false, error: res.error, ...why };
   }
-  try {
-    const parsed = JSON.parse(res.stdout) as SearchedModel[];
-    return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
-  } catch {
-    return { ok: false, error: "models search did not return JSON" };
-  }
+  const models = parse(res.stdout);
+  if (!models) return { ok: false, error: "models search did not return JSON" };
+  return { ok: true, models, ...(snapModels && sameIds(models, snapModels) ? { stale: true } : {}) };
+}
+/** Two lists naming the same model ids (in any order). */
+function sameIds(a: readonly SearchedModel[], b: readonly SearchedModel[]): boolean {
+  if (a.length !== b.length) return false;
+  const ids = new Set(b.map((m) => m.id));
+  return a.every((m) => ids.has(m.id));
 }
 
 /* ---------------------------------------------------------------

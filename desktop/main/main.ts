@@ -1553,9 +1553,9 @@ function wireIpc(client: AgentClient): void {
     return setProviderModel(id, model);
   });
   ipcMain.handle("cli:providerModels", (_event, payload: unknown) => {
-    const { id, kind } = (payload ?? {}) as { id?: unknown; kind?: unknown };
+    const { id, kind, live } = (payload ?? {}) as { id?: unknown; kind?: unknown; live?: unknown };
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return providerModels(id, typeof kind === "string" ? kind : "");
+    return providerModels(id, typeof kind === "string" ? kind : "", { live: live === true });
   });
   /* r6 cloud item 2: the wizard's key check, done honestly — one real
      one-token completion against the provider, instead of a catalogue
@@ -7135,9 +7135,9 @@ async function settingsTestPartC(
   if (appendLocal && localId && !chain.includes(localId)) chain.push(localId);
   const expectedChain = chain.filter((id, i) => configured.has(id) && chain.indexOf(id) === i);
   const fbLinks = fb.fallback.links.map((l) => l.providerId);
-  // The chain as drawn: one row per link in order, its position badge and its provider id (with the model after a slash when it has one).
+  // The chain as drawn: one row per link in order, its position badge and its provider id (the row's data-llm-row; the row reads the provider's name, ATO-318).
   const fbRows = await js<Array<{ idx: string; id: string }>>(
-    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"fb:\"]')].map((r) => ({idx: ((r.querySelector('.llm-idx') || {}).textContent || '').trim(), id: ((r.querySelector('.llm-id') || {}).textContent || '').trim()}))",
+    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"fb:\"]')].map((r) => ({idx: ((r.querySelector('.llm-idx') || {}).textContent || '').trim(), id: (r.dataset.llmRow || '').slice(3)}))",
   );
   const fbDrawn = fbRows.length === expectedChain.length && fbRows.every((r, i) => r.idx === String(i + 1) && (r.id === expectedChain[i] || r.id.startsWith(`${expectedChain[i]}/`)));
   check(
