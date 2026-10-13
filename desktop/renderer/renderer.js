@@ -15481,14 +15481,28 @@ function modelListFailLine(res, name) {
   if (res.unreachable) return 'Nothing answered at ' + who + '\u2019s address. Check that it is running and reachable.';
   return '';
 }
+/* ATO-318: the quick list (for AI/ML API and OpenRouter, the one built into
+   the app) shows at once; the provider's live list replaces it when it lands,
+   so the filter finds every model, not the built-in few. A live list is kept
+   for the session, so reopening the popover does not wait on the network. */
+const SEL_LIVE_MODELS = new Map();
 async function selLoadModels(providerId) {
   const entry = selProviders().find((p) => p.id === providerId);
-  SEL.modelsFor = providerId; SEL.models = []; SEL.modelsBusy = true; SEL.modelsErr = null; render();
-  const res = await BR.providerModels(providerId, (entry && entry.kind) || '');
+  const kind = (entry && entry.kind) || '';
+  const live = SEL_LIVE_MODELS.get(providerId);
+  SEL.modelsFor = providerId; SEL.models = live || []; SEL.modelsBusy = !live; SEL.modelsErr = null; render();
+  if (live) return;
+  const res = await BR.providerModels(providerId, kind);
   if (SEL.modelsFor !== providerId) return;
   SEL.modelsBusy = false;
   if (!res || !res.ok) { SEL.modelsErr = modelListFailLine(res, providerWord(providerId)) || (res && res.error) || 'could not list models'; render(); return; }
   SEL.models = res.models || [];
+  render();
+  const fresh = await BR.providerModels(providerId, kind, true).catch(() => null);
+  if (!fresh || !fresh.ok || fresh.stale === true || !Array.isArray(fresh.models) || !fresh.models.length) return;
+  SEL_LIVE_MODELS.set(providerId, fresh.models);
+  if (SEL.modelsFor !== providerId) return;
+  SEL.models = fresh.models;
   render();
 }
 
