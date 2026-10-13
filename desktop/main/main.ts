@@ -175,6 +175,7 @@ import {
   llamaProbe,
   dotenvKeys,
   dotenvSet,
+  desktopDotenvError,
   envPresent,
   // Settings › Connections › Composio: composio.userId / sessionId / mcpUrl in one write
   configSetPaths,
@@ -2566,14 +2567,15 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:envPresent", (_event, names: unknown) =>
     envPresent(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string").slice(0, 64) : []),
   );
-  // The one key the desktop writes into .env: the Telegram bot token (the TUI's telegram-settings.ts setToken).
+  // The keys the desktop writes into .env (DESKTOP_DOTENV_KEYS): the Telegram bot token (the TUI's
+  // telegram-settings.ts setToken) and the Exa key for web search (ATO-328). Never logged, never echoed back.
   ipcMain.handle("app:dotenvSet", async (_event, payload: unknown) => {
     const { stateDir, key, value } = (payload ?? {}) as { stateDir?: unknown; key?: unknown; value?: unknown };
     if (!ownDir(stateDir)) return { ok: false, error: "state dir required" };
-    if (key !== "TELEGRAM_BOT_TOKEN") return { ok: false, error: "only TELEGRAM_BOT_TOKEN may be written from the desktop" };
-    if (value !== null && typeof value !== "string") return { ok: false, error: "value must be a string or null" };
-    const res = await dotenvSet(stateDir, key, value);
-    A.telegramStep(value === null ? "token_cleared" : "token_saved", res);   // never the token
+    const refused = desktopDotenvError(key, value);
+    if (refused) return { ok: false, error: refused };
+    const res = await dotenvSet(stateDir, key as string, value as string | null);
+    if (key === "TELEGRAM_BOT_TOKEN") A.telegramStep(value === null ? "token_cleared" : "token_saved", res);   // never the token
     return res;
   });
 

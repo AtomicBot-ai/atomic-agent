@@ -87,6 +87,8 @@ const ANX_ACTS = (() => {
         restart:L, start:L, stop:L, token:L, tokenCancel:L, tokenSave:L},
       // Settings › Connections › Composio (renderer.js composioAct); never the key.
       composio:{check:L, enable:L, key:L, keyCancel:L, keySave:L, refresh:L, removeKey:L, restart:L},
+      // ATO-328: Save on the Exa key card (chat) or its Settings row; never the key.
+      exakey:{save:{chat:L, settings:L}},
       import:{apply:L, field:L, focus:L, preview:L, reset:L, source:Object.assign(set(impSources), {tui:L}),
         toggle:set(impFields)},
     };
