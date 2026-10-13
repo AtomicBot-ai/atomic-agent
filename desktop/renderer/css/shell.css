@@ -10,8 +10,8 @@
      painted by #sidebar::before inside that box (8px gutter on the window
      side), so the box widths stay what the checks read.
    - Sidebar rows are one line; the row's dot is a 6px ring with a 1px border.
-   - `.sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn` carries exactly
-     `visibility:visible` — the smoke compares that rule's text.
+   - `.sesrow:hover .sesmore,.sesrow:focus-within .sesmore` carries exactly
+     `visibility:visible` — the smoke compares that rule's text (ATO-165).
    ============================================================ */
 
 /* ---------------- desktop + window ---------------- */
@@ -165,19 +165,20 @@
 @keyframes sdot-pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @media (prefers-reduced-motion:reduce){.sdot.running{box-shadow:0 0 0 2.5px color-mix(in srgb, var(--brand) 42%, transparent)}}
 
-/* Hover controls: always in the flow, revealed on hover or keyboard focus, so
-   nothing shifts. Spans with role="button" — the row itself is the button. */
-.pinbtn,.unreadbtn{
+/* ATO-165: the row's "…" control (it opens the row menu: Pin / Unpin, Mark as
+   read / unread, Delete…). Always in the flow, revealed on hover, keyboard
+   focus, on the open chat's row and while its menu is up, so nothing shifts.
+   A span with role="button" — the row itself is the button. */
+.sesmore{
   width:24px;height:24px;flex:none;visibility:hidden;display:flex;align-items:center;justify-content:center;
   border-radius:50%;color:var(--ink-3);background:transparent;
 }
-.pinbtn svg,.unreadbtn svg{width:14px;height:14px}
-.sesrow:hover .pinbtn,.sesrow.pinned .pinbtn{visibility:visible}
-.sesrow:focus-within .pinbtn{visibility:visible}
-.sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn{visibility:visible}
-.pinbtn:hover,.unreadbtn:hover{background:var(--press);color:var(--ink)}
-.sesrow.pinned .pinbtn{color:var(--ink-2)}
-.sesrow.on .pinbtn,.sesrow.on .unreadbtn{color:var(--blue)}
+.sesmore svg{width:14px;height:14px}
+.sesrow:hover .sesmore,.sesrow:focus-within .sesmore{visibility:visible}
+.sesrow.on .sesmore,.sesmore[aria-expanded="true"]{visibility:visible}
+.sesmore:hover,.sesmore[aria-expanded="true"]{background:var(--press);color:var(--ink)}
+.sesmore:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.sesrow.on .sesmore{color:var(--blue)}
 
 .loadmore{
   align-self:flex-start;height:28px;margin-top:2px;padding:0 10px;border-radius:var(--r-pill);
@@ -200,7 +201,7 @@
 #sidebar.rail{width:52px;padding:10px 10px 18px;margin-top:0}
 #sidebar.rail::before{top:0;left:4px;right:4px}
 #sidebar.rail .sb-top{display:none}
-#sidebar.rail .wschip,#sidebar.rail .sesrow .t1,#sidebar.rail .pinbtn,#sidebar.rail .unreadbtn,
+#sidebar.rail .wschip,#sidebar.rail .sesrow .t1,#sidebar.rail .sesmore,
 #sidebar.rail .loadmore,#sidebar.rail .sb-empty,#sidebar.rail .sb-settings-lb,#sidebar.rail .sb-new-lb{display:none}
 #sidebar.rail .sb-head{justify-content:center;height:36px}
 #sidebar.rail .sb-head > svg{position:static}
@@ -217,7 +218,7 @@
   #sidebar{width:52px;padding:10px 10px 18px;margin-top:0}
   #sidebar::before{top:0;left:4px;right:4px}
   #sidebar .sb-top{display:none}
-  #sidebar .wschip,#sidebar .sesrow .t1,#sidebar .pinbtn,#sidebar .unreadbtn,
+  #sidebar .wschip,#sidebar .sesrow .t1,#sidebar .sesmore,
   #sidebar .loadmore,#sidebar .sb-empty,#sidebar .sb-settings-lb,#sidebar .sb-new-lb{display:none}
   #sidebar .sb-head{justify-content:center;height:36px}
   #sidebar .sb-head > svg{position:static}

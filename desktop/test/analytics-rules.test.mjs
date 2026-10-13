@@ -112,6 +112,23 @@ test("renderer: a keyboard marker is reported as a shortcut", () => {
   assert.equal(ANX.viaNow(), "shortcut");
 });
 
+test("renderer: the chat row menu's verbs are counted, the chat's id never is (ATO-165)", () => {
+  const { ANX, sent } = loadRenderer();
+  ANX.aroundAct("sesmenu:hermes:20260511_162944_79a9e8", () => {});
+  ANX.aroundAct("read:20261013-a1b2c3", () => {});
+  ANX.aroundAct("unread:20261013-a1b2c3", () => {});
+  ANX.aroundAct("pin:20261013-a1b2c3", () => {});
+  ANX.aroundAct("del:20261013-a1b2c3", () => {});
+  const ui = sent.filter((e) => e.event === "ui_action").map((e) => e.props.action);
+  const ses = sent.filter((e) => e.event === "session_action").map((e) => e.props.action);
+  assert.deepEqual(ui, ["sesmenu", "read", "unread", "pin", "del"]);
+  assert.deepEqual(ses, ["mark_read", "mark_unread", "pin", "delete"]);
+  assert.ok(!JSON.stringify(sent).includes("20261013"));
+  assert.equal(V.validateEvent("session_action", { action: "mark_read" }, "ui").props.action, "mark_read");
+  assert.equal(uiAction("sesmenu"), "sesmenu");
+  assert.equal(uiAction("read"), "read");
+});
+
 /* ---- opt-out order ---- */
 
 function fakeSwitch(log, { now = true, files = false } = {}) {

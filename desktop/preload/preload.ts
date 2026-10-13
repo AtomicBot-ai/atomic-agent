@@ -157,14 +157,11 @@ contextBridge.exposeInMainWorld("atomic", {
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   /** 13: the page's ground colour (#rrggbb), for the window's own background. */
   windowGround: (color: string) => ipcRenderer.invoke("app:windowGround", color),
-  // item 6: the sidebar's own pin/read state (Electron userData/prefs.json) and the row menu
+  // item 6: the sidebar's own pin/read state (Electron userData/prefs.json). ATO-165: the
+  // chat row's menu is drawn in the window now (renderer chatMenuHTML), so no native menu here.
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
   prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>
     ipcRenderer.invoke("app:prefsSet", prefs),
-  // r5 item 3: `unread` is the row's current state — main uses it to disable
-  // "Mark as Unread" on a row that already reads unread.
-  sessionMenu: (id: string, pinned: boolean, unread?: boolean) =>
-    ipcRenderer.invoke("app:sessionMenu", { id, pinned, unread }),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */

@@ -266,7 +266,7 @@ export const EVENTS: Record<string, EventSpec> = {
   settings_pane_viewed: { owner: "ui", props: { pane: en(SETTINGS_PANES), ms_on_pane: int({ nullable: true }) } },
   session_action: {
     owner: "ui",
-    props: { action: en(["new", "switch", "open", "pin", "unpin", "mark_unread", "delete", "load_more", "clear"]) },
+    props: { action: en(["new", "switch", "open", "pin", "unpin", "mark_unread", "mark_read", "delete", "load_more", "clear"]) },
   },
   voice_used: {
     owner: "main",

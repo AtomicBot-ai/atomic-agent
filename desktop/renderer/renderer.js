@@ -1855,6 +1855,10 @@ const TASKS = [];
 const SIDEBAR_PAGE = 15;                 // rows per list before "Load more"
 const PAGE = {chats:1, tasks:1};         // how many pages each list is showing
 const PREFS = {pinned:[], seen:{}, loaded:false};  // userData/prefs.json, never the agent config
+/* ATO-165: the chat row's menu (S.overlay === 'sesmenu'). `id` is the chat it
+   acts on; `point` is where a right-click opened it (null: under the row's
+   "…" control); `next` is the point handed from openChatMenu to act('sesmenu:'). */
+const SESMENU = {id:null, point:null, next:null};
 const PENDING_APPROVALS = new Map();     // sessionId → approvalId, from /api/events
 /* Backlog 25: sessionId → the card drawn for that chat's open request, so the
    chat can draw it again when it is opened again (openSession). Good only
@@ -2128,10 +2132,18 @@ function renderSidebar() {
     + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
     + '<div class="sb-lists">'
+      /* ATO-165: a "Pinned" section above Chats, only while something is
+         pinned; its rows are not repeated under Chats. */
+      + (ch.pinned > 0
+        ? '<div class="sb-list sb-pinned" data-list="pinned">'
+          + '<div class="sb-list-head micro"><span>Pinned</span></div>'
+          + ch.rows.slice(0, ch.pinned).map(chatRow).join('')
+        + '</div>'
+        : '')
       + '<div class="sb-list" data-list="chats">'
         + '<div class="sb-list-head micro"><span>Chats</span></div>'
-        + (ch.rows.length ? ch.rows.map(chatRow).join('')
-           : '<div class="sb-empty">No chats yet</div>')
+        + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
+           : ch.rows.length ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
       + (showTasks
@@ -2199,14 +2211,18 @@ function sidebarTasks() {
 
 /** Chats: sessions with at least one saved turn, pinned first, newest first.
     Item 27: a new chat whose first turn is still running stands where its
-    stored row will land, at the top of the unpinned ones. */
+    stored row will land, at the top of the unpinned ones.
+    ATO-165: the pinned block is ordered by pin time (the last pinned on top —
+    `pin:` unshifts), not by the session list's order, and is drawn under its
+    own "Pinned" header; `pinned` is how many of `rows` belong to it. The
+    order itself is chat-list.js orderChats (unit-tested). */
 function sidebarChats() {
-  const pinnedSet = new Set(PREFS.pinned);
   const stored = new Set(SESSIONS.map((s) => s.id));
   const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
-  const all = SESSIONS.filter((s) => pinnedSet.has(s.id)).concat(pending, SESSIONS.filter((s) => !pinnedSet.has(s.id)));
+  const order = orderChats(SESSIONS, pending, PREFS.pinned);
+  const all = order.pinned.concat(order.rest);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
-  return {rows, hidden: all.length - rows.length};
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length)};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2286,15 +2302,58 @@ function chatRow(s) {
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
-    /* r5 item 3: "a button to mark a session as unread." A span with
-       role="button", not a <button> — `.sesrow` is itself a button and the pin
-       beside it is a span for exactly that reason. Emitted only while the row
-       reads read, so the control never offers a no-op. */
-    + (state === 'empty'
-       ? '<span class="unreadbtn iconbtn" data-unread="' + esc(s.id) + '" title="Mark as unread" aria-label="Mark as unread" role="button">' + ic('unread') + '</span>'
-       : '')
-    + '<span class="pinbtn iconbtn" data-pin="' + esc(s.id) + '" title="' + (pinned ? 'Unpin' : 'Pin') + '" role="button">' + ic('pin') + '</span>'
+    /* ATO-165: one "…" control opens the row's menu (Pin / Unpin, Mark as read
+       / unread, Delete…) — it replaced the separate pin and mark-as-unread
+       controls. A span with role="button", not a <button>: `.sesrow` is
+       itself a button. tabindex makes it reachable with Tab; Enter or Space
+       on it opens the menu (the keydown handler), as does the context-menu
+       key or Shift+F10 on the row. Shown on hover, keyboard focus and on the
+       open chat's row. */
+    + '<span class="sesmore iconbtn" data-sesmenu="' + esc(s.id) + '" title="Chat actions" aria-label="Chat actions"'
+      + ' aria-haspopup="menu" aria-expanded="' + (S.overlay === 'sesmenu' && SESMENU.id === s.id ? 'true' : 'false') + '"'
+      + ' role="button" tabindex="0">' + ic('dots') + '</span>'
     + '</button>';
+}
+
+/* ATO-165: the chat row's menu. `point` is where a right-click landed; null
+   puts the menu under the row's "…" control. The verb is act('sesmenu:<id>'),
+   so analytics sees one ui_action for the opening and one for the pick. */
+function openChatMenu(id, point) {
+  if (!id) return;
+  SESMENU.next = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? {x: point.x, y: point.y} : null;
+  act('sesmenu:' + id);
+}
+/** Focus the menu's `i`th row (after the paint that drew it). */
+function focusChatMenu(i) {
+  const items = document.querySelectorAll('.sesmenu [role="menuitem"]');
+  const el = items[Math.max(0, Math.min(i, items.length - 1))];
+  if (el) el.focus({preventScroll: true});
+}
+const SESMENU_W = 220;
+function chatMenuHTML() {
+  const s = chatById(SESMENU.id);
+  if (!s) return '';
+  const id = s.id;
+  const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id])});
+  const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
+  let x = 60, y = 60;
+  if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
+  else {
+    const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
+    const a = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]');
+    const r = a ? a.getBoundingClientRect() : null;
+    // Under the "…", its left edge on the control's: the menu opens into the content column, not off the window's left.
+    if (r && r.width > 0) { x = r.left; y = r.bottom + 4; }
+  }
+  const at = chatMenuPlace(x, y, SESMENU_W, h, window.innerWidth, window.innerHeight);
+  return '<div class="scrim" data-close="1" style="background:transparent">'
+    + '<div class="popover sesmenu tk-pop" role="menu" aria-label="' + esc('Chat actions: ' + s.t) + '"'
+      + ' style="position:fixed;left:' + at.left + 'px;top:' + at.top + 'px;right:auto;bottom:auto;width:' + SESMENU_W + 'px;transform-origin:0 0">'
+    + items.map((it) => (it.danger ? '<div class="sesmenu-sep" role="separator"></div>' : '')
+        + '<button class="tk-mi sesmenu-item' + (it.danger ? ' tk-mi--danger' : '') + '" role="menuitem" tabindex="-1"'
+        + ' data-verb="' + it.verb + '" data-act="' + esc(it.verb + ':' + id) + '">'
+        + ic(it.icon) + '<span class="body"><span class="t">' + esc(it.label) + '</span></span></button>').join('')
+    + '</div></div>';
 }
 
 /** ATO-135: how many messages chat `sid` has queued, on screen or not. */
@@ -2536,11 +2595,12 @@ function workingTickStart() {
    The row is ALWAYS in the flow and always occupies its 22px box; only its
    PAINT flips — `.msgacts` is hidden with `opacity:0;pointer-events:none` and
    revealed by `.turn:hover` / `:focus-within` (styles.css, item-4 section). It
-   is deliberately NOT `visibility:hidden` the way `.pinbtn` is on a sidebar
-   row: a visibility-hidden button cannot take focus in Chromium, so
+   is deliberately NOT `visibility:hidden` the way `.sesmore` is on a sidebar
+   row (whose row is itself a focusable button, so it is revealed before Tab
+   reaches it): a visibility-hidden button cannot take focus in Chromium, so
    `:focus-within` would never fire and these controls would be unreachable
    without a mouse — the suite caught exactly that. Do not "align" this with
-   `.pinbtn`. Either way revealing the row cannot move one pixel of the
+   `.sesmore`. Either way revealing the row cannot move one pixel of the
    transcript. A zero-height overlay painted into the 20px inter-turn gap was
    rejected: the buttons would sit outside their own `.turn`'s hover box and
    would vanish the moment the pointer reached them.
@@ -4283,6 +4343,7 @@ function overlaysHTML() {
   if (S.overlay === 'palette') html += paletteHTML();
   if (S.overlay === 'context') html += contextHTML();
   if (S.overlay === 'modes') html += modesHTML();
+  if (S.overlay === 'sesmenu') html += chatMenuHTML();
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -5666,6 +5727,9 @@ function act(a) {
   const k = colon < 0 ? a : a.slice(0, colon);
   const v = colon < 0 ? undefined : a.slice(colon + 1);
   const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
+  /* ATO-165: the chat row's menu is a pick-one menu — whatever verb runs next
+     (one of its own items, or anything else) takes it down first. */
+  if (S.overlay === 'sesmenu' && k !== 'sesmenu') S.overlay = null;
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
@@ -5919,6 +5983,15 @@ function act(a) {
                            syncChromeTheme(); syncWindowGround(); render(); syncWindowGroundSoon(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
+  /* ATO-165: the chat row's menu — opened by the row's "…" control, a
+     right-click on the row, or the context-menu key on it (openChatMenu).
+     The same id again closes it, as a second click on a menu button does. */
+  if (k === 'sesmenu')   { const again = S.overlay === 'sesmenu' && SESMENU.id === v;
+                           const point = SESMENU.next; SESMENU.next = null;
+                           close();
+                           if (again || !v || !chatById(v)) { render(); return; }
+                           S.overlay = 'sesmenu'; SESMENU.id = v; SESMENU.point = point;
+                           render(); focusChatMenu(0); return; }
   // Item 27: a new chat whose first turn has not been stored yet has nothing to delete; say so rather than nothing.
   if (k === 'delask' && !SESSIONS.some((x) => x.id === v) && PENDING_CHATS.has(v)) {
     toast('This chat is still starting', 'It can be deleted once its first reply is in'); return;
@@ -5947,8 +6020,14 @@ function act(a) {
                                 takes its place answers no request, as after New chat. (A chat whose
                                 turn runs here never gets this far: deleteRefused.) */
                              if (S.pending && S.pending.sessionId === v) forgetApprovalCard();
-                             if (S.sessionId === v) { S.sessionId = ''; S.agentSession = null; S.log = []; S.busy = false; forgetApprovalCard(); }
+                             /* ATO-165: deleting the open chat lands in a new, empty one — what
+                                session:new leaves behind (no row highlighted, the caret in the
+                                composer, a fresh window fill), minus its "New session" toast. */
+                             const wasOpen = S.sessionId === v;
+                             if (wasOpen) { S.sessionId = ''; S.agentSession = null; S.log = []; S.history = []; S.busy = false;
+                                            forgetApprovalCard(); clearPlanOffer(); S.room = 'chat'; FOCUS.entry = true; }
                              close(); render(); toast('Session deleted', gone);
+                             if (wasOpen) { refreshContext(); refreshSkillList(); }
                            });
                            return; }
   // item 6: pin / unpin, and the two lists' pagination.
@@ -5968,6 +6047,8 @@ function act(a) {
      you are reading does not mark itself unread as replies land. Every other
      chat is unaffected. */
   if (k === 'unread')    { delete PREFS.seen[v]; savePrefs(); render(); return; }
+  // ATO-165: the menu's other half — stamp the chat read without opening it (markSeen, as opening does).
+  if (k === 'read')      { if (chatById(v)) markSeen(v); render(); return; }
   if (k === 'more')      { if (PAGE[v] != null) PAGE[v]++; render(); nameVisibleSessions(); return; }
   // Opening a task = reading it. The Tasks tab is the only place with a task
   // detail on this tree, so the row lands there with that task selected.
@@ -6617,16 +6698,13 @@ document.addEventListener('click', (e) => {
     answer(ap.dataset.appr); return;
   }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
-  // item 6: the pin button sits inside the row, so it has to win over it
-  const pn = t.closest('[data-pin]');
-  if (pn) { e.preventDefault(); e.stopPropagation(); act((PREFS.pinned.includes(pn.dataset.pin) ? 'unpin:' : 'pin:') + pn.dataset.pin); return; }
-  /* r5 item 3: same shape as the pin beside it, and for the same reason — the
-     control sits INSIDE the row button, so it has to win over it. The ordering
-     (before [data-ses]) and the stopPropagation are load-bearing: without
-     either, the click opens the session, openSession runs markSeen, and the
-     mark is undone by the very gesture that made it. */
-  const ur = t.closest('[data-unread]');
-  if (ur) { e.preventDefault(); e.stopPropagation(); act('unread:' + ur.dataset.unread); return; }
+  /* ATO-165: the row's "…" control sits INSIDE the row button, so it has to
+     win over it. The ordering (before [data-ses]) and the stopPropagation are
+     load-bearing: without either the click also opens the chat. Its menu's
+     items live on the overlay layer, outside the row, so they never fall
+     through to [data-ses]. */
+  const sm = t.closest('[data-sesmenu]');
+  if (sm) { e.preventDefault(); e.stopPropagation(); openChatMenu(sm.dataset.sesmenu, null); return; }
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
@@ -7560,6 +7638,32 @@ document.addEventListener('keydown', (e) => {
   if (k === 'Escape' && (VOICE.state === 'recording' || VOICE.state === 'starting'
       || VOICE.state === 'finishing' || VOICE.menu)) {
     e.preventDefault(); voiceCancel(); return;
+  }
+
+  // ATO-165: the chat row's "…" is a span (the row is the button) — Enter and Space open its menu.
+  const smk = e.target.closest && e.target.closest('[data-sesmenu]');
+  if (smk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault(); e.stopPropagation(); ANX.via('key'); openChatMenu(smk.dataset.sesmenu, null); return;
+  }
+  // ATO-165: Escape closes the menu and hands the focus back to the row's "…" it came from.
+  if (S.overlay === 'sesmenu' && k === 'Escape') {
+    e.preventDefault();
+    const back = SESMENU.id;
+    act('close');
+    const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(back) : back;
+    const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]');
+    if (ctl) ctl.focus({preventScroll: true});
+    return;
+  }
+  // ATO-165: the menu's rows move with the arrows, Home and End.
+  if (S.overlay === 'sesmenu' && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
+    e.preventDefault();
+    const items = Array.from(document.querySelectorAll('.sesmenu [role="menuitem"]'));
+    const at = items.indexOf(document.activeElement);
+    const n = items.length;
+    if (n) focusChatMenu(k === 'Home' ? 0 : k === 'End' ? n - 1
+      : k === 'ArrowDown' ? (at + 1) % n : (at <= 0 ? n - 1 : at - 1));
+    return;
   }
 
   /* 05.10 (Nadya): the desktop's approval keys. ⌘↩ allows once and ⌘. denies
@@ -18883,26 +18987,25 @@ function homeDir() {
   }
   return wd.startsWith('/Users/') ? wd.split('/').slice(0, 3).join('/') : '';
 }
-/* r5 item 3 review fix: the one line that hands the row menu to the bridge.
-   It is a named function purely so the suite can stand in front of it and
-   capture what the contextmenu listener really passed — the contextBridge
-   object is frozen in the main world, so BR.sessionMenu itself cannot be
-   shadowed, and Menu.popup opens a native window the harness cannot drive.
-   Everything the listener computes therefore stays under test; this forwards
-   it verbatim. */
-function sendSessionMenu(id, pinned, unread) { BR.sessionMenu(id, pinned, unread); }
+/* The one line that hands the row menu its arguments. It is a named function
+   so the suite can stand in front of it and capture what the contextmenu
+   listener really passed (__sessionMenuArgs). ATO-165: it no longer reaches
+   the bridge — a right-click opens the same in-window menu as the row's "…"
+   control (one menu, one set of words), at the pointer. A context-menu key or
+   Shift+F10 on a focused row reports no pointer (0,0), so that menu opens
+   under the row's "…" instead. */
+function sendSessionMenu(id, pinned, unread, point) { openChatMenu(id, point || null); }
 
 document.addEventListener('contextmenu', (e) => {
   if (!e.target.closest) return;
-  // item 6: Pin/Unpin · Delete… on a chat row, as a native menu.
+  // item 6: Pin/Unpin · Mark as read/unread · Delete… on a chat row.
   const row = e.target.closest('[data-ses]');
-  if (row && BR && BR.sessionMenu) {
+  if (row) {
     e.preventDefault();
-    // r5 item 3: "Mark as Unread" joins Pin and Delete… in this menu. The third
-    // argument is the row's CURRENT unread state — main disables the item when
-    // the row already reads unread, so the menu never offers a no-op.
+    const s = chatById(row.dataset.ses);   // item 27: a stand-in's state too
     sendSessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses),
-                    chatDot(chatById(row.dataset.ses))[0] !== 'empty');   // item 27: a stand-in's dot too
+                    !!s && chatUnread(s, PREFS.seen[row.dataset.ses]),
+                    e.clientX || e.clientY ? {x: e.clientX, y: e.clientY} : null);
     return;
   }
   const f = e.target.closest('[data-file]');
@@ -24769,6 +24872,7 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   window.__sidebar = () => ({
     headers: [...document.querySelectorAll('.sb-list-head > span:first-child')].map((n) => n.textContent),
+    pinnedRows: document.querySelectorAll('#sidebar [data-list="pinned"] .sesrow').length,   // ATO-165
     navrows: document.querySelectorAll('.navrow').length,
     skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),
     subtitles: document.querySelectorAll('#sidebar .sesrow .t2').length,
@@ -24855,18 +24959,26 @@ if (typeof window !== 'undefined') {
     return {mapped: PENDING_APPROVALS.has(id), running: RUNNING.has('smoke-appr'),
             dot: chatDot(SESSIONS.find((s) => s.id === id))[0]};
   };
-  /* The pin affordance as the user meets it: the button rendered on the row,
-     clicked through the document delegator. Asserts the row did not also open
-     (the delegator stops there) and that the title flips. */
+  /* The pin affordance as the user meets it (ATO-165): the row's "…", then
+     the menu's Pin / Unpin, both clicked through the document delegator.
+     Asserts the row did not also open, that the pick closed the menu, and
+     that the item's word flips (read by opening the menu again). */
   window.__clickPin = (id) => {
-    const btn = document.querySelector('[data-ses="' + id + '"] [data-pin]');
+    const more = () => document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
+    const pinItem = () => document.querySelector('.sesmenu [data-verb="pin"], .sesmenu [data-verb="unpin"]');
+    const btn = more();
     if (!btn) return {found:false};
     const before = S.sessionId;
-    const titleBefore = btn.getAttribute('title');
     btn.click();
-    const after = document.querySelector('[data-ses="' + id + '"] [data-pin]');
+    const item = pinItem();
+    const titleBefore = item ? item.textContent.trim() : null;
+    if (item) item.click();
+    const menuClosed = S.overlay !== 'sesmenu' && !document.querySelector('.sesmenu');
+    const again = more();
+    let titleAfter = null;
+    if (again) { again.click(); const it = pinItem(); titleAfter = it ? it.textContent.trim() : null; act('close'); }
     return {found:true, pinned: PREFS.pinned.includes(id), opened: S.sessionId === id && before !== id,
-            sessionId: S.sessionId, titleBefore, titleAfter: after ? after.getAttribute('title') : null};
+            sessionId: S.sessionId, titleBefore, titleAfter, menuClosed};
   };
   /* The shape of the transcript on screen. A frame belonging to a turn the
      user navigated away from used to splice its tool card, reasoning block or
@@ -26598,33 +26710,51 @@ if (typeof window !== 'undefined') {
   window.__theme = (t) => { act('theme:' + t); return window.__sbToggle(); };
   window.__renderProbe = () => { render(); return window.__sbToggle(); };
 
-  /* --- item 3 --- */
+  /* --- item 3 (ATO-165: the "…" and its menu) ---
+     The row's "…" as it sits, and the read/unread item its menu offers right
+     now — read by opening the menu through the real click and closing it. */
   window.__unreadCtl = (id) => {
     const s = SESSIONS.find((x) => x.id === id);
-    const el = document.querySelector('.sesrow[data-ses="' + id + '"] [data-unread]');
-    return {present: !!el, title: el ? el.getAttribute('title') : '',
-            vis: el ? getComputedStyle(el).visibility : '',
-            railDisplay: el ? getComputedStyle(el).display : '',
-            dot: chatDot(s)[0]};
+    const el = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
+    const out = {present: !!el, vis: el ? getComputedStyle(el).visibility : '',
+                 railDisplay: el ? getComputedStyle(el).display : '',
+                 dot: chatDot(s)[0], label: null, verb: null};
+    if (el && out.railDisplay !== 'none') {
+      el.click();
+      const it = document.querySelector('.sesmenu [data-verb="read"], .sesmenu [data-verb="unread"]');
+      if (it) { out.label = it.textContent.trim(); out.verb = it.dataset.verb; }
+      if (S.overlay === 'sesmenu') act('close');
+    }
+    return out;
   };
-  /* `opened` is the ordering proof, not `stayedPut`: the harness has to open
-     the row first (the control is only offered on a row that reads read), so
-     S.sessionId already names it and stayedPut is true either way. openSession
-     is stood in front of for the length of the click instead — if the click
-     fell through to the [data-ses] branch behind the control, it would run and
-     markSeen would undo the mark. Zero calls is what proves the [data-unread]
-     branch (and its stopPropagation) beat the row. */
-  window.__markUnread = (id) => {
-    const el = document.querySelector('.sesrow[data-ses="' + id + '"] [data-unread]');
+  /* `opened` is the ordering proof, not `stayedPut`: the harness opens the
+     row first, so S.sessionId already names it and stayedPut is true either
+     way. openSession is stood in front of for the length of the clicks
+     instead — if the click on the "…" fell through to the [data-ses] branch
+     behind it, it would run and markSeen would undo the mark. Zero calls is
+     what proves the [data-sesmenu] branch (and its stopPropagation) beat the
+     row. ATO-165: the "…" opens the menu; the pick is the menu's own item. */
+  const menuPick = (id, verb) => {
+    const el = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
     const before = S.sessionId;
     const real = openSession;
-    let opened = 0;
+    let opened = 0, clicked = false;
     openSession = function (...a) { opened += 1; return real.apply(null, a); };
-    try { if (el) el.click(); } finally { openSession = real; }
-    return {clicked: !!el, dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
+    try {
+      if (el) {
+        el.click();
+        const it = document.querySelector('.sesmenu [data-verb="' + verb + '"]');
+        if (it) { it.click(); clicked = true; }
+        else if (S.overlay === 'sesmenu') act('close');
+      }
+    } finally { openSession = real; }
+    return {clicked, dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
             seen: PREFS.seen[id] === undefined ? null : PREFS.seen[id],
-            opened, stayedPut: S.sessionId === before};
+            opened, stayedPut: S.sessionId === before,
+            menuClosed: S.overlay !== 'sesmenu' && !document.querySelector('.sesmenu')};
   };
+  window.__markUnread = (id) => menuPick(id, 'unread');
+  window.__markRead = (id) => menuPick(id, 'read');   // ATO-165
   /* A real refresh from the agent plus a full render — the proof that nothing
      re-stamps a chat that is not on screen. */
   window.__unreadSurvives = async (id) => {
@@ -27117,8 +27247,8 @@ if (typeof window !== 'undefined') {
      than read off the rule text. `:hover` genuinely cannot be synthesised;
      focus can, and the twin declaration is the same one. */
   window.__unreadFocusReveal = (id) => {
-    const row = document.querySelector('.sesrow[data-ses="' + id + '"]');
-    const el = row ? row.querySelector('[data-unread]') : null;
+    const row = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"]');
+    const el = row ? row.querySelector('[data-sesmenu]') : null;   // ATO-165: the row's "…"
     if (!row || !el) return null;
     const before = document.activeElement;
     try {
