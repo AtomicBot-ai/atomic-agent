@@ -245,6 +245,7 @@ Atomic Agent's memory is not a giant chat log pasted back into the prompt. It's 
 - **Dedup and eviction** merge near-duplicate memories and evict by usefulness, not age, on by default.
 - **Reflection** runs after turns, off the main agent slot, and writes memory without blocking the reply.
 - **Obsidian export:** `atomic-agent memory export --vault <dir>` writes notes, lessons and procedures into a vault as linked Markdown files.
+- **Re-embedding:** with local embeddings on, switching the embedding model (or turning embeddings on over existing notes) gives older notes vectors for the new model in the background; `atomic-agent memory reindex` does it right away.
 
 New to this? [MEMORY_GUIDE.md](docs/user/memory.md) walks the whole loop end to end: what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
 

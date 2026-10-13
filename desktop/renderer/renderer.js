@@ -2250,9 +2250,14 @@ function chatDot(s) {
   // The third element is presentation only: the Soft Tactile status grammar
   // draws waiting-for-you amber and failed red (sidebar dot tone classes).
   if (PENDING_APPROVALS.has(s.id)) return ['filled', 'waiting for your approval', 'tone-amber'];
+  // A local outbox chat (noteWaitingChat) has sent nothing yet, so nothing in it finished or can be unread.
+  if (s.waiting) return ['empty', 'waiting to send'];
   if (unread && ATTN.has(s.id)) return ['filled', 'the last turn failed', 'tone-red'];
   if (unread && s.status === 'stalled') return ['filled', 'stopped: max steps reached without a reply'];
-  if (unread && s.status === 'failed') return ['filled', 'the last turn failed', 'tone-red'];
+  // QA 0.0.2: Mark as unread drops the stamp, and a chat whose stored status was
+  // still `failed` from any earlier turn drew red instead of the unread blue.
+  // Red from the stored status needs a failed turn stored after a real stamp.
+  if (unread && chatFailedSinceRead(s, seen)) return ['filled', 'the last turn failed', 'tone-red'];
   if (unread) return ['filled', 'finished — not read yet'];
   return ['empty', 'read'];
 }
@@ -6081,13 +6086,15 @@ function act(a) {
      refreshSessions nor nameVisibleSessions writes it, so the row stays filled
      across refreshes until the chat is opened again. A sentinel value or a
      second store would only be a second thing to keep in sync.
-     ATTN is deliberately untouched: adding to it would draw "the last turn
-     failed" on a chat whose turn did not fail.
+     ATTN is never added to here: that would draw "the last turn failed" on a
+     chat whose turn did not fail. It is cleared instead (QA 0.0.2): a chat
+     marked unread draws the plain unread dot, not a red one left over from a
+     failure that was already read on screen.
      The one case this does not survive is the chat currently ON SCREEN when
      its own turn ends — the terminal frame re-stamps S.sessionId so the chat
      you are reading does not mark itself unread as replies land. Every other
      chat is unaffected. */
-  if (k === 'unread')    { delete PREFS.seen[v]; savePrefs(); render(); return; }
+  if (k === 'unread')    { delete PREFS.seen[v]; ATTN.delete(v); savePrefs(); render(); return; }
   // ATO-165: the menu's other half — stamp the chat read without opening it (markSeen, as opening does).
   if (k === 'read')      { if (chatById(v)) markSeen(v); render(); return; }
   if (k === 'more')      { if (PAGE[v] != null) PAGE[v]++; render(); nameVisibleSessions(); return; }
@@ -8967,8 +8974,9 @@ function onChatEvent(ev) {
       // When this turn's frames are no longer the ones S.turnId points at, the
       // branch below never runs and the composer would stay busy for good.
       if (sid && sid === S.sessionId && ![...RUNNING.values()].includes(sid)) S.busy = false;
-      // The chat on screen is being read as it lands, so it is never unread.
-      if (sid && sid === S.sessionId) { PREFS.seen[sid] = Date.now(); savePrefs(); }
+      // The chat on screen is being read as it lands, so it is never unread,
+      // and its failure is read with it (markSeen clears ATTN the same way).
+      if (sid && sid === S.sessionId) { PREFS.seen[sid] = Date.now(); ATTN.delete(sid); savePrefs(); }
       // Review fix: openSession promises the reply will appear when it is ready (LIVE_ELSEWHERE_LINE)
       // for a chat whose turn is running but whose stream is not in this log
       // (the user left and came back). Nothing reloaded it, so the reply never

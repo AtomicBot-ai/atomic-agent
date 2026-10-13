@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-const {orderChats, chatUnread, chatMenuItems, chatMenuPlace} = createRequire(import.meta.url)('../renderer/chat-list.js');
+const {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace} = createRequire(import.meta.url)('../renderer/chat-list.js');
 
 const ses = (id, updatedAt = 1) => ({id, t: id, updatedAt});
 const ids = (rows) => rows.map((r) => r.id);
@@ -49,6 +49,19 @@ test('unread: no stamp, or a turn stored after the stamp', () => {
   assert.equal(chatUnread(ses('a', 10), 10), false);
   assert.equal(chatUnread(ses('a', 10), 20), false);
   assert.equal(chatUnread(null, 0), false);
+});
+
+test('red from the stored status only for a failed turn stored after a real read stamp', () => {
+  const failed = {id: 'a', t: 'a', updatedAt: 10, status: 'failed'};
+  // Mark as unread drops the stamp: the plain unread dot, not red (QA 0.0.2).
+  assert.equal(chatFailedSinceRead(failed, undefined), false);
+  assert.equal(chatUnread(failed, undefined), true);
+  // A failed turn stored after the chat was read is news: red.
+  assert.equal(chatFailedSinceRead(failed, 5), true);
+  // Read after the failure: no dot at all, so no tone either.
+  assert.equal(chatFailedSinceRead(failed, 10), false);
+  assert.equal(chatFailedSinceRead({...failed, status: 'completed'}, 5), false);
+  assert.equal(chatFailedSinceRead(null, 5), false);
 });
 
 test('the row menu: Pin or Unpin, Mark as read or unread, then Delete…', () => {

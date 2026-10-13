@@ -241,4 +241,7 @@
 .sesmenu .sesmenu-item > svg{width:15px;height:15px;flex:none}
 .sesmenu .sesmenu-item:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .sesmenu .sesmenu-item:focus{background:var(--hover)}
+/* The transparent ground above outranks the kit's .tk-mi:hover (same
+   specificity, later sheet), so the pointer lit no row: restated here. */
+.sesmenu .sesmenu-item:hover{background:var(--hover)}
 .sesmenu-sep{height:1px;margin:4px 6px;background:var(--divider)}

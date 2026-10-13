@@ -3165,10 +3165,20 @@ export async function modelsRemoveSafe(kind: "chat" | "embedding", id: string): 
  * answering, are left be. A pid that is not a llama-server any more (reused)
  * is never touched.
  */
+/**
+ * Whether Atomic Core holds the embedding side: an embedding session
+ * (`core/embedding.json`) or, for EmbeddingGemma 2, its embedding module
+ * (`core/embedding-module.json`). Neither leaves a pid file of ours, so
+ * only `models stop-embedding` stops them.
+ */
+export function coreEmbeddingRecorded(dataDir: string): boolean {
+  return ["embedding.json", "embedding-module.json"].some((f) => existsSync(join(dataDir, "core", f)));
+}
+
 export async function stopEmbeddingServer(): Promise<{ ok: boolean; error?: string }> {
   const status = await modelsStatus();
   const dataDir = (status.ok && status.status?.dataDir) || managedFactsFromFile().dataDir;
-  if (existsSync(join(dataDir, "core", "embedding.json"))) {
+  if (coreEmbeddingRecorded(dataDir)) {
     const result = await cli(["models", "stop-embedding"], 60_000);
     return result.ok ? { ok: true } : { ok: false, error: result.error || result.stderr };
   }

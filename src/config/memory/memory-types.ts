@@ -138,6 +138,12 @@ export interface RuntimeMemoryConfig {
     fts5Weight: number;
     vectorWeight: number;
     bruteForceCeiling: number;
+    /**
+     * Embed, in the background, the notes that have no vector for the
+     * active embedding model (after a model switch, or when embeddings
+     * are turned on over an existing corpus). Default `true`.
+     */
+    backfill: boolean;
   };
   /**
    * Phase 2: reactive link graph. See UserConfigFile.memory.links.
@@ -359,6 +365,12 @@ export interface UserMemoryConfig {
     fts5Weight: number;
     vectorWeight: number;
     bruteForceCeiling: number;
+    /**
+     * Embed, in the background, the notes that have no vector for the
+     * active embedding model (after a model switch, or when embeddings
+     * are turned on over an existing corpus). Default `true`.
+     */
+    backfill: boolean;
   };
   /**
    * Memory-v2 phase 2: reactive link graph. Added in config v13.

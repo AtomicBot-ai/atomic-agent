@@ -237,7 +237,7 @@ export async function createAgentRuntime(
     }
   }
   const memoryStores = await createRuntimeMemoryStores({
-    config, metrics, onProfileEvicted: (eviction) => {
+    config, metrics, logger, onProfileEvicted: (eviction) => {
       const sessionId = turnContext.getStore()?.sessionId;
       logger.info("profile facts evicted over memory.profile.maxEntries", {
         evicted: eviction.evicted.length,
@@ -575,6 +575,7 @@ export async function createAgentRuntime(
   const lifecycle = createRuntimeLifecycle({
     sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
+    embeddingBackfill: memoryStores.embeddingBackfill,
     get scheduler() { return scheduler; },
     get taskRunner() { return taskRunner; },
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },

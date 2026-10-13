@@ -32,6 +32,18 @@ function chatUnread(row, seenAt) {
   return !(seen >= 0) || ((row && row.updatedAt) || 0) > seen;
 }
 
+/* Whether an unread chat's dot takes the failed (red) tone from the status
+   the agent stored: only when the chat has a real read stamp and a turn was
+   stored after it, so the failure is news since the chat was last read. A
+   chat with no stamp is unread because it was never opened here, or because
+   the operator picked Mark as unread; that is the plain unread dot (brand
+   blue), whatever its last turn did. A turn that failed while this window
+   watched is ATTN's (renderer.js chatDot), not this. */
+function chatFailedSinceRead(row, seenAt) {
+  if (!row || row.status !== 'failed') return false;
+  return typeof seenAt === 'number' && seenAt >= 0 && (row.updatedAt || 0) > seenAt;
+}
+
 /* The row menu's items, top to bottom. Each is the act verb it runs, its
    label, its icon name and whether it is the destructive one. Rename is not
    here: nothing in the desktop or the agent's session routes renames a chat. */
@@ -53,4 +65,4 @@ function chatMenuPlace(x, y, w, h, winW, winH) {
   return {left, top};
 }
 
-if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatMenuItems, chatMenuPlace};
+if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace};

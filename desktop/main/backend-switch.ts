@@ -843,9 +843,9 @@ function settleStop(stop: Promise<CliResult>, ms: number): Promise<CliResult | n
     new Promise<null>((r) => { timer = setTimeout(() => r(null), ms); timer.unref?.(); }),
   ]).finally(() => { if (timer) clearTimeout(timer); });
 }
-/** Whether Atomic Core still records a chat or embedding session it owns (`<dataDir>/core/{chat,embedding}.json`). */
+/** Whether Atomic Core still records a chat or embedding session it owns (`<dataDir>/core/{chat,embedding,embedding-module}.json`). */
 export function coreSessionsRecorded(dataDir: string): boolean {
-  return ["chat.json", "embedding.json"].some((f) => existsSync(join(dataDir, "core", f)));
+  return ["chat.json", "embedding.json", "embedding-module.json"].some((f) => existsSync(join(dataDir, "core", f)));
 }
 
 /* ---- the agent's restart after a switch (backlog 18, its second review) ----

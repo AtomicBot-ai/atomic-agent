@@ -1,5 +1,7 @@
+import type Database from "better-sqlite3";
 import type { AtomicAgentConfig } from "../../config/config-schema.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { ProfileStore, type ProfileStoreOptions } from "../../memory/profile-store.js";
 import { MemoryStore } from "../../memory/memory-store.js";
 import { LessonStore } from "../../memory/lessons/lesson-store.js";
@@ -7,10 +9,16 @@ import { ProcedureStore } from "../../memory/procedures/procedure-store.js";
 import { LinkStore } from "../../memory/links/link-store.js";
 import { VoteStore } from "../../memory/voting/vote-store.js";
 import type { EmbeddingClient } from "../../memory/embeddings/embedding-client.js";
-import { createLocalEmbeddingClient, EmbeddingStore, EmbeddingWriter } from "../../memory/embeddings/index.js";
-import { getEmbeddingModelDef, isKnownEmbeddingModelId } from "../../local-llm/catalog/models-catalog.js";
-import { checkLlamaServer } from "../../llm/llama-server-health.js";
-import { coreEmbeddingStatus, createCoreEmbeddingClient } from "../../local-llm/core/core-embedding.js";
+import {
+  backfillEmbeddings,
+  countPendingEmbeddings,
+  EmbeddingStore,
+  EmbeddingWriter,
+  type EmbeddingBackfillResult,
+} from "../../memory/embeddings/index.js";
+import { connectMemoryEmbeddings } from "../../memory/embeddings/memory-embedding-connection.js";
+
+export { probeCoreEmbedding } from "../../memory/embeddings/memory-embedding-connection.js";
 
 /** The runtime owns these four connections; embedding/link/vote wrappers borrow notesStore's handle. */
 export interface RuntimeMemoryStores {
@@ -22,6 +30,8 @@ export interface RuntimeMemoryStores {
   lessonStore: LessonStore;
   procedureStore: ProcedureStore;
   voteStore: VoteStore | null;
+  /** Background re-embed of notes the active model has no vector for; shutdown stops it. */
+  embeddingBackfill: EmbeddingBackfillHandle | null;
 }
 
 /** Sequential recipe: derived stores are not constructed before the awaited embedding probe/attachment. */
@@ -29,8 +39,10 @@ export async function createRuntimeMemoryStores(args: {
   config: Pick<AtomicAgentConfig, "paths" | "memory" | "localModels">;
   metrics: AgentMetrics;
   onProfileEvicted: NonNullable<ProfileStoreOptions["onEvicted"]>;
+  /** Receives the backfill's start and end lines. Without it the backfill runs silently. */
+  logger?: Pick<StructuredLogger, "info">;
 }): Promise<RuntimeMemoryStores> {
-  const { config, metrics, onProfileEvicted } = args;
+  const { config, metrics, onProfileEvicted, logger } = args;
 
   // TODO(memory-v2): cross-phase invariant 4 — the consolidator
   // (phase 5) registers with the existing `Scheduler` here, not via a
@@ -63,98 +75,65 @@ export async function createRuntimeMemoryStores(args: {
   });
 
   // Memory-v2 phase 1B. Embedding plumbing — opt-in, graceful
-  // degradation. Conditions to wire it up (in order):
-  //
-  //   1. Both feature flags on: `memory.embeddings.enabled` AND
-  //      `localModels.embeddings.enabled`. Either off ⇒ FTS5-only.
-  //   2. A valid embedding model id is configured.
-  //   3. Probe `localModels.embeddings.url` for `/health`. Daemon
-  //      down ⇒ FTS5-only (logged + counted as `disabled`, not as a
-  //      failure — runtime keeps booting).
-  //
-  // The probe runs in the bootstrap critical path with a short
-  // timeout so a stale lockfile / stuck daemon cannot wedge the
-  // entire startup. Failure is observability-only: we never throw.
+  // degradation. `connectMemoryEmbeddings` checks the feature flags and
+  // the model, and probes it with a short timeout (`memory reindex`
+  // reaches the model the same way). Daemon down ⇒ FTS5-only (logged +
+  // counted, not a failure — runtime keeps booting). We never throw.
   let embeddingHealth: "ok" | "unreachable" | "disabled" = "disabled";
   let embeddingClient: EmbeddingClient | null = null;
-  if (
-    config.memory.embeddings.enabled &&
-    config.localModels.embeddings.enabled &&
-    config.localModels.embeddings.modelId !== null &&
-    isKnownEmbeddingModelId(config.localModels.embeddings.modelId)
-  ) {
-    const embModelDef = getEmbeddingModelDef(
-      config.localModels.embeddings.modelId,
-    );
-    const embUrl = config.localModels.embeddings.url;
-    // A model that runs in Atomic Core's embedding module has no URL of
-    // its own: ask Core (never starting it) instead of probing `/health`.
-    const viaCore = embModelDef.requiresCoreEmbeddingModule === true;
-    const probe: { reachable: boolean; why?: string } = viaCore
-      ? await probeCoreEmbedding(config.paths.localModelsDataDir, embModelDef)
-      : await checkLlamaServer({
-          url: embUrl,
-          retries: 0,
-          backoffMs: 0,
-          timeoutMs: 2000,
-        }).catch(() => ({ reachable: false }));
-    if (probe.reachable) {
-      try {
-        // Not a bare `LlamaEmbeddingClient`: a managed embedding daemon
-        // requires the key (#582), and `/health` above is exempt from
-        // it, so a keyless client would pass the probe and then get 401
-        // on every `/embedding`.
-        const client = viaCore
-          ? createCoreEmbeddingClient({
-              dataDir: config.paths.localModelsDataDir,
-              dim: embModelDef.dim,
-              model: embModelDef.id,
-              ...(embModelDef.prompts ? { prompts: embModelDef.prompts } : {}),
-            })
-          : createLocalEmbeddingClient({
-              url: embUrl,
-              dim: embModelDef.dim,
-              model: embModelDef.id,
-              ...(embModelDef.prompts ? { prompts: embModelDef.prompts } : {}),
-            });
-        embeddingClient = client;
-        const embStore = new EmbeddingStore({
+  let embeddingBackfill: EmbeddingBackfillHandle | null = null;
+  const connection = await connectMemoryEmbeddings(config);
+  if (connection.state === "reachable") {
+    try {
+      const client = connection.createClient();
+      embeddingClient = client;
+      const embStore = new EmbeddingStore({
+        db: notesStore.getDatabaseHandleForEmbeddings(),
+      });
+      const writer = new EmbeddingWriter({
+        client,
+        store: embStore,
+        metrics,
+      });
+      notesStore.attachEmbeddings({
+        writer,
+        store: embStore,
+        // Parsed from config but, before ATO-366, never passed on: recall
+        // ran with the store's built-in weights and ceiling.
+        fts5Weight: config.memory.embeddings.fts5Weight,
+        vectorWeight: config.memory.embeddings.vectorWeight,
+        bruteForceCeiling: config.memory.embeddings.bruteForceCeiling,
+        ...(connection.minCosine !== undefined ? { minCosine: connection.minCosine } : {}),
+      });
+      embeddingHealth = "ok";
+      if (config.memory.embeddings.backfill) {
+        embeddingBackfill = startEmbeddingBackfill({
           db: notesStore.getDatabaseHandleForEmbeddings(),
+          writer,
+          ...(logger ? { logger } : {}),
         });
-        const writer = new EmbeddingWriter({
-          client,
-          store: embStore,
-          metrics,
-        });
-        notesStore.attachEmbeddings({ writer, store: embStore });
-        embeddingHealth = "ok";
-      } catch (e) {
-        // Construction errors here are pure programmer error
-        // (constructor validation): log + degrade, never throw.
-        process.stderr.write(
-          `memory-v2 phase 1B: failed to wire embedding client: ${
-            e instanceof Error ? e.message : String(e)
-          }\n`,
-        );
-        embeddingHealth = "unreachable";
       }
-    } else {
-      embeddingHealth = "unreachable";
+    } catch (e) {
+      // Construction errors here are pure programmer error
+      // (constructor validation): log + degrade, never throw.
       process.stderr.write(
-        `memory-v2 phase 1B: ${probe.why ?? `embedding daemon at ${embUrl} is unreachable`}; ` +
-          `hybrid recall disabled, FTS5-only path active.\n`,
+        `memory-v2 phase 1B: failed to wire embedding client: ${
+          e instanceof Error ? e.message : String(e)
+        }\n`,
       );
+      embeddingHealth = "unreachable";
     }
-    metrics.recordMemoryEmbeddingsDaemonHealth({
-      outcome: embeddingHealth,
-      model: embModelDef.id,
-    });
-  } else {
-    metrics.recordMemoryEmbeddingsDaemonHealth({
-      outcome: "disabled",
-      model: null,
-    });
+  } else if (connection.state === "unreachable") {
+    embeddingHealth = "unreachable";
+    process.stderr.write(
+      `memory-v2 phase 1B: ${connection.why}; ` +
+        `hybrid recall disabled, FTS5-only path active.\n`,
+    );
   }
+  metrics.recordMemoryEmbeddingsDaemonHealth({
+    outcome: embeddingHealth,
+    model: connection.state === "disabled" ? null : connection.modelId,
+  });
 
   // Memory-v2 phase 2. The link graph store rides the same memory.sqlite
   // handle as `notesStore` — `MemoryStore` already enabled
@@ -202,31 +181,97 @@ export async function createRuntimeMemoryStores(args: {
         db: notesStore.getDatabaseHandleForEmbeddings(),
       })
     : null;
-  return { profileStore, notesStore, embeddingHealth, embeddingClient, linkStore, lessonStore, procedureStore, voteStore };
+  return { profileStore, notesStore, embeddingHealth, embeddingClient, linkStore, lessonStore, procedureStore, voteStore, embeddingBackfill };
+}
+
+export interface EmbeddingBackfillHandle {
+  /** Settles with the run's result, or `null` when it never started (stopped during the delay). */
+  readonly done: Promise<EmbeddingBackfillResult | null>;
+  /** Abort the run (an in-flight embed included) and wait for it to settle. */
+  stop(): Promise<void>;
 }
 
 /**
- * Whether Atomic Core's embedding module can serve `def` now: Core runs,
- * the module is on for this model and has not failed. An idle module is
- * fine (the first request starts it). A running module whose vectors do
- * not have the catalog's length is never attached: one memory store must
- * not mix dimensions.
+ * Start re-embedding, in the background, the notes the attached model has
+ * no vector for (a model switch, or embeddings turned on over an existing
+ * corpus). Returns `null` when there is nothing to do.
+ *
+ * Low priority by construction: it waits `startDelayMs` before the first
+ * embed (a short-lived runtime, such as `run` or `task run`, shuts down
+ * before it starts), embeds one note at a time in small batches and
+ * sleeps between batches, so live writes and recall queries share the
+ * model with it. Its timers are unref'd and shutdown aborts the in-flight
+ * request: it never holds a process open. A model that goes down ends the
+ * run quietly; the next boot resumes where it stopped.
  */
-export async function probeCoreEmbedding(
-  dataDir: string,
-  def: { id: string; name: string; dim: number },
-  status: (dataDir: string) => ReturnType<typeof coreEmbeddingStatus> = coreEmbeddingStatus,
-): Promise<{ reachable: boolean; why?: string }> {
-  const st = await status(dataDir);
-  if (!st) return { reachable: false, why: `${def.name} is not running in Atomic Core` };
-  if (!st.enabled || st.model_id !== def.id) {
-    return { reachable: false, why: `Atomic Core's embedding module is not serving ${def.name}` };
+export function startEmbeddingBackfill(args: {
+  db: Database.Database;
+  writer: EmbeddingWriter;
+  logger?: Pick<StructuredLogger, "info">;
+  startDelayMs?: number;
+  pauseMs?: number;
+  batchSize?: number;
+}): EmbeddingBackfillHandle | null {
+  const { db, writer, logger } = args;
+  const model = writer.client.model;
+  try {
+    if (countPendingEmbeddings(db, model) === 0) return null;
+  } catch {
+    return null;
   }
-  if (st.state === "failed" || st.state === "unsupported" || st.state === "disabled") {
-    return { reachable: false, why: `Atomic Core's embedding module is ${st.state}${st.error ? ` (${st.error.message})` : ""}` };
-  }
-  if (st.state === "ready" && st.dims !== def.dim) {
-    return { reachable: false, why: `${def.name} answers ${st.dims}-dim vectors, expected ${def.dim}` };
-  }
-  return { reachable: true };
+  const controller = new AbortController();
+  const { signal } = controller;
+  const done = (async (): Promise<EmbeddingBackfillResult | null> => {
+    await sleep(args.startDelayMs ?? BACKFILL_START_DELAY_MS, signal);
+    if (signal.aborted) return null;
+    logger?.info("memory embeddings backfill started", {
+      model,
+      pending: countPendingEmbeddings(db, model),
+    });
+    const result = await backfillEmbeddings(
+      { db, writer },
+      {
+        batchSize: args.batchSize ?? BACKFILL_BATCH_SIZE,
+        concurrency: 1,
+        signal,
+        pause: () => sleep(args.pauseMs ?? BACKFILL_PAUSE_MS, signal),
+      },
+    );
+    logger?.info("memory embeddings backfill finished", {
+      model,
+      embedded: result.embedded,
+      skipped: result.skipped,
+      remaining: result.remaining,
+      ...(result.stoppedReason ? { stoppedReason: result.stoppedReason } : {}),
+    });
+    return result;
+  })().catch(() => null);
+  return {
+    done,
+    stop: async () => {
+      controller.abort();
+      await done;
+    },
+  };
+}
+
+const BACKFILL_START_DELAY_MS = 15_000;
+const BACKFILL_PAUSE_MS = 250;
+const BACKFILL_BATCH_SIZE = 8;
+
+/** Resolves after `ms`, or at once on abort. Unref'd: never keeps the process alive. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    timer.unref();
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

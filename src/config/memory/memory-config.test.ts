@@ -272,6 +272,13 @@ describe("memory configuration domain seams", () => {
     } finally { USER_CONFIG_DEFAULTS.memory = original; }
   });
 
+  it("defaults the embedding backfill on and accepts turning it off", () => {
+    expect(parseMemory({}).embeddings.backfill).toBe(true);
+    expect(parseMemory({ embeddings: { backfill: false } }).embeddings.backfill).toBe(false);
+    expect(parseUserConfigFile({ memory: { embeddings: { backfill: false } } }).memory.embeddings.backfill).toBe(false);
+    expect(thrownError(() => parseMemory({ embeddings: { backfill: "maybe" } }))).toBeInstanceOf(OwnedValidationError);
+  });
+
   it("preserves zero allowances, independent weights and duplicate exemplar data", () => {
     const raw = {
       reflection: { maxNotesPerCall: 0 }, recallInjection: { k: 0 }, index: { limit: 0 },

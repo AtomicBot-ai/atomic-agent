@@ -463,6 +463,14 @@ export interface EmbeddingModelDef {
    * `EmbedRequest.purpose`. Absent: the text is embedded as is.
    */
   prompts?: Readonly<Record<"query" | "document" | "similarity", string>>;
+  /**
+   * Cosine a note needs to be recalled on meaning alone (no shared
+   * keyword). Models differ in where unrelated texts land: absent, memory
+   * uses its default (0.35, fitted to EmbeddingGemma). The values below
+   * are estimates from the models' published similarity ranges, not
+   * measurements on our notes.
+   */
+  minCosine?: number;
 }
 
 /**
@@ -500,6 +508,8 @@ export const EMBEDDING_MODELS_CATALOG: readonly EmbeddingModelDef[] = [
     pooling: "mean",
     minRamGb: 1,
     recommendedRamGb: 2,
+    // Unrelated texts commonly score 0.4–0.5.
+    minCosine: 0.55,
   },
   {
     id: "bge-small-en-v1.5",
@@ -514,6 +524,8 @@ export const EMBEDDING_MODELS_CATALOG: readonly EmbeddingModelDef[] = [
     pooling: "cls",
     minRamGb: 1,
     recommendedRamGb: 1,
+    // BGE v1.5 compresses similarities into roughly 0.4–1.
+    minCosine: 0.6,
   },
   {
     id: "bge-base-en-v1.5",
@@ -528,6 +540,7 @@ export const EMBEDDING_MODELS_CATALOG: readonly EmbeddingModelDef[] = [
     pooling: "cls",
     minRamGb: 1,
     recommendedRamGb: 2,
+    minCosine: 0.6,
   },
   {
     id: "bge-m3",
@@ -543,6 +556,7 @@ export const EMBEDDING_MODELS_CATALOG: readonly EmbeddingModelDef[] = [
     pooling: "cls",
     minRamGb: 2,
     recommendedRamGb: 4,
+    minCosine: 0.45,
   },
   {
     id: "jina-embeddings-v2-base-en",
@@ -558,6 +572,7 @@ export const EMBEDDING_MODELS_CATALOG: readonly EmbeddingModelDef[] = [
     pooling: "mean",
     minRamGb: 1,
     recommendedRamGb: 2,
+    minCosine: 0.55,
   },
   {
     // Google's EmbeddingGemma 2 (`gemma-embedding2`, llama.cpp b11454+):

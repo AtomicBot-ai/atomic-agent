@@ -310,7 +310,7 @@ export interface CoreEmbeddingClientOptions {
    */
   timeoutMs?: number;
   /** Connect to the running Core without starting it. Default: the recorded Core. */
-  connect?: () => Promise<CoreControlClient | null>;
+  connect?: (signal?: AbortSignal) => Promise<CoreControlClient | null>;
 }
 
 /**
@@ -333,9 +333,9 @@ export function coreEmbeddingTimeoutMs(purpose: EmbedRequest["purpose"]): number
  */
 export function createCoreEmbeddingClient(opts: CoreEmbeddingClientOptions): EmbeddingClient {
   if (!Number.isInteger(opts.dim) || opts.dim <= 0) throw new Error(`createCoreEmbeddingClient: dim must be a positive integer, got ${opts.dim}`);
-  const connect = opts.connect ?? (async () => {
+  const connect = opts.connect ?? (async (signal?: AbortSignal) => {
     const record = readCoreEmbeddingRecord(opts.dataDir);
-    return connectCore(opts.dataDir, record?.coreVersion ?? activeCoreVersion(opts.dataDir));
+    return connectCore(opts.dataDir, record?.coreVersion ?? activeCoreVersion(opts.dataDir), signal);
   });
   let connected: CoreControlClient | null = null;
   return {
@@ -344,7 +344,9 @@ export function createCoreEmbeddingClient(opts: CoreEmbeddingClientOptions): Emb
     async embed(req: EmbedRequest): Promise<EmbedResult> {
       let answer: { status: number; body: unknown };
       try {
-        connected ??= await connect();
+        // The request's signal covers the reconnect too: an aborted backfill
+        // (shutdown) must not sit out the 15 s handshake bound.
+        connected ??= await connect(req.signal);
         if (!connected) throw new EmbeddingUnavailableError("Atomic Core is not running");
         answer = await connected.call<{ status: number; body: unknown }>("/embedding/embed",
           { model: opts.model, input: promptedEmbeddingText(req, opts.prompts) },

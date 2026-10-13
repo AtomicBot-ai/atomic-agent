@@ -138,7 +138,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 77.
 - `memory.embeddings.enabled` (default `false`).
 - `memory.embeddings.fts5Weight` (default `0.5`).
 - `memory.embeddings.vectorWeight` (default `0.5`).
-- `memory.embeddings.bruteForceCeiling` (default `200`).
+- `memory.embeddings.bruteForceCeiling` (default `2000`).
+- `memory.embeddings.backfill` (default `true`).
 - `memory.links.enabled` (default `true`).
 - `memory.links.autoGenerate` (default `true`).
 - `memory.links.expansionDepth` (default `1`).

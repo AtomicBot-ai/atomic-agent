@@ -13,9 +13,9 @@ import type { EmbeddingStore } from "./embedding-store.js";
  * extension loader is brittle across platforms (different .so / .dylib
  * names per arch, Apple Silicon notarisation, Windows .dll loaders).
  * For the v2 launch we accept O(N) cosine on the embedding rows — N
- * is bounded by `memory.notes.maxEntries` (default 1 000) and the
- * `bruteForceCeiling` soft-warn ensures we shout when corpus growth
- * outpaces the brute-force budget. A follow-up phase will graduate to
+ * is bounded by `memory.notes.maxEntries` (default 1 000) and the scan
+ * by `bruteForceCeiling` (see `scanCandidates`), whose overflow counter
+ * shouts when corpus growth outpaces the brute-force budget. A follow-up phase will graduate to
  * `sqlite-vec` or an ANN index without changing this module's API.
  *
  * Graceful degradation contract:
@@ -26,11 +26,39 @@ import type { EmbeddingStore } from "./embedding-store.js";
  *     `EmbeddingUnavailableError`, the same fallback path fires and a
  *     single `agent.memory.embeddings.fallback_to_fts5` counter is
  *     emitted per turn so dashboards spot persistent daemon outages.
- *   - When the corpus exceeds `bruteForceCeiling`, the cosine path is
- *     **skipped** (not just slow) and the counter
- *     `agent.memory.embeddings.brute_force_overflow` increments. The
- *     caller still sees a useful FTS5-only result set.
+ *   - When the corpus exceeds `bruteForceCeiling`, the scan covers the
+ *     newest `bruteForceCeiling` vectors plus the BM25 candidates'
+ *     (keyword hits keep their re-rank, recent notes stay reachable by
+ *     meaning) and `agent.memory.embeddings.brute_force_overflow`
+ *     increments.
+ *
+ * Notes found only by meaning (no shared keyword, e.g. another
+ * language) come in through `deps.hydrate`, only into the slots keyword
+ * hits leave free, and only when they clear the similarity floor and
+ * stay close to the best cosine of the query (`admitsCosineOnly`).
  */
+
+/**
+ * Default cosine a note needs to be recalled on meaning alone, for
+ * models without their own `minCosine` in the catalog. EmbeddingGemma
+ * puts unrelated short texts at roughly 0.1–0.3 and paraphrases or
+ * translations well above 0.5; 0.35 keeps the first out without losing
+ * the second. Models whose unrelated texts score higher (nomic, BGE)
+ * carry a higher floor in the catalog. Keyword hits are not gated: BM25
+ * already vouched for them.
+ */
+export const COSINE_ONLY_MIN_SIMILARITY = 0.35;
+
+/**
+ * How far below the query's best cosine a meaning-only note may sit.
+ * The prompt's auto-recall runs on every tool step: when nothing in the
+ * corpus is really close, the floor alone would let the "least
+ * unrelated" notes in each time. Anchoring to the best match keeps only
+ * the notes that are about as close as the best one (0.15 is about the
+ * gap between a paraphrase and a loosely related note on these models;
+ * an estimate, not a measurement).
+ */
+export const COSINE_ONLY_MAX_GAP = 0.15;
 
 export interface HybridRecallInputEntry extends MemoryEntry {
   /** Lower is better — raw BM25 score as returned by `bm25(fts)`. */
@@ -54,13 +82,27 @@ export interface HybridRecallOptions {
 export interface HybridRecallDeps {
   embeddingClient: EmbeddingClient | null;
   embeddingStore: EmbeddingStore | null;
-  /** Skip cosine when `memory_embeddings.model` row count exceeds this. */
+  /**
+   * Most vectors one recall scans. Above it: the newest this many, plus
+   * the BM25 candidates' vectors.
+   */
   bruteForceCeiling: number;
   /** 0..1 weight for the normalised BM25 score. */
   fts5Weight: number;
   /** 0..1 weight for cosine similarity. `fts5Weight + vectorWeight` should equal 1. */
   vectorWeight: number;
   metrics?: AgentMetrics;
+  /**
+   * The attached model's floor for meaning-only notes (catalog
+   * `minCosine`). Default `COSINE_ONLY_MIN_SIMILARITY`.
+   */
+  minCosine?: number;
+  /**
+   * Loads the entries of notes found by cosine alone, by id (ids that no
+   * longer exist are left out). Without it, cosine only re-ranks the BM25
+   * hits.
+   */
+  hydrate?: (ids: readonly number[]) => MemoryEntry[];
 }
 
 /**
@@ -70,11 +112,13 @@ export interface HybridRecallDeps {
  *  1. If `embeddingClient` or `embeddingStore` is null → return
  *     `bm25Hits.slice(0, k)` (graceful fallback).
  *  2. Embed the query (catch `EmbeddingUnavailableError`).
- *  3. Pull row count for the model. If `> bruteForceCeiling` → emit
- *     `brute_force_overflow` and return BM25-only.
- *  4. Otherwise: brute-force cosine over `listByModel`, apply
- *     workingDir + tags filters, blend with normalised BM25 scores,
- *     return top-K.
+ *  3. Read the candidate vectors (`scanCandidates`): all of the model's
+ *     up to `bruteForceCeiling`, else the newest that many plus the BM25
+ *     candidates', emitting `brute_force_overflow`.
+ *  4. Cosine over them, apply workingDir + tags filters (the same ones
+ *     the BM25 query applies). Keyword hits are ranked among themselves
+ *     by normalised BM25 blended with cosine and keep their slots; the
+ *     best meaning-only notes fill the slots left, return top-K.
  */
 export async function recallHybrid(
   deps: HybridRecallDeps,
@@ -102,71 +146,97 @@ export async function recallHybrid(
     throw err;
   }
 
-  const model = deps.embeddingClient.model;
-  const total = deps.embeddingStore.countByModel(model);
-  if (total > deps.bruteForceCeiling) {
-    deps.metrics?.recordMemoryEmbeddingsBruteForceOverflow({
-      rows: total,
-      ceiling: deps.bruteForceCeiling,
-    });
-    return opts.bm25Hits.slice(0, opts.k);
-  }
-
-  const candidates = deps.embeddingStore.listByModel(model);
+  const candidates = scanCandidates(deps.embeddingStore, deps.embeddingClient.model, deps, opts);
   const requiredTags = opts.requiredTags ?? [];
-  // Cosine over filtered candidates only.
-  const cosineHits: Array<{ id: number; cosine: number }> = [];
+  // Cosine over filtered candidates only. The filters mirror the BM25
+  // query (`MemoryStore.recallRaw`): working dir in scope and every
+  // required tag. It has no archived/kind filter, so neither does this.
+  const cosineById = new Map<number, number>();
   for (const c of candidates) {
-    if (
-      opts.workingDir !== undefined &&
-      opts.workingDir !== null &&
-      c.workingDir !== opts.workingDir
-    ) {
-      continue;
-    }
-    if (
-      requiredTags.length > 0 &&
-      !requiredTags.every((t) => c.tags.includes(t))
-    ) {
-      continue;
-    }
-    const cosine = cosineSimilarity(queryVec, c.vector);
-    if (cosine > 0) cosineHits.push({ id: c.memoryId, cosine });
+    if (!passesFilters(c, opts.workingDir, requiredTags)) continue;
+    // A vector of another length (a corrupt or foreign row) cannot be
+    // compared: skip it rather than fail the whole recall.
+    if (c.vector.length !== queryVec.length) continue;
+    cosineById.set(c.memoryId, cosineSimilarity(queryVec, c.vector));
   }
 
-  // Blend the two signals. BM25 is "lower is better" and unbounded
-  // below; normalise via `1 / (1 + |bm25|)` so it maps to (0, 1].
-  // Cosine is already in [-1, 1]; clamp to [0, 1] (negative cosine ⇒
-  // unrelated, score 0).
-  const blended = new Map<number, { entry: MemoryEntry; score: number }>();
-  for (const hit of opts.bm25Hits) {
-    const normBm25 = 1 / (1 + Math.abs(hit.bm25Score));
-    blended.set(hit.id, {
-      entry: hit,
-      score: deps.fts5Weight * normBm25,
-    });
-  }
-  for (const c of cosineHits) {
-    const normCos = Math.max(0, Math.min(1, c.cosine));
-    const existing = blended.get(c.id);
-    if (existing) {
-      existing.score += deps.vectorWeight * normCos;
-    } else {
-      // We need the full `MemoryEntry`. The caller's `bm25Hits` may
-      // not contain this id (cosine-only neighbour). Read it from the
-      // candidate metadata: we have id + workingDir + tags but not
-      // content/createdAt/updatedAt — defer fetching via a callback
-      // would be cleaner, but for now we skip cosine-only hits. The
-      // BM25 hit-set already serves as the candidate pool; cosine
-      // just re-ranks within it. Pure cosine-only recall is deferred
-      // to a follow-up that lets the caller pass a hydrator.
-      continue;
-    }
-  }
-  return [...blended.values()]
+  // Keyword hits, re-ranked among themselves. FTS5's bm25() is negative
+  // and more negative is better, so the strongest hit has the largest
+  // magnitude: normalise by the set's largest so the best keyword hit
+  // scores 1 (the old `1 / (1 + |bm25|)` gave it the smallest share).
+  // Cosine is clamped to [0, 1] (negative ⇒ unrelated, 0).
+  const maxBm25 = Math.max(0, ...opts.bm25Hits.map((hit) => Math.abs(hit.bm25Score)));
+  const keyword = opts.bm25Hits
+    .map((hit) => {
+      const normBm25 = maxBm25 > 0 ? Math.abs(hit.bm25Score) / maxBm25 : 1;
+      const cosine = Math.max(0, Math.min(1, cosineById.get(hit.id) ?? 0));
+      return { entry: hit as MemoryEntry, score: deps.fts5Weight * normBm25 + deps.vectorWeight * cosine };
+    })
+    // Stable sort: equal scores keep BM25 order.
     .sort((a, b) => b.score - a.score)
     .slice(0, opts.k)
     .map((r) => r.entry);
+
+  // Notes found by meaning alone only fill the slots keyword hits leave
+  // free: an exact keyword hit (an identifier, a path, a URL) is never
+  // pushed out by something that merely sounds alike.
+  const free = opts.k - keyword.length;
+  if (free <= 0 || !deps.hydrate || deps.vectorWeight <= 0) return keyword;
+  const keywordIds = new Set(opts.bm25Hits.map((hit) => hit.id));
+  let bestCosine = 0;
+  for (const cosine of cosineById.values()) if (cosine > bestCosine) bestCosine = cosine;
+  const floor = Math.max(deps.minCosine ?? COSINE_ONLY_MIN_SIMILARITY, bestCosine - COSINE_ONLY_MAX_GAP);
+  const meaningOnly = [...cosineById.entries()]
+    .filter(([id, cosine]) => !keywordIds.has(id) && cosine >= floor)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, free);
+  if (meaningOnly.length === 0) return keyword;
+  const hydrated = new Map(deps.hydrate(meaningOnly.map(([id]) => id)).map((entry) => [entry.id, entry]));
+  const extra: MemoryEntry[] = [];
+  for (const [id] of meaningOnly) {
+    const entry = hydrated.get(id);
+    // Re-checked on the hydrated row: it may have changed since the scan.
+    if (entry && passesFilters(entry, opts.workingDir, requiredTags)) extra.push(entry);
+  }
+  return [...keyword, ...extra];
+}
+
+type Candidate = ReturnType<EmbeddingStore["listByModel"]>[number];
+
+/**
+ * The vectors one recall scores. Up to `bruteForceCeiling` vectors for
+ * the model: all of them. Above it: the newest `bruteForceCeiling` (recent
+ * notes stay reachable by meaning) plus the BM25 candidates' (every
+ * keyword hit keeps its re-rank), deduplicated. The cost is reading and
+ * decoding the vectors (2 000 × 768 floats ≈ 6 MB) and as many dot
+ * products: a few milliseconds per recall at the default ceiling.
+ */
+function scanCandidates(
+  store: EmbeddingStore,
+  model: string,
+  deps: Pick<HybridRecallDeps, "bruteForceCeiling" | "metrics">,
+  opts: Pick<HybridRecallOptions, "bm25Hits">,
+): Candidate[] {
+  const total = store.countByModel(model);
+  if (total <= deps.bruteForceCeiling) return store.listByModel(model);
+  deps.metrics?.recordMemoryEmbeddingsBruteForceOverflow({
+    rows: total,
+    ceiling: deps.bruteForceCeiling,
+  });
+  const byId = new Map<number, Candidate>();
+  for (const c of store.listNewestByModel(model, deps.bruteForceCeiling)) byId.set(c.memoryId, c);
+  const missing = opts.bm25Hits.map((hit) => hit.id).filter((id) => !byId.has(id));
+  for (const c of store.listByModelForMemories(model, missing)) byId.set(c.memoryId, c);
+  return [...byId.values()];
+}
+
+function passesFilters(
+  row: { workingDir: string | null; tags: readonly string[] },
+  workingDir: string | null | undefined,
+  requiredTags: readonly string[],
+): boolean {
+  if (workingDir !== undefined && workingDir !== null && row.workingDir !== workingDir) return false;
+  return requiredTags.every((t) => row.tags.includes(t));
 }
 
 /**

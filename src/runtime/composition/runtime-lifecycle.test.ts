@@ -137,4 +137,23 @@ describe("runtime lifecycle ownership", () => {
     ]);
   });
 
+  it("aborts the embedding backfill with the other memory work and waits for it before closing the notes store", async () => {
+    const events: string[] = [];
+    const { resources } = fixture(events);
+    let settle: () => void = () => {};
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    const lifecycle = createRuntimeLifecycle({
+      ...resources,
+      embeddingBackfill: { stop: async () => { events.push("backfill.stop"); await settled; events.push("backfill.settled"); } },
+    });
+    const shutdown = lifecycle.shutdown();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(events.indexOf("backfill.stop")).toBe(events.indexOf("naming.abort") + 1);
+    expect(events).not.toContain("notes.close");
+    settle();
+    await shutdown;
+    expect(events.indexOf("backfill.settled")).toBeLessThan(events.indexOf("notes.close"));
+    expect(events.filter((event) => !event.startsWith("backfill."))).toEqual(order);
+  });
+
 });
