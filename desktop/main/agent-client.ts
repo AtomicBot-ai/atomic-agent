@@ -119,6 +119,12 @@ const KILL_WAIT_MS = 3_000;
  * blocking the main thread. It holds the databases while it is there.
  */
 const LINGER_WAIT_MS = 5_000;
+/**
+ * ATO-259: a manual compaction is answered when the summary is written.
+ * The agent caps the whole operation at ten minutes by default
+ * (compaction.maxTotalTimeoutMs); one more minute covers the queue wait.
+ */
+const COMPACT_TIMEOUT_MS = 11 * 60_000;
 
 /**
  * Where the agent might be, in order of preference.
@@ -1111,6 +1117,51 @@ export class AgentClient extends EventEmitter {
         contextWindow: number | null; reservedForReply: number; replyCap?: number; pairsCap: number;
       };
       return { ok: true, supported: true, ...body };
+    } catch (err) {
+      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * ATO-259: compact a session's context now, through the agent's
+   * `POST /api/sessions/{id}/compact` (PR #618). The route waits for the
+   * summary, so the bound is the agent's own ten-minute ceiling plus a
+   * margin; closing the request would cancel the compaction. A 409 is the
+   * agent's "busy" (one already running). An agent without the route
+   * answers its unknown-route 404 and is reported as unsupported; the
+   * route's own 404 is an unknown session.
+   */
+  async compactSession(sessionId: string): Promise<{
+    ok: boolean; supported: boolean;
+    status?: "compacted" | "noop" | "busy" | "failed" | "cancelled";
+    tokensBefore?: number; tokensAfter?: number; message?: string; error?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/compact`, {
+        method: "POST",
+        headers: this.headers(),
+        body: "{}",
+        signal: AbortSignal.timeout(COMPACT_TIMEOUT_MS),
+      });
+      const body = (await res.json().catch(() => null)) as {
+        status?: string; tokensBefore?: unknown; tokensAfter?: unknown; message?: unknown;
+        error?: { message?: string };
+      } | null;
+      if (res.status === 404) {
+        const detail = body?.error?.message ?? "";
+        if (/session not found/i.test(detail)) return { ok: false, supported: true, error: "This chat is not saved yet" };
+        return { ok: false, supported: false, error: "This agent cannot compact a conversation" };
+      }
+      const status = body?.status;
+      if ((res.ok || res.status === 409) && (status === "compacted" || status === "noop" || status === "busy" || status === "failed" || status === "cancelled")) {
+        return {
+          ok: status === "compacted" || status === "noop", supported: true, status,
+          ...(typeof body?.tokensBefore === "number" ? { tokensBefore: body.tokensBefore } : {}),
+          ...(typeof body?.tokensAfter === "number" ? { tokensAfter: body.tokensAfter } : {}),
+          ...(typeof body?.message === "string" && body.message ? { message: body.message } : {}),
+        };
+      }
+      return { ok: false, supported: true, error: body?.error?.message || `HTTP ${res.status}` };
     } catch (err) {
       return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
     }

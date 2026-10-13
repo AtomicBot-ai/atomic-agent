@@ -297,6 +297,8 @@ contextBridge.exposeInMainWorld("atomic", {
   llamaProps: (url: string, apiKey?: string) => ipcRenderer.invoke("agent:llamaProps", { url, apiKey }),
   contextPreview: (sessionId: string | null, message: string) =>
     ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
+  /** ATO-259: summarize the chat's older history now (POST /api/sessions/{id}/compact). */
+  compactSession: (sessionId: string) => ipcRenderer.invoke("agent:compactSession", { sessionId }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),

@@ -1695,6 +1695,8 @@ const SLASH = [
   // menu-registry.ts setup.onboarding: `/onboarding`, alias `/setup` (the 4th field: aliases, matched as typed).
   ['onboarding','run first-time setup again from the start — keeps your providers, keys, sessions and memory','',['setup']],
   ['clear','clear chat transcript (keeps session)'],
+  // ATO-259: POST /api/sessions/{id}/compact, as the TUI's `/compact`.
+  ['compact','summarize older messages to free up context'],
   ['abort','abort the running turn'],
   ['quit','exit Atomic Agent'],
   ['debug','toggle debug pane (feed / logs / world …)'],
@@ -1959,7 +1961,14 @@ const LIVE_TURNS = new Map();
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered']);
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
+  // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
+  'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
+/* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
+   the agent says how it went), the chat a manual compaction is running for
+   (`manual`), and whether the agent has the route (an older agent answers
+   its unknown-route 404 and the command says so). */
+const COMPACT = {rowId:null, manual:null, supported:true};
 /* Item 38: the local model server's request slots (`total_slots` in its
    /props), read when two chats run at once. */
 const LLAMA_SLOTS = {n:null, busy:false};
@@ -2492,7 +2501,10 @@ function item(m) {
    ============================================================ */
 function workingShown(m) {
   if (!m || m.k !== 'assistant' || m.id !== S.streamId || !S.busy || String(m.text || '').trim()) return false;
-  const prev = S.log[S.log.indexOf(m) - 1];
+  // ATO-259: a finished compaction line says what happened; the turn is still waiting for words under it.
+  let at = S.log.indexOf(m) - 1;
+  while (at >= 0 && S.log[at].k === 'system' && S.log[at].compactDone) at--;
+  const prev = S.log[at];
   return !!prev && prev.k === 'user';
 }
 /** Time since the send, in the failure line's words ("12 s", "1 min 5 s"). */
@@ -4720,7 +4732,10 @@ function contextHTML() {
       + '</span></div></div>'
     /* ATO-182: no Done, as in the mode and model popovers (ATO-167): a step
        applies as it is pressed, and a click outside or Escape closes it. */
-    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span></div></div></div>';
+    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
+    /* ATO-259: summarize the older history now, as `/compact` does. Off while
+       a turn runs or a compaction is already going, with the reason as its tip. */
+    + compactButtonHTML() + '</div></div></div>';
 }
 
 /* The kit dot for a chatDot()/taskDot() pair, in the Tactile status grammar:
@@ -5683,6 +5698,7 @@ function act(a) {
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
+  if (a === 'context:compact') { close(); render(); compactNow(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
   if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.softError = null; WIZ.errorKind = null; WIZ.forId = null; SEL.err = null; SEL.addOpen = false; render(); return; }
   /* Chat review (Д21): Where it runs › Add provider. Settings › Models on its
@@ -6521,6 +6537,10 @@ function runSlash(parts) {
     S.log.push({id:nid(), k:'system', text:'usage: /privacy | /privacy analytics on|off|status'}); render(); return;
   }
   if (name === 'analytics') { analyticsSlash(rest); return; }
+  if (name === 'compact') {
+    if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
+    compactNow(); return;
+  }
   if (nav[name]) { act(nav[name]); return; }
   S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
   render();
@@ -8648,6 +8668,91 @@ function providerFirstWords(reason) {
   return /^[A-Z][a-z']/.test(first) ? first.charAt(0).toLowerCase() + first.slice(1) : first;
 }
 
+/* ============================================================
+   ATO-259 / ATO-295 — context compaction in the chat. The words and the
+   availability rule live in context-compaction.js; these own the rows.
+   ============================================================ */
+/** One maintenance frame of the turn on screen into its rows; true when something changed. */
+function compactTurnFrame(ev, item) {
+  const p = ev.payload || {};
+  if (ev.kind === 'history_trimmed') {
+    if (!item) return false;
+    S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(HISTORY_TRIMMED_LINE)});
+    return true;
+  }
+  let row = COMPACT.rowId ? S.log.find((m) => m.id === COMPACT.rowId) : null;
+  if (ev.kind === 'compaction_started') {
+    if (!item) return false;
+    row = {id:nid(), k:'system', note:true, spin:true, compact:true, text: esc(COMPACTING_LINE)};
+    S.log.splice(S.log.indexOf(item), 0, row);
+    COMPACT.rowId = row.id;
+    return true;
+  }
+  if (ev.kind === 'compaction_progress') {
+    if (!row || !row.spin) return false;
+    row.text = esc(compactionProgressLine(p));
+    return true;
+  }
+  const line = compactionResultLine(p);
+  COMPACT.rowId = null;
+  if (row) { Object.assign(row, {spin:false, compactDone:true, sev:line.sev, text: esc(line.text)}); }
+  else if (item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, compactDone:true, sev:line.sev, text: esc(line.text)});
+  else return false;
+  // The prompt the next step builds is smaller; the chip says so when the turn ends (refreshContext).
+  return true;
+}
+/** The turn ended with its compaction row still spinning (a Stop, a failure): it stops spinning. */
+function compactTurnEnded() {
+  const row = COMPACT.rowId ? S.log.find((m) => m.id === COMPACT.rowId) : null;
+  COMPACT.rowId = null;
+  if (!row || !row.spin) return false;
+  Object.assign(row, {spin:false, compactDone:true, text: esc(compactionResultLine({status:'cancelled'}).text)});
+  return true;
+}
+/** Why `/compact` and "Compact now" are off for the chat on screen, or ''. */
+function compactBlocked() {
+  const sid = S.agentSession;
+  return compactBlockedReason({
+    supported: COMPACT.supported && !!(BR && BR.compactSession),
+    compacting: !!COMPACT.manual || !!COMPACT.rowId,
+    busy: S.busy || !!S.pending || (!!sid && [...RUNNING.values()].includes(sid)),
+    sessionId: sid,
+  });
+}
+function compactButtonHTML() {
+  const why = compactBlocked();
+  return '<button class="btn btn-s xs" data-act="context:compact"' + (why ? ' disabled title="' + esc(why) + '"' : ' title="Summarize older messages to free up context"')
+    + '>Compact now</button>';
+}
+/**
+ * `/compact` and "Compact now": POST /api/sessions/{id}/compact through main.
+ * The row spins in the chat until the agent answers (it waits for the
+ * summary); the answer replaces it. Nothing is sent as a message and no
+ * turn starts.
+ */
+async function compactNow() {
+  const why = compactBlocked();
+  if (why) { toast("Can't compact now", why, 'bad'); return; }
+  const sid = S.agentSession;
+  const row = {id:nid(), k:'system', note:true, spin:true, compact:true, text: esc(COMPACTING_LINE)};
+  S.log.push(row);
+  COMPACT.manual = sid;
+  render();
+  let r;
+  try { r = await BR.compactSession(sid); }
+  catch (err) { r = {ok:false, supported:true, error: String((err && err.message) || err)}; }
+  COMPACT.manual = null;
+  if (r && r.supported === false) COMPACT.supported = false;
+  const line = r && r.status
+    ? compactionResultLine({status:r.status, tokens_before:r.tokensBefore, tokens_after:r.tokensAfter, message:r.message})
+    : compactionResultLine({status:'failed', message:(r && r.error) || 'the agent gave no reason'});
+  Object.assign(row, {spin:false, compactDone:true, sev:line.sev, text: esc(line.text)});
+  // The person may have opened another chat while it ran: the answer is theirs all the same.
+  if (S.log.includes(row)) render();
+  else toast(line.sev ? "Couldn't compact" : 'Compaction finished', line.text, line.sev ? 'bad' : undefined);
+  if (r && r.status === 'compacted') refreshContext();
+}
+
 function onChatEvent(ev) {
   /* B5 — a named `event: error` frame (it arrives with `payload`) is not
      always the end of the turn. The agent's one error emitter also sends a
@@ -8734,6 +8839,8 @@ function onChatEvent(ev) {
   }
   // ATO-197: wherever its rows are, a turn's end settles the calls nothing answered (Stop, a failure).
   if (ev && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && ev.turnId && toolCardsTurnEnded(ev)) render();
+  // ATO-259: a compaction the turn's end cut short does not spin on.
+  if (ev && ev.turnId === S.turnId && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && compactTurnEnded()) render();
   // Item 38: what a turn draws while its rows are not on screen waits for its chat to be opened.
   if (liveTurnFrame(ev)) return;
   if (!ev || ev.turnId !== S.turnId) return;
@@ -8835,6 +8942,14 @@ function onChatEvent(ev) {
     // the lines that say what happened, as the TUI's reducer keeps it off its feed.
     if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, text: esc(fzWorkerLine(e))});
     render();
+    return;
+  }
+  /* ATO-259 / ATO-295: the agent is compacting the chat's context before its
+     next step, or it left older history out to fit. Without these the turn
+     showed only "Working…" for the 15-20 s a summary takes. */
+  if (ev.kind === 'compaction_started' || ev.kind === 'compaction_progress' || ev.kind === 'compaction_completed'
+      || ev.kind === 'compaction_failed' || ev.kind === 'history_trimmed') {
+    if (compactTurnFrame(ev, item)) render();
     return;
   }
   if (ev.kind === 'reasoning_progress') {
@@ -18568,7 +18683,8 @@ function systemRun(m, times) {
    muted info glyph. The actions keep a leading space so a row's
    textContent still reads "sentence Action" (and "sentence \u00d7N"). */
 function sysGlyph(m) {
-  if (m.text === 'loading session\u2026') return '<span class="sys-ic"><span class="tk-spin"></span></span>';
+  // ATO-259: a compaction still running spins, as the session load does.
+  if (m.spin || m.text === 'loading session\u2026') return '<span class="sys-ic"><span class="tk-spin"></span></span>';
   const sev = m.sev || (m.act === 'switch-provider' ? 'err' : '');
   const name = sev === 'err' || sev === 'warn' ? 'alert' : sev === 'pause' ? 'pause' : sev === 'stop' ? 'stop' : m.fusion ? 'fusion' : 'info';
   return '<span class="sys-ic' + (sev ? ' ' + sev : '') + '">' + ic(name) + '</span>';

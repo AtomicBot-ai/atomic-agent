@@ -1759,6 +1759,12 @@ function wireIpc(client: AgentClient): void {
     const { sessionId, message } = (payload ?? {}) as { sessionId?: unknown; message?: unknown };
     return client.contextPreview(typeof sessionId === "string" && sessionId ? sessionId : null, typeof message === "string" ? message : "");
   });
+  // ATO-259: `/compact` and the context popover's "Compact now".
+  ipcMain.handle("agent:compactSession", (_event, payload: unknown) => {
+    const { sessionId } = (payload ?? {}) as { sessionId?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, error: "No chat to compact yet" };
+    return client.compactSession(sessionId);
+  });
 
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {

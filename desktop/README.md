@@ -40,6 +40,7 @@ generated per launch, so nothing outside this app can reach the agent.
 | Approval verdicts | `POST /api/approval/resolve` |
 | Steering the turn already running | `POST /api/sessions/{id}/steer` |
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
+| Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,
@@ -84,6 +85,18 @@ staleness guard, so a slow refresh for the session the user just left cannot
 draw its trimming verdict over the numbers of the session they are on. A
 prompt-derived window is released when the active `<providerId> <chatModel>`
 changes, so the gauge never draws a new model against the old model's scale.
+
+**Context compaction (ATO-259, ATO-295).** When the agent summarizes older
+history inside a turn, the stream carries `compaction_started`,
+`compaction_progress` and `compaction_completed` / `compaction_failed`; the
+chat shows a spinning "Compacting the conversation…" line that becomes
+"Conversation compacted: ~30k → ~9k tokens" (or a plain failure line). When
+the agent could not compact and left older history out, `history_trimmed`
+adds one line saying so and pointing at `/compact`. `/compact` in the composer
+and "Compact now" in the context popover call the compact route through main
+(`agent:compactSession`); both are off while a turn runs, while a compaction
+is going, and before the chat is saved. Words and rules:
+[context-compaction.js](renderer/context-compaction.js).
 
 **The session's model stamp.** The same row carries `metadata.llm` — the
 provider and model that session last ran on. It is reported and never applied:

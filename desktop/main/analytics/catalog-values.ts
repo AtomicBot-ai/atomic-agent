@@ -44,7 +44,7 @@ export const SLASH_COMMANDS = [
   "dump", "report", "help", "tools", "theme", "onboarding", "setup", "clear", "abort", "quit", "debug", "chat",
   "runmode", "observe", "manage", "feed", "logs", "reasoning", "world", "expand", "collapse", "session",
   "sessions", "new", "skills", "skill", "memory", "llm", "mcp", "model", "tasks", "task", "telegram",
-  "import", "privacy", "analytics", "unknown",
+  "import", "privacy", "analytics", "compact", "unknown",
 ] as const;
 /** The renderer's approval CATS ids. */
 export const APPROVAL_CATEGORIES = [

@@ -1573,6 +1573,32 @@ describe("profile clip", () => {
   });
 });
 
+describe("history trimmed (ATO-295)", () => {
+  it("tells the chat that older messages were left out and how to summarize them", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s1",
+      event: { type: "history_trimmed", stepIndex: 2, droppedMessages: 14, droppedTurns: 3, boundBy: "tokens" },
+    });
+    const last = next.messages.at(-1);
+    expect(last?.role).toBe("system");
+    expect(last?.text).toBe(
+      "Older messages were left out to fit the model's context. Use /compact to summarize them instead.",
+    );
+  });
+
+  it("does not paint a background session's trim into the chat on screen", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s2",
+      event: { type: "history_trimmed", stepIndex: 2, droppedMessages: 14, droppedTurns: 3, boundBy: "pairs" },
+    });
+    expect(next.messages).toEqual(initial.messages);
+  });
+});
+
 describe("empty-completion recovery", () => {
   const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",
