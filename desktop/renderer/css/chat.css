@@ -475,3 +475,18 @@
 .imgview-bar .iconbtn{color:#fff}
 /* A picture that could not be shown: a chip, quieter, its tooltip says why. */
 .replyfiles .filechip.unshown{opacity:.7}
+
+/* ---------------- ATO-328: web search asks for an Exa key ----------------
+   One card under the search call that asked (exa-key.js), in the column the
+   tool cards use; the same field sits in Settings › General. */
+.exak.tk-card.pad{gap:10px;margin:6px 0 4px;max-width:520px}
+.exak p{margin:0;font-size:14px;line-height:1.55;color:var(--ink-2)}
+.exak-head{display:flex;align-items:center;gap:8px;font-size:14.5px;color:var(--ink)}
+.exak-head > svg{width:16px;height:16px;color:var(--ink-3)}
+.exak-head b{font-weight:600}
+.exak .exak-sub,.exak-row .exak-sub{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-3)}
+.exak-inp input{font:400 13.5px/1 var(--font-mono);letter-spacing:.04em}
+.exak-inp.is-error{border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
+.exak-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.exak-row .exak-inp{margin-top:8px;max-width:420px}
+.exak-row .exak-acts{margin-top:8px}

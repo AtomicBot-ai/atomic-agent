@@ -1322,6 +1322,17 @@ const CMP = {
   message:null, msgGen:0, warning:null, warnGen:0, lastError:null, owedGen:null,
   checkError:null, checkGen:0, // the last failed Check again, for this agent generation only
 };
+/* ATO-328: the Exa key card under a web search call and its Settings field
+   (exa-key.js). `has`: EXA_API_KEY is in <stateDir>/.env or this app's
+   environment (names only, never the value), null until read. `draft`: what
+   is typed in each field, kept here so a repaint does not wipe it, and
+   dropped once saved; never put into markup or logs. `savedGen`: the agent
+   generation a save happened under, so a restart is owed while it lasts;
+   `savedFor`: the call whose card says "saved". */
+const EXA = {
+  has:null, checking:false, saving:false, savedGen:null, savedFor:null,
+  draft:{chat:'', settings:''}, error:{chat:null, settings:null}, note:{chat:null, settings:null},
+};
 /* Import panel — the TUI's ImportPanelState; the form is
    createInitialImportFormState (hermes, ~/.hermes, sessions+cron on). */
 const IMP = {
@@ -2073,6 +2084,7 @@ S.log = [
 function render() {
   if (LIVE_REPLAY) return;   // Item 38: the chat being opened renders once, after its kept frames
   imageViewerFollowsChat();   // ATO-408: the picture viewer closes when its chat is left
+  const exaHeld = exaKeyHold();   // ATO-328: the Exa key field being typed in survives the rebuild
   ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
@@ -2087,6 +2099,7 @@ function render() {
   fzFlushSoon();
   // Backlog 28: so does a landed model's start, held by a turn in another chat.
   obFlushDeferredSoon();
+  exaKeyRestore(exaHeld);
 }
 
 
@@ -3129,6 +3142,9 @@ function toolSettle(c, p, at) {
   c.forced = false;
   if (status === 'denied') c.outcome = 'denied'; else delete c.outcome;
   if (typeof p.summary === 'string') c.out = p.summary;
+  // ATO-328: the frame's `key_required` (search ran without a key and Exa could not serve): the Exa key card goes under this call.
+  const keyReq = exaKeyRequired(p);
+  if (keyReq) c.keyReq = keyReq;
   const ms = Number(p.duration_ms);
   if (p.duration_ms != null && Number.isFinite(ms)) {
     c.observedMs = Math.max(1, Math.round(ms));
@@ -4096,7 +4112,9 @@ function repaintTranscript() {
   const sc = $('#scroller');
   const col = sc && S.log.length ? sc.querySelector(':scope > .col720') : null;
   if (!col) return false;
+  const exaHeld = exaKeyHold();   // ATO-328: a stream frame does not wipe the Exa key being pasted
   col.innerHTML = renderItems();
+  exaKeyRestore(exaHeld);
   if (S.stick) sc.scrollTop = sc.scrollHeight;
   return true;
 }
@@ -5272,6 +5290,8 @@ function settingsPaneEntered(opened) {
   else if (pane === 'telegram') telegramTabEntered();
   else if (pane === 'composio') composioTabEntered();
   else if (pane === 'import') importTabEntered();
+  // ATO-328: General's Exa key row says whether a key is saved; read the names on every entry.
+  if (pane === 'general') exaKeyRefresh();
 }
 
 function settingsPane() {
@@ -5340,6 +5360,8 @@ function generalPane() {
           label: 'Anonymous usage analytics', title: 'Turn analytics ' + (on ? 'off' : 'on')})
       + '</div>'
       + nameChatsRowHTML()
+      // ATO-328: the Exa key for web search, the field the chat card offers too (exa-key.js).
+      + exaKeySettingsRowHTML(exaKeyState('settings'), {esc, ic})
       // ATO-229: automatic update checks, the version, Check now (app-update.js).
       + appUpdRowsHTML()
     + '</div>'
@@ -6047,6 +6069,8 @@ function act(a) {
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
+  // ATO-328: Save on the Exa key card or its Settings row. No close(): the card is in the chat, the row in Settings.
+  if (k === 'exakey') { exaKeyAct(v); return; }
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
@@ -6974,6 +6998,8 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
   // Composio: the key field keeps its draft in memory only (composioKeyRestore puts it back after a repaint).
   if (e.target.id === 'cmp-key') { CMP.draft = e.target.value; if (CMP.keyError) CMP.keyError = null; return; }
+  // ATO-328: the Exa key fields keep their draft in memory only (exaKeyRestore puts it back after a repaint).
+  if (e.target.dataset && e.target.dataset.exaKey) { EXA.draft[e.target.dataset.exaKey] = e.target.value; return; }
   if (e.target.dataset && e.target.dataset.impField) { IMP.form[e.target.dataset.impField] = e.target.value; return; }
   if (e.target.id === 'tk-search') { TK.search = e.target.value; TK.cursor = 0; const at = e.target.selectionStart; tkRepaint();
     const n = $('#tk-search'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
@@ -7899,6 +7925,8 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
+  // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike.
+  if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); exaKeyAct('save:' + e.target.dataset.exaKey); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
      too. ⌘N, ⌘0, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
      and Windows already match on a Russian layout; with the page taking
@@ -18992,12 +19020,19 @@ async function wizNextStep() {
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
+  // ATO-328: the one call the Exa key card goes under, below its row (or below the fold that holds it).
+  const exaHost = exaKeyHost(items);
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
     if (m.k === 'tool') {
       let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
       const run = items.slice(i, j + 1);
-      if (run.length >= 3 && !OPEN_GROUPS.has(m.id)) { html += groupCard(run); i = j; continue; }
+      if (run.length >= 3 && !OPEN_GROUPS.has(m.id)) {
+        html += groupCard(run);
+        const host = exaHost ? run.find((c) => c.id === exaHost) : null;
+        if (host) html += exaKeyTurnHTML(host);
+        i = j; continue;
+      }
     }
     /* The same warning, over and over, is one fact — not news each time.
        A retrying turn, a daemon that will not come up, a provider refusing
@@ -19016,9 +19051,116 @@ function renderItems() {
       if (times >= 2) { html += systemRun(m, times); i = j; continue; }
     }
     html += item(m);
+    if (exaHost && m.id === exaHost) html += exaKeyTurnHTML(m);
   }
   return html;
 }
+/* ============================================================
+   ATO-328: web search asks for an Exa key (exa-key.js)
+
+   A search call whose `tool_result` frame carries `key_required` gets one
+   card under it (the newest such call; one per conversation, since the
+   field repeats on every search while Exa is parked), with a link to
+   Exa's key page, a password field and Save. Settings › General has the same
+   field. The key goes to <stateDir>/.env as EXA_API_KEY through main's
+   `app:dotenvSet` (the writer the Telegram token uses: owner-only file,
+   atomic write, never logged), which `atag serve` loads into its
+   environment when it starts: so a save owes a restart, offered on the card
+   once no reply is running. The value never reaches state other than the
+   field's own draft, the markup, a toast or a log.
+   ============================================================ */
+function exaKeyBusy() { return !!S.busy || RUNNING.size > 0; }
+function exaKeyState(place) {
+  const restartOwed = EXA.savedGen !== null && EXA.savedGen === AGENT_GEN;
+  // Settings says what became of a save; the chat card says it in its own saved state.
+  const saved = place === 'settings' && EXA.savedGen !== null
+    ? (restartOwed ? 'Key saved. Web search uses it after the agent restarts.' : 'Key saved. Web search uses it.') : null;
+  return {
+    has: EXA.has, saving: EXA.saving, error: EXA.error[place], note: EXA.note[place] || saved,
+    restartOwed, busy: exaKeyBusy(),
+  };
+}
+/* The card's row, in the column the tool cards use. */
+function exaKeyTurnHTML(m) {
+  if (!m || !m.keyReq) return '';
+  if (EXA.has === null && !EXA.checking) setTimeout(exaKeyRefresh, 0);   // once: is a key already saved?
+  /* Saved: this card took the key, or a key was saved and the agent has not
+     restarted yet (it keeps sending the field until then, and the card moves
+     to each newer search; asking again would read as if the save was lost). */
+  const st = exaKeyState('chat');
+  st.saved = EXA.savedFor === m.id || st.restartOwed;
+  return '<div class="turn tk-step exak-turn" id="exak-' + m.id + '"><div></div><div>'
+    + exaKeyCardHTML(m.keyReq, st, {esc, ic}) + '</div></div>';
+}
+/* Is a key there already? <stateDir>/.env and this app's environment, by name. */
+async function exaKeyRefresh() {
+  const stateDir = memStateDir();
+  if (!BR || !BR.dotenvKeys || !BR.envPresent || !stateDir || EXA.checking) return;
+  EXA.checking = true;
+  try {
+    const [dotenv, env] = await Promise.all([BR.dotenvKeys(stateDir), BR.envPresent([EXA_KEY_ENV])]);
+    const was = EXA.has;
+    EXA.has = (!!dotenv && dotenv.ok !== false && Array.isArray(dotenv.keys) && dotenv.keys.includes(EXA_KEY_ENV))
+      || (Array.isArray(env) && env.includes(EXA_KEY_ENV));
+    if (was !== EXA.has) render();
+  } catch (e) { /* left unknown; the card still offers the field */ }
+  finally { EXA.checking = false; }
+}
+/* The field being typed in, so a repaint can put the caret back (the
+   markup carries an empty input: the draft is refilled below, never
+   written into the HTML). */
+function exaKeyHold() {
+  const a = document.activeElement;
+  if (!a || !a.dataset || !a.dataset.exaKey) return null;
+  return {place: a.dataset.exaKey, start: a.selectionStart, end: a.selectionEnd};
+}
+function exaKeyRestore(held) {
+  document.querySelectorAll('input[data-exa-key]').forEach((n) => {
+    const v = EXA.draft[n.dataset.exaKey] || '';
+    if (n.value !== v) n.value = v;
+  });
+  if (!held) return;
+  // The chat card's field does not take the focus back from under Settings or an overlay.
+  if (held.place === 'chat' && (S.settings || S.overlay)) return;
+  const n = document.querySelector('input[data-exa-key="' + held.place + '"]');
+  if (!n || n.disabled || document.activeElement === n) return;
+  n.focus();
+  try { n.setSelectionRange(held.start, held.end); } catch (e) { /* a password field may refuse; the caret goes to the end */ }
+}
+async function exaKeySave(place) {
+  if (place !== 'chat' && place !== 'settings') return;
+  if (EXA.saving) return;
+  const field = document.querySelector('input[data-exa-key="' + place + '"]');
+  const value = exaKeyClean(field ? field.value : EXA.draft[place]);
+  EXA.error[place] = null; EXA.note[place] = null;
+  if (value === '') {
+    // ATO-132's rule for key fields: an empty field keeps the saved key.
+    if (EXA.has) EXA.note[place] = 'Nothing pasted, so the saved key stays.';
+    else EXA.error[place] = 'Paste the key first.';
+    render(); return;
+  }
+  if (value === null) { EXA.error[place] = 'That does not look like an Exa API key. Copy it again from the Exa dashboard.'; render(); return; }
+  const stateDir = memStateDir();
+  if (!BR || !BR.dotenvSet || !stateDir) { EXA.error[place] = 'The app is still starting. Try again in a moment.'; render(); return; }
+  EXA.saving = true; render();
+  let res;
+  try { res = await BR.dotenvSet(stateDir, EXA_KEY_ENV, value); }
+  catch (e) { res = {ok:false, error: e && e.message ? e.message : String(e)}; }
+  EXA.saving = false;
+  if (!res || res.ok === false) { EXA.error[place] = 'Could not save the key: ' + ((res && res.error) || 'unknown error'); render(); return; }
+  EXA.draft = {chat:'', settings:''};
+  EXA.error = {chat:null, settings:null};
+  EXA.has = true;
+  EXA.savedGen = AGENT_GEN;
+  EXA.savedFor = exaKeyHost(S.log);
+  EXA.note = {chat:null, settings:null};
+  render();
+}
+function exaKeyAct(what) {
+  const [verb, place] = String(what || '').split(':');
+  if (verb === 'save') exaKeySave(place);
+}
+
 /** One row for a run of identical system lines, with the repeat count.
     `m.text` is already-escaped html on this path (the callers escape what
     they interpolate), so it is emitted as the single row would emit it. */
