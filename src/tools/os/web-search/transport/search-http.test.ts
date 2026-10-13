@@ -85,6 +85,34 @@ describe("searchHttp curl argv", () => {
   });
 });
 
+describe("searchHttp connect timeout (ATO-326)", () => {
+  async function argvFor(timeoutMs: number): Promise<string[]> {
+    const calls: string[][] = [];
+    await searchHttp({
+      url: "https://search.example/q",
+      timeoutMs,
+      cwd: "/tmp",
+      signal: new AbortController().signal,
+      runCommand: capturingRunCommand(calls),
+      lookup: publicLookup,
+    });
+    return calls[0]!;
+  }
+
+  it("gives up on a host that does not finish the handshake in 5s", async () => {
+    // A provider blocked in the user's network used to hold the whole
+    // 15s `--max-time` before the chain could move on.
+    const args = await argvFor(15_000);
+    expect(args[args.indexOf("--connect-timeout") + 1]).toBe("5");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("15");
+  });
+
+  it("never gives the handshake more than the whole request", async () => {
+    const args = await argvFor(2_000);
+    expect(args[args.indexOf("--connect-timeout") + 1]).toBe("2");
+  });
+});
+
 describe("searchHttp 429 retry", () => {
   /** Records requested backoff instead of spending real wall-clock. */
   function fakeSleep(slept: number[]) {
