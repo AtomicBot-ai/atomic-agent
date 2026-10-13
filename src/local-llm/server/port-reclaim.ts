@@ -8,6 +8,8 @@ import {
   resolvePidFilePath,
 } from "../backend-paths.js";
 import { fetchServedModelIds, isPortAnswering } from "./daemon-launch-guard.js";
+import { readCoreSession } from "../core/core-state.js";
+import { recoverOrphanedCoreSessions, stopCoreSession } from "../core/core-sessions.js";
 import { findPortHolder, isStateDirInUse, type PortHolder } from "./port-holder.js";
 import { hasOtherLiveSessions } from "./session-registry.js";
 
@@ -23,6 +25,11 @@ import { hasOtherLiveSessions } from "./session-registry.js";
  *   - another atomic-agent data dir's llama-server that nothing of that
  *     state dir is using (no live session marker, `sessions.sqlite` open
  *     by no process) → **stop** it: it outlived the run that started it;
+ *   - a live Atomic Core session of our data dir on the port (Core owns it)
+ *     → **adopt** it when it is the same role serving the alias we want,
+ *     otherwise unload it **through Core**; never signalled, never moved;
+ *   - Atomic Core's llama-server of our data dir with no live session (a
+ *     crashed Core left it) → restart Core, which reaps it;
  *   - anything else — another state dir still in use, Atomic Chat,
  *     Ollama, a server the operator runs by hand, a holder we cannot
  *     identify → never touched; **move** to the next free port.
@@ -58,7 +65,19 @@ export interface ReclaimDeps {
   portOpen: (port: number) => Promise<boolean>;
   writePidFile: (dataDir: string, role: ReclaimRequest["role"], pid: number) => void;
   samePath: (a: string, b: string) => boolean;
+  /** The live Atomic Core session of `dataDir` listening on `port`, if any. */
+  coreSessionOnPort?: (dataDir: string, port: number) => CoreSessionOnPort | null;
+  /** Unload one role's Core session through Core. */
+  stopCoreRole?: (dataDir: string, role: ReclaimRequest["role"]) => Promise<boolean>;
+  /** Restart a crashed Core so it reaps the model it left running. */
+  recoverCore?: (dataDir: string) => Promise<boolean>;
   waitMs?: number;
+}
+
+export interface CoreSessionOnPort {
+  role: ReclaimRequest["role"];
+  pid: number;
+  modelId: string;
 }
 
 export async function reclaimManagedPort(
@@ -67,11 +86,32 @@ export async function reclaimManagedPort(
 ): Promise<ReclaimOutcome> {
   if (!(await deps.portOpen(req.port))) return { kind: "free" };
 
+  // Atomic Core's own session: adopted or unloaded through Core, never
+  // treated as a foreign holder (which would move the port and save it).
+  const core = deps.coreSessionOnPort?.(req.ownDataDir, req.port) ?? null;
+  if (core) {
+    if (core.role === req.role && core.modelId === req.alias) {
+      deps.writePidFile(req.ownDataDir, req.role, core.pid);
+      return { kind: "adopted", pid: core.pid };
+    }
+    const why = `unloaded Atomic Core's ${core.role} model ${core.modelId} (pid ${core.pid}) through Core: not ${req.alias}`;
+    await deps.stopCoreRole?.(req.ownDataDir, core.role);
+    if (await waitClosed(req.port, deps)) return { kind: "stopped", pid: core.pid, why };
+    return move(req, deps, `${why}, but it did not release the port`);
+  }
+
   const holder = await deps.findHolder(req.port);
   const verdict = await judgeHolder(req, holder, deps);
   if (verdict.kind === "adopt") {
     deps.writePidFile(req.ownDataDir, req.role, verdict.pid);
     return { kind: "adopted", pid: verdict.pid };
+  }
+  if (verdict.kind === "recover") {
+    const recovered = await deps.recoverCore?.(req.ownDataDir).catch(() => false);
+    if (recovered && (await waitClosed(req.port, deps))) {
+      return { kind: "stopped", pid: verdict.pid, why: verdict.why };
+    }
+    return move(req, deps, `port ${req.port} is held by Atomic Core's llama-server pid ${verdict.pid}, which Core no longer tracks`);
   }
   if (verdict.kind === "stop") {
     await deps.stopProcess(verdict.pid);
@@ -85,6 +125,7 @@ export async function reclaimManagedPort(
 
 type Verdict =
   | { kind: "adopt"; pid: number }
+  | { kind: "recover"; pid: number; why: string }
   | { kind: "stop"; pid: number; why: string }
   | { kind: "leave"; why: string };
 
@@ -102,6 +143,14 @@ async function judgeHolder(
   const who = `pid ${holder.pid} (${holder.executable ? basename(holder.executable) : "unknown executable"})`;
   if (!holder.atagDataDir) {
     return { kind: "leave", why: `port ${req.port} is held by ${who}, which is not an atomic-agent server` };
+  }
+  if (holder.coreManaged) {
+    // Core owns its children: no signal from here. A live session was
+    // handled above, so this one outlived a crashed Core.
+    if (deps.samePath(holder.atagDataDir, req.ownDataDir)) {
+      return { kind: "recover", pid: holder.pid, why: `restarted Atomic Core to stop ${who}, left running by a Core that exited` };
+    }
+    return { kind: "leave", why: `port ${req.port} is held by ${who}, which Atomic Core of ${holder.atagDataDir} owns` };
   }
   if (deps.samePath(holder.atagDataDir, req.ownDataDir)) {
     const served = await deps.servedModels(req.port);
@@ -224,6 +273,15 @@ export function defaultReclaimDeps(): ReclaimDeps {
         "utf-8",
       ),
     samePath,
+    coreSessionOnPort: (dataDir, port) => {
+      for (const role of ["chat", "embedding"] as const) {
+        const session = readCoreSession(dataDir, role);
+        if (session && session.port === port) return { role, pid: session.pid, modelId: session.model_id };
+      }
+      return null;
+    },
+    stopCoreRole: (dataDir, role) => stopCoreSession(dataDir, role),
+    recoverCore: (dataDir) => recoverOrphanedCoreSessions(dataDir),
   };
 }
 

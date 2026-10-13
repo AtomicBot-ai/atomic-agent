@@ -1,6 +1,6 @@
 import { getConfig } from "../../config/index.js";
 import { resolveEmbeddingApiKey } from "../../local-llm/server/managed-api-key.js";
-import { LlamaEmbeddingClient } from "./embedding-client.js";
+import { LlamaEmbeddingClient, type EmbeddingPrompts } from "./embedding-client.js";
 
 /**
  * The `LlamaEmbeddingClient` for a local embedding `llama-server`, with
@@ -19,11 +19,13 @@ export function createLocalEmbeddingClient(opts: {
   dim: number;
   model: string;
   fixedApiKey?: string;
+  prompts?: EmbeddingPrompts;
 }): LlamaEmbeddingClient {
   return new LlamaEmbeddingClient({
     url: opts.url,
     dim: opts.dim,
     model: opts.model,
+    ...(opts.prompts ? { prompts: opts.prompts } : {}),
     getApiKey: () => {
       if (opts.fixedApiKey) return opts.fixedApiKey;
       const config = getConfig();

@@ -99,7 +99,7 @@ export async function createAgentRuntime(
     brokenPipe: options.brokenPipe,
   });
 
-  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured } =
+  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed } =
     observability.createControls();
 
   const traces = createRuntimeTraces(config, options, logger);
@@ -680,6 +680,7 @@ export async function createAgentRuntime(
     setAnalyticsEnabled,
     reportOnboardingStep,
     reportModelConfigured,
+    reportLocalEngineFailed,
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
     getPlanMode: () => planMode,

@@ -22,8 +22,9 @@ Other arguments are rejected. HTTP exposes authenticated
 absent). POST consumes the body through the normal size limiter. Disconnecting
 that HTTP request cancels its compaction, not the main turn. NDJSON exposes
 `compact_session` and `get_compaction`, both with `{sessionId}` and ordinary
-request/response correlation. Desktop UI and channel-specific commands are not
-part of these surfaces.
+request/response correlation. The desktop calls the HTTP POST from its `/compact`
+command and the context popover's "Compact now". Channel-specific commands are
+not part of these surfaces.
 
 The runtime control inbox accepts manual requests during inference, tool work
 and approval waits. The loop consumes a request before its next inference, after
@@ -50,6 +51,9 @@ when covered. Earlier complete steps of that task can therefore be compacted.
 The checkpoint text/boundary stay fixed until the next successful compaction.
 `conversationPackStart` remains a distinct mechanical cut, reset on successful
 compaction. In `local`, disabling auto or failing to summarize retains the packer fallback.
+When that cut leaves rows out, the loop emits `history_trimmed` (dropped messages,
+dropped user turns, bound) once per cut: again only when the dropped count changes,
+re-armed by a build that drops nothing. Fusion workers do not emit it.
 
 In `cloud`, both prompts project the saved message journal through that checkpoint.
 Active loaded instructions and state are carried in full; older state updates also
@@ -128,7 +132,8 @@ replayed, and repeat refusal follows ordinary error handling.
 ## Observability and validation
 
 Session-scoped `compaction_started`, `compaction_progress`, `compaction_completed` and
-`compaction_failed` events reach hosts and traces. TUI shows status and estimates,
+`compaction_failed` events reach hosts and traces; HTTP chat streams forward them
+and `history_trimmed` as extension-only named frames. TUI shows status and estimates,
 and refreshes the context readout after persistence. Progress reports the current
 part, exact planned part count, completed parts and estimated **raw source** size,
 which may exceed the rendered conversation estimate. TUI does not infer progress
@@ -140,7 +145,9 @@ timing counts when no provider usage block is returned.
 Contract tests: [planner/service](../context-compaction.test.ts),
 [HTTP/runtime/persistence](../../http/route-compaction.test.ts),
 [NDJSON](../../sidecar/compaction.test.ts),
-[TUI commands](../../tui/commands/slash-command-handler.test.ts).
+[TUI commands](../../tui/commands/slash-command-handler.test.ts),
+[trim notice](../../agent/history-trim-warning.test.ts),
+[stream frames](../../http/stream-maintenance-frame.test.ts).
 These tests use scripted completions; they establish mechanics, not summary
 quality. Real local and cloud models require separate repeated-compaction
 evaluations for retention of constraints, done/planned distinctions and resumption.

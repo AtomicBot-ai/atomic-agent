@@ -76,15 +76,16 @@ export function clampRowsForLegacyConhost(
  * The one-time startup line for the transcript, or `null` off a legacy
  * conhost. Worded as a recommendation, not an error: the guard already
  * has the rendering handled — this is where the operator learns that a
- * better console exists.
+ * better console exists. The `ATOMIC_AGENT_CONHOST_GUARD` override is
+ * deliberately left out of this line: it read as an error to users and
+ * is documented in the module comment above instead.
  */
 export function legacyConhostStartupHint(
   options: LegacyConhostOptions = {},
 ): string | null {
   if (!isLegacyConhost(options)) return null;
   return (
-    "legacy Windows console detected — the bottom row is kept clear to " +
-    "avoid scroll glitches; Windows Terminal (`wt`) renders this UI " +
-    "properly (ATOMIC_AGENT_CONHOST_GUARD=0 disables the guard)"
+    "Tip: this is the classic Windows console. The UI works here, but " +
+    "looks better in Windows Terminal (run `wt`)."
   );
 }

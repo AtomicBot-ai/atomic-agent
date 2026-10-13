@@ -23,7 +23,7 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
   NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SWITCH_REFUSALS, uiActionOk, UI_VIA,
@@ -170,11 +170,21 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   llama_runtime_updated: {
     owner: "main",
-    props: { trigger: en(["setup", "settings"]), result: en(["ok", "up_to_date", "failed", "cancelled"]), ms },
+    // `engine`: which local engine the update installed (Atomic Chat Core installs itself, then its llama.cpp).
+    props: { trigger: en(["setup", "settings", "launch"]), result: en(["ok", "up_to_date", "failed", "cancelled"]), ms, engine: en(LOCAL_ENGINES, { nullable: true }) },
   },
   local_backend_started: {
     owner: "main",
-    props: { via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }) },
+    props: { via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }), engine: en(LOCAL_ENGINES, { nullable: true }) },
+  },
+  /* The window put up the local engine's recovery card (main/engine-failure.ts):
+     the engine did not download, verify or start. The failure itself is the
+     agent's own `local_engine_failed` (src/analytics), sent by the `models`
+     command that failed; this counts what the person was shown, and where
+     from (`via`), so the two are never the same event counted twice. */
+  engine_recovery_shown: {
+    owner: "main",
+    props: { engine: en(LOCAL_ENGINES, { nullable: true }), stage: en(ENGINE_FAILURE_STAGES), via: en(ENGINE_RECOVERY_VIA) },
   },
   backend_switched: {
     owner: "main",
@@ -259,7 +269,7 @@ export const EVENTS: Record<string, EventSpec> = {
   settings_pane_viewed: { owner: "ui", props: { pane: en(SETTINGS_PANES), ms_on_pane: int({ nullable: true }) } },
   session_action: {
     owner: "ui",
-    props: { action: en(["new", "switch", "open", "pin", "unpin", "mark_unread", "delete", "load_more", "clear"]) },
+    props: { action: en(["new", "switch", "open", "pin", "unpin", "mark_unread", "mark_read", "delete", "load_more", "clear"]) },
   },
   voice_used: {
     owner: "main",

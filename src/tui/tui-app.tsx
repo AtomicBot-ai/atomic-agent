@@ -357,6 +357,9 @@ export interface TuiAppCallbacks {
    * worker keeps its partial file, so Enter on the row resumes it.
    */
   onLocalModelsPullCancelRequested?(kind: "chat" | "embedding"): void;
+  onComposerEngineRequested?(engine: "atomic-core" | "llama-server", leg?: "orchestrator" | "worker"): void;
+  onComposerFusionModelRequested?(leg: "orchestrator" | "worker", model: string): void;
+  onLocalModelsEngineRequested?(engine: "atomic-core" | "llama-server"): void;
   onLocalModelsSetActiveRequested?(
     modelId: import("../local-llm/index.js").LocalModelId,
   ): void;
@@ -368,6 +371,8 @@ export interface TuiAppCallbacks {
    */
   onLocalModelsUseManagedRequested?(): void | Promise<void>;
   onLocalModelsBackendPullRequested?(): void;
+  /** `R` on the Atomic Core notice: download the engine again, then start the configured model. */
+  onLocalModelsCoreRetryRequested?(): void;
   onLocalModelsRefreshRequested?(): void;
   /** Ask Hugging Face what GGUFs the typed reference names. */
   onLocalModelsHfResolveRequested?(reference: string): void;
@@ -1045,6 +1050,13 @@ export function TuiApp({
   useEffect(() => {
     if (composerSwitchOpen) callbacks.onLocalModelsRefreshRequested?.();
   }, [composerSwitchOpen, callbacks]);
+
+  const composerCatalogProvider = state.composerSwitch?.kind === "workers"
+    ? state.providersPanel.runMode?.workerProviderId
+    : state.composerSwitch?.kind === "model" ? state.providersPanel.runMode?.orchestratorProviderId : null;
+  useEffect(() => {
+    if (composerCatalogProvider) callbacks.onProvidersInlineModelsEnsureRequested?.(composerCatalogProvider);
+  }, [composerCatalogProvider, callbacks]);
 
   // Same problem one screen earlier. The composer's model control has
   // to be able to say `download model` on a local route without the

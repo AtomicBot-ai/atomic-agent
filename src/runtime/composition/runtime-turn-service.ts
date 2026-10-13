@@ -15,7 +15,8 @@ import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
-import { captureMessageSent, type AnalyticsStateStore, type TurnUsageMeter } from "../../analytics/index.js";
+import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
+import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
@@ -571,11 +572,14 @@ export function createRuntimeTurnService(
     }
     const startedAt = Date.now();
     turnUsageMeter.begin(session.id);
+    const localEngine = resolveTurnLocalEngine(getConfig(), providerRegistry.activeText.id);
+    const engineTag = localEngine ? { localEngine } : {};
     try {
       const result = await turnController.enqueue(submission);
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
         provider: providerRegistry.activeText.name,
         model: resolveActiveModelName(),
+        ...engineTag,
         latencyMs: Date.now() - startedAt,
         stepCount: result.stepCount,
         outcome: result.reason,
@@ -586,6 +590,7 @@ export function createRuntimeTurnService(
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
         provider: providerRegistry.activeText.name,
         model: resolveActiveModelName(),
+        ...engineTag,
         latencyMs: Date.now() - startedAt,
         outcome: "failed",
         ...turnUsageMeter.snapshot(session.id),
@@ -595,4 +600,17 @@ export function createRuntimeTurnService(
   };
 
   return { executeTurn, steer, runTurn };
+}
+
+/**
+ * Which engine serves a turn on `providerId`, for `message_sent`'s
+ * `local_engine`; undefined for a cloud provider. The managed engine only
+ * answers for the synthesized `local-llama` entry in managed mode; any
+ * other llama-server entry, or external mode, is a server the operator
+ * runs. A fixed word, never a URL.
+ */
+export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: string): LocalEngine | undefined {
+  if (!providerIdIsLlamaServer(resolveLlmConfig(config), providerId)) return undefined;
+  if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";
+  return config.localModels.managed.engine === "llama-server" ? "llama-server" : "atomic-core";
 }

@@ -1,15 +1,29 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getLocalModelDef, type LocalModelDef } from "../catalog/models-catalog.js";
+import { resolveChatModelWeightsPath } from "../backend-paths.js";
+import { buildLocalGgufModelDef } from "../catalog/local-gguf.js";
+import {
+  getLocalModelDef,
+  setCustomLocalModels,
+  type LocalModelDef,
+} from "../catalog/models-catalog.js";
 import {
   downloadMmproj,
   downloadModel,
   isMmprojDownloaded,
   isModelDownloaded,
+  removeModel,
 } from "./model-installer.js";
 
 describe("model-installer", () => {
@@ -102,6 +116,100 @@ describe("model-installer", () => {
   it("isMmprojDownloaded returns false for text-only models", () => {
     const model = makeTextOnlyModelDef();
     expect(isMmprojDownloaded(dir, model)).toBe(false);
+  });
+});
+
+describe("model-installer: a GGUF added from disk (issue #631)", () => {
+  let dir: string;
+  let userDir: string;
+  let prevFetch: typeof fetch;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "local_model-mi-data-"));
+    userDir = mkdtempSync(join(tmpdir(), "local_model-mi-user-"));
+    prevFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = prevFetch;
+    setCustomLocalModels([]);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(userDir, { recursive: true, force: true });
+  });
+
+  function addFromDisk(): { def: LocalModelDef; path: string } {
+    const folder = join(userDir, "My Models");
+    mkdirSync(folder);
+    const path = join(folder, "model.gguf");
+    writeFileSync(path, Buffer.alloc(256, 3));
+    const def = buildLocalGgufModelDef({ path, sizeBytes: 256 });
+    setCustomLocalModels([def]);
+    return { def, path };
+  }
+
+  it("launches from the operator's file, not the managed directory", () => {
+    const { def, path } = addFromDisk();
+    expect(resolveChatModelWeightsPath(dir, def)).toBe(path);
+    expect(isModelDownloaded(dir, def)).toBe(true);
+  });
+
+  it("never downloads or copies the file", async () => {
+    const { def } = addFromDisk();
+    const fn = vi.fn();
+    globalThis.fetch = fn as unknown as typeof fetch;
+    await downloadModel(dir, def);
+    expect(fn).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, "models", def.id))).toBe(false);
+  });
+
+  it("reports a moved file instead of trying to fetch it", async () => {
+    const { def, path } = addFromDisk();
+    rmSync(path);
+    const fn = vi.fn();
+    globalThis.fetch = fn as unknown as typeof fetch;
+    expect(isModelDownloaded(dir, def)).toBe(false);
+    await expect(downloadModel(dir, def)).rejects.toThrow(
+      `local model file not found: ${path}`,
+    );
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("removal deletes nothing, even inside the managed directory", async () => {
+    // The one setup where the guard matters: without it `removeModel`
+    // would `rm -r <dataDir>/models/<id>/`, which here holds the file.
+    // Adding such a path is refused up front (`resolveLocalGgufFile`),
+    // so this is a hand-edited entry — the guard is on the entry, not on
+    // where the file happens to be.
+    const base = buildLocalGgufModelDef({
+      path: join(userDir, "model.gguf"),
+      sizeBytes: 64,
+    });
+    const path = join(dir, "models", base.id, "model.gguf");
+    mkdirSync(join(dir, "models", base.id), { recursive: true });
+    writeFileSync(path, Buffer.alloc(64, 4));
+    setCustomLocalModels([{ ...base, localPath: path }]);
+    await removeModel(dir, base.id);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it("refuses a file:// URL that lost its localPath instead of fetching it", async () => {
+    // What an older build leaves behind after rewriting the list, when
+    // the URL does not name a .gguf the parser could recover.
+    const def: LocalModelDef = {
+      ...buildLocalGgufModelDef({
+        path: join(userDir, "model.gguf"),
+        sizeBytes: 64,
+      }),
+      huggingFaceUrl: "file:///nowhere/model.bin",
+    };
+    delete def.localPath;
+    const fn = vi.fn();
+    globalThis.fetch = fn as unknown as typeof fetch;
+    await expect(downloadModel(dir, def)).rejects.toThrow(
+      /points at a file on this machine \(file:\/\/\/nowhere\/model\.bin\), which cannot be downloaded/,
+    );
+    expect(fn).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, "models", def.id))).toBe(false);
   });
 });
 

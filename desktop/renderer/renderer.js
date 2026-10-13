@@ -253,6 +253,8 @@ const PRESETS = [
   {id:'xai', label:'xAI (Grok)', kind:'openai-compatible', baseUrl:'https://api.x.ai', env:'XAI_API_KEY'},
   {id:'moonshot', label:'Moonshot AI (Kimi)', kind:'openai-compatible', baseUrl:'https://api.moonshot.ai', env:'MOONSHOT_API_KEY'},
   {id:'perplexity', label:'Perplexity', kind:'openai-compatible', baseUrl:'https://api.perplexity.ai', env:'PERPLEXITY_API_KEY'},
+  // provider-presets.ts dashscope: Qwen models straight from Alibaba Cloud (international endpoint).
+  {id:'dashscope', label:'DashScope (Qwen)', kind:'openai-compatible', baseUrl:'https://dashscope-intl.aliyuncs.com/compatible-mode', env:'DASHSCOPE_API_KEY'},
   {id:'nous', label:'Nous Research', kind:'openai-compatible', baseUrl:'https://inference-api.nousresearch.com', env:'NOUS_API_KEY'},
   {id:'novita', label:'Novita AI', kind:'openai-compatible', baseUrl:'https://api.novita.ai/openai', env:'NOVITA_API_KEY'},
   // Atomic Chat's Local API Server: 127.0.0.1 (the address it binds), /v1 appended like every compat base; no key unless one is set in its settings.
@@ -555,7 +557,8 @@ const OB_COPY = {
   skipOfferFailed: 'Start using the agent without a local model.',
   skipOfferKey: 'press s',
   // onboarding-download-progress.tsx:63-79
-  phaseRuntime: 'llama.cpp runtime',
+  // The engine the setup installs, named the same whichever one it is: the app never names llama.cpp.
+  phaseRuntime: 'Local engine',
   phaseWeights: 'model weights',
   starting: 'starting…',
   // onboarding-wait-or-jump-step.tsx / onboarding-screen.tsx:63
@@ -881,6 +884,9 @@ let DWATCH = null;
    once per start: on the app line as it arrives, and as the composer's strip
    while the route is the local model, until dismissed or the next start. */
 const CPUW = {on: false, seq: 0, modelId: null, said: 0, dismissed: 0};
+/* The local engine (Atomic Chat Core, the default) did not download or start: main's
+   engine:failure, {stage, why, detail, at}, or null once a start or an install worked. */
+const ENGF = {f: null, said: 0, dismissed: 0, fresh: false};
 
 let BUILD = null;
 /* Provider ids whose key was saved without ever being checked. Read from
@@ -983,6 +989,8 @@ const SWXBR = {
   swapFusionLegs: () => { SWX.route = 'swapFusionLegs'; return BR.swapFusionLegs(); },
   fusionWorkers: (n) => { SWX.route = 'fusionWorkers'; return BR.fusionWorkers(n); },
   fusionWorkerModel: (id) => { SWX.route = 'fusionWorkerModel'; return BR.fusionWorkerModel(id); },
+  composerEngine: (id, leg) => { SWX.route = 'composerEngine'; return BR.composerEngine(id, leg); },
+  fusionModel: (leg, id) => { SWX.route = 'fusionModel'; return BR.fusionModel(leg, id); },
 };
 
 /* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
@@ -1144,7 +1152,14 @@ function sidebarToggleHTML() {
   return '<button class="iconbtn sidebtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
     + (narrow ? ' disabled' : '')
     + ' aria-pressed="' + open + '"'
-    + ' title="' + title + '">' + ic('sidebar') + '</button>';
+    + ' title="' + title + '" aria-label="' + title + '">' + ic('sidebar') + '</button>';
+}
+/* 13.10 (owner's review): Search is a magnifier button beside the sidebar
+   toggle, not a pill at the right of the toolbar. Same verb, same chord in the
+   tooltip, same 32px icon button as the toggle. */
+function searchBtnHTML() {
+  const title = kbdText('Search and commands (⌘ K)');
+  return '<button class="iconbtn chromesearch" data-act="palette" title="' + title + '" aria-label="' + title + '">' + ic('search') + '</button>';
 }
 /* r5 item 6 — "clicking new chat puts keyboard focus straight in the prompt
    input" (the user's words). session:new raises the flag; afterChat consumes
@@ -1254,6 +1269,7 @@ const LLMP = {
   emb:null, embDaemon:null, // `atag models list-embeddings` rows + its trailer
   served:null, // ATO-125: {chat, embedding} — what the managed servers say they run, asked on their ports (cli:modelsServed)
   models:[], modelsFor:null, modelsBusy:false, modelsErr:null, // `atag models search --json` for the Cloud text-models block
+  modelsStale:false, modelsRetry:null, // ATO-318: the list is the app's built-in one (the live fetch did not come back); the one timed retry
   filter:'', filterFocused:false, pricing:'all',
   health:null, // /health.llama for the External row's status
   envKeys:null, dotenvKeys:null, // key NAMES present (never values)
@@ -1299,8 +1315,8 @@ const IMP_SOURCE_META = {
   openclaw:{label:'OpenClaw', logo:'openclaw', dir:'~/.openclaw', toggles:['sessions','cron']},
   'claude-code':{label:'Claude Code', logo:'claudecode', dir:'~/.claude', toggles:['skills','memory','mcp','sessions','secrets'], secretsHint:'ANTHROPIC_API_KEY'},
   codex:{label:'Codex', logo:'codex', dir:'~/.codex', toggles:['skills','memory','sessions','secrets'], secretsHint:'OPENAI_API_KEY'},
-  pi:{label:'Pi', logo:'', dir:'~/.pi/agent', toggles:['skills','sessions']},
-  'oh-my-pi':{label:'Oh-My-Pi', logo:'', dir:'~/.omp/agent', toggles:['skills','mcp','sessions']},
+  pi:{label:'Pi', logo:'pi', dir:'~/.pi/agent', toggles:['skills','sessions']},
+  'oh-my-pi':{label:'Oh-My-Pi', logo:'ohmypi', dir:'~/.omp/agent', toggles:['skills','mcp','sessions']},
 };
 const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', sessions:'Sessions', cron:'Cron jobs', secrets:'Secrets'};
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
@@ -1464,6 +1480,9 @@ const P = {
   memory:'<path d="M8 2.5l5.5 3L8 8.5l-5.5-3zM2.5 8.5 8 11.5l5.5-3M2.5 11 8 14l5.5-3"/>',
   search:'<circle cx="7" cy="7" r="4.25"/><path d="M10.2 10.2 13.5 13.5"/>',
   sidebar:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/>',
+  /* 13.10: steps on a thread — two nodes joined by a line, a line of text
+     beside each. It was the sidebar's panel glyph mirrored, and the owner
+     took the inspector button for the sidebar toggle. */
   inspector:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
   console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   plus:'<path d="M8 3v10M3 8h10"/>',
@@ -1482,7 +1501,9 @@ const P = {
   arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
   copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
   home:'<path d="M2.5 7.25 8 2.75l5.5 4.5"/><path d="M4 6.1V13a.5.5 0 0 0 .5.5H7V10h2v3.5h2.5a.5.5 0 0 0 .5-.5V6.1"/>',
-  gear:'<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
+  /* 13.10: a cog — six teeth around a hub. The old glyph was a ring with eight
+     loose rays, which at 16px read as the theme picker's sun. */
+  gear:'<path d="M6.63 3.51L6.78 1.72L9.22 1.72L9.37 3.51A4.7 4.7 0 0 1 11.21 4.56L12.83 3.8L14.05 5.92L12.58 6.94A4.7 4.7 0 0 1 12.58 9.06L14.05 10.08L12.83 12.2L11.21 11.44A4.7 4.7 0 0 1 9.37 12.49L9.22 14.28L6.78 14.28L6.63 12.49A4.7 4.7 0 0 1 4.79 11.44L3.17 12.2L1.95 10.08L3.42 9.06A4.7 4.7 0 0 1 3.42 6.94L1.95 5.92L3.17 3.8L4.79 4.56A4.7 4.7 0 0 1 6.63 3.51z"/><circle cx="8" cy="8" r="1.9"/>',
   cloud:'<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8.9 2.6 2.6 0 0 1-.4 5.1z"/>',
   cpu:'<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 6.5h3v3h-3zM6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"/>',
   laptop:'<rect x="3.5" y="3.5" width="9" height="6.5" rx="1.2"/><path d="M2 12.5h12"/>',
@@ -1564,6 +1585,7 @@ const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden=
    the server icon for a provider and the CPU icon for a model instead — never
    a monogram. */
 const LOGO_FILES = {
+  pi:'pi.svg', ohmypi:'ohmypi.svg',
   qwen:'qwen-color.svg', google:'google.svg', openai:'openai.svg', claude:'claude-color.svg', anthropic:'anthropic.svg',
   openrouter:'openrouter.svg', aimlapi:'aimlapi.png', gemini:'gemini-color.svg', groq:'groq.svg', deepseek:'deepseek-color.svg',
   mistral:'mistral-color.svg', cerebras:'cerebras-color.svg', together:'together-color.svg', fireworks:'fireworks-color.svg',
@@ -1602,6 +1624,7 @@ const PROVIDER_LOGO_KEYS = {
   'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
   github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
   'atomic-chat':'atomicchat', 'atomic chat':'atomicchat', 'atomic chat (local)':'atomicchat',
+  dashscope:'qwen', 'qwen (dashscope)':'qwen', 'dashscope (qwen)':'qwen',
 };
 /** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
 function providerLogoKey(p) {
@@ -1675,6 +1698,8 @@ const SLASH = [
   // menu-registry.ts setup.onboarding: `/onboarding`, alias `/setup` (the 4th field: aliases, matched as typed).
   ['onboarding','run first-time setup again from the start — keeps your providers, keys, sessions and memory','',['setup']],
   ['clear','clear chat transcript (keeps session)'],
+  // ATO-259: POST /api/sessions/{id}/compact, as the TUI's `/compact`.
+  ['compact','summarize older messages to free up context'],
   ['abort','abort the running turn'],
   ['quit','exit Atomic Agent'],
   ['debug','toggle debug pane (feed / logs / world …)'],
@@ -1836,6 +1861,10 @@ const TASKS = [];
 const SIDEBAR_PAGE = 15;                 // rows per list before "Load more"
 const PAGE = {chats:1, tasks:1};         // how many pages each list is showing
 const PREFS = {pinned:[], seen:{}, loaded:false};  // userData/prefs.json, never the agent config
+/* ATO-165: the chat row's menu (S.overlay === 'sesmenu'). `id` is the chat it
+   acts on; `point` is where a right-click opened it (null: under the row's
+   "…" control); `next` is the point handed from openChatMenu to act('sesmenu:'). */
+const SESMENU = {id:null, point:null, next:null};
 const PENDING_APPROVALS = new Map();     // sessionId → approvalId, from /api/events
 /* Backlog 25: sessionId → the card drawn for that chat's open request, so the
    chat can draw it again when it is opened again (openSession). Good only
@@ -1939,7 +1968,14 @@ const LIVE_TURNS = new Map();
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered']);
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
+  // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
+  'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
+/* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
+   the agent says how it went), the chat a manual compaction is running for
+   (`manual`), and whether the agent has the route (an older agent answers
+   its unknown-route 404 and the command says so). */
+const COMPACT = {rowId:null, manual:null, supported:true};
 /* Item 38: the local model server's request slots (`total_slots` in its
    /props), read when two chats run at once. */
 const LLAMA_SLOTS = {n:null, busy:false};
@@ -1961,12 +1997,14 @@ const shortModel = (id) => id.replace(/-instruct$/, '');
    its id. */
 const BACKEND_WORDS = {cloud:'Cloud', local:'Local models', custom:'Custom server', fusion:'Fusion'};
 function backendWord(b) { return BACKEND_WORDS[b] || String(b || ''); }
+/* Presets the TUI offers and this window's wizard does not (provider-presets.ts): a provider added there keeps a name here. */
+const TUI_ONLY_PRESET_WORDS = {};
 /** A provider id → its preset's name ("OpenRouter", "Atomic Chat"), qualifier dropped. */
 function providerWord(id) {
   const s = String(id || '');
   if (s === 'no provider') return 'No provider';
   const p = PRESETS.find((x) => x.id === s) || KIND_ROWS.find((x) => x.id === s && !x.custom);
-  return p ? p.label.split(' (')[0] : s;
+  return p ? p.label.split(' (')[0] : TUI_ONLY_PRESET_WORDS[s] || s;
 }
 /** A model id → the local catalogue's `name` without the file-format tail
     ("Gemma 4 E4B QAT GGUF" → "Gemma 4 E4B"); otherwise the id as before. */
@@ -2036,20 +2074,29 @@ function roomTitle() {
   return '';
 }
 
-/* Calm (S1): four controls — sidebar toggle, title, Search, inspector
-   toggle. The console left the toolbar: it is View › Toggle Console
-   (⇧ ⌘ Y) and the palette's Logs row. Chords live in tooltips only. */
+/* Calm (S1): sidebar toggle, Search, title, inspector toggle. The console
+   left the toolbar: it is View › Toggle Console (⇧ ⌘ Y) and the palette's
+   Logs row. Chords live in tooltips only.
+   13.10 (owner's review, the Atomic Chat layout): while the sidebar is
+   expanded it reaches up into this band and its own top row carries the
+   traffic lights, Search and the toggle (renderSidebar's .sb-top); the
+   toolbar then starts at the sidebar's edge (`.sb-open`) with the title.
+   Collapsed — the rail, or a window narrower than 1000px — the two buttons
+   come back here, next to the traffic lights. Exactly one of each is ever in
+   the DOM. */
 function renderToolbar() {
   const t = roomTitle();
+  const open = sidebarExpanded();
+  $('#toolbar').classList.toggle('sb-open', open);
   $('#toolbar').innerHTML =
     '<div class="lights" aria-hidden="true"></div>'
-    + sidebarToggleHTML()
+    + (open ? '' : sidebarToggleHTML() + searchBtnHTML())
     + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
-      + '<button class="searchbtn" data-act="palette" title="' + kbdText('Search and commands (⌘ K)') + '">' + ic('search') + '<span class="sec">Search</span></button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
         + ' aria-pressed="' + !!S.inspector + '"'
-        + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '">' + ic('inspector') + '</button>'
+        + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '"'
+        + ' aria-label="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '">' + ic('inspector') + '</button>'
     + '</div>';
 }
 
@@ -2090,15 +2137,26 @@ function renderSidebar() {
      which Settings › Tasks reports in full — the section is not drawn. */
   const showTasks = tk.rows.length > 0;
   $('#sidebar').innerHTML =
-    '<div class="sb-head">' + MARK_COLOR
+    // 13.10: the expanded sidebar's top row sits in the window's title band —
+    // the traffic lights on its left, Search and the toggle on its right.
+    (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML() + sidebarToggleHTML() + '</div>' : '')
+    + '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
     + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
     + '<div class="sb-lists">'
+      /* ATO-165: a "Pinned" section above Chats, only while something is
+         pinned; its rows are not repeated under Chats. */
+      + (ch.pinned > 0
+        ? '<div class="sb-list sb-pinned" data-list="pinned">'
+          + '<div class="sb-list-head micro"><span>Pinned</span></div>'
+          + ch.rows.slice(0, ch.pinned).map(chatRow).join('')
+        + '</div>'
+        : '')
       + '<div class="sb-list" data-list="chats">'
         + '<div class="sb-list-head micro"><span>Chats</span></div>'
-        + (ch.rows.length ? ch.rows.map(chatRow).join('')
-           : '<div class="sb-empty">No chats yet</div>')
+        + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
+           : ch.rows.length ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
       + (showTasks
@@ -2166,14 +2224,18 @@ function sidebarTasks() {
 
 /** Chats: sessions with at least one saved turn, pinned first, newest first.
     Item 27: a new chat whose first turn is still running stands where its
-    stored row will land, at the top of the unpinned ones. */
+    stored row will land, at the top of the unpinned ones.
+    ATO-165: the pinned block is ordered by pin time (the last pinned on top —
+    `pin:` unshifts), not by the session list's order, and is drawn under its
+    own "Pinned" header; `pinned` is how many of `rows` belong to it. The
+    order itself is chat-list.js orderChats (unit-tested). */
 function sidebarChats() {
-  const pinnedSet = new Set(PREFS.pinned);
   const stored = new Set(SESSIONS.map((s) => s.id));
   const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
-  const all = SESSIONS.filter((s) => pinnedSet.has(s.id)).concat(pending, SESSIONS.filter((s) => !pinnedSet.has(s.id)));
+  const order = orderChats(SESSIONS, pending, PREFS.pinned);
+  const all = order.pinned.concat(order.rest);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
-  return {rows, hidden: all.length - rows.length};
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length)};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2253,15 +2315,72 @@ function chatRow(s) {
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
-    /* r5 item 3: "a button to mark a session as unread." A span with
-       role="button", not a <button> — `.sesrow` is itself a button and the pin
-       beside it is a span for exactly that reason. Emitted only while the row
-       reads read, so the control never offers a no-op. */
-    + (state === 'empty'
-       ? '<span class="unreadbtn iconbtn" data-unread="' + esc(s.id) + '" title="Mark as unread" aria-label="Mark as unread" role="button">' + ic('unread') + '</span>'
-       : '')
-    + '<span class="pinbtn iconbtn" data-pin="' + esc(s.id) + '" title="' + (pinned ? 'Unpin' : 'Pin') + '" role="button">' + ic('pin') + '</span>'
+    /* ATO-165: one "…" control opens the row's menu (Pin / Unpin, Mark as read
+       / unread, Delete…) — it replaced the separate pin and mark-as-unread
+       controls. A span with role="button", not a <button>: `.sesrow` is
+       itself a button. tabindex makes it reachable with Tab; Enter or Space
+       on it opens the menu (the keydown handler), as does the context-menu
+       key or Shift+F10 on the row. Shown on hover, keyboard focus and on the
+       open chat's row. */
+    + '<span class="sesmore iconbtn" data-sesmenu="' + esc(s.id) + '" title="Chat actions" aria-label="Chat actions"'
+      + ' aria-haspopup="menu" aria-expanded="' + (S.overlay === 'sesmenu' && SESMENU.id === s.id ? 'true' : 'false') + '"'
+      + ' role="button" tabindex="0">' + ic('dots') + '</span>'
     + '</button>';
+}
+
+/* ATO-165: the chat row's menu. `point` is where a right-click landed; null
+   puts the menu under the row's "…" control. The verb is act('sesmenu:<id>'),
+   so analytics sees one ui_action for the opening and one for the pick. */
+function openChatMenu(id, point) {
+  if (!id) return;
+  SESMENU.next = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? {x: point.x, y: point.y} : null;
+  act('sesmenu:' + id);
+}
+/** Focus the menu's `i`th row (after the paint that drew it). */
+/* ATO-165: a closed chat menu hands the focus back to the "…" it came from, now and after the repaint settles
+   (a sidebar rebuilt in the same frame would replace the control the focus was just put on). */
+function chatMenuFocusBack(id) {
+  const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
+  // A hidden control (visibility:hidden on a row that is not hovered or open) cannot take focus: show it while it holds it.
+  const back = () => {
+    const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]');
+    if (!ctl) return;
+    ctl.classList.add('focusback');
+    ctl.addEventListener('blur', () => ctl.classList.remove('focusback'), {once: true});
+    ctl.focus({preventScroll: true});
+  };
+  back(); requestAnimationFrame(back);
+}
+function focusChatMenu(i) {
+  const items = document.querySelectorAll('.sesmenu [role="menuitem"]');
+  const el = items[Math.max(0, Math.min(i, items.length - 1))];
+  if (el) el.focus({preventScroll: true});
+}
+const SESMENU_W = 220;
+function chatMenuHTML() {
+  const s = chatById(SESMENU.id);
+  if (!s) return '';
+  const id = s.id;
+  const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id])});
+  const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
+  let x = 60, y = 60;
+  if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
+  else {
+    const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
+    const a = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]');
+    const r = a ? a.getBoundingClientRect() : null;
+    // Under the "…", its left edge on the control's: the menu opens into the content column, not off the window's left.
+    if (r && r.width > 0) { x = r.left; y = r.bottom + 4; }
+  }
+  const at = chatMenuPlace(x, y, SESMENU_W, h, window.innerWidth, window.innerHeight);
+  return '<div class="scrim" data-close="1" style="background:transparent">'
+    + '<div class="popover sesmenu tk-pop" role="menu" aria-label="' + esc('Chat actions: ' + s.t) + '"'
+      + ' style="position:fixed;left:' + at.left + 'px;top:' + at.top + 'px;right:auto;bottom:auto;width:' + SESMENU_W + 'px;transform-origin:0 0">'
+    + items.map((it) => (it.danger ? '<div class="sesmenu-sep" role="separator"></div>' : '')
+        + '<button class="tk-mi sesmenu-item' + (it.danger ? ' tk-mi--danger' : '') + '" role="menuitem" tabindex="-1"'
+        + ' data-verb="' + it.verb + '" data-act="' + esc(it.verb + ':' + id) + '">'
+        + ic(it.icon) + '<span class="body"><span class="t">' + esc(it.label) + '</span></span></button>').join('')
+    + '</div></div>';
 }
 
 /** ATO-135: how many messages chat `sid` has queued, on screen or not. */
@@ -2458,7 +2577,10 @@ function item(m) {
    ============================================================ */
 function workingShown(m) {
   if (!m || m.k !== 'assistant' || m.id !== S.streamId || !S.busy || String(m.text || '').trim()) return false;
-  const prev = S.log[S.log.indexOf(m) - 1];
+  // ATO-259: a finished compaction line says what happened; the turn is still waiting for words under it.
+  let at = S.log.indexOf(m) - 1;
+  while (at >= 0 && S.log[at].k === 'system' && S.log[at].compactDone) at--;
+  const prev = S.log[at];
   return !!prev && prev.k === 'user';
 }
 /** Time since the send, in the failure line's words ("12 s", "1 min 5 s"). */
@@ -2503,11 +2625,12 @@ function workingTickStart() {
    The row is ALWAYS in the flow and always occupies its 22px box; only its
    PAINT flips — `.msgacts` is hidden with `opacity:0;pointer-events:none` and
    revealed by `.turn:hover` / `:focus-within` (styles.css, item-4 section). It
-   is deliberately NOT `visibility:hidden` the way `.pinbtn` is on a sidebar
-   row: a visibility-hidden button cannot take focus in Chromium, so
+   is deliberately NOT `visibility:hidden` the way `.sesmore` is on a sidebar
+   row (whose row is itself a focusable button, so it is revealed before Tab
+   reaches it): a visibility-hidden button cannot take focus in Chromium, so
    `:focus-within` would never fire and these controls would be unreachable
    without a mouse — the suite caught exactly that. Do not "align" this with
-   `.pinbtn`. Either way revealing the row cannot move one pixel of the
+   `.sesmore`. Either way revealing the row cannot move one pixel of the
    transcript. A zero-height overlay painted into the 20px inter-turn gap was
    rejected: the buttons would sit outside their own `.turn`'s hover box and
    would vanish the moment the pointer reached them.
@@ -3275,6 +3398,9 @@ function composer() {
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
       + '<span class="ss-text">' + esc(SWX.err || SWX.sendError) + '</span></div>'
+    // The local engine did not download or start: its two ways out, before the CPU notice (no model runs at all).
+    : engfShown()
+    ? engfNoticeHTML()
     // ATO-244: the model runs on the processor; last, under every strip that carries a decision or a failure.
     : cpuNoticeShown()
     ? cpuNoticeHTML()
@@ -3412,7 +3538,9 @@ function routeChipsHtml(backend) {
         // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
-        + (selHasKind('provider')
+        + (backend === 'fusion' ? '<span class="composer-seat" role="group" aria-label="Orchestrator">' : '')
+        + (backend === 'fusion' ? composerEngineChip('provider', composerSeatLocal(fzSeats().plans) ? composerEngineName(composerEngineId()) : fzSeats().plans.provider, composerSeatLocal(fzSeats().plans), 'Orchestrator')
+          : selHasKind('provider')
             ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider" data-id="' + esc(selProviderLabel()) + '"'
               + ' title="' + (backend === 'fusion' ? 'Plans the work: ' : 'Provider: ') + esc(providerWord(selProviderLabel())) + '"'
               + ' aria-label="' + (backend === 'fusion' ? 'Plans the work: ' : 'Provider: ') + esc(providerWord(selProviderLabel())) + '">'
@@ -3424,6 +3552,7 @@ function routeChipsHtml(backend) {
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
         + modelChipHtml()
+        + (backend === 'fusion' ? '</span>' : '')
         // Run mode — Fusion: the ⇄ between the two seats and the fourth control, `workers`.
         + fzChipsHtml();
 }
@@ -3469,7 +3598,7 @@ function syncLoader() {
 
 /** ' is-open' while the popover a composer chip opens is up (presentation only). */
 function cchipOpen(kind) {
-  if (kind === 'backend' || kind === 'provider' || kind === 'model' || kind === 'workers') {
+  if (kind === 'backend' || kind === 'provider' || kind === 'model' || kind === 'workers' || kind === 'workerProvider') {
     return SEL.open && !OB.open && SEL.kind === kind ? ' is-open' : '';
   }
   return S.overlay === kind ? ' is-open' : '';
@@ -4244,6 +4373,7 @@ function overlaysHTML() {
   if (S.overlay === 'palette') html += paletteHTML();
   if (S.overlay === 'context') html += contextHTML();
   if (S.overlay === 'modes') html += modesHTML();
+  if (S.overlay === 'sesmenu') html += chatMenuHTML();
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -4680,7 +4810,10 @@ function contextHTML() {
       + '</span></div></div>'
     /* ATO-182: no Done, as in the mode and model popovers (ATO-167): a step
        applies as it is pressed, and a click outside or Escape closes it. */
-    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span></div></div></div>';
+    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
+    /* ATO-259: summarize the older history now, as `/compact` does. Off while
+       a turn runs or a compaction is already going, with the reason as its tip. */
+    + compactButtonHTML() + '</div></div></div>';
 }
 
 /* The kit dot for a chatDot()/taskDot() pair, in the Tactile status grammar:
@@ -4778,6 +4911,8 @@ function renderSettings() {
   // Item 36: the nav scrolls when the window is too short for its rows, and
   // the same rebuild would put it back at the top on every poll.
   const keepNav = old ? ((old.querySelector('.setmenu') || {}).scrollTop || 0) : 0;
+  // ATO-318: a field or button the operator is on inside the pane keeps the focus (and a field its caret) through the rebuild.
+  const keepFocus = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane) ? paneFocusKeep(old.querySelector('.setbody')) : null;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -4817,6 +4952,7 @@ function renderSettings() {
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
+  if (keepFocus && !MENUFOCUS.want) paneFocusRestore(el.querySelector('.setbody'), keepFocus);
   // Calm (S5): the ring goes on the section the window opened on.
   // preventScroll: the row is in view already (revealed above), and a focus that scrolled would undo the nav's kept scroll.
   if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus({preventScroll: true}); }
@@ -5627,10 +5763,17 @@ function act(a) {
   const k = colon < 0 ? a : a.slice(0, colon);
   const v = colon < 0 ? undefined : a.slice(colon + 1);
   const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
+  /* ATO-165: the chat row's menu is a pick-one menu — whatever verb runs next
+     (one of its own items, or anything else) takes it down first. */
+  /* Its layer is repainted on the spot: a pick whose own branch repaints only
+     part of the window, or lands while a full render is held (LIVE_REPLAY),
+     must not leave the menu drawn on top of the row it acted on. */
+  const menuWas = S.overlay === 'sesmenu' ? SESMENU.id : null;
+  if (menuWas && k !== 'sesmenu') { S.overlay = null; renderOverlays(); }
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
-  if (a === 'close') { close(); render(); return; }
+  if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   // ATO-229: the update toast and Settings › General's update rows (app-update.js).
   if (k === 'appupd') { appUpdAct(v); return; }
@@ -5640,6 +5783,7 @@ function act(a) {
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
+  if (a === 'context:compact') { close(); render(); compactNow(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
   if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.softError = null; WIZ.errorKind = null; WIZ.forId = null; SEL.err = null; SEL.addOpen = false; render(); return; }
   /* Chat review (Д21): Where it runs › Add provider. Settings › Models on its
@@ -5835,6 +5979,7 @@ function act(a) {
   // ATO-244: the CPU strip's two ways out; either holds until the next model start.
   if (a === 'cpu:dismiss') { CPUW.dismissed = CPUW.seq; render(); return; }
   if (a === 'cpu:cloud') { CPUW.dismissed = CPUW.seq; render(); selChooseBackend('cloud'); return; }
+  if (k === 'engf') { engfAct(v || ''); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -5879,6 +6024,15 @@ function act(a) {
                            syncChromeTheme(); syncWindowGround(); render(); syncWindowGroundSoon(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
+  /* ATO-165: the chat row's menu — opened by the row's "…" control, a
+     right-click on the row, or the context-menu key on it (openChatMenu).
+     The same id again closes it, as a second click on a menu button does. */
+  if (k === 'sesmenu')   { const again = S.overlay === 'sesmenu' && SESMENU.id === v;
+                           const point = SESMENU.next; SESMENU.next = null;
+                           close();
+                           if (again || !v || !chatById(v)) { render(); return; }
+                           S.overlay = 'sesmenu'; SESMENU.id = v; SESMENU.point = point;
+                           render(); focusChatMenu(0); return; }
   // Item 27: a new chat whose first turn has not been stored yet has nothing to delete; say so rather than nothing.
   if (k === 'delask' && !SESSIONS.some((x) => x.id === v) && PENDING_CHATS.has(v)) {
     toast('This chat is still starting', 'It can be deleted once its first reply is in'); return;
@@ -5907,8 +6061,14 @@ function act(a) {
                                 takes its place answers no request, as after New chat. (A chat whose
                                 turn runs here never gets this far: deleteRefused.) */
                              if (S.pending && S.pending.sessionId === v) forgetApprovalCard();
-                             if (S.sessionId === v) { S.sessionId = ''; S.agentSession = null; S.log = []; S.busy = false; forgetApprovalCard(); }
+                             /* ATO-165: deleting the open chat lands in a new, empty one — what
+                                session:new leaves behind (no row highlighted, the caret in the
+                                composer, a fresh window fill), minus its "New session" toast. */
+                             const wasOpen = S.sessionId === v;
+                             if (wasOpen) { S.sessionId = ''; S.agentSession = null; S.log = []; S.history = []; S.busy = false;
+                                            forgetApprovalCard(); clearPlanOffer(); S.room = 'chat'; FOCUS.entry = true; }
                              close(); render(); toast('Session deleted', gone);
+                             if (wasOpen) { refreshContext(); refreshSkillList(); }
                            });
                            return; }
   // item 6: pin / unpin, and the two lists' pagination.
@@ -5928,6 +6088,8 @@ function act(a) {
      you are reading does not mark itself unread as replies land. Every other
      chat is unaffected. */
   if (k === 'unread')    { delete PREFS.seen[v]; savePrefs(); render(); return; }
+  // ATO-165: the menu's other half — stamp the chat read without opening it (markSeen, as opening does).
+  if (k === 'read')      { if (chatById(v)) markSeen(v); render(); return; }
   if (k === 'more')      { if (PAGE[v] != null) PAGE[v]++; render(); nameVisibleSessions(); return; }
   // Opening a task = reading it. The Tasks tab is the only place with a task
   // detail on this tree, so the row lands there with that task selected.
@@ -6477,6 +6639,10 @@ function runSlash(parts) {
     S.log.push({id:nid(), k:'system', text:'usage: /privacy | /privacy analytics on|off|status'}); render(); return;
   }
   if (name === 'analytics') { analyticsSlash(rest); return; }
+  if (name === 'compact') {
+    if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
+    compactNow(); return;
+  }
   if (nav[name]) { act(nav[name]); return; }
   S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
   render();
@@ -6577,16 +6743,13 @@ document.addEventListener('click', (e) => {
     answer(ap.dataset.appr); return;
   }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
-  // item 6: the pin button sits inside the row, so it has to win over it
-  const pn = t.closest('[data-pin]');
-  if (pn) { e.preventDefault(); e.stopPropagation(); act((PREFS.pinned.includes(pn.dataset.pin) ? 'unpin:' : 'pin:') + pn.dataset.pin); return; }
-  /* r5 item 3: same shape as the pin beside it, and for the same reason — the
-     control sits INSIDE the row button, so it has to win over it. The ordering
-     (before [data-ses]) and the stopPropagation are load-bearing: without
-     either, the click opens the session, openSession runs markSeen, and the
-     mark is undone by the very gesture that made it. */
-  const ur = t.closest('[data-unread]');
-  if (ur) { e.preventDefault(); e.stopPropagation(); act('unread:' + ur.dataset.unread); return; }
+  /* ATO-165: the row's "…" control sits INSIDE the row button, so it has to
+     win over it. The ordering (before [data-ses]) and the stopPropagation are
+     load-bearing: without either the click also opens the chat. Its menu's
+     items live on the overlay layer, outside the row, so they never fall
+     through to [data-ses]. */
+  const sm = t.closest('[data-sesmenu]');
+  if (sm) { e.preventDefault(); e.stopPropagation(); openChatMenu(sm.dataset.sesmenu, null); return; }
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
@@ -7315,6 +7478,97 @@ function cpuNoticeHTML() {
     + '<button class="btn btn-g xs" data-act="cpu:cloud">Use a cloud model</button>'
     + '<button class="iconbtn sm" data-act="cpu:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
 }
+/* Atomic Chat Core is the default local engine, and a Core that will not
+   download or start leaves no local engine at all: the agent has no automatic
+   fallback. Main reads the agent's failure wherever a start, an install or a
+   switch came back with it (main/engine-failure.ts) and sends one plain
+   sentence. The window says it once (a toast and the app line), keeps a strip
+   over the composer while the route needs the local engine, and a card in
+   Settings › Models, each with the one way out: download the engine again.
+   llama.cpp is never offered here (support-only CLI). Never a spinner left
+   turning. */
+const ENGF_TITLE = 'The local engine isn\u2019t ready';
+function engfApply(f) {
+  ENGF.f = f && typeof f === 'object' && typeof f.why === 'string' ? f : null;
+  if (ENGF.f && ENGF.said !== ENGF.f.at) {
+    ENGF.said = ENGF.f.at;
+    appSay('The local engine is not ready: ' + (ENGF.f.detail || ENGF.f.why), 'caution');
+    toast(ENGF_TITLE, ENGF.f.why, 'bad');
+  }
+  render();
+  if (llmVisible()) llmRepaint();
+}
+/** The route needs the local engine: Local, or Fusion with a local seat. */
+function engfRouteLocal() {
+  const b = selBackend();
+  if (b === 'local') return true;
+  if (b !== 'fusion') return false;
+  const seats = fzSeats();
+  return composerSeatLocal(seats.plans) || composerSeatLocal(seats.works);
+}
+function engfShown() {
+  return !!ENGF.f && ENGF.dismissed !== ENGF.f.at && engfRouteLocal();
+}
+/** The one way out: Download again runs the engine install. None when the failure is one it cannot change (main's `retryable: false`): `why` says what to do instead. */
+function engfActsHTML(size) {
+  if (ENGF.f && ENGF.f.retryable === false) return '';
+  const busy = typeof LLMP !== 'undefined' && (LLMP.busy || !!LLMP.pulling);
+  const dis = busy ? ' disabled' : '';
+  return '<button class="btn btn-s ' + size + '" data-act="engf:retry"' + dis + ' title="Download and install the local engine again">Download again</button>';
+}
+function engfNoticeHTML() {
+  const f = ENGF.f;
+  return '<div class="statusstrip engfail" role="alert">'
+    + '<span class="ss-ic err">' + ic('alert') + '</span>'
+    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(ENGF_TITLE) + '</b>' + esc(f.why) + '</span>'
+    + engfActsHTML('xs')
+    + '<button class="iconbtn sm" data-act="engf:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
+}
+/** Settings › Models: the same, as a card, whatever the route (the engine is Settings' to fix). */
+function engfCardHTML() {
+  const f = ENGF.f;
+  if (!f) return '';
+  return '<div class="tk-notice tk-notice--red llm-engfail" role="alert">' + ic('alert')
+    + '<span class="grow"><b>' + esc(ENGF_TITLE) + '</b><span class="llm-note">' + esc(f.why) + '</span>'
+    + (f.detail ? '<span class="llm-note llm-engfail-detail">' + esc(f.detail) + '</span>' : '') + '</span>'
+    + '<span class="llm-engfail-acts">' + engfActsHTML('sm') + '</span></div>';
+}
+/**
+ * main's launch install (installEngineAtLaunch): Atomic Core's backend comes
+ * down before the model starts. Drawn as Settings' engine install is
+ * (llmEngineInstall): LLMP.pulling takes its `cli:pull` frames into the
+ * banner's bar, and a toast says why the model is not up yet. The setup
+ * queue, when it is the one downloading, keeps its own bar (DL.job).
+ */
+function engfLaunchInstall(st) {
+  if (typeof LLMP === 'undefined') return;
+  if (st && st.running) {
+    if (LLMP.pulling || (typeof DL !== 'undefined' && DL.job)) return;
+    LLMP.msg = null; LLMP.statusErr = null;
+    LLMP.pulling = {kind: 'runtime', id: 'the local engine', launch: true};
+    LLMP.pullLog = ['starting…'];
+    appSay('local-llm: downloading the local engine before the model starts');
+    toast('Downloading the local engine', 'Your local model starts once it is in. Progress is in Settings \u203a Models.');
+  } else if (LLMP.pulling && LLMP.pulling.launch) {
+    // Its done frame normally ends it first (the LLMP pull subscriber); this is the backstop.
+    LLMP.pulling = null;
+  }
+  render();
+  if (llmVisible()) llmRepaint();
+}
+/* The setup's own failed runtime row, when there is one: during the first run
+   the way out goes through the setup queue (its Retry), so the model held
+   behind the runtime still starts when it lands. */
+function engfSetupRuntime() {
+  return typeof DL !== 'undefined' ? DL.failed.find((f) => f.kind === 'runtime') || null : null;
+}
+async function engfAct(verb) {
+  if (verb === 'dismiss') { if (ENGF.f) ENGF.dismissed = ENGF.f.at; render(); return; }
+  if (verb === 'retry' && ENGF.f && ENGF.f.retryable === false) return;
+  const setup = engfSetupRuntime();
+  // `fresh`: main forgets the active Core's install record first, so a broken copy is downloaded again rather than kept.
+  if (verb === 'retry') { if (setup) { ENGF.fresh = true; dlRetry(setup.n); } else llmEngineInstall({fresh: true}); }
+}
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
   if (!wait) return '';
@@ -7455,6 +7709,28 @@ document.addEventListener('keydown', (e) => {
   if (k === 'Escape' && (VOICE.state === 'recording' || VOICE.state === 'starting'
       || VOICE.state === 'finishing' || VOICE.menu)) {
     e.preventDefault(); voiceCancel(); return;
+  }
+
+  // ATO-165: the chat row's "…" is a span (the row is the button) — Enter and Space open its menu.
+  const smk = e.target.closest && e.target.closest('[data-sesmenu]');
+  if (smk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault(); e.stopPropagation(); ANX.via('key'); openChatMenu(smk.dataset.sesmenu, null); return;
+  }
+  // ATO-165: Escape closes the menu and hands the focus back to the row's "…" it came from.
+  if (S.overlay === 'sesmenu' && k === 'Escape') {
+    e.preventDefault();
+    act('close');   // the shared close path hands the focus back to the row's "…" (chatMenuFocusBack)
+    return;
+  }
+  // ATO-165: the menu's rows move with the arrows, Home and End.
+  if (S.overlay === 'sesmenu' && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
+    e.preventDefault();
+    const items = Array.from(document.querySelectorAll('.sesmenu [role="menuitem"]'));
+    const at = items.indexOf(document.activeElement);
+    const n = items.length;
+    if (n) focusChatMenu(k === 'Home' ? 0 : k === 'End' ? n - 1
+      : k === 'ArrowDown' ? (at + 1) % n : (at <= 0 ? n - 1 : at - 1));
+    return;
   }
 
   /* 05.10 (Nadya): the desktop's approval keys. ⌘↩ allows once and ⌘. denies
@@ -7666,7 +7942,9 @@ setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
    touches #content, so it cannot fight the composer's caret. Deliberately NOT a
    resize listener: there is none in this file, and a per-frame render() would
    rebuild the composer on every drag pixel. */
-if (NARROW.addEventListener) NARROW.addEventListener('change', () => renderToolbar());
+// 13.10: the toggle and Search move between the sidebar's top row and the
+// toolbar on this crossing, so both are repainted (still no #content write).
+if (NARROW.addEventListener) NARROW.addEventListener('change', () => { renderToolbar(); renderSidebar(); });
 // 14: the inspector is not rebuilt while the window is too narrow to show it,
 // so widening the window past 1180px repaints it.
 if (INSP_NARROW.addEventListener) INSP_NARROW.addEventListener('change', () => renderInspector());
@@ -8537,6 +8815,91 @@ function providerFirstWords(reason) {
   return /^[A-Z][a-z']/.test(first) ? first.charAt(0).toLowerCase() + first.slice(1) : first;
 }
 
+/* ============================================================
+   ATO-259 / ATO-295 — context compaction in the chat. The words and the
+   availability rule live in context-compaction.js; these own the rows.
+   ============================================================ */
+/** One maintenance frame of the turn on screen into its rows; true when something changed. */
+function compactTurnFrame(ev, item) {
+  const p = ev.payload || {};
+  if (ev.kind === 'history_trimmed') {
+    if (!item) return false;
+    S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(HISTORY_TRIMMED_LINE)});
+    return true;
+  }
+  let row = COMPACT.rowId ? S.log.find((m) => m.id === COMPACT.rowId) : null;
+  if (ev.kind === 'compaction_started') {
+    if (!item) return false;
+    row = {id:nid(), k:'system', note:true, spin:true, compact:true, text: esc(COMPACTING_LINE)};
+    S.log.splice(S.log.indexOf(item), 0, row);
+    COMPACT.rowId = row.id;
+    return true;
+  }
+  if (ev.kind === 'compaction_progress') {
+    if (!row || !row.spin) return false;
+    row.text = esc(compactionProgressLine(p));
+    return true;
+  }
+  const line = compactionResultLine(p);
+  COMPACT.rowId = null;
+  if (row) { Object.assign(row, {spin:false, compactDone:true, sev:line.sev, text: esc(line.text)}); }
+  else if (item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, compactDone:true, sev:line.sev, text: esc(line.text)});
+  else return false;
+  // The prompt the next step builds is smaller; the chip says so when the turn ends (refreshContext).
+  return true;
+}
+/** The turn ended with its compaction row still spinning (a Stop, a failure): it stops spinning. */
+function compactTurnEnded() {
+  const row = COMPACT.rowId ? S.log.find((m) => m.id === COMPACT.rowId) : null;
+  COMPACT.rowId = null;
+  if (!row || !row.spin) return false;
+  Object.assign(row, {spin:false, compactDone:true, text: esc(compactionResultLine({status:'cancelled'}).text)});
+  return true;
+}
+/** Why `/compact` and "Compact now" are off for the chat on screen, or ''. */
+function compactBlocked() {
+  const sid = S.agentSession;
+  return compactBlockedReason({
+    supported: COMPACT.supported && !!(BR && BR.compactSession),
+    compacting: !!COMPACT.manual || !!COMPACT.rowId,
+    busy: S.busy || !!S.pending || (!!sid && [...RUNNING.values()].includes(sid)),
+    sessionId: sid,
+  });
+}
+function compactButtonHTML() {
+  const why = compactBlocked();
+  return '<button class="btn btn-s xs" data-act="context:compact"' + (why ? ' disabled title="' + esc(why) + '"' : ' title="Summarize older messages to free up context"')
+    + '>Compact now</button>';
+}
+/**
+ * `/compact` and "Compact now": POST /api/sessions/{id}/compact through main.
+ * The row spins in the chat until the agent answers (it waits for the
+ * summary); the answer replaces it. Nothing is sent as a message and no
+ * turn starts.
+ */
+async function compactNow() {
+  const why = compactBlocked();
+  if (why) { toast("Can't compact now", why, 'bad'); return; }
+  const sid = S.agentSession;
+  const row = {id:nid(), k:'system', note:true, spin:true, compact:true, text: esc(COMPACTING_LINE)};
+  S.log.push(row);
+  COMPACT.manual = sid;
+  render();
+  let r;
+  try { r = await BR.compactSession(sid); }
+  catch (err) { r = {ok:false, supported:true, error: String((err && err.message) || err)}; }
+  COMPACT.manual = null;
+  if (r && r.supported === false) COMPACT.supported = false;
+  const line = r && r.status
+    ? compactionResultLine({status:r.status, tokens_before:r.tokensBefore, tokens_after:r.tokensAfter, message:r.message})
+    : compactionResultLine({status:'failed', message:(r && r.error) || 'the agent gave no reason'});
+  Object.assign(row, {spin:false, compactDone:true, sev:line.sev, text: esc(line.text)});
+  // The person may have opened another chat while it ran: the answer is theirs all the same.
+  if (S.log.includes(row)) render();
+  else toast(line.sev ? "Couldn't compact" : 'Compaction finished', line.text, line.sev ? 'bad' : undefined);
+  if (r && r.status === 'compacted') refreshContext();
+}
+
 function onChatEvent(ev) {
   /* B5 — a named `event: error` frame (it arrives with `payload`) is not
      always the end of the turn. The agent's one error emitter also sends a
@@ -8623,6 +8986,8 @@ function onChatEvent(ev) {
   }
   // ATO-197: wherever its rows are, a turn's end settles the calls nothing answered (Stop, a failure).
   if (ev && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && ev.turnId && toolCardsTurnEnded(ev)) render();
+  // ATO-259: a compaction the turn's end cut short does not spin on.
+  if (ev && ev.turnId === S.turnId && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && compactTurnEnded()) render();
   // Item 38: what a turn draws while its rows are not on screen waits for its chat to be opened.
   if (liveTurnFrame(ev)) return;
   if (!ev || ev.turnId !== S.turnId) return;
@@ -8724,6 +9089,14 @@ function onChatEvent(ev) {
     // the lines that say what happened, as the TUI's reducer keeps it off its feed.
     if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, text: esc(fzWorkerLine(e))});
     render();
+    return;
+  }
+  /* ATO-259 / ATO-295: the agent is compacting the chat's context before its
+     next step, or it left older history out to fit. Without these the turn
+     showed only "Working…" for the 15-20 s a summary takes. */
+  if (ev.kind === 'compaction_started' || ev.kind === 'compaction_progress' || ev.kind === 'compaction_completed'
+      || ev.kind === 'compaction_failed' || ev.kind === 'history_trimmed') {
+    if (compactTurnFrame(ev, item)) render();
     return;
   }
   if (ev.kind === 'reasoning_progress') {
@@ -9708,6 +10081,19 @@ if (BR) {
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
   // ATO-130: Settings' llama.cpp update, waiting for its turn or running.
   if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
+  if (BR.onEngineFailure) BR.onEngineFailure(engfApply);
+  // A window opened after the failure (a relaunch, the dock) hears it too.
+  if (BR.engineFailure) BR.engineFailure().then((f) => { if (f) engfApply(f); }).catch(() => {});
+  // The launch installing Core's backend before the model starts: its bar, and a word that it is happening.
+  if (BR.onEngineLaunchInstall) BR.onEngineLaunchInstall(engfLaunchInstall);
+  if (BR.engineLaunchInstall) BR.engineLaunchInstall().then((st) => { if (st && st.running) engfLaunchInstall(st); }).catch(() => {});
+  /* main sends only a real update, once per version (core-update-notice.ts).
+     requiresAgentUpdate never toasts: nobody can act on it here, and the
+     app's own update brings the Core it supports. */
+  if (BR.onCoreUpdate) BR.onCoreUpdate((check) => {
+    if (check && check.updateAvailable) toast('Atomic Core update', 'Atomic Core ' + check.compatibleVersion
+      + ' is ready. Open Settings › Models › Engine to install it when you are ready.');
+  });
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
   if (BR.daemonWatch) BR.daemonWatch().then((st) => {
@@ -10850,7 +11236,7 @@ function dlCapLabel(label) {
   return s.length <= 30 ? s : s.slice(0, 29) + '…';
 }
 function dlJobLabel(job) {
-  return dlCapLabel(job.kind === 'runtime' ? 'llama.cpp' : job.id);
+  return dlCapLabel(job.kind === 'runtime' ? OB_COPY.phaseRuntime : job.id);
 }
 
 /** waitOrJumpPullStatus (onboarding-wait-or-jump-step.tsx:25-31). */
@@ -10917,7 +11303,7 @@ function dlNext() {
       if (job.kind === 'runtime') {
         // A runtime step that would not even start is still not the model
         // download failing: say so, and run the weights job behind it.
-        DL.runtimeError = res.error || 'could not start the llama.cpp runtime download';
+        DL.runtimeError = res.error || 'could not start the local engine download';
         dlFail(job, DL.runtimeError);
         dlNext();
         return;
@@ -10949,7 +11335,12 @@ function dlSpawn(job) {
  * this is where a check stands in for it.
  */
 function dlPullStart(job) {
-  return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id, {trigger: OB.open ? 'onboarding' : 'other'});
+  if (job.kind === 'runtime') {
+    // The recovery card's Download again through the setup queue (engfAct): a fresh install, once.
+    const fresh = ENGF.fresh; ENGF.fresh = false;
+    return fresh ? BR.modelsUpdateStream(undefined, {fresh: true}) : BR.modelsUpdateStream();
+  }
+  return BR.modelsPull(job.id, {trigger: OB.open ? 'onboarding' : 'other'});
 }
 
 /**
@@ -10998,8 +11389,8 @@ function dlOnPull(ev) {
          the phase stays `waiting`, which is the truth about the bytes. */
       DL.runtime.drove = ev.sawProgress === true || DL.runtime.drove;
       if (ev.ok === false) {
-        DL.runtimeError = cancelled ? 'the llama.cpp runtime download was cancelled'
-          : (ev.error || 'the llama.cpp runtime download failed');
+        DL.runtimeError = cancelled ? 'the local engine download was cancelled'
+          : (ev.error || 'the local engine download failed');
         if (!cancelled) dlFail(finished, DL.runtimeError);
       } else {
         DL.runtime.state = 'done';
@@ -11151,7 +11542,7 @@ function xpullOwner() {
   const p = LLMP.pulling;
   if (p) {
     return {key:'llm:' + p.kind + ':' + p.id + (p.phase ? ':' + p.phase : ''), src:'llm', id: p.id, llmKind: p.kind,
-      kind: p.phase === 'mmproj' ? 'projector' : p.kind === 'embedding' ? 'embedding' : 'weights', cancel:'llm:cancelPull'};
+      kind: p.phase === 'mmproj' ? 'projector' : p.kind === 'embedding' ? 'embedding' : p.kind === 'runtime' ? 'runtime' : 'weights', cancel:'llm:cancelPull'};
   }
   return null;
 }
@@ -11465,7 +11856,7 @@ function dlCardAct(verb) {
          would fail with no binary. The switch waits for it, and happens once. */
       DL.switchAfter = id;
       const name = dlCardName({kind: 'weights', id});
-      toast(name + ' starts after the runtime', 'The llama.cpp runtime is still downloading. The switch happens as soon as it is in place.');
+      toast(name + ' starts after the local engine', 'The local engine is still downloading. The switch happens as soon as it is in place.');
       render();
       return;
     }
@@ -11652,7 +12043,11 @@ function obProgressHTML() {
     : OB_COPY.starting;
   // The runtime step's own failure, said once and not folded into the
   // weights bar: the model download below it is still running.
-  const runtimeErr = DL.runtimeError
+  // A Core failure (main's engine:failure) is said plainly, with its two ways out.
+  const runtimeErr = DL.runtimeError && ENGF.f
+    ? '<div class="ob-err ob-engfail">' + ic('alert') + '<span><b>' + esc(ENGF_TITLE) + '</b> ' + esc(ENGF.f.why) + '</span>'
+      + '<span class="ob-engfail-acts">' + engfActsHTML('xs') + '</span></div>'
+    : DL.runtimeError
     ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.runtimeError) + '</span></div>' : '';
   return row(OB_COPY.phaseRuntime, DL.runtime) + runtimeErr + row(OB_COPY.phaseWeights, DL.weights)
     + '<div class="ob-rate">' + esc(rate) + '</div>';
@@ -15260,7 +15655,9 @@ function selLocalRoute() { return selBackend() === 'local'; }
 function selKinds() {
   const b = selBackend();
   // composerSwitchKindsFor: `if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"]`.
-  return b === 'local' ? ['backend','model'] : b === 'fusion' ? ['backend','provider','model','workers'] : ['backend','provider','model'];
+  // Local is backend and model only: the engine is not a choice in the composer (llama.cpp is support-only, via the CLI).
+  return b === 'fusion' ? ['backend','provider','model','workerProvider','workers']
+    : b === 'local' ? ['backend','model'] : ['backend','provider','model'];
 }
 /** True when the route offers `kind` — the chips and the switch read the same rule. */
 function selHasKind(kind) { return selKinds().indexOf(kind) >= 0; }
@@ -15300,11 +15697,11 @@ function openSelector(kind) {
   SEL.view = (SEL.view || 0) + 1;
   SEL.open = true; SEL.kind = selHasKind(want) ? want : 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
   render();
-  if (SEL.kind === 'model') selEnterModelPane();
+  if (SEL.kind === 'model' || SEL.kind === 'workers') selEnterModelPane();
   if (SEL.kind === 'backend' && selBackend() !== 'cloud' && !SEL.local.length) selLoadLocal();
   /* Run mode — Fusion: the fusion row's pre-flight, the local orchestrator row
      and the workers rows read the key list and the on-disk snapshot. */
-  if (!BSW.localLoaded && (SEL.kind === 'backend' || SEL.kind === 'workers' || (SEL.kind === 'provider' && selBackend() === 'fusion'))) bswSnapshot();
+  if (!BSW.localLoaded && (SEL.kind === 'backend' || SEL.kind === 'workers' || SEL.kind === 'workerProvider' || (SEL.kind === 'provider' && selBackend() === 'fusion'))) bswSnapshot();
   // Re-read which providers have a key on every open: a key added since the
   // last read (a terminal export, the .env) is what unblocks Fusion's row.
   bswRefreshFacts();
@@ -15356,21 +15753,34 @@ function modelListFailLine(res, name) {
   if (res.unreachable) return 'Nothing answered at ' + who + '\u2019s address. Check that it is running and reachable.';
   return '';
 }
+/* ATO-318: the quick list (for AI/ML API and OpenRouter, the one built into
+   the app) shows at once; the provider's live list replaces it when it lands,
+   so the filter finds every model, not the built-in few. A live list is kept
+   for the session, so reopening the popover does not wait on the network. */
+const SEL_LIVE_MODELS = new Map();
 async function selLoadModels(providerId) {
   const entry = selProviders().find((p) => p.id === providerId);
-  SEL.modelsFor = providerId; SEL.models = []; SEL.modelsBusy = true; SEL.modelsErr = null; render();
-  const res = await BR.providerModels(providerId, (entry && entry.kind) || '');
+  const kind = (entry && entry.kind) || '';
+  const live = SEL_LIVE_MODELS.get(providerId);
+  SEL.modelsFor = providerId; SEL.models = live || []; SEL.modelsBusy = !live; SEL.modelsErr = null; render();
+  if (live) return;
+  const res = await BR.providerModels(providerId, kind);
+  if (SEL.modelsFor !== providerId) return;
   SEL.modelsBusy = false;
   if (!res || !res.ok) { SEL.modelsErr = modelListFailLine(res, providerWord(providerId)) || (res && res.error) || 'could not list models'; render(); return; }
   SEL.models = res.models || [];
   render();
+  const fresh = await BR.providerModels(providerId, kind, true).catch(() => null);
+  if (!fresh || !fresh.ok || fresh.stale === true || !Array.isArray(fresh.models) || !fresh.models.length) return;
+  SEL_LIVE_MODELS.set(providerId, fresh.models);
+  if (SEL.modelsFor !== providerId) return;
+  SEL.models = fresh.models;
+  render();
 }
 
 function selEnterModelPane() {
-  // SELECTOR LANE: custom reads the same list as local (see selRows).
-  // Run mode — Fusion: the model pane is the orchestrator's catalogue (a cloud one's).
-  if (selBackend() !== 'cloud' && selBackend() !== 'fusion') { if (!SEL.local.length) selLoadLocal(); return; }
-  const id = selActiveProviderId();
+  const id = composerModelProvider();
+  if (selBackend() === 'local' || selBackend() === 'custom' || id === 'local-llama') { if (!SEL.local.length) selLoadLocal(); return; }
   if (id && SEL.modelsFor !== id && selProviders().some((p) => p.id === id)) selLoadModels(id);
 }
 
@@ -15454,8 +15864,8 @@ function selRows() {
        addProvider: !!fzBlocked, active: here === 'fusion'},
     ];
   }
-  if (SEL.kind === 'provider' && selBackend() === 'fusion') return fzProviderRows();
-  if (SEL.kind === 'workers') return fzWorkerRows();
+  if ((SEL.kind === 'provider' || SEL.kind === 'workerProvider') && selBackend() === 'fusion') return composerFusionEngineRows(SEL.kind === 'workerProvider' ? 'worker' : 'orchestrator');
+  if ((SEL.kind === 'model' || SEL.kind === 'workers') && selBackend() === 'fusion') return composerSeatModelRows();
   if (SEL.kind === 'provider') {
     const activeId = selActiveProviderId();
     // providerRows: hasApiKey ? (chatModel ?? 'default model') : 'no API key'.
@@ -15526,6 +15936,9 @@ function selRows() {
 
 async function selActivate(row) {
   if (!row) return;
+  if (row.type === 'localEngine') return composerPickEngine(row);
+  if (row.type === 'localBusy') { toast(row.label + ' is the ' + row.otherRole, COMPOSER_ONE_LOCAL + ' Press \u21c4 to swap the roles, or pick a cloud provider here.'); return; }
+  if (row.type === 'seatModel') return composerPickSeatModel(row);
   if (row.type === 'backend') {
     // The custom row has no switch behind it: pointing the route at a server
     // the operator runs needs the URL probed first, which is the External
@@ -15564,7 +15977,10 @@ async function selActivate(row) {
   }
   // Either seat, either kind: a local orchestrator, or a cloud provider for the workers.
   if (row.type === 'fusionLeg') {
+    if (row.id !== 'local-llama' && !BSW.readyIds.includes(row.id)) { bswOpenKey(row.id); return; }
     const pins = row.leg === 'orchestrator' ? {orchestratorProvider: row.id} : {workerProvider: row.id};
+    // The workers' provider for the orchestrator too: both seats on one provider (two of its models), not a reshuffle.
+    if (row.leg === 'orchestrator' && row.id === rmNow().workerProviderId) pins.workerProvider = row.id;
     const before = fzBefore('switching…');
     fzAfter(await swxRun(BSW.line, row.leg === 'orchestrator' ? {backend:'fusion', providerId: row.id} : {backend:'fusion'},
       () => SWXBR.enterFusion(pins)), before);
@@ -15674,6 +16090,7 @@ function selRowLead(r) {
     return '<span class="tk-ico tk-ico--sm' + (r.active ? ' tk-ico--blue' : '') + '">'
       + ic(r.id === 'cloud' ? 'cloud' : r.id === 'local' ? 'laptop' : r.id === 'fusion' ? 'fusion' : 'server') + '</span>';
   }
+  if (r.type === 'localEngine' || r.type === 'localBusy') return composerEngineMark(composerEngineId(), 'sm');
   if (r.type === 'provider' || r.type === 'fusionLeg') return providerMark(r.id, 'sm');
   if (r.type === 'action' && r.id === 'loading') return '<span class="selspin"><span class="tk-spin"></span></span>';
   if (r.type === 'action') return '<span class="tk-ico tk-ico--sm">' + ic(r.id === 'add' ? 'plus' : 'download') + '</span>';
@@ -15723,18 +16140,20 @@ function selectorHTML() {
      the wizard's list (sel:add), which checks the key before it saves. */
 
   const title = SEL.kind === 'backend' ? 'Where it runs'
-    : SEL.kind === 'provider' ? 'Provider' : SEL.kind === 'workers' ? 'Workers' : 'Model';
+    : SEL.kind === 'workerProvider' ? 'Worker'
+    : SEL.kind === 'provider' ? (selBackend() === 'local' ? 'Inference engine' : selBackend() === 'fusion' ? 'Orchestrator' : 'Provider')
+    : SEL.kind === 'workers' ? 'Worker model' : selBackend() === 'fusion' ? 'Orchestrator model' : 'Model';
 
   // An empty list is not a list — it is one action. The provider and
   // local model panes always carry the TUI's action row ("Add a new
   // provider" last / "Download more models…" first, ATO-167), so, as in the TUI, an empty
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
-  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
+  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !((SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter)) {
     return selShell(title, '<div class="selbody"><p class="selnote cap">Nothing to show.</p></div>', '');
   }
 
-  const search = SEL.kind === 'model'
+  const search = (SEL.kind === 'model' || SEL.kind === 'workers')
     ? '<div class="selsearch"><label class="tk-inpwrap">' + ic('search') + '<input id="sel-filter" '
       + 'placeholder="Search models" value="' + esc(SEL.filter) + '" spellcheck="false" autocomplete="off"></label></div>'
     : '';
@@ -15771,7 +16190,7 @@ function selectorHTML() {
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
         const name = selRowName(r);
         return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
-          + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
+          + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
           + selRowLead(r)
           + '<span class="col"><span class="nm">'
           + (model ? selHilite(name, SEL.filter) : esc(name)) + '</span><span class="cap">' + esc(r.detail || '') + '</span>'
@@ -15785,7 +16204,7 @@ function selectorHTML() {
     // Review: set the out-of-reach block off when the list above it is only the Download row.
     + (outHTML && rows.length === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '')
     + outHTML
-    + (!real.length && !out.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
+    + (!real.length && !out.length && (SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
   /* ATO-167: no Done. A pick applies at once and a click outside closes the
@@ -15802,7 +16221,7 @@ function selShell(title, body, foot, lead) {
   const chip = (kind) => document.querySelector('#composer .cfoot [data-sel-open="' + kind + '"]');
   const anchor = chip(SEL.kind) || chip('provider') || chip('backend')
     || document.querySelector('.modelchip') || document.querySelector('.modechip');
-  const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' ? 520
+  const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' || SEL.kind === 'workers' ? 520
     : SEL.kind === 'provider' ? 420 : 440;
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover selpop tk-pop" style="' + anchorStyle(anchor, width) + '">'
@@ -16879,6 +17298,28 @@ function rmDegradationLine(d) {
   }
   return 'Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).';
 }
+/* ATO-261 / ATO-305: the resolved run mode as Settings › Models states it
+   under the run-mode cards: the seats in words (fzSeatWord), models as their
+   ids, and no dashes. `/runmode status` keeps the TUI's body (rmDescribe). */
+function rmSettingsLine(rm) {
+  const seat = (id, model) => fzSeatWord(id) + (model ? ' (' + model + ')' : '');
+  const undash = (t) => String(t).replace(/\s+\u2014\s+/g, ': ');
+  const parts = [];
+  if (rm.effective === 'fusion') {
+    // A seat's name leads its clause ("This computer" is a name, not a phrase to fold into a sentence).
+    parts.push('Fusion. Orchestrator: ' + seat(rm.orchestratorProviderId, rm.orchestratorModel)
+      + '. Workers (' + rm.workers + '): ' + seat(rm.workerProviderId, rm.workerModel));
+  } else {
+    parts.push((rm.effective === 'cloud' ? 'Cloud' : 'Local') + ': ' + fzSeatWord(rm.primaryProviderId));
+  }
+  if (rm.degraded) parts.push(undash(rmDegradationLine(rm.degraded)));
+  else if (rm.stored !== null && rm.stored !== rm.effective) {
+    const word = (m) => m === 'fusion' ? 'Fusion' : m === 'cloud' ? 'Cloud' : 'Local';
+    parts.push(word(rm.stored) + ' is saved, but ' + word(rm.effective) + ' is in effect: the '
+      + (rm.stored === 'fusion' ? 'orchestrator' : rm.stored) + ' provider is not the active one. Pick the mode again to apply it');
+  }
+  return parts.join('. ');
+}
 /** run-mode-summary.ts describeRunMode — the body of `/runmode status`. */
 function rmDescribe(rm) {
   const label = rm.effective === 'fusion' ? 'Fusion' : rm.effective === 'cloud' ? 'Cloud' : 'Local';
@@ -17038,9 +17479,11 @@ function fzChipsHtml() {
       + ' title="' + esc(tip) + '"'
       + ' aria-label="' + esc(queued || 'Swap orchestrator and workers') + '">'
       + ic('swap') + '</button>'
+    + '<span class="composer-seat" role="group" aria-label="Worker">'
+    + composerEngineChip('workerProvider', composerSeatLocal(fzSeats().works) ? composerEngineName(composerEngineId()) : fzSeats().works.provider, composerSeatLocal(fzSeats().works), 'Worker')
     + '<button class="cchip workerschip' + cchipOpen('workers') + '" data-sel-open="workers" data-id="' + esc(label) + '"'
       + ' title="Does the work: ' + esc(label) + '" aria-label="Does the work: ' + esc(fzSeatWord(label)) + '">' + modelMark(label, 'xs')
-      + '<span class="cval">' + esc(fzSeatWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+      + '<span class="cval">' + esc(fzSeatWord(label)) + '</span>' + ic('chevD', 'chev') + '</button></span>';
 }
 /**
  * ATO-136 — the planner is a local model (after a ⇄, or picked so), as the
@@ -17068,25 +17511,50 @@ function fzSeatId(label) {
   return at >= 0 && at < s.length - 1 ? s.slice(at + 1) : s;
 }
 
-/** fusion-intro.ts describeFusionIntro — one paragraph is the desktop's (see main/run-mode.ts). */
+/* ATO-261: a Fusion seat in words. The local seat is "Local models", as the
+   composer's seat chip says (composer-engines.js), never `local-llama`; a
+   cloud seat is its preset's name ("AI/ML API", "DashScope"), never its id. */
+function fzSeatWord(providerId) {
+  if (!providerId) return null;
+  return providerId === 'local-llama' ? composerEngineName() : providerWord(providerId);
+}
+/** fusion-intro.ts describeFusionIntro — one paragraph is the desktop's (see main/run-mode.ts).
+    A seat with no model pinned is named in words (fzSeatWord). ATO-305: no dashes in the copy. */
 function fzIntroParagraphs(rm) {
-  const orchestrator = rm.orchestratorModel ?? rm.orchestratorProviderId ?? 'your cloud provider';
-  const worker = rm.workerModel ?? rm.workerProviderId ?? 'the local model';
+  const orchestrator = rm.orchestratorModel ?? fzSeatWord(rm.orchestratorProviderId) ?? 'your cloud provider';
+  const worker = rm.workerModel ?? fzSeatWord(rm.workerProviderId) ?? 'the local model';
   return [
     'Fusion splits the work between two models: one decides, the other does.',
-    'Right now — ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
+    'Right now, ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
       + ' ' + worker + ' executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.',
     'How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.',
-    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one; so does a big local model directing a small one.',
+    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute: your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one, even from the same provider. This setup has one managed local engine, which can serve either role.',
     'Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.',
-    'The Provider and Workers controls pick both seats — each row says whether it runs local or in the cloud. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.',
+    'Each seat has separate inference engine and model controls. Use the swap button to trade the seats. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.',
   ];
 }
 /** Only on the way IN — re-applying Fusion (another orchestrator) is not a moment to explain it again. */
 function fzIntro(rm) {
-  S.log.push({id:nid(), k:'system', note:true, fusionIntro:true,
-    text: '<span class="fz-intro"><span class="fz-mark">' + esc(FUSION_MARK) + '</span>'
-      + fzIntroParagraphs(rm).map((p) => '<span class="fz-p">' + esc(p) + '</span>').join('') + '</span>'});
+  S.log.push({id:nid(), k:'system', note:true, fusionIntro:true, text: fzIntroHTML(rm)});
+}
+function fzIntroHTML(rm) {
+  return '<span class="fz-intro"><span class="fz-mark">' + esc(FUSION_MARK) + '</span>'
+    + fzIntroParagraphs(rm).map((p) => '<span class="fz-p">' + esc(p) + '</span>').join('') + '</span>';
+}
+/* ATO-261: the intro says who plans and who executes "right now", so after ⇄
+   (or a seat changed under Fusion) this chat's intro says the new pairing
+   instead of the one it was written with. Only the latest intro: it is the
+   one that describes the present. true when it changed. */
+function fzIntroRefresh(rm) {
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const m = S.log[i];
+    if (!m || !m.fusionIntro) continue;
+    const html = fzIntroHTML(rm);
+    if (m.text === html) return false;
+    m.text = html;
+    return true;
+  }
+  return false;
 }
 
 /** dispatch-run-mode.ts parseRunModeCommand. */
@@ -17144,6 +17612,7 @@ function fzAfter(res, before) {
   const now = rmNow();
   const entered = res.runMode ? !!res.runMode.enteredFusion : (now.effective === 'fusion' && before !== 'fusion');
   if (entered) fzIntro(now);
+  else if (now.effective === 'fusion' && fzIntroRefresh(now)) render();
   closeSelectorUnlessSetup(res.selectorView);
   return res;
 }
@@ -17338,17 +17807,20 @@ if (typeof window !== 'undefined') {
   window.__rmDescribe = (cfg) => rmDescribe(rmResolve(cfg));
   window.__fzBlocker = (cfg, facts) => fzBlockerFor(cfg, facts);
   window.__fzIntro = (cfg) => fzIntroParagraphs(rmResolve(cfg));
+  window.__rmSettingsLine = (cfg) => rmSettingsLine(rmResolve(cfg));
   window.__fzParse = (args) => fzParse(args);
   window.__fzWorkerLine = (e) => fzWorkerLine(e);
   window.__slashNames = () => SLASH.map((s) => s[0]);
   window.__approvalCat = (cat) => ({label: CATEGORY_LABEL[cat] || null, level: (CATS.find((c) => c[0] === cat) || [null, null, null])[2]});
   window.__fzProbe = (cfg, facts) => {
     const keep = {cfg: LIVE_CONFIG, ids: BSW.readyIds, rl: BSW.readyLoaded, ll: BSW.localLoaded, local: SEL.local, want: SWX.want, kind: SEL.kind,
-      queued: FZ.swapQueued};
+      queued: FZ.swapQueued, models: SEL.models, modelsFor: SEL.modelsFor, filter: SEL.filter};
     try {
       LIVE_CONFIG = cfg;
       BSW.readyIds = facts.readyIds || []; BSW.readyLoaded = true; BSW.localLoaded = facts.localLoaded !== false;
       SEL.local = facts.local || []; SWX.want = null; FZ.swapQueued = false;
+      // A cloud seat's model rows are its provider's catalogue: the probe hands one in.
+      SEL.models = facts.models || []; SEL.modelsFor = null; SEL.filter = '';
       const rows = (kind) => { SEL.kind = kind; return selRows().map((r) => ({type:r.type, id:r.id, label:r.label, detail:r.detail || '', active:!!r.active})); };
       const tpl = document.createElement('template');
       tpl.innerHTML = composer();
@@ -17360,7 +17832,9 @@ if (typeof window !== 'undefined') {
       return {
         backend: selBackend(), kinds: selKinds(), chips,
         swap: !!tpl.content.querySelector('.cfoot [data-act="runmode:swap"]'),
-        rows: {backend: rows('backend'), provider: rows('provider'), workers: selHasKind('workers') ? rows('workers') : null},
+        rows: {backend: rows('backend'), provider: rows('provider'),
+          workerProvider: selHasKind('workerProvider') ? rows('workerProvider') : null,
+          workers: selHasKind('workers') ? rows('workers') : null},
         settings: {active: on ? on.dataset.act : null,
           status: (set.content.querySelector('.llm-rm-status') || {}).textContent || '',
           workersOn: (set.content.querySelector('.llm-workerseg .on') || {}).textContent || '',
@@ -17369,6 +17843,7 @@ if (typeof window !== 'undefined') {
     } finally {
       LIVE_CONFIG = keep.cfg; BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll;
       SEL.local = keep.local; SWX.want = keep.want; SEL.kind = keep.kind; FZ.swapQueued = keep.queued;
+      SEL.models = keep.models; SEL.modelsFor = keep.modelsFor; SEL.filter = keep.filter;
       render();
     }
   };
@@ -18365,7 +18840,8 @@ function systemRun(m, times) {
    muted info glyph. The actions keep a leading space so a row's
    textContent still reads "sentence Action" (and "sentence \u00d7N"). */
 function sysGlyph(m) {
-  if (m.text === 'loading session\u2026') return '<span class="sys-ic"><span class="tk-spin"></span></span>';
+  // ATO-259: a compaction still running spins, as the session load does.
+  if (m.spin || m.text === 'loading session\u2026') return '<span class="sys-ic"><span class="tk-spin"></span></span>';
   const sev = m.sev || (m.act === 'switch-provider' ? 'err' : '');
   const name = sev === 'err' || sev === 'warn' ? 'alert' : sev === 'pause' ? 'pause' : sev === 'stop' ? 'stop' : m.fusion ? 'fusion' : 'info';
   return '<span class="sys-ic' + (sev ? ' ' + sev : '') + '">' + ic(name) + '</span>';
@@ -18747,26 +19223,25 @@ function homeDir() {
   }
   return wd.startsWith('/Users/') ? wd.split('/').slice(0, 3).join('/') : '';
 }
-/* r5 item 3 review fix: the one line that hands the row menu to the bridge.
-   It is a named function purely so the suite can stand in front of it and
-   capture what the contextmenu listener really passed — the contextBridge
-   object is frozen in the main world, so BR.sessionMenu itself cannot be
-   shadowed, and Menu.popup opens a native window the harness cannot drive.
-   Everything the listener computes therefore stays under test; this forwards
-   it verbatim. */
-function sendSessionMenu(id, pinned, unread) { BR.sessionMenu(id, pinned, unread); }
+/* The one line that hands the row menu its arguments. It is a named function
+   so the suite can stand in front of it and capture what the contextmenu
+   listener really passed (__sessionMenuArgs). ATO-165: it no longer reaches
+   the bridge — a right-click opens the same in-window menu as the row's "…"
+   control (one menu, one set of words), at the pointer. A context-menu key or
+   Shift+F10 on a focused row reports no pointer (0,0), so that menu opens
+   under the row's "…" instead. */
+function sendSessionMenu(id, pinned, unread, point) { openChatMenu(id, point || null); }
 
 document.addEventListener('contextmenu', (e) => {
   if (!e.target.closest) return;
-  // item 6: Pin/Unpin · Delete… on a chat row, as a native menu.
+  // item 6: Pin/Unpin · Mark as read/unread · Delete… on a chat row.
   const row = e.target.closest('[data-ses]');
-  if (row && BR && BR.sessionMenu) {
+  if (row) {
     e.preventDefault();
-    // r5 item 3: "Mark as Unread" joins Pin and Delete… in this menu. The third
-    // argument is the row's CURRENT unread state — main disables the item when
-    // the row already reads unread, so the menu never offers a no-op.
+    const s = chatById(row.dataset.ses);   // item 27: a stand-in's state too
     sendSessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses),
-                    chatDot(chatById(row.dataset.ses))[0] !== 'empty');   // item 27: a stand-in's dot too
+                    !!s && chatUnread(s, PREFS.seen[row.dataset.ses]),
+                    e.clientX || e.clientY ? {x: e.clientX, y: e.clientY} : null);
     return;
   }
   const f = e.target.closest('[data-file]');
@@ -19534,13 +20009,13 @@ async function tasksRefresh(quiet) {
    data-act) the user was on. With nothing focused inside the window a full
    render() also refreshes the tab suffix and the sidebar count. */
 function tkRepaintKeepFocus() {
-  const el = document.activeElement;
   const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
-  const focused = el && box && box.contains(el) && el.dataset ? el.dataset.act : null;
-  if (!focused) { render(); return; }
+  const keep = paneFocusKeep(box);
+  if (!keep) { render(); return; }
+  const top = box.scrollTop;
   tkRepaint();
-  const again = box.querySelector('[data-act="' + focused.replace(/"/g, '\\"') + '"]');
-  if (again) again.focus();
+  box.scrollTop = top;
+  paneFocusRestore(box, keep);
 }
 
 function tasksTab() {
@@ -19971,10 +20446,13 @@ function tkRenderKeepCaret() {
   if (!tkTyping()) { render(); return; }
   const id = el.id, field = el.dataset ? el.dataset.tkField : null;
   const at = el.selectionStart, end = el.selectionEnd;
+  const box = S.settings ? document.querySelector('#settings .setbody') : null;
+  const top = box ? box.scrollTop : 0;
   tkRepaint();
+  if (box) box.scrollTop = top;
   const n = id ? document.getElementById(id) : (field ? document.querySelector('[data-tk-field="' + field + '"]') : null);
   if (!n) return;
-  n.focus();
+  n.focus({preventScroll: true});
   if (typeof at === 'number') { try { n.setSelectionRange(at, end); } catch (e) { /* select/checkbox: no caret */ } }
 }
 
@@ -20044,16 +20522,45 @@ if (typeof window !== 'undefined') {
 function paneBox() {
   return S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
 }
+/* ATO-318: what holds the focus inside a pane, by what a repaint draws again
+   (its data-act, its id, a Tasks form field, an Import field), with the caret
+   of a text field. null when the focus is elsewhere or names nothing. */
+function paneFocusKeep(box) {
+  const el = document.activeElement;
+  if (!el || !box || el === box || !box.contains(el)) return null;
+  const attr = (k, v) => '[' + k + '="' + String(v).replace(/["\\]/g, '\\$&') + '"]';
+  const d = el.dataset || {};
+  const sel = d.act ? attr('data-act', d.act) : el.id ? '#' + CSS.escape(el.id)
+    : d.tkField ? attr('data-tk-field', d.tkField) : d.impFocus ? attr('data-imp-focus', d.impFocus) : null;
+  if (!sel) return null;
+  let start = null, end = null;
+  try { if (typeof el.selectionStart === 'number') { start = el.selectionStart; end = el.selectionEnd; } } catch (e) { /* type without a caret */ }
+  return {sel, start, end};
+}
+/* Put the focus back where paneFocusKeep found it. preventScroll: a focus
+   that scrolls brings its element into view, and the element is very often
+   at the top of the pane (the mode tabs, Refresh), so the pane jumped back up
+   on the next 5 s poll after any scroll (ATO-318). */
+function paneFocusRestore(box, keep) {
+  if (!keep || !box) return;
+  const again = box.querySelector(keep.sel);
+  if (!again || again === document.activeElement) return;
+  again.focus({preventScroll: true});
+  if (keep.start !== null) { try { again.setSelectionRange(keep.start, keep.end); } catch (e) { /* type without a caret */ } }
+}
+/* Repaint a pane in place. With nothing focused in it, a whole render() (which
+   keeps the pane's scroll, renderSettings); with something focused, the pane
+   alone, its scroll, the focus and a field's caret kept. */
 function paneRepaintKeepFocus(html) {
   const box = paneBox();
   if (!box) { render(); return; }
-  const el = document.activeElement;
-  const focused = el && box.contains(el) && el.dataset ? el.dataset.act : null;
-  if (!focused) { render(); return; }
+  const keep = paneFocusKeep(box);
+  if (!keep) { render(); return; }
+  const top = box.scrollTop;
   box.innerHTML = html;
   settingsStatusRepaint();
-  const again = box.querySelector('[data-act="' + focused.replace(/"/g, '\\"') + '"]');
-  if (again) again.focus();
+  box.scrollTop = top;
+  paneFocusRestore(box, keep);
 }
 function tuiTrunc(text, max) { text = String(text == null ? '' : text); return text.length <= max ? text : text.slice(0, max - 1) + '…'; }
 /* Body lines as the TUI's renderBody draws them (an empty line keeps its height). */
@@ -22019,15 +22526,42 @@ async function llmEnsureModels() {
   const p = llmCloudSectionProvider();
   if (!p || !BR) return;
   if (LLMP.modelsFor === p.id && (LLMP.modelsBusy || LLMP.models.length || LLMP.modelsErr)) return;
-  LLMP.modelsFor = p.id; LLMP.models = []; LLMP.modelsBusy = true; LLMP.modelsErr = null;
+  if (LLMP.modelsRetry) { clearTimeout(LLMP.modelsRetry); LLMP.modelsRetry = null; }
+  LLMP.modelsFor = p.id; LLMP.models = []; LLMP.modelsBusy = true; LLMP.modelsErr = null; LLMP.modelsStale = false;
   llmRepaint();
-  const res = await BR.providerModels(p.id, p.kind || '');
+  await llmFetchModels(p);
+}
+/* ATO-318: Settings asks for the provider's whole LIVE list (`live`): AI/ML
+   API and OpenRouter used to answer from the snapshot built into the agent
+   (32 AI/ML API models of the hundreds it serves), and the filter could only
+   search those. Main says `stale` when the live fetch did not come back and
+   the list is that snapshot: the pane says so, asks once more by itself, and
+   carries a Retry. A list already on screen stays while it is asked again. */
+async function llmFetchModels(p) {
+  const res = await BR.providerModels(p.id, p.kind || '', true);
   if (LLMP.modelsFor !== p.id) return;
   LLMP.modelsBusy = false;
-  if (!res || !res.ok) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
-  else LLMP.models = res.models || [];
+  if (!res || !res.ok) {
+    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
+  } else {
+    LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
+    if (LLMP.modelsStale && !LLMP.modelsRetry) {
+      LLMP.modelsRetry = setTimeout(() => {
+        const q = llmCloudSectionProvider();
+        if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
+      }, 15000);
+    }
+  }
   llmClampCursors();
   llmRepaint();
+}
+/* Ask for the live list again (the Retry under a built-in list, or the one timed retry). */
+function llmRetryModels() {
+  const p = llmCloudSectionProvider();
+  if (!p || !BR || LLMP.modelsBusy) return;
+  LLMP.modelsFor = p.id; LLMP.modelsBusy = true; LLMP.modelsErr = null;
+  llmRepaintList();
+  llmFetchModels(p);
 }
 function llmRepaint() {
   if (llmVisible()) paneRepaintKeepFocus(llmTab());
@@ -22384,8 +22918,8 @@ function llmRunModeHTML(status, tone) {
           + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(need ? need.line : what) + '</span></span></button>';
       }).join('')
     + '</div>'
-    + llmNowHTML() + tpLlmFaultHTML()
-    + (fusionShown ? '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>' : '')
+    + llmNowHTML() + engfCardHTML() + tpLlmFaultHTML()
+    + (fusionShown ? '<p class="llm-rm-status">' + esc(rmSettingsLine(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
     + '</section>';
@@ -22541,11 +23075,15 @@ function llmRouteFacts() {
     {label:'local daemon', value: llmFormatDaemon() + ' · mode ' + mode + (mode === 'external' ? ' · ' + (lm.url || '') : '')},
   ];
 }
+/* The local slot's id (local-llama) is an internal name: the card shows the words people see elsewhere, and Copy keeps the id. */
+function llmRouteWord(id) {
+  return id === 'local-llama' ? 'Local models (' + (llmManaged().engine === 'llama-server' ? 'llama.cpp' : 'Atomic Core') + ')' : id;
+}
 function llmRouteCardHTML() {
   return '<div class="llm-route">' + llmRouteFacts().map((f, i) => '<div class="llm-kv"><span class="llm-k">' + esc(f.label) + '</span>'
     + (f.label === 'current'
-      ? '<b class="mono">' + esc(f.id) + '</b>' + (f.model ? '<span class="llm-slash"> / </span><span class="mono">' + esc(f.model) + '</span>' : '')
-      : '<span class="mono">' + esc(f.value) + '</span>')
+      ? '<b class="mono" title="' + esc(f.id) + '">' + esc(llmRouteWord(f.id)) + '</b>' + (f.model ? '<span class="llm-slash"> / </span><span class="mono">' + esc(f.model) + '</span>' : '')
+      : '<span class="mono">' + esc(f.label === 'provider embeddings' ? f.value.replace(/^local-llama\b/, llmRouteWord('local-llama')) : f.value) + '</span>')
     + '<button class="iconbtn sm llm-copybtn" data-act="llm:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(f.label) + '">' + ic('copy') + '</button></div>').join('')
     + '</div>';
 }
@@ -22592,6 +23130,8 @@ function dwatchStatusLine() {
 function llmAdvancedHTML(mode) {
   const open = !!SETDET['llm-adv'];
   const managed = llmManaged();
+  // No engine named is Core, the default (composerEngineId).
+  const onCore = composerEngineId() === 'atomic-core';
   const autoOn = managed.autoUpdate !== false;
   const embOn = llmEmbCfg().enabled === true;
   const btn = (act, label, title) => '<button class="btn btn-s sm" data-act="' + act + '" title="' + esc(title) + '">' + esc(label) + '</button>';
@@ -22607,10 +23147,17 @@ function llmAdvancedHTML(mode) {
     + (mode === 'local'
       ? '<div class="llm-adv-h">Engine</div>'
         + '<div class="llm-tune-card llm-engine">'
-          + llmTuneRowHTML('llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
-              btn('llm:backend', 'Update now', 'Fetch the newest llama.cpp now (B)'))
-          + llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
-              sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start (U)'))
+          + llmTuneRowHTML(onCore ? 'Atomic Core' : 'llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
+              btn('llm:backend', 'Update now', 'Install the supported engine (B)'))
+          /* Core is the engine, and choosing one is not part of the normal flow: llama.cpp is never offered
+             in the app (support-only: `models engine llama-server`). Once on llama.cpp, this one row is the quiet way back. */
+          + (onCore ? ''
+              : llmTuneRowHTML('Engine choice', 'llama.cpp runs your local models now. Stop local models before switching back. Your downloaded models stay available.',
+                  btn('llm:engine', 'Use Atomic Chat engine', 'Switch back to the default local engine')))
+          + (onCore
+              ? llmTuneRowHTML('Core updates', 'Checks never install or interrupt your models. Updates apply after you stop local models.', btn('llm:engineCheck', 'Check for updates', 'Check Atomic Core releases'))
+              : llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
+                  sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start (U)')))
           + llmTuneRowHTML('Device', 'Auto runs the model on the GPU when there is one. A change applies the next time the model server starts.',
               btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU (G)'))
           // The log itself is Diagnostics' (Д58: one place for it); this is the way there.
@@ -22837,7 +23384,11 @@ function llmCloudModelListHTML() {
     : rows.length > visible.length || rows.length !== section.models.length
       ? 'Showing ' + (start + 1) + '–' + (start + visible.length) + ' of ' + rows.length + (rows.length !== section.models.length ? ' (filtered from ' + section.models.length + ')' : '') + '. Filter to find the rest.'
       : '';
+  const who = esc(providerWord(section.provider ? section.provider.id : ''));
   return (section.status === 'loading' ? '<div class="llm-loading"><span class="tk-spin"></span><span>Fetching the model list…</span></div>' : '')
+    // ATO-318: the snapshot built into the app is not the provider's list; say so, with the way to ask again.
+    + (section.status === 'ready' && LLMP.modelsStale ? '<div class="llm-counter llm-stale">The live list from ' + who + ' did not load, so this is the list built into the app. '
+      + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')
     + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span></div>' : '')
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
     + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');
@@ -22929,7 +23480,10 @@ function llmFallbackHTML() {
           const p = llmProvider(id);
           return '<button class="tuirow tk-li llm-row' + (i === c ? ' on' : '') + '" data-llm-row="fb-pick:' + esc(id) + '" data-act="llm:fb:pick:' + esc(id) + '">'
             + llmProviderMark(p || {id, kind:''}, 'sm')
-            + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(id) + '</span></span>' + (p && p.kind ? '<span class="d">' + esc(p.kind) + '</span>' : '') + '</span></button>';
+            // ATO-318: the provider's name ("DashScope", "AI/ML API"), its id beside it as on the Cloud rows.
+            + '<span class="body"><span class="t"><span class="llm-name">' + esc(providerWord(id)) + '</span>'
+            + (providerWord(id) !== id ? ' <span class="llm-id mono">' + esc(id) + '</span>' : '') + '</span>'
+            + (p && p.kind ? '<span class="d">' + esc(p.kind) + '</span>' : '') + '</span></button>';
         }).join('') + '</div>'
         : '<div class="llm-empty">Every configured provider is already in the chain.</div>')
       + '</section>';
@@ -22959,7 +23513,8 @@ function llmFallbackHTML() {
       return '<button class="tuirow tk-li llm-row llm-fb-row' + (sel ? ' on' : '') + '" data-llm-row="fb:' + esc(l.providerId) + '" data-act="llm:fb:select:' + i + '">'
         + '<span class="body"><span class="t"><span class="llm-idx">' + (r.index + 1) + '</span>'
           + llmProviderMark(p || {id:l.providerId, kind:l.kind}, 'sm')
-          + '<span class="llm-id mono">' + esc(l.providerId + (l.modelLabel ? '/' + l.modelLabel : '')) + '</span></span>'
+          + '<span class="llm-name">' + esc(providerWord(l.providerId)) + '</span>'
+          + (l.modelLabel ? ' <span class="llm-id mono">' + esc(l.modelLabel) + '</span>' : '') + '</span>'
           + '<span class="d">' + esc(l.kind) + '</span></span>'
         + '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(note) + '</span>'
         + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="Local models, as the last resort">' + ic('lock') + '</span>'
@@ -22984,7 +23539,7 @@ function llmModalHTML() {
     // While it works Cancel waits (a removal half-done is worse than one finished or refused).
     const acts = (label, yes) => '<div class="acts"><button class="btn btn-s sm" data-act="llm:cancel"' + (c.submitting ? ' disabled' : '') + '>Cancel</button>'
       + '<button class="btn btn-df sm" data-act="llm:confirm"' + (yes.disabled ? ' disabled' : '') + (yes.title ? ' title="' + esc(yes.title) + '"' : '') + '>' + esc(label) + '</button></div>';
-    if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + c.id + '?')
+    if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + providerWord(c.id) + '?')
       + err + busy + acts('Remove', {disabled:c.submitting}) + '</div>';
     /* ATO-119: any model on disk, the one in use and the embedding models
        included. A model a server has loaded is never deleted under it: the
@@ -23168,13 +23723,36 @@ function llmHfRamWarning(fileSizeGb, hostRamGb) {
   if (fileSizeGb <= hostRamGb) return null;
   return fileSizeGb.toFixed(1) + ' GB model, ' + hostRamGb + ' GB of RAM — it will run from disk, slowly.';
 }
-/* llm-panel.tsx DownloadBanner: the CLI streams lines, not a byte count, so the last line stands where the TUI draws its bar. */
+/* llm-panel.tsx DownloadBanner: the CLI streams text lines ("[===   ] 48%  6.40 GB / 13.27 GB  file.gguf (14.2 GB)").
+   The banner reads the percent and sizes out of the last line and draws a real bar; a line without them stays as text. */
+function llmPullView(line) {
+  const text = String(line || 'starting…');
+  const pctM = text.match(/(\d{1,3})%/);
+  const gbM = text.match(/([\d.]+)\s*GB\s*\/\s*([\d.]+)\s*GB\s*(.*)$/);
+  const pct = pctM ? Math.max(0, Math.min(100, Number(pctM[1]))) : null;
+  if (!gbM) return {pct, meta: text.replace(/^\[[=\s>-]*\]\s*/, ''), file: ''};
+  const file = gbM[3].replace(/\s*\([\d.]+\s*GB\)\s*$/, '').trim();
+  const size = (gb) => gb < 1 ? Math.round(gb * 1024) + ' MB' : gb.toFixed(1) + ' GB';
+  const meta = size(Number(gbM[1])) + ' of ' + size(Number(gbM[2])) + (pct === null ? '' : ' · ' + pct + '%');
+  return {pct, meta, file};
+}
+function llmPaintPull(line) {
+  const v = llmPullView(line);
+  const meta = document.getElementById('llm-pull-meta'); if (meta) meta.textContent = v.meta;
+  const file = document.getElementById('llm-pull-file'); if (file) { file.textContent = v.file; file.title = v.file; }
+  const bar = document.getElementById('llm-pull-bar');
+  if (bar) { const w = v.pct === null ? 0 : v.pct; bar.setAttribute('aria-valuenow', String(w)); bar.firstElementChild.style.width = w + '%'; }
+}
 function llmDownloadBannerHTML() {
   const p = LLMP.pulling;
-  // ST-21: a blue notice; the last CLI line keeps #llm-pull-line, which the pull subscriber writes into directly.
+  const v = llmPullView(LLMP.pullLog[LLMP.pullLog.length - 1]);
+  const w = v.pct === null ? 0 : v.pct;
+  // ST-21: a blue notice; the pull subscriber repaints #llm-pull-meta and #llm-pull-bar in place.
   return '<div class="tk-notice tk-notice--blue llm-dl"><span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>'
-    + '<span class="grow llm-dl-body"><b>downloading — ' + esc(p.id) + '</b><span class="llm-note">model: ' + esc(p.id) + '</span>'
-    + '<span class="llm-dl-line" id="llm-pull-line">' + esc(LLMP.pullLog[LLMP.pullLog.length - 1] || 'starting…') + '</span></span>'
+    + '<span class="grow llm-dl-body"><b>Downloading ' + esc(p.id) + '</b>'
+    + '<span class="tk-prog llm-dl-prog" id="llm-pull-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + w + '"><i style="width:' + w + '%"></i></span>'
+    + '<span class="llm-note llm-dl-meta" id="llm-pull-meta">' + esc(v.meta) + '</span>'
+    + '<span class="llm-note llm-dl-file" id="llm-pull-file" title="' + esc(v.file) + '">' + esc(v.file) + '</span></span>'
     + '<button class="btn btn-g sm" data-act="llm:cancelPull">Cancel</button></div>';
 }
 
@@ -23394,8 +23972,8 @@ async function llmEmbToggle() {
 /* ATO-130: the update waits its turn behind a model start (or a switch) on its
    way; "updating…" said otherwise all that time. Main tells which it is
    (cli:updatePhase), and the line follows while this update is on. */
-const LLM_UPDATING = 'local-llm: updating the llama.cpp backend…';
-const LLM_UPDATE_WAITING = 'local-llm: llama.cpp update waiting for the model to start…';
+const LLM_UPDATING = 'local-llm: updating the local engine…';
+const LLM_UPDATE_WAITING = 'local-llm: engine update waiting for the model to start…';
 function llmUpdatePhase(p) {
   if (!p || !LLMP.updating || !LLMP.msg) return;
   if (LLMP.msg.text !== LLM_UPDATING && LLMP.msg.text !== LLM_UPDATE_WAITING) return;
@@ -23413,19 +23991,70 @@ async function llmBackendUpdate() {
      5 s status poll clears LLMP.statusErr), and replaces "updating…", which
      otherwise stayed on for good. */
   if (res && res.ok === false && res.running) {
-    LLMP.msg = {text:'! the llama.cpp backend was not updated: ' + llmRunningWord(res.running)
+    LLMP.msg = {text:'! the local engine was not updated: ' + llmRunningWord(res.running)
       + ' is downloading. Update it once that has finished.'};
   } else if (!res || res.ok === false) LLMP.msg = {text:'! ' + llmFail('models update failed', res)};
   else LLMP.msg = {text:'local-llm: backend update — ' + ((res.stdout || '').trim().split('\n').pop() || 'done')};
   llmRefresh();
 }
+/**
+ * The local engine's install as a download with a bar: `models update`
+ * streamed (cli:modelsUpdateStream, the setup's runtime path), drawn in
+ * Settings' download banner (llmPullView reads its "backend zip" lines as it
+ * reads a model's). With Atomic Chat Core it installs Core when it is missing
+ * and then the llama.cpp build Core picks for this computer, which is more
+ * than a minute on a slow line: a bar, not "updating…". The recovery card's
+ * Download again and, on Core, Update now come here; llama.cpp's Update now
+ * keeps its buffered update (llmBackendUpdate). How it ended comes as the
+ * stream's done frame (the LLMP pull subscriber), and a failure as main's
+ * engine:failure.
+ */
+function llmEngineInstall(opts) {
+  if (!BR || LLMP.busy || LLMP.pulling) return;
+  const fresh = !!(opts && opts.fresh);
+  if (!BR.modelsUpdateStream) { llmBackendUpdate(); return; }
+  if (ENGF.f) ENGF.dismissed = ENGF.f.at;   // the card's question is being answered; its result says the rest
+  LLMP.msg = null; LLMP.statusErr = null;
+  LLMP.pulling = {kind:'runtime', id: composerEngineId() === 'atomic-core' ? 'the local engine' : 'llama.cpp'};
+  LLMP.pullLog = ['starting…'];
+  if (!llmVisible()) toast('Downloading the local engine', 'Its progress is in Settings \u203a Models.');
+  render(); llmRepaint();
+  Promise.resolve(fresh ? BR.modelsUpdateStream('settings', {fresh: true}) : BR.modelsUpdateStream('settings')).then((res) => {
+    if (res && res.ok === false) {
+      LLMP.pulling = null;
+      LLMP.msg = {text: res.running ? '! the local engine was not downloaded: ' + llmRunningWord(res.running) + ' is downloading. Try again once that has finished.'
+        : '! ' + llmFail('engine download failed', res)};
+      render(); llmRepaint();
+    }
+  }, (err) => { LLMP.pulling = null; LLMP.msg = {text: '! ' + String((err && err.message) || err)}; render(); llmRepaint(); });
+}
 /** The download main's refusal names (downloadRunning), in words. */
 function llmRunningWord(running) {
-  if (running.kind === 'runtime' || running.kind === 'update') return 'the llama.cpp runtime';
+  if (running.kind === 'runtime' || running.kind === 'update') return 'the local engine';
   const name = dlCardName({kind: running.kind, id: running.id});
   return running.kind === 'projector' ? 'the vision projector of ' + name : name;
 }
+async function llmEngineAction(action) {
+  if (!BR || LLMP.busy) return;
+  LLMP.busy = true; LLMP.msg = {text: action === 'check' ? 'Checking Atomic Core updates…' : 'Changing local engine…'}; llmRepaint();
+  try {
+    const res = await BR.modelsEngine(action);
+    if (!res || !res.ok) LLMP.msg = {text: '! ' + llmFail('Engine action failed', res)};
+    else if (action === 'check') {
+      const check = res.value && res.value.check;
+      LLMP.msg = {text: check ? (check.requiresAgentUpdate
+        ? 'Atomic Core ' + check.latestVersion + ' is available. A newer Agent build must support it before installation.'
+        : check.updateAvailable ? 'Atomic Core ' + check.compatibleVersion + ' is ready to install. Stop local models, then choose Update now.'
+        : 'Atomic Core is up to date (' + check.currentVersion + ').') : 'Engine status unavailable.'};
+    } else {
+      LLMP.msg = {text: 'Local engine: ' + (action === 'atomic-core' ? 'Atomic Core' : 'llama.cpp') + '. Choose Update now to install it.'};
+      await refreshLiveConfig();
+    }
+  } catch (err) { LLMP.msg = {text: '! ' + String(err)}; }
+  finally { LLMP.busy = false; llmRefresh(); }
+}
 async function llmAutoUpdateToggle() {
+  if (composerEngineId() === 'atomic-core') { llmEngineAction('check'); return; }
   if (!BR) return;
   const next = !(llmManaged().autoUpdate !== false);
   const res = await BR.configSet('localModels.managed.autoUpdate', String(next));
@@ -23753,6 +24382,7 @@ function llmAct(what) {
   if (verb === 'select') { LLMP.cursor[LLMP.mode] = +arg; llmRepaint(); return; }
   if (verb === 'enter') { if (LLMP.mode === 'fallback') { llmFallbackEnter(); return; } llmPrimary(llmRowAt()); return; }
   if (verb === 'refresh') { llmRefresh(); return; }
+  if (verb === 'modelsRetry') { llmRetryModels(); return; }
   if (verb === 'filter') { llmSetMode('cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
   if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
@@ -23789,7 +24419,11 @@ function llmAct(what) {
     if (BR && BR.hostRam && !LLMHF.ram) BR.hostRam().then((n) => { LLMHF.ram = Number(n) || 0; if (LLMHF.open) llmRepaint(); });
     return;
   }
-  if (verb === 'backend') { llmBackendUpdate(); return; }
+  // Only the way back to Core: llama.cpp is reached only through the support CLI (`models engine llama-server`).
+  if (verb === 'engine') { if (composerEngineId() === 'llama-server') llmEngineAction('atomic-core'); return; }
+  if (verb === 'engineCheck') { llmEngineAction('check'); return; }
+  // On Core (the default) the install is a download with a bar; llama.cpp's update stays as it was.
+  if (verb === 'backend') { if (composerEngineId() === 'atomic-core') llmEngineInstall(); else llmBackendUpdate(); return; }
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
   if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
@@ -24036,9 +24670,16 @@ if (BR) {
 if (BR) {
   BR.onPull((ev) => {
     if (!ev || !LLMP.pulling) return;
-    if (ev.line) { LLMP.pullLog.push(ev.line); const box = document.getElementById('llm-pull-line'); if (box) box.textContent = ev.line; }
+    if (ev.line) { LLMP.pullLog.push(ev.line); llmPaintPull(ev.line); }
     if (ev.done) {
       const p = LLMP.pulling; LLMP.pulling = null;
+      // The engine install (llmEngineInstall): no model to activate; a failure is main's engine:failure card too.
+      if (p.kind === 'runtime') {
+        LLMP.msg = ev.ok ? {text: ev.upToDate ? 'local-llm: the local engine is already installed' : 'local-llm: the local engine is installed'}
+          : {text: '! ' + (ev.error || 'the local engine download failed')};
+        render(); llmRefresh();
+        return;
+      }
       if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmAfterPull(p); }
       else { LLMP.statusErr = ev.error || 'the download failed'; LLMHF.pendingMmproj = null; llmRepaint(); }
     }
@@ -24317,8 +24958,9 @@ function importTab() {
   else if (report) body += impReportHTML(IMP.report, IMP.mode === 'done');
   return '<div class="sd-pane sd-imp">' + body + '</div>';
 }
-/* Д54: Pi and Oh-My-Pi have no mark in logos/, so they wear a neutral terminal
-   glyph the size of a mark rather than a logo made up for them. */
+/* Oh-My-Pi wears its own mark (can1357/oh-my-pi assets/icon.svg, MIT) on a dark
+   tile; Pi has no published mark, so it wears a plain pi glyph in the same style.
+   A source with no logo key still falls back to the neutral terminal glyph. */
 function impLogoHTML(source, size) {
   return logoHTML(impMeta(source).logo, size) || '<span class="tk-ico tk-ico--' + (size === 'xs' ? 'xs' : 'sm') + ' sd-implogo">' + ic('term') + '</span>';
 }
@@ -24540,6 +25182,7 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   window.__sidebar = () => ({
     headers: [...document.querySelectorAll('.sb-list-head > span:first-child')].map((n) => n.textContent),
+    pinnedRows: document.querySelectorAll('#sidebar [data-list="pinned"] .sesrow').length,   // ATO-165
     navrows: document.querySelectorAll('.navrow').length,
     skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),
     subtitles: document.querySelectorAll('#sidebar .sesrow .t2').length,
@@ -24626,18 +25269,26 @@ if (typeof window !== 'undefined') {
     return {mapped: PENDING_APPROVALS.has(id), running: RUNNING.has('smoke-appr'),
             dot: chatDot(SESSIONS.find((s) => s.id === id))[0]};
   };
-  /* The pin affordance as the user meets it: the button rendered on the row,
-     clicked through the document delegator. Asserts the row did not also open
-     (the delegator stops there) and that the title flips. */
+  /* The pin affordance as the user meets it (ATO-165): the row's "…", then
+     the menu's Pin / Unpin, both clicked through the document delegator.
+     Asserts the row did not also open, that the pick closed the menu, and
+     that the item's word flips (read by opening the menu again). */
   window.__clickPin = (id) => {
-    const btn = document.querySelector('[data-ses="' + id + '"] [data-pin]');
+    const more = () => document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
+    const pinItem = () => document.querySelector('.sesmenu [data-verb="pin"], .sesmenu [data-verb="unpin"]');
+    const btn = more();
     if (!btn) return {found:false};
     const before = S.sessionId;
-    const titleBefore = btn.getAttribute('title');
     btn.click();
-    const after = document.querySelector('[data-ses="' + id + '"] [data-pin]');
+    const item = pinItem();
+    const titleBefore = item ? item.textContent.trim() : null;
+    if (item) item.click();
+    const menuClosed = S.overlay !== 'sesmenu' && !document.querySelector('#overlays .sesmenu');
+    const again = more();
+    let titleAfter = null;
+    if (again) { again.click(); const it = pinItem(); titleAfter = it ? it.textContent.trim() : null; act('close'); }
     return {found:true, pinned: PREFS.pinned.includes(id), opened: S.sessionId === id && before !== id,
-            sessionId: S.sessionId, titleBefore, titleAfter: after ? after.getAttribute('title') : null};
+            sessionId: S.sessionId, titleBefore, titleAfter, menuClosed};
   };
   /* The shape of the transcript on screen. A frame belonging to a turn the
      user navigated away from used to splice its tool card, reasoning block or
@@ -26351,7 +27002,9 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   /* --- item 2 --- */
   window.__sbToggle = () => {
-    const b = document.querySelector('#toolbar [data-act="toggle:sidebar"]');
+    // 13.10: the toggle lives in the sidebar's top row while it is expanded
+    // and in the toolbar while it is collapsed.
+    const b = document.querySelector('#sidebar .sb-top [data-act="toggle:sidebar"], #toolbar [data-act="toggle:sidebar"]');
     const sb = document.querySelector('#sidebar');
     if (!b || !sb) return null;
     const cs = getComputedStyle(b);
@@ -26367,33 +27020,51 @@ if (typeof window !== 'undefined') {
   window.__theme = (t) => { act('theme:' + t); return window.__sbToggle(); };
   window.__renderProbe = () => { render(); return window.__sbToggle(); };
 
-  /* --- item 3 --- */
+  /* --- item 3 (ATO-165: the "…" and its menu) ---
+     The row's "…" as it sits, and the read/unread item its menu offers right
+     now — read by opening the menu through the real click and closing it. */
   window.__unreadCtl = (id) => {
     const s = SESSIONS.find((x) => x.id === id);
-    const el = document.querySelector('.sesrow[data-ses="' + id + '"] [data-unread]');
-    return {present: !!el, title: el ? el.getAttribute('title') : '',
-            vis: el ? getComputedStyle(el).visibility : '',
-            railDisplay: el ? getComputedStyle(el).display : '',
-            dot: chatDot(s)[0]};
+    const el = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
+    const out = {present: !!el, vis: el ? getComputedStyle(el).visibility : '',
+                 railDisplay: el ? getComputedStyle(el).display : '',
+                 dot: chatDot(s)[0], label: null, verb: null};
+    if (el && out.railDisplay !== 'none') {
+      el.click();
+      const it = document.querySelector('.sesmenu [data-verb="read"], .sesmenu [data-verb="unread"]');
+      if (it) { out.label = it.textContent.trim(); out.verb = it.dataset.verb; }
+      if (S.overlay === 'sesmenu') act('close');
+    }
+    return out;
   };
-  /* `opened` is the ordering proof, not `stayedPut`: the harness has to open
-     the row first (the control is only offered on a row that reads read), so
-     S.sessionId already names it and stayedPut is true either way. openSession
-     is stood in front of for the length of the click instead — if the click
-     fell through to the [data-ses] branch behind the control, it would run and
-     markSeen would undo the mark. Zero calls is what proves the [data-unread]
-     branch (and its stopPropagation) beat the row. */
-  window.__markUnread = (id) => {
-    const el = document.querySelector('.sesrow[data-ses="' + id + '"] [data-unread]');
+  /* `opened` is the ordering proof, not `stayedPut`: the harness opens the
+     row first, so S.sessionId already names it and stayedPut is true either
+     way. openSession is stood in front of for the length of the clicks
+     instead — if the click on the "…" fell through to the [data-ses] branch
+     behind it, it would run and markSeen would undo the mark. Zero calls is
+     what proves the [data-sesmenu] branch (and its stopPropagation) beat the
+     row. ATO-165: the "…" opens the menu; the pick is the menu's own item. */
+  const menuPick = (id, verb) => {
+    const el = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
     const before = S.sessionId;
     const real = openSession;
-    let opened = 0;
+    let opened = 0, clicked = false;
     openSession = function (...a) { opened += 1; return real.apply(null, a); };
-    try { if (el) el.click(); } finally { openSession = real; }
-    return {clicked: !!el, dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
+    try {
+      if (el) {
+        el.click();
+        const it = document.querySelector('.sesmenu [data-verb="' + verb + '"]');
+        if (it) { it.click(); clicked = true; }
+        else if (S.overlay === 'sesmenu') act('close');
+      }
+    } finally { openSession = real; }
+    return {clicked, dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
             seen: PREFS.seen[id] === undefined ? null : PREFS.seen[id],
-            opened, stayedPut: S.sessionId === before};
+            opened, stayedPut: S.sessionId === before,
+            menuClosed: S.overlay !== 'sesmenu' && !document.querySelector('#overlays .sesmenu')};
   };
+  window.__markUnread = (id) => menuPick(id, 'unread');
+  window.__markRead = (id) => menuPick(id, 'read');   // ATO-165
   /* A real refresh from the agent plus a full render — the proof that nothing
      re-stamps a chat that is not on screen. */
   window.__unreadSurvives = async (id) => {
@@ -26886,8 +27557,8 @@ if (typeof window !== 'undefined') {
      than read off the rule text. `:hover` genuinely cannot be synthesised;
      focus can, and the twin declaration is the same one. */
   window.__unreadFocusReveal = (id) => {
-    const row = document.querySelector('.sesrow[data-ses="' + id + '"]');
-    const el = row ? row.querySelector('[data-unread]') : null;
+    const row = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"]');
+    const el = row ? row.querySelector('[data-sesmenu]') : null;   // ATO-165: the row's "…"
     if (!row || !el) return null;
     const before = document.activeElement;
     try {

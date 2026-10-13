@@ -10,6 +10,7 @@ import {
   classifyVramFit,
   estimateModelVramNeedGb,
   resolveRowAt,
+  showsCoreFailureNotice,
   type EmbeddingDaemonInfo,
   type EmbeddingModelRow,
   type LocalModelRow,
@@ -18,6 +19,7 @@ import {
 } from "./local-models-panel-state.js";
 import { describePullWaiting } from "./describe-pull-waiting.js";
 import { NotifyPromptBox } from "./notify-prompt-box.js";
+import { CORE_FAILURE_NOTICE_ROWS, CoreFailureNotice } from "./core-failure-notice.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
 
@@ -263,9 +265,11 @@ export function LocalModelDetail({
       ? `downloading… ${rowPull.percent}% · x cancel`
       : "downloading… · x cancel"
     : !row.downloaded
-      ? row.def.supportsVision
-        ? "Enter — download (gguf + mmproj)"
-        : "Enter — download"
+      ? row.def.localPath
+        ? "local file missing — add it again by its path"
+        : row.def.supportsVision
+          ? "Enter — download (gguf + mmproj)"
+          : "Enter — download"
       : row.mmprojStatus === "missing"
         ? "Enter — download mmproj"
         : !row.active
@@ -282,7 +286,12 @@ export function LocalModelDetail({
       <Text color={theme.colors.muted}>{m.id}</Text>
       <Text>{m.description}</Text>
       <Text color={row.downloaded ? "green" : theme.colors.muted}>
-        status: {row.downloaded ? "downloaded" : "not downloaded"}
+        status:{" "}
+        {row.downloaded
+          ? "downloaded"
+          : row.def.localPath
+            ? `local file missing at ${row.def.localPath}`
+            : "not downloaded"}
         {row.active ? " · active" : ""}
       </Text>
       {row.def.supportsVision ? (
@@ -351,7 +360,8 @@ export function LocalModelsPanel({
     (panel.notifyPrompt ? 7 : 0) +
     (panel.embeddingOnboardingPrompt ? 6 : 0) +
     (panel.removeConfirmId ? 5 : 0) +
-    (panel.embeddingRemoveConfirmId ? 5 : 0);
+    (panel.embeddingRemoveConfirmId ? 5 : 0) +
+    (showsCoreFailureNotice(panel) ? CORE_FAILURE_NOTICE_ROWS : 0);
   const listBudget = Math.max(3, maxRows - footerRows - modalRows);
   return (
     <Box flexDirection="column">
@@ -442,6 +452,7 @@ export function LocalModelsPanel({
           </Text>
         </Box>
       ) : null}
+      <CoreFailureNotice panel={panel} />
       {renderModelLists(panel, listBudget)}
       {useFullFooter ? (
         <Box marginTop={1} flexDirection="column">

@@ -976,7 +976,19 @@ export interface UserConfigFile {
 // v75: known cloud providers without a saved modelMode adopt cloud context.
 // Explicit provider/model policies and local/unknown endpoints stay unchanged.
 // This one-time migration shares the classification used for new connections.
-export const USER_CONFIG_VERSION = 75;
+// v76: `localModels.customModels[]` entries accept `localPath` — the
+// absolute path of a GGUF the operator already had on disk (issue #631),
+// launched where it lies and never downloaded or deleted. Additive: an
+// older file has no such entries. An older build that rewrites the list
+// drops `localPath` but keeps the entry's `file://` `huggingFaceUrl`; the
+// parser recovers the path from that URL, so the round trip loses nothing.
+// v77: Atomic Core is the default local engine (`localModels.managed.engine`
+// default `atomic-core`). The choice used to sit behind an opt-in variable,
+// so an older file's `llama-server` or missing engine is a default, not a
+// choice: it migrates to `atomic-core`. llama.cpp stays selectable, and an
+// explicit `llama-server` in a v77+ file is honoured. Other fields, external
+// mode included, are untouched.
+export const USER_CONFIG_VERSION = 77;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1127,6 +1139,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   72,
   73,
   74,
+  75,
+  76,
   USER_CONFIG_VERSION,
 ];
 

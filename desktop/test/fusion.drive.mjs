@@ -147,21 +147,24 @@ try {
   const ch1 = await chips();
   const has = (list, kind, re) => list.some(([k, t]) => k === kind && re.test(t));
   check('B: the chips are fusion · aimlapi · its model ⇄ workers',
-    has(ch1, 'backend', /^fusion$/) && has(ch1, 'provider', /^aimlapi$/) && has(ch1, 'model', /grok-4-6/) && has(ch1, 'workers', /qwen-3\.5-4b/)
+    has(ch1, 'backend', /^fusion$/) && has(ch1, 'provider', /^aimlapi$/) && has(ch1, 'model', /grok-4-6/) && has(ch1, 'workerProvider', /^local-llama$/) && has(ch1, 'workers', /qwen-3\.5-4b/)
       && await app.eval(`!!document.querySelector('#composer .cfoot .fzswap')`), JSON.stringify(ch1));
   const intro = await app.eval(`[...document.querySelectorAll('.sysrow .fz-intro')].map((n) => n.textContent)`);
   check('B: the intro is in the transcript once, naming both legs',
-    intro.length === 1 && intro[0].includes('orchestrator') && intro[0].includes('x-ai/grok-4-6 plans') && intro[0].includes('qwen-3.5-4b executes'),
+    intro.length === 1 && intro[0].includes('orchestrator') && intro[0].includes('x-ai/grok-4-6 plans') && !intro[0].includes('\u2014') && intro[0].includes('qwen-3.5-4b executes'),
     intro.length + ' intro(s)');
   await shot('B-fusion-chips-intro');
 
-  /* C — the Workers control: pin the workers to the other cloud provider. */
-  await app.clickSel('#composer .cfoot [data-sel-open="workers"]');
-  await until(async () => (await popTitle()) === 'Workers', 'the Workers popover', 10000);
-  await until(async () => (await popRows()).length === 2, 'the workers rows', 15000);
+  /* C — the worker engine control: pin the workers to the other cloud provider. */
+  await app.clickSel('#composer .cfoot [data-sel-open="workerProvider"]');
+  await until(async () => (await popTitle()) === 'Worker inference engine', 'the Workers popover', 10000);
+  await until(async () => (await popRows()).length >= 3, 'the worker engine rows', 15000);
   const rowsC = await popRows();
-  check('C: workers rows — openrouter in the cloud, then Download more models…',
-    JSON.stringify(rowsC.map((r) => [r[0], r[1]])) === '[["OpenRouter","workers · in the cloud"],["Download more models…","opens the local models pane"]]', JSON.stringify(rowsC));
+  // The engine is not a choice in the composer: one neutral local row, no engine named.
+  check('C: worker engine rows offer OpenRouter and one local row, Local models, with no engine name',
+    ['OpenRouter', 'Local models'].every(label => rowsC.some(r => r[0] === label))
+      && rowsC.filter(r => r[0] === 'Local models').length === 1
+      && !rowsC.some(r => r[0] === 'Atomic Chat' || r[0] === 'Local llama'), JSON.stringify(rowsC));
   await shot('C-workers-popover');
   await app.clickSel('.selpop .modelrow[data-id="openrouter"]');
   await landed((c) => c.runMode && c.runMode.fusion && c.runMode.fusion.workerProvider === 'openrouter', 'the workers pinned to openrouter');
@@ -172,11 +175,12 @@ try {
 
   /* D — the Provider control under Fusion is the orchestrator seat. */
   await app.clickSel('#composer .cfoot [data-sel-open="provider"]');
-  await until(async () => (await popTitle()) === 'Provider' && (await popRows()).length >= 3, 'the Provider popover', 10000);
+  await until(async () => (await popTitle()) === 'Orchestrator inference engine' && (await popRows()).length >= 3, 'the Provider popover', 10000);
   await until(async () => (await popRows()).every((r) => r[1] !== 'checking keys…'), 'the key facts', 15000);
   const rowsD = await popRows();
-  check('D: provider rows read orchestrator, the current one marked',
-    JSON.stringify(rowsD) === '[["AI/ML API","orchestrator",true],["OpenRouter","orchestrator",false],["Add a new provider","opens the wizard",false]]', JSON.stringify(rowsD));
+  check('D: orchestrator engine rows list the worker provider too and mark the current engine',
+    rowsD.some(r => r[0] === 'AI/ML API' && r[2]) && rowsD.some(r => r[0] === 'OpenRouter' && !r[2])
+      && rowsD.some(r => r[0] === 'Local models') && !rowsD.some(r => r[0] === 'Atomic Chat' || r[0] === 'Local llama'), JSON.stringify(rowsD));
   await shot('D-provider-popover');
   await closePopover();
 
@@ -189,6 +193,9 @@ try {
     c3.runMode.mode === 'fusion' && c3.runMode.fusion.workerProvider === 'aimlapi'
       && (await app.eval(`document.querySelectorAll('.sysrow .fz-intro').length`)) === 1,
     `${JSON.stringify({ active: c3.active, runMode: c3.runMode })} · ${JSON.stringify(await chips())}`);
+  // ATO-261: the one intro now says the swapped pairing ("Right now, <the new orchestrator> plans").
+  const introE = await until(() => app.eval(`(() => { const n = document.querySelector('.sysrow .fz-intro'); const t = n ? n.textContent : ''; return /Right now, qwen\/qwen3\.7-flash plans/.test(t) ? t : null; })()`), 'the intro follows the swap', 10000).catch(() => null);
+  check('E: after ⇄ the intro names the new orchestrator and workers', !!introE && introE.includes('x-ai/grok-4-6 executes'), String(introE).slice(0, 120));
 
   /* F — /runmode status and /runmode workers N, typed. */
   await slash('/runmode status');
@@ -209,7 +216,7 @@ try {
     n: document.querySelectorAll('#settings .llm-workerseg button').length,
     status: (document.querySelector('#settings .llm-rm-status') || {}).textContent})`);
   check('G: Settings › LLM — Fusion active, 3 of workers 1–8, the resolved status',
-    card.on === 'runmode:fusion' && card.workers === '3' && card.n === 8 && /^Fusion — orchestrator openrouter/.test(card.status), JSON.stringify(card));
+    card.on === 'runmode:fusion' && card.workers === '3' && card.n === 8 && /^Fusion\. Orchestrator: OpenRouter \(/.test(card.status) && !card.status.includes('\u2014'), JSON.stringify(card));
   await app.eval(`(() => { const n = document.querySelector('#settings .llm-runmode'); if (n) n.scrollIntoView({block:'start'}); return true; })()`);
   await shot('G-settings-llm-run-mode');
   await app.clickSel('#settings .llm-workerseg button', { nth: 1 });

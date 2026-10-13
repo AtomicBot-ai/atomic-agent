@@ -123,7 +123,7 @@ contextBridge.exposeInMainWorld("atomic", {
   upsertProvider: (entry: Record<string, unknown>) => ipcRenderer.invoke("cli:upsertProvider", entry),
   setProviderModel: (id: string, model: string) =>
     ipcRenderer.invoke("cli:setProviderModel", { id, model }),
-  providerModels: (id: string, kind: string) => ipcRenderer.invoke("cli:providerModels", { id, kind }),
+  providerModels: (id: string, kind: string, live?: boolean) => ipcRenderer.invoke("cli:providerModels", { id, kind, live: live === true }),
   // r6 cloud item 2: a real one-token completion, the only check that can fail.
   verifyProviderKey: (entry: Record<string, unknown>, model: string) =>
     ipcRenderer.invoke("cli:verifyProviderKey", { entry, model }),
@@ -157,14 +157,11 @@ contextBridge.exposeInMainWorld("atomic", {
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
   /** 13: the page's ground colour (#rrggbb), for the window's own background. */
   windowGround: (color: string) => ipcRenderer.invoke("app:windowGround", color),
-  // item 6: the sidebar's own pin/read state (Electron userData/prefs.json) and the row menu
+  // item 6: the sidebar's own pin/read state (Electron userData/prefs.json). ATO-165: the
+  // chat row's menu is drawn in the window now (renderer chatMenuHTML), so no native menu here.
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
   prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>
     ipcRenderer.invoke("app:prefsSet", prefs),
-  // r5 item 3: `unread` is the row's current state — main uses it to disable
-  // "Mark as Unread" on a row that already reads unread.
-  sessionMenu: (id: string, pinned: boolean, unread?: boolean) =>
-    ipcRenderer.invoke("app:sessionMenu", { id, pinned, unread }),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
@@ -205,6 +202,7 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:memoryQuery", { stateDir, name, params: params ?? [] }),
 
   /** Item 7 part C: the LLM, Telegram and Import tabs. */
+  modelsEngine: (action: string) => ipcRenderer.invoke("cli:modelsEngine", action),
   modelsStatus: () => ipcRenderer.invoke("cli:modelsStatus"),
   modelsListEmbeddings: () => ipcRenderer.invoke("cli:modelsListEmbeddings"),
   modelsStop: () => ipcRenderer.invoke("cli:modelsStop"),
@@ -221,6 +219,14 @@ contextBridge.exposeInMainWorld("atomic", {
   queuesKeep: (snapshot: Record<string, string[]>) => ipcRenderer.send("app:queuesKeep", snapshot),
   queuesTake: (): unknown => ipcRenderer.sendSync("app:queuesTake"),
   /** ATO-130: Settings' llama.cpp update waiting for its turn behind a model start, or running. */
+  onCoreUpdate: (cb: (payload: unknown) => void) => on("core:update", cb),
+  /** The local engine (Atomic Chat Core) failed to download or start: {stage, why, detail, at}, or null once it works again. */
+  onEngineFailure: (cb: (payload: unknown) => void) => on("engine:failure", cb),
+  /** The engine failure main keeps, for a window opened after it happened. */
+  engineFailure: () => ipcRenderer.invoke("engine:failure"),
+  /** The launch installing Atomic Core's backend before the model starts: {running}. Its progress comes as `cli:pull` frames (kind runtime). */
+  onEngineLaunchInstall: (cb: (payload: unknown) => void) => on("engine:launchInstall", cb),
+  engineLaunchInstall: () => ipcRenderer.invoke("engine:launchInstall"),
   onUpdatePhase: (cb: (payload: unknown) => void) => on("cli:updatePhase", cb),
   modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
   modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),
@@ -276,6 +282,8 @@ contextBridge.exposeInMainWorld("atomic", {
   onDaemonWatch: (cb: (payload: unknown) => void) => on("app:daemonWatch", cb),
   daemonWatch: () => ipcRenderer.invoke("app:daemonWatch"),
   fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
+  composerEngine: (engine: string, leg?: string) => ipcRenderer.invoke("cli:composerEngine", engine, leg),
+  fusionModel: (leg: string, model: string) => ipcRenderer.invoke("cli:fusionModel", leg, model),
   fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
   useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
   setExternalLlamaUrl: (url: string) => ipcRenderer.invoke("cli:setExternalLlamaUrl", url),
@@ -289,6 +297,8 @@ contextBridge.exposeInMainWorld("atomic", {
   llamaProps: (url: string, apiKey?: string) => ipcRenderer.invoke("agent:llamaProps", { url, apiKey }),
   contextPreview: (sessionId: string | null, message: string) =>
     ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
+  /** ATO-259: summarize the chat's older history now (POST /api/sessions/{id}/compact). */
+  compactSession: (sessionId: string) => ipcRenderer.invoke("agent:compactSession", { sessionId }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),
@@ -311,7 +321,8 @@ contextBridge.exposeInMainWorld("atomic", {
   importFromTui: (opts: Record<string, boolean>) => ipcRenderer.invoke("app:importFromTui", opts),
   /** r5 item 7 — setup wizard: the streamed runtime phase, the custom-endpoint
    *  whole-file write, and the first-run import scan. */
-  modelsUpdateStream: () => ipcRenderer.invoke("cli:modelsUpdateStream"),
+  // `fresh`: the recovery card's Download again (main forgets the active Core's install record first).
+  modelsUpdateStream: (via?: "setup" | "settings", opts?: { fresh?: boolean }) => ipcRenderer.invoke("cli:modelsUpdateStream", via, opts),
   setExternalLlamaUrls: (chatUrl: string, embeddingUrl?: string) =>
     ipcRenderer.invoke("cli:setExternalLlamaUrls", { chatUrl, embeddingUrl: embeddingUrl ?? "" }),
   detectImportAgents: () => ipcRenderer.invoke("app:detectImportAgents"),

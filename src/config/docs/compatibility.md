@@ -5,7 +5,7 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 75; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 77; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
@@ -18,6 +18,10 @@ Memory embeddings are off by default; query rewriting, links, evolution, lessons
 For input versions below 75, validated providers without `modelMode` receive `cloud` when the shared [provider classification](../model-mode.ts) recognizes a cloud service. This uses the same rule as adding a connection. Explicit `local`/`cloud` settings and per-model overrides remain intact; local and unknown endpoints are left as they were. Null is parsed as absent before migration. Provider IDs, models, credentials and numerical limits are not changed by this migration.
 
 [Config loading](../config-file.ts) persists the upgraded version through its existing atomic owner-only writer. Read-only parsing returns migrated values without writing. Version 75 or newer does not reapply classification: manual `local` or `inherit` choices survive later loads and provider edits. A missing version follows the existing current-version rule. [Mode tests](../model-mode.test.ts), [file IO tests](../config-file.test.ts) and [provider commands](../llm-provider-commands.test.ts) cover classification, persistence, restart and manual precedence.
+
+## Atomic Core default engine migration
+
+Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before it the Atomic Core choice sat behind an opt-in environment variable, so a stored `llama-server` was the written default rather than a decision: for input versions below 77 a missing or `llama-server` engine becomes `atomic-core`. Nothing else in the file changes, including external mode and every other managed field. From version 77 an explicit `llama-server` is honoured, so switching back with `models engine llama-server` survives later loads. Unknown engine values still fail validation. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
 ## Scalar validation
 
@@ -70,6 +74,8 @@ Outputs and nested objects are fresh. Permissive field lookup, discarded unknown
 Current defaults are read separately at each old fallback expression, retaining short-circuiting and within-call nested/whole-default replacements. Pre-v41 auto-update returns true without reading a default, including malformed supplied values. Explicit parallel auto also bypasses defaults; only the historical pre-v63 pinned value follows its existing migration. Tensor split/custom-model arrays ignore mutated defaults, and absent embedding URL uses the validated embedding port. Unknown nonempty embedding model IDs remain accepted; managed IDs use the catalog or parsed same-file custom definitions.
 
 User/runtime shapes remain separate. Outputs/default factories have fresh nested objects and arrays. Disabled/external modes still validate all settings; positive ports retain their current bounds, URLs retain general scheme acceptance, and Hugging Face normalization retains path prefixes. No new network/process/filesystem operation, trimming policy, migration or default is introduced. Environment precedence, catalog publication after loading and live server ownership stay with their existing owners.
+
+Custom model entries accept `localPath` (v76): an absolute `.gguf` path added from disk, launched in place and never downloaded or deleted. An entry without it whose `huggingFaceUrl` is a `file:` URL naming an absolute `.gguf` takes the path back from that URL, because an older build rewriting the list drops `localPath` but keeps the URL. Whether the file still exists is checked at launch, not at parse time.
 
 ## Frontend, channel and integration settings
 

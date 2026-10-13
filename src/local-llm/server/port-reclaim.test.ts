@@ -134,6 +134,61 @@ describe("reclaimManagedPort", () => {
   });
 });
 
+describe("reclaimManagedPort under Atomic Core", () => {
+  const embReq: ReclaimRequest = { ...req, role: "embedding", port: 19092, alias: "nomic-embed-text-v1.5", avoidPorts: [19091] };
+  const coreHolder = (dir: string, pid = 777): PortHolder => ({
+    pid,
+    executable: `${dir}/core/versions/0.13.6/data/llamacpp/backends/b1/cpu/build/bin/llama-server`,
+    atagDataDir: dir,
+    coreManaged: true,
+  });
+
+  it("adopts the live Core embedding session on its port instead of moving it (the restart case)", async () => {
+    const d = deps({
+      open: new Set([19092]),
+      holder: coreHolder(OWN),
+      coreSessionOnPort: (dir, port) => (dir === OWN && port === 19092 ? { role: "embedding", pid: 777, modelId: "nomic-embed-text-v1.5" } : null),
+    });
+    expect(await reclaimManagedPort(embReq, d)).toEqual({ kind: "adopted", pid: 777 });
+    expect(d.pidFiles).toEqual([[OWN, "embedding", 777]]);
+    expect(d.stopped).toEqual([]);
+  });
+
+  it("unloads a Core session serving something else through Core, never by signal, and keeps the port", async () => {
+    const open = new Set([19091]);
+    const unloaded: string[] = [];
+    const d = deps({
+      open,
+      holder: coreHolder(OWN),
+      coreSessionOnPort: () => ({ role: "chat", pid: 777, modelId: "gemma-4-12b" }),
+      stopCoreRole: async (_dir, role) => { unloaded.push(role); open.delete(19091); return true; },
+    });
+    const out = await reclaimManagedPort(req, d);
+    expect(out).toMatchObject({ kind: "stopped", pid: 777 });
+    expect(unloaded).toEqual(["chat"]);
+    expect(d.stopped).toEqual([]);
+  });
+
+  it("restarts a crashed Core to reap the server it left on our port", async () => {
+    const open = new Set([19091]);
+    let recovered = 0;
+    const d = deps({
+      open,
+      holder: coreHolder(OWN),
+      recoverCore: async () => { recovered += 1; open.delete(19091); return true; },
+    });
+    expect(await reclaimManagedPort(req, d)).toMatchObject({ kind: "stopped", pid: 777 });
+    expect(recovered).toBe(1);
+    expect(d.stopped).toEqual([]);
+  });
+
+  it("never signals another data dir's Core server", async () => {
+    const d = deps({ holder: coreHolder(QA) });
+    expect(await reclaimManagedPort(req, d)).toMatchObject({ kind: "moved", port: 19093 });
+    expect(d.stopped).toEqual([]);
+  });
+});
+
 describe("isPortOpen", () => {
   const servers: Server[] = [];
   afterEach(async () => {

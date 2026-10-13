@@ -319,7 +319,7 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
       DL.dry = false;
       dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
       render(); await tick(60);
-      const retried = await pressIn('llama.cpp runtime', '.dlc-retry');
+      const retried = await pressIn('Local engine', '.dlc-retry');
       feed({id: ID, done: true, ok: true});
       await tick(120);
       return retried;
@@ -337,7 +337,7 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
 
       // (b) The runtime's × while the projector waits behind it.
       await begin();
-      out.cancelAct = await pressIn('llama.cpp runtime', '.dlc-x');
+      out.cancelAct = await pressIn('Local engine', '.dlc-x');
       out.cancelled = seen();
       // The killed child exits non-zero: a cancel, not a failure.
       feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: false, error: 'models update exited with code null', sawProgress: false, upToDate: false});
@@ -363,7 +363,7 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
       out.failAnswered = answer({ok: true, path: '/smoke/t18e/' + FILE});
       await tick(150);
       out.failLanded = seen({marker: marker()});
-      out.retryAct = await pressIn('llama.cpp runtime', '.dlc-retry');
+      out.retryAct = await pressIn('Local engine', '.dlc-retry');
       out.retriedHeld = DL.activateAfter;
       runtimeEnds(true);
       await tick(150);
@@ -378,7 +378,7 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
     "T18 D1 (F8): a vision model whose weights land with a retried llama.cpp runtime next waits for it — its projector is a queued row, not a second download",
     typeof r["retried"] === "string" && /^dlc:retry:/.test(r["retried"] as string)
       && landed.calls.length === 0 && landed.job === "runtime:llama.cpp" && landed.projector === null
-      && same(lines(landed.card), ["llama.cpp runtime | Starting…", `${NAME} | Vision projector · Queued`])
+      && same(lines(landed.card), ["Local engine | Starting…", `${NAME} | Vision projector · Queued`])
       && landed.card?.rows[1]?.cancel === `dlc:drop:projector:${ID}` && landed.marker?.weightsLanded === true,
     JSON.stringify({ retried: r["retried"], landed }),
   );
@@ -394,7 +394,7 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
   check(
     "T18 D1 (F8): the runtime's × stops only the runtime — the projector waiting behind it stays, and comes down once the runtime has exited",
     r["cancelAct"] === "dlc:cancel" && cancelled.job === "runtime:llama.cpp:cancelled" && cancelled.calls.length === 0
-      && same(lines(cancelled.card), ["llama.cpp runtime | Cancelling…", `${NAME} | Vision projector · Queued`])
+      && same(lines(cancelled.card), ["Local engine | Cancelling…", `${NAME} | Vision projector · Queued`])
       && same(afterExit.calls, [PROJ]) && afterExit.projector === ID && afterExit.job === null && afterExit.failed.length === 0,
     JSON.stringify({ act: r["cancelAct"], cancelled, afterExit }),
   );
@@ -407,7 +407,7 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
   const dropped = r["dropped"] as Seen, afterDrop = r["afterDrop"] as Seen;
   check(
     "T18 D1 (F8): the waiting projector's × takes it off and forgets the resume reminder — nothing comes down or starts when the runtime lands",
-    r["dropAct"] === `dlc:drop:projector:${ID}` && same(lines(dropped.card), ["llama.cpp runtime | Starting…"])
+    r["dropAct"] === `dlc:drop:projector:${ID}` && same(lines(dropped.card), ["Local engine | Starting…"])
       && dropped.marker === null && dropped.calls.length === 0
       && afterDrop.calls.length === 0 && afterDrop.projector === null && afterDrop.card === null,
     JSON.stringify({ act: r["dropAct"], dropped, afterDrop }),
@@ -417,7 +417,7 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
     "T18 D1 (F8): with that runtime failed the landed projector starts nothing either; a Retry on the runtime then starts the model once it lands",
     same(failedRuntime.calls, [PROJ]) && same(failedRuntime.failed, ["runtime:llama.cpp"])
       && r["failAnswered"] === true && same(failLanded.calls, [PROJ]) && failLanded.marker?.id === ID
-      && same(lines(failLanded.card), ["llama.cpp runtime | Failed · smoke t18e: models update exited with code 1"])
+      && same(lines(failLanded.card), ["Local engine | Failed · smoke t18e: models update exited with code 1"])
       && typeof r["retryAct"] === "string" && r["retriedHeld"] === ID
       && same(failRetried.calls, [PROJ, START]) && failRetried.card === null && failRetried.marker === null,
     JSON.stringify({ failedRuntime, failLanded, retry: r["retryAct"], held: r["retriedHeld"], failRetried }),
@@ -451,7 +451,7 @@ async function runtimeRefused(js: Js, check: Check): Promise<void> {
       DL.dry = false;
       dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
       render(); await tick(60);
-      out.retried = await pressIn('llama.cpp runtime', '.dlc-retry');
+      out.retried = await pressIn('Local engine', '.dlc-retry');
       feed({id: ID, done: true, ok: true});
       await tick(150);
       out.refused = seen({spawns: T.spawns.slice()});
@@ -460,7 +460,7 @@ async function runtimeRefused(js: Js, check: Check): Promise<void> {
       out.landed = seen({marker: marker(), landed: DL.landed});
       // Main is free again: Retry on the runtime, which lands.
       refuse = false;
-      out.retryAct = await pressIn('llama.cpp runtime', '.dlc-retry');
+      out.retryAct = await pressIn('Local engine', '.dlc-retry');
       out.held = DL.activateAfter;
       runtimeEnds(true);
       await tick(150);
@@ -472,7 +472,7 @@ async function runtimeRefused(js: Js, check: Check): Promise<void> {
       DL.dry = false;
       dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
       render(); await tick(60);
-      await pressIn('llama.cpp runtime', '.dlc-retry');
+      await pressIn('Local engine', '.dlc-retry');
       feed({id: 'smoke-t18e-text', done: true, ok: true});
       await tick(150);
       out.textRefused = seen({held: DL.activateAfter});
@@ -519,14 +519,14 @@ async function startStaysGone(js: Js, check: Check): Promise<void> {
       DL.dry = false;
       dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
       render(); await tick(60);
-      await pressIn('llama.cpp runtime', '.dlc-retry');
+      await pressIn('Local engine', '.dlc-retry');
       feed({id: ID, done: true, ok: true});
       await tick(120);
     };
     try {
       // (e) Cancelled runtime; the projector then fails, and is retried from its row.
       await begin();
-      await pressIn('llama.cpp runtime', '.dlc-x');
+      await pressIn('Local engine', '.dlc-x');
       feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: false, error: 'models update exited with code null', sawProgress: false, upToDate: false});
       await tick(120);
       out.eAnswered = answer({ok: false, error: 'smoke t18e: the connection was reset'});
@@ -540,7 +540,7 @@ async function startStaysGone(js: Js, check: Check): Promise<void> {
 
       // (f) The runtime's child exits 0 as its Cancel comes in.
       await begin();
-      await pressIn('llama.cpp runtime', '.dlc-x');
+      await pressIn('Local engine', '.dlc-x');
       runtimeEnds(true);
       await tick(120);
       out.fAnswered = answer({ok: true, path: '/smoke/t18e/' + FILE});
@@ -559,7 +559,7 @@ async function startStaysGone(js: Js, check: Check): Promise<void> {
       feed({id: ID, done: true, ok: true});
       await tick(120);
       out.gParked = seen();
-      out.gDrop = await pressIn('llama.cpp runtime', '.dlc-x');
+      out.gDrop = await pressIn('Local engine', '.dlc-x');
       feed({id: 'smoke-t18e-y', done: true, ok: true});
       await tick(150);
       out.gAnswered = answer({ok: true, path: '/smoke/t18e/' + FILE});
@@ -588,7 +588,7 @@ async function startStaysGone(js: Js, check: Check): Promise<void> {
   check(
     "T18 D1 (F8): a queued runtime taken off the card takes the held vision model's start with it — its projector lands and starts nothing, while the model in front starts as it lands",
     gParked.job === "weights:smoke-t18e-y" && same(gParked.queue, ["runtime:llama.cpp"])
-      && same(lines(gParked.card), ["Smoke T18e Y | Starting…", "llama.cpp runtime | Queued", `${NAME} | Vision projector · Queued`])
+      && same(lines(gParked.card), ["Smoke T18e Y | Starting…", "Local engine | Queued", `${NAME} | Vision projector · Queued`])
       && r["gDrop"] === "dlc:drop:runtime:llama.cpp" && r["gAnswered"] === true
       && same(gLanded.calls, [PROJ, "activate:smoke-t18e-y"]) && gLanded.card === null && gLanded.marker?.id === ID,
     JSON.stringify({ gParked, drop: r["gDrop"], gLanded }),
@@ -621,7 +621,7 @@ async function settingsUpdateRefused(js: Js, check: Check, main: SmokeDownloads)
   check(
     "T18 D1 (F8): Settings' llama.cpp update refused while a projector downloads says so and stays said — what is downloading, no \"updating…\" left behind; a plain failure is said the same way",
     !!busy && busy.busy === false
-      && busy.msg === "! the llama.cpp backend was not updated: the vision projector of smoke-t18e-held is downloading. Update it once that has finished."
+      && busy.msg === "! the local engine was not updated: the vision projector of smoke-t18e-held is downloading. Update it once that has finished."
       && failed.busy === false && failed.msg === "! models update failed: smoke: offline, nothing is downloaded",
     JSON.stringify({ busy, failed }),
   );
@@ -646,7 +646,7 @@ async function runtimeRetryAfterProjector(js: Js, check: Check): Promise<void> {
       out.answered = answer({ok: false, error: 'smoke t18e: HTTP 503 from the projector URL'});
       await tick(150);
       out.failed = seen();
-      out.retryRuntime = await pressIn('llama.cpp runtime', '.dlc-retry');
+      out.retryRuntime = await pressIn('Local engine', '.dlc-retry');
       out.retried = seen({held: DL.activateAfter});
       runtimeEnds(true);
       await tick(150);
@@ -699,7 +699,7 @@ async function runtimeRetryAfterLanding(js: Js, check: Check): Promise<void> {
       out.answered = answer({ok: true, path: '/smoke/t18e/' + FILE});
       await tick(150);
       out.landed = seen({landed: DL.landed});
-      out.retryRuntime = await pressIn('llama.cpp runtime', '.dlc-retry');
+      out.retryRuntime = await pressIn('Local engine', '.dlc-retry');
       out.held = DL.activateAfter;
       runtimeEnds(true);
       await tick(150);
@@ -879,7 +879,7 @@ async function resumeChecksRuntime(js: Js, check: Check): Promise<void> {
       remember({weightsLanded: true});
       await relaunch();
       out.runtimeRun = seen({marker: marker()});
-      out.runtimeCancelAct = await pressIn('llama.cpp runtime', '.dlc-x');
+      out.runtimeCancelAct = await pressIn('Local engine', '.dlc-x');
       out.runtimeCancelled = seen({marker: marker()});
       feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: false, error: 'models update exited with code null', sawProgress: false, upToDate: false});
       await tick(150);
@@ -893,7 +893,7 @@ async function resumeChecksRuntime(js: Js, check: Check): Promise<void> {
   check(
     "T18 D5: a projector-only resume reads models status first, and with no llama.cpp binary it fetches the runtime before the projector",
     same(resumed.calls, ["status"]) && resumed.job === "runtime:llama.cpp" && resumed.projector === null
-      && same(lines(resumed.card), ["llama.cpp runtime | Starting…", `${NAME} | Vision projector · Queued`]),
+      && same(lines(resumed.card), ["Local engine | Starting…", `${NAME} | Vision projector · Queued`]),
     JSON.stringify(resumed),
   );
   check(
@@ -915,7 +915,7 @@ async function resumeChecksRuntime(js: Js, check: Check): Promise<void> {
   check(
     "T18 D5: the runtime's × on that resume takes the projector waiting in its run too, and forgets the reminder — nothing comes down or starts after it",
     run.job === "runtime:llama.cpp" && run.marker?.id === ID && r["runtimeCancelAct"] === "dlc:cancel"
-      && same(lines(rc.card), ["llama.cpp runtime | Cancelling…"]) && rc.marker === null
+      && same(lines(rc.card), ["Local engine | Cancelling…"]) && rc.marker === null
       && same(rx.calls, ["status"]) && rx.projector === null && rx.job === null && rx.card === null,
     JSON.stringify({ run, act: r["runtimeCancelAct"], cancelled: rc, exited: rx }),
   );
@@ -994,7 +994,7 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
       DL.dry = false;
       dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
       render(); await tick(60);
-      await pressIn('llama.cpp runtime', '.dlc-retry');
+      await pressIn('Local engine', '.dlc-retry');
       feed({id: ID, done: true, ok: true});
       await tick(120);
     };

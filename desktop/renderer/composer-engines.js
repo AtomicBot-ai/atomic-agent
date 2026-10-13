@@ -1,0 +1,105 @@
+"use strict";
+
+// Separate provider/engine and model choices on each composer seat.
+/* Atomic Chat Core is the local engine. A config with no engine named runs Core (the agent's own default
+   since the engine migration), so the window reads it the same way: only an explicit llama-server is llama.cpp. */
+function composerEngineId() { return llmManaged().engine === 'llama-server' ? 'llama-server' : 'atomic-core'; }
+/* The composer never names the engine: a local seat is "this computer" whichever engine runs it, as before Core
+   existed, and "Atomic Chat" stays the name of the Atomic Chat (local) provider preset alone. llama.cpp is never
+   offered in the app (support-only: `models engine llama-server`); Settings › Models › Advanced leads back. */
+function composerEngineName() { return 'Local models'; }
+function composerSeatLocal(seat) { return seat.provider === 'local-llama'; }
+/* Why one seat at most: the managed engine loads one model, and a second local model would split the same memory and GPU. */
+const COMPOSER_ONE_LOCAL = 'Your computer runs one local model at a time, so the local engine can take only one role.';
+function composerEngineMark(_id, size) { return markFallbackHTML('laptop', size); }
+function composerEngineChip(kind, label, local, role) {
+  const title = (role ? role + ': ' : 'Inference engine: ') + label;
+  // data-id stays the seat's provider id (local-llama for the managed engine), as the provider chip carried before.
+  const id = local ? 'local-llama' : label;
+  return '<button class="cchip providerchip enginechip' + cchipOpen(kind) + '" data-sel-open="' + kind + '" data-id="' + esc(id) + '"'
+    + ' title="' + esc(title) + '" aria-label="' + esc(title) + '">'
+    + (local ? composerEngineMark(composerEngineId(), 'xs') : providerMark(label, 'xs'))
+    + '<span class="cval">' + esc(local ? label : providerWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+}
+/* One local row per seat: picking it keeps whichever engine is configured (Core, or llama.cpp set through the support CLI). */
+function composerLocalEngineRows(leg) {
+  const rm = rmNow();
+  const seat = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
+  return [{
+    type:'localEngine', id:composerEngineId(), label:composerEngineName(), leg,
+    detail:'Runs on this machine',
+    active: !leg || seat === 'local-llama',
+  }];
+}
+function composerFusionEngineRows(leg) {
+  const rm = rmNow();
+  const chosen = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
+  const other = leg === 'worker' ? rm.orchestratorProviderId : rm.workerProviderId;
+  // Both seats may use one cloud provider (two of its models).
+  const cloud = selProviders().map((p) => ({
+    type:'fusionLeg', leg, id:p.id, label:p.id,
+    // A saved key the provider turned down says so, as the provider rows do (T32).
+    detail: BSW.readyIds.includes(p.id) ? 'Cloud provider'
+      : typeof savedKeyInvalid === 'function' && savedKeyInvalid(p) ? 'saved key is invalid · paste it again' : 'No API key',
+    active:p.id === chosen,
+  }));
+  // There is one managed local slot. The swap control moves it between roles; the seat that
+  // does not hold it still lists it, greyed, with the reason, so it does not just vanish.
+  const otherRole = leg === 'worker' ? 'orchestrator' : 'worker';
+  const busy = [{type:'localBusy', id:'local-llama', label:composerEngineName(), otherRole,
+    detail:'Busy as the ' + otherRole + ' \u00b7 \u21c4 swaps the roles', note:{text:COMPOSER_ONE_LOCAL}, active:false}];
+  return cloud.concat(other === 'local-llama' ? busy : composerLocalEngineRows(leg),
+    [{type:'action', id:'add', label:'Add a new provider', detail:'opens the wizard', active:false}]);
+}
+function composerModelSeat() {
+  return selBackend() === 'fusion' ? (SEL.kind === 'workers' ? 'worker' : 'orchestrator') : null;
+}
+function composerModelProvider() {
+  const leg = composerModelSeat();
+  return leg ? fzSeats()[leg === 'worker' ? 'works' : 'plans'].provider : selActiveProviderId();
+}
+function composerSeatModelRows() {
+  const leg = composerModelSeat();
+  const id = composerModelProvider();
+  const seat = fzSeats()[leg === 'worker' ? 'works' : 'plans'];
+  if (id === 'local-llama') {
+    return [{type:'action', id:'downloadMore', label:'Download more models…', detail:'opens Settings › Models', active:false}]
+      .concat(selLocalMatches().filter((m) => m.downloaded).map((m) => ({
+        type:'seatModel', leg, id:m.id, label:llmModelName(m), detail:'On this machine', active:m.id === seat.label,
+      })));
+  }
+  return SEL.models.filter((m) => !SEL.filter || modelMatches(m.id, '', SEL.filter)).map((m) => ({
+    type:'seatModel', leg, id:m.id, label:m.id, detail:m.contextWindow ? fmtContextWindow(m.contextWindow) + ' context' : '', active:m.id === seat.label,
+  }));
+}
+async function composerPickEngine(row) {
+  const held = restartStopsTurn();
+  if (held) { restartRefusedToast(held); return; }
+  if (row.active) {
+    SEL.kind = row.leg === 'worker' ? 'workers' : 'model'; SEL.filter = ''; SEL.cursor = 0;
+    render(); selEnterModelPane(); return;
+  }
+  // The switch queue (switch-queue.js) clears SEL.busy once the last queued switch settles.
+  SEL.busy = true; SEL.err = null; render();
+  let result, ran = false;
+  try { result = await swxRun('Changing inference engine…', {}, () => { ran = true; return SWXBR.composerEngine(row.id, row.leg); }); }
+  catch (err) { result = {ok:false, error:err && err.message ? err.message : String(err)}; }
+  // A newer choice replaced this one: it owns the selector and its feedback.
+  // One replaced before it ran changed nothing, which is said, since the pick carried no route of its own.
+  if (result && result.superseded) {
+    if (!ran) toast('Engine not changed', 'A newer model or provider choice ran instead. Choose ' + row.label + ' again to use it.');
+    return;
+  }
+  if (!result || !result.ok) { SEL.err = result && (result.error || result.refusal) || 'Could not change the engine'; render(); return; }
+  await refreshLiveConfig();
+  if (result.selectorView !== undefined && result.selectorView !== (SEL.view || 0)) { render(); return; }
+  SEL.kind = row.leg === 'worker' ? 'workers' : 'model'; SEL.filter = ''; SEL.cursor = 0;
+  render(); selEnterModelPane();
+}
+async function composerPickSeatModel(row) {
+  const held = restartStopsTurn();
+  if (held) { restartRefusedToast(held); return; }
+  const before = fzBefore('Selecting model…');
+  const want = row.leg === 'worker' ? {worker:{provider:composerModelProvider(), label:row.id}} : {model:row.id};
+  fzAfter(await swxRun('Selecting model…', want, () => SWXBR.fusionModel(row.leg, row.id)), before);
+}

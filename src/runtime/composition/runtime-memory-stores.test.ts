@@ -11,7 +11,8 @@ import * as health from "../../llm/llama-server-health.js";
 import * as embeddings from "../../memory/embeddings/index.js";
 import { LlamaEmbeddingClient } from "../../memory/embeddings/embedding-client.js";
 import { MemoryStore } from "../../memory/memory-store.js";
-import { createRuntimeMemoryStores, type RuntimeMemoryStores } from "./runtime-memory-stores.js";
+import { createRuntimeMemoryStores, probeCoreEmbedding, type RuntimeMemoryStores } from "./runtime-memory-stores.js";
+import type { CoreEmbeddingStatus } from "../../local-llm/core/core-embedding.js";
 
 let dir: string;
 let config: AtomicAgentConfig;
@@ -146,5 +147,31 @@ describe("runtime memory stores construction", () => {
     context.run({ sessionId: "first" }, () => stores?.profileStore.set("first", "one", { pinned: false }));
     context.run({ sessionId: "second" }, () => stores?.profileStore.set("second", "two", { pinned: false }));
     expect(events).toEqual([{ sessionId: "second", count: 1 }]);
+  });
+});
+
+describe("probeCoreEmbedding", () => {
+  const def = { id: "embeddinggemma-2", name: "EmbeddingGemma 2", dim: 768 };
+  const status = (change: Partial<CoreEmbeddingStatus>): CoreEmbeddingStatus => ({
+    state: "ready", enabled: true, model_path: "/m.gguf", model_id: def.id, engine: null, pid: 1, port: 2,
+    dims: 768, modalities: ["text"], restarts: 0, error: null, since: 0, ...change,
+  });
+  const probe = (st: CoreEmbeddingStatus | null) => probeCoreEmbedding("/data", def, async () => st);
+
+  it("attaches a ready module of the catalog's dimension, and an idle one (the first request starts it)", async () => {
+    await expect(probe(status({}))).resolves.toEqual({ reachable: true });
+    await expect(probe(status({ state: "idle", dims: null }))).resolves.toEqual({ reachable: true });
+  });
+  it("never attaches a module whose vectors have another length", async () => {
+    await expect(probe(status({ dims: 1024 }))).resolves.toMatchObject({ reachable: false, why: expect.stringContaining("1024-dim") });
+  });
+  it.each<[string, CoreEmbeddingStatus | null]>([
+    ["Core not running", null],
+    ["module off", status({ enabled: false, state: "disabled" })],
+    ["another model", status({ model_id: "other" })],
+    ["failed", status({ state: "failed", error: { code: "MODEL_LOAD_FAILED", message: "boom" } })],
+    ["no engine", status({ state: "unsupported" })],
+  ])("falls back to FTS5 when %s", async (_label, st) => {
+    await expect(probe(st)).resolves.toMatchObject({ reachable: false });
   });
 });

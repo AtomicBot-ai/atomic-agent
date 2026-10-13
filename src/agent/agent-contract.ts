@@ -24,10 +24,11 @@ import type { TruncationRetry } from "./turn/truncation-recovery.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ProfileClippedEvent } from "./profile-clip-warning.js";
+import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
 export interface AgentLoopDependencies {
-  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal) => import("../session/workspace-context.js").SessionWorkspace;
+  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../session/workspace-context.js").WorkspacePrepareOptions) => import("../session/workspace-context.js").SessionWorkspace;
   /** Save model-visible cloud messages before inference, under the turn owner. */
   persistContext?: (state: SessionState) => void;
   compaction?: ContextCompactionControl;
@@ -709,6 +710,8 @@ export type AgentLoopEvent =
     }
   /** `### profile` was clipped at `memory.profile.maxTokens` (issue #407). */
   | ProfileClippedEvent
+  /** The packer left older history out of the prompt (ATO-295). */
+  | HistoryTrimmedEvent
   | { type: "step_started"; stepIndex: number }
   | {
       type: "step_finished";
@@ -787,6 +790,8 @@ export type AgentLoopEvent =
       from: string;
       to: string;
       reason: string;
+      /** The failure's kind, read off the error (`falloverCause`). */
+      cause?: "billing" | "auth" | "other";
     }
   /**
    * A memory sub-call (reflection, link generation, voting, query

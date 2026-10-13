@@ -42,13 +42,21 @@ export type EmbeddingModelId =
   | "bge-small-en-v1.5"
   | "bge-base-en-v1.5"
   | "bge-m3"
-  | "jina-embeddings-v2-base-en";
+  | "jina-embeddings-v2-base-en"
+  | "embeddinggemma-2";
 
 export interface LocalModelDef {
   id: LocalModelId;
   name: string;
   filename: string;
   huggingFaceUrl: string;
+  /**
+   * Absolute path of a GGUF the operator already had on disk (issue
+   * #631, `local-gguf.ts`). When set, the weights are launched from this
+   * path instead of `<dataDir>/models/<id>/<filename>`, are never
+   * downloaded, and are never deleted by `removeModel`.
+   */
+  localPath?: string;
   fileSizeGb: number;
   sizeLabel: string;
   description: string;
@@ -443,6 +451,18 @@ export interface EmbeddingModelDef {
   pooling: "mean" | "last" | "cls" | "rank";
   minRamGb: number;
   recommendedRamGb: number;
+  /**
+   * The model's architecture is newer than the TurboQuant llama.cpp fork
+   * that runs chat models, so it runs only in Atomic Core's own embedding
+   * module (stock llama.cpp builds Core installs on demand), never as a
+   * managed `llama-server` or a Core model session.
+   */
+  requiresCoreEmbeddingModule?: true;
+  /**
+   * Task prefixes from the model card, prepended to the text per
+   * `EmbedRequest.purpose`. Absent: the text is embedded as is.
+   */
+  prompts?: Readonly<Record<"query" | "document" | "similarity", string>>;
 }
 
 /**
@@ -538,6 +558,30 @@ export const EMBEDDING_MODELS_CATALOG: readonly EmbeddingModelDef[] = [
     pooling: "mean",
     minRamGb: 1,
     recommendedRamGb: 2,
+  },
+  {
+    // Google's EmbeddingGemma 2 (`gemma-embedding2`, llama.cpp b11454+):
+    // Apache-2.0, 100+ languages. Core's module starts it with the
+    // GGUF's own pooling, so `pooling` here is informational only.
+    id: "embeddinggemma-2",
+    name: "EmbeddingGemma 2",
+    filename: "embeddinggemma-2-Q8_0.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/main/embeddinggemma-2-Q8_0.gguf",
+    fileSizeGb: 0.31,
+    sizeLabel: "310 MB",
+    description:
+      "Multilingual (100+ langs), 768-dim; needs the Atomic Core engine",
+    dim: 768,
+    pooling: "mean",
+    minRamGb: 1,
+    recommendedRamGb: 2,
+    requiresCoreEmbeddingModule: true,
+    prompts: {
+      query: "task: search result | query: ",
+      document: "title: none | text: ",
+      similarity: "task: sentence similarity | query: ",
+    },
   },
 ];
 

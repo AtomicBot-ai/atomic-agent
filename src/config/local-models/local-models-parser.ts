@@ -39,6 +39,13 @@ const UNCHOSEN_PARALLEL = 2;
 
 /** First version where `parallel` means "let the machine decide" by default. */
 const AUTO_PARALLEL_VERSION = 63;
+/**
+ * v77 made Atomic Core the default local engine. Before it the choice was
+ * hidden behind an opt-in variable, so a stored `llama-server` (written by
+ * every engine-aware build as the default) is not a choice: older files
+ * move to `atomic-core`. From v77 an explicit `llama-server` is honoured.
+ */
+const ATOMIC_CORE_DEFAULT_VERSION = 77;
 
 export function parseLocalTemplateSetting(
   raw: unknown,
@@ -212,6 +219,18 @@ function resolveManagedParallel(
   return pinned;
 }
 
+function resolveManagedEngine(
+  inputVersion: number,
+  raw: unknown,
+  readDefaults: () => UserLocalModelsConfig,
+): "llama-server" | "atomic-core" {
+  if (raw !== undefined && raw !== "llama-server" && raw !== "atomic-core") {
+    throw new ConfigValidationError("localModels.managed.engine", "expected llama-server|atomic-core");
+  }
+  if (inputVersion < ATOMIC_CORE_DEFAULT_VERSION) return "atomic-core";
+  return raw ?? readDefaults().managed.engine ?? "atomic-core";
+}
+
 function resolveManagedAutoUpdate(
   inputVersion: number,
   raw: unknown,
@@ -274,6 +293,7 @@ export function prepareLocalModelsInputs(
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
   const managed: UserManagedLocalLlmConfig = {
+    engine: resolveManagedEngine(inputVersion, rawManaged.engine, readDefaults),
     modelId: parseOptionalManagedModelId(
       rawManaged.modelId,
       "localModels.managed.modelId",

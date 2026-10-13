@@ -115,7 +115,8 @@ describe("DownloadChip", () => {
     const view = render(
       <DownloadChip pull={pull({ kind: "backend", modelId: "_backend" })} />,
     );
-    expect(strip(view.lastFrame() ?? "")).toContain("llama.cpp");
+    expect(strip(view.lastFrame() ?? "")).toContain("Local engine");
+    expect(strip(view.lastFrame() ?? "")).not.toContain("llama");
   });
 
   describe("an 87-char custom Hugging Face id", () => {

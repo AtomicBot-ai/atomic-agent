@@ -198,8 +198,8 @@ async function updateLimits(check: Check): Promise<void> {
     const tookSilent = Date.now() - t0;
     const installed = backendInstalled();
     const said = installed
-      ? /made no progress for 0 s and was stopped — the model starts on the llama\.cpp already installed/
-      : /made no progress for 0 s and was stopped — there is no llama\.cpp installed yet/;
+      ? /made no progress for 0 s and was stopped — the model starts on the local engine already installed/
+      : /made no progress for 0 s and was stopped — there is no local engine installed yet/;
     check(
       "T111 (ATO-128): an update that shows no progress is stopped by its own limit and says so; the start behind it goes on only with a llama.cpp in place",
       silent.ok === false && silent.timedOut === true && silent.sawProgress === false && tookSilent < 5_000
@@ -341,8 +341,8 @@ export async function checks111(js: Js, check: Check): Promise<void> {
     })()`);
     check(
       "T111 (ATO-130): Settings read \"waiting for the model to start\" while the update waits its turn, \"updating\" once it runs, and nothing else is overwritten",
-      phase.waiting === "local-llm: llama.cpp update waiting for the model to start…"
-        && phase.running === "local-llm: updating the llama.cpp backend…" && phase.off === "local-llm: something else",
+      phase.waiting === "local-llm: engine update waiting for the model to start…"
+        && phase.running === "local-llm: updating the local engine…" && phase.off === "local-llm: something else",
       show(phase),
     );
 

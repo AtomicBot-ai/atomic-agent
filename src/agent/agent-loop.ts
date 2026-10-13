@@ -43,6 +43,7 @@ import { composeSteerNotice } from "./steer-notice.js";
 import { getConfig } from "../config/index.js";
 
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
+import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
 
 /**
  * What the user reads when the step loop ran out before the model
@@ -59,6 +60,8 @@ import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.j
 export class AgentLoop {
   /** Once-per-session dedupe for the `### profile` clip warning. */
   private readonly profileClipWarnings = new ProfileClipWarnings();
+  /** Once-per-cut notice that the packer left older history out (ATO-295). */
+  private readonly historyTrimWarnings = new HistoryTrimWarnings();
 
   constructor(private readonly deps: AgentLoopDependencies) {}
 
@@ -518,6 +521,16 @@ export class AgentLoop {
                   clip: event.prompt.profileClip,
                   ...(this.deps.logger ? { logger: this.deps.logger } : {}),
                   emit: (clipped) => this.deps.onEvent?.(clipped),
+                });
+                // ATO-295: the packer cut older history (compaction off,
+                // failed or not possible). Said once per cut, not per step.
+                reportHistoryTrim({
+                  warnings: this.historyTrimWarnings,
+                  sessionId: state.id,
+                  stepIndex: i,
+                  prompt: event.prompt,
+                  ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+                  emit: (trimmed) => this.deps.onEvent?.(trimmed),
                 });
               }
             },

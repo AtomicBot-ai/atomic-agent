@@ -76,7 +76,7 @@ export function isManagedModeReadyOnDisk(): boolean {
   const modelId = cfg.localModels.managed.modelId;
   if (!modelId || !isKnownLocalModelId(modelId)) return false;
   const dataDir = cfg.paths.localModelsDataDir;
-  if (!isBackendDownloaded(dataDir)) return false;
+  if (!isBackendDownloaded(dataDir, cfg.localModels.managed.engine)) return false;
   const def = getLocalModelDef(modelId);
   if (!isModelDownloaded(dataDir, def)) return false;
   return true;

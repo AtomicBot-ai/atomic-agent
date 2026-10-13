@@ -1,6 +1,7 @@
 import { LlamaServerError } from "../llama-server-client.js";
 import {
   isCreditExhausted,
+  isModerationRefusal,
   OpenAiHttpError,
 } from "../provider/openai/openai-http.js";
 import { CREDENTIAL_WORDING } from "../provider/openai/parse-provider-error-body.js";
@@ -55,6 +56,47 @@ export function isCredentialRejection(err: unknown): boolean {
  */
 export function isBillingRefusal(err: unknown): boolean {
   return err instanceof OpenAiHttpError && !err.timedOut && isCreditExhausted(err);
+}
+
+/**
+ * Which reading the fallover notice gives this failure, judged on the
+ * error rather than on its reason text: "billing" (top up), "auth" (fix
+ * the key) or "other" (the chain's probe will see it clear).
+ *
+ * The notice used to classify `describeReason`'s text alone, and that
+ * text is the raw body cut to 180 characters. Gemini's per-minute 429
+ * and OpenAI's `insufficient_quota` 429 both open "You exceeded your
+ * current quota, please check your plan and billing details", and the
+ * part that tells them apart (Gemini's "retry in 41s", OpenAI's code)
+ * comes after the cut, so a rate limit was read as an empty account. An
+ * OpenRouter 403 for input its moderation flagged read as a bad key.
+ * The error still has the whole body: billing is the chain's own rule
+ * (`isBillingRefusal`), and a 401 or 403 is the key's unless the
+ * provider said its moderation refused the input, the same line the
+ * chat sentence draws (`humanizeOpenAiHttpError`).
+ *
+ * "Other" only where the error says so for certain: no answer, a
+ * timeout, a 5xx, 408, a 429 that is not billing, a 404, a moderation
+ * 403. Anything else is undefined and the text decides, as it did:
+ * an empty account also answers 400 (Anthropic's "Your credit balance
+ * is too low", OpenAI's `billing_hard_limit_reached`), and the chain's
+ * billing rule does not read a 400. Undefined too for errors that are
+ * not a cloud provider's answer.
+ */
+export function falloverCause(
+  err: unknown,
+): "billing" | "auth" | "other" | undefined {
+  if (!(err instanceof OpenAiHttpError)) return undefined;
+  if (isBillingRefusal(err)) return "billing";
+  const { status } = err;
+  if (err.timedOut || status === null) return "other";
+  if (status === 401 || status === 403) {
+    return isModerationRefusal(err) ? "other" : "auth";
+  }
+  if (status >= 500 || status === 408 || status === 429 || status === 404) {
+    return "other";
+  }
+  return undefined;
 }
 
 /**

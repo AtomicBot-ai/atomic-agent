@@ -6,7 +6,7 @@
 
 import { curatedMeta } from "../model-catalog.js";
 import { daemonEffect, keyCheckResult, presetOf, switchOutcome } from "./classify.js";
-import { readConfigFile } from "./environment.js";
+import { localEngineOf, readConfigFile } from "./environment.js";
 import { analyticsEnabled, currentRunMode, flagsStore, refreshRunMode, track } from "./core.js";
 
 let stateDir = "";
@@ -100,7 +100,7 @@ export function switchEnd(begin: { from: string | null; at: number }, res: unkno
     }
     const effect = daemonEffect(r?.daemon);
     if (effect && effect !== "untouched" && effect !== "superseded" && effect !== "skipped") {
-      track("local_backend_started", { via: "swap", result: effect, model_id: modelIdProp(r?.modelId), ms });
+      track("local_backend_started", { via: "swap", result: effect, model_id: modelIdProp(r?.modelId), ms, engine: localEngineOf(readConfigFile(stateDir)) });
     }
     if (kind?.action && r?.ok) fusionConfigured(kind.action);
     if (r?.ok) maybeModelConfigured();
@@ -123,7 +123,22 @@ export function localBackendStarted(via: "launch" | "swap", daemon: unknown, mod
   try {
     const effect = daemonEffect(daemon);
     if (!effect) return;
-    track("local_backend_started", { via, result: effect, model_id: modelIdProp(modelId), ms });
+    track("local_backend_started", { via, result: effect, model_id: modelIdProp(modelId), ms, engine: localEngineOf(readConfigFile(stateDir)) });
+  } catch {
+    /* never */
+  }
+}
+
+/**
+ * The recovery card went up (main.ts noteEngine): the local engine did not
+ * download, verify or start. Not `local_engine_failed`: the agent's `models`
+ * command that failed already sends that one, so the desktop counts only what
+ * it showed, and from where.
+ */
+export function engineRecoveryShown(stage: string, via: string): void {
+  try {
+    if (!analyticsEnabled()) return;
+    track("engine_recovery_shown", { engine: localEngineOf(readConfigFile(stateDir)), stage, via });
   } catch {
     /* never */
   }

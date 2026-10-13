@@ -40,6 +40,7 @@ generated per launch, so nothing outside this app can reach the agent.
 | Approval verdicts | `POST /api/approval/resolve` |
 | Steering the turn already running | `POST /api/sessions/{id}/steer` |
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
+| Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,
@@ -84,6 +85,18 @@ staleness guard, so a slow refresh for the session the user just left cannot
 draw its trimming verdict over the numbers of the session they are on. A
 prompt-derived window is released when the active `<providerId> <chatModel>`
 changes, so the gauge never draws a new model against the old model's scale.
+
+**Context compaction (ATO-259, ATO-295).** When the agent summarizes older
+history inside a turn, the stream carries `compaction_started`,
+`compaction_progress` and `compaction_completed` / `compaction_failed`; the
+chat shows a spinning "Compacting the conversation…" line that becomes
+"Conversation compacted: ~30k → ~9k tokens" (or a plain failure line). When
+the agent could not compact and left older history out, `history_trimmed`
+adds one line saying so and pointing at `/compact`. `/compact` in the composer
+and "Compact now" in the context popover call the compact route through main
+(`agent:compactSession`); both are off while a turn runs, while a compaction
+is going, and before the chat is saved. Words and rules:
+[context-compaction.js](renderer/context-compaction.js).
 
 **The session's model stamp.** The same row carries `metadata.llm` — the
 provider and model that session last ran on. It is reported and never applied:
@@ -214,9 +227,13 @@ Real, driven by the running agent:
   string; an empty Tasks list says `(no tasks yet)` rather than the TUI's
   `(no active tasks)`, because this list is every task the agent holds and not
   the rail's running/pending/recurring projection — "no active tasks" would be
-  a claim about a different list. Chats can be pinned and unpinned from the row's hover button or
-  its right-click menu (Pin/Unpin · Delete…), and **Delete really deletes**:
-  `DELETE /api/sessions/{id}`, not a splice that the next load undoes.
+  a claim about a different list. Each chat row has a **…** button (on hover, keyboard
+  focus and on the open chat's row) and the same menu on a right-click: Pin / Unpin,
+  Mark as read / Mark as unread, Delete… Pinned chats stand in a **Pinned** section above
+  Chats, the last pinned on top, and are not repeated below. Pin and read state live in
+  Electron's `prefs.json`, not in the agent. **Delete really deletes** (after a confirm):
+  `DELETE /api/sessions/{id}`, not a splice that the next load undoes; deleting the open
+  chat leaves an empty new one.
   Each list header carries a **+** on its own line: the one on Chats starts a
   new chat, the one on Tasks opens Settings › Tasks with the create form up,
   and on the Tasks header `N running` sits to the left of it. The head row —
@@ -233,10 +250,16 @@ Real, driven by the running agent:
   than 1000px — the two lists stay as a column of dots, each row's tooltip
   naming it, so the rail is still a way back into a chat; the two list headers
   stay too, stripped to their **+**, because 52px does not hold a label or the
-  counter and the rail would otherwise have no way to start anything. The
-  toolbar's sidebar button glows in the accent (`.iconbtn.on`, the same
-  treatment the Inspector and Console buttons use) while the sidebar is
-  expanded, and *expanded* is the conjunction of both facts — the flag and the
+  counter and the rail would otherwise have no way to start anything.
+  Expanded, the sidebar reaches up into the 52px title band (the Atomic Chat
+  layout): its top row (`.sb-top`) has the macOS traffic lights on the left
+  and two 32px icon buttons on the right, Search (the palette, ⌘ K) and the
+  sidebar toggle; the row is the drag handle, the buttons are not, and the
+  toolbar starts past the sidebar (`#toolbar.sb-open`). Collapsed, both
+  buttons stand in the toolbar next to the lights; there is no Search pill.
+  Smoke task 114 covers the layout. The sidebar button glows in the accent
+  (`.iconbtn.on`, the same treatment the Inspector and Console buttons use)
+  while the sidebar is expanded, and *expanded* is the conjunction of both facts — the flag and the
   breakpoint — so the glow cannot lie on a narrow window. Below 1000px the
   media query pins 52px whatever the flag says, so the button is **disabled**
   there rather than left as a live control that does nothing, its tooltip
@@ -1183,7 +1206,7 @@ npm install
 npm run dist
 ```
 
-Output: `desktop/release/Atomic Agent-<version>-arm64.dmg` (Apple Silicon,
+Output: `desktop/release/Atomic-Agent-<version>-arm64.dmg` (Apple Silicon,
 about 121 MB).
 
 The build is **unsigned and un-notarised** — `mac.identity` is explicitly
@@ -1312,7 +1335,7 @@ the update files into `desktop/release/`. Everything a release uploads to
 
 | Platform | Files |
 |---|---|
-| macOS | `stable-mac.yml`, `Atomic Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. |
+| macOS | `stable-mac.yml`, `Atomic-Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. File names carry no space (`mac.artifactName`): GitHub renames a space in an uploaded asset to a dot, and `stable-mac.yml` would then point at a file that 404s (ATO-255). |
 | Windows | `stable.yml` (merged, below), `Atomic-Agent-Setup-<version>-x64.exe` and `Atomic-Agent-Setup-<version>-arm64.exe`; their `.blockmap`s are optional. |
 
 Linux is not updated from inside the app yet (the updater is off there and
@@ -1382,7 +1405,7 @@ which the terminal installers read. Each desktop release replaces its files
 
 ```bash
 gh release upload desktop-latest \
-  "Atomic Agent-<version>-arm64-mac.zip" "Atomic Agent-<version>-arm64-mac.zip.blockmap" \
+  "Atomic-Agent-<version>-arm64-mac.zip" "Atomic-Agent-<version>-arm64-mac.zip.blockmap" \
   "Atomic-Agent-Setup-<version>-x64.exe" "Atomic-Agent-Setup-<version>-x64.exe.blockmap" \
   "Atomic-Agent-Setup-<version>-arm64.exe" "Atomic-Agent-Setup-<version>-arm64.exe.blockmap" \
   --repo AtomicBot-ai/atomic-agent --clobber
@@ -1471,3 +1494,26 @@ finish before the newest choice starts, but its stale feedback cannot close a
 newly opened selector or overwrite the selected target. Interactive local starts
 use `models start --interactive` to avoid waiting for the optional throughput
 benchmark after health is ready.
+
+## Atomic Chat Core, the default local engine
+
+Atomic Chat Core is the default local engine. The agent's config migration writes `localModels.managed.engine: "atomic-core"` for everyone, and a config with no engine named runs Core too; the desktop reads it the same way (`managedEngineOf` in `main/agent-cli.ts`, `composerEngineId` in `renderer/composer-engines.js`). Only an explicit `"llama-server"` is llama.cpp. The engine is not a choice in the normal UI: the Local route draws only the backend and model controls, and a Fusion seat lists one neutral local row, **This computer** ("Local model · runs on this machine"), which keeps whichever engine is configured. llama.cpp is never shown in the app, failure states included: it is a support-only fallback reached with `atomic-agent models engine llama-server`. There is no experimental flag any more.
+
+Settings → Models → Advanced → Engine shows the running engine's install and update rows. Its **Engine choice** row appears only on llama.cpp (reachable only through that CLI command), with **Use Atomic Chat engine** as the quiet way back to Core; stop local models before switching. Model files are shared across engines. Core installation and model ownership are delegated to the agent's `models` commands; the desktop uses the same session credentials for native health/context probes and never force-kills Core-owned model processes. On Core, Update now runs the streamed `models update` (Core when it is missing, then the llama.cpp build Core picks) and draws it as a progress bar in the download banner. The first-run setup's runtime phase is the same `models update`, so it installs whichever engine the config names.
+
+**When Core is not ready.** With Core selected, a failed Core download, verification or start leaves no local engine: the agent has no automatic fallback and ends every such failure with `Retry with: atomic-agent models update`. `main/engine-failure.ts` reads that hint (older agents' llama.cpp hints are still accepted), the agent's stage sentences ("The Atomic Chat engine could not be downloaded" / "did not pass verification" / "could not install its inference backend" / "could not start") or a line naming Atomic Core in every start, install and switch answer and turns it into one plain sentence (download, verify, backend, blocked or start). Main keeps it, sends it to the window (`engine:failure`) and clears it on the next success. The window shows a toast once, a strip over the composer while the route needs the local engine, and a card in Settings → Models (and in the setup's runtime row on first run), each titled "The local engine isn't ready" with one action, **Download again** (the engine install, or the setup's own retry). There is no llama.cpp button. The setup's runtime row is labelled **Local engine** whichever engine it installs.
+
+Core release checks run after startup and every six hours, like app checks. Check for updates also runs on demand. A check never downloads or stops a model, and a machine with no Core installed yet gets no update toast (Core comes with the first model start or from the installer). An unsupported newer Core is described as needing a newer Agent build. Update now refuses while local models run. The existing app updater remains responsible for the desktop app itself.
+
+### Bundled Atomic Chat Core
+
+The installer carries Atomic Chat Core, so the first local model needs no Core download.
+
+- **Where it comes from.** `npm run fetch-core` (`scripts/fetch-core.mjs`) downloads the release asset for the target (`--platform darwin|win32|linux --arch x64|arm64`, or `--slug win32-arm64`) from `AtomicBot-ai/atomic-chat-core` into `build/core/<platform>-<arch>/`. The version is `BUNDLED_CORE_VERSION` in `main/core-bundle.ts`, the one place to bump it, and it must be a version the agent lists in `CORE_VERSIONS`. The `dist*` scripts and every job in `.github/workflows/desktop.yml` run it before electron-builder.
+- **Verification.** The asset must match exactly one line of the release's `SHA256SUMS`, or the build fails. A file that already matches is not downloaded again. `afterPack` fails the build when `resources/core/` has no binary.
+- **Signing.** macOS: electron-builder signs `Contents/Resources/core/atomic-chat-core` with the app (Developer ID, hardened runtime, `entitlementsInherit`), and notarization covers it. Windows: the workflow signs `build/core/<slug>/atomic-chat-core.exe` with signtool before packaging, like the agent binaries (both x64 and the arm64 job on the x64 runner). Without the secrets the build still succeeds, unsigned.
+- **First launch.** `seedBundledCore(dataDir)` (`main/core-seed.ts`) copies the binary to `<dataDir>/core/versions/<version>/` and writes `verified.json` with the sha256 of the copy on disk. That is not the release hash: signing changes the bytes, and the release hash was already checked at build time. A valid install is never overwritten, and `active.json` stays the agent's.
+
+### Composer inference engines
+
+Local mode shows the backend and model controls only; the engine is not named or chosen there. Fusion shows an engine/provider and model pair for each role (a local seat reads **This computer**, never an engine name, so it is not confused with the Atomic Chat (local) provider preset), separated by the swap control. Model catalogs and model pins follow their own role; changing a worker does not activate it as the orchestrator. The managed runtime has one local slot, which can move between roles with swap. A loaded local model must be stopped before its engine changes. Route changes keep the existing busy-turn and Stop guards.

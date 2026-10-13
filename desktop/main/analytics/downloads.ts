@@ -12,7 +12,7 @@ import { totalmem } from "node:os";
 import { curatedMeta } from "../model-catalog.js";
 import { DOWNLOAD_TRIGGERS } from "./catalog.js";
 import { downloadFailReason, fitFor, hfLookupResult, quantOf } from "./classify.js";
-import { readConfigFile } from "./environment.js";
+import { localEngineOf, readConfigFile } from "./environment.js";
 import { analyticsEnabled, track } from "./core.js";
 
 interface Download {
@@ -154,16 +154,16 @@ export function hfLookupDone(outcome: { choices?: number; error?: string }): voi
   }
 }
 
-/** `models update` finished — the setup's streamed phase or Settings' button. */
+/** `models update` finished — the setup's streamed phase, Settings' button, or the launch's first Atomic Core install. */
 export function runtimeUpdated(
-  trigger: "setup" | "settings",
+  trigger: "setup" | "settings" | "launch",
   startedAt: number,
   res: { ok?: boolean; upToDate?: boolean; error?: string | null } | null,
   cancelled: boolean,
 ): void {
   try {
     const result = cancelled ? "cancelled" : res?.ok ? (res.upToDate ? "up_to_date" : "ok") : "failed";
-    track("llama_runtime_updated", { trigger, result, ms: Date.now() - startedAt });
+    track("llama_runtime_updated", { trigger, result, ms: Date.now() - startedAt, engine: localEngineOf(readConfigFile(stateDir)) });
   } catch {
     /* never */
   }

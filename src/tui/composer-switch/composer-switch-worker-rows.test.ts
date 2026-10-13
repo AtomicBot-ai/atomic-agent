@@ -7,6 +7,13 @@ import {
 } from "./composer-switch-fixtures.js";
 import { selectComposerSwitchRows } from "./composer-switch-rows.js";
 import { selectWorkerRows } from "./composer-switch-worker-rows.js";
+import type { TuiState } from "../tui-state.js";
+
+/** The state with an engine control drawn (`atomicCoreChoice`), which snapshots no longer set. */
+function withEngineChoice(state: TuiState): TuiState {
+  const panel = state.localModelsPanel;
+  return { ...state, localModelsPanel: { ...panel, backend: { ...panel.backend, atomicCoreChoice: true } } };
+}
 
 describe("the workers switch", () => {
   it("offers both kinds for the worker slot, and no counts", () => {
@@ -74,9 +81,23 @@ describe("the workers switch", () => {
 
   it("is the switch's rows for the `workers` kind", () => {
     const state = fusionState();
-    expect(selectComposerSwitchRows(state, "workers")).toEqual(
-      selectWorkerRows(state),
-    );
+    const models = selectComposerSwitchRows(state, "workers");
+    expect(models.map(r => r.label)).toEqual(["qwen-3.5-4b", "Download more models…"]);
+    expect(models[0]?.intent).toEqual({kind: "fusionModel", leg: "worker", modelId: "qwen-3.5-4b"});
+    expect(selectComposerSwitchRows(state, "workerProvider").map(r => r.label)).toContain("Local");
+  });
+
+  it("offers one neutral local worker row carrying the selected engine, never an engine choice", () => {
+    for (const state of [fusionState(), withEngineChoice(fusionState())]) {
+      const local = selectComposerSwitchRows(state, "workerProvider").filter(r => r.intent.kind === "localEngine");
+      expect(local.map(r => r.label)).toEqual(["Local"]);
+      expect(local[0]?.intent).toEqual({ kind: "localEngine", engine: state.localModelsPanel.backend.engine ?? "atomic-core", leg: "worker" });
+    }
+    const onLlama = fusionState();
+    const llama = { ...onLlama, localModelsPanel: { ...onLlama.localModelsPanel, backend: { ...onLlama.localModelsPanel.backend, engine: "llama-server" as const } } };
+    const row = selectComposerSwitchRows(llama, "workerProvider").find(r => r.intent.kind === "localEngine");
+    expect(row?.label).toBe("Local");
+    expect(row?.intent).toEqual({ kind: "localEngine", engine: "llama-server", leg: "worker" });
   });
 });
 

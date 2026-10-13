@@ -1,9 +1,65 @@
 import { describe, expect, it } from "vitest";
 
+import { describeReason } from "../llm/fallback/describe-reason.js";
+import { falloverCause } from "../llm/fallback/link-failure-kind.js";
+import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import {
   classifyFalloverReason,
   formatProviderFalloverNotice,
 } from "./format-provider-fallover.js";
+
+/** A provider error as `httpErrorFromResponse` builds it. */
+function providerError(status: number, body: string, label: string): OpenAiHttpError {
+  return new OpenAiHttpError(
+    `openai provider ${status}: ${body}`,
+    status,
+    "https://example.test/v1/chat/completions",
+    false,
+    null,
+    label,
+    undefined,
+    { body: parseProviderErrorBody(body) },
+  );
+}
+
+/** Gemini's OpenAI-compatible 429 for its free tier's per-minute limit. */
+const GEMINI_PER_MINUTE_429 = JSON.stringify([
+  {
+    error: {
+      code: 429,
+      message:
+        "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 10, model: gemini-2.5-flash\nPlease retry in 41.6s.",
+      status: "RESOURCE_EXHAUSTED",
+    },
+  },
+]);
+
+/** OpenAI's 429 for an account with no quota left. */
+const OPENAI_INSUFFICIENT_QUOTA_429 = JSON.stringify({
+  error: {
+    message:
+      "You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.",
+    type: "insufficient_quota",
+    param: null,
+    code: "insufficient_quota",
+  },
+});
+
+/** OpenRouter's 403 for input a moderated model's filter flagged. */
+const OPENROUTER_MODERATION_403 = JSON.stringify({
+  error: {
+    code: 403,
+    message:
+      'openai/gpt-4o requires moderation on OpenRouter. Your input was flagged for "harassment"',
+    metadata: {
+      reasons: ["harassment"],
+      flagged_input: "...",
+      provider_name: "OpenAI",
+      model_slug: "openai/gpt-4o",
+    },
+  },
+});
 
 describe("classifyFalloverReason", () => {
   it.each([
@@ -28,6 +84,146 @@ describe("classifyFalloverReason", () => {
     "timed out after 300000ms",
   ])("leaves %j as transient", (reason) => {
     expect(classifyFalloverReason(reason)).toBe("other");
+  });
+
+  it.each([
+    // Gemini (Vertex wording): a quota per minute is a rate limit.
+    `openai provider 429: {"error":{"code":429,"message":"Quota exceeded for quota metric 'Generate Content API requests per minute' and limit 'GenerateContent request limit per minute for a region'","status":"RESOURCE_EXHAUSTED"}}`,
+    // Gemini's free tier, billing words and all, with its cooldown in view.
+    "openai provider 429: You exceeded your current quota, please check your plan and billing details. Please retry in 41.6s.",
+    'openai provider 429: {"error":{"message":"Rate limit exceeded: free-models-per-min. ","code":429}}',
+    '"gemini" is rate-limiting this key (429). Tried 3 times — wait a minute and retry.',
+  ])("reads a rate window in quota or billing words as transient: %j", (reason) => {
+    expect(classifyFalloverReason(reason)).toBe("other");
+  });
+
+  it("keeps OpenAI's insufficient_quota a billing refusal, rate words or not", () => {
+    expect(
+      classifyFalloverReason(`openai provider 429: ${OPENAI_INSUFFICIENT_QUOTA_429}`),
+    ).toBe("billing");
+    expect(
+      classifyFalloverReason(
+        '"openai" refused the request: you exceeded your current quota, please check your plan and billing details. Top up your balance with "openai" or pick another provider in the Providers panel.',
+      ),
+    ).toBe("billing");
+    expect(
+      classifyFalloverReason("openai provider 429: insufficient_quota, see the rate limits page"),
+    ).toBe("billing");
+  });
+
+  it("does not read a moderation 403 as a key refusal", () => {
+    expect(
+      classifyFalloverReason(`openai provider 403: ${OPENROUTER_MODERATION_403}`),
+    ).toBe("other");
+    expect(
+      classifyFalloverReason(describeReason(providerError(403, OPENROUTER_MODERATION_403, "openrouter"))),
+    ).toBe("other");
+  });
+
+  it("keeps a top-up instruction billing: a retry without a delay is not a cooldown", () => {
+    expect(
+      classifyFalloverReason(
+        'openai provider 402: {"error":{"message":"Insufficient credits. Please try again after topping up."}}',
+      ),
+    ).toBe("billing");
+    expect(
+      classifyFalloverReason("openai provider 429: Insufficient credits. Please try again after topping up."),
+    ).toBe("billing");
+    expect(
+      classifyFalloverReason("openai provider 429: Quota exceeded. Please retry after 30 seconds."),
+    ).toBe("other");
+  });
+
+  it("does not read an account flagged for abuse as moderation", () => {
+    expect(
+      classifyFalloverReason(
+        'openai provider 403: {"error":{"message":"Your account has been flagged for suspicious activity and suspended."}}',
+      ),
+    ).toBe("auth");
+  });
+
+  it("still reads a plain 401 or 403 as a key refusal", () => {
+    expect(classifyFalloverReason("openai provider 401: ")).toBe("auth");
+    expect(classifyFalloverReason("openai provider 403: ")).toBe("auth");
+    expect(
+      classifyFalloverReason('openai provider 401: {"error":{"message":"Incorrect API key provided: sk-abc***xyz."}}'),
+    ).toBe("auth");
+  });
+});
+
+/* The reason text is the raw body cut to 180 characters, and Gemini's
+   per-minute 429 and OpenAI's insufficient_quota 429 open with the same
+   sentence: the part that tells them apart is past the cut. The cause the
+   runtime reads off the whole error is what the notice must go by. */
+describe("the fallover notice for the errors the chain actually sees", () => {
+  const notice = (err: OpenAiHttpError): string =>
+    formatProviderFalloverNotice("gemini", "local-llama", describeReason(err), falloverCause(err));
+
+  it("does not tell the operator to top up for Gemini's per-minute limit", () => {
+    const err = providerError(429, GEMINI_PER_MINUTE_429, "gemini");
+    // The text alone cannot tell: this is the misreading the cause fixes.
+    expect(classifyFalloverReason(describeReason(err))).toBe("billing");
+    expect(falloverCause(err)).toBe("other");
+    const text = notice(err);
+    expect(text).not.toMatch(/top it up|will not clear by itself/);
+    expect(text).toContain("until gemini recovers");
+  });
+
+  it("still tells the operator to top up for OpenAI's insufficient_quota", () => {
+    const err = providerError(429, OPENAI_INSUFFICIENT_QUOTA_429, "openai");
+    expect(falloverCause(err)).toBe("billing");
+    expect(notice(err)).toMatch(/top it up/);
+  });
+
+  it("does not send the operator to the key for a moderation 403", () => {
+    const err = providerError(403, OPENROUTER_MODERATION_403, "openrouter");
+    expect(falloverCause(err)).toBe("other");
+    const text = notice(err);
+    expect(text).not.toContain(".env");
+    expect(text).not.toMatch(/refused the credentials/);
+  });
+
+  it("still sends the operator to the key for a plain 401 or 403", () => {
+    for (const status of [401, 403]) {
+      const err = providerError(status, "", "openrouter");
+      expect(falloverCause(err)).toBe("auth");
+      expect(notice(err)).toContain(".env");
+    }
+  });
+
+  /* An empty account also answers 400, which the chain's billing rule
+     does not read: the cause must stay undefined so the text decides,
+     not override it with "other". */
+  it.each([
+    [
+      "anthropic",
+      '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}',
+    ],
+    [
+      "openai",
+      '{"error":{"message":"Billing hard limit has been reached","type":"invalid_request_error","param":null,"code":"billing_hard_limit_reached"}}',
+    ],
+  ])("still tells the operator to top up for %s's empty-account 400", (label, body) => {
+    const err = providerError(400, body, label);
+    expect(falloverCause(err)).toBeUndefined();
+    expect(notice(err)).toMatch(/top it up/);
+  });
+
+  it("does not explain away an account flagged for abuse as moderation", () => {
+    const err = providerError(
+      403,
+      '{"error":{"message":"Your account has been flagged for suspicious activity and suspended."}}',
+      "openrouter",
+    );
+    expect(falloverCause(err)).toBe("auth");
+    expect(notice(err)).toContain(".env");
+  });
+
+  it("falls back to the text for an error the runtime cannot read", () => {
+    expect(falloverCause(new Error("socket hang up"))).toBeUndefined();
+    expect(
+      formatProviderFalloverNotice("openrouter", "local-llama", '"openrouter" rejected the request (402).', undefined),
+    ).toMatch(/top it up/);
   });
 });
 

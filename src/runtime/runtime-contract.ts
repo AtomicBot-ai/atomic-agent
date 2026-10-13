@@ -536,6 +536,18 @@ export interface AgentRuntime {
    */
   reportModelConfigured(provider: string, kind: "local" | "cloud"): void;
   /**
+   * Report that the local engine could not be installed or started and
+   * the operator was offered the way forward (`local_engine_failed`).
+   * `stage` and `reasonCode` are fixed words from the engine's error, never
+   * a message or a path. A no-op while analytics is off. Optional so test
+   * doubles and older hosts need not implement it.
+   */
+  reportLocalEngineFailed?(context: {
+    engine: "atomic-core" | "llama-server";
+    stage: string;
+    reasonCode: string;
+  }): void;
+  /**
    * Live approval level (1 = every gated action asks … 5 = approve
    * everything). Reads the gate, not the boot-time config snapshot, so
    * it reflects `--no-approval` boots and later `setApprovalLevel`

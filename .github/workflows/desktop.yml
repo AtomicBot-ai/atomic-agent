@@ -17,6 +17,13 @@
 #   signed before they are bundled and electron-builder signs the app exe, the
 #   installer and the uninstaller through desktop/scripts/win-sign.cjs.
 #
+# Atomic Chat Core ships inside every app (resources/core). "Fetch Atomic Chat
+# Core" downloads the release asset for the job's slug into
+# desktop/build/core/<slug> and fails unless it matches the release's
+# SHA256SUMS. On Windows it is signed there, before packaging, like the agent
+# binaries; on macOS electron-builder signs it with the app. The desktop
+# seeds it into the agent's data dir on first launch (desktop/main/core-seed.ts).
+#
 # Windows on ARM (ATO-252) is the one exception to "each job builds on its own
 # platform", and it is split in two jobs:
 # - agent-win32-arm64 (windows-11-arm) builds the agent bundle natively with
@@ -161,6 +168,10 @@ jobs:
       - name: Build Node SEA binary
         run: npm run bundle:build-binary
 
+      # Before the Windows signing steps: they sign this file where it lands.
+      - name: Fetch Atomic Chat Core
+        run: node desktop/scripts/fetch-core.mjs --slug "${{ matrix.slug }}"
+
       # ---- Windows code signing (DigiCert KeyLocker) --------------------------
       # Same setup as release.yml. Without the secrets these steps are skipped
       # and the installer comes out unsigned (SmartScreen will warn).
@@ -240,6 +251,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $targets = @((Get-Item "bundle\${{ matrix.slug }}\atomic-agent.exe").FullName)
+          # Atomic Chat Core, staged by "Fetch Atomic Chat Core"; extraResources ships it as resources/core.
+          $targets += (Get-Item "desktop\build\core\${{ matrix.slug }}\atomic-chat-core.exe").FullName
           $rg = "assets\ripgrep\${{ matrix.slug }}\rg.exe"
           if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
           $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
@@ -401,6 +414,11 @@ jobs:
           speech_sig=$(codesign -dvv "$app/Contents/Resources/native/atomic-speech" 2>&1)
           grep -q "^Authority=Developer ID Application" <<<"$speech_sig"
           grep -q "^CodeDirectory .*flags=.*runtime" <<<"$speech_sig"
+          # Atomic Chat Core: Developer ID, hardened runtime, secure timestamp.
+          core_sig=$(codesign -dvv "$app/Contents/Resources/core/atomic-chat-core" 2>&1)
+          grep -q "^Authority=Developer ID Application" <<<"$core_sig"
+          grep -q "^CodeDirectory .*flags=.*runtime" <<<"$core_sig"
+          grep -q "^Timestamp=" <<<"$core_sig"
           spctl --assess --type execute --verbose=2 "$app"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           xcrun stapler validate "$app"
@@ -413,7 +431,8 @@ jobs:
           # win32-x64 only here; package-win32-arm64 checks win-arm64-unpacked.
           $files = @(Get-ChildItem "desktop\release\*.exe") +
             @(Get-Item "desktop\release\win-unpacked\Atomic Agent.exe") +
-            @(Get-Item "desktop\release\win-unpacked\resources\agent\atomic-agent.exe")
+            @(Get-Item "desktop\release\win-unpacked\resources\agent\atomic-agent.exe") +
+            @(Get-Item "desktop\release\win-unpacked\resources\core\atomic-chat-core.exe")
           foreach ($f in $files) {
             Write-Host "Verifying: $($f.FullName)"
             signtool verify /pa "$($f.FullName)"
@@ -437,6 +456,32 @@ jobs:
             $cn = ([regex]::Match($subject, '(?:^|,\s*)CN=("[^"]*"|[^,]*)')).Groups[1].Value.Trim('"')
             if ($expected -notcontains $cn) { Write-Error "signer CN '$cn' is not in publisherName ($($expected -join ' | '))"; exit 1 }
           }
+
+      # The Core the app seeds on first launch must RUN, as packaged and signed:
+      # core-seed.ts writes its install record only when `--version` prints the
+      # bundled version, so a copy that signing or packaging broke would make
+      # every user download Core at first start. Run on each runner's own
+      # architecture; win32-arm64 is built on x64 (package-win32-arm64) and is
+      # not run.
+      - name: Run the packaged Atomic Chat Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(node --input-type=module -e "import('./desktop/scripts/fetch-core.mjs').then((m) => console.log(m.bundledCoreVersion()))")
+          case "${{ matrix.slug }}" in
+            darwin-arm64) core="desktop/release/mac-arm64/Atomic Agent.app/Contents/Resources/core/atomic-chat-core" ;;
+            win32-x64)    core="desktop/release/win-unpacked/resources/core/atomic-chat-core.exe" ;;
+            linux-x64)    core="desktop/release/linux-unpacked/resources/core/atomic-chat-core" ;;
+            linux-arm64)  core="desktop/release/linux-arm64-unpacked/resources/core/atomic-chat-core" ;;
+            *) echo "no packaged Core check for ${{ matrix.slug }}"; exit 0 ;;
+          esac
+          test -f "$core" || { echo "::error::no packaged Core at $core"; exit 1; }
+          got=$("$core" --version | tr -d '\r' | head -n 1 | xargs)
+          echo "packaged Core: $core -> '$got' (expected '$expected')"
+          if [[ "$got" != "$expected" ]]; then
+            echo "::error::the packaged Atomic Chat Core reports '$got', expected '$expected'"
+            exit 1
+          fi
 
       - name: List packages
         run: ls -la desktop/release
@@ -628,6 +673,11 @@ jobs:
           test -f bundle/win32-arm64/node_modules/better-sqlite3/build/Release/better_sqlite3.node
           ls -la bundle/win32-arm64
 
+      # The arm64 asset, fetched on this x64 runner: it is only signed and
+      # packed here, never run.
+      - name: Fetch Atomic Chat Core
+        run: node desktop/scripts/fetch-core.mjs --slug win32-arm64
+
       # ---- Windows code signing (DigiCert KeyLocker), as in the package job ---
       - name: Unsigned Windows build
         if: env.HAS_WIN_SIGNING != 'true'
@@ -689,9 +739,9 @@ jobs:
             exit 1
           }
 
-      # The same three binaries the win32-x64 row signs (the agent, ripgrep,
-      # better-sqlite3), but signed where they already sit in the staged
-      # bundle: package-bundle ran on the ARM runner. afterPack copies the
+      # The same binaries the win32-x64 row signs (the agent, ripgrep,
+      # better-sqlite3, Atomic Chat Core), the agent's signed where they already
+      # sit in the staged bundle: package-bundle ran on the ARM runner. afterPack copies the
       # bundle into resources/agent; the signatures live inside the files.
       - name: Sign agent binaries (Windows)
         if: env.HAS_WIN_SIGNING == 'true'
@@ -705,6 +755,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $targets = @((Get-Item "bundle\win32-arm64\atomic-agent.exe").FullName)
+          $targets += (Get-Item "desktop\build\core\win32-arm64\atomic-chat-core.exe").FullName
           $rg = "bundle\win32-arm64\vendor\rg.exe"
           if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
           $sqlite = Get-ChildItem -Path "bundle\win32-arm64\node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
@@ -768,7 +819,8 @@ jobs:
         run: |
           $files = @(Get-ChildItem "desktop\release\*.exe") +
             @(Get-Item "desktop\release\win-arm64-unpacked\Atomic Agent.exe") +
-            @(Get-Item "desktop\release\win-arm64-unpacked\resources\agent\atomic-agent.exe")
+            @(Get-Item "desktop\release\win-arm64-unpacked\resources\agent\atomic-agent.exe") +
+            @(Get-Item "desktop\release\win-arm64-unpacked\resources\core\atomic-chat-core.exe")
           foreach ($f in $files) {
             Write-Host "Verifying: $($f.FullName)"
             signtool verify /pa "$($f.FullName)"

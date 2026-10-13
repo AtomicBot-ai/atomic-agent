@@ -10,6 +10,7 @@ import type { EmbeddingClient } from "../../memory/embeddings/embedding-client.j
 import { createLocalEmbeddingClient, EmbeddingStore, EmbeddingWriter } from "../../memory/embeddings/index.js";
 import { getEmbeddingModelDef, isKnownEmbeddingModelId } from "../../local-llm/catalog/models-catalog.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
+import { coreEmbeddingStatus, createCoreEmbeddingClient } from "../../local-llm/core/core-embedding.js";
 
 /** The runtime owns these four connections; embedding/link/vote wrappers borrow notesStore's handle. */
 export interface RuntimeMemoryStores {
@@ -86,23 +87,36 @@ export async function createRuntimeMemoryStores(args: {
       config.localModels.embeddings.modelId,
     );
     const embUrl = config.localModels.embeddings.url;
-    const probe = await checkLlamaServer({
-      url: embUrl,
-      retries: 0,
-      backoffMs: 0,
-      timeoutMs: 2000,
-    }).catch(() => ({ reachable: false }));
+    // A model that runs in Atomic Core's embedding module has no URL of
+    // its own: ask Core (never starting it) instead of probing `/health`.
+    const viaCore = embModelDef.requiresCoreEmbeddingModule === true;
+    const probe: { reachable: boolean; why?: string } = viaCore
+      ? await probeCoreEmbedding(config.paths.localModelsDataDir, embModelDef)
+      : await checkLlamaServer({
+          url: embUrl,
+          retries: 0,
+          backoffMs: 0,
+          timeoutMs: 2000,
+        }).catch(() => ({ reachable: false }));
     if (probe.reachable) {
       try {
         // Not a bare `LlamaEmbeddingClient`: a managed embedding daemon
         // requires the key (#582), and `/health` above is exempt from
         // it, so a keyless client would pass the probe and then get 401
         // on every `/embedding`.
-        const client = createLocalEmbeddingClient({
-          url: embUrl,
-          dim: embModelDef.dim,
-          model: embModelDef.id,
-        });
+        const client = viaCore
+          ? createCoreEmbeddingClient({
+              dataDir: config.paths.localModelsDataDir,
+              dim: embModelDef.dim,
+              model: embModelDef.id,
+              ...(embModelDef.prompts ? { prompts: embModelDef.prompts } : {}),
+            })
+          : createLocalEmbeddingClient({
+              url: embUrl,
+              dim: embModelDef.dim,
+              model: embModelDef.id,
+              ...(embModelDef.prompts ? { prompts: embModelDef.prompts } : {}),
+            });
         embeddingClient = client;
         const embStore = new EmbeddingStore({
           db: notesStore.getDatabaseHandleForEmbeddings(),
@@ -127,7 +141,7 @@ export async function createRuntimeMemoryStores(args: {
     } else {
       embeddingHealth = "unreachable";
       process.stderr.write(
-        `memory-v2 phase 1B: embedding daemon at ${embUrl} is unreachable; ` +
+        `memory-v2 phase 1B: ${probe.why ?? `embedding daemon at ${embUrl} is unreachable`}; ` +
           `hybrid recall disabled, FTS5-only path active.\n`,
       );
     }
@@ -189,4 +203,30 @@ export async function createRuntimeMemoryStores(args: {
       })
     : null;
   return { profileStore, notesStore, embeddingHealth, embeddingClient, linkStore, lessonStore, procedureStore, voteStore };
+}
+
+/**
+ * Whether Atomic Core's embedding module can serve `def` now: Core runs,
+ * the module is on for this model and has not failed. An idle module is
+ * fine (the first request starts it). A running module whose vectors do
+ * not have the catalog's length is never attached: one memory store must
+ * not mix dimensions.
+ */
+export async function probeCoreEmbedding(
+  dataDir: string,
+  def: { id: string; name: string; dim: number },
+  status: (dataDir: string) => ReturnType<typeof coreEmbeddingStatus> = coreEmbeddingStatus,
+): Promise<{ reachable: boolean; why?: string }> {
+  const st = await status(dataDir);
+  if (!st) return { reachable: false, why: `${def.name} is not running in Atomic Core` };
+  if (!st.enabled || st.model_id !== def.id) {
+    return { reachable: false, why: `Atomic Core's embedding module is not serving ${def.name}` };
+  }
+  if (st.state === "failed" || st.state === "unsupported" || st.state === "disabled") {
+    return { reachable: false, why: `Atomic Core's embedding module is ${st.state}${st.error ? ` (${st.error.message})` : ""}` };
+  }
+  if (st.state === "ready" && st.dims !== def.dim) {
+    return { reachable: false, why: `${def.name} answers ${st.dims}-dim vectors, expected ${def.dim}` };
+  }
+  return { reachable: true };
 }

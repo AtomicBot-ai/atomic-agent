@@ -55,6 +55,8 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stateDir = mkdtempSync(join(tmpdir(), "local-models-pair-"));
     process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
     resetConfigCache();
+    // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+    persistUserLocalModelsConfig({ managed: { engine: "llama-server" } });
     vi.mocked(localLlm.getDaemonStatus).mockReset();
     vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset();
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset();

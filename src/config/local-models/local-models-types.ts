@@ -12,6 +12,8 @@ export type LocalLlmMode = "external" | "managed";
 export type LocalTemplateSetting = "auto" | "on" | "off";
 
 export interface UserManagedLocalLlmConfig {
+  /** Managed process owner. Default `"atomic-core"`; files before v77 migrate to it (llama.cpp stays selectable). */
+  engine?: "llama-server" | "atomic-core";
   modelId: string | null;
   port: number;
   dataDirOverride: string | null;

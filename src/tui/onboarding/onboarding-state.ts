@@ -131,7 +131,7 @@ export const ONBOARDING_CHOICES: readonly OnboardingChoice[] = [
     id: "local",
     label: "Local models",
     detail: [
-      "llama.cpp on this machine. Private, free per token,",
+      "Runs on this machine. Private, free per token,",
       "one download of 2.7–22 GB.",
     ],
   },

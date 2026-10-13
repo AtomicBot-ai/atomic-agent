@@ -203,7 +203,7 @@ async function reopenOverRunningPull(js: Js, check: Check): Promise<void> {
   check(
     "T18 S5: the llama.cpp runtime main is still fetching in front of the model is followed the same way, then the weights are asked for",
     JSON.stringify(rt.queue) === JSON.stringify(["runtime:llama.cpp", `weights:${ID}`]) && rt.failed.length === 0 && rt.runtimeError === null
-      && !!rt.card && rt.card.title === "Downloading" && rt.card.rows[0]?.name === "llama.cpp runtime" && /30%/.test(rt.card.rows[0]?.line ?? "")
+      && !!rt.card && rt.card.title === "Downloading" && rt.card.rows[0]?.name === "Local engine" && /30%/.test(rt.card.rows[0]?.line ?? "")
       && JSON.stringify(rtNext.calls) === JSON.stringify(["status", "spawn:runtime:llama.cpp", `spawn:weights:${ID}`])
       && JSON.stringify(rtNext.queue) === JSON.stringify([`weights:${ID}`])
       && rtLanded.calls[rtLanded.calls.length - 1] === `activate:${ID}` && rtLanded.card === null && rtLanded.failed.length === 0,

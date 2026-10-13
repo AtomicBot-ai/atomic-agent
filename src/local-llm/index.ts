@@ -44,6 +44,7 @@ export {
   resolveServerBinPath,
   resolveModelDir,
   resolveModelFilePath,
+  resolveChatModelWeightsPath,
   resolveMmprojFilePath,
   resolveVersionFilePath,
   resolveBackendCheckFilePath,
@@ -174,12 +175,23 @@ export {
   parseListDevices,
   pickBestDevice,
   listVulkanDevices,
+  probeDevices,
   deviceTableOnce,
   resolveManagedDevice,
   sharesSystemMemory,
+  type DeviceProbe,
+  type DeviceProbeSpawn,
+  type DeviceTable,
   type GpuDevice,
   type ListDevices,
 } from "./backend/gpu-devices.js";
+export {
+  describeUnlistedDevices,
+  managedDeviceSource,
+  managedDeviceTable,
+  probeManagedDevices,
+  type ManagedDeviceSource,
+} from "./backend/managed-devices.js";
 export {
   resolveGpuBudgetGb,
   MAC_UNIFIED_GPU_FRACTION,
@@ -200,6 +212,7 @@ export {
   stopEmbeddingDaemon,
   getEmbeddingDaemonStatus,
   buildEmbeddingServerArgs,
+  coreEmbeddingEngineRequired,
   startChatAndEmbeddingDaemons,
   stopChatAndEmbeddingDaemons,
   probeThroughput,
@@ -282,6 +295,15 @@ export {
   formatGgufSize,
   ggufSizeGb,
 } from "./catalog/huggingface-model-def.js";
+export {
+  buildLocalGgufModelDef,
+  buildLocalGgufModelId,
+  describeMissingLocalGguf,
+  looksLikeLocalGgufPath,
+  MANAGED_GGUF_PATH_ERROR,
+  resolveLocalGgufFile,
+  type LocalGgufFile,
+} from "./catalog/local-gguf.js";
 export {
   parseHuggingFaceModelRef,
   type HuggingFaceModelRef,

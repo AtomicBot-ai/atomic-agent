@@ -3,7 +3,21 @@ import { describe, expect, it } from "vitest";
 import {
   EmbeddingUnavailableError,
   LlamaEmbeddingClient,
+  promptedEmbeddingText,
 } from "./embedding-client.js";
+
+describe("promptedEmbeddingText", () => {
+  const prompts = { query: "q: ", document: "d: ", similarity: "s: " };
+  it("prefixes the purpose's prompt when the model has prompts", () => {
+    expect(promptedEmbeddingText({ text: "x", purpose: "query" }, prompts)).toBe("q: x");
+    expect(promptedEmbeddingText({ text: "x", purpose: "document" }, prompts)).toBe("d: x");
+    expect(promptedEmbeddingText({ text: "x", purpose: "similarity" }, prompts)).toBe("s: x");
+  });
+  it("leaves the text alone without prompts or without a purpose", () => {
+    expect(promptedEmbeddingText({ text: "x", purpose: "query" }, undefined)).toBe("x");
+    expect(promptedEmbeddingText({ text: "x" }, prompts)).toBe("x");
+  });
+});
 
 describe("LlamaEmbeddingClient", () => {
   function makeFetch(
@@ -57,6 +71,24 @@ describe("LlamaEmbeddingClient", () => {
     expect(r.model).toBe("test-model");
     expect(Array.from(r.vector)).toHaveLength(3);
     expect(r.vector[0]).toBeCloseTo(0.1, 6);
+  });
+
+  it("applies the model's prompt for the request purpose", async () => {
+    const seen: unknown[] = [];
+    const fetchFn = makeFetch(({ body }) => {
+      seen.push(body);
+      return new Response(JSON.stringify({ embedding: [1, 2, 3] }), { status: 200 });
+    });
+    const c = new LlamaEmbeddingClient({
+      url: "http://x",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+      prompts: { query: "q: ", document: "d: ", similarity: "s: " },
+    });
+    await c.embed({ text: "hello", purpose: "document" });
+    await c.embed({ text: "hello" });
+    expect(seen).toEqual([{ content: "d: hello" }, { content: "hello" }]);
   });
 
   it("accepts nested { embedding: number[][] } shape", async () => {

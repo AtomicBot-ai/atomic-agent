@@ -227,3 +227,18 @@
 @media (max-height:700px){
   .voicestrip .tk-vmenu .vsmfoot{max-height:78px;overflow-y:auto}
 }
+/* A row that is listed but cannot be picked here (the local engine busy in the other Fusion seat). */
+.selpop .modelrow.off{opacity:.55;cursor:default}
+.selpop .modelrow.off:hover{background:none}
+
+/* ---------------- the chat row's menu (ATO-165) ----------------
+   Opened by a sidebar row's "…" or a right-click on the row; placed by
+   chatMenuHTML (position:fixed, kept inside the window). The rows are the
+   kit's .tk-mi; Delete… is the danger row under a rule. */
+.popover.sesmenu{width:220px;padding:6px;gap:1px}
+.sesmenu .sesmenu-item{width:100%;border:0;background:transparent;text-align:left;cursor:pointer;color:var(--ink);font:inherit;font-size:13.5px}
+.sesmenu .sesmenu-item.tk-mi--danger{color:var(--critical)}
+.sesmenu .sesmenu-item > svg{width:15px;height:15px;flex:none}
+.sesmenu .sesmenu-item:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.sesmenu .sesmenu-item:focus{background:var(--hover)}
+.sesmenu-sep{height:1px;margin:4px 6px;background:var(--divider)}

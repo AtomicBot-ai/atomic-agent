@@ -129,7 +129,7 @@ export type LlmCompleteStream = (
 
 
 export interface StepDependencies {
-  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal) => import("../../session/workspace-context.js").SessionWorkspace;
+  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../../session/workspace-context.js").WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
   /** Publish completed cloud tool pairs even if the batch then cancels. */
   commitSession?: (state: SessionState) => void;
   modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;

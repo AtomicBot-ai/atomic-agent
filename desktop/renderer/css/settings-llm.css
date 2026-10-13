@@ -43,8 +43,10 @@
 .llm-pane .llm-start b,.llm-pane .llm-dl-body b{font-size:13.5px;font-weight:600}
 .llm-pane .llm-dl .tk-ico{margin-top:-2px}
 .llm-pane .llm-dl .btn{margin:-4px -2px 0 0}
-.llm-pane .llm-dl-line{display:block;margin-top:6px;padding:7px 11px;border-radius:var(--r-well);background:var(--lift);
-  font:400 12px/1.5 var(--font-mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.llm-pane .llm-dl-prog{flex:none;width:100%;margin:8px 0 4px}
+.llm-pane .llm-dl-meta{font-variant-numeric:tabular-nums}
+.llm-pane .llm-dl-file{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.llm-pane .llm-dl-file:empty{display:none}
 
 /* ---- Route card: what answers now ---- */
 .llm-pane .llm-route{display:flex;flex-direction:column;gap:3px;min-width:0;padding:13px 18px 14px;border-radius:var(--r-block);background:var(--well)}
@@ -69,6 +71,8 @@
 .llm-pane .llm-empty{padding:14px 16px;border-radius:var(--r-card);background:var(--well);color:var(--ink-2);font-size:13px;font-weight:400;white-space:normal}
 .llm-pane .llm-empty.is-strong{color:var(--ink);font-weight:500}
 .llm-pane .llm-counter{margin:0;padding:0 6px;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2)}
+/* ATO-318: the caption over a model list that is the app's built-in one, not the provider's live list. */
+.llm-pane .llm-stale{font:400 12px/1.5 var(--font-ui)}
 .llm-pane .llm-loading{display:flex;align-items:center;gap:8px;padding:6px 6px;font-size:12.5px;color:var(--ink-2)}
 
 /* ---- Rows ---- */
@@ -254,3 +258,8 @@
 /* `fault:` from atag models status (tui-parity.js). */
 .llm-pane .llm-fault{margin-top:8px;align-items:flex-start}
 .llm-pane .llm-fault .grow{font-size:12.5px;line-height:1.45}
+/* The local engine is not ready (engfCardHTML): title, the plain why, the agent's own line, then Download again. */
+.llm-pane .llm-engfail .grow{display:flex;flex-direction:column;gap:2px;min-width:0}
+.llm-pane .llm-engfail b{font-size:13.5px;font-weight:600}
+.llm-pane .llm-engfail-detail{overflow-wrap:anywhere;opacity:.8}
+.llm-pane .llm-engfail-acts{display:flex;gap:6px;flex:none;align-self:center}

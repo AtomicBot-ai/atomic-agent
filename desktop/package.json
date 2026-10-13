@@ -1,7 +1,7 @@
 {
   "name": "atomic-agent-desktop",
   "productName": "Atomic Agent",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Desktop client for atomic-agent. Supervises a local `atag serve` process and drives it over the loopback HTTP API.",
   "license": "MIT",
   "homepage": "https://atomicagent.io",
@@ -21,6 +21,7 @@
     "dev": "npm run build && electron . --dev",
     "smoke": "npm run build && electron . --smoke",
     "smoke:ci": "node scripts/smoke-ci.mjs",
+    "fetch-core": "node scripts/fetch-core.mjs",
     "scenarios": "npm run build && node test/scenarios/run-all.mjs",
     "drive:onboarding": "npm run build && node test/onboarding-mouse.mjs",
     "drive:selector": "npm run build && node test/drive-selector.mjs",
@@ -31,9 +32,9 @@
     "drive:wizard": "npm run build && node test/wizard-resume.drive.mjs",
     "drive:fusion": "npm run build && node test/fusion.drive.mjs",
     "drive:live": "npm run build && node test/live-routes.drive.mjs",
-    "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --mac --arm64 --publish never",
-    "dist:win": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --win --x64 --publish never",
-    "dist:linux": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --linux --publish never",
+    "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && node scripts/fetch-core.mjs --platform darwin --arch arm64 && electron-builder --mac --arm64 --publish never",
+    "dist:win": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && node scripts/fetch-core.mjs --platform win32 --arch x64 && electron-builder --win --x64 --publish never",
+    "dist:linux": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && node scripts/fetch-core.mjs --platform linux && electron-builder --linux --publish never",
     "postinstall": "node scripts/ensure-electron.mjs"
   },
   "devDependencies": {

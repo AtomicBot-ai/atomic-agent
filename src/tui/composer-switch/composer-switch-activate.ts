@@ -49,6 +49,22 @@ export function activateComposerSwitchRow(
   dispatch: (action: TuiAction) => void,
   callbacks: TuiAppCallbacks,
 ): void {
+  if (row.intent.kind === "localEngine") {
+    callbacks.onComposerEngineRequested?.(row.intent.engine, row.intent.leg);
+    return;
+  }
+  if (row.intent.kind === "fusionModel") {
+    const rm = state.providersPanel.runMode;
+    const id = row.intent.leg === "worker" ? rm?.workerProviderId : rm?.orchestratorProviderId;
+    const provider = state.providersPanel.rows.find(p => p.id === id);
+    if (provider && provider.kind !== "llama-server" && !provider.hasApiKey) {
+      goToLlmPane(dispatch, "cloud");
+      triggerLlmPrimary(cloudProviderRow(provider), state, dispatch, callbacks);
+      return;
+    }
+    callbacks.onComposerFusionModelRequested?.(row.intent.leg, row.intent.modelId);
+    return;
+  }
   if (row.intent.kind === "llmRow") {
     const llmRow = row.intent.row;
     if (
@@ -82,14 +98,21 @@ export function activateComposerSwitchRow(
     return;
   }
   if (row.intent.kind === "fusionLeg") {
+    const id = row.intent.providerId;
+    const provider = state.providersPanel.rows.find(p => p.id === id);
+    if (provider && provider.kind !== "llama-server" && !provider.hasApiKey) {
+      goToLlmPane(dispatch, "cloud");
+      triggerLlmPrimary(cloudProviderRow(provider), state, dispatch, callbacks);
+      return;
+    }
     // One write moves the pin and, for the orchestrator, the active
     // provider with it — `setMode` is the only path that keeps those
     // two from contradicting each other.
     callbacks.onRunModeChangeRequested?.("fusion", {
       fusion:
         row.intent.leg === "orchestrator"
-          ? { orchestratorProvider: row.intent.providerId }
-          : { workerProvider: row.intent.providerId },
+          ? { orchestratorProvider: row.intent.providerId, workerProvider: state.providersPanel.runMode?.workerProviderId ?? undefined }
+          : { workerProvider: row.intent.providerId, orchestratorProvider: state.providersPanel.runMode?.orchestratorProviderId ?? undefined },
     });
     return;
   }

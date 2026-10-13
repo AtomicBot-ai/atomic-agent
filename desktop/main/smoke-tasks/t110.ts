@@ -293,8 +293,8 @@ async function contextDone(js: Js, check: Check): Promise<void> {
       done: [...box.querySelectorAll('.ctxpop button')].some((b) => b.textContent.trim() === 'Done')};
   })()`);
   check(
-    "T110 ATO-182: the context popover has no Done; Clear transcript stays",
-    !r.err && show(r.foot) === show(["Clear transcript | clear"]) && !r.done,
+    "T110 ATO-182: the context popover has no Done; Clear transcript stays (Compact now beside it, ATO-259)",
+    !r.err && show(r.foot) === show(["Clear transcript | clear", "Compact now | context:compact"]) && !r.done,
     r.err ?? show(r),
   );
 }

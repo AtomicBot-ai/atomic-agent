@@ -16,6 +16,7 @@ import { commandOf, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
+import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 
 // Moved next to the key lookup that needs it; main.ts still imports it from here.
 export { managedDataDir } from "./local-llama-key.js";
@@ -739,6 +740,20 @@ export interface SearchedModel {
   supportsTools?: string | boolean;
 }
 
+/* A model list is a JSON array on stdout. A line the agent prints around it (a config
+   migration notice on the first run of a new build, a warning) must not cost the list:
+   the array is read from the first "[" to the last "]" when the whole text is not JSON. */
+export function parseModelList(stdout: string): SearchedModel[] | null {
+  const read = (text: string): SearchedModel[] | null => {
+    try { const v = JSON.parse(text) as unknown; return Array.isArray(v) ? (v as SearchedModel[]) : null; } catch { return null; }
+  };
+  const whole = read(stdout);
+  if (whole) return whole;
+  const a = stdout.indexOf("["), b = stdout.lastIndexOf("]");
+  return a >= 0 && b > a ? read(stdout.slice(a, b + 1)) : null;
+}
+const notJson = (stdout: string) => "models search did not return JSON: " + JSON.stringify(stdout.trim().slice(0, 120));
+
 /** The provider's live model list, as `atag models search --json` reports it. */
 export async function modelsSearch(
   query: string,
@@ -752,12 +767,8 @@ export async function modelsSearch(
   }
   const res = await cli(args, 60_000);
   if (!res.ok) return { ok: false, error: res.error };
-  try {
-    const parsed = JSON.parse(res.stdout) as SearchedModel[];
-    return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
-  } catch {
-    return { ok: false, error: "models search did not return JSON" };
-  }
+  const parsed = parseModelList(res.stdout);
+  return parsed ? { ok: true, models: parsed } : { ok: false, error: notJson(res.stdout) };
 }
 
 /**
@@ -822,6 +833,37 @@ export function daemonFoundUp(): void {
   tell("started");
 }
 
+/**
+ * How long a `models start` may take. 300 s covers a model load; it does not
+ * cover Atomic Core installing itself first. Under Core the first start
+ * downloads Core's inference backend (hundreds of MB, CUDA builds on Windows)
+ * whenever it is not on disk: on a fresh machine, for desktop 0.0.1 users the
+ * config migration moves to Core, and after a Core version bump. The agent's
+ * own deadline for that download is 10 minutes (models-handlers.ts
+ * BACKEND_DOWNLOAD_TIMEOUT_MS), so a start that may install gets 20.
+ */
+export const START_TIMEOUT_MS = 300_000;
+export const START_WITH_INSTALL_TIMEOUT_MS = 20 * 60_000;
+/**
+ * Whether the next `models start` may install Atomic Core first: Core is the
+ * engine and its backend is not ready (backendInstalled), or the active Core
+ * is not the version this build carries (a version bump the agent installs on
+ * its next start).
+ */
+export function coreInstallMayRun(): boolean {
+  if (managedEngineNow() !== "atomic-core") return false;
+  if (!backendInstalled()) return true;
+  try {
+    const active = JSON.parse(readFileSync(join(managedDataDirNow(), "core", "active.json"), "utf8")) as { version?: unknown };
+    return active.version !== BUNDLED_CORE_VERSION;
+  } catch {
+    return true;
+  }
+}
+export function startTimeoutMs(): number {
+  return coreInstallMayRun() ? START_WITH_INSTALL_TIMEOUT_MS : START_TIMEOUT_MS;
+}
+
 /** What a start that spawned nothing says: the app is quitting. */
 export const START_REFUSED_QUITTING = "the app is quitting — the model server was not started";
 /** What a start that spawned nothing says: a stop or a switch came after it was asked for. */
@@ -855,7 +897,7 @@ export async function modelsStart(
   /* ATO-157: a smoke's stand-in start — no port of the real server watched,
      nothing added to the starts quitting would end, no speed remembered. */
   if (cliStandIns.getStore()) {
-    const res = await cli(["models", "start", "--interactive"], 300_000, undefined, opts.signal);
+    const res = await cli(["models", "start", "--interactive"], START_TIMEOUT_MS, undefined, opts.signal);
     if (res.ok && !opts.signal?.aborted && (opts.stillWanted?.() ?? true)) tell("started");
     return res;
   }
@@ -866,7 +908,8 @@ export async function modelsStart(
   const port = managedPortFromFile();
   let gone = false;
   const watch = port === null ? null : watchStartedServer(port, () => { gone = true; abort.abort(); });
-  const run = cli(["models", "start", "--interactive"], 300_000, undefined, abort.signal);
+  // Long enough for Core to install itself first when it may (startTimeoutMs).
+  const run = cli(["models", "start", "--interactive"], startTimeoutMs(), undefined, abort.signal);
   const entry = { abort, done: run };
   startsOnTheirWay.add(entry);
   try {
@@ -1046,6 +1089,9 @@ async function certificateAt(baseUrl: string | undefined, timeoutMs = 5_000): Pr
   }
 }
 
+/** How many rows a full list asks for: past any provider's catalogue, so a filter searches all of it. */
+const LIVE_LIST_LIMIT = 5000;
+
 /**
  * A provider's model list.
  *
@@ -1055,17 +1101,36 @@ async function certificateAt(baseUrl: string | undefined, timeoutMs = 5_000): Pr
  *    before the user types;
  *  - only `openrouter` and `aimlapi` ship bundled catalogues, so every
  *    other kind needs `--refresh` to fetch a live list.
+ *
+ * `live` (Settings › Models): the bundled kinds are asked with `--refresh`
+ * too, and every kind with a limit past its catalogue, so the list is the
+ * provider's whole live one (AI/ML API advertises hundreds of chat models;
+ * its bundled snapshot is a few dozen). `models search` keeps the snapshot
+ * silently when the live fetch fails, so the snapshot is read beside it and
+ * a refreshed list with exactly its ids comes back `stale: true`: the pane
+ * says it is the built-in list and asks again.
  */
 export async function providerModels(
   providerId: string,
   kind: string,
-): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string } & ModelListFailure> {
+  opts: { live?: boolean } = {},
+): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string; stale?: boolean } & ModelListFailure> {
   if (!/^[\w.-]{1,48}$/.test(providerId)) return { ok: false, error: "bad provider id" };
   const bundled = kind === "openrouter" || kind === "aimlapi";
-  const args = ["models", "search", " ", "--provider", providerId, "--limit", "200", "--json"];
-  if (!bundled) args.push("--refresh");
-  const res = await cli(args, 90_000);
+  const live = opts.live === true;
+  const limit = live ? String(LIVE_LIST_LIMIT) : "200";
+  const args = ["models", "search", " ", "--provider", providerId, "--limit", limit, "--json"];
+  if (!bundled || live) args.push("--refresh");
+  const parse = parseModelList;
+  // The bundled snapshot is local and quick; it is only read to tell a live list from the fallback.
+  const [res, snap] = await Promise.all([
+    cli(args, 90_000),
+    bundled && live ? cli(["models", "search", " ", "--provider", providerId, "--limit", limit, "--json"], 30_000) : Promise.resolve(null),
+  ]);
+  const snapModels = snap && snap.ok ? parse(snap.stdout) : null;
   if (!res.ok) {
+    // A bundled kind still has its snapshot when the refreshed call itself failed.
+    if (snapModels && snapModels.length) return { ok: true, models: snapModels, stale: true };
     const why = modelListFailure(res.error ?? "", providerId);
     if (why.unreachable && !cliStandIns.getStore()) {
       const read = await readWholeConfig().catch(() => null);
@@ -1075,12 +1140,16 @@ export async function providerModels(
     }
     return { ok: false, error: res.error, ...why };
   }
-  try {
-    const parsed = JSON.parse(res.stdout) as SearchedModel[];
-    return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
-  } catch {
-    return { ok: false, error: "models search did not return JSON" };
-  }
+  const models = parse(res.stdout);
+  // A live list that cannot be read falls back to the built-in one (with Try again) rather than to the current model alone.
+  if (!models) return snapModels && snapModels.length ? { ok: true, models: snapModels, stale: true } : { ok: false, error: notJson(res.stdout) };
+  return { ok: true, models, ...(snapModels && sameIds(models, snapModels) ? { stale: true } : {}) };
+}
+/** Two lists naming the same model ids (in any order). */
+function sameIds(a: readonly SearchedModel[], b: readonly SearchedModel[]): boolean {
+  if (a.length !== b.length) return false;
+  const ids = new Set(b.map((m) => m.id));
+  return a.every((m) => ids.has(m.id));
 }
 
 /* ---------------------------------------------------------------
@@ -1751,7 +1820,7 @@ export interface UserConfigShape {
   localModels?: {
     url?: string;
     mode?: string;
-    managed?: { modelId?: string | null; port?: number; parallel?: number | string };
+    managed?: { engine?: "atomic-core" | "llama-server"; modelId?: string | null; port?: number; parallel?: number | string };
     // r5 item 7 (setup wizard): the custom-endpoint branch writes modelId
     // as persistUserRemoteLlmUrls does, so the field has to exist here.
     embeddings?: { url?: string; enabled?: boolean; modelId?: string | null };
@@ -1918,6 +1987,11 @@ export function applyManagedMode(cfg: UserConfigShape): boolean {
   const lm = (cfg.localModels ??= {});
   if (lm.mode === "managed") return false;
   lm.mode = "managed";
+  /* A first switch to managed names the engine the agent would pick anyway
+     (Atomic Chat Core), so the file says what runs. An engine already named,
+     llama.cpp included, is the person's choice and stays. */
+  const managed = (lm.managed ??= {});
+  if (managed.engine !== "llama-server" && managed.engine !== "atomic-core") managed.engine = "atomic-core";
   syncLocalLlamaProviderUrl(cfg);
   return true;
 }
@@ -2117,7 +2191,7 @@ export function managedDaemonPidAlive(cfg: UserConfigShape): boolean {
   const h = cliStandIns.getStore();
   if (h) return h.daemonPidAlive?.() ?? false;
   const override = (cfg.localModels?.managed as unknown as { dataDirOverride?: unknown } | undefined)?.dataDirOverride;
-  return daemonPidsIn(managedDataDir(typeof override === "string" ? override : null)).some((pid) => {
+  return daemonPidsIn(managedDataDir(typeof override === "string" ? override : null), true).some((pid) => {
     try {
       process.kill(pid, 0);
       return true;
@@ -2128,9 +2202,11 @@ export function managedDaemonPidAlive(cfg: UserConfigShape): boolean {
 }
 
 /** The pids the daemons' pid files name (`llama-server.pid`, `llama-embed.pid`, src/local-llm/backend-paths.ts). */
-export function daemonPidsIn(dataDir: string): number[] {
+export function daemonPidsIn(dataDir: string, includeCore = false): number[] {
   const pids: number[] = [];
   for (const file of ["llama-server.pid", "llama-embed.pid"]) {
+    // Core-owned children are stopped only through the authenticated Core API.
+    if (!includeCore && existsSync(join(dataDir, "core", file === "llama-server.pid" ? "chat.json" : "embedding.json"))) continue;
     try {
       const pid = Number(readFileSync(join(dataDir, file), "utf8").trim());
       if (Number.isInteger(pid) && pid > 1) pids.push(pid);
@@ -2774,7 +2850,7 @@ export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStat
       mode: fields["mode"]!,
       dataDir: fields["data dir"] || null,
       backend: fields["backend"] || null,
-      backendTag: fields["backend"] ? (fields["backend"].split(/\s+/)[0] ?? null) : null,
+      backendTag: fields["backend"]?.startsWith("Atomic Core") ? fields["backend"].split(" · ")[0]! : fields["backend"] ? (fields["backend"].split(/\s+/)[0] ?? null) : null,
       compute: fields["compute"] || null,
       activeModel: activeId && activeId !== "(none)" && activeId !== "none" ? activeId : null,
       activeDownloaded: active ? /downloaded/.test(active) && !/not downloaded/.test(active) : null,
@@ -3092,6 +3168,10 @@ export async function modelsRemoveSafe(kind: "chat" | "embedding", id: string): 
 export async function stopEmbeddingServer(): Promise<{ ok: boolean; error?: string }> {
   const status = await modelsStatus();
   const dataDir = (status.ok && status.status?.dataDir) || managedFactsFromFile().dataDir;
+  if (existsSync(join(dataDir, "core", "embedding.json"))) {
+    const result = await cli(["models", "stop-embedding"], 60_000);
+    return result.ok ? { ok: true } : { ok: false, error: result.error || result.stderr };
+  }
   const pidFile = join(dataDir, "llama-embed.pid");
   let pid: number;
   try {
@@ -3173,6 +3253,8 @@ export async function modelsUseEmbedding(idOrDisable: string): Promise<CliResult
  * `started`: this call started it. An agent without the verb (before it) says
  * "unknown subcommand", and nothing is up.
  */
+/** What an embedding start that spawned nothing says: Atomic Core's backend is not installed yet. */
+export const EMBEDDING_WAITS_FOR_ENGINE = "the local engine is not installed yet — the embedding server starts after the model's first start installs it";
 export async function modelsStartEmbedding(
   opts: { stillWanted?: () => boolean } = {},
 ): Promise<CliResult & { up: boolean; started: boolean; notStarted?: boolean }> {
@@ -3183,9 +3265,17 @@ export async function modelsStartEmbedding(
   }
   const read = (res: CliResult) => {
     const started = /^embedding: started pid/m.test(res.stdout);
-    return { ...res, started, up: started || /^embedding: already running/m.test(res.stdout) };
+    return { ...res, started, up: started || /^embedding: already (?:running|starting)/m.test(res.stdout) };
   };
   if (cliStandIns.getStore()) return read(await cli(["models", "start-embedding"], 60_000));
+  /* Under Atomic Core with its backend not on disk, `models start-embedding`
+     installs the backend first (hundreds of MB) inside this 60 s cap: it was
+     killed half way, every time, and held the daemon's turn meanwhile. The
+     chat model's start installs it with its bar; the embedding server is
+     paired after that start (backend-switch pairEmbeddingServer). */
+  if (managedEngineNow() === "atomic-core" && !backendInstalled()) {
+    return { ok: false, stdout: "", stderr: "", error: EMBEDDING_WAITS_FOR_ENGINE, up: false, started: false, notStarted: true };
+  }
   // One of the starts quitting ends (abortStarts); what it spawned is in its pid file for the stop after.
   const abort = new AbortController();
   const run = cli(["models", "start-embedding"], 60_000, undefined, abort.signal);
@@ -3764,22 +3854,66 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
 export const UPDATE_FIRST_PROGRESS_MS = 90_000;
 export const UPDATE_STALL_MS = 300_000;
 export function updateTimedOutError(ms: number, keptBackend: boolean): string {
-  const stopped = `the llama.cpp update made no progress for ${Math.round(ms / 1000)} s and was stopped`;
+  const stopped = `the local engine update made no progress for ${Math.round(ms / 1000)} s and was stopped`;
   return keptBackend
-    ? `${stopped} — the model starts on the llama.cpp already installed; the update is tried again at the next start or from Settings › Models`
-    : `${stopped} — there is no llama.cpp installed yet to start the model on; try again once the connection is back`;
+    ? `${stopped} — the model starts on the local engine already installed; the update is tried again at the next start or from Settings › Models`
+    : `${stopped} — there is no local engine installed yet to start the model on; try again once the connection is back`;
 }
-/** Whether the managed data dir the desktop's config names holds a llama.cpp backend (`<data dir>/backend`). */
+/**
+ * The managed engine a config names. Atomic Chat Core is the default local
+ * engine: the agent's config migration writes "atomic-core" for everyone and
+ * its schema default is the same, so a file with no engine named runs Core.
+ * Only an explicit "llama-server" is llama.cpp. Every desktop read of the
+ * engine goes through here, so the window, the setup and the agent agree.
+ */
+export type ManagedEngine = "atomic-core" | "llama-server";
+export function managedEngineOf(cfg: unknown): ManagedEngine {
+  const engine = (cfg as { localModels?: { managed?: { engine?: unknown } } } | null | undefined)?.localModels?.managed?.engine;
+  return engine === "llama-server" ? "llama-server" : "atomic-core";
+}
+
+/**
+ * Whether the managed data dir the desktop's config names holds a local
+ * engine ready to start a model: llama.cpp's `<data dir>/backend`, or for
+ * Atomic Core (the default) the active Core version with the backend it
+ * installed. A Core binary alone (the one the installer seeds) is not
+ * enough: the backend still has to come down through it.
+ */
 export function backendInstalled(): boolean {
   let override: unknown = null;
+  let engine: ManagedEngine = "atomic-core";
   try {
-    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"));
     override = cfg.localModels?.managed?.dataDirOverride;
-  } catch {
-    // no config yet: the default data dir
-  }
-  return existsSync(join(managedDataDir(typeof override === "string" ? override : null), "backend"));
+    engine = managedEngineOf(cfg);
+  } catch { /* no config yet: the defaults, Core included */ }
+  const dir = managedDataDir(typeof override === "string" ? override : null);
+  if (engine === "llama-server") return existsSync(join(dir, "backend"));
+  try {
+    const active = JSON.parse(readFileSync(join(dir, "core", "active.json"), "utf8"));
+    if (!/^\d+\.\d+\.\d+$/.test(active.version)) return false;
+    const versionDir = join(dir, "core", "versions", active.version);
+    const record = JSON.parse(readFileSync(join(versionDir, "backend.json"), "utf8"));
+    return record.coreVersion === active.version && existsSync(record.binary)
+      && existsSync(join(versionDir, process.platform === "win32" ? "atomic-chat-core.exe" : "atomic-chat-core"));
+  } catch { return false; }
 }
+
+export async function modelsEngine(action: string, signal?: AbortSignal): Promise<CliResult & { value?: unknown }> {
+  if (!["status", "check", "atomic-core", "llama-server"].includes(action)) return { ok: false, stdout: "", stderr: "", error: "Unknown engine action" };
+  // status and check only read (check also asks GitHub): no config lock, so the background check never holds up a switch.
+  const readOnly = action === "status" || action === "check";
+  /* `signal` (the launch's background Core check, main.ts watchCoreUpdates):
+     the quit ends the child at once rather than leaving a GitHub request
+     running behind the app. */
+  const result = readOnly ? await cli(["models", "engine", action], 30_000, undefined, signal) : await withConfigLock(() => cli(["models", "engine", action], 30_000, undefined, signal));
+  if (result.ok && (action === "status" || action === "check")) {
+    try { return { ...result, value: JSON.parse(result.stdout) }; }
+    catch { return { ...result, ok: false, error: "The agent returned invalid engine status" }; }
+  }
+  return result;
+}
+
 /**
  * ATO-129: the llama.cpp update downloads and unpacks into `<data dir>/backend.next`
  * and moves the old backend aside as `backend.old` for the moment of the swap
@@ -3836,6 +3970,11 @@ function newestMtime(dir: string): number {
     }
   }
   return newest;
+}
+/** The managed engine the desktop's config names; Atomic Chat Core when it names none or cannot be read. */
+export function managedEngineNow(): ManagedEngine {
+  try { return managedEngineOf(JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"))); }
+  catch { return "atomic-core"; }
 }
 /** The managed data dir the desktop's config names (its `dataDirOverride`, or the default). */
 export function managedDataDirNow(): string {

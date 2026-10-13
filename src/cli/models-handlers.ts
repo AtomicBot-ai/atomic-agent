@@ -35,10 +35,12 @@ import {
   isModelDownloaded,
   isWindowsArm64,
   listLocalModels,
-  listVulkanDevices,
   AUTO_UPDATE_RECHECK_MS,
-  deviceTableOnce,
+  describeUnlistedDevices,
+  managedDeviceSource,
+  managedDeviceTable,
   maybeAutoUpdateBackend,
+  probeManagedDevices,
   readBackendVersion,
   readDownloadJob,
   DEFAULT_HF_ENDPOINT,
@@ -56,6 +58,7 @@ import {
   resolvePlatformAsset,
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
+  coreEmbeddingEngineRequired,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -64,6 +67,79 @@ import {
   type DownloadJobMode,
   type DownloadNotifyChannel,
 } from "../local-llm/index.js";
+import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../local-llm/core/core-errors.js";
+import { retireIdleCore } from "../local-llm/core/core-sessions.js";
+import { activeCoreVersion, CORE_VERSION } from "../local-llm/core/core-state.js";
+import { selectManagedEngine } from "../local-llm/engine-selection.js";
+import { persistManagedEngine } from "./models-engine.js";
+import { reportLocalEngineFailed } from "../analytics/index.js";
+import { getAppVersion } from "../version.js";
+
+/**
+ * Report an Atomic Core failure the command is about to print
+ * (`local_engine_failed`): fixed words only, bounded, never throws. The
+ * desktop drives local models through these commands, so this is where
+ * its failures are counted too.
+ */
+async function reportCoreFailure(failure: CoreFailureInfo | null | undefined): Promise<void> {
+  if (!failure) return;
+  const cfg = getConfig();
+  await reportLocalEngineFailed({
+    stateDir: cfg.paths.stateDir,
+    version: getAppVersion(),
+    enabled: cfg.analytics.enabled,
+    context: { engine: "atomic-core", stage: failure.stage, reasonCode: failure.reasonCode },
+  });
+}
+
+function coreFailureOf(err: unknown): CoreFailureInfo | null {
+  return err instanceof CoreUnavailableError ? err.info : null;
+}
+
+/**
+ * This computer has no Atomic Core build (`no_backend`, `unsupported`):
+ * switch it to the llama-server engine once, with one line, and install
+ * llama.cpp when it is missing (the caller has already reported
+ * `local_engine_failed`),
+ * so the command can go on to start the model. False, changing nothing,
+ * for any other failure (a retryable one keeps Core and its retry hint) or
+ * when the switch is refused (a model still running).
+ */
+async function fallBackFromCore(
+  dataDir: string,
+  failure: CoreFailureInfo | null | undefined,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const cfg = getConfig();
+  if (cfg.localModels.managed.engine !== "atomic-core" || !shouldFallBackFromCore(failure)) return false;
+  try {
+    await selectManagedEngine(dataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
+      () => persistManagedEngine(cfg.paths.userConfigFile, "llama-server"));
+  } catch (e) {
+    process.stderr.write(`note: could not switch to the llama.cpp engine — ${e instanceof Error ? e.message : String(e)}\n`);
+    return false;
+  }
+  process.stderr.write(`${CORE_FALLBACK_LINE}\n`);
+  // Core may have been started for the attempt; it serves nothing now.
+  await retireIdleCore(dataDir);
+  if (!isBackendDownloaded(dataDir, "llama-server")) {
+    await downloadBackend(dataDir, {
+      engine: "llama-server",
+      signal,
+      onProgress: (p: number, t: number, tot: number) => {
+        const line = renderPullProgress("backend zip", p, t, tot);
+        if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+        else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+      },
+    });
+    if (process.stderr.isTTY) process.stderr.write("\n");
+  }
+  return true;
+}
+
+function backendProgressLabel(): string {
+  return getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Chat engine" : "backend zip";
+}
 
 export function readCliOption(
   args: string[],
@@ -130,6 +206,15 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
   }
   const m = getLocalModelDef(idArg);
   const dataDir = getConfig().paths.localModelsDataDir;
+  if (m.localPath) {
+    // Added from disk: there is nothing to fetch, only a file to find.
+    if (isModelDownloaded(dataDir, m)) {
+      process.stderr.write(`${m.id} is a local file: ${m.localPath}\n`);
+      return 0;
+    }
+    process.stderr.write(`${m.id}: local file not found: ${m.localPath}\n`);
+    return 1;
+  }
   const mode: DownloadJobMode =
     flags.has("--mmproj") && m.supportsVision ? "with-mmproj" : "gguf-only";
   if (flags.has("--mmproj") && !m.supportsVision) {
@@ -397,8 +482,8 @@ export async function runLocalModelsStatus(): Promise<number> {
     return 0;
   }
   const dataDir = cfg.paths.localModelsDataDir;
-  const ver = readBackendVersion(dataDir);
-  const binOk = isBackendDownloaded(dataDir);
+  const ver = readBackendVersion(dataDir, getConfig().localModels.managed.engine);
+  const binOk = isBackendDownloaded(dataDir, getConfig().localModels.managed.engine);
   const mid = cfg.localModels.managed.modelId;
   let modelLine = "none";
   if (mid && isKnownLocalModelId(mid)) {
@@ -414,13 +499,18 @@ export async function runLocalModelsStatus(): Promise<number> {
     `backend:        ${ver?.tag ?? "(none)"} (installed ${ver?.downloadedAt ?? "n/a"}), binary ${binOk ? "ok" : "missing"}\n`,
   );
   process.stdout.write(
-    `compute:        ${describeComputeBackend(ver?.asset)}\n`,
+    `compute:        ${cfg.localModels.managed.engine === "atomic-core" ? (ver?.asset ?? "not installed") + " (selected by Atomic Core)" : describeComputeBackend(ver?.asset)}\n`,
   );
   process.stdout.write(`active model:   ${modelLine}\n`);
   process.stdout.write(
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
   process.stdout.write(`health:         ${health}\n`);
+  if (st.coreOrphaned) {
+    process.stdout.write(
+      "note:           Atomic Chat's engine stopped unexpectedly; this model is still running without it. 'atomic-agent models stop' or 'models start' restarts the engine and cleans it up.\n",
+    );
+  }
   // `health: ok` is a socket answering, not a model working. A server
   // that cannot allocate keeps its socket and fails every decode, so
   // the one place that knows is its own log.
@@ -440,8 +530,12 @@ export async function runLocalModelsStatus(): Promise<number> {
   return 0;
 }
 
-export async function runLocalModelsStart(opts: { interactive?: boolean } = {}): Promise<number> {
-  const cfg = getConfig();
+export async function runLocalModelsStart(
+  opts: { interactive?: boolean; signal?: AbortSignal } = {},
+): Promise<number> {
+  const { signal } = opts;
+  // Re-read after a fallback from Atomic Core switches the engine.
+  let cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
     process.stderr.write("external mode — nothing to start\n");
     return 1;
@@ -456,6 +550,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
   const dataDir = cfg.paths.localModelsDataDir;
   try {
     const auto = await maybeAutoUpdateBackend(dataDir, {
+        engine: getConfig().localModels.managed.engine,
       enabled: cfg.localModels.managed.autoUpdate,
       // Unlike the TUI, `models start` is an explicit one-shot command:
       // updating before the daemon comes up is what the operator asked
@@ -468,7 +563,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       // recorded in the data dir, stands instead of a GitHub round trip.
       recheckAfterMs: AUTO_UPDATE_RECHECK_MS,
       onProgress: (p: number, t: number, tot: number) => {
-        const line = renderPullProgress("backend zip", p, t, tot);
+        const line = renderPullProgress(backendProgressLabel(), p, t, tot);
         if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
         else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
       },
@@ -488,7 +583,19 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       );
     } else if (auto.action === "update_failed") {
       if (process.stderr.isTTY) process.stderr.write("\n");
-      if (!auto.backendUsable) {
+      if (!auto.backendUsable && auto.coreFailure) {
+        await reportCoreFailure(auto.coreFailure);
+        // No Core build for this computer: continue on llama.cpp.
+        if (await fallBackFromCore(dataDir, auto.coreFailure, AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS))) {
+          cfg = getConfig();
+        } else {
+          // First run of the default engine could not install it. The message
+          // already says what happened and, when a retry can help, how.
+          process.stderr.write(`${auto.error}\n`);
+          await retireIdleCore(dataDir);
+          return 1;
+        }
+      } else if (!auto.backendUsable) {
         // The daemon was stopped for the update and there is no binary
         // left to fall back to — nothing can be started.
         process.stderr.write(
@@ -496,10 +603,11 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
             `run 'atomic-agent models update' once connectivity is back.\n`,
         );
         return 1;
+      } else {
+        process.stderr.write(
+          `note: backend update failed — starting current binary (${auto.error})\n`,
+        );
       }
-      process.stderr.write(
-        `note: backend update failed — starting current binary (${auto.error})\n`,
-      );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -550,21 +658,33 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
   const tensorSplit = cfg.localModels.managed.tensorSplit;
   const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(dataDir, binaryName);
+  const engine = getConfig().localModels.managed.engine;
   // One `--list-devices` for the launch, run only when something asks:
   // an `auto` pick here, the context fit in startDaemon (`deviceTableOnce`).
-  const listDevices = deviceTableOnce(binPath);
+  // The engine is installed by now (the auto-update above installs Atomic
+  // Core and its backend on a first start), so under Core this asks the
+  // llama-server Core will load the model with, as Core runs it — the
+  // device pick and the context fit see the GPU the model will use.
+  const listDevices = managedDeviceTable(dataDir, engine);
   const device = await resolveManagedDevice(
-    binPath,
+    managedDeviceSource(dataDir, engine)?.binPath ?? resolveServerBinPath(dataDir, binaryName),
     cfg.localModels.managed.device,
     {
       multiGpu,
       listDevices,
     },
   );
+  const unlisted = device === undefined && !multiGpu ? listDevices.failure() : null;
   process.stdout.write(
-    `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}\n`,
+    `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu, unlisted)}\n`,
   );
+  if (unlisted !== null) {
+    // Not "no GPU": the binary could not be asked. The context below is
+    // fitted without a device table, as on a machine without one.
+    process.stderr.write(
+      `note: could not list compute devices (${unlisted}) — starting without a device pick; the context is not fitted to GPU memory\n`,
+    );
+  }
 
   // Which direction fusion is pointing decides what `parallel: "auto"`
   // means for this launch (see `resolveLocalLegRole`). Resolved here
@@ -582,6 +702,8 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
   const startWithDevice = (dev: string | undefined) =>
     startChatAndEmbeddingDaemons({
       chat: {
+        engine: cfg.localModels.managed.engine,
+        signal,
         ...(opts.interactive ? { throughputProbe: false, healthTimeoutMs: 120_000 } : {}),
         dataDir,
         modelId: mid,
@@ -607,6 +729,8 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       ...(embRequested && embReady && embRunningPid === null
         ? {
             embedding: {
+              engine: cfg.localModels.managed.engine,
+              signal,
               dataDir,
               modelId: embCfg.modelId as never,
               port: embCfg.port,
@@ -627,7 +751,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       // CPU build the nightly also publishes and retry once.
       if (
         !shouldFallBackToCpuBackend({
-          installedAsset: readBackendVersion(dataDir)?.asset,
+          installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
           configuredVariant: getConfiguredBackendVariant(),
           error: e,
         })
@@ -653,7 +777,9 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       process.stderr.write("retrying start on the CPU build…\n");
       result = await startWithDevice("cpu");
     }
-    const visionLine = mmprojFile
+    const visionLine = mmprojFile && result.chat.projectorDropped
+      ? `, vision disabled (Atomic Chat could not load ${m.mmprojFilename}; the model runs text-only)`
+      : mmprojFile
       ? `, vision enabled (${m.mmprojFilename})`
       : m.supportsVision
         ? `, vision disabled (mmproj missing — download via TUI 'Local Models' panel)`
@@ -671,7 +797,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
       );
     } else if ("pid" in result.embedding) {
       process.stdout.write(
-        `embedding: started pid ${result.embedding.pid}, healthy on port ${embCfg.port} (${embCfg.modelId})\n`,
+        `embedding: started pid ${result.embedding.pid}, healthy on port ${result.embedding.port ?? embCfg.port} (${embCfg.modelId})\n`,
       );
     } else if ("error" in result.embedding) {
       process.stderr.write(
@@ -688,6 +814,9 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
     return 0;
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    await reportCoreFailure(coreFailureOf(e));
+    // A Core started for this attempt and left serving nothing exits.
+    await retireIdleCore(dataDir);
     return 1;
   }
 }
@@ -707,7 +836,7 @@ export async function runLocalModelsStart(opts: { interactive?: boolean } = {}):
  * each said in one `embedding:` line on stdout; exit 1 when the start
  * failed. Never touches the chat daemon or the config.
  */
-export async function runLocalModelsStartEmbedding(): Promise<number> {
+export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
     process.stderr.write("external mode — nothing to start\n");
@@ -730,27 +859,69 @@ export async function runLocalModelsStartEmbedding(): Promise<number> {
   }
   const now = await getEmbeddingDaemonStatus(dataDir, emb.port);
   if (now.running) {
-    process.stdout.write(`embedding: already running pid ${now.pid} on port ${emb.port} (${modelId})\n`);
+    // Core's module may be starting or restarting, with no process yet.
+    const what = now.pid !== null ? `running pid ${now.pid}` : now.loading ? "starting" : "running";
+    process.stdout.write(`embedding: already ${what} on port ${now.port} (${modelId})\n`);
     return 0;
   }
+  const embDef = getEmbeddingModelDef(modelId);
+  if (embDef.requiresCoreEmbeddingModule && cfg.localModels.managed.engine !== "atomic-core") {
+    process.stderr.write(`embedding: failed to start (${coreEmbeddingEngineRequired(embDef.name)})\n`);
+    return 1;
+  }
+  // The default engine may not be installed yet (the desktop can start the
+  // embedding side on its own): install it first, as `start` does.
+  if (cfg.localModels.managed.engine === "atomic-core" && !isBackendDownloaded(dataDir, "atomic-core")) {
+    try {
+      await downloadBackend(dataDir, { engine: "atomic-core", signal, onProgress: (p, t, tot) => {
+        const line = renderPullProgress(backendProgressLabel(), p, t, tot);
+        if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+        else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+      } });
+      if (process.stderr.isTTY) process.stderr.write("\n");
+    } catch (e) {
+      const failure = coreFailureOf(e);
+      await reportCoreFailure(failure);
+      let switched = false;
+      try { switched = await fallBackFromCore(dataDir, failure, signal); }
+      catch (fallbackErr) { e = fallbackErr; }
+      if (!switched) {
+        process.stderr.write(`embedding: failed to start (${e instanceof Error ? e.message : String(e)})\n`);
+        await retireIdleCore(dataDir);
+        return 1;
+      }
+    }
+  }
   // The chat daemon's device, as `start` resolves it, so both land on the same one.
+  const engine = getConfig().localModels.managed.engine;
   const { binaryName } = resolvePlatformAsset();
   const device = await resolveManagedDevice(
-    resolveServerBinPath(dataDir, binaryName),
+    managedDeviceSource(dataDir, engine)?.binPath ?? resolveServerBinPath(dataDir, binaryName),
     cfg.localModels.managed.device,
-    { multiGpu: cfg.localModels.managed.tensorSplit.length > 0 },
+    { multiGpu: cfg.localModels.managed.tensorSplit.length > 0, listDevices: managedDeviceTable(dataDir, engine) },
   );
   try {
-    const { pid } = await startEmbeddingDaemon({
+    const { pid, port } = await startEmbeddingDaemon({
+      engine,
+      signal,
       dataDir,
       modelId,
       port: emb.port,
       ...(device ? { device } : {}),
+      onEngineInstall: () => process.stderr.write(`embedding: installing a llama.cpp build for ${embDef.name}…\n`),
+      onEngineProgress: (p, t, tot) => {
+        const line = renderPullProgress("llama.cpp for embeddings", p, t, tot);
+        if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+        else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+      },
     });
-    process.stdout.write(`embedding: started pid ${pid}, healthy on port ${emb.port} (${modelId})\n`);
+    process.stdout.write(`embedding: started pid ${pid}, healthy on port ${port ?? emb.port} (${modelId})\n`);
     return 0;
   } catch (e) {
     process.stderr.write(`embedding: failed to start (${e instanceof Error ? e.message : String(e)})\n`);
+    await reportCoreFailure(coreFailureOf(e));
+    // A Core started for this attempt and left serving nothing exits.
+    await retireIdleCore(dataDir);
     return 1;
   }
 }
@@ -786,12 +957,17 @@ function persistBackendVariantCpu(path: string): void {
 }
 
 export async function runLocalModelsStop(): Promise<number> {
+  const dataDir = getConfig().paths.localModelsDataDir;
   try {
-    await stopChatAndEmbeddingDaemons(getConfig().paths.localModelsDataDir);
+    await stopChatAndEmbeddingDaemons(dataDir);
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
   }
+  // With no model left, the CLI-scoped Atomic Core daemon exits too (the
+  // desktop quits through this command). Bounded and best-effort: Core
+  // refuses while another client or session remains; no PID is signalled.
+  await retireIdleCore(dataDir);
   process.stdout.write("stopped\n");
   return 0;
 }
@@ -803,19 +979,20 @@ export async function runLocalModelsStop(): Promise<number> {
  * returned (`undefined` means no GPU was picked → llama.cpp default /
  * CPU fallback). `multiGpu` (a configured tensor split) relabels the
  * unresolved-`auto` case: there it means "all GPUs, split", not "no
- * GPU detected".
+ * GPU detected"; so does `unlisted`, why `--list-devices` could not be
+ * run at all — the machine may well have a GPU nobody could ask about.
  */
 function describeDeviceChoice(
   configured: string,
   resolved: string | undefined,
   multiGpu = false,
+  unlisted: string | null = null,
 ): string {
   if (configured === "cpu") return "cpu (forced, -ngl 0)";
   if (configured === "auto") {
     if (resolved) return `auto → ${resolved}`;
-    return multiGpu
-      ? "auto → all GPUs (tensor split)"
-      : "auto → CPU (no GPU detected)";
+    if (multiGpu) return "auto → all GPUs (tensor split)";
+    return unlisted !== null ? describeUnlistedDevices(unlisted) : "auto → CPU (no GPU detected)";
   }
   return resolved ?? configured;
 }
@@ -841,25 +1018,35 @@ const DEVICE_ID_RE = /^[A-Za-z]+\d+(,[A-Za-z]+\d+)*$/;
 export async function runLocalModelsDevices(): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
-  if (!isBackendDownloaded(dataDir)) {
+  if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
     process.stderr.write(
       "backend not downloaded; run 'atomic-agent models update' first\n",
     );
     return 1;
   }
+  const engine = getConfig().localModels.managed.engine;
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(dataDir, binaryName);
+  const binPath = managedDeviceSource(dataDir, engine)?.binPath ?? resolveServerBinPath(dataDir, binaryName);
   const configured = cfg.localModels.managed.device;
   const multiGpu = cfg.localModels.managed.tensorSplit.length > 0;
-  const devices = await listVulkanDevices(binPath);
+  // Under Atomic Core: Core's own llama-server, run as Core runs it.
+  const probe = await probeManagedDevices(dataDir, engine);
+  const devices = probe.devices;
   const resolved = await resolveManagedDevice(binPath, configured, {
     multiGpu,
+    listDevices: async () => devices,
   });
 
   process.stdout.write(`configured device: ${configured}\n`);
   process.stdout.write(
-    `effective device:  ${describeDeviceChoice(configured, resolved, multiGpu)}\n\n`,
+    `effective device:  ${describeDeviceChoice(configured, resolved, multiGpu, probe.error)}\n\n`,
   );
+  if (devices.length === 0 && probe.error !== null) {
+    // The binary could not be asked: say so, not "no GPU". Exit 0 as the
+    // empty list does — the desktop reads this as a device list.
+    process.stdout.write(`could not list devices with ${binPath}: ${probe.error}\n`);
+    return 0;
+  }
   if (devices.length === 0) {
     process.stdout.write(
       "no GPU devices reported (will run on CPU). Install a Vulkan driver for GPU acceleration.\n",
@@ -1094,14 +1281,14 @@ export async function runLocalModelsListEmbeddings(): Promise<number> {
   const embPort = cfg.localModels.embeddings.port;
   const st = await getEmbeddingDaemonStatus(dataDir, embPort);
   process.stdout.write(
-    `\nembedding daemon: ${st.running ? `running (pid ${st.pid})` : "stopped"} on port ${embPort}, health: ${
+    `\nembedding daemon: ${st.running ? `running (pid ${st.pid})` : "stopped"} on port ${st.port}, health: ${
       st.healthy ? "ok" : st.loading ? "loading" : "down"
     }\n`,
   );
   return 0;
 }
 
-export async function runLocalModelsUpdate(): Promise<number> {
+export async function runLocalModelsUpdate(signal?: AbortSignal): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode !== "managed") {
     process.stderr.write(
@@ -1111,9 +1298,14 @@ export async function runLocalModelsUpdate(): Promise<number> {
   }
   const dataDir = cfg.paths.localModelsDataDir;
   try {
-    const { updateAvailable, latestTag, currentTag } =
-      await checkForBackendUpdate(dataDir);
-    if (!updateAvailable) {
+    const engine = getConfig().localModels.managed.engine;
+    // `models update` is the retry for Atomic Core: a release check that
+    // cannot reach GitHub must not stand between the operator and the
+    // install, which fetches the pinned version directly.
+    const { updateAvailable, latestTag, currentTag } = engine === "atomic-core"
+      ? await checkForBackendUpdate(dataDir, engine).catch(() => ({ updateAvailable: true, latestTag: "Atomic Core (pinned)", currentTag: null }))
+      : await checkForBackendUpdate(dataDir, engine);
+    if (!updateAvailable && cfg.localModels.managed.engine !== "atomic-core") {
       // ATO-252: on Windows on ARM "no release for this platform" with
       // nothing installed is not "unchanged": there is no engine to run
       // local models at all yet. Fail with the sentence the desktop shows
@@ -1121,7 +1313,7 @@ export async function runLocalModelsUpdate(): Promise<number> {
       if (
         latestTag === null &&
         isWindowsArm64() &&
-        !isBackendDownloaded(dataDir)
+        !isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)
       ) {
         process.stderr.write(`${WINDOWS_ARM64_NO_BACKEND_MESSAGE}\n`);
         return 1;
@@ -1140,22 +1332,51 @@ export async function runLocalModelsUpdate(): Promise<number> {
       `current: ${currentTag ?? "none"} → latest: ${latestTag}\n`,
     );
     const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (st.running) await stopChatAndEmbeddingDaemons(dataDir);
+    // A newer Core pin installs beside the running one (its own version
+    // folder) and is switched to once models stop; the same version cannot
+    // be reinstalled under running models.
+    if (st.running && cfg.localModels.managed.engine === "atomic-core" && activeCoreVersion(dataDir) === CORE_VERSION) {
+      throw new Error("Stop local models before updating the engine. Your running models are unchanged.");
+    }
+    if (st.running && cfg.localModels.managed.engine !== "atomic-core") await stopChatAndEmbeddingDaemons(dataDir);
     const tty = process.stderr.isTTY;
-    await downloadBackend(dataDir, {
+    const installed = await downloadBackend(dataDir, {
+      engine: cfg.localModels.managed.engine,
+      signal,
       onProgress: (p, t, tot) => {
-        const line = renderPullProgress("backend zip", p, t, tot);
+        const line = renderPullProgress(backendProgressLabel(), p, t, tot);
         if (tty) process.stderr.write(`\r${line.padEnd(79)}`);
         else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
       },
     });
     if (tty) process.stderr.write("\n");
+    if (installed.activated === false) {
+      process.stdout.write(
+        "installed. Atomic Chat switches to it at the next start once local models are stopped.\n",
+      );
+      return 0;
+    }
     process.stdout.write(
       "done. run 'atomic-agent models start' to use the new backend.\n",
     );
     return 0;
   } catch (e) {
+    const failure = coreFailureOf(e);
+    await reportCoreFailure(failure);
+    // No Core build for this computer: install llama.cpp instead, so the
+    // desktop's install step leaves a working engine.
+    try {
+      if (await fallBackFromCore(dataDir, failure, signal)) {
+        process.stdout.write("done. run 'atomic-agent models start' to use the new backend.\n");
+        return 0;
+      }
+    } catch (fallbackErr) {
+      process.stderr.write(`${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}\n`);
+      return 1;
+    }
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    // A Core started for the install and left serving nothing exits.
+    await retireIdleCore(dataDir);
     return 1;
   }
 }
@@ -1185,13 +1406,20 @@ export async function runLocalModelsRemove(
       return 1;
     }
   }
-  const wasCustom = getLocalModelDef(idArg).family === "custom";
+  const removedDef = getLocalModelDef(idArg);
+  const wasCustom = removedDef.family === "custom";
+  // A model added from disk keeps its file: `removeModel` deletes nothing
+  // for it, and only the catalog entry goes.
   await removeModel(dataDir, idArg);
   // A curated row survives its files' deletion — the catalog is the
   // product. A custom row exists only because the operator added it, so
   // removing the model undoes the add too; otherwise the row would
   // linger in `models list` with no other way to drop it.
   if (wasCustom) removeCustomModel(idArg);
-  process.stdout.write(`removed ${idArg}\n`);
+  process.stdout.write(
+    removedDef.localPath
+      ? `removed ${idArg} (file kept at ${removedDef.localPath})\n`
+      : `removed ${idArg}\n`,
+  );
   return 0;
 }

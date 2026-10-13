@@ -50,7 +50,7 @@ test('selector downloads dismiss the overlay, allow reopening the picker and off
   const c=vm.createContext({SEL:{pulling:null,kind:'model',localBusy:false,modelsBusy:false},DL:{},WIZ:{phase:null},
     BR:{modelsPull:async()=>{started++;return {ok:true};},onPull:fn=>{listener=fn;}},
     xpullOwner:()=>c.SEL.pulling,dlChipBusy:()=>false,closeSelector:()=>{closed++;},render(){},bswSnapshot(){},
-    toast:(...a)=>notices.push(a),selRows:()=>[],selShell:(title,body)=>title+body,
+    toast:(...a)=>notices.push(a),selRows:()=>[],selShell:(title,body)=>title+body,selBackend:()=>'local',
     document:{querySelector:()=>null},
   });
   for(const name of ['selPull','selectorHTML'])vm.runInContext(functions.get(name),c);

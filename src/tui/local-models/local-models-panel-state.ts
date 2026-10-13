@@ -132,6 +132,10 @@ export interface EmbeddingDaemonInfo {
 }
 
 export interface LocalModelsBackendInfo {
+  engine?: "atomic-core" | "llama-server";
+  /** The composer draws an engine control on the local route. Snapshots set it false: Core is the engine, and llama.cpp
+   *  is reached only through the support command `/model engine llama-server`. Absent (before the first snapshot) means hidden. */
+  atomicCoreChoice?: boolean;
   currentTag: string | null;
   latestTag: string | null;
   updateAvailable: boolean | null;
@@ -234,6 +238,22 @@ export interface LocalModelsPanelState {
   } | null;
   /** See `LocalModelsNotifyPrompt`. `null` when closed. */
   notifyPrompt: LocalModelsNotifyPrompt | null;
+  /** See `LocalModelsCoreFailure`. `null` when the last Core install/start did not fail. */
+  coreFailure: LocalModelsCoreFailure | null;
+}
+
+/**
+ * Atomic Core (the default engine) could not be installed or started. The
+ * panel shows `reason` with one action: `R` downloads it again. Plain data
+ * copied from `CoreUnavailableError`.
+ */
+export interface LocalModelsCoreFailure {
+  stage: "download" | "verify" | "backend" | "start";
+  reasonCode: string;
+  /** What happened, in plain words, without the hint sentences. */
+  reason: string;
+  /** False when another download cannot help (unsupported platform, full disk). */
+  retryable: boolean;
 }
 
 /**
@@ -317,7 +337,13 @@ export function createInitialLocalModelsPanelState(
     hf: createInitialLocalModelsHfState(),
     embeddingOnboardingPrompt: null,
     notifyPrompt: null,
+    coreFailure: null,
   };
+}
+
+/** The Core notice shows only while Atomic Core is the selected engine and its last install/start failed. */
+export function showsCoreFailureNotice(panel: LocalModelsPanelState): boolean {
+  return panel.coreFailure !== null && panel.backend.engine !== "llama-server";
 }
 
 export function createInitialLocalModelsHfState(): LocalModelsHfState {

@@ -1,10 +1,13 @@
 export {
   EmbeddingUnavailableError,
   LlamaEmbeddingClient,
+  promptedEmbeddingText,
 } from "./embedding-client.js";
 export { createLocalEmbeddingClient } from "./local-embedding-client.js";
 export type {
   EmbeddingClient,
+  EmbeddingPrompts,
+  EmbeddingPurpose,
   EmbedRequest,
   EmbedResult,
   LlamaEmbeddingClientOptions,

@@ -7,6 +7,10 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shoul
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
+import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
+import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
+import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
+import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -97,6 +101,8 @@ import {
   restartsAgent,
   selectCloudModel,
   selectFusionWorkerModel,
+  selectComposerEngine,
+  selectFusionModel,
   selectLocalModel,
   setFusionWorkers,
   runModeWantsDaemon,
@@ -146,6 +152,7 @@ import {
   skillInstall,
   // Item 7 part C (LLM / Telegram / Import tabs); modelsStop is imported above with lane B's set
   modelsStatus,
+  modelsEngine,
   modelsListEmbeddings,
   modelsRemove,
   modelsRemoveSafe,
@@ -174,6 +181,8 @@ import {
   // whole-file write, and the four import sources the flow's last step offers.
   modelsUpdateStream,
   managedDataDirNow,
+  managedEngineNow,
+  backendInstalled,
   STAGING_STALE_MS,
   sweepBackendStaging,
   setExternalLlamaUrls,
@@ -445,6 +454,16 @@ const REMOVING_BUSY = "it is being deleted — try again once that has finished"
    its restart of the agent (applySwitch) then left a fresh `atag serve` behind
    the app; nothing restarts the agent once the app is quitting. */
 let quitting = false;
+/* The launch's background Atomic Core update check (watchCoreUpdates): its
+   timers, and the `models engine` child on its way. Nothing of it is waited
+   for by the quit; stopForQuit ends it. */
+const coreChecks: { abort: AbortController; first: NodeJS.Timeout | null; every: NodeJS.Timeout | null } = { abort: new AbortController(), first: null, every: null };
+function stopCoreUpdateChecks(): void {
+  if (coreChecks.first) clearTimeout(coreChecks.first);
+  if (coreChecks.every) clearInterval(coreChecks.every);
+  coreChecks.first = coreChecks.every = null;
+  coreChecks.abort.abort();
+}
 /* Backlog 18 (R1): a download stops with the app rather than writing on
    after it — the next launch resumes the setup download from its partial
    file, and two writers on one partial file is how a resume goes wrong.
@@ -458,6 +477,8 @@ let quitting = false;
    carries on with the undo it hands back. */
 function stopForQuit(): () => void {
   quitting = true;
+  // Background checks are abandoned, never waited for: the Core update check asks GitHub.
+  stopCoreUpdateChecks();
   pull?.cancel();
   pullUpdate?.cancel();
   hfProjector?.controller.abort();
@@ -477,7 +498,7 @@ function stopForQuit(): () => void {
    it does, and it does not begin under a start on its way. `stop` ends it:
    while it waits for its turn the wait ends at once and the turn does
    nothing; once it runs, `run` stops its child on the same signal. */
-const UPDATE_STOPPED = "the llama.cpp update was stopped before it began";
+const UPDATE_STOPPED = "the local engine update was stopped before it began";
 /* ATO-129: an update that ended without its new backend — stopped by Quit, a
    Cancel or its own time limit — leaves its half-downloaded staging folder
    behind; it goes here, still in the update's daemon turn, where no other
@@ -551,6 +572,76 @@ const smokeDownloads: SmokeDownloads = {
     return () => { bootRoute = was; };
   },
 };
+
+/**
+ * The engine install, streamed: `models update` in the daemon's turn, its
+ * progress as `cli:pull` frames (kind `runtime`) that the setup queue and
+ * Settings' banner draw as a bar. The setup's runtime phase, Settings' engine
+ * install and the recovery card's Download again (cli:modelsUpdateStream),
+ * and the launch's first Core install (startLocalDaemonAtBoot) all run it.
+ * `done` is how it ended, after the server it stopped is back (afterUpdate).
+ */
+type InstallEnded = CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean };
+function engineInstallStream(
+  via: "setup" | "settings" | "launch",
+  opts: { fresh?: boolean } = {},
+): { ok: true; done: Promise<CliResult> } | { ok: false; error: string; running?: ReturnType<typeof downloadRunning> } {
+  const fresh = opts.fresh === true;
+  const running = downloadRunning();
+  if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+  if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
+  const id = "llama.cpp";
+  const own = new AbortController();
+  const updateStartedAt = Date.now();
+  let slot: DownloadSlot | null = null;
+  // ATO-123: as Settings' update (cli:modelsUpdate) — the update's own stop is on purpose, and the server comes back after it.
+  const held: { hold: UpdateHold | null } = { hold: null };
+  const stopped = (error: string): InstallEnded => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false });
+  const done = updateInTurn<InstallEnded>(
+    own.signal,
+    stopped,
+    async () => {
+      held.hold = updateBegins();
+      // In the daemon's turn: nothing is starting Core while its record goes.
+      if (fresh && managedEngineNow() === "atomic-core") {
+        const reset = await resetCoreForRedownload(managedDataDirNow());
+        console.error(`[desktop] local-llm: Download again: Atomic Core ${reset.version}${reset.removedRecord ? ", its install record removed" : ""}${reset.removedBinary ? ", its binary (it did not run) removed" : ""}`);
+      }
+      if (own.signal.aborted) return stopped(UPDATE_STOPPED);
+      const started = modelsUpdateStream((line) =>
+        pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
+      );
+      own.signal.addEventListener("abort", () => started.cancel(), { once: true });
+      return started.done.then(updateSwept);
+    },
+  );
+  pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
+  const final = done.then(async (ended): Promise<CliResult> => {
+    pullUpdate = null;
+    /* ATO-128: one stopped by its own time limit left a llama.cpp in place
+       as it was, so a server it stopped comes back on that one (keptBackend). */
+    const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
+    A.runtimeUpdated(via, updateStartedAt, res, own.signal.aborted);
+    if (!own.signal.aborted) noteEngine(res, { clears: true, via });
+    send("cli:pull", {
+      id,
+      done: true,
+      ok: res.ok,
+      error: res.error ?? null,
+      kind: "runtime",
+      // Nothing was downloaded: the version file already named the
+      // latest tag. The renderer must not leave a bar standing that it
+      // never drove — it draws the phase as passed instead.
+      sawProgress: ended.sawProgress,
+      upToDate: ended.upToDate,
+      // ATO-128: stopped by its own time limit — with a llama.cpp in place, the model held for it starts on that one (renderer obPullFinished).
+      timedOut: ended.timedOut,
+      keptBackend: ended.keptBackend,
+    });
+    return res;
+  });
+  return { ok: true, done: final };
+}
 
 /** One `cli:pull` progress frame, kept as its slot's last one when it carries a percent. */
 function pullFrame(slot: DownloadSlot | null, frame: Record<string, unknown>): void {
@@ -628,6 +719,32 @@ async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null>
 
 function send(channel: string, payload?: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+/* Atomic Chat Core is the default local engine, and a Core that will not
+   download or start leaves no local engine at all (engine-failure.ts). Every
+   start, install and switch answer passes through here: a Core failure is
+   kept and told to the window, which draws the recovery card (Download again)
+   instead of leaving a spinner; the next success clears it. A
+   window opened later asks for it (engine:failure). */
+let engineFailure: (EngineFailure & { at: number }) | null = null;
+/** What put the recovery card up, for `engine_recovery_shown.via` (analytics/catalog-values.ts ENGINE_RECOVERY_VIA). */
+type EngineVia = "launch" | "swap" | "update" | "start" | "switch" | "setup" | "settings" | "other";
+function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia } = {}): void {
+  const failed = engineFailureOf(answer);
+  if (failed) {
+    engineFailure = { ...failed, at: Date.now() };
+    console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
+    send("engine:failure", engineFailure);
+    // The agent's `models` command already sent local_engine_failed for this; the desktop counts the card it showed.
+    A.engineRecoveryShown(failed.stage, opts.via ?? "other");
+    return;
+  }
+  const a = answer as { ok?: unknown; daemon?: unknown } | null;
+  if (engineFailure && a && a.ok === true && (opts.clears || a.daemon === "started" || a.daemon === "restarted")) {
+    engineFailure = null;
+    send("engine:failure", null);
+  }
 }
 
 /* --- Item 6 (sidebar): the viewer's own sidebar state ---------------------
@@ -861,28 +978,6 @@ function hfGatedTokenHint(message: string, dir: string): string {
     + " — start the app with it exported and the listing will see it too.)";
 }
 
-/* r5 item 3 review fix: the chat row's context menu, as a template. Factored
-   out of the app:sessionMenu handler so the suite can assert the "Mark as
-   Unread" entry and its `enabled` gate directly — Menu.popup opens a native
-   window the harness cannot drive, and nothing else in the run would notice
-   the entry being dropped. */
-function sessionMenuTemplate(
-  id: string,
-  pinned: boolean,
-  unread: boolean,
-): Electron.MenuItemConstructorOptions[] {
-  return [
-    // r5 item 3: macOS title case, beside the Pin/Delete… the menu already
-    // offers. `enabled` is what keeps it honest on a row that is already
-    // unread — the item is shown, greyed, rather than offering a no-op.
-    { label: "Mark as Unread", enabled: !unread, click: () => send("app:menu", "unread:" + id) },
-    { type: "separator" },
-    { label: pinned ? "Unpin" : "Pin", click: () => send("app:menu", (pinned ? "unpin:" : "pin:") + id) },
-    { type: "separator" },
-    { label: "Delete…", click: () => send("app:menu", "delask:" + id) },
-  ];
-}
-
 /* N3 — the agent's output, on disk.
    Everything `atag serve` said lived in the console drawer's 300-line ring,
    in memory, and went with the window: quitting the app destroyed the
@@ -979,11 +1074,17 @@ async function shutdownForUpdate(): Promise<boolean> {
   stopForQuit();
   const client = agent;
   agent = null;
-  // close() answers whether the agent and every child it let go of are gone.
-  const gone = client ? await client.close().catch(() => false) : true;
-  await stopLocalDaemonOnQuit();
+  /* close() answers whether the agent and every child it let go of are gone.
+     Bounded, so the model server's stop always runs before the installer
+     starts, inside the updater's own limit (updater.ts SHUTDOWN_TIMEOUT_MS):
+     a close that hangs used to mean no stop at all. */
+  const gone = client ? await settleWithin(client.close().catch(() => false), UPDATE_CLOSE_MS, false) : true;
+  // Whatever stopOnExit says: the update replaces the files the model server and Atomic Core run from.
+  await stopLocalDaemonOnQuit(undefined, { forUpdate: true });
   return gone;
 }
+/** shutdownForUpdate's bound on the agent's close: with the stop after it (≤ ~10.5 s), inside the updater's 15 s. */
+const UPDATE_CLOSE_MS = 4_000;
 
 /** ATO-134: how long a switch waits for /health's busyTurns (asked without the llama probe, so milliseconds) before it counts the agent busy. */
 const SWITCH_BUSY_CHECK_MS = 5_000;
@@ -1272,52 +1373,15 @@ function wireIpc(client: AgentClient): void {
      Backlog 18: in the daemon's turn, as Settings' update (updateInTurn).
      The slot is taken at once, and its × (cli:cancelPull) ends it even while
      it waits for that turn: it never begins, and the window is told now. */
-  ipcMain.handle("cli:modelsUpdateStream", () => {
-    const running = downloadRunning();
-    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
-    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
-    const id = "llama.cpp";
-    const own = new AbortController();
-    const updateStartedAt = Date.now();
-    let slot: DownloadSlot | null = null;
-    // ATO-123: as Settings' update (cli:modelsUpdate) — the update's own stop is on purpose, and the server comes back after it.
-    const held: { hold: UpdateHold | null } = { hold: null };
-    const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>(
-      own.signal,
-      (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
-      () => {
-        held.hold = updateBegins();
-        const started = modelsUpdateStream((line) =>
-          pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
-        );
-        own.signal.addEventListener("abort", () => started.cancel(), { once: true });
-        return started.done.then(updateSwept);
-      },
-    );
-    pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
-    void done.then(async (ended) => {
-      pullUpdate = null;
-      /* ATO-128: one stopped by its own time limit left a llama.cpp in place
-         as it was, so a server it stopped comes back on that one (keptBackend). */
-      const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
-      A.runtimeUpdated("setup", updateStartedAt, res, own.signal.aborted);
-      send("cli:pull", {
-        id,
-        done: true,
-        ok: res.ok,
-        error: res.error ?? null,
-        kind: "runtime",
-        // Nothing was downloaded: the version file already named the
-        // latest tag. The renderer must not leave a bar standing that it
-        // never drove — it draws the phase as passed instead.
-        sawProgress: res.sawProgress,
-        upToDate: res.upToDate,
-        // ATO-128: stopped by its own time limit — with a llama.cpp in place, the model held for it starts on that one (renderer obPullFinished).
-        timedOut: res.timedOut,
-        keptBackend: res.keptBackend,
-      });
-    });
-    return { ok: true, started: true };
+  // `via`: the setup's runtime phase (default), or Settings' engine install with its bar (llmEngineInstall).
+  /* `fresh`: the recovery card's Download again. Under Core the active
+     version's verified.json goes first (and a binary that does not run),
+     or the agent's install would find it "installed" and do nothing: a
+     broken seeded copy is replaced, not kept (core-seed.ts resetCoreForRedownload). */
+  ipcMain.handle("cli:modelsUpdateStream", (_event, via: unknown, opts: unknown) => {
+    const fresh = !!(opts && typeof opts === "object" && (opts as { fresh?: unknown }).fresh === true);
+    const r = engineInstallStream(via === "settings" ? "settings" : "setup", { fresh });
+    return r.ok ? { ok: true, started: true } : r;
   });
   ipcMain.handle("cli:cancelPull", () => {
     // Item 7A: the one Cancel button covers both downloads, because the
@@ -1523,9 +1587,9 @@ function wireIpc(client: AgentClient): void {
     return setProviderModel(id, model);
   });
   ipcMain.handle("cli:providerModels", (_event, payload: unknown) => {
-    const { id, kind } = (payload ?? {}) as { id?: unknown; kind?: unknown };
+    const { id, kind, live } = (payload ?? {}) as { id?: unknown; kind?: unknown; live?: unknown };
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return providerModels(id, typeof kind === "string" ? kind : "");
+    return providerModels(id, typeof kind === "string" ? kind : "", { live: live === true });
   });
   /* r6 cloud item 2: the wizard's key check, done honestly — one real
      one-token completion against the provider, instead of a catalogue
@@ -1562,7 +1626,9 @@ function wireIpc(client: AgentClient): void {
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
-  ipcMain.handle("cli:modelsStart", () => startDaemonNow());
+  ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true, via: "start" }), res)));
+  ipcMain.handle("engine:failure", () => engineFailure);
+  ipcMain.handle("engine:launchInstall", () => ({ running: launchInstall }));
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
     if (!ownDir(stateDir) || typeof sessionId !== "string") {
@@ -1584,18 +1650,10 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
   // Item 6 (sidebar): pin + read state, in userData — never in the agent config.
+  // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
+  // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
   ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
-  // The row's right-click menu. `Menu` is not a top-level import here, so it is
-  // required inside the handler exactly as app:fileMenu does.
-  ipcMain.handle("app:sessionMenu", (event, payload: unknown) => {
-    const { id, pinned, unread } = (payload ?? {}) as { id?: unknown; pinned?: unknown; unread?: unknown };
-    if (typeof id !== "string" || !id) return;
-    const { Menu } = require("electron") as typeof import("electron");
-    const menu = Menu.buildFromTemplate(sessionMenuTemplate(id, !!pinned, unread === true));
-    const sender = BrowserWindow.fromWebContents(event.sender);
-    menu.popup(sender ? { window: sender } : {});
-  });
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
@@ -1666,13 +1724,15 @@ function wireIpc(client: AgentClient): void {
      Not a generation count: a newer switch can end without a restart (no key,
      a refused write), and then nothing restarts for it. */
   let switchesOnTheirWay = 0;
-  const switched = async (run: () => Promise<SwitchResult>, kind?: Parameters<typeof A.switchEnd>[2]) => {
+  const switched = async (run: () => Promise<SwitchResult>, kind?: Parameters<typeof A.switchEnd>[2], engine = false) => {
     switchesOnTheirWay++;
     const began = A.switchBegin();
     let answer: unknown = null;
     try {
       return (answer = await applySwitch(await run()));
     } finally {
+      // An engine pick that succeeded is a new start: the card about the old engine goes.
+      noteEngine(answer, { clears: engine, via: "switch" });
       switchesOnTheirWay--;
       A.switchEnd(began, answer, kind);   // backend_switched (+ fusion_configured, model_configured)
     }
@@ -1725,6 +1785,12 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:contextPreview", (_event, payload: unknown) => {
     const { sessionId, message } = (payload ?? {}) as { sessionId?: unknown; message?: unknown };
     return client.contextPreview(typeof sessionId === "string" && sessionId ? sessionId : null, typeof message === "string" ? message : "");
+  });
+  // ATO-259: `/compact` and the context popover's "Compact now".
+  ipcMain.handle("agent:compactSession", (_event, payload: unknown) => {
+    const { sessionId } = (payload ?? {}) as { sessionId?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, error: "No chat to compact yet" };
+    return client.compactSession(sessionId);
   });
 
   // Files the agent produced: open, reveal, copy, save elsewhere.
@@ -2075,6 +2141,12 @@ function wireIpc(client: AgentClient): void {
 
   // --- Item 7 part C (LLM / Telegram / Import tabs) ---
   ipcMain.handle("cli:modelsStatus", () => modelsStatus());
+  ipcMain.handle("cli:modelsEngine", (_event, action: unknown) =>
+    typeof action !== "string" ? { ok: false, error: "Engine action required" }
+      : action === "status" || action === "check" ? modelsEngine(action)
+      // Settings' engine switch: in the daemon's turn and with the agent restart, as the composer's pick.
+      : action === "atomic-core" || action === "llama-server" ? switched(() => selectComposerEngine(action), undefined, true)
+      : { ok: false, error: "Unknown engine action" });
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
   // Item 11: at once — a start on its way is ended, not waited for.
   ipcMain.handle("cli:modelsStop", () => stopDaemonNow());
@@ -2173,6 +2245,7 @@ function wireIpc(client: AgentClient): void {
         },
       );
       A.runtimeUpdated("settings", updateStartedAt, res, own.signal.aborted);
+      if (!own.signal.aborted) noteEngine(res, { clears: true, via: "settings" });
     } finally {
       if (settingsUpdate === own) settingsUpdate = null;
     }
@@ -2294,11 +2367,22 @@ function wireIpc(client: AgentClient): void {
     send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
+    // A Core that would not start at launch is told too: the window offers the way out, not a log line.
+    noteEngine(r, { via: r.via });
     if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
     return switched(() => setFusionWorkers(workers), { action: "set_workers" });
+  });
+  ipcMain.handle("cli:composerEngine", async (_event, engine: unknown, leg: unknown) => {
+    if (engine !== "atomic-core" && engine !== "llama-server") return { ok: false, error: "Unknown inference engine" };
+    if (leg !== undefined && leg !== "worker" && leg !== "orchestrator") return { ok: false, error: "Unknown Fusion role" };
+    return switched(() => selectComposerEngine(engine, leg), undefined, true);
+  });
+  ipcMain.handle("cli:fusionModel", async (_event, leg: unknown, model: unknown) => {
+    if ((leg !== "worker" && leg !== "orchestrator") || typeof model !== "string") return { ok: false, error: "A role and model are required" };
+    return switched(() => selectFusionModel(leg, model));
   });
   ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
@@ -2499,8 +2583,14 @@ function wireIpc(client: AgentClient): void {
 }
 
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
+/* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
+   chat is on the list, then Chats, then Tasks when the agent holds any. */
+function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+}
 type Sb = {
   headers: string[];
+  pinnedRows?: number;
   navrows: number;
   skillsRow: boolean;
   subtitles: number;
@@ -2557,7 +2647,7 @@ async function smokeTest(): Promise<void> {
     "renderer painted",
     // Calm (S1): Chats first; Tasks is drawn only when the agent holds tasks.
     !!sb0 && sb0.navrows === 0
-      && JSON.stringify(sb0.headers) === (sb0.tasks.length > 0 ? '["Chats","Tasks"]' : '["Chats"]')
+      && JSON.stringify(sb0.headers) === sidebarHeadersExpected(sb0)
       && sb0.subtitles === 0 && !sb0.skillsRow,
     sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
   );
@@ -3691,7 +3781,7 @@ function exitAfterAgentStop(code: number): void {
   const client = agent;
   agent = null;
   // close, not stop: no restart, workspace change or import still on its way starts another agent after it.
-  const shutdown = (client ? client.close() : Promise.resolve(true)).then(stopLocalDaemonOnQuit);
+  const shutdown = (client ? client.close() : Promise.resolve(true)).then(() => stopLocalDaemonOnQuit());
   void Promise.race([shutdown, new Promise((r) => setTimeout(r, 10_000))])
     .catch(() => undefined)
     .finally(() => app.exit(code));
@@ -4419,22 +4509,19 @@ async function sidebarTest(
     let sb = await js<Sb>("window.__sidebar()");
     check(
       // Calm (S1): Chats first, Tasks under it and only when there are tasks.
-      "sidebar is Chats, then Tasks when there are any, with no nav rows",
-      JSON.stringify(sb.headers) === (sb.tasks.length > 0 ? '["Chats","Tasks"]' : '["Chats"]')
+      "sidebar is Pinned when anything is pinned, Chats, then Tasks when there are any, with no nav rows",
+      JSON.stringify(sb.headers) === sidebarHeadersExpected(sb)
         && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
       `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
     );
     // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
     // class. This measures the row the user asked for — 30 px, one text line,
     // and dot + name (+ its hover controls) as its only children.
-    // r5 item 3 added a second hover control to a chat row that reads read
-    // ("Mark as unread"), so the allowed tail is now pin and unread rather than
-    // pin alone. Both are 22px inside a 30px row, so the height is unchanged —
-    // which is the half of this check that would catch a row growing.
-    // The cap on the tail's LENGTH is kept (the pre-existing check had
-    // `children.length <= 3`): `every` is vacuously true on an empty tail and
-    // says nothing about a third or fourth control, which a 30px flex row full
-    // of 22px buttons would swallow without moving the height.
+    // ATO-165: the pin and mark-as-unread controls became one "…" control that
+    // opens the row's menu, so the allowed tail is that one control.
+    // The cap on the tail's LENGTH is kept: `every` is vacuously true on an
+    // empty tail and says nothing about a second or third control, which a
+    // 34px flex row of 24px buttons would swallow without moving the height.
     type RowShape = { rows: number; minHeight: number; maxHeight: number; children: string[]; titleHeight: number; titleLineHeight: number; nowrap: boolean } | null;
     const shape = await js<RowShape>("window.__rowShape()");
     const rowTail = shape ? shape.children.slice(2) : [];
@@ -4443,8 +4530,8 @@ async function sidebarTest(
       "sidebar rows are one line: dot + name (+ hover controls)",
       !!shape && shape.minHeight === 34 && shape.maxHeight === 34
         && shape.children[0] === "sdot" && shape.children[1] === "t1"
-        && rowTail.length <= 2
-        && rowTail.every((c) => c === "pinbtn" || c === "unreadbtn")
+        && rowTail.length <= 1
+        && rowTail.every((c) => c === "sesmore")
         && shape.nowrap && shape.titleHeight <= shape.titleLineHeight + 1,
       shape ? `${shape.rows} rows ${shape.minHeight}–${shape.maxHeight}px, children ${JSON.stringify(shape.children)}, title ${shape.titleHeight}px of line-height ${shape.titleLineHeight}, nowrap=${shape.nowrap}` : "no rows",
     );
@@ -4493,22 +4580,18 @@ async function sidebarTest(
       const pinned = await js<string[]>(`window.__pin(${JSON.stringify(last)})`);
       sb = await js<Sb>("window.__sidebar()");
       const stored = await js<{ data: { pinned: string[] } }>("window.__prefs()");
-      // r5 fix, found by this lane's runs going red at random: the assertion
-      // used to be `sb.chats[0].id === last`, which only holds when NO other
-      // chat is pinned. sidebarChats sorts pinned rows ahead of unpinned ones
-      // in SESSIONS order — it does not order the pinned block by pin recency,
-      // even though act('pin:') unshifts — so with an operator pin already in
-      // prefs.json the newly pinned row is first only by luck of the session
-      // list's own order. What the code guarantees, and what this check's name
-      // means, is that the pinned row sorts ahead of every unpinned one.
+      // ATO-165: the pinned block is ordered by pin time now (the last pinned
+      // on top), so the chat just pinned is the first row whatever else the
+      // operator has pinned — and it stands under the "Pinned" header.
       const pinIndex = sb.chats.findIndex((c) => c.id === last);
       const firstUnpinned = sb.chats.findIndex((c) => !c.pinned);
       check(
-        "a pinned chat sorts ahead of every unpinned one and is stored",
-        pinIndex >= 0 && sb.chats[pinIndex].pinned
+        "a pinned chat sorts first, under Pinned, ahead of every unpinned one and is stored",
+        pinIndex === 0 && sb.chats[pinIndex].pinned
           && (firstUnpinned === -1 || pinIndex < firstUnpinned)
+          && sb.headers[0] === "Pinned"
           && stored.data.pinned.includes(last),
-        `${last} at index ${pinIndex}, first unpinned at ${firstUnpinned};`
+        `${last} at index ${pinIndex}, first unpinned at ${firstUnpinned}, headers ${JSON.stringify(sb.headers)};`
         + ` pinned=${JSON.stringify(pinned)} stored=${JSON.stringify(stored.data.pinned)}`,
       );
       await js<string[]>(`window.__unpin(${JSON.stringify(last)})`);
@@ -4528,25 +4611,24 @@ async function sidebarTest(
       );
 
       // Review fix: the two checks above go through act() and read PREFS, so
-      // they would pass with no pin button rendered at all. This one clicks the
-      // affordance the user actually has — the row's [data-pin] — through the
-      // real document delegator, and proves the click does not also open the
-      // chat (the delegator stops at the pin branch).
-      type PinClick = { found: boolean; pinned?: boolean; opened?: boolean; titleBefore?: string; titleAfter?: string };
+      // they would pass with no control rendered at all. This one clicks the
+      // affordance the user actually has — ATO-165: the row's "…", then the
+      // menu's Pin — through the real document delegator, and proves neither
+      // click opens the chat and that the pick closes the menu.
+      type PinClick = { found: boolean; pinned?: boolean; opened?: boolean; titleBefore?: string | null; titleAfter?: string | null; menuClosed?: boolean };
       const clicked = await js<PinClick>(`window.__clickPin(${JSON.stringify(last)})`);
       const unclicked = clicked.found ? await js<PinClick>(`window.__clickPin(${JSON.stringify(last)})`) : { found: false };
-      const menuIpc = await js<string>("typeof window.atomic.sessionMenu");
       check(
-        "the row's pin button pins without opening the chat",
+        "the row's menu pins without opening the chat, and closes on the pick",
         clicked.found === true &&
           clicked.pinned === true &&
           clicked.opened === false &&
           clicked.titleBefore === "Pin" &&
           clicked.titleAfter === "Unpin" &&
+          clicked.menuClosed === true &&
           unclicked.pinned === false &&
-          unclicked.titleAfter === "Pin" &&
-          menuIpc === "function",
-        `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}, sessionMenu ${menuIpc}`,
+          unclicked.titleAfter === "Pin",
+        `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}`,
       );
     } else {
       check("a pinned chat sorts first and is stored", true, "skipped — fewer than two chats in this workspace");
@@ -6952,13 +7034,15 @@ async function settingsTestPartC(
   const st = await modelsStatus();
   const cfg0 = await readCfg();
   const activeText = cfg0.llm?.activeTextProvider ?? "local-llama";
+  // 13.10: the card names the local slot in words (Local models (Atomic Core) or (llama.cpp)); Copy keeps the id.
+  const localRouteWord = `Local models (${(cfg0.localModels?.managed as { engine?: string } | undefined)?.engine === "llama-server" ? "llama.cpp" : "Atomic Core"})`;
   const activeEntry = (cfg0.llm?.providers ?? []).find((p) => p.id === activeText);
   const localRoute = !activeEntry || activeEntry.kind === "llama-server";
   const expectedModel = localRoute ? (st.status?.activeModel ?? cfg0.localModels?.managed?.modelId ?? null) : (activeEntry?.defaultChatModel ?? activeEntry?.model ?? null);
   const expectedDaemon = st.ok && st.status ? (st.status.daemonRunning ? (String(st.status.health).toLowerCase() === "ok" ? "running pid " : "pid ") : "stopped") : null;
   const kvOf = (label: string): string => (localView.kv.find(([k]) => k === label) ?? [label, ""])[1];
   const routeOk = !!expectedDaemon && local.daemonLabel.startsWith(expectedDaemon) && kvOf("local daemon").startsWith(`${local.daemonLabel} · mode ${cfg0.localModels?.mode ?? "external"}`)
-    && kvOf("current") === `${activeText}${expectedModel ? " / " + expectedModel : ""}` && kvOf("tools") === (localRoute ? "grammar · cache local slot/cache_prompt" : "native_tools · cache cloud: no slot affinity");
+    && kvOf("current") === `${activeText === "local-llama" ? localRouteWord : activeText}${expectedModel ? " / " + expectedModel : ""}` && kvOf("tools") === (localRoute ? "grammar · cache local slot/cache_prompt" : "native_tools · cache cloud: no slot affinity");
   check("llm tab: route card follows the user file and atag models status", routeOk, `current ${activeText} / ${expectedModel ?? "—"} · daemon ${JSON.stringify(local.daemonLabel)} vs status ${st.ok ? st.status?.daemon : st.error}${routeOk ? "" : " · card " + JSON.stringify(localView.kv)}`);
 
   // ---- LLM: Cloud pane ----
@@ -7084,9 +7168,9 @@ async function settingsTestPartC(
   if (appendLocal && localId && !chain.includes(localId)) chain.push(localId);
   const expectedChain = chain.filter((id, i) => configured.has(id) && chain.indexOf(id) === i);
   const fbLinks = fb.fallback.links.map((l) => l.providerId);
-  // The chain as drawn: one row per link in order, its position badge and its provider id (with the model after a slash when it has one).
+  // The chain as drawn: one row per link in order, its position badge and its provider id (the row's data-llm-row; the row reads the provider's name, ATO-318).
   const fbRows = await js<Array<{ idx: string; id: string }>>(
-    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"fb:\"]')].map((r) => ({idx: ((r.querySelector('.llm-idx') || {}).textContent || '').trim(), id: ((r.querySelector('.llm-id') || {}).textContent || '').trim()}))",
+    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"fb:\"]')].map((r) => ({idx: ((r.querySelector('.llm-idx') || {}).textContent || '').trim(), id: (r.dataset.llmRow || '').slice(3)}))",
   );
   const fbDrawn = fbRows.length === expectedChain.length && fbRows.every((r, i) => r.idx === String(i + 1) && (r.id === expectedChain[i] || r.id.startsWith(`${expectedChain[i]}/`)));
   check(
@@ -8980,6 +9064,37 @@ async function backendSwitchTest(
  * <json>`: there is no config-write route, and PATCH /api/config re-defaults
  * every block it does not merge.
  */
+/* The launch's engine install on its way (installEngineAtLaunch): a window
+   opened or reloaded meanwhile asks for it (engine:launchInstall) and draws
+   the same bar. */
+let launchInstall = false;
+/**
+ * Install Atomic Core's backend before the launch start, with its progress
+ * where the window shows it: `engine:launchInstall` tells the window, which
+ * puts the bar in Settings' banner and says so in a toast; the frames are
+ * the install's own `cli:pull` ones. True when the engine is in (or another
+ * download holds the slot, and the start installs it itself under its longer
+ * limit); false when it failed or was stopped.
+ */
+async function installEngineAtLaunch(): Promise<boolean> {
+  const r = engineInstallStream("launch");
+  if (!r.ok) {
+    console.error(`[desktop] local-llm: the local engine is not installed yet, and its install could not begin now (${r.error}); the model's start installs it`);
+    return r.error !== SMOKE_OFFLINE;
+  }
+  launchInstall = true;
+  console.error("[desktop] local-llm: installing the local engine before the model starts");
+  send("engine:launchInstall", { running: true });
+  try {
+    const res = await r.done;
+    if (!res.ok) console.error(`[desktop] local-llm: the local engine install did not finish: ${res.error ?? "unknown error"}`);
+    return res.ok;
+  } finally {
+    launchInstall = false;
+    send("engine:launchInstall", { running: false });
+  }
+}
+
 /**
  * The managed llama daemon, brought up at launch when the chat route needs it.
  *
@@ -9011,6 +9126,16 @@ async function startLocalDaemonAtBoot(): Promise<void> {
     backendUp = false;
     const st = await modelsStatus();
     if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
+    /* Atomic Core with its backend not on disk yet (a fresh machine, a 0.0.1
+       desktop the config migration moved to Core, a backend removed): the
+       start would download it silently first, hundreds of MB, under a spinner.
+       It is installed first, with its bar (engineInstallStream, as the setup
+       and Settings do), and the model starts after it. A failure is the
+       recovery card (noteEngine), and nothing is started on top of it. */
+    if (managedEngineNow() === "atomic-core" && !backendInstalled()) {
+      const installed = await installEngineAtLaunch();
+      if (!installed) return;
+    }
     /* Item 11: as the background bring-up — a ⇄ or a start made while the
        model loads queues behind it rather than starting a second daemon, and
        a stop (a cloud switch, Settings › Stop) ends it at once instead of
@@ -9159,6 +9284,41 @@ A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
 wireProcessErrorReporting();
 
+
+/** Core checks follow the app update cadence; they never install or stop a model. */
+function watchCoreUpdates(): void {
+  // Core is the default engine, so every launch checks; the status read below skips it on llama.cpp.
+  if (SMOKE || FIRST_RUN_PROBE) return;
+  let previous = "";
+  const signal = coreChecks.abort.signal;
+  const check = async () => {
+    if (quitting || signal.aborted) return;
+    try {
+      const status = await modelsEngine("status", signal);
+      if (!status.ok || (status.value as { engine?: string } | undefined)?.engine !== "atomic-core") return;
+      if (quitting || signal.aborted) return;
+      const result = await modelsEngine("check", signal);
+      const value = result.value as { check?: { currentVersion: string | null; compatibleVersion: string; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
+      if (!result.ok || !value?.check) return;
+      /* Only a real update the person can install toasts, once per version
+         (core-update-notice.ts): never requiresAgentUpdate, which they cannot
+         act on (the app's own update brings the agent and its Core), never a
+         fresh machine with nothing installed yet, and never again for a
+         version already shown, on this launch or the next. */
+      const userData = app.getPath("userData");
+      const version = coreUpdateNoticeVersion(value.check, readDismissedCoreUpdate(userData));
+      if (!version || version === previous || quitting || !win || win.isDestroyed()) return;
+      previous = version;
+      send("core:update", value.check);
+      writeDismissedCoreUpdate(userData, version);
+    } catch { /* Offline checks are retried at the next scheduled check or manually. */ }
+  };
+  coreChecks.first = setTimeout(() => { void check(); }, 10_000);
+  coreChecks.every = setInterval(() => { void check(); }, 6 * 60 * 60_000);
+  coreChecks.first.unref();
+  coreChecks.every.unref();
+}
+
 void app.whenReady().then(async () => {
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
@@ -9181,6 +9341,7 @@ void app.whenReady().then(async () => {
   buildMenu((command) => send("app:menu", command));
   wireIpc(agent);
   wireUpdater();
+  watchCoreUpdates();
   // ATO-229: the first update check waits for the window (then ~10 s more, updater.ts).
   if (!FIRST_RUN_PROBE) win.once("ready-to-show", () => appUpdater()?.start());
   /* ATO-123: armed for every real run. A smoke run leaves it off: its checks
@@ -9206,10 +9367,21 @@ void app.whenReady().then(async () => {
     const sweepAtLaunch = () => sweepBackendStaging(managedDataDirNow(), { minAgeMs: STAGING_STALE_MS })
       .then((swept) => { if (swept.length) console.error(`[desktop] local-llm: tidied what an earlier llama.cpp update left behind (${swept.join(", ")})`); })
       .catch(() => undefined);
+    /* Atomic Chat Core is the default local engine, and the installer carries
+       it signed by our own certificate (scripts/fetch-core.mjs). It is put where
+       the agent looks for it before anything can start Core, so the first local
+       model needs no Core download and no GitHub; an install already there is
+       left alone (core-seed.ts). A dev run has no bundled copy and seeds nothing. */
+    const seedCore = () => (app.isPackaged && !SMOKE ? seedBundledCore(managedDataDirNow()) : Promise.resolve({ seeded: false, reason: "not a packaged app" }))
+      .then((r) => {
+        if (r.seeded) console.error("[desktop] local-llm: Atomic Core placed from the installer");
+        else if (r.reason && !/already installed|not a packaged app/.test(r.reason)) console.error(`[desktop] local-llm: Atomic Core not placed (${r.reason})`);
+      })
+      .catch(() => undefined);
     /* ATO-126: the embedding server before `atag serve` boots, which is the
        only moment serve looks for it (a smoke run starts no model server). */
     const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(embeddingsFirst).then(() => {
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(embeddingsFirst).then(() => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
@@ -9289,14 +9461,31 @@ app.on("before-quit", (event) => {
   agent = null;
   const shutdown = { done: false };
   quitShutdown = shutdown;
+  /* The config the model server's stop reads (stopOnExit), asked for now,
+     beside the agent's close rather than after it: one `atag` call less on
+     the quit's own clock. */
+  const quitConfig = readQuitConfig();
   /* close, not stop: a restart, a workspace change or an import whose stop
      this joins would otherwise start `atag serve` again behind the quitting
-     app (agent-client start). */
-  void client.close().catch(() => undefined).then(stopLocalDaemonOnQuit).then(() => analyticsClosed).finally(() => {
+     app (agent-client start). Bounded step by step and as a whole
+     (quit-shutdown.ts): the model server's stop runs whatever the close did,
+     and the app goes even if something stalls. */
+  void runQuitShutdown({
+    closeAgent: () => client.close(),
+    stopModelServer: () => stopLocalDaemonOnQuit(quitConfig),
+    flush: () => analyticsClosed,
+  }).then((outcome) => {
+    if (outcome === "timed-out") console.error("[desktop] the quit's shutdown ran out of time — quitting without waiting further");
+  }).finally(() => {
     shutdown.done = true;
     app.quit();
   });
 });
+
+/** Item 30: the config the quit's model-server stop reads, bounded; null when it could not be read in time. */
+function readQuitConfig(): Promise<Awaited<ReturnType<typeof readWholeConfig>> | null> {
+  return settleWithin(readWholeConfig(), 8_000, null);
+}
 
 /**
  * `localModels.managed.stopOnExit` (default true), honoured on quit. The
@@ -9306,12 +9495,23 @@ app.on("before-quit", (event) => {
  * the next reboot. The daemon is on the desktop's own state dir and port, so
  * no terminal session shares it. Bounded, so a stuck CLI cannot hold quit.
  */
-async function stopLocalDaemonOnQuit(): Promise<void> {
+async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>, opts: { forUpdate?: boolean } = {}): Promise<void> {
   if (SMOKE) return;
+  /* An app update: the stop runs whatever the config says (stopOnExit off
+     included) and reads only the data dir from disk, no `atag` call, so it
+     fits the updater's limit. `models stop` also retires an idle Atomic Core. */
+  if (opts.forUpdate) {
+    try {
+      const killed = await stopDaemonForQuit(managedDataDirNow(), { stopMs: 5_000, retryMs: 4_000 });
+      if (killed.length) console.error(`[desktop] killed the model server that outlived its stop before the update (pid ${killed.join(", ")})`);
+    } catch { /* the update goes on */ }
+    return;
+  }
   try {
     /* Item 30: bounded, and a config that cannot be read in time is no reason
-       to leave the model server up — the defaults (managed, stopOnExit) stop it. */
-    const read = await Promise.race([readWholeConfig(), new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000))]);
+       to leave the model server up — the defaults (managed, stopOnExit) stop it.
+       The quit asks for it as it begins (readQuitConfig), beside the agent's close. */
+    const read = await (config ?? readQuitConfig());
     const lm = read?.ok ? read.config?.localModels : undefined;
     const managed = lm?.managed as { stopOnExit?: boolean; dataDirOverride?: string | null } | undefined;
     if (read?.ok && (lm?.mode !== "managed" || managed?.stopOnExit === false)) return;
@@ -9973,9 +10173,9 @@ async function onboardingTest(
     );
     check(
       "wizard: a runtime phase queues in front of the weights and says so",
-      queued.label === "llama.cpp" && queued.kind === "runtime" && queued.queued === 1 &&
+      queued.label === "Local engine" && queued.kind === "runtime" && queued.queued === 1 &&
         // Backlog 18: the card draws the queued job as its own row.
-        /llama\.cpp runtime Starting…/.test(queued.text) && /Queued/.test(queued.text) &&
+        /Local engine Starting…/.test(queued.text) && /Queued/.test(queued.text) &&
         queued.phases.runtime === "waiting" && queued.phases.weights === "waiting" &&
         queued.measured === false &&
         moving.phases.runtime === "active" && moving.drove.runtime === true,
@@ -11800,7 +12000,7 @@ async function chromeTest(
     check("item 5: Escape still closes the menu", esc.pane === null, JSON.stringify(esc));
     await js<void>("window.__settingsClose(); window.__clearToasts()");
 
-    // --- item 3: mark a session as unread -----------------------------------
+    // --- item 3: mark a session as unread (ATO-165: through the row's menu) --
     const chats = await js<Array<{ id: string; dot: string; name: string }>>(
       "window.__sidebar().chats.map((c) => ({id:c.id, dot:c.dot, name:c.name}))",
     );
@@ -11809,46 +12009,49 @@ async function chromeTest(
       check("item 3: mark as unread", false, "no chat rows in the sidebar to test against");
     } else {
       // Open it first — opening a chat is reading it, so the row reads read and
-      // the control is on offer.
+      // its menu offers Mark as unread.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
       await wait(1200);
-      const readRow = await js<{ present: boolean; title: string; vis: string; dot: string }>(
-        `window.__unreadCtl(${JSON.stringify(target.id)})`,
-      );
+      type Ctl = { present: boolean; vis: string; railDisplay: string; dot: string; label: string | null; verb: string | null };
+      const readRow = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
-        "item 3: a read row offers Mark as unread, hidden until hover",
-        readRow.present && readRow.title === "Mark as unread" && readRow.vis === "hidden" && readRow.dot === "empty",
-        `${JSON.stringify(readRow)} (:hover is not synthesisable from script — the rule text is asserted below)`,
+        "item 3: a read row's menu offers Mark as unread, and the open chat's row shows its \"…\"",
+        readRow.present && readRow.label === "Mark as unread" && readRow.verb === "unread"
+          && readRow.vis === "visible" && readRow.dot === "empty",
+        `${JSON.stringify(readRow)} (the open chat's row keeps its "…" on screen — ATO-165)`,
       );
-      const [unreadHover, unreadDetail] = await hoverRuleHolds(
-        ".sesrow:hover .unreadbtn, .sesrow:focus-within .unreadbtn",
-        ".sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn{visibility:visible}",
+      const [moreHover, moreDetail] = await hoverRuleHolds(
+        ".sesrow:hover .sesmore, .sesrow:focus-within .sesmore",
+        ".sesrow:hover .sesmore,.sesrow:focus-within .sesmore{visibility:visible}",
         "visibility: visible;",
       );
-      check("item 3: the control is revealed by hover or keyboard focus", unreadHover, unreadDetail);
+      check("item 3: on the other rows the \"…\" is revealed by hover or keyboard focus", moreHover, moreDetail);
       /* r5 review fix — the ':focus-within' half of that same declaration IS
-         drivable, and nothing drove it: the check above compares rule TEXT,
-         which is all :hover allows. Focus the row for real and read the
-         computed visibility on the way in and on the way out. */
-      const reveal = await js<{ rest: string; focused: string; blurred: string; inRow: boolean; hadFocus: boolean } | null>(
-        `window.__unreadFocusReveal(${JSON.stringify(target.id)})`,
-      );
-      check(
-        "item 3: keyboard focus on the row reveals the control for real",
-        !!reveal && reveal.inRow && reveal.hadFocus
-          && reveal.rest === "hidden" && reveal.focused === "visible" && reveal.blurred === "hidden",
-        `${JSON.stringify(reveal)} (:hover stays a rule-text assertion above; this is the twin declaration, driven)`,
-      );
-      const marked = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; stayedPut: boolean }>(
+         drivable. Focus a row that is NOT the open chat (the open one shows
+         its "…" at rest) and read the computed visibility on the way in and out. */
+      const other = chats.find((c) => c.id !== target.id);
+      if (other) {
+        const reveal = await js<{ rest: string; focused: string; blurred: string; inRow: boolean; hadFocus: boolean } | null>(
+          `window.__unreadFocusReveal(${JSON.stringify(other.id)})`,
+        );
+        check(
+          "item 3: keyboard focus on a row reveals its \"…\" for real",
+          !!reveal && reveal.inRow && reveal.hadFocus
+            && reveal.rest === "hidden" && reveal.focused === "visible" && reveal.blurred === "hidden",
+          `${JSON.stringify(reveal)} (:hover stays a rule-text assertion above; this is the twin declaration, driven)`,
+        );
+      } else {
+        process.stdout.write("SKIP item 3 focus reveal: one chat on the list, and it is the open one\n");
+      }
+      const marked = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; stayedPut: boolean; menuClosed: boolean }>(
         `window.__markUnread(${JSON.stringify(target.id)})`,
       );
       check(
-        "item 3: the control fills the dot without opening the chat",
+        "item 3: the menu's Mark as unread fills the dot without opening the chat",
         marked.clicked && marked.dot === "filled" && marked.seen === null
-          && marked.opened === 0 && marked.stayedPut,
-        `${JSON.stringify(marked)} (opened=0 is the ordering proof — the row had to be opened first for the`
-        + ` control to be offered, so stayedPut is true either way; a fall-through to [data-ses] would have run`
-        + ` openSession and markSeen would have undone the mark)`,
+          && marked.opened === 0 && marked.stayedPut && marked.menuClosed,
+        `${JSON.stringify(marked)} (opened=0 is the ordering proof — a fall-through from the "…" to [data-ses]`
+        + ` would have run openSession and markSeen would have undone the mark)`,
       );
       const survived = await js<{ dot: string; seen: number | null }>(
         `window.__unreadSurvives(${JSON.stringify(target.id)})`,
@@ -11860,51 +12063,44 @@ async function chromeTest(
           && !Object.prototype.hasOwnProperty.call(stored.data.seen, target.id),
         `${JSON.stringify(survived)}; prefs.seen has the id: ${Object.prototype.hasOwnProperty.call(stored.data.seen, target.id)}`,
       );
-      const already = await js<{ present: boolean }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      const already = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
-        "item 3: an already-unread row offers nothing",
-        !already.present,
+        "item 3: an unread row's menu offers Mark as read instead",
+        already.present && already.label === "Mark as read" && already.verb === "read",
         JSON.stringify(already),
       );
       const args = await js<{ argc: number; id: string; pinned: boolean; unread: boolean } | null>(
         `window.__sessionMenuArgs(${JSON.stringify(target.id)})`,
       );
       check(
-        "item 3: the right-click menu is told the row is unread",
-        !!args && args.argc === 3 && args.unread === true && args.id === target.id && args.pinned === false,
-        `${JSON.stringify(args)} (captured from a real contextmenu on the row, in front of the bridge call —`
-        + ` Menu.popup opens a native window the harness cannot drive, so the payload the renderer sends is what is asserted)`,
+        "item 3: a right-click on the row opens the same menu, told the row is unread",
+        !!args && args.argc >= 3 && args.unread === true && args.id === target.id && args.pinned === false,
+        `${JSON.stringify(args)} (captured from a real contextmenu on the row, in front of sendSessionMenu)`,
       );
-      // The other end of the same wire: what main builds from that payload.
-      const menuUnread = sessionMenuTemplate(target.id, false, true);
-      const menuRead = sessionMenuTemplate(target.id, false, false);
+      // ATO-165: Mark as read — the dot empties without opening the chat.
+      const readBack = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; menuClosed: boolean }>(
+        `window.__markRead(${JSON.stringify(target.id)})`,
+      );
       check(
-        "item 3: main puts Mark as Unread in the menu, greyed on a row already unread",
-        menuUnread[0]?.label === "Mark as Unread" && menuUnread[0]?.enabled === false
-          && menuRead[0]?.enabled === true
-          && menuRead.some((i) => i.label === "Pin") && menuRead.some((i) => i.label === "Delete…"),
-        `${JSON.stringify(menuRead.map((i) => [i.label ?? i.type, i.enabled]))};`
-        + ` unread row enabled=${String(menuUnread[0]?.enabled)}`
-        + ` (the preload line between the two is a verbatim forward and is the one link not independently asserted)`,
+        "item 3: the menu's Mark as read empties the dot without opening the chat, and stamps prefs",
+        readBack.clicked && readBack.dot === "empty" && typeof readBack.seen === "number" && readBack.opened === 0
+          && readBack.menuClosed,
+        JSON.stringify(readBack),
       );
-      // The menu's verb, through the same act() the app:menu listener calls.
-      await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
-      await wait(1200);
-      const reread = await js<{ dot: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      // The menu's verb, through act() as the menu's own item does.
       const viaMenu = await js<{ dot: string }>(
         `(() => { act('unread:' + ${JSON.stringify(target.id)}); return window.__unreadCtl(${JSON.stringify(target.id)}); })()`,
       );
-      check(
-        "item 3: opening the chat reads it again, and the menu verb re-marks it",
-        reread.dot === "empty" && viaMenu.dot === "filled",
-        `after open ${reread.dot}, after act('unread:…') ${viaMenu.dot}`,
-      );
-      // Read it again first: the control is only emitted on a row that reads
-      // read, and the check above deliberately left this one unread.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
       await wait(1200);
+      const reread = await js<{ dot: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      check(
+        "item 3: the menu verb re-marks it, and opening the chat reads it again",
+        viaMenu.dot === "filled" && reread.dot === "empty",
+        `after act('unread:…') ${viaMenu.dot}, after open ${reread.dot}`,
+      );
       await js<unknown>("window.__rail()");
-      const inRail = await js<{ present: boolean; railDisplay: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      const inRail = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
         "item 3: the collapsed rail keeps only the dot",
         inRail.present && inRail.railDisplay === "none",

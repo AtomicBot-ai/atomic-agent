@@ -31,7 +31,7 @@ import { reconcileCloudSkills } from "../../session/workspace-context.js";
 
 export function refreshStepWorkspace(ctx: StepContext, deps: StepDependencies): void {
   const cloud = deps.modelMode?.mode === "cloud";
-  ctx.workspace = (cloud || ctx.session.inheritedWorkspace) ? deps.prepareWorkspace?.(ctx.session, cloud, ctx.signal) : undefined;
+  ctx.workspace = (cloud || ctx.session.inheritedWorkspace) ? deps.prepareWorkspace?.(ctx.session, cloud, ctx.signal, { contextWindow: deps.contextWindow ?? null }) : undefined;
   if (cloud && ctx.workspace) {
     const next = reconcileCloudSkills(ctx.session, ctx.workspace);
     if (next !== ctx.session) { ctx.session = next; deps.commitSession?.(next); }
@@ -281,7 +281,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   if (deps.modelModePolicy) {
     llmParams.prepareForLink = (link) => {
       const linkDeps = { ...deps, modelMode: link.modelMode, toolTransport: link.transport };
-      if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, linkDeps);
+      if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, link.contextWindow ? { ...linkDeps, contextWindow: link.contextWindow } : linkDeps);
       const linked = deps.prepareWorkspace ? prepareStepPrompt(ctx, linkDeps) : null;
       const linkDescriptors = linked?.stepDescriptors ?? stepDescriptors;
       const wire = linked ? buildLlmStreamParams({ promptText: "", deps: linkDeps,

@@ -1,3 +1,6 @@
+import { selectManagedEngine } from "../../local-llm/engine-selection.js";
+import { retireIdleCore } from "../../local-llm/core/core-sessions.js";
+import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
 import { totalmem } from "node:os";
 
@@ -45,8 +48,14 @@ import {
   isMmprojDownloaded,
   isModelDownloaded,
   buildCustomModelDef,
+  buildLocalGgufModelDef,
+  describeMissingLocalGguf,
   listLocalModels,
+  looksLikeLocalGgufPath,
+  resolveLocalGgufFile,
+  resolveModelsDir,
   listVulkanDevices,
+  managedDeviceSource,
   AUTO_UPDATE_RECHECK_MS,
   checkForBackendUpdateForPanel,
   maybeAutoUpdateBackend,
@@ -176,6 +185,11 @@ export interface LocalModelsOrchestratorHooks {
    * `autoStartIfReady` adoption of a model configured long ago.
    */
   onManagedModelActivated?: () => void;
+  /**
+   * Atomic Core could not be installed or started, and the panel now
+   * offers "download again". For `local_engine_failed`.
+   */
+  onLocalEngineFailed?: (failure: CoreFailureInfo) => void;
   /**
    * Test seams for the download worker. The defaults launch a detached
    * copy of this program; a test substitutes an in-process runner so
@@ -365,10 +379,41 @@ export class LocalModelsOrchestrator {
     this.logsTimer = null;
   }
 
+  private stopGeneration = 0;
+
+  /** Keep an entire composer change cancelled after Stop, across its own starts. */
+  captureStopGuard(): () => boolean {
+    const generation = this.stopGeneration;
+    return () => !this.closing && generation === this.stopGeneration;
+  }
+  private backendAbort: AbortController | null = null;
+  private readonly coreStarts = new Map<Promise<unknown>, AbortController>();
+
+  /** Core loads are cancelled by the owning queue operation and also by Stop,
+   * which must reach a non-replacing embedding start the queue would not abort. */
+  private async trackCoreStart<T>(outer: AbortSignal | undefined, start: (signal?: AbortSignal) => Promise<T>): Promise<T> {
+    if (getConfig().localModels.managed.engine !== "atomic-core") return start(outer);
+    const abort = new AbortController();
+    const pending = start(outer ? AbortSignal.any([outer, abort.signal]) : abort.signal);
+    this.coreStarts.set(pending, abort);
+    try { return await pending; } finally { this.coreStarts.delete(pending); }
+  }
+
+  private async cancelCoreStarts(): Promise<void> {
+    for (const abort of this.coreStarts.values()) abort.abort();
+    await Promise.allSettled(this.coreStarts.keys());
+  }
+
   async shutdown(): Promise<void> {
     this.closing = true;
-    await this.operations.close();
+    if (getConfig().localModels.managed.engine === "atomic-core") this.backendAbort?.abort();
+    // close() aborts every queued operation synchronously, so an owned start
+    // sees its own signal first and exits quietly; then reach the rest.
+    const closed = this.operations.close();
+    await this.cancelCoreStarts();
+    await closed;
     this.supervisor.stop();
+    if (getConfig().localModels.managed.engine === "atomic-core") await this.backendPullInFlight;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     // The workers are on their own: quitting must not stop a download.
@@ -387,6 +432,7 @@ export class LocalModelsOrchestrator {
     // on Ctrl+C — the only thing that stops it is this explicit kill. If we
     // do not wait for it, the host process exits before the kill lands and
     // llama-server is orphaned in the background.
+    let retired = false;
     if (this.daemonSupervised) {
       this.daemonSupervised = false;
       const cfg = getConfig();
@@ -399,7 +445,15 @@ export class LocalModelsOrchestrator {
         !hasOtherLiveSessions(cfg.paths.localModelsDataDir)
       ) {
         await this.stopDaemonSilent();
+        retired = true;
       }
+    }
+    // An idle Atomic Core exits with the TUI whether or not this session
+    // started a model (a failed load, an install, a status check all start
+    // Core). Core itself refuses while any model session or other client
+    // remains, so a warm `models start` model keeps it. Bounded, no signal.
+    if (!retired && getConfig().localModels.managed.engine === "atomic-core") {
+      await retireIdleCore(getConfig().paths.localModelsDataDir);
     }
   }
 
@@ -423,13 +477,13 @@ export class LocalModelsOrchestrator {
           cfg.localModels.mode === "managed" &&
           cfg.localModels.managed.modelId === def.id,
       }));
-      const ver = readBackendVersion(dataDir);
+      const ver = readBackendVersion(dataDir, getConfig().localModels.managed.engine);
       let updateAvailable: boolean | null = null;
       let latestTag: string | null = null;
       try {
         // An update shown here is one the next start asks for too: it
         // drops the record a start would otherwise trust for hours.
-        const u = await checkForBackendUpdateForPanel(dataDir);
+        const u = await checkForBackendUpdateForPanel(dataDir, getConfig().localModels.managed.engine);
         updateAvailable = u.updateAvailable;
         latestTag = u.latestTag;
       } catch {
@@ -465,10 +519,14 @@ export class LocalModelsOrchestrator {
         type: "local_models_snapshot_loaded",
         rows,
         backend: {
+          engine: cfg.localModels.managed.engine ?? "atomic-core",
+          // Core is the engine and the choice is not part of the normal UI: llama.cpp is offered by the
+          // core failure notice (R/L) and `/model engine`, so the composer draws no engine control.
+          atomicCoreChoice: false,
           currentTag: ver?.tag ?? null,
           latestTag,
           updateAvailable,
-          autoUpdate: cfg.localModels.managed.autoUpdate,
+          autoUpdate: cfg.localModels.managed.engine === "atomic-core" ? false : cfg.localModels.managed.autoUpdate,
         },
         daemon: {
           running: daemon.running,
@@ -535,13 +593,29 @@ export class LocalModelsOrchestrator {
       return;
     }
 
-    if (mode !== "mmproj-only" && !isBackendDownloaded(dataDir)) {
+    // Added from disk: nothing to download, so a missing file is the
+    // whole story — say where it was expected rather than spawn a worker
+    // that can only fail (or fetch a backend for a model that cannot run).
+    if (
+      mode !== "mmproj-only" &&
+      def.localPath &&
+      !isModelDownloaded(dataDir, def)
+    ) {
+      this.bus.emit({
+        type: "local_models_pull_failed",
+        kind: "chat",
+        error: describeMissingLocalGguf(def.localPath),
+      });
+      return;
+    }
+
+    if (mode !== "mmproj-only" && !isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: backend missing — downloading llama.cpp first…",
       });
       await this.pullBackend();
-      if (!isBackendDownloaded(dataDir)) return;
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
     }
 
     try {
@@ -1266,6 +1340,14 @@ export class LocalModelsOrchestrator {
    * sentence and is shown on the editor that asked for the reference.
    */
   async resolveHuggingFaceReference(raw: string): Promise<void> {
+    if (looksLikeLocalGgufPath(raw)) {
+      // A path supersedes whatever was being looked up before it: drop
+      // that socket so a late answer cannot land over the local add.
+      this.hfLookup?.abort();
+      this.hfLookup = null;
+      await this.addLocalGgufFile(raw);
+      return;
+    }
     const controller = new AbortController();
     this.hfLookup?.abort();
     this.hfLookup = controller;
@@ -1330,6 +1412,35 @@ export class LocalModelsOrchestrator {
     await this.pullModel(id);
   }
 
+  /**
+   * The reference was a path to a GGUF already on disk (issue #631):
+   * validate it, register it where it lies — no copy, no download — and
+   * hand it to the same pull the Hugging Face rows use. That pull finds
+   * the weights present and goes straight to activate-and-start. A bad
+   * path stays on the reference editor with the reason.
+   */
+  private async addLocalGgufFile(raw: string): Promise<void> {
+    let id: LocalModelId;
+    try {
+      const dataDir = getConfig().paths.localModelsDataDir;
+      const def = buildLocalGgufModelDef(
+        resolveLocalGgufFile(raw, {
+          managedModelsDir: resolveModelsDir(dataDir),
+        }),
+      );
+      addCustomModel(def);
+      id = def.id;
+    } catch (err) {
+      this.bus.emit({
+        type: "local_models_hf_lookup_failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.bus.emit({ type: "local_models_hf_closed" });
+    await this.pullModel(id);
+  }
+
   async pullBackend(): Promise<void> {
     // Coalesce concurrent callers onto one download. If a backend pull is
     // already running (e.g. a chat pull triggered it and an embedding pull
@@ -1346,13 +1457,16 @@ export class LocalModelsOrchestrator {
   }
 
   private async runBackendPull(): Promise<void> {
+    const controller = new AbortController();
+    this.backendAbort = controller;
     const dataDir = getConfig().paths.localModelsDataDir;
+    this.clearCoreFailure();
     this.bus.emit({
       type: "local_models_pull_started",
       pull: {
         kind: "backend",
         modelId: "_backend",
-        label: "llama.cpp backend",
+        label: getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Core engine" : "llama.cpp backend",
         percent: 0,
         transferredBytes: 0,
         totalBytes: 0,
@@ -1362,6 +1476,8 @@ export class LocalModelsOrchestrator {
     try {
       let lastProgress = { percent: 0, transferred: 0, total: 0 };
       await downloadBackend(dataDir, {
+        engine: getConfig().localModels.managed.engine,
+        signal: controller.signal,
         onProgress: (percent, transferred, total) => {
           lastProgress = { percent, transferred, total };
           this.bus.emit({
@@ -1404,7 +1520,71 @@ export class LocalModelsOrchestrator {
         kind: "backend",
         error: msg,
       });
+      const failure = e instanceof CoreUnavailableError ? e.info : null;
+      if (!(await this.fallBackFromCore(failure))) this.reportCoreFailure(e);
     }
+  }
+
+  /**
+   * This computer has no Atomic Core build (`no_backend`, `unsupported`):
+   * report `local_engine_failed`, switch it to the llama-server engine once
+   * with one feed line, and leave the next backend pull to install
+   * llama.cpp. A retryable failure keeps Core and its "download again"
+   * notice. False when nothing was switched.
+   */
+  private async fallBackFromCore(failure: CoreFailureInfo | null | undefined): Promise<boolean> {
+    const cfg = getConfig();
+    if (this.closing || cfg.localModels.managed.engine !== "atomic-core" || !failure || !shouldFallBackFromCore(failure)) return false;
+    this.hooks?.onLocalEngineFailed?.(failure);
+    try {
+      await selectManagedEngine(cfg.paths.localModelsDataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
+        () => persistUserLocalModelsConfig({ managed: { engine: "llama-server" } }));
+    } catch {
+      return false;
+    }
+    this.clearCoreFailure();
+    this.bus.emit({ type: "runtime_info", line: `local-llm: ${CORE_FALLBACK_LINE}` });
+    await retireIdleCore(cfg.paths.localModelsDataDir);
+    return true;
+  }
+
+  /**
+   * `R` on the Core notice: download Atomic Core again, then start the
+   * configured model when it is ready to run, so one key gets the operator
+   * back to a working model.
+   */
+  async retryCoreEngine(): Promise<void> {
+    await this.pullBackend();
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    if (this.closing || cfg.localModels.managed.engine === "llama-server") return;
+    if (!isBackendDownloaded(dataDir, cfg.localModels.managed.engine)) return;
+    const mid = cfg.localModels.managed.modelId;
+    if (cfg.localModels.mode !== "managed" || !mid || !isKnownLocalModelId(mid)) return;
+    if (!isModelDownloaded(dataDir, getLocalModelDef(mid))) return;
+    if ((await getDaemonStatus(dataDir, cfg.localModels.managed.port)).running) return;
+    await this.startDaemon();
+  }
+
+  /**
+   * Show a CoreUnavailableError as the panel notice (R download again),
+   * say it in the feed and report it. Anything else, and a
+   * cancellation, is left to the caller's existing reporting.
+   */
+  private reportCoreFailure(err: unknown, info?: CoreFailureInfo): boolean {
+    const failure = info ?? (err instanceof CoreUnavailableError ? err.info : null);
+    if (!failure || this.closing) return false;
+    this.bus.emit({ type: "local_models_core_failure_set", failure });
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: ${failure.reason} Press R in Models to download it again.`,
+    });
+    this.hooks?.onLocalEngineFailed?.(failure);
+    return true;
+  }
+
+  private clearCoreFailure(): void {
+    this.bus.emit({ type: "local_models_core_failure_set", failure: null });
   }
 
   /**
@@ -1448,7 +1628,17 @@ export class LocalModelsOrchestrator {
     this.hooks?.onManagedModelSelected?.(id);
     await this.refresh();
     if (!current()) return;
-    if (!isModelDownloaded(dataDir, getLocalModelDef(id))) {
+    const selectedDef = getLocalModelDef(id);
+    if (!isModelDownloaded(dataDir, selectedDef)) {
+      if (selectedDef.localPath) {
+        // Nothing to download for a file added from disk; the honest
+        // message is where it was expected.
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: ${selectedDef.name}: ${describeMissingLocalGguf(selectedDef.localPath)}`,
+        });
+        return;
+      }
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: model ${id} not downloaded — downloading now…`,
@@ -1515,11 +1705,15 @@ export class LocalModelsOrchestrator {
       // A curated row survives its files' deletion — the catalog is the
       // product. A custom row exists only because the operator added it,
       // so deleting the model undoes the add too; otherwise the row
-      // would linger with no other way to drop it from the list.
+      // would linger with no other way to drop it from the list. A row
+      // added from disk only loses its entry: `removeModel` leaves the
+      // operator's own file alone.
       if (def.family === "custom") removeCustomModel(id);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: ${def.name} removed`,
+        line: def.localPath
+          ? `local-llm: ${def.name} removed from the list (file kept at ${def.localPath})`
+          : `local-llm: ${def.name} removed`,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1550,12 +1744,55 @@ export class LocalModelsOrchestrator {
    * presses `s` to apply.
    */
   /**
+   * Choose the managed engine. Refused while a local model runs; never
+   * stops a model or starts a download (`selectManagedEngine`).
+   */
+  async chooseEngine(engine: "atomic-core" | "llama-server", opts: { quietIfSelected?: boolean } = {}): Promise<boolean> {
+    // Queued behind any start or stop instead of racing it, and without
+    // replacing it: a load in progress finishes, then the running check in
+    // selectManagedEngine refuses the change. Choosing never cancels a model.
+    // Stop does cancel the choice: not being the queue's latest operation, it
+    // is not aborted by Stop, so it checks the Stop guard before saving.
+    const wanted = this.captureStopGuard();
+    return this.operations.run(() => this.chooseEngineNow(engine, wanted, opts.quietIfSelected === true), false, false);
+  }
+
+  private async chooseEngineNow(engine: "atomic-core" | "llama-server", wanted: () => boolean, quietIfSelected: boolean): Promise<boolean> {
+    if (!wanted()) return false;
+    const cfg = getConfig();
+    if ((cfg.localModels.managed.engine ?? "atomic-core") === engine) {
+      // The composer's one local row carries the engine already selected: picking it names no engine.
+      if (!quietIfSelected) this.bus.emit({ type: "composer_notice", text: `${engine === "atomic-core" ? "Atomic Chat" : "Local llama"} is already selected.` });
+      return true;
+    }
+    try {
+      let saved = false;
+      await selectManagedEngine(cfg.paths.localModelsDataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
+        () => { if (!wanted()) return; persistUserLocalModelsConfig({ managed: { engine } }); saved = true; });
+      if (!saved) return false;
+      this.bus.emit({ type: "runtime_info", line: `Local engine: ${engine}. Start your model; a missing engine is installed first (B in Models installs it now).` });
+      this.bus.emit({ type: "composer_notice", text: `Inference engine: ${engine === "atomic-core" ? "Atomic Chat" : "Local llama"}.` });
+      await this.refresh();
+      return true;
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      this.bus.emit({ type: "runtime_info", line: text });
+      this.bus.emit({ type: "composer_notice", text });
+      return false;
+    }
+  }
+
+  /**
    * Flip `localModels.managed.autoUpdate`. The flag is on by default and
    * governs a background download, so it needs a way out that is not
    * "hand-edit config.json" — the CLI equivalent takes the whole file.
    * Takes effect on the next start; nothing in flight is cancelled.
    */
   async toggleBackendAutoUpdate(): Promise<void> {
+    if (getConfig().localModels.managed.engine === "atomic-core") {
+      this.bus.emit({ type: "runtime_info", line: "Atomic Core checks for updates in the model panel. Press B to install; running models must be stopped first." });
+      return;
+    }
     const next = !getConfig().localModels.managed.autoUpdate;
     persistUserLocalModelsConfig({ managed: { autoUpdate: next } });
     resetConfigCache();
@@ -1572,10 +1809,10 @@ export class LocalModelsOrchestrator {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     let ids: string[] = [];
-    if (isBackendDownloaded(dataDir)) {
-      const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName);
-      ids = (await listVulkanDevices(binPath)).map((d) => d.id);
+    if (isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
+      // Under Atomic Core: Core's own llama-server, run as Core runs it.
+      const source = managedDeviceSource(dataDir, getConfig().localModels.managed.engine);
+      ids = source ? (await listVulkanDevices(source.binPath, source.spawn)).map((d) => d.id) : [];
     }
     const order = ["auto", ...ids, "cpu"];
     const current = cfg.localModels.managed.device;
@@ -1617,10 +1854,9 @@ export class LocalModelsOrchestrator {
     if (configuredDevice === "cpu") return null;
     // Preferred source: Vulkan devices reported by the backend
     // (covers NVIDIA / AMD / Intel). Requires the binary on disk.
-    if (this.cachedDevices === null && isBackendDownloaded(dataDir)) {
-      const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName);
-      this.cachedDevices = await listVulkanDevices(binPath);
+    if (this.cachedDevices === null && isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
+      const source = managedDeviceSource(dataDir, getConfig().localModels.managed.engine);
+      this.cachedDevices = source ? await listVulkanDevices(source.binPath, source.spawn) : [];
     }
     const budget = resolveGpuBudgetGb({
       platform,
@@ -1679,7 +1915,10 @@ export class LocalModelsOrchestrator {
      */
     cpuFallbackAttempted?: boolean;
   }): Promise<boolean> {
-    const cfg = getConfig();
+    if (this.closing) return false;
+    // Re-read after the backend step: a computer without an Atomic Core
+    // build is switched to llama.cpp there (`fallBackFromCore`).
+    let cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
       this.bus.emit({
         type: "runtime_info",
@@ -1698,14 +1937,25 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getLocalModelDef(mid);
     let justPulledBackend = false;
-    if (!isBackendDownloaded(dataDir)) {
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: backend missing — downloading…",
       });
+      const engineBefore = getConfig().localModels.managed.engine;
       await this.pullBackend();
-      if (!isBackendDownloaded(dataDir)) return false;
+      // Switched to llama.cpp by the failed Core install: install that now.
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine) &&
+          getConfig().localModels.managed.engine !== engineBefore) await this.pullBackend();
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return false;
       justPulledBackend = true;
+    }
+    if (!isModelDownloaded(dataDir, def) && def.localPath) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${def.name} cannot start — ${describeMissingLocalGguf(def.localPath)}`,
+      });
+      return false;
     }
     if (!isModelDownloaded(dataDir, def)) {
       // With a pull already in flight the honest message is the live
@@ -1724,6 +1974,7 @@ export class LocalModelsOrchestrator {
       const updated = await this.applyBackendAutoUpdate(dataDir);
       if (!updated || opts?.signal?.aborted) return false;
     }
+    cfg = getConfig();
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "starting" });
     this.bus.emit({
       type: "runtime_info",
@@ -1752,11 +2003,13 @@ export class LocalModelsOrchestrator {
       const tensorSplit = cfg.localModels.managed.tensorSplit;
       const multiGpu = tensorSplit.length > 0;
       const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName);
+      const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
+      // Under Atomic Core its llama-server needs the environment Core runs it with.
+      const spawn = managedDeviceSource(dataDir, getConfig().localModels.managed.engine)?.spawn;
       const device = await resolveManagedDevice(
         binPath,
         cfg.localModels.managed.device,
-        { multiGpu },
+        { multiGpu, ...(spawn ? { spawn } : {}) },
       );
       this.bus.emit({
         type: "runtime_info",
@@ -1804,9 +2057,11 @@ export class LocalModelsOrchestrator {
         chatClear.port,
         clearance,
       );
-      const result = await startChatAndEmbeddingDaemons({
+      opts?.signal?.throwIfAborted();
+      const result = await this.trackCoreStart(opts?.signal, signal => startChatAndEmbeddingDaemons({
         chat: {
-          signal: opts?.signal,
+          engine: cfg.localModels.managed.engine,
+          signal,
           throughputProbe: false,
           healthTimeoutMs: 120_000,
           dataDir,
@@ -1822,12 +2077,13 @@ export class LocalModelsOrchestrator {
           ...(multiGpu ? { tensorSplit } : {}),
         },
         embedding: embClear.options
-          ? { ...embClear.options, ...(device ? { device } : {}) }
+          ? { ...embClear.options, signal, engine: cfg.localModels.managed.engine, ...(device ? { device } : {}) }
           : undefined,
-      });
+      }));
       this.daemonSupervised = true;
       opts?.signal?.throwIfAborted();
       this.supervisor.noteStarted();
+      this.clearCoreFailure();
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${chatClear.port}${
@@ -1839,7 +2095,9 @@ export class LocalModelsOrchestrator {
       if (def.supportsVision) {
         this.bus.emit({
           type: "runtime_info",
-          line: mmprojFile
+          line: mmprojFile && result.chat.projectorDropped
+            ? `local-llm: vision disabled — Atomic Chat could not load ${def.mmprojFilename}; the model runs text-only`
+            : mmprojFile
             ? `local-llm: vision enabled (${def.mmprojFilename})`
             : `local-llm: vision disabled — mmproj not downloaded for ${def.id}`,
         });
@@ -1871,7 +2129,7 @@ export class LocalModelsOrchestrator {
       if (
         !opts?.cpuFallbackAttempted &&
         shouldFallBackToCpuBackend({
-          installedAsset: readBackendVersion(dataDir)?.asset,
+          installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
           configuredVariant: getConfiguredBackendVariant(),
           error: e,
         })
@@ -1879,10 +2137,12 @@ export class LocalModelsOrchestrator {
         return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal);
       }
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
-      this.bus.emit({
-        type: "runtime_info",
-        line: `local-llm: start failed — ${msg}`,
-      });
+      if (!this.reportCoreFailure(e)) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: start failed — ${msg}`,
+        });
+      }
       return false;
     } finally {
       this.endActiveRefresh();
@@ -1931,7 +2191,7 @@ export class LocalModelsOrchestrator {
       pull: {
         kind: "backend",
         modelId: "_backend",
-        label: "llama.cpp backend",
+        label: getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Core engine" : "llama.cpp backend",
         percent: 0,
         transferredBytes: 0,
         totalBytes: 0,
@@ -2014,8 +2274,22 @@ export class LocalModelsOrchestrator {
   }
 
   async stopDaemon(opts?: { silent?: boolean }): Promise<void> {
+    this.stopGeneration++;
     this.chatReadyError = "The model was stopped. Start a model and retry the message.";
-    return this.operations.run(() => this.stopDaemonNow(opts), undefined);
+    const core = getConfig().localModels.managed.engine === "atomic-core";
+    if (core) this.backendAbort?.abort();
+    // run() aborts the waiting or running start synchronously, so that start
+    // sees its own signal and ends without reporting a failure. Core loads the
+    // queue does not replace (embedding pairing) are cancelled after it.
+    const stopped = this.operations.run(async () => {
+      // A Core install holds the engine lock that the stop below needs.
+      if (core) await this.backendPullInFlight;
+      return this.stopDaemonNow(opts);
+    }, undefined);
+    // Observed here; the caller still receives the rejection below.
+    stopped.catch(() => {});
+    await this.cancelCoreStarts();
+    return stopped;
   }
 
   private async stopDaemonNow(opts?: { silent?: boolean }): Promise<void> {
@@ -2181,12 +2455,18 @@ export class LocalModelsOrchestrator {
    * phase 1B: stops both daemons atomically.
    */
   private async stopDaemonSilent(): Promise<void> {
+    const cfg = getConfig();
     try {
-      await stopChatAndEmbeddingDaemons(getConfig().paths.localModelsDataDir, {
+      await stopChatAndEmbeddingDaemons(cfg.paths.localModelsDataDir, {
         timeoutMs: 2000,
       });
     } catch {
       /* best-effort during shutdown */
+    }
+    // With the models unloaded, the idle Atomic Core daemon goes too. Core
+    // itself refuses while any model session or other client remains.
+    if (cfg.localModels.managed.engine === "atomic-core") {
+      await retireIdleCore(cfg.paths.localModelsDataDir);
     }
   }
 
@@ -2279,6 +2559,7 @@ export class LocalModelsOrchestrator {
   private async ensureEmbeddingPairedNow(opts?: {
     hotSwap?: boolean;
   }): Promise<void> {
+    if (this.closing) return;
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
 
@@ -2347,8 +2628,10 @@ export class LocalModelsOrchestrator {
       });
     }
 
+    const wanted = this.captureStopGuard();
     try {
-      const { pid } = await startEmbeddingDaemon({ ...desired, signal: this.operations.signal });
+      const { pid } = await this.trackCoreStart(this.operations.signal, signal =>
+        startEmbeddingDaemon({ ...desired, signal, engine: cfg.localModels.managed.engine }));
       this.operations.signal?.throwIfAborted();
       persistMemoryEmbeddingsEnabled(true);
       this.bus.emit({
@@ -2356,6 +2639,8 @@ export class LocalModelsOrchestrator {
         line: `local-llm: embedding daemon up (${desired.modelId}, pid ${pid}) — hybrid recall on`,
       });
     } catch (e) {
+      // Cancelled by Stop, shutdown or a newer choice: nothing failed.
+      if (this.operations.signal?.aborted || !wanted()) return;
       const msg = e instanceof Error ? e.message : String(e);
       // Not persisted: `autoStartIfReady` reaches this at TUI launch
       // with no user action, and a transient start failure must not
@@ -2413,13 +2698,13 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getEmbeddingModelDef(id);
 
-    if (!isBackendDownloaded(dataDir)) {
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: backend missing — downloading llama.cpp first…",
       });
       await this.pullBackend();
-      if (!isBackendDownloaded(dataDir)) return;
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
     }
 
     try {
@@ -2703,6 +2988,7 @@ export class LocalModelsOrchestrator {
   ): Promise<boolean> {
     try {
       const result = await maybeAutoUpdateBackend(dataDir, {
+        engine: getConfig().localModels.managed.engine,
         enabled: getConfig().localModels.managed.autoUpdate,
         keepDaemonRunning: opts?.keepDaemonRunning,
         // A check from the last few hours stands, whichever process made
@@ -2718,7 +3004,7 @@ export class LocalModelsOrchestrator {
             pull: {
               kind: "backend",
               modelId: "_backend",
-              label: "llama.cpp backend",
+              label: getConfig().localModels.managed.engine === "atomic-core" ? "Atomic Core engine" : "llama.cpp backend",
               percent: 0,
               transferredBytes: 0,
               totalBytes: 0,
@@ -2741,7 +3027,9 @@ export class LocalModelsOrchestrator {
         this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
         this.bus.emit({
           type: "runtime_info",
-          line: `local-llm: updated llama.cpp ${result.from ?? "none"} → ${result.to}`,
+          line: getConfig().localModels.managed.engine === "atomic-core"
+            ? `local-llm: installed ${result.to}${result.from ? ` (was ${result.from})` : ""}`
+            : `local-llm: updated llama.cpp ${result.from ?? "none"} → ${result.to}`,
         });
       } else if (result.action === "check_failed") {
         this.bus.emit({
@@ -2763,10 +3051,17 @@ export class LocalModelsOrchestrator {
           error: result.error,
         });
         if (!result.backendUsable) {
-          this.bus.emit({
-            type: "runtime_info",
-            line: `local-llm: backend update failed and no usable backend remains — ${result.error}`,
-          });
+          if (await this.fallBackFromCore(result.coreFailure)) {
+            // Now on llama.cpp: install it and go on with the start.
+            await this.pullBackend();
+            return isBackendDownloaded(dataDir, getConfig().localModels.managed.engine);
+          }
+          if (!result.coreFailure || !this.reportCoreFailure(undefined, result.coreFailure)) {
+            this.bus.emit({
+              type: "runtime_info",
+              line: `local-llm: backend update failed and no usable backend remains — ${result.error}`,
+            });
+          }
           return false;
         }
         this.bus.emit({
@@ -2822,8 +3117,21 @@ export class LocalModelsOrchestrator {
     const mid = cfg.localModels.managed.modelId;
     if (!mid || !isKnownLocalModelId(mid)) return;
     const dataDir = cfg.paths.localModelsDataDir;
-    if (!isBackendDownloaded(dataDir)) return;
     const def = getLocalModelDef(mid);
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
+      // llama.cpp is never fetched at launch. Atomic Core is the default
+      // engine, and a model that served yesterday must not silently stay
+      // down because its engine changed: install it with progress, then
+      // start. A failure leaves the panel's retry / llama.cpp notice.
+      // A server still running from before the engine changed is adopted
+      // below as it is; the install waits for the next start.
+      if (getConfig().localModels.managed.engine !== "atomic-core" || !isModelDownloaded(dataDir, def)) return;
+      if (!(await getDaemonStatus(dataDir, cfg.localModels.managed.port)).running) {
+        this.bus.emit({ type: "runtime_info", line: "local-llm: installing the Atomic Chat engine…" });
+        await this.pullBackend();
+        if (this.operations.signal?.aborted || !isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return;
+      }
+    }
     if (!isModelDownloaded(dataDir, def)) return;
     const running = await getDaemonStatus(
       dataDir,
@@ -2963,10 +3271,12 @@ export class LocalModelsOrchestrator {
       (configured && isKnownLocalModelId(configured)
         ? configured
         : DEFAULT_LLAMACPP_MODEL_ID);
-    if (!isBackendDownloaded(dataDir)) {
+    if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
       this.bus.emit({
         type: "runtime_info",
-        line: "local-llm: downloading llama.cpp backend…",
+        line: getConfig().localModels.managed.engine === "atomic-core"
+          ? "local-llm: installing the Atomic Chat engine…"
+          : "local-llm: downloading llama.cpp backend…",
       });
       await this.pullBackend();
     }

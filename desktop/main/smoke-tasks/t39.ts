@@ -1,4 +1,4 @@
-import { managedStart, servedWith } from "./managed-start.js";
+import { coreDeviceListing, managedStart, servedWith } from "./managed-start.js";
 
 /**
  * Release-fix checks for backlog item 39 (see main/release-fixes-smoke.ts).
@@ -23,7 +23,11 @@ import { managedStart, servedWith } from "./managed-start.js";
  *   3 — The real `models start`, against a stand-in llama-server
  *       (managed-start.ts): one `--list-devices` per start; the speed probed
  *       on a model's first start, carried over on the next (the start still
- *       says "~22 tok/s"), and probed again after a llama.cpp update.
+ *       says "~22 tok/s"), and probed again after a llama.cpp update. These
+ *       run on the agent's own llama-server (the config pins the engine).
+ *   4 — Under Atomic Core, the default engine, the device list is asked of
+ *       the llama-server Core installed, not the agent's own build
+ *       (managed-start.ts `coreDeviceListing`, `models devices`).
  *
  * The renderer checks put LIVE_CONFIG, the pane's message and the server
  * status back as they found them; the start checks run in a throwaway state
@@ -41,6 +45,17 @@ const count = (calls: string[], what: string) => calls.filter((c) => c === what)
 export async function checks39(js: Js, check: Check): Promise<void> {
   await noticeChecks(js, check);
   await startChecks(check);
+  await coreDeviceChecks(check);
+}
+
+async function coreDeviceChecks(check: Check): Promise<void> {
+  const { run, bins, coreBin } = await coreDeviceListing("CUDA0: NVIDIA GeForce RTX 4090 (24564 MiB, 23000 MiB free)");
+  check(
+    "T39: under Atomic Core the agent asks Core's own llama-server for --list-devices, and picks its GPU",
+    run.ok && bins.length === 1 && bins[0] === "core --list-devices" && /effective device:\s+auto → CUDA0/.test(run.stdout)
+      && /\*\s+CUDA0/.test(run.stdout),
+    q({ ok: run.ok, bins, coreBin, stdout: run.stdout.slice(-400), stderr: run.stderr.slice(-300), error: run.error }),
+  );
 }
 
 async function noticeChecks(js: Js, check: Check): Promise<void> {

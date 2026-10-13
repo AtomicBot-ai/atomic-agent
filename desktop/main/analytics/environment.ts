@@ -123,6 +123,17 @@ export function readConfigFile(stateDir: string): Record<string, unknown> | null
 
 type Cfg = Record<string, unknown> | null | undefined;
 
+/**
+ * The managed local engine the file names, for the engine property. No engine
+ * named is Atomic Chat Core, the default (agent-cli.ts managedEngineOf); null
+ * only when there is no readable file at all.
+ */
+export function localEngineOf(cfg: Cfg): "atomic-core" | "llama-server" | null {
+  if (!cfg) return null;
+  const engine = ((cfg["localModels"] as { managed?: { engine?: unknown } } | undefined)?.managed)?.engine;
+  return engine === "llama-server" ? "llama-server" : "atomic-core";
+}
+
 /** `analytics.enabled` when the file says it outright (true / false), else undefined. */
 export function explicitAnalyticsEnabled(cfg: Cfg): boolean | undefined {
   if (!cfg) return undefined;

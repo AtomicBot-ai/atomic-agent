@@ -93,7 +93,8 @@ const TROUBLE = `[
 ]`;
 
 const kinds = (chips) => chips.map((c) => c.kind);
-/** composerSwitchKindsFor, restated here so the test owns the expectation. */
+/** composerSwitchKindsFor, restated here so the test owns the expectation.
+    The local engine is not a choice in the composer, so the local route draws backend + model only. */
 const expectedKinds = (backend) =>
   backend === 'local' ? ['backend', 'model'] : ['backend', 'provider', 'model'];
 
