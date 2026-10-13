@@ -4,6 +4,16 @@ import { dirname } from "node:path";
 import type { WebSearchProviderName } from "../web-search-provider.js";
 
 /**
+ * Which tier of a provider a park was earned on. Exa has two with separate
+ * quotas: its keyless MCP endpoint and its keyed API. A park from the free
+ * tier says nothing about a key the user has just added, so the
+ * orchestrator drops a park whose tag is not the tier it is about to use
+ * (ATO-327). Untagged parks (other providers, files written before tags
+ * existed) apply to every tier.
+ */
+export type CooldownTag = "keyless" | "keyed";
+
+/**
  * Which providers are parked, and until when.
  *
  * The transport already retries a 429 twice against the same provider
@@ -35,16 +45,6 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  * as expired, and a record whose park ended more than `2 * maxMs` ago is
  * dropped on load rather than parking a provider on yesterday's evidence.
  */
-/**
- * Which tier of a provider a park was earned on. Exa has two with separate
- * quotas: its keyless MCP endpoint and its keyed API. A park from the free
- * tier says nothing about a key the user has just added, so the
- * orchestrator drops a park whose tag is not the tier it is about to use
- * (ATO-327). Untagged parks (other providers, files written before tags
- * existed) apply to every tier.
- */
-export type CooldownTag = "keyless" | "keyed";
-
 export interface ProviderCooldown {
   /** True while `name` is parked — the orchestrator skips it. */
   isParked(name: WebSearchProviderName, now: number): boolean;
