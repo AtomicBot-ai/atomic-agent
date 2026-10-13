@@ -44,7 +44,7 @@ const ANX = (() => {
   }
 
   /* The verbs that also mean something to the session list or the turn. */
-  const SESSION_VERB = {ses:'open', pin:'pin', unpin:'unpin', unread:'mark_unread', del:'delete'};
+  const SESSION_VERB = {ses:'open', pin:'pin', unpin:'unpin', unread:'mark_unread', read:'mark_read', del:'delete'};
   function sessionAction(a, clean) {
     if (a === 'session:new') return 'new';
     if (a === 'session:switch') return 'switch';

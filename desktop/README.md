@@ -227,9 +227,13 @@ Real, driven by the running agent:
   string; an empty Tasks list says `(no tasks yet)` rather than the TUI's
   `(no active tasks)`, because this list is every task the agent holds and not
   the rail's running/pending/recurring projection — "no active tasks" would be
-  a claim about a different list. Chats can be pinned and unpinned from the row's hover button or
-  its right-click menu (Pin/Unpin · Delete…), and **Delete really deletes**:
-  `DELETE /api/sessions/{id}`, not a splice that the next load undoes.
+  a claim about a different list. Each chat row has a **…** button (on hover, keyboard
+  focus and on the open chat's row) and the same menu on a right-click: Pin / Unpin,
+  Mark as read / Mark as unread, Delete… Pinned chats stand in a **Pinned** section above
+  Chats, the last pinned on top, and are not repeated below. Pin and read state live in
+  Electron's `prefs.json`, not in the agent. **Delete really deletes** (after a confirm):
+  `DELETE /api/sessions/{id}`, not a splice that the next load undoes; deleting the open
+  chat leaves an empty new one.
   Each list header carries a **+** on its own line: the one on Chats starts a
   new chat, the one on Tasks opens Settings › Tasks with the create form up,
   and on the Tasks header `N running` sits to the left of it. The head row —

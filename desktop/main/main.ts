@@ -889,28 +889,6 @@ function hfGatedTokenHint(message: string, dir: string): string {
     + " — start the app with it exported and the listing will see it too.)";
 }
 
-/* r5 item 3 review fix: the chat row's context menu, as a template. Factored
-   out of the app:sessionMenu handler so the suite can assert the "Mark as
-   Unread" entry and its `enabled` gate directly — Menu.popup opens a native
-   window the harness cannot drive, and nothing else in the run would notice
-   the entry being dropped. */
-function sessionMenuTemplate(
-  id: string,
-  pinned: boolean,
-  unread: boolean,
-): Electron.MenuItemConstructorOptions[] {
-  return [
-    // r5 item 3: macOS title case, beside the Pin/Delete… the menu already
-    // offers. `enabled` is what keeps it honest on a row that is already
-    // unread — the item is shown, greyed, rather than offering a no-op.
-    { label: "Mark as Unread", enabled: !unread, click: () => send("app:menu", "unread:" + id) },
-    { type: "separator" },
-    { label: pinned ? "Unpin" : "Pin", click: () => send("app:menu", (pinned ? "unpin:" : "pin:") + id) },
-    { type: "separator" },
-    { label: "Delete…", click: () => send("app:menu", "delask:" + id) },
-  ];
-}
-
 /* N3 — the agent's output, on disk.
    Everything `atag serve` said lived in the console drawer's 300-line ring,
    in memory, and went with the window: quitting the app destroyed the
@@ -1615,18 +1593,10 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
 
   // Item 6 (sidebar): pin + read state, in userData — never in the agent config.
+  // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
+  // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
   ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
-  // The row's right-click menu. `Menu` is not a top-level import here, so it is
-  // required inside the handler exactly as app:fileMenu does.
-  ipcMain.handle("app:sessionMenu", (event, payload: unknown) => {
-    const { id, pinned, unread } = (payload ?? {}) as { id?: unknown; pinned?: unknown; unread?: unknown };
-    if (typeof id !== "string" || !id) return;
-    const { Menu } = require("electron") as typeof import("electron");
-    const menu = Menu.buildFromTemplate(sessionMenuTemplate(id, !!pinned, unread === true));
-    const sender = BrowserWindow.fromWebContents(event.sender);
-    menu.popup(sender ? { window: sender } : {});
-  });
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
@@ -2556,8 +2526,14 @@ function wireIpc(client: AgentClient): void {
 }
 
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
+/* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
+   chat is on the list, then Chats, then Tasks when the agent holds any. */
+function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+}
 type Sb = {
   headers: string[];
+  pinnedRows?: number;
   navrows: number;
   skillsRow: boolean;
   subtitles: number;
@@ -2614,7 +2590,7 @@ async function smokeTest(): Promise<void> {
     "renderer painted",
     // Calm (S1): Chats first; Tasks is drawn only when the agent holds tasks.
     !!sb0 && sb0.navrows === 0
-      && JSON.stringify(sb0.headers) === (sb0.tasks.length > 0 ? '["Chats","Tasks"]' : '["Chats"]')
+      && JSON.stringify(sb0.headers) === sidebarHeadersExpected(sb0)
       && sb0.subtitles === 0 && !sb0.skillsRow,
     sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
   );
@@ -4476,22 +4452,19 @@ async function sidebarTest(
     let sb = await js<Sb>("window.__sidebar()");
     check(
       // Calm (S1): Chats first, Tasks under it and only when there are tasks.
-      "sidebar is Chats, then Tasks when there are any, with no nav rows",
-      JSON.stringify(sb.headers) === (sb.tasks.length > 0 ? '["Chats","Tasks"]' : '["Chats"]')
+      "sidebar is Pinned when anything is pinned, Chats, then Tasks when there are any, with no nav rows",
+      JSON.stringify(sb.headers) === sidebarHeadersExpected(sb)
         && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
       `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
     );
     // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
     // class. This measures the row the user asked for — 30 px, one text line,
     // and dot + name (+ its hover controls) as its only children.
-    // r5 item 3 added a second hover control to a chat row that reads read
-    // ("Mark as unread"), so the allowed tail is now pin and unread rather than
-    // pin alone. Both are 22px inside a 30px row, so the height is unchanged —
-    // which is the half of this check that would catch a row growing.
-    // The cap on the tail's LENGTH is kept (the pre-existing check had
-    // `children.length <= 3`): `every` is vacuously true on an empty tail and
-    // says nothing about a third or fourth control, which a 30px flex row full
-    // of 22px buttons would swallow without moving the height.
+    // ATO-165: the pin and mark-as-unread controls became one "…" control that
+    // opens the row's menu, so the allowed tail is that one control.
+    // The cap on the tail's LENGTH is kept: `every` is vacuously true on an
+    // empty tail and says nothing about a second or third control, which a
+    // 34px flex row of 24px buttons would swallow without moving the height.
     type RowShape = { rows: number; minHeight: number; maxHeight: number; children: string[]; titleHeight: number; titleLineHeight: number; nowrap: boolean } | null;
     const shape = await js<RowShape>("window.__rowShape()");
     const rowTail = shape ? shape.children.slice(2) : [];
@@ -4500,8 +4473,8 @@ async function sidebarTest(
       "sidebar rows are one line: dot + name (+ hover controls)",
       !!shape && shape.minHeight === 34 && shape.maxHeight === 34
         && shape.children[0] === "sdot" && shape.children[1] === "t1"
-        && rowTail.length <= 2
-        && rowTail.every((c) => c === "pinbtn" || c === "unreadbtn")
+        && rowTail.length <= 1
+        && rowTail.every((c) => c === "sesmore")
         && shape.nowrap && shape.titleHeight <= shape.titleLineHeight + 1,
       shape ? `${shape.rows} rows ${shape.minHeight}–${shape.maxHeight}px, children ${JSON.stringify(shape.children)}, title ${shape.titleHeight}px of line-height ${shape.titleLineHeight}, nowrap=${shape.nowrap}` : "no rows",
     );
@@ -4550,22 +4523,18 @@ async function sidebarTest(
       const pinned = await js<string[]>(`window.__pin(${JSON.stringify(last)})`);
       sb = await js<Sb>("window.__sidebar()");
       const stored = await js<{ data: { pinned: string[] } }>("window.__prefs()");
-      // r5 fix, found by this lane's runs going red at random: the assertion
-      // used to be `sb.chats[0].id === last`, which only holds when NO other
-      // chat is pinned. sidebarChats sorts pinned rows ahead of unpinned ones
-      // in SESSIONS order — it does not order the pinned block by pin recency,
-      // even though act('pin:') unshifts — so with an operator pin already in
-      // prefs.json the newly pinned row is first only by luck of the session
-      // list's own order. What the code guarantees, and what this check's name
-      // means, is that the pinned row sorts ahead of every unpinned one.
+      // ATO-165: the pinned block is ordered by pin time now (the last pinned
+      // on top), so the chat just pinned is the first row whatever else the
+      // operator has pinned — and it stands under the "Pinned" header.
       const pinIndex = sb.chats.findIndex((c) => c.id === last);
       const firstUnpinned = sb.chats.findIndex((c) => !c.pinned);
       check(
-        "a pinned chat sorts ahead of every unpinned one and is stored",
-        pinIndex >= 0 && sb.chats[pinIndex].pinned
+        "a pinned chat sorts first, under Pinned, ahead of every unpinned one and is stored",
+        pinIndex === 0 && sb.chats[pinIndex].pinned
           && (firstUnpinned === -1 || pinIndex < firstUnpinned)
+          && sb.headers[0] === "Pinned"
           && stored.data.pinned.includes(last),
-        `${last} at index ${pinIndex}, first unpinned at ${firstUnpinned};`
+        `${last} at index ${pinIndex}, first unpinned at ${firstUnpinned}, headers ${JSON.stringify(sb.headers)};`
         + ` pinned=${JSON.stringify(pinned)} stored=${JSON.stringify(stored.data.pinned)}`,
       );
       await js<string[]>(`window.__unpin(${JSON.stringify(last)})`);
@@ -4585,25 +4554,24 @@ async function sidebarTest(
       );
 
       // Review fix: the two checks above go through act() and read PREFS, so
-      // they would pass with no pin button rendered at all. This one clicks the
-      // affordance the user actually has — the row's [data-pin] — through the
-      // real document delegator, and proves the click does not also open the
-      // chat (the delegator stops at the pin branch).
-      type PinClick = { found: boolean; pinned?: boolean; opened?: boolean; titleBefore?: string; titleAfter?: string };
+      // they would pass with no control rendered at all. This one clicks the
+      // affordance the user actually has — ATO-165: the row's "…", then the
+      // menu's Pin — through the real document delegator, and proves neither
+      // click opens the chat and that the pick closes the menu.
+      type PinClick = { found: boolean; pinned?: boolean; opened?: boolean; titleBefore?: string | null; titleAfter?: string | null; menuClosed?: boolean };
       const clicked = await js<PinClick>(`window.__clickPin(${JSON.stringify(last)})`);
       const unclicked = clicked.found ? await js<PinClick>(`window.__clickPin(${JSON.stringify(last)})`) : { found: false };
-      const menuIpc = await js<string>("typeof window.atomic.sessionMenu");
       check(
-        "the row's pin button pins without opening the chat",
+        "the row's menu pins without opening the chat, and closes on the pick",
         clicked.found === true &&
           clicked.pinned === true &&
           clicked.opened === false &&
           clicked.titleBefore === "Pin" &&
           clicked.titleAfter === "Unpin" &&
+          clicked.menuClosed === true &&
           unclicked.pinned === false &&
-          unclicked.titleAfter === "Pin" &&
-          menuIpc === "function",
-        `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}, sessionMenu ${menuIpc}`,
+          unclicked.titleAfter === "Pin",
+        `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}`,
       );
     } else {
       check("a pinned chat sorts first and is stored", true, "skipped — fewer than two chats in this workspace");
@@ -11895,7 +11863,7 @@ async function chromeTest(
     check("item 5: Escape still closes the menu", esc.pane === null, JSON.stringify(esc));
     await js<void>("window.__settingsClose(); window.__clearToasts()");
 
-    // --- item 3: mark a session as unread -----------------------------------
+    // --- item 3: mark a session as unread (ATO-165: through the row's menu) --
     const chats = await js<Array<{ id: string; dot: string; name: string }>>(
       "window.__sidebar().chats.map((c) => ({id:c.id, dot:c.dot, name:c.name}))",
     );
@@ -11904,46 +11872,49 @@ async function chromeTest(
       check("item 3: mark as unread", false, "no chat rows in the sidebar to test against");
     } else {
       // Open it first — opening a chat is reading it, so the row reads read and
-      // the control is on offer.
+      // its menu offers Mark as unread.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
       await wait(1200);
-      const readRow = await js<{ present: boolean; title: string; vis: string; dot: string }>(
-        `window.__unreadCtl(${JSON.stringify(target.id)})`,
-      );
+      type Ctl = { present: boolean; vis: string; railDisplay: string; dot: string; label: string | null; verb: string | null };
+      const readRow = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
-        "item 3: a read row offers Mark as unread, hidden until hover",
-        readRow.present && readRow.title === "Mark as unread" && readRow.vis === "hidden" && readRow.dot === "empty",
-        `${JSON.stringify(readRow)} (:hover is not synthesisable from script — the rule text is asserted below)`,
+        "item 3: a read row's menu offers Mark as unread, and the open chat's row shows its \"…\"",
+        readRow.present && readRow.label === "Mark as unread" && readRow.verb === "unread"
+          && readRow.vis === "visible" && readRow.dot === "empty",
+        `${JSON.stringify(readRow)} (the open chat's row keeps its "…" on screen — ATO-165)`,
       );
-      const [unreadHover, unreadDetail] = await hoverRuleHolds(
-        ".sesrow:hover .unreadbtn, .sesrow:focus-within .unreadbtn",
-        ".sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn{visibility:visible}",
+      const [moreHover, moreDetail] = await hoverRuleHolds(
+        ".sesrow:hover .sesmore, .sesrow:focus-within .sesmore",
+        ".sesrow:hover .sesmore,.sesrow:focus-within .sesmore{visibility:visible}",
         "visibility: visible;",
       );
-      check("item 3: the control is revealed by hover or keyboard focus", unreadHover, unreadDetail);
+      check("item 3: on the other rows the \"…\" is revealed by hover or keyboard focus", moreHover, moreDetail);
       /* r5 review fix — the ':focus-within' half of that same declaration IS
-         drivable, and nothing drove it: the check above compares rule TEXT,
-         which is all :hover allows. Focus the row for real and read the
-         computed visibility on the way in and on the way out. */
-      const reveal = await js<{ rest: string; focused: string; blurred: string; inRow: boolean; hadFocus: boolean } | null>(
-        `window.__unreadFocusReveal(${JSON.stringify(target.id)})`,
-      );
-      check(
-        "item 3: keyboard focus on the row reveals the control for real",
-        !!reveal && reveal.inRow && reveal.hadFocus
-          && reveal.rest === "hidden" && reveal.focused === "visible" && reveal.blurred === "hidden",
-        `${JSON.stringify(reveal)} (:hover stays a rule-text assertion above; this is the twin declaration, driven)`,
-      );
-      const marked = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; stayedPut: boolean }>(
+         drivable. Focus a row that is NOT the open chat (the open one shows
+         its "…" at rest) and read the computed visibility on the way in and out. */
+      const other = chats.find((c) => c.id !== target.id);
+      if (other) {
+        const reveal = await js<{ rest: string; focused: string; blurred: string; inRow: boolean; hadFocus: boolean } | null>(
+          `window.__unreadFocusReveal(${JSON.stringify(other.id)})`,
+        );
+        check(
+          "item 3: keyboard focus on a row reveals its \"…\" for real",
+          !!reveal && reveal.inRow && reveal.hadFocus
+            && reveal.rest === "hidden" && reveal.focused === "visible" && reveal.blurred === "hidden",
+          `${JSON.stringify(reveal)} (:hover stays a rule-text assertion above; this is the twin declaration, driven)`,
+        );
+      } else {
+        process.stdout.write("SKIP item 3 focus reveal: one chat on the list, and it is the open one\n");
+      }
+      const marked = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; stayedPut: boolean; menuClosed: boolean }>(
         `window.__markUnread(${JSON.stringify(target.id)})`,
       );
       check(
-        "item 3: the control fills the dot without opening the chat",
+        "item 3: the menu's Mark as unread fills the dot without opening the chat",
         marked.clicked && marked.dot === "filled" && marked.seen === null
-          && marked.opened === 0 && marked.stayedPut,
-        `${JSON.stringify(marked)} (opened=0 is the ordering proof — the row had to be opened first for the`
-        + ` control to be offered, so stayedPut is true either way; a fall-through to [data-ses] would have run`
-        + ` openSession and markSeen would have undone the mark)`,
+          && marked.opened === 0 && marked.stayedPut && marked.menuClosed,
+        `${JSON.stringify(marked)} (opened=0 is the ordering proof — a fall-through from the "…" to [data-ses]`
+        + ` would have run openSession and markSeen would have undone the mark)`,
       );
       const survived = await js<{ dot: string; seen: number | null }>(
         `window.__unreadSurvives(${JSON.stringify(target.id)})`,
@@ -11955,51 +11926,44 @@ async function chromeTest(
           && !Object.prototype.hasOwnProperty.call(stored.data.seen, target.id),
         `${JSON.stringify(survived)}; prefs.seen has the id: ${Object.prototype.hasOwnProperty.call(stored.data.seen, target.id)}`,
       );
-      const already = await js<{ present: boolean }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      const already = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
-        "item 3: an already-unread row offers nothing",
-        !already.present,
+        "item 3: an unread row's menu offers Mark as read instead",
+        already.present && already.label === "Mark as read" && already.verb === "read",
         JSON.stringify(already),
       );
       const args = await js<{ argc: number; id: string; pinned: boolean; unread: boolean } | null>(
         `window.__sessionMenuArgs(${JSON.stringify(target.id)})`,
       );
       check(
-        "item 3: the right-click menu is told the row is unread",
-        !!args && args.argc === 3 && args.unread === true && args.id === target.id && args.pinned === false,
-        `${JSON.stringify(args)} (captured from a real contextmenu on the row, in front of the bridge call —`
-        + ` Menu.popup opens a native window the harness cannot drive, so the payload the renderer sends is what is asserted)`,
+        "item 3: a right-click on the row opens the same menu, told the row is unread",
+        !!args && args.argc >= 3 && args.unread === true && args.id === target.id && args.pinned === false,
+        `${JSON.stringify(args)} (captured from a real contextmenu on the row, in front of sendSessionMenu)`,
       );
-      // The other end of the same wire: what main builds from that payload.
-      const menuUnread = sessionMenuTemplate(target.id, false, true);
-      const menuRead = sessionMenuTemplate(target.id, false, false);
+      // ATO-165: Mark as read — the dot empties without opening the chat.
+      const readBack = await js<{ clicked: boolean; dot: string; seen: number | null; opened: number; menuClosed: boolean }>(
+        `window.__markRead(${JSON.stringify(target.id)})`,
+      );
       check(
-        "item 3: main puts Mark as Unread in the menu, greyed on a row already unread",
-        menuUnread[0]?.label === "Mark as Unread" && menuUnread[0]?.enabled === false
-          && menuRead[0]?.enabled === true
-          && menuRead.some((i) => i.label === "Pin") && menuRead.some((i) => i.label === "Delete…"),
-        `${JSON.stringify(menuRead.map((i) => [i.label ?? i.type, i.enabled]))};`
-        + ` unread row enabled=${String(menuUnread[0]?.enabled)}`
-        + ` (the preload line between the two is a verbatim forward and is the one link not independently asserted)`,
+        "item 3: the menu's Mark as read empties the dot without opening the chat, and stamps prefs",
+        readBack.clicked && readBack.dot === "empty" && typeof readBack.seen === "number" && readBack.opened === 0
+          && readBack.menuClosed,
+        JSON.stringify(readBack),
       );
-      // The menu's verb, through the same act() the app:menu listener calls.
-      await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
-      await wait(1200);
-      const reread = await js<{ dot: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      // The menu's verb, through act() as the menu's own item does.
       const viaMenu = await js<{ dot: string }>(
         `(() => { act('unread:' + ${JSON.stringify(target.id)}); return window.__unreadCtl(${JSON.stringify(target.id)}); })()`,
       );
-      check(
-        "item 3: opening the chat reads it again, and the menu verb re-marks it",
-        reread.dot === "empty" && viaMenu.dot === "filled",
-        `after open ${reread.dot}, after act('unread:…') ${viaMenu.dot}`,
-      );
-      // Read it again first: the control is only emitted on a row that reads
-      // read, and the check above deliberately left this one unread.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
       await wait(1200);
+      const reread = await js<{ dot: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      check(
+        "item 3: the menu verb re-marks it, and opening the chat reads it again",
+        viaMenu.dot === "filled" && reread.dot === "empty",
+        `after act('unread:…') ${viaMenu.dot}, after open ${reread.dot}`,
+      );
       await js<unknown>("window.__rail()");
-      const inRail = await js<{ present: boolean; railDisplay: string }>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      const inRail = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
         "item 3: the collapsed rail keeps only the dot",
         inRail.present && inRail.railDisplay === "none",
