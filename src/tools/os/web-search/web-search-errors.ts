@@ -45,3 +45,55 @@ export class WebSearchRateLimitedError extends WebSearchBlockedError {
     this.retryAfterMs = retryAfterMs;
   }
 }
+
+/**
+ * Machine-readable "an Exa API key would fix this" signal, put in the
+ * `os.web.search` tool result `details.keyRequired` (ATO-327). A host app
+ * renders a key card from it; the model reads the same advice in the text.
+ *
+ * Present only while Exa is in the provider chain and `envVar` resolves to
+ * no key, and only when the keyless Exa tier did not serve the search:
+ * - `rate_limited`: keyless Exa answered HTTP 429 (or is still parked for
+ *   one). The search may still have succeeded through a fallback.
+ * - `unreachable`: keyless Exa could not be reached and no provider
+ *   answered.
+ * - `missing`: keyless Exa failed some other way (a 403, a bad answer)
+ *   and no provider answered.
+ *
+ * Never present when a key is set: a keyed Exa failure is not fixed by a key.
+ */
+export interface WebSearchKeyRequired {
+  provider: "exa";
+  reason: "rate_limited" | "unreachable" | "missing";
+  getKeyUrl: string;
+  envVar: string;
+}
+
+/** Where a free Exa API key is issued. */
+export const EXA_GET_KEY_URL = "https://dashboard.exa.ai/api-keys";
+
+/**
+ * Every provider in the chain failed. The message is the whole report the
+ * model and the user read: one plain line per provider and one action.
+ * `failures` repeats the per-provider lines for `details`.
+ *
+ * A subclass of {@link WebSearchBlockedError}, like the rate-limit error,
+ * so code that treats a blocked search as a structured failure keeps doing
+ * so. `provider` is the configured primary.
+ */
+export class WebSearchUnavailableError extends WebSearchBlockedError {
+  readonly failures: readonly string[];
+  readonly keyRequired: WebSearchKeyRequired | undefined;
+
+  constructor(
+    provider: WebSearchProviderName,
+    message: string,
+    failures: readonly string[],
+    keyRequired?: WebSearchKeyRequired,
+  ) {
+    super(provider, message);
+    this.name = "WebSearchUnavailableError";
+    this.failures = failures;
+    this.keyRequired = keyRequired;
+  }
+}
