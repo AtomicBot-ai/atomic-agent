@@ -212,6 +212,7 @@ export {
   stopEmbeddingDaemon,
   getEmbeddingDaemonStatus,
   buildEmbeddingServerArgs,
+  coreEmbeddingEngineRequired,
   startChatAndEmbeddingDaemons,
   stopChatAndEmbeddingDaemons,
   probeThroughput,

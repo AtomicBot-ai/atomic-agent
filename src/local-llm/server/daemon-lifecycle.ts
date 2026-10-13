@@ -1,5 +1,13 @@
 import { loadCoreSession, recoverOrphanedCoreSessions, stopCoreSession, coreSessionStatus } from "../core/core-sessions.js";
 import { coreSessionPath, orphanedCoreSession, type ManagedEngine } from "../core/core-state.js";
+import {
+  coreEmbeddingRunning,
+  coreEmbeddingStatus,
+  readCoreEmbeddingRecord,
+  startCoreEmbedding,
+  stopCoreEmbedding,
+} from "../core/core-embedding.js";
+import type { DownloadFileOptions } from "../downloads/download-file.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
@@ -1343,6 +1351,18 @@ export interface EmbeddingDaemonStartOptions {
   device?: string;
   /** Same as `DaemonStartOptions.apiKey`; both daemons share one key. */
   apiKey?: string;
+  /**
+   * A model that runs in Atomic Core's embedding module may need a stock
+   * llama.cpp build installed first: called when that download starts,
+   * then with its progress.
+   */
+  onEngineInstall?: () => void;
+  onEngineProgress?: DownloadFileOptions["onProgress"];
+}
+
+/** Why a Core-module embedding model cannot start on the llama-server engine. */
+export function coreEmbeddingEngineRequired(modelName: string): string {
+  return `${modelName} runs on the Atomic Core engine; switch with \`atomic-agent models engine atomic-core\``;
 }
 
 /**
@@ -1384,7 +1404,10 @@ export function buildEmbeddingServerArgs(
 
 export async function startEmbeddingDaemon(
   opts: EmbeddingDaemonStartOptions,
-): Promise<{ pid: number }> {
+): Promise<{ pid: number; port?: number }> {
+  if (getEmbeddingModelDef(opts.modelId).requiresCoreEmbeddingModule) {
+    return startCoreModuleEmbedding(opts);
+  }
   await recoverOrphanedCoreSessions(opts.dataDir);
   const pidPath = resolveEmbeddingPidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir, "embedding");
@@ -1470,6 +1493,41 @@ export async function startEmbeddingDaemon(
 }
 
 /**
+ * A model that only Atomic Core's embedding module runs: Core spawns and
+ * owns its llama-server on a port of its choosing, so no pid file, port
+ * or device applies. Fails at once on the llama-server engine.
+ */
+async function startCoreModuleEmbedding(
+  opts: EmbeddingDaemonStartOptions,
+): Promise<{ pid: number; port?: number }> {
+  const model = getEmbeddingModelDef(opts.modelId);
+  if (opts.engine !== "atomic-core") {
+    throw new Error(coreEmbeddingEngineRequired(model.name));
+  }
+  const modelPath = resolveModelFilePath(opts.dataDir, model.id, model.filename);
+  if (!existsSync(modelPath)) {
+    throw new Error(
+      `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
+    );
+  }
+  const status = await startCoreEmbedding(opts.dataDir, {
+    modelId: model.id,
+    modelPath,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.onEngineInstall ? { onEngineInstall: opts.onEngineInstall } : {}),
+    ...(opts.onEngineProgress ? { onEngineProgress: opts.onEngineProgress } : {}),
+  });
+  if (status.dims !== model.dim) {
+    // Never mix dimensions in one memory store: refuse rather than serve.
+    await stopCoreEmbedding(opts.dataDir).catch(() => {});
+    throw new Error(
+      `${model.name} answered ${status.dims}-dim vectors, expected ${model.dim}; embedding stays off`,
+    );
+  }
+  return { pid: status.pid ?? 0, ...(status.port !== null ? { port: status.port } : {}) };
+}
+
+/**
  * A launch that failed after the spawn must not leave its child behind
  * or a pid file naming it: kill it if it is still up (a child that
  * loaded but serves the wrong thing) and forget it either way.
@@ -1491,6 +1549,8 @@ export async function stopEmbeddingDaemon(
   dataDir: string,
   opts?: { timeoutMs?: number },
 ): Promise<void> {
+  // Core's embedding module first: a model switch may leave either kind.
+  await stopCoreEmbedding(dataDir);
   if (await stopCoreSession(dataDir, "embedding")) return;
   const pidPath = resolveEmbeddingPidFilePath(dataDir);
   let raw: string;
@@ -1566,6 +1626,20 @@ export async function getEmbeddingDaemonStatus(
   dataDir: string,
   port: number,
 ): Promise<DaemonStatus> {
+  if (readCoreEmbeddingRecord(dataDir)) {
+    // Core's module: no pid file or configured port, Core owns both.
+    const st = await coreEmbeddingStatus(dataDir);
+    if (!st || !st.enabled || !coreEmbeddingRunning(st)) {
+      return { running: false, pid: null, port, healthy: false, loading: false };
+    }
+    return {
+      running: true,
+      pid: st.pid,
+      port: st.port ?? port,
+      healthy: st.state === "ready",
+      loading: st.state !== "ready",
+    };
+  }
   if (existsSync(coreSessionPath(dataDir, "embedding"))) {
     const orphan = orphanedCoreSession(dataDir, "embedding");
     if (orphan) {
@@ -1612,7 +1686,7 @@ export async function getEmbeddingDaemonStatus(
  */
 export interface StartBothResult {
   chat: DaemonStartResult;
-  embedding: { pid: number } | { error: string } | { skipped: true };
+  embedding: { pid: number; port?: number } | { error: string } | { skipped: true };
 }
 
 export async function startChatAndEmbeddingDaemons(opts: {

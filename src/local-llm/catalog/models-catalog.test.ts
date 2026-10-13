@@ -164,6 +164,23 @@ describe("models-catalog (embedding)", () => {
     }
   });
 
+  it("keeps the default and marks EmbeddingGemma 2 as a Core-module model with task prompts", () => {
+    expect(DEFAULT_EMBEDDING_MODEL_ID).toBe("nomic-embed-text-v1.5");
+    const gemma = getEmbeddingModelDef("embeddinggemma-2");
+    expect(gemma).toMatchObject({ dim: 768, requiresCoreEmbeddingModule: true });
+    expect(gemma.prompts).toEqual({
+      query: "task: search result | query: ",
+      document: "title: none | text: ",
+      similarity: "task: sentence similarity | query: ",
+    });
+    // Every other model runs on llama-server / a Core session as before.
+    for (const def of EMBEDDING_MODELS_CATALOG) {
+      if (def.id === "embeddinggemma-2") continue;
+      expect(def.requiresCoreEmbeddingModule).toBeUndefined();
+      expect(def.prompts).toBeUndefined();
+    }
+  });
+
   it("default embedding model id resolves to a real catalog entry", () => {
     expect(isKnownEmbeddingModelId(DEFAULT_EMBEDDING_MODEL_ID)).toBe(true);
     expect(getEmbeddingModelDef(DEFAULT_EMBEDDING_MODEL_ID).id).toBe(

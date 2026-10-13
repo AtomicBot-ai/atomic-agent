@@ -28,7 +28,8 @@ interface CoreLock {
 /** Core answered a control request with an error status. */
 export class CoreRequestError extends Error {
   override readonly name = "CoreRequestError";
-  constructor(readonly status: number, message: string) { super(message); }
+  /** Core's error code (`EMBEDDING_ENGINE_UNSUPPORTED`, ...), when the answer carried one. */
+  constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
 }
 
 export class CoreControlClient {
@@ -45,7 +46,7 @@ export class CoreControlClient {
     });
     // A proxy or a crashed handler may answer a 5xx without JSON; the status still decides retries.
     const value = await response.json().catch(() => null) as (T & { error?: { code?: string; message?: string } }) | null;
-    if (!response.ok) throw new CoreRequestError(response.status, value?.error?.message ?? `Atomic Core request failed (${response.status})`);
+    if (!response.ok) throw new CoreRequestError(response.status, value?.error?.message ?? `Atomic Core request failed (${response.status})`, value?.error?.code);
     if (value === null) throw new Error("Atomic Core returned an unreadable answer.");
     return value;
   }

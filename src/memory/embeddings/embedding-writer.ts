@@ -54,7 +54,7 @@ export class EmbeddingWriter {
   async writeFor(memoryId: number, content: string): Promise<boolean> {
     const started = this.now();
     try {
-      const result = await this.client.embed({ text: content });
+      const result = await this.client.embed({ text: content, purpose: "document" });
       this.store.upsert({
         memoryId,
         model: result.model,

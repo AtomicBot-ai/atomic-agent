@@ -48,11 +48,12 @@ it("never unloads a session another caller already had", async () => {
   expect(fake.call.mock.calls.some(([path]) => path.endsWith("/unload"))).toBe(false);
 });
 
-function idleCore(sessions: unknown[], shutdown: () => unknown = () => ({ ok: true, stopping: true })) {
+function idleCore(sessions: unknown[], shutdown: () => unknown = () => ({ ok: true, stopping: true }), embedding?: { enabled: boolean }) {
   vi.mocked(connectCore).mockResolvedValue(fake as never);
   fake.snapshot.mockResolvedValue({ sessions });
   fake.call.mockImplementation(async (path: string) => {
     if (path === "/clients") return { client: { id: "me" }, heartbeat_interval_ms: 15_000 };
+    if (path === "/embedding/status" && embedding) return embedding;
     if (path === "/shutdown") return shutdown();
     if (path === "/clients/me") return {};
     throw new Error("unexpected route");
@@ -69,6 +70,15 @@ it("leaves Core running while a model session remains", async () => {
   await expect(stopIdleCore(dir)).resolves.toBe(false);
   expect(fake.call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
   expect(fake.call).toHaveBeenCalledWith("/clients/me", undefined, { method: "DELETE" });
+});
+it("leaves Core running while its embedding module is enabled", async () => {
+  idleCore([], undefined, { enabled: true });
+  await expect(stopIdleCore(dir)).resolves.toBe(false);
+  expect(fake.call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
+});
+it("shuts down a Core whose embedding module is off", async () => {
+  idleCore([], undefined, { enabled: false });
+  await expect(stopIdleCore(dir)).resolves.toBe(true);
 });
 it("leaves Core running when another client is attached", async () => {
   idleCore([], () => { throw new Error("Other clients are still attached to this core."); });

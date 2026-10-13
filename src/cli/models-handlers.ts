@@ -58,6 +58,7 @@ import {
   resolvePlatformAsset,
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
+  coreEmbeddingEngineRequired,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -796,7 +797,7 @@ export async function runLocalModelsStart(
       );
     } else if ("pid" in result.embedding) {
       process.stdout.write(
-        `embedding: started pid ${result.embedding.pid}, healthy on port ${embCfg.port} (${embCfg.modelId})\n`,
+        `embedding: started pid ${result.embedding.pid}, healthy on port ${result.embedding.port ?? embCfg.port} (${embCfg.modelId})\n`,
       );
     } else if ("error" in result.embedding) {
       process.stderr.write(
@@ -858,8 +859,13 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
   }
   const now = await getEmbeddingDaemonStatus(dataDir, emb.port);
   if (now.running) {
-    process.stdout.write(`embedding: already running pid ${now.pid} on port ${emb.port} (${modelId})\n`);
+    process.stdout.write(`embedding: already running pid ${now.pid} on port ${now.port} (${modelId})\n`);
     return 0;
+  }
+  const embDef = getEmbeddingModelDef(modelId);
+  if (embDef.requiresCoreEmbeddingModule && cfg.localModels.managed.engine !== "atomic-core") {
+    process.stderr.write(`embedding: failed to start (${coreEmbeddingEngineRequired(embDef.name)})\n`);
+    return 1;
   }
   // The default engine may not be installed yet (the desktop can start the
   // embedding side on its own): install it first, as `start` does.
@@ -893,15 +899,21 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     { multiGpu: cfg.localModels.managed.tensorSplit.length > 0, listDevices: managedDeviceTable(dataDir, engine) },
   );
   try {
-    const { pid } = await startEmbeddingDaemon({
+    const { pid, port } = await startEmbeddingDaemon({
       engine,
       signal,
       dataDir,
       modelId,
       port: emb.port,
       ...(device ? { device } : {}),
+      onEngineInstall: () => process.stderr.write(`embedding: installing a llama.cpp build for ${embDef.name}…\n`),
+      onEngineProgress: (p, t, tot) => {
+        const line = renderPullProgress("llama.cpp for embeddings", p, t, tot);
+        if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+        else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+      },
     });
-    process.stdout.write(`embedding: started pid ${pid}, healthy on port ${emb.port} (${modelId})\n`);
+    process.stdout.write(`embedding: started pid ${pid}, healthy on port ${port ?? emb.port} (${modelId})\n`);
     return 0;
   } catch (e) {
     process.stderr.write(`embedding: failed to start (${e instanceof Error ? e.message : String(e)})\n`);
@@ -1267,7 +1279,7 @@ export async function runLocalModelsListEmbeddings(): Promise<number> {
   const embPort = cfg.localModels.embeddings.port;
   const st = await getEmbeddingDaemonStatus(dataDir, embPort);
   process.stdout.write(
-    `\nembedding daemon: ${st.running ? `running (pid ${st.pid})` : "stopped"} on port ${embPort}, health: ${
+    `\nembedding daemon: ${st.running ? `running (pid ${st.pid})` : "stopped"} on port ${st.port}, health: ${
       st.healthy ? "ok" : st.loading ? "loading" : "down"
     }\n`,
   );

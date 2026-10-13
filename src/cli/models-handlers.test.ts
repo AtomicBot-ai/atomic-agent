@@ -425,6 +425,23 @@ describe("runLocalModelsStartEmbedding", () => {
     vi.mocked(localLlm.startEmbeddingDaemon).mockRejectedValue(new Error("port 19092 is already served"));
     await expect(runLocalModelsStartEmbedding()).resolves.toBe(1);
   });
+
+  it("refuses EmbeddingGemma 2 on the llama-server engine with the switch command", async () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        mode: "managed",
+        managed: { ...USER_CONFIG_DEFAULTS.localModels.managed, engine: "llama-server" },
+        embeddings: { ...USER_CONFIG_DEFAULTS.localModels.embeddings, enabled: true, modelId: "embeddinggemma-2" },
+      },
+    });
+    resetConfigCache();
+    const stderr = vi.mocked(process.stderr.write);
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(1);
+    expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+    expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain("atomic-agent models engine atomic-core");
+  });
 });
 
 /**

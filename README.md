@@ -327,6 +327,8 @@ Managed mode downloads the backend, pulls GGUF models, selects the active model,
 
 The default engine is Atomic Chat Core, which installs and runs our TurboQuant `llama.cpp` build for your computer. The first start installs it with progress. If that fails, the error says what happened and how to retry: `atomic-agent models update` (TUI: `R` in Models). The standalone `llama.cpp` server remains a support-only fallback that the app does not show: `atomic-agent models engine llama-server` selects it and `atomic-agent models engine atomic-core` switches back; both engines use the same model files.
 
+`embeddinggemma-2` (Google's EmbeddingGemma 2, multilingual, 768-dim) runs only on the Atomic Core engine: Core serves it from its embedding module and the first `models start-embedding` installs the newer stock `llama.cpp` build it needs.
+
 Big models can download in the background, detached from the terminal that started them:
 
 ```bash
