@@ -456,6 +456,8 @@ export type BringUp = {
   daemon: DaemonEffect;
   daemonLine?: string;
   error?: string;
+  /** A failed start's last stderr, for the engine failure it may describe (engine-failure.ts engineFailureOf). */
+  daemonError?: string;
   /** ATO-126: the embedding server was started, or hybrid recall switched back on, for it: `atag serve` wires it only as it boots. */
   paired?: boolean;
 };
@@ -743,7 +745,11 @@ async function startIfDown(s: BringUpSteps): Promise<BringUp> {
   const st = await modelsStart({ signal: s.signal });
   // The quit had begun (closeStarts): nothing was started.
   if (st.notStarted) return SUPERSEDED;
-  if (!st.ok) return { daemon: "start-failed", error: st.error };
+  /* The end of what the start printed rides along (engine-failure.ts reads
+     `daemonError`): a start the app ended on its time limit while Atomic
+     Core was still downloading is told by its progress lines, which the
+     error's own 200 characters may not reach. */
+  if (!st.ok) return { daemon: "start-failed", error: st.error, ...(st.stderr ? { daemonError: st.stderr.slice(-2_000) } : {}) };
   if (!s.superseded()) await pairEmbeddingServer({ startOut: st.stdout, stillWanted: () => !s.superseded() });
   return { daemon: "started", daemonLine: readyLine(st.stdout) };
 }

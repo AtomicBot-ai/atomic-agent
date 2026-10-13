@@ -9064,17 +9064,6 @@ async function backendSwitchTest(
  * <json>`: there is no config-write route, and PATCH /api/config re-defaults
  * every block it does not merge.
  */
-/**
- * The managed llama daemon, brought up at launch when the chat route needs it.
- *
- * `atag serve` never starts it: in the terminal the TUI does (its local-models
- * orchestrator), and in this app only a backend switch did. So after a reboot,
- * or any launch after the daemon had stopped, a person on the local route got
- * "The provider is not answering" on their first message, with a model
- * downloaded and nothing wrong. Start it here when the route is managed-local
- * and the active model is on disk; a running daemon, an external or cloud
- * route, or a model not yet downloaded leaves everything as it is.
- */
 /* The launch's engine install on its way (installEngineAtLaunch): a window
    opened or reloaded meanwhile asks for it (engine:launchInstall) and draws
    the same bar. */
@@ -9106,6 +9095,17 @@ async function installEngineAtLaunch(): Promise<boolean> {
   }
 }
 
+/**
+ * The managed llama daemon, brought up at launch when the chat route needs it.
+ *
+ * `atag serve` never starts it: in the terminal the TUI does (its local-models
+ * orchestrator), and in this app only a backend switch did. So after a reboot,
+ * or any launch after the daemon had stopped, a person on the local route got
+ * "The provider is not answering" on their first message, with a model
+ * downloaded and nothing wrong. Start it here when the route is managed-local
+ * and the active model is on disk; a running daemon, an external or cloud
+ * route, or a model not yet downloaded leaves everything as it is.
+ */
 async function startLocalDaemonAtBoot(): Promise<void> {
   let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
   try {
@@ -9126,10 +9126,6 @@ async function startLocalDaemonAtBoot(): Promise<void> {
     backendUp = false;
     const st = await modelsStatus();
     if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
-    /* Item 11: as the background bring-up — a ⇄ or a start made while the
-       model loads queues behind it rather than starting a second daemon, and
-       a stop (a cloud switch, Settings › Stop) ends it at once instead of
-       waiting out the load. It says how it went through onBackgroundBringUp. */
     /* Atomic Core with its backend not on disk yet (a fresh machine, a 0.0.1
        desktop the config migration moved to Core, a backend removed): the
        start would download it silently first, hundreds of MB, under a spinner.
@@ -9140,6 +9136,10 @@ async function startLocalDaemonAtBoot(): Promise<void> {
       const installed = await installEngineAtLaunch();
       if (!installed) return;
     }
+    /* Item 11: as the background bring-up — a ⇄ or a start made while the
+       model loads queues behind it rather than starting a second daemon, and
+       a stop (a cloud switch, Settings › Stop) ends it at once instead of
+       waiting out the load. It says how it went through onBackgroundBringUp. */
     const bringUpAt = Date.now();
     const up = await bringUpAtLaunch(st.status.activeModel);
     A.localBackendStarted("launch", up.daemon, st.status.activeModel, Date.now() - bringUpAt);
@@ -9298,7 +9298,7 @@ function watchCoreUpdates(): void {
       if (!status.ok || (status.value as { engine?: string } | undefined)?.engine !== "atomic-core") return;
       if (quitting || signal.aborted) return;
       const result = await modelsEngine("check", signal);
-      const value = result.value as { check?: { currentVersion: string | null; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
+      const value = result.value as { check?: { currentVersion: string | null; compatibleVersion: string; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
       if (!result.ok || !value?.check) return;
       /* Only a real update the person can install toasts, once per version
          (core-update-notice.ts): never requiresAgentUpdate, which they cannot

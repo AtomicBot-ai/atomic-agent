@@ -145,3 +145,12 @@ test("a start the app ended on its time limit while Core was downloading: the do
   // A start killed on purpose (a stop, the quit) is still not a failure.
   assert.equal(engineFailureOf({ ok: false, stdout: "", stderr, error: "`atag models start` was stopped before it finished" }), null);
 });
+
+test("a launch start's failure is read through its stderr tail (daemonError) too", () => {
+  const f = engineFailureOf({
+    daemon: "start-failed",
+    error: "the agent did not answer `atag models start` within 1200s — it may be busy or starting up. Try again. (note: checking the engine)",
+    daemonError: "note: checking the engine\n[==========          ] 50%  0.35 GB / 0.70 GB  Atomic Chat engine\n",
+  });
+  assert.equal(f.reason, "incomplete");
+});
