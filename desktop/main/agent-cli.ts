@@ -739,6 +739,20 @@ export interface SearchedModel {
   supportsTools?: string | boolean;
 }
 
+/* A model list is a JSON array on stdout. A line the agent prints around it (a config
+   migration notice on the first run of a new build, a warning) must not cost the list:
+   the array is read from the first "[" to the last "]" when the whole text is not JSON. */
+export function parseModelList(stdout: string): SearchedModel[] | null {
+  const read = (text: string): SearchedModel[] | null => {
+    try { const v = JSON.parse(text) as unknown; return Array.isArray(v) ? (v as SearchedModel[]) : null; } catch { return null; }
+  };
+  const whole = read(stdout);
+  if (whole) return whole;
+  const a = stdout.indexOf("["), b = stdout.lastIndexOf("]");
+  return a >= 0 && b > a ? read(stdout.slice(a, b + 1)) : null;
+}
+const notJson = (stdout: string) => "models search did not return JSON: " + JSON.stringify(stdout.trim().slice(0, 120));
+
 /** The provider's live model list, as `atag models search --json` reports it. */
 export async function modelsSearch(
   query: string,
@@ -752,12 +766,8 @@ export async function modelsSearch(
   }
   const res = await cli(args, 60_000);
   if (!res.ok) return { ok: false, error: res.error };
-  try {
-    const parsed = JSON.parse(res.stdout) as SearchedModel[];
-    return { ok: true, models: Array.isArray(parsed) ? parsed : [] };
-  } catch {
-    return { ok: false, error: "models search did not return JSON" };
-  }
+  const parsed = parseModelList(res.stdout);
+  return parsed ? { ok: true, models: parsed } : { ok: false, error: notJson(res.stdout) };
 }
 
 /**
@@ -1078,14 +1088,7 @@ export async function providerModels(
   const limit = live ? String(LIVE_LIST_LIMIT) : "200";
   const args = ["models", "search", " ", "--provider", providerId, "--limit", limit, "--json"];
   if (!bundled || live) args.push("--refresh");
-  const parse = (stdout: string): SearchedModel[] | null => {
-    try {
-      const parsed = JSON.parse(stdout) as SearchedModel[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return null;
-    }
-  };
+  const parse = parseModelList;
   // The bundled snapshot is local and quick; it is only read to tell a live list from the fallback.
   const [res, snap] = await Promise.all([
     cli(args, 90_000),
@@ -1105,7 +1108,8 @@ export async function providerModels(
     return { ok: false, error: res.error, ...why };
   }
   const models = parse(res.stdout);
-  if (!models) return { ok: false, error: "models search did not return JSON" };
+  // A live list that cannot be read falls back to the built-in one (with Try again) rather than to the current model alone.
+  if (!models) return snapModels && snapModels.length ? { ok: true, models: snapModels, stale: true } : { ok: false, error: notJson(res.stdout) };
   return { ok: true, models, ...(snapModels && sameIds(models, snapModels) ? { stale: true } : {}) };
 }
 /** Two lists naming the same model ids (in any order). */

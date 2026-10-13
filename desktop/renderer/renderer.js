@@ -253,6 +253,8 @@ const PRESETS = [
   {id:'xai', label:'xAI (Grok)', kind:'openai-compatible', baseUrl:'https://api.x.ai', env:'XAI_API_KEY'},
   {id:'moonshot', label:'Moonshot AI (Kimi)', kind:'openai-compatible', baseUrl:'https://api.moonshot.ai', env:'MOONSHOT_API_KEY'},
   {id:'perplexity', label:'Perplexity', kind:'openai-compatible', baseUrl:'https://api.perplexity.ai', env:'PERPLEXITY_API_KEY'},
+  // provider-presets.ts dashscope: Qwen models straight from Alibaba Cloud (international endpoint).
+  {id:'dashscope', label:'DashScope (Qwen)', kind:'openai-compatible', baseUrl:'https://dashscope-intl.aliyuncs.com/compatible-mode', env:'DASHSCOPE_API_KEY'},
   {id:'nous', label:'Nous Research', kind:'openai-compatible', baseUrl:'https://inference-api.nousresearch.com', env:'NOUS_API_KEY'},
   {id:'novita', label:'Novita AI', kind:'openai-compatible', baseUrl:'https://api.novita.ai/openai', env:'NOVITA_API_KEY'},
   // Atomic Chat's Local API Server: 127.0.0.1 (the address it binds), /v1 appended like every compat base; no key unless one is set in its settings.
@@ -1622,7 +1624,7 @@ const PROVIDER_LOGO_KEYS = {
   'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
   github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
   'atomic-chat':'atomicchat', 'atomic chat':'atomicchat', 'atomic chat (local)':'atomicchat',
-  dashscope:'qwen', 'qwen (dashscope)':'qwen',
+  dashscope:'qwen', 'qwen (dashscope)':'qwen', 'dashscope (qwen)':'qwen',
 };
 /** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
 function providerLogoKey(p) {
@@ -1996,7 +1998,7 @@ const shortModel = (id) => id.replace(/-instruct$/, '');
 const BACKEND_WORDS = {cloud:'Cloud', local:'Local models', custom:'Custom server', fusion:'Fusion'};
 function backendWord(b) { return BACKEND_WORDS[b] || String(b || ''); }
 /* Presets the TUI offers and this window's wizard does not (provider-presets.ts): a provider added there keeps a name here. */
-const TUI_ONLY_PRESET_WORDS = {dashscope:'DashScope'};
+const TUI_ONLY_PRESET_WORDS = {};
 /** A provider id → its preset's name ("OpenRouter", "Atomic Chat"), qualifier dropped. */
 function providerWord(id) {
   const s = String(id || '');
