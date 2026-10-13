@@ -1150,7 +1150,14 @@ function sidebarToggleHTML() {
   return '<button class="iconbtn sidebtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
     + (narrow ? ' disabled' : '')
     + ' aria-pressed="' + open + '"'
-    + ' title="' + title + '">' + ic('sidebar') + '</button>';
+    + ' title="' + title + '" aria-label="' + title + '">' + ic('sidebar') + '</button>';
+}
+/* 13.10 (owner's review): Search is a magnifier button beside the sidebar
+   toggle, not a pill at the right of the toolbar. Same verb, same chord in the
+   tooltip, same 32px icon button as the toggle. */
+function searchBtnHTML() {
+  const title = kbdText('Search and commands (⌘ K)');
+  return '<button class="iconbtn chromesearch" data-act="palette" title="' + title + '" aria-label="' + title + '">' + ic('search') + '</button>';
 }
 /* r5 item 6 — "clicking new chat puts keyboard focus straight in the prompt
    input" (the user's words). session:new raises the flag; afterChat consumes
@@ -1470,7 +1477,10 @@ const P = {
   memory:'<path d="M8 2.5l5.5 3L8 8.5l-5.5-3zM2.5 8.5 8 11.5l5.5-3M2.5 11 8 14l5.5-3"/>',
   search:'<circle cx="7" cy="7" r="4.25"/><path d="M10.2 10.2 13.5 13.5"/>',
   sidebar:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/>',
-  inspector:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
+  /* 13.10: steps on a thread — two nodes joined by a line, a line of text
+     beside each. It was the sidebar's panel glyph mirrored, and the owner
+     took the inspector button for the sidebar toggle. */
+  inspector:'<circle cx="4.5" cy="4" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><path d="M4.5 5.5v5M8 4h5.5M8 8h4M8 12h5.5"/>',
   console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   plus:'<path d="M8 3v10M3 8h10"/>',
   minus:'<path d="M3 8h10"/>',
@@ -1488,7 +1498,9 @@ const P = {
   arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
   copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
   home:'<path d="M2.5 7.25 8 2.75l5.5 4.5"/><path d="M4 6.1V13a.5.5 0 0 0 .5.5H7V10h2v3.5h2.5a.5.5 0 0 0 .5-.5V6.1"/>',
-  gear:'<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
+  /* 13.10: a cog — six teeth around a hub. The old glyph was a ring with eight
+     loose rays, which at 16px read as the theme picker's sun. */
+  gear:'<path d="M6.63 3.51L6.78 1.72L9.22 1.72L9.37 3.51A4.7 4.7 0 0 1 11.21 4.56L12.83 3.8L14.05 5.92L12.58 6.94A4.7 4.7 0 0 1 12.58 9.06L14.05 10.08L12.83 12.2L11.21 11.44A4.7 4.7 0 0 1 9.37 12.49L9.22 14.28L6.78 14.28L6.63 12.49A4.7 4.7 0 0 1 4.79 11.44L3.17 12.2L1.95 10.08L3.42 9.06A4.7 4.7 0 0 1 3.42 6.94L1.95 5.92L3.17 3.8L4.79 4.56A4.7 4.7 0 0 1 6.63 3.51z"/><circle cx="8" cy="8" r="1.9"/>',
   cloud:'<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8.9 2.6 2.6 0 0 1-.4 5.1z"/>',
   cpu:'<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 6.5h3v3h-3zM6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"/>',
   laptop:'<rect x="3.5" y="3.5" width="9" height="6.5" rx="1.2"/><path d="M2 12.5h12"/>',
@@ -2045,20 +2057,29 @@ function roomTitle() {
   return '';
 }
 
-/* Calm (S1): four controls — sidebar toggle, title, Search, inspector
-   toggle. The console left the toolbar: it is View › Toggle Console
-   (⇧ ⌘ Y) and the palette's Logs row. Chords live in tooltips only. */
+/* Calm (S1): sidebar toggle, Search, title, inspector toggle. The console
+   left the toolbar: it is View › Toggle Console (⇧ ⌘ Y) and the palette's
+   Logs row. Chords live in tooltips only.
+   13.10 (owner's review, the Atomic Chat layout): while the sidebar is
+   expanded it reaches up into this band and its own top row carries the
+   traffic lights, Search and the toggle (renderSidebar's .sb-top); the
+   toolbar then starts at the sidebar's edge (`.sb-open`) with the title.
+   Collapsed — the rail, or a window narrower than 1000px — the two buttons
+   come back here, next to the traffic lights. Exactly one of each is ever in
+   the DOM. */
 function renderToolbar() {
   const t = roomTitle();
+  const open = sidebarExpanded();
+  $('#toolbar').classList.toggle('sb-open', open);
   $('#toolbar').innerHTML =
     '<div class="lights" aria-hidden="true"></div>'
-    + sidebarToggleHTML()
+    + (open ? '' : sidebarToggleHTML() + searchBtnHTML())
     + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
-      + '<button class="searchbtn" data-act="palette" title="' + kbdText('Search and commands (⌘ K)') + '">' + ic('search') + '<span class="sec">Search</span></button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
         + ' aria-pressed="' + !!S.inspector + '"'
-        + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '">' + ic('inspector') + '</button>'
+        + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '"'
+        + ' aria-label="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '">' + ic('inspector') + '</button>'
     + '</div>';
 }
 
@@ -2099,7 +2120,10 @@ function renderSidebar() {
      which Settings › Tasks reports in full — the section is not drawn. */
   const showTasks = tk.rows.length > 0;
   $('#sidebar').innerHTML =
-    '<div class="sb-head">' + MARK_COLOR
+    // 13.10: the expanded sidebar's top row sits in the window's title band —
+    // the traffic lights on its left, Search and the toggle on its right.
+    (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML() + sidebarToggleHTML() + '</div>' : '')
+    + '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
     + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
@@ -7747,7 +7771,9 @@ setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
    touches #content, so it cannot fight the composer's caret. Deliberately NOT a
    resize listener: there is none in this file, and a per-frame render() would
    rebuild the composer on every drag pixel. */
-if (NARROW.addEventListener) NARROW.addEventListener('change', () => renderToolbar());
+// 13.10: the toggle and Search move between the sidebar's top row and the
+// toolbar on this crossing, so both are repainted (still no #content write).
+if (NARROW.addEventListener) NARROW.addEventListener('change', () => { renderToolbar(); renderSidebar(); });
 // 14: the inspector is not rebuilt while the window is too narrow to show it,
 // so widening the window past 1180px repaints it.
 if (INSP_NARROW.addEventListener) INSP_NARROW.addEventListener('change', () => renderInspector());
@@ -26554,7 +26580,9 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   /* --- item 2 --- */
   window.__sbToggle = () => {
-    const b = document.querySelector('#toolbar [data-act="toggle:sidebar"]');
+    // 13.10: the toggle lives in the sidebar's top row while it is expanded
+    // and in the toolbar while it is collapsed.
+    const b = document.querySelector('#sidebar .sb-top [data-act="toggle:sidebar"], #toolbar [data-act="toggle:sidebar"]');
     const sb = document.querySelector('#sidebar');
     if (!b || !sb) return null;
     const cs = getComputedStyle(b);
