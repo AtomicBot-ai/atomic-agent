@@ -69,10 +69,19 @@ it("never retries a cancelled install and does not dress it as a failure", async
   expect(fake.call.mock.calls.filter(([path]) => path === "/backends/llamacpp/install")).toHaveLength(1);
 });
 
-/** An older pinned Core is active; `sessions` says what it serves right now. */
-function olderCoreServing(sessions: unknown[]) {
+/**
+ * An older pinned Core is active; `sessions` says what it serves right now,
+ * `embedding` its embedding module (absent: a Core without one, 404).
+ */
+function olderCoreServing(sessions: unknown[], embedding?: { enabled: boolean }) {
   writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.11.2" });
-  vi.mocked(connectCore).mockResolvedValue({ snapshot: async () => ({ sessions }) } as never);
+  vi.mocked(connectCore).mockResolvedValue({
+    snapshot: async () => ({ sessions }),
+    call: async (path: string) => {
+      if (path === "/embedding/status" && embedding) return embedding;
+      throw new CoreRequestError(404, "Not found");
+    },
+  } as never);
 }
 
 it("installs a newer pin beside an older Core that serves a model, without switching to it", async () => {
@@ -92,7 +101,7 @@ it("switches to the newer pin when the older Core is idle", async () => {
 
 it("still refuses to reinstall the active version under running models", async () => {
   writeCoreJson(join(coreRoot(dir), "active.json"), { version: CORE_VERSION });
-  vi.mocked(connectCore).mockResolvedValue({ snapshot: async () => ({ sessions: [{ model_id: "m" }] }) } as never);
+  vi.mocked(connectCore).mockResolvedValue({ snapshot: async () => ({ sessions: [{ model_id: "m" }] }), call: async () => { throw new CoreRequestError(404, "Not found"); } } as never);
   await expect(installCoreBackend(dir)).rejects.toThrow("Stop local models");
 });
 
@@ -104,6 +113,18 @@ it("activates an installed newer pin only once nothing runs", async () => {
   await expect(activateCoreVersion(dir, CORE_VERSION)).resolves.toBe(false);
   expect(activeCoreVersion(dir)).toBe("0.11.2");
   olderCoreServing([]);
+  await expect(activateCoreVersion(dir, CORE_VERSION)).resolves.toBe(true);
+  expect(activeCoreVersion(dir)).toBe(CORE_VERSION);
+});
+
+it("does not switch Core versions while the active Core runs its embedding module", async () => {
+  olderCoreServing([], { enabled: true });
+  writeCoreJson(join(coreVersionDir(dir, CORE_VERSION), "verified.json"), { version: CORE_VERSION, sha256: "a".repeat(64) });
+  writeFileSync(coreBinary(dir, CORE_VERSION), "fixture");
+  writeCoreJson(join(coreVersionDir(dir, CORE_VERSION), "backend.json"), { coreVersion: CORE_VERSION, provider: "llamacpp", version: "b1", backend: "cpu", binary: join(backendPath, process.platform === "win32" ? "llama-server.exe" : "llama-server"), installedAt: "now" });
+  await expect(activateCoreVersion(dir, CORE_VERSION)).resolves.toBe(false);
+  expect(activeCoreVersion(dir)).toBe("0.11.2");
+  olderCoreServing([], { enabled: false });
   await expect(activateCoreVersion(dir, CORE_VERSION)).resolves.toBe(true);
   expect(activeCoreVersion(dir)).toBe(CORE_VERSION);
 });

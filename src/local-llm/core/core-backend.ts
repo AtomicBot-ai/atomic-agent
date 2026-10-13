@@ -19,10 +19,17 @@ export function isCoreBackendInstalled(dataDir: string, version = activeCoreVers
   return isCoreInstalled(dataDir, version) && readCoreBackend(dataDir, version) !== null;
 }
 
-/** The active Core serves no model session (or is not running at all). */
+/**
+ * The active Core serves no model session and no enabled embedding module
+ * (or is not running at all). An older Core without the module answers
+ * 404 there: not busy.
+ */
 async function activeCoreIdle(dataDir: string): Promise<boolean> {
   const current = await connectCore(dataDir, activeCoreVersion(dataDir));
-  return !current || (await current.snapshot()).sessions.length === 0;
+  if (!current) return true;
+  if ((await current.snapshot()).sessions.length > 0) return false;
+  const embedding = await current.call<{ enabled?: boolean }>("/embedding/status").catch(() => null);
+  return !embedding?.enabled;
 }
 
 function writeActiveVersion(dataDir: string, version: string): void {

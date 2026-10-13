@@ -1,5 +1,4 @@
 import { existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import type { DownloadFileOptions } from "../downloads/download-file.js";
 import {
   EmbeddingUnavailableError,
@@ -9,10 +8,21 @@ import {
   type EmbeddingClient,
   type EmbeddingPrompts,
 } from "../../memory/embeddings/embedding-client.js";
-import { installSelectedBackend } from "./core-backend.js";
-import { connectCore, CoreRequestError, ensureCore, withCoreClient, type CoreControlClient } from "./core-client.js";
-import { withCoreOperation } from "./core-operation.js";
-import { activeCoreVersion, CORE_VERSIONS, coreRoot, readCoreJson, writeCoreJson } from "./core-state.js";
+import { activateCoreVersion, installSelectedBackend, isCoreBackendInstalled } from "./core-backend.js";
+import { connectCore, CoreRequestError, withCoreClient, type CoreControlClient } from "./core-client.js";
+import { CORE_OPERATION_WAIT_MS, withCoreOperation } from "./core-operation.js";
+import { retireIdleCore } from "./core-sessions.js";
+import {
+  activeCoreVersion,
+  CORE_VERSION,
+  coreEmbeddingRecordPath,
+  readCoreEmbeddingRecord,
+  writeCoreJson,
+  type CoreEmbeddingRecord,
+} from "./core-state.js";
+
+// The record lives with the other Core state so Core start can apply a pending stop.
+export { coreEmbeddingRecordPath, readCoreEmbeddingRecord, type CoreEmbeddingRecord } from "./core-state.js";
 
 /**
  * Atomic Core's embedding module (Core 0.13+): one stock llama.cpp
@@ -48,25 +58,8 @@ export interface CoreEmbeddingStatus {
   since: number;
 }
 
-/**
- * What this agent turned on in Core, so status and stop find the module
- * without starting Core (`core/embedding-module.json`). The module has no
- * pid or port file of its own: Core owns its process.
- */
-export interface CoreEmbeddingRecord {
-  coreVersion: string;
-  modelId: string;
-  modelPath: string;
-}
-
-export function coreEmbeddingRecordPath(dataDir: string): string {
-  return join(coreRoot(dataDir), "embedding-module.json");
-}
-
-export function readCoreEmbeddingRecord(dataDir: string): CoreEmbeddingRecord | null {
-  const record = readCoreJson<CoreEmbeddingRecord>(coreEmbeddingRecordPath(dataDir));
-  if (!record || typeof record.modelId !== "string" || typeof record.modelPath !== "string") return null;
-  return CORE_VERSIONS.includes(record.coreVersion as typeof CORE_VERSIONS[number]) ? record : null;
+function markDisablePending(dataDir: string, record: CoreEmbeddingRecord): void {
+  writeCoreJson(coreEmbeddingRecordPath(dataDir), { ...record, disablePending: true } satisfies CoreEmbeddingRecord);
 }
 
 function dropCoreEmbeddingRecord(dataDir: string): void {
@@ -105,15 +98,18 @@ export function upstreamBuildNumber(version: string): number | undefined {
 }
 
 /**
- * Which stock llama.cpp build serves a model that needs `minBuild`. An
- * installed build this computer can run wins. Otherwise Core's own
+ * Which stock llama.cpp build serves a model that needs `minBuild`.
+ * `available` and `recommended` are already gated by Core for this
+ * hardware (it maps its family ids, `win-cuda-13-x64`, onto concrete
+ * builds, `win-cuda-13.1-x64`), so they are trusted as they are, and an
+ * installed build counts only when it is also in `available`. An
+ * installed build at or above the floor wins; otherwise Core's
  * recommendation when it is new enough, else the newest available build
- * at or above the floor, the recommended backend kind first (Core picked
- * it for this hardware). Pure.
+ * at or above the floor, the recommended backend kind first. Pure.
  */
 export function chooseUpstreamEngine(catalog: UpstreamCatalog, minBuild: number): UpstreamEngineChoice {
-  const supported = new Set(catalog.supported_backends ?? []);
-  const runnable = (b: UpstreamBuild) => supported.size === 0 || supported.has(b.backend);
+  const available = catalog.available ?? [];
+  const runnable = (b: UpstreamBuild) => available.some(a => a.version === b.version && a.backend === b.backend);
   const newEnough = (b: UpstreamBuild) => (upstreamBuildNumber(b.version) ?? -1) >= minBuild;
   const newestFirst = (a: UpstreamBuild, b: UpstreamBuild) => (upstreamBuildNumber(b.version) ?? 0) - (upstreamBuildNumber(a.version) ?? 0);
 
@@ -122,9 +118,9 @@ export function chooseUpstreamEngine(catalog: UpstreamCatalog, minBuild: number)
 
   const [tag, backend, extra] = (catalog.recommended ?? "").split("/");
   const recommended = tag && backend && !extra ? { version: tag, backend } : null;
-  if (recommended && newEnough(recommended) && runnable(recommended)) return { kind: "install", ...recommended };
+  if (recommended && newEnough(recommended)) return { kind: "install", ...recommended };
 
-  const candidates = (catalog.available ?? []).filter(b => newEnough(b) && runnable(b));
+  const candidates = available.filter(newEnough);
   candidates.sort((a, b) => newestFirst(a, b) || Number(b.backend === recommended?.backend) - Number(a.backend === recommended?.backend));
   const pick = candidates[0];
   return pick ? { kind: "install", version: pick.version, backend: pick.backend } : { kind: "none" };
@@ -132,18 +128,19 @@ export function chooseUpstreamEngine(catalog: UpstreamCatalog, minBuild: number)
 
 /**
  * Install a stock llama.cpp build the module can use, when none is.
- * Returns the `<tag>/<backend>` installed, or null when one already was
- * (Core refused it, so installing changes nothing).
+ * Returns the `<tag>/<backend>` and whether it was installed now; a build
+ * that was already there and still refused by Core is not reinstalled.
  */
-export async function installCoreEmbeddingEngine(client: CoreControlClient, opts: DownloadFileOptions = {}, minBuild = CORE_EMBEDDING_MIN_BUILD): Promise<string | null> {
+export async function installCoreEmbeddingEngine(client: CoreControlClient, opts: DownloadFileOptions = {}, minBuild = CORE_EMBEDDING_MIN_BUILD): Promise<{ build: string; installedNow: boolean }> {
   const catalog = await client.call<UpstreamCatalog>(`/backends/${UPSTREAM}/catalog`, {}, { signal: opts.signal, timeoutMs: 60_000 });
   const choice = chooseUpstreamEngine(catalog, minBuild);
-  if (choice.kind === "installed") return null;
   if (choice.kind === "none") {
     throw new Error(`No llama.cpp build b${minBuild} or newer is published for this computer, so the embedding model cannot run here yet.`);
   }
+  const build = `${choice.version}/${choice.backend}`;
+  if (choice.kind === "installed") return { build, installedNow: false };
   await installSelectedBackend(client, UPSTREAM, { version: choice.version, backend: choice.backend }, opts);
-  return `${choice.version}/${choice.backend}`;
+  return { build, installedNow: true };
 }
 
 // ---------------------------------------------------------------------
@@ -158,7 +155,7 @@ export function describeCoreEmbeddingError(err: unknown, modelId: string): Error
     case "MODEL_FILE_NOT_FOUND":
       return new Error(`embedding model ${modelId} not downloaded; run 'atomic-agent models pull-embedding ${modelId}'`, { cause: err });
     case "EMBEDDING_ENGINE_UNSUPPORTED":
-      return new Error(`Atomic Core found no llama.cpp build that runs ${modelId} (${why}). Retry with: atomic-agent models start-embedding`, { cause: err });
+      return new Error(`Atomic Core found no llama.cpp build that runs ${modelId} (${why}). Check your connection and retry with: atomic-agent models start-embedding`, { cause: err });
     case "EMBEDDING_MODEL_NOT_EMBEDDING":
       return new Error(`The ${modelId} file is not an embedding model (${why}). Remove it and pull it again.`, { cause: err });
     case "EMBEDDING_UNAVAILABLE":
@@ -183,54 +180,77 @@ export interface CoreEmbeddingStartOptions {
 
 /**
  * Configure and load the module on a connected Core. A missing engine is
- * installed once and the load retried. On any failure (cancellation
- * included) the module is turned off again, so a failed start leaves
- * nothing for Core to retry in the background.
+ * installed once and the load retried. Leaves the module configured on
+ * failure: `startCoreEmbedding` turns it off again.
  */
 export async function startCoreEmbeddingOn(client: CoreControlClient, opts: CoreEmbeddingStartOptions): Promise<CoreEmbeddingStatus> {
   const load = () => client.call<CoreEmbeddingStatus>("/embedding/load", {}, { ...(opts.signal ? { signal: opts.signal } : {}), timeoutMs: 180_000 });
-  try {
-    opts.signal?.throwIfAborted();
-    await client.call("/embedding/config", {
-      enabled: true, model_path: opts.modelPath, model_id: opts.modelId,
-      mmproj_path: "", ctx_size: 2048, pooling: "",
-    }, { method: "PUT", ...(opts.signal ? { signal: opts.signal } : {}) });
-    let status: CoreEmbeddingStatus;
-    try { status = await load(); }
-    catch (err) {
-      if (!(err instanceof CoreRequestError) || err.code !== "EMBEDDING_ENGINE_UNSUPPORTED") throw err;
-      opts.onEngineInstall?.();
-      const installed = await installCoreEmbeddingEngine(client, {
-        ...(opts.signal ? { signal: opts.signal } : {}),
-        ...(opts.onEngineProgress ? { onProgress: opts.onEngineProgress } : {}),
-      }, opts.minBuild);
-      if (installed === null) throw err;
-      status = await load();
+  opts.signal?.throwIfAborted();
+  await client.call("/embedding/config", {
+    enabled: true, model_path: opts.modelPath, model_id: opts.modelId,
+    mmproj_path: "", ctx_size: 2048, pooling: "",
+  }, { method: "PUT", ...(opts.signal ? { signal: opts.signal } : {}) });
+  let status: CoreEmbeddingStatus;
+  try { status = await load(); }
+  catch (err) {
+    if (!(err instanceof CoreRequestError) || err.code !== "EMBEDDING_ENGINE_UNSUPPORTED") throw err;
+    opts.onEngineInstall?.();
+    const engine = await installCoreEmbeddingEngine(client, {
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.onEngineProgress ? { onProgress: opts.onEngineProgress } : {}),
+    }, opts.minBuild);
+    if (!engine.installedNow) {
+      // Installing again would change nothing: say so instead of a retry hint that loops.
+      throw new Error(`Atomic Core refused llama.cpp ${engine.build} for ${opts.modelId} (${err.message.replace(/\.$/, "")}). Update the engine with: atomic-agent models update, and report it if this persists.`, { cause: err });
     }
-    if (status.state !== "ready" || !Number.isInteger(status.dims) || status.model_id !== opts.modelId) {
-      throw new Error(`Atomic Core reported the embedding model as ${status.state}${status.error ? ` (${status.error.message})` : ""}.`);
-    }
-    return status;
-  } catch (err) {
-    await client.call("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 }).catch(() => {});
-    if (opts.signal?.aborted) throw err;
-    throw describeCoreEmbeddingError(err, opts.modelId);
+    status = await load();
   }
+  if (status.state !== "ready" || !Number.isInteger(status.dims) || status.model_id !== opts.modelId) {
+    throw new Error(`Atomic Core reported the embedding model as ${status.state}${status.error ? ` (${status.error.message})` : ""}.`);
+  }
+  return status;
+}
+
+/** Turn the module off on a connected Core; false when Core refused or did not answer. */
+async function disableOn(client: CoreControlClient, timeoutMs: number): Promise<boolean> {
+  return client.call("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs }).then(() => true, () => false);
+}
+
+/**
+ * The module needs Core with the embedding module (this build's pin). An
+ * older active Core is switched when nothing runs on it; otherwise the
+ * sentence says what to do.
+ */
+async function moduleCoreVersion(dataDir: string): Promise<string> {
+  if (activeCoreVersion(dataDir) === CORE_VERSION) return CORE_VERSION;
+  if (await activateCoreVersion(dataDir, CORE_VERSION)) return CORE_VERSION;
+  throw new Error(isCoreBackendInstalled(dataDir, CORE_VERSION)
+    ? `The embedding model needs Atomic Core ${CORE_VERSION}, which is installed but waits until local models stop. Run: atomic-agent models stop, then start again.`
+    : `The embedding model needs Atomic Core ${CORE_VERSION}. Install it with: atomic-agent models update`);
 }
 
 /**
  * `models start-embedding` for a model that runs in Core's embedding
  * module: install an engine when needed, load the model, record it.
- * Serialized with every other engine operation.
+ * Serialized with every other engine operation. On any failure
+ * (cancellation included) the module is turned off again, so Core has
+ * nothing to retry in the background; if Core will not take that change,
+ * the record stays with the change pending.
  */
 export async function startCoreEmbedding(dataDir: string, opts: CoreEmbeddingStartOptions): Promise<CoreEmbeddingStatus> {
+  const version = await moduleCoreVersion(dataDir);
   return withCoreOperation(dataDir, async () => {
-    const version = activeCoreVersion(dataDir);
     return withCoreClient(dataDir, version, async client => {
+      const record: CoreEmbeddingRecord = { coreVersion: version, modelId: opts.modelId, modelPath: opts.modelPath };
       // Recorded first: a start interrupted after Core enabled the module is still stoppable.
-      writeCoreJson(coreEmbeddingRecordPath(dataDir), { coreVersion: version, modelId: opts.modelId, modelPath: opts.modelPath } satisfies CoreEmbeddingRecord);
+      writeCoreJson(coreEmbeddingRecordPath(dataDir), record);
       try { return await startCoreEmbeddingOn(client, opts); }
-      catch (err) { dropCoreEmbeddingRecord(dataDir); throw err; }
+      catch (err) {
+        if (await disableOn(client, 30_000)) dropCoreEmbeddingRecord(dataDir);
+        else markDisablePending(dataDir, record);
+        if (opts.signal?.aborted) throw err;
+        throw describeCoreEmbeddingError(err, opts.modelId);
+      }
     }, opts.signal);
   });
 }
@@ -238,30 +258,36 @@ export async function startCoreEmbedding(dataDir: string, opts: CoreEmbeddingSta
 /**
  * Turn the module off (`enabled: false`, so Core neither keeps it nor
  * starts it at its next launch) and forget the record. False when this
- * agent never started it. A Core that is not running is started for the
- * change; the caller's idle retirement stops it again.
+ * agent never started it. A Core that is not running is never started for
+ * this: the record is marked `disablePending` and the next Core start
+ * applies it (`applyPendingEmbeddingDisable`). A refused change also stays
+ * pending, and the stop fails. After a change on a running Core, an idle
+ * Core is retired unless `retire: false`. `waitMs` bounds both the wait
+ * for another engine operation and Core's answer (at least 5 s).
  */
-export async function stopCoreEmbedding(dataDir: string, opts: { waitMs?: number } = {}): Promise<boolean> {
+export async function stopCoreEmbedding(dataDir: string, opts: { waitMs?: number; retire?: boolean } = {}): Promise<boolean> {
   if (!existsSync(coreEmbeddingRecordPath(dataDir))) return false;
-  return withCoreOperation(dataDir, async () => {
+  const waitMs = opts.waitMs ?? CORE_OPERATION_WAIT_MS;
+  const touched = await withCoreOperation(dataDir, async () => {
     const record = readCoreEmbeddingRecord(dataDir);
-    if (!record) { dropCoreEmbeddingRecord(dataDir); return true; }
-    let client = await connectCore(dataDir, record.coreVersion).catch(() => null);
-    if (!client) {
-      try { client = await ensureCore(dataDir, record.coreVersion); }
-      // Core cannot start (removed, broken): nothing of it can run the module either.
-      catch { dropCoreEmbeddingRecord(dataDir); return true; }
+    if (!record) { dropCoreEmbeddingRecord(dataDir); return false; }
+    const client = await connectCore(dataDir, record.coreVersion).catch(() => null);
+    if (!client) { markDisablePending(dataDir, record); return false; }
+    if (!(await disableOn(client, Math.max(waitMs, 5_000)))) {
+      markDisablePending(dataDir, record);
+      throw new Error("Atomic Core did not turn the embedding model off; it is retried at the next engine start.");
     }
-    await client.call("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 });
     dropCoreEmbeddingRecord(dataDir);
     return true;
-  }, opts);
+  }, { waitMs });
+  if (touched && opts.retire !== false) await retireIdleCore(dataDir);
+  return true;
 }
 
 /** The module's status on the recorded Core, without starting it; null when it is not running or never started. */
 export async function coreEmbeddingStatus(dataDir: string, connect: typeof connectCore = connectCore): Promise<CoreEmbeddingStatus | null> {
   const record = readCoreEmbeddingRecord(dataDir);
-  if (!record) return null;
+  if (!record || record.disablePending) return null;
   try {
     const client = await connect(dataDir, record.coreVersion);
     return client ? await client.call<CoreEmbeddingStatus>("/embedding/status") : null;
@@ -278,10 +304,25 @@ export interface CoreEmbeddingClientOptions {
   /** The catalog id: the `memory_embeddings.model` column and the module's `model_id`. */
   model: string;
   prompts?: EmbeddingPrompts;
-  /** Per request. An idle module starts on the first one, so allow for a load. */
+  /**
+   * Per request; default `coreEmbeddingTimeoutMs(purpose)`. Set, it
+   * applies to every purpose.
+   */
   timeoutMs?: number;
   /** Connect to the running Core without starting it. Default: the recorded Core. */
   connect?: () => Promise<CoreControlClient | null>;
+}
+
+/**
+ * How long one embed waits. Core starts an idle module on the request and
+ * waits up to its `startup_timeout_secs` (120 s) for it, so a document
+ * write (in the background) waits that long plus the answer. A recall
+ * query or a gate check blocks the user's turn and falls back to FTS5
+ * cheaply, while Core keeps starting the module for the next one: those
+ * stay short.
+ */
+export function coreEmbeddingTimeoutMs(purpose: EmbedRequest["purpose"]): number {
+  return purpose === "query" || purpose === "similarity" ? 15_000 : 130_000;
 }
 
 /**
@@ -307,7 +348,7 @@ export function createCoreEmbeddingClient(opts: CoreEmbeddingClientOptions): Emb
         if (!connected) throw new EmbeddingUnavailableError("Atomic Core is not running");
         answer = await connected.call<{ status: number; body: unknown }>("/embedding/embed",
           { model: opts.model, input: promptedEmbeddingText(req, opts.prompts) },
-          { ...(req.signal ? { signal: req.signal } : {}), timeoutMs: opts.timeoutMs ?? 30_000 });
+          { ...(req.signal ? { signal: req.signal } : {}), timeoutMs: opts.timeoutMs ?? coreEmbeddingTimeoutMs(req.purpose) });
       } catch (err) {
         connected = null;
         if (err instanceof EmbeddingUnavailableError) throw err;

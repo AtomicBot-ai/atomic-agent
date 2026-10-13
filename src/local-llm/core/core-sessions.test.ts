@@ -53,7 +53,11 @@ function idleCore(sessions: unknown[], shutdown: () => unknown = () => ({ ok: tr
   fake.snapshot.mockResolvedValue({ sessions });
   fake.call.mockImplementation(async (path: string) => {
     if (path === "/clients") return { client: { id: "me" }, heartbeat_interval_ms: 15_000 };
-    if (path === "/embedding/status" && embedding) return embedding;
+    if (path === "/embedding/status") {
+      if (embedding) return embedding;
+      // A Core without the embedding module (0.11) answers 404: not busy.
+      throw Object.assign(new Error("Not found"), { status: 404 });
+    }
     if (path === "/shutdown") return shutdown();
     if (path === "/clients/me") return {};
     throw new Error("unexpected route");

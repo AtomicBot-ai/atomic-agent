@@ -27,10 +27,21 @@ vi.mock("node:os", async (importOriginal) => {
 });
 
 const startCoreEmbeddingMock = vi.hoisted(() => vi.fn());
-vi.mock("../core/core-embedding.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../core/core-embedding.js")>()),
-  startCoreEmbedding: startCoreEmbeddingMock,
-}));
+const stopCoreEmbeddingMock = vi.hoisted(() => vi.fn());
+const coreEmbeddingStatusMock = vi.hoisted(() => vi.fn());
+vi.mock("../core/core-embedding.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../core/core-embedding.js")>();
+  // Spies over the real stop/status, so every other test keeps their behaviour.
+  stopCoreEmbeddingMock.mockImplementation(actual.stopCoreEmbedding);
+  coreEmbeddingStatusMock.mockImplementation(actual.coreEmbeddingStatus);
+  return {
+    ...actual,
+    startCoreEmbedding: startCoreEmbeddingMock,
+    stopCoreEmbedding: stopCoreEmbeddingMock,
+    coreEmbeddingStatus: coreEmbeddingStatusMock,
+  };
+});
+import { coreEmbeddingRecordPath, CORE_VERSION, readCoreEmbeddingRecord, writeCoreJson } from "../core/core-state.js";
 
 import {
   resolveEmbeddingPidFilePath,
@@ -46,6 +57,7 @@ import {
   DaemonHealthError,
   ForeignDaemonError,
   getDaemonStatus,
+  getEmbeddingDaemonStatus,
   probeThroughput,
   readLaunchRecord,
   readReusableThroughput,
@@ -455,7 +467,11 @@ describe("buildEmbeddingServerArgs (memory-v2 phase 1B)", () => {
 
 describe("embedding models that run in Atomic Core's module", () => {
   const dirs: string[] = [];
-  beforeEach(() => spawnMock.mockReset());
+  beforeEach(() => {
+    spawnMock.mockReset();
+    stopCoreEmbeddingMock.mockClear();
+    coreEmbeddingStatusMock.mockClear();
+  });
   afterEach(() => {
     startCoreEmbeddingMock.mockReset();
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -490,6 +506,40 @@ describe("embedding models that run in Atomic Core's module", () => {
     }));
     expect(existsSync(resolveEmbeddingPidFilePath(dataDir))).toBe(false);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  const gemmaRecord = (dataDir: string, change: object = {}) =>
+    writeCoreJson(coreEmbeddingRecordPath(dataDir), { coreVersion: CORE_VERSION, modelId: "embeddinggemma-2", modelPath: "/m.gguf", ...change });
+
+  it("a leftover module record of another model neither hides nor stands in for the configured model", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir);
+    await expect(getEmbeddingDaemonStatus(dataDir, 19092, "nomic-embed-text-v1.5")).resolves.toMatchObject({ running: false, pid: null, port: 19092 });
+    expect(coreEmbeddingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("reports Core's module for the model it was started for", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir);
+    coreEmbeddingStatusMock.mockResolvedValueOnce({ state: "starting", enabled: true, pid: null, port: null });
+    await expect(getEmbeddingDaemonStatus(dataDir, 19092, "embeddinggemma-2")).resolves.toEqual({ running: true, pid: null, port: 19092, healthy: false, loading: true });
+  });
+
+  it("does not ask Core about a module whose stop is still pending", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir, { disablePending: true });
+    await expect(getEmbeddingDaemonStatus(dataDir, 19092, "embeddinggemma-2")).resolves.toMatchObject({ running: false });
+    expect(coreEmbeddingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("turns a leftover module off before starting another embedding model", async () => {
+    const dataDir = dataDirWithGemma();
+    gemmaRecord(dataDir);
+    // No backend here, so the start itself fails after the cleanup.
+    await startEmbeddingDaemon({ engine: "llama-server", dataDir, modelId: "nomic-embed-text-v1.5", port: 19092 }).catch(() => {});
+    expect(stopCoreEmbeddingMock).toHaveBeenCalledWith(dataDir, { retire: false });
+    // Core is not running: never started for this, the disable waits for its next start.
+    expect(readCoreEmbeddingRecord(dataDir)).toMatchObject({ disablePending: true });
   });
 
   it("refuses a module that answers another vector length", async () => {

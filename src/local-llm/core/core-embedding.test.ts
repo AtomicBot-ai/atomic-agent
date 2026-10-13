@@ -2,18 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connectCore, CoreRequestError, ensureCore, type CoreControlClient } from "./core-client.js";
+import { applyPendingEmbeddingDisable, connectCore, CoreRequestError, ensureCore, type CoreControlClient } from "./core-client.js";
 import {
   chooseUpstreamEngine,
   coreEmbeddingRecordPath,
   coreEmbeddingStatus,
+  coreEmbeddingTimeoutMs,
   createCoreEmbeddingClient,
+  readCoreEmbeddingRecord,
   startCoreEmbedding,
   startCoreEmbeddingOn,
   stopCoreEmbedding,
   type CoreEmbeddingStatus,
 } from "./core-embedding.js";
-import { CORE_VERSION, writeCoreJson } from "./core-state.js";
+import { retireIdleCore } from "./core-sessions.js";
+import { CORE_VERSION, coreRoot, writeCoreJson } from "./core-state.js";
 import { EmbeddingUnavailableError } from "../../memory/embeddings/embedding-client.js";
 
 const fake = vi.hoisted(() => ({ call: vi.fn(), downloadEvents: vi.fn(), snapshot: vi.fn() }));
@@ -23,6 +26,7 @@ vi.mock("./core-client.js", async importOriginal => ({
   ensureCore: vi.fn(),
   withCoreClient: async (_d: string, _v: string, fn: (client: typeof fake) => Promise<unknown>) => fn(fake),
 }));
+vi.mock("./core-sessions.js", () => ({ retireIdleCore: vi.fn(async () => false) }));
 const client = fake as unknown as CoreControlClient;
 
 let dir: string;
@@ -30,6 +34,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   dir = mkdtempSync(join(tmpdir(), "core-embedding-"));
   vi.mocked(connectCore).mockResolvedValue(null);
+  vi.mocked(retireIdleCore).mockResolvedValue(false);
   fake.downloadEvents.mockResolvedValue(async () => {});
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -39,33 +44,47 @@ const ready: CoreEmbeddingStatus = {
   engine: { path: "/b/llama-server", version_backend: "b11460/macos-arm64", provider: "llamacpp-upstream" },
   pid: 4242, port: 39001, dims: 768, modalities: ["text"], restarts: 0, error: null, since: 0,
 };
+const record = (change: object = {}) =>
+  writeCoreJson(coreEmbeddingRecordPath(dir), { coreVersion: CORE_VERSION, modelId: "embeddinggemma-2", modelPath: "/m.gguf", ...change });
+const disable = ["/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 }];
 
 describe("chooseUpstreamEngine", () => {
   const min = 11454;
-  it("uses an installed build at or above the floor that this computer runs", () => {
+  it("uses an installed build at or above the floor that Core lists as available here", () => {
     expect(chooseUpstreamEngine({
-      supported_backends: ["macos-arm64"],
-      installed: [{ version: "b11400", backend: "macos-arm64" }, { version: "b11460", backend: "macos-arm64" }, { version: "b11500", backend: "win-cuda-x64" }],
+      available: [{ version: "b11460", backend: "macos-arm64" }, { version: "b11500", backend: "macos-arm64" }],
+      installed: [{ version: "b11400", backend: "macos-arm64" }, { version: "b11460", backend: "macos-arm64" }, { version: "b11500", backend: "win-cuda-13.1-x64" }],
       recommended: "b11500/macos-arm64",
     }, min)).toEqual({ kind: "installed", version: "b11460", backend: "macos-arm64" });
   });
-  it("installs Core's recommendation when it is new enough", () => {
+  it("trusts Core's hardware gate: family ids in supported_backends do not drop concrete CUDA builds", () => {
     expect(chooseUpstreamEngine({
-      supported_backends: ["win-vulkan-x64", "win-cpu-x64"],
-      installed: [{ version: "b11400", backend: "win-vulkan-x64" }],
-      recommended: "b11470/win-vulkan-x64",
-    }, min)).toEqual({ kind: "install", version: "b11470", backend: "win-vulkan-x64" });
+      supported_backends: ["win-cuda-13-x64", "win-vulkan-x64", "win-cpu-x64"],
+      installed: [],
+      recommended: "b11470/win-cuda-13.1-x64",
+      available: [{ version: "b11470", backend: "win-cuda-13.1-x64" }, { version: "b11470", backend: "win-vulkan-x64" }],
+    }, min)).toEqual({ kind: "install", version: "b11470", backend: "win-cuda-13.1-x64" });
+    expect(chooseUpstreamEngine({
+      supported_backends: ["linux-cuda-13-arm64"],
+      recommended: "b11400/linux-cuda-13.1-arm64",
+      available: [{ version: "b11460", backend: "linux-cpu-arm64" }, { version: "b11460", backend: "linux-cuda-13.1-arm64" }],
+    }, min)).toEqual({ kind: "install", version: "b11460", backend: "linux-cuda-13.1-arm64" });
+  });
+  it("ignores an installed build Core does not offer for this hardware", () => {
+    expect(chooseUpstreamEngine({
+      installed: [{ version: "b11500", backend: "win-cuda-13.1-x64" }],
+      available: [{ version: "b11460", backend: "win-vulkan-x64" }],
+      recommended: "b11460/win-vulkan-x64",
+    }, min)).toEqual({ kind: "install", version: "b11460", backend: "win-vulkan-x64" });
   });
   it("otherwise installs the newest available build, the recommended kind first", () => {
     expect(chooseUpstreamEngine({
-      supported_backends: ["win-vulkan-x64", "win-cpu-x64"],
       recommended: "b11400/win-vulkan-x64",
       available: [
         { version: "b11460", backend: "win-cpu-x64" },
         { version: "b11460", backend: "win-vulkan-x64" },
         { version: "b11455", backend: "win-vulkan-x64" },
         { version: "b11400", backend: "win-vulkan-x64" },
-        { version: "b99999", backend: "win-cuda-13-x64" },
         { version: "latest", backend: "win-vulkan-x64" },
       ],
     }, min)).toEqual({ kind: "install", version: "b11460", backend: "win-vulkan-x64" });
@@ -87,11 +106,19 @@ describe("createCoreEmbeddingClient", () => {
     expect(out.vector).toBeInstanceOf(Float32Array);
     expect(out.vector).toHaveLength(768);
     expect(out.model).toBe("embeddinggemma-2");
-    expect(fake.call).toHaveBeenCalledWith("/embedding/embed", { model: "embeddinggemma-2", input: "task: search result | query: where is my config" }, expect.objectContaining({ timeoutMs: 30_000 }));
+    expect(fake.call).toHaveBeenCalledWith("/embedding/embed", { model: "embeddinggemma-2", input: "task: search result | query: where is my config" }, expect.objectContaining({ timeoutMs: 15_000 }));
     await embedder.embed({ text: "a note", purpose: "document" });
     expect(fake.call.mock.calls[1]?.[1]).toEqual({ model: "embeddinggemma-2", input: "title: none | text: a note" });
+    expect(fake.call.mock.calls[1]?.[2]).toMatchObject({ timeoutMs: 130_000 });
     await embedder.embed({ text: "plain" });
     expect(fake.call.mock.calls[2]?.[1]).toEqual({ model: "embeddinggemma-2", input: "plain" });
+  });
+
+  it("gives a background write room for Core's cold start, and keeps turn-path calls short", () => {
+    expect(coreEmbeddingTimeoutMs("document")).toBeGreaterThan(120_000);
+    expect(coreEmbeddingTimeoutMs(undefined)).toBeGreaterThan(120_000);
+    expect(coreEmbeddingTimeoutMs("query")).toBe(15_000);
+    expect(coreEmbeddingTimeoutMs("similarity")).toBe(15_000);
   });
 
   it("treats an engine error answer as unavailable", async () => {
@@ -144,7 +171,7 @@ describe("starting the module", () => {
         if (++loads === 1) throw new CoreRequestError(409, "No installed llama.cpp build can run the embedding model.", "EMBEDDING_ENGINE_UNSUPPORTED");
         return ready;
       }
-      if (path === "/backends/llamacpp-upstream/catalog") return { supported_backends: ["macos-arm64"], recommended: "b11470/macos-arm64", installed: [] };
+      if (path === "/backends/llamacpp-upstream/catalog") return { recommended: "b11470/macos-arm64", installed: [], available: [{ version: "b11470", backend: "macos-arm64" }] };
       if (path === "/backends/llamacpp-upstream/install") return { path: "/b" };
       return {};
     });
@@ -155,19 +182,42 @@ describe("starting the module", () => {
     expect(loads).toBe(2);
   });
 
+  it("says Core refused an installed build instead of a retry hint that loops", async () => {
+    fake.call.mockImplementation(async (path: string) => {
+      if (path === "/embedding/load") throw new CoreRequestError(409, "No installed llama.cpp build can run the embedding model.", "EMBEDDING_ENGINE_UNSUPPORTED");
+      if (path === "/backends/llamacpp-upstream/catalog") return { installed: [{ version: "b11470", backend: "macos-arm64" }], available: [{ version: "b11470", backend: "macos-arm64" }] };
+      return {};
+    });
+    const err = await startCoreEmbedding(dir, opts).catch((e: unknown) => e as Error);
+    expect(err.message).toContain("Atomic Core refused llama.cpp b11470/macos-arm64");
+    expect(err.message).not.toContain("start-embedding");
+    expect(fake.call.mock.calls.some(([path]) => path === "/backends/llamacpp-upstream/install")).toBe(false);
+  });
+
   it("turns the module off and names the pull command when the file is missing", async () => {
     fake.call.mockImplementation(async (path: string) => {
       if (path === "/embedding/load") throw new CoreRequestError(404, "The embedding model does not exist.", "MODEL_FILE_NOT_FOUND");
       return {};
     });
-    await expect(startCoreEmbeddingOn(client, opts)).rejects.toThrow("atomic-agent models pull-embedding embeddinggemma-2");
-    expect(fake.call).toHaveBeenLastCalledWith("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 });
+    await expect(startCoreEmbedding(dir, opts)).rejects.toThrow("atomic-agent models pull-embedding embeddinggemma-2");
+    expect(fake.call).toHaveBeenLastCalledWith(...disable);
+    expect(existsSync(coreEmbeddingRecordPath(dir))).toBe(false);
+  });
+
+  it("keeps the record with the disable pending when Core will not turn a failed start off", async () => {
+    fake.call.mockImplementation(async (path: string, body?: { enabled?: boolean }) => {
+      if (path === "/embedding/load") throw new CoreRequestError(500, "boom", "MODEL_LOAD_FAILED");
+      if (path === "/embedding/config" && body?.enabled === false) throw new CoreRequestError(503, "busy");
+      return {};
+    });
+    await expect(startCoreEmbedding(dir, opts)).rejects.toThrow("could not start the embedding model: boom");
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ modelId: "embeddinggemma-2", disablePending: true });
   });
 
   it("records a started module and forgets a failed one", async () => {
     fake.call.mockImplementation(async (path: string) => (path === "/embedding/load" ? ready : {}));
     await startCoreEmbedding(dir, opts);
-    expect(existsSync(coreEmbeddingRecordPath(dir))).toBe(true);
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ coreVersion: CORE_VERSION, modelId: "embeddinggemma-2" });
     fake.call.mockImplementation(async (path: string) => {
       if (path === "/embedding/load") throw new CoreRequestError(500, "boom", "MODEL_LOAD_FAILED");
       return {};
@@ -175,11 +225,15 @@ describe("starting the module", () => {
     await expect(startCoreEmbedding(dir, opts)).rejects.toThrow("could not start the embedding model: boom");
     expect(existsSync(coreEmbeddingRecordPath(dir))).toBe(false);
   });
+
+  it("refuses to run the module on an older active Core it cannot switch", async () => {
+    writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.11.2" });
+    await expect(startCoreEmbedding(dir, opts)).rejects.toThrow(`needs Atomic Core ${CORE_VERSION}. Install it with: atomic-agent models update`);
+    expect(fake.call).not.toHaveBeenCalled();
+  });
 });
 
 describe("stopping and status", () => {
-  const record = () => writeCoreJson(coreEmbeddingRecordPath(dir), { coreVersion: CORE_VERSION, modelId: "embeddinggemma-2", modelPath: "/m.gguf" });
-
   it("does nothing for a module this agent never started", async () => {
     await expect(stopCoreEmbedding(dir)).resolves.toBe(false);
     await expect(coreEmbeddingStatus(dir)).resolves.toBeNull();
@@ -187,22 +241,56 @@ describe("stopping and status", () => {
     expect(ensureCore).not.toHaveBeenCalled();
   });
 
-  it("turns the module off on the running Core and forgets it", async () => {
+  it("turns the module off on the running Core, forgets it, then lets an idle Core retire", async () => {
     record();
     vi.mocked(connectCore).mockResolvedValue(client);
     fake.call.mockResolvedValue({});
     await expect(stopCoreEmbedding(dir)).resolves.toBe(true);
-    expect(fake.call).toHaveBeenCalledWith("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 });
+    expect(fake.call).toHaveBeenCalledWith(...disable);
+    expect(existsSync(coreEmbeddingRecordPath(dir))).toBe(false);
+    expect(retireIdleCore).toHaveBeenCalledWith(dir);
+  });
+
+  it("honours a short wait for Core's answer, never below five seconds", async () => {
+    record();
+    vi.mocked(connectCore).mockResolvedValue(client);
+    fake.call.mockResolvedValue({});
+    await stopCoreEmbedding(dir, { waitMs: 4_000, retire: false });
+    expect(fake.call).toHaveBeenCalledWith("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 5_000 });
+    expect(retireIdleCore).not.toHaveBeenCalled();
+  });
+
+  it("never starts a stopped Core: the disable waits for the next Core start", async () => {
+    record();
+    await expect(stopCoreEmbedding(dir)).resolves.toBe(true);
+    expect(ensureCore).not.toHaveBeenCalled();
+    expect(fake.call).not.toHaveBeenCalled();
+    expect(retireIdleCore).not.toHaveBeenCalled();
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ disablePending: true });
+    await expect(coreEmbeddingStatus(dir)).resolves.toBeNull();
+
+    // The next Core start (ensureCore) applies it.
+    fake.call.mockResolvedValue({});
+    await applyPendingEmbeddingDisable(dir, CORE_VERSION, client);
+    expect(fake.call).toHaveBeenCalledWith(...disable);
     expect(existsSync(coreEmbeddingRecordPath(dir))).toBe(false);
   });
 
-  it("starts a stopped Core to turn the module off, so it does not come back at Core's next launch", async () => {
+  it("keeps the disable pending when Core refuses it, and the stop says so", async () => {
     record();
-    vi.mocked(ensureCore).mockResolvedValue(client);
-    fake.call.mockResolvedValue({});
-    await expect(stopCoreEmbedding(dir)).resolves.toBe(true);
-    expect(ensureCore).toHaveBeenCalledWith(dir, CORE_VERSION);
-    expect(fake.call).toHaveBeenCalledWith("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 });
+    vi.mocked(connectCore).mockResolvedValue(client);
+    fake.call.mockRejectedValue(new CoreRequestError(503, "busy"));
+    await expect(stopCoreEmbedding(dir)).rejects.toThrow("retried at the next engine start");
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ disablePending: true });
+    await applyPendingEmbeddingDisable(dir, CORE_VERSION, client);
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ disablePending: true });
+  });
+
+  it("leaves a record without a pending disable alone on Core start", async () => {
+    record();
+    await applyPendingEmbeddingDisable(dir, CORE_VERSION, client);
+    expect(fake.call).not.toHaveBeenCalled();
+    expect(existsSync(coreEmbeddingRecordPath(dir))).toBe(true);
   });
 
   it("reads status from the recorded Core without starting it", async () => {

@@ -859,7 +859,9 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
   }
   const now = await getEmbeddingDaemonStatus(dataDir, emb.port);
   if (now.running) {
-    process.stdout.write(`embedding: already running pid ${now.pid} on port ${now.port} (${modelId})\n`);
+    // Core's module may be starting or restarting, with no process yet.
+    const what = now.pid !== null ? `running pid ${now.pid}` : now.loading ? "starting" : "running";
+    process.stdout.write(`embedding: already ${what} on port ${now.port} (${modelId})\n`);
     return 0;
   }
   const embDef = getEmbeddingModelDef(modelId);

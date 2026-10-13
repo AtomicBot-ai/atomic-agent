@@ -1408,6 +1408,9 @@ export async function startEmbeddingDaemon(
   if (getEmbeddingModelDef(opts.modelId).requiresCoreEmbeddingModule) {
     return startCoreModuleEmbedding(opts);
   }
+  // A module model left on in Core (a switch away from it) would keep
+  // running beside this one: turn it off first, keeping Core up for the load.
+  await stopCoreEmbedding(opts.dataDir, { retire: false });
   await recoverOrphanedCoreSessions(opts.dataDir);
   const pidPath = resolveEmbeddingPidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir, "embedding");
@@ -1550,7 +1553,7 @@ export async function stopEmbeddingDaemon(
   opts?: { timeoutMs?: number },
 ): Promise<void> {
   // Core's embedding module first: a model switch may leave either kind.
-  await stopCoreEmbedding(dataDir);
+  await stopCoreEmbedding(dataDir, opts?.timeoutMs === undefined ? {} : { waitMs: opts.timeoutMs });
   if (await stopCoreSession(dataDir, "embedding")) return;
   const pidPath = resolveEmbeddingPidFilePath(dataDir);
   let raw: string;
@@ -1625,8 +1628,21 @@ export async function stopEmbeddingDaemon(
 export async function getEmbeddingDaemonStatus(
   dataDir: string,
   port: number,
+  /** The configured embedding model; default: read from the config. */
+  configuredModelId?: string | null,
 ): Promise<DaemonStatus> {
-  if (readCoreEmbeddingRecord(dataDir)) {
+  const moduleRecord = readCoreEmbeddingRecord(dataDir);
+  // Core's module answers only for the model it was started for; a leftover
+  // record of another model (or a stop still pending) must not hide or
+  // stand in for the configured model's own daemon.
+  if (
+    moduleRecord &&
+    !moduleRecord.disablePending &&
+    moduleRecord.modelId ===
+      (configuredModelId === undefined
+        ? getConfig().localModels.embeddings.modelId
+        : configuredModelId)
+  ) {
     // Core's module: no pid file or configured port, Core owns both.
     const st = await coreEmbeddingStatus(dataDir);
     if (!st || !st.enabled || !coreEmbeddingRunning(st)) {
