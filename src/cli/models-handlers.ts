@@ -35,10 +35,12 @@ import {
   isModelDownloaded,
   isWindowsArm64,
   listLocalModels,
-  listVulkanDevices,
   AUTO_UPDATE_RECHECK_MS,
-  deviceTableOnce,
+  describeUnlistedDevices,
+  managedDeviceSource,
+  managedDeviceTable,
   maybeAutoUpdateBackend,
+  probeManagedDevices,
   readBackendVersion,
   readDownloadJob,
   DEFAULT_HF_ENDPOINT,
@@ -598,21 +600,33 @@ export async function runLocalModelsStart(
   const tensorSplit = cfg.localModels.managed.tensorSplit;
   const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
+  const engine = getConfig().localModels.managed.engine;
   // One `--list-devices` for the launch, run only when something asks:
   // an `auto` pick here, the context fit in startDaemon (`deviceTableOnce`).
-  const listDevices = deviceTableOnce(binPath);
+  // The engine is installed by now (the auto-update above installs Atomic
+  // Core and its backend on a first start), so under Core this asks the
+  // llama-server Core will load the model with, as Core runs it — the
+  // device pick and the context fit see the GPU the model will use.
+  const listDevices = managedDeviceTable(dataDir, engine);
   const device = await resolveManagedDevice(
-    binPath,
+    managedDeviceSource(dataDir, engine)?.binPath ?? resolveServerBinPath(dataDir, binaryName),
     cfg.localModels.managed.device,
     {
       multiGpu,
       listDevices,
     },
   );
+  const unlisted = device === undefined && !multiGpu ? listDevices.failure() : null;
   process.stdout.write(
-    `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}\n`,
+    `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu, unlisted)}\n`,
   );
+  if (unlisted !== null) {
+    // Not "no GPU": the binary could not be asked. The context below is
+    // fitted without a device table, as on a machine without one.
+    process.stderr.write(
+      `note: could not list compute devices (${unlisted}) — starting without a device pick; the context is not fitted to GPU memory\n`,
+    );
+  }
 
   // Which direction fusion is pointing decides what `parallel: "auto"`
   // means for this launch (see `resolveLocalLegRole`). Resolved here
@@ -803,11 +817,12 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     }
   }
   // The chat daemon's device, as `start` resolves it, so both land on the same one.
+  const engine = getConfig().localModels.managed.engine;
   const { binaryName } = resolvePlatformAsset();
   const device = await resolveManagedDevice(
-    resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine),
+    managedDeviceSource(dataDir, engine)?.binPath ?? resolveServerBinPath(dataDir, binaryName),
     cfg.localModels.managed.device,
-    { multiGpu: cfg.localModels.managed.tensorSplit.length > 0 },
+    { multiGpu: cfg.localModels.managed.tensorSplit.length > 0, listDevices: managedDeviceTable(dataDir, engine) },
   );
   try {
     const { pid } = await startEmbeddingDaemon({
@@ -875,19 +890,20 @@ export async function runLocalModelsStop(): Promise<number> {
  * returned (`undefined` means no GPU was picked → llama.cpp default /
  * CPU fallback). `multiGpu` (a configured tensor split) relabels the
  * unresolved-`auto` case: there it means "all GPUs, split", not "no
- * GPU detected".
+ * GPU detected"; so does `unlisted`, why `--list-devices` could not be
+ * run at all — the machine may well have a GPU nobody could ask about.
  */
 function describeDeviceChoice(
   configured: string,
   resolved: string | undefined,
   multiGpu = false,
+  unlisted: string | null = null,
 ): string {
   if (configured === "cpu") return "cpu (forced, -ngl 0)";
   if (configured === "auto") {
     if (resolved) return `auto → ${resolved}`;
-    return multiGpu
-      ? "auto → all GPUs (tensor split)"
-      : "auto → CPU (no GPU detected)";
+    if (multiGpu) return "auto → all GPUs (tensor split)";
+    return unlisted !== null ? describeUnlistedDevices(unlisted) : "auto → CPU (no GPU detected)";
   }
   return resolved ?? configured;
 }
@@ -919,19 +935,29 @@ export async function runLocalModelsDevices(): Promise<number> {
     );
     return 1;
   }
+  const engine = getConfig().localModels.managed.engine;
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
+  const binPath = managedDeviceSource(dataDir, engine)?.binPath ?? resolveServerBinPath(dataDir, binaryName);
   const configured = cfg.localModels.managed.device;
   const multiGpu = cfg.localModels.managed.tensorSplit.length > 0;
-  const devices = await listVulkanDevices(binPath);
+  // Under Atomic Core: Core's own llama-server, run as Core runs it.
+  const probe = await probeManagedDevices(dataDir, engine);
+  const devices = probe.devices;
   const resolved = await resolveManagedDevice(binPath, configured, {
     multiGpu,
+    listDevices: async () => devices,
   });
 
   process.stdout.write(`configured device: ${configured}\n`);
   process.stdout.write(
-    `effective device:  ${describeDeviceChoice(configured, resolved, multiGpu)}\n\n`,
+    `effective device:  ${describeDeviceChoice(configured, resolved, multiGpu, probe.error)}\n\n`,
   );
+  if (devices.length === 0 && probe.error !== null) {
+    // The binary could not be asked: say so, not "no GPU". Exit 0 as the
+    // empty list does — the desktop reads this as a device list.
+    process.stdout.write(`could not list devices with ${binPath}: ${probe.error}\n`);
+    return 0;
+  }
   if (devices.length === 0) {
     process.stdout.write(
       "no GPU devices reported (will run on CPU). Install a Vulkan driver for GPU acceleration.\n",

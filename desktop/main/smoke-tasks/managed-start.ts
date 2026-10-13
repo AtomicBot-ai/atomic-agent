@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { commandOf, resolveBinary } from "../agent-client.js";
+import { BUNDLED_CORE_VERSION, bundledCoreFileName } from "../core-bundle.js";
 
 /**
  * The agent's own `models start`, end to end, with nothing real behind it —
@@ -22,6 +23,12 @@ import { commandOf, resolveBinary } from "../agent-client.js";
  * device}` with its own flags, and `probe`. The agent binary is the real one,
  * pointed at the throwaway dir through ATOMIC_AGENT_STATE_DIR; the
  * llama.cpp auto-update is off there, so nothing is fetched.
+ *
+ * The config pins `localModels.managed.engine: "llama-server"`: these checks
+ * are about the agent's own llama-server path (still the support fallback).
+ * Atomic Chat Core, the default engine, would load the stand-in's header-only
+ * GGUF for real and refuse it ("The model's architecture or format is not
+ * supported"). `coreDeviceListing` below covers the device half under Core.
  */
 
 const run = promisify(execFile);
@@ -178,7 +185,7 @@ export async function managedStart(model: "qwen35" | "dense"): Promise<ManagedSt
   const writeConfig = () => writeFileSync(join(state, "config.json"), JSON.stringify({
     localModels: {
       mode: "managed",
-      managed: { modelId: MODEL_ID, port, autoUpdate: false, parallel: 1, contextSize: 0, ...managedOver },
+      managed: { modelId: MODEL_ID, port, autoUpdate: false, parallel: 1, contextSize: 0, engine: "llama-server", ...managedOver },
     },
   }, null, 2));
   writeConfig();
@@ -236,4 +243,66 @@ export async function managedStart(model: "qwen35" | "dense"): Promise<ManagedSt
       rmSync(dir, { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * `models devices` under Atomic Core, on a throwaway state dir where Core is
+ * "installed" as the agent reads it (`verified.json` and a binary for the
+ * bundled version, `backend.json` naming its llama-server under Core's data
+ * dir) and the agent's own `backend/llama-server` is there too. Both are the
+ * stand-in, behind a wrapper that writes which one was run (`core` / `own`)
+ * and with what arguments to `bins`. Core's daemon is never started: listing
+ * devices only reads Core's records and runs its backend binary.
+ */
+export async function coreDeviceListing(row: string): Promise<{ run: CliRun; bins: string[]; coreBin: string }> {
+  const bin = resolveBinary();
+  if (!bin) throw new Error("no agent binary");
+  const dir = mkdtempSync(join(tmpdir(), "aa-core-devices-"));
+  try {
+    const state = join(dir, "state");
+    const data = join(state, "models");
+    const versionDir = join(data, "core", "versions", BUNDLED_CORE_VERSION);
+    const coreBinDir = join(versionDir, "data", "llamacpp", "backends", "smoke-tq", "macos-arm64", "build", "bin");
+    mkdirSync(coreBinDir, { recursive: true });
+    mkdirSync(join(data, "backend"), { recursive: true });
+    const script = join(dir, "llama-server-stand-in.cjs");
+    writeFileSync(script, STAND_IN);
+    writeFileSync(join(dir, "calls.log"), "");
+    writeFileSync(join(dir, "devices.txt"), `  ${row}\n`);
+    const bins = join(dir, "bins");
+    writeFileSync(bins, "");
+    const wrapper = (path: string, tag: string) => {
+      writeFileSync(path, ["#!/bin/sh", `echo "${tag} $*" >> ${q(bins)}`, `ELECTRON_RUN_AS_NODE=1 exec ${q(process.execPath)} ${q(script)} "$@"`, ""].join("\n"));
+      chmodSync(path, 0o755);
+    };
+    const coreBin = join(coreBinDir, "llama-server");
+    wrapper(coreBin, "core");
+    wrapper(join(data, "backend", "llama-server"), "own");
+    // Core itself: present and verified as far as the agent checks, never run here.
+    writeFileSync(join(versionDir, bundledCoreFileName()), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    writeFileSync(join(versionDir, "verified.json"), JSON.stringify({ version: BUNDLED_CORE_VERSION, sha256: "0".repeat(64) }));
+    writeFileSync(join(versionDir, "backend.json"), JSON.stringify({
+      coreVersion: BUNDLED_CORE_VERSION, provider: "llamacpp", version: "smoke-tq", backend: "macos-arm64",
+      binary: coreBin, installedAt: new Date().toISOString(),
+    }));
+    writeFileSync(join(data, "core", "active.json"), JSON.stringify({ version: BUNDLED_CORE_VERSION }));
+    writeFileSync(join(state, "config.json"), JSON.stringify({
+      localModels: { mode: "managed", managed: { modelId: MODEL_ID, autoUpdate: false, engine: "atomic-core", device: "auto" } },
+    }, null, 2));
+    let res: CliRun;
+    try {
+      const { stdout, stderr } = await run(bin, ["models", "devices"], {
+        env: { ...process.env, ATOMIC_AGENT_STATE_DIR: state },
+        timeout: 60_000,
+        maxBuffer: 1024 * 1024,
+      });
+      res = { ok: true, stdout, stderr };
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string; message?: string };
+      res = { ok: false, stdout: e.stdout ?? "", stderr: e.stderr ?? "", error: e.message ?? String(err) };
+    }
+    return { run: res, bins: readFileSync(bins, "utf8").split("\n").filter(Boolean), coreBin };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }

@@ -38,6 +38,7 @@ T39: models start asks llama-server --list-devices once*
 T39: a model's first start measures its speed*
 T39: the next start of that model on the same llama.cpp*
 T39: after a llama.cpp update the speed is measured again*
+T39: under Atomic Core the agent asks Core's own llama-server*
 T42*
 T43 B:*
 

@@ -190,33 +190,93 @@ export function pickBestDevice(devices: readonly GpuDevice[]): string | null {
 }
 
 /**
- * Enumerate compute devices by shelling out to
- * `<binPath> --list-devices`. Best-effort: any failure (binary missing,
- * timeout, unexpected output) resolves to `[]` so callers degrade to the
- * llama.cpp default device selection / CPU fallback. Some builds print
- * the device table to stderr, so both streams are parsed.
+ * How to run the binary for `--list-devices`: the environment and working
+ * directory it needs. The agent's own llama.cpp build runs as is (none); a
+ * build Atomic Core installed is run with the environment Core gives it
+ * (`coreBackendSpawn`), or its GPU backends do not load.
  */
-export async function listVulkanDevices(binPath: string): Promise<GpuDevice[]> {
+export interface DeviceProbeSpawn {
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}
+
+/** What one `--list-devices` run said, and why it said nothing when it could not run. */
+export interface DeviceProbe {
+  devices: GpuDevice[];
+  /**
+   * Why the binary could not be asked (missing, not executable, a library
+   * it could not load, killed at the deadline), or `null` when it ran. A
+   * binary that ran and reported no GPU is `null` with no devices: that is
+   * a machine with no GPU, not a failure.
+   */
+  error: string | null;
+}
+
+/** Deadline for one `--list-devices` run. */
+const DEVICE_PROBE_TIMEOUT_MS = 5000;
+
+/** The first line of what a failed run printed, or what failed to run it. */
+function describeProbeFailure(err: unknown, output: string): string {
+  const e = err as { code?: unknown; killed?: boolean; signal?: unknown; message?: string };
+  if (e?.killed) return `--list-devices did not answer within ${DEVICE_PROBE_TIMEOUT_MS / 1000} s`;
+  const first = output.split("\n").map((l) => l.trim()).find(Boolean);
+  if (first) return first.slice(0, 200);
+  if (typeof e?.code === "string") return `${e.code}${e.message ? `: ${e.message}` : ""}`.slice(0, 200);
+  if (typeof e?.code === "number") return `--list-devices exited with code ${e.code}`;
+  if (typeof e?.signal === "string") return `--list-devices was killed by ${e.signal}`;
+  return (e?.message ?? String(err)).slice(0, 200);
+}
+
+/**
+ * Enumerate compute devices by shelling out to `<binPath> --list-devices`,
+ * and say why when the binary could not be asked. Never throws. Some
+ * builds print the device table to stderr, so both streams are parsed; a
+ * run that failed but still printed a table keeps it.
+ */
+export async function probeDevices(binPath: string, spawn?: DeviceProbeSpawn): Promise<DeviceProbe> {
   try {
     const { stdout, stderr } = await execFileAsync(
       binPath,
       ["--list-devices"],
       {
-        timeout: 5000,
+        timeout: DEVICE_PROBE_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
+        ...(spawn?.env ? { env: spawn.env } : {}),
+        ...(spawn?.cwd ? { cwd: spawn.cwd } : {}),
       },
     );
-    return parseListDevices(`${stdout}\n${stderr}`);
+    return { devices: parseListDevices(`${stdout}\n${stderr}`), error: null };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string };
     const combined = `${e?.stdout ?? ""}\n${e?.stderr ?? ""}`.trim();
-    if (combined.length > 0) return parseListDevices(combined);
-    return [];
+    const devices = combined.length > 0 ? parseListDevices(combined) : [];
+    return { devices, error: devices.length > 0 ? null : describeProbeFailure(err, combined) };
   }
+}
+
+/**
+ * Enumerate compute devices by shelling out to
+ * `<binPath> --list-devices`. Best-effort: any failure (binary missing,
+ * timeout, unexpected output) resolves to `[]` so callers degrade to the
+ * llama.cpp default device selection / CPU fallback. `probeDevices` says
+ * why a run came back empty.
+ */
+export async function listVulkanDevices(binPath: string, spawn?: DeviceProbeSpawn): Promise<GpuDevice[]> {
+  return (await probeDevices(binPath, spawn)).devices;
 }
 
 /** A launch's device table, read on demand (`deviceTableOnce`). */
 export type ListDevices = () => Promise<readonly GpuDevice[]>;
+
+/**
+ * A launch's device table that also says why it is empty when the binary
+ * could not be asked (`failure()`: `null` until it has run, and whenever
+ * the run answered, devices or none).
+ */
+export interface DeviceTable {
+  (): Promise<readonly GpuDevice[]>;
+  failure(): string | null;
+}
 
 /**
  * `<binPath> --list-devices` for one launch: run the first time something
@@ -231,19 +291,32 @@ export type ListDevices = () => Promise<readonly GpuDevice[]>;
  * to start the backend at all (16 s before the server printed its first
  * line, on a 16 GB Mac). It is asked once more at once, and that answer
  * stands either way — a machine with no GPU says nothing twice.
+ *
+ * `spawn` is how the binary is run (`DeviceProbeSpawn`): Atomic Core's
+ * build needs Core's environment.
  */
-export function deviceTableOnce(binPath: string): ListDevices {
-  let table: Promise<GpuDevice[]> | null = null;
+export function deviceTableOnce(binPath: string, spawn?: DeviceProbeSpawn): DeviceTable {
+  let table: Promise<DeviceProbe> | null = null;
+  let last: DeviceProbe | null = null;
   let asked = 0;
-  const ask = (): Promise<GpuDevice[]> => {
+  const ask = (): Promise<DeviceProbe> => {
     asked += 1;
-    table = listVulkanDevices(binPath);
+    table = probeDevices(binPath, spawn).then((probe) => {
+      last = probe;
+      return probe;
+    });
     return table;
   };
-  return async () => {
-    const devices = await (table ?? ask());
-    return devices.length === 0 && asked < 2 ? ask() : devices;
+  const read = async (): Promise<readonly GpuDevice[]> => {
+    const probe = await (table ?? ask());
+    return probe.devices.length === 0 && asked < 2 ? (await ask()).devices : probe.devices;
   };
+  return Object.assign(read, { failure: () => last?.error ?? null });
+}
+
+/** A table that cannot be asked at all (no binary to ask): empty, and says why. */
+export function unavailableDeviceTable(reason: string): DeviceTable {
+  return Object.assign(async () => [] as readonly GpuDevice[], { failure: () => reason });
 }
 
 /**
@@ -267,16 +340,16 @@ export function deviceTableOnce(binPath: string): ListDevices {
  * Best-effort and never throws — enumeration failures fall through to
  * `undefined`. `opts.listDevices` is the launch's own table
  * (`deviceTableOnce`), so the context fit after it does not enumerate
- * again; without it the binary is asked here.
+ * again; without it the binary is asked here, run as `opts.spawn` says.
  */
 export async function resolveManagedDevice(
   binPath: string,
   configured: string | undefined,
-  opts?: { multiGpu?: boolean; listDevices?: ListDevices },
+  opts?: { multiGpu?: boolean; listDevices?: ListDevices; spawn?: DeviceProbeSpawn },
 ): Promise<string | undefined> {
   if (configured === "cpu") return "cpu";
   if (configured && configured !== "auto") return configured;
   if (opts?.multiGpu) return undefined;
-  const devices = await (opts?.listDevices ?? (() => listVulkanDevices(binPath)))();
+  const devices = await (opts?.listDevices ?? (() => listVulkanDevices(binPath, opts?.spawn)))();
   return pickBestDevice(devices) ?? undefined;
 }

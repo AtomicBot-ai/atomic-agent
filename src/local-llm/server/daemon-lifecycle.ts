@@ -45,11 +45,11 @@ import {
   type GgufMetadata,
 } from "../catalog/gguf-metadata.js";
 import {
-  deviceTableOnce,
   resolveManagedDevice,
   sharesSystemMemory,
   type ListDevices,
 } from "../backend/gpu-devices.js";
+import { managedDeviceTable } from "../backend/managed-devices.js";
 import {
   resolveSwaFullDecision,
   type SwaFullDecision,
@@ -240,8 +240,12 @@ export function throughputBasis(
   modelId: string,
   device: string | undefined,
   launch: { contextSize: number; fitsDevice: boolean | null },
+  engine?: ManagedEngine,
 ): string {
-  const backend = readBackendVersion(dataDir);
+  // Under Atomic Core the build is the backend Core installed (its tag and
+  // install time), not the agent's own llama.cpp: a speed measured on one
+  // is never carried over to the other.
+  const backend = readBackendVersion(dataDir, engine);
   return JSON.stringify([
     modelId,
     backend?.tag ?? null,
@@ -881,6 +885,66 @@ export interface DaemonStartResult {
   prefixReuse: "partial" | "none" | null;
 }
 
+/**
+ * The throughput half of a start, once the server answers: the speed an
+ * earlier start measured on the same launch (`knownSpeed`) is stamped for
+ * this daemon, otherwise one probe measures it (`probe`), and its record
+ * is written next to the pid file. Shared by both engines: an Atomic Core
+ * session is a llama-server on the managed port behind the session's key.
+ * Returns the speed, or `null` when it stays unknown.
+ */
+async function recordStartThroughput(opts: {
+  dataDir: string;
+  port: number;
+  apiKey: string | null;
+  pid: number;
+  modelId: string;
+  args: readonly string[];
+  knownSpeed: ThroughputRecord | null;
+  speedBasis: string;
+  probe: boolean;
+}): Promise<number | null> {
+  // A stale record must never outlive the daemon it described: drop
+  // it before the probe so a skipped or failed probe leaves nothing
+  // behind that `readThroughputRecord` could mistake (it also checks
+  // the pid, but the file is cheap to clear). A speed carried over was
+  // read above, and is stamped for this daemon instead of measured.
+  try {
+    unlinkSync(resolveThroughputFilePath(opts.dataDir));
+  } catch {
+    /* none recorded */
+  }
+  if (opts.knownSpeed) {
+    writeThroughputRecord(opts.dataDir, { ...opts.knownSpeed, pid: opts.pid });
+    return opts.knownSpeed.tokensPerSecond;
+  }
+  if (!opts.probe) return null;
+  // On the only slot nothing can decode beside the probe. With more, a
+  // turn already running when it starts, or still running when it
+  // ends, shared the GPU with it: such a figure is not carried over.
+  const apiKey = opts.apiKey;
+  const oneSlot = opts.args[opts.args.indexOf("--parallel") + 1] === "1";
+  const idleBefore =
+    oneSlot || (await slotsAllIdle({ port: opts.port, apiKey }));
+  const sample = await probeThroughput({
+    port: opts.port,
+    apiKey,
+  });
+  if (!sample) return null;
+  const alone =
+    oneSlot ||
+    (idleBefore && (await slotsAllIdle({ port: opts.port, apiKey })));
+  writeThroughputRecord(opts.dataDir, {
+    ...sample,
+    pid: opts.pid,
+    modelId: opts.modelId,
+    measuredAt: Date.now(),
+    measuredOn: opts.speedBasis,
+    alone,
+  });
+  return sample.tokensPerSecond;
+}
+
 export async function startDaemon(
   opts: DaemonStartOptions,
 ): Promise<DaemonStartResult> {
@@ -915,8 +979,9 @@ export async function startDaemon(
   // figure to probe and degrades to its conservative no-VRAM default;
   // operators splitting across GPUs can pin `contextSize` explicitly.
   // One `--list-devices` for the whole launch: the device pick and the
-  // context fit below read the same table (`deviceTableOnce`).
-  const listDevices = opts.listDevices ?? deviceTableOnce(binPath);
+  // context fit below read the same table (`deviceTableOnce`). Under
+  // Atomic Core it is Core's own llama-server, run as Core runs it.
+  const listDevices = opts.listDevices ?? managedDeviceTable(opts.dataDir, opts.engine);
   const device = await resolveManagedDevice(binPath, opts.device, {
     multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
     listDevices,
@@ -976,10 +1041,13 @@ export async function startDaemon(
   // The speed an earlier start measured on this same launch, read before
   // this one clears the record: carried over, it spares the probe
   // (`readReusableThroughput`).
-  const speedBasis = throughputBasis(opts.dataDir, model.id, device, {
-    contextSize,
-    fitsDevice,
-  });
+  const speedBasis = throughputBasis(
+    opts.dataDir,
+    model.id,
+    device,
+    { contextSize, fitsDevice },
+    opts.engine,
+  );
   const knownSpeed =
     opts.throughputProbe === false
       ? null
@@ -1008,10 +1076,22 @@ export async function startDaemon(
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
     writeFileSync(pidPath, String(session.pid), "utf8");
+    // Core's session is a llama-server on this port that takes the
+    // session's key: its speed is measured, or carried over, as ours is.
+    const tokensPerSecond = await recordStartThroughput({
+      dataDir: opts.dataDir,
+      port: opts.port,
+      apiKey: session.api_key,
+      pid: session.pid,
+      modelId: model.id,
+      args,
+      knownSpeed,
+      speedBasis,
+      probe: opts.throughputProbe !== false,
+    });
     writeLaunchRecord(opts.dataDir, { pid: session.pid, modelId: model.id, contextSize,
       swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now() });
-    // Readiness does not wait for a synthetic generation. No measured speed means unknown.
-    return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond: null };
+    return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond };
   }
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
@@ -1072,46 +1152,17 @@ export async function startDaemon(
       abandonChild(child.pid, pidPath);
       throw err;
     }
-    // A stale record must never outlive the daemon it described: drop
-    // it before the probe so a skipped or failed probe leaves nothing
-    // behind that `readThroughputRecord` could mistake (it also checks
-    // the pid, but the file is cheap to clear). A speed carried over was
-    // read above, and is stamped for this daemon instead of measured.
-    try {
-      unlinkSync(resolveThroughputFilePath(opts.dataDir));
-    } catch {
-      /* none recorded */
-    }
-    let tokensPerSecond: number | null = null;
-    if (knownSpeed) {
-      tokensPerSecond = knownSpeed.tokensPerSecond;
-      writeThroughputRecord(opts.dataDir, { ...knownSpeed, pid: child.pid });
-    } else if (opts.throughputProbe !== false) {
-      // On the only slot nothing can decode beside the probe. With more, a
-      // turn already running when it starts, or still running when it
-      // ends, shared the GPU with it: such a figure is not carried over.
-      const oneSlot = args[args.indexOf("--parallel") + 1] === "1";
-      const idleBefore =
-        oneSlot || (await slotsAllIdle({ port: opts.port, apiKey }));
-      const sample = await probeThroughput({
-        port: opts.port,
-        apiKey,
-      });
-      if (sample) {
-        tokensPerSecond = sample.tokensPerSecond;
-        const alone =
-          oneSlot ||
-          (idleBefore && (await slotsAllIdle({ port: opts.port, apiKey })));
-        writeThroughputRecord(opts.dataDir, {
-          ...sample,
-          pid: child.pid,
-          modelId: model.id,
-          measuredAt: Date.now(),
-          measuredOn: speedBasis,
-          alone,
-        });
-      }
-    }
+    const tokensPerSecond = await recordStartThroughput({
+      dataDir: opts.dataDir,
+      port: opts.port,
+      apiKey,
+      pid: child.pid,
+      modelId: model.id,
+      args,
+      knownSpeed,
+      speedBasis,
+      probe: opts.throughputProbe !== false,
+    });
     writeLaunchRecord(opts.dataDir, {
       pid: child.pid,
       modelId: model.id,
@@ -1337,7 +1388,9 @@ export async function startEmbeddingDaemon(
     );
   }
 
-  const device = await resolveManagedDevice(binPath, opts.device);
+  const device = await resolveManagedDevice(binPath, opts.device, {
+    listDevices: managedDeviceTable(opts.dataDir, opts.engine),
+  });
   const apiKey =
     opts.apiKey ??
     resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());

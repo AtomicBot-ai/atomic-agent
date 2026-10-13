@@ -55,6 +55,7 @@ import {
   resolveLocalGgufFile,
   resolveModelsDir,
   listVulkanDevices,
+  managedDeviceSource,
   AUTO_UPDATE_RECHECK_MS,
   checkForBackendUpdateForPanel,
   maybeAutoUpdateBackend,
@@ -1776,9 +1777,9 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
     let ids: string[] = [];
     if (isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
-      const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
-      ids = (await listVulkanDevices(binPath)).map((d) => d.id);
+      // Under Atomic Core: Core's own llama-server, run as Core runs it.
+      const source = managedDeviceSource(dataDir, getConfig().localModels.managed.engine);
+      ids = source ? (await listVulkanDevices(source.binPath, source.spawn)).map((d) => d.id) : [];
     }
     const order = ["auto", ...ids, "cpu"];
     const current = cfg.localModels.managed.device;
@@ -1821,9 +1822,8 @@ export class LocalModelsOrchestrator {
     // Preferred source: Vulkan devices reported by the backend
     // (covers NVIDIA / AMD / Intel). Requires the binary on disk.
     if (this.cachedDevices === null && isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) {
-      const { binaryName } = resolvePlatformAsset();
-      const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
-      this.cachedDevices = await listVulkanDevices(binPath);
+      const source = managedDeviceSource(dataDir, getConfig().localModels.managed.engine);
+      this.cachedDevices = source ? await listVulkanDevices(source.binPath, source.spawn) : [];
     }
     const budget = resolveGpuBudgetGb({
       platform,
@@ -1964,10 +1964,12 @@ export class LocalModelsOrchestrator {
       const multiGpu = tensorSplit.length > 0;
       const { binaryName } = resolvePlatformAsset();
       const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
+      // Under Atomic Core its llama-server needs the environment Core runs it with.
+      const spawn = managedDeviceSource(dataDir, getConfig().localModels.managed.engine)?.spawn;
       const device = await resolveManagedDevice(
         binPath,
         cfg.localModels.managed.device,
-        { multiGpu },
+        { multiGpu, ...(spawn ? { spawn } : {}) },
       );
       this.bus.emit({
         type: "runtime_info",
