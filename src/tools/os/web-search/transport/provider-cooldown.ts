@@ -35,6 +35,16 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  * as expired, and a record whose park ended more than `2 * maxMs` ago is
  * dropped on load rather than parking a provider on yesterday's evidence.
  */
+/**
+ * Which tier of a provider a park was earned on. Exa has two with separate
+ * quotas: its keyless MCP endpoint and its keyed API. A park from the free
+ * tier says nothing about a key the user has just added, so the
+ * orchestrator drops a park whose tag is not the tier it is about to use
+ * (ATO-327). Untagged parks (other providers, files written before tags
+ * existed) apply to every tier.
+ */
+export type CooldownTag = "keyless" | "keyed";
+
 export interface ProviderCooldown {
   /** True while `name` is parked — the orchestrator skips it. */
   isParked(name: WebSearchProviderName, now: number): boolean;
@@ -48,7 +58,10 @@ export interface ProviderCooldown {
     name: WebSearchProviderName,
     now: number,
     retryAfterMs: number | null,
+    tag?: CooldownTag,
   ): number;
+  /** The tier the current record was parked on, if it was tagged. */
+  tagOf(name: WebSearchProviderName): CooldownTag | undefined;
   /** A provider answered. Forget its history so the next park starts small. */
   clear(name: WebSearchProviderName): void;
 }
@@ -98,6 +111,8 @@ interface CooldownEntry {
   until: number;
   /** Consecutive parks, for the doubling. */
   strikes: number;
+  /** Tier the park was earned on; absent for an untagged park. */
+  tag?: CooldownTag;
 }
 
 export function createProviderCooldown(
@@ -150,8 +165,17 @@ function buildCooldown(
     isParked(name, now) {
       return remainingMs(name, now) > 0;
     },
-    park(name, now, retryAfterMs) {
-      const previous = entries.get(name);
+    tagOf(name) {
+      return entries.get(name)?.tag;
+    },
+    park(name, now, retryAfterMs, tag) {
+      // Strikes earned on another tier are another quota's history: a
+      // keyed Exa must not inherit the free tier's escalation (ATO-327).
+      const recorded = entries.get(name);
+      const previous =
+        recorded?.tag !== undefined && tag !== undefined && recorded.tag !== tag
+          ? undefined
+          : recorded;
       // Strikes survive an expired park on purpose: a provider that has
       // been rate-limited three times in the last ten minutes has a
       // standing quota whether or not its last park has lapsed, and
@@ -170,7 +194,11 @@ function buildCooldown(
           ? 0
           : Math.min(MAX_HONOURED_RETRY_AFTER_MS, Math.max(0, retryAfterMs));
       const parkMs = Math.max(escalated, advertised);
-      entries.set(name, { until: now + parkMs, strikes });
+      entries.set(name, {
+        until: now + parkMs,
+        strikes,
+        ...(tag !== undefined ? { tag } : {}),
+      });
       persist?.();
       return parkMs;
     },
@@ -216,6 +244,10 @@ function loadCooldownFile(
     entries.set(name as WebSearchProviderName, {
       until: entry.until,
       strikes: entry.strikes,
+      // Files from before tags existed have none: untagged, as before.
+      ...(entry.tag === "keyless" || entry.tag === "keyed"
+        ? { tag: entry.tag }
+        : {}),
     });
   }
   return entries;

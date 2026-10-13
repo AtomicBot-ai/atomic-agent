@@ -652,6 +652,65 @@ describe("an Exa primary without a key", () => {
     expect(err.keyRequired?.reason).toBe("unreachable");
     expect(err.message).toContain("None of the search sites could be reached");
   });
+
+  it("does not let a free-tier park hold back a key added afterwards", async () => {
+    // The user hit the free limit, added EXA_API_KEY and restarted, as the
+    // error told them to. The persisted park from the free tier must not
+    // keep the keyed API from being asked.
+    const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new WebSearchRateLimitedError("exa", null);
+    });
+    const cooldown = createProviderCooldown();
+    const config = makeConfig({ provider: "exa", fallback: ["duckduckgo"] });
+    const T0 = 5_000_000;
+
+    await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      cooldown,
+      now: () => T0,
+    });
+    expect(cooldown.tagOf("exa")).toBe("keyless");
+
+    exa.search.mockImplementation(async () => [RESULT]);
+    const keyed = await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: { ...makeOptions(), query: "with a key" },
+      env: EXA_KEYED,
+      cooldown,
+      now: () => T0 + 10_000,
+    });
+
+    expect(exa.search).toHaveBeenCalledTimes(2);
+    expect(keyed.provider).toBe("exa");
+    expect(keyed.degraded.some((note) => note.includes("skipped"))).toBe(false);
+    expect(keyed.keyRequired).toBeUndefined();
+    expect(ddg.search).toHaveBeenCalledOnce();
+  });
+
+  it("passes a Stop through as it is: no report, no key card", async () => {
+    const { exa, ddg } = exaAndDdg();
+    const controller = new AbortController();
+    exa.search.mockImplementation(async () => {
+      controller.abort();
+      throw new Error("The operation was aborted");
+    });
+
+    const err = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: { ...makeOptions(), signal: controller.signal },
+      env: {},
+    }).catch((e: unknown) => e);
+
+    expect(err).not.toBeInstanceOf(WebSearchUnavailableError);
+    expect((err as Error).message).toBe("The operation was aborted");
+    expect(ddg.search).not.toHaveBeenCalled();
+  });
 });
 
 describe("an Exa primary with a key", () => {

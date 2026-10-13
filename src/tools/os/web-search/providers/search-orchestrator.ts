@@ -5,6 +5,7 @@ import {
 } from "../transport/search-cache.js";
 import {
   formatCooldown,
+  type CooldownTag,
   type ProviderCooldown,
 } from "../transport/provider-cooldown.js";
 import {
@@ -122,6 +123,15 @@ export async function runWebSearchWithFallback(
     //
     // The cache is still consulted first — a parked provider's earlier
     // answers are not stale just because its quota ran out.
+    //
+    // Exa's keyless and keyed tiers have separate quotas. A park from the
+    // free tier must not hold back a key the user has just added (and was
+    // told to restart for, which the persisted cooldown survives), so a
+    // park tagged with the other tier is dropped here (ATO-327).
+    const tier: CooldownTag | undefined =
+      name === "exa" ? (keylessExa ? "keyless" : "keyed") : undefined;
+    const parkedTier = tier !== undefined ? cooldown?.tagOf(name) : undefined;
+    if (parkedTier !== undefined && parkedTier !== tier) cooldown?.clear(name);
     const parkedFor = cooldown?.remainingMs(name, now()) ?? 0;
 
     const cacheKey = buildSearchCacheKey(
@@ -177,6 +187,9 @@ export async function runWebSearchWithFallback(
       }
       lastEmpty = { results, provider: name, fromCache: false, degraded };
     } catch (err) {
+      // A Stop fails whatever provider was running. That is not a search
+      // failure: no report, no key card, the abort goes up as it did.
+      if (input.options.signal.aborted) throw err;
       const freeTier = keylessExa && name === "exa";
       failures.push(describeFailure(name, err, freeTier));
       if (isConnectFailure(err)) connectFailures++;
@@ -189,7 +202,7 @@ export async function runWebSearchWithFallback(
               : "missing";
       }
       if (err instanceof WebSearchRateLimitedError && cooldown) {
-        const parked = cooldown.park(name, now(), err.retryAfterMs);
+        const parked = cooldown.park(name, now(), err.retryAfterMs, tier);
         degraded.push(
           freeTier
             ? `${name} free limit reached (HTTP 429, no ${search.exa.apiKeyEnv}), parked for ${formatCooldown(parked)}`
