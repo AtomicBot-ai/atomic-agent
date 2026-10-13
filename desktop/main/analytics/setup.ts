@@ -129,11 +129,16 @@ export function localBackendStarted(via: "launch" | "swap", daemon: unknown, mod
   }
 }
 
-/** The local engine did not download, verify or start: the recovery card is up (main.ts noteEngine). */
-export function localEngineFailed(stage: string): void {
+/**
+ * The recovery card went up (main.ts noteEngine): the local engine did not
+ * download, verify or start. Not `local_engine_failed`: the agent's `models`
+ * command that failed already sends that one, so the desktop counts only what
+ * it showed, and from where.
+ */
+export function engineRecoveryShown(stage: string, via: string): void {
   try {
     if (!analyticsEnabled()) return;
-    track("local_engine_failed", { engine: localEngineOf(readConfigFile(stateDir)), stage });
+    track("engine_recovery_shown", { engine: localEngineOf(readConfigFile(stateDir)), stage, via });
   } catch {
     /* never */
   }

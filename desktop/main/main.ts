@@ -655,13 +655,16 @@ function send(channel: string, payload?: unknown): void {
    instead of leaving a spinner; the next success clears it. A
    window opened later asks for it (engine:failure). */
 let engineFailure: (EngineFailure & { at: number }) | null = null;
-function noteEngine(answer: unknown, opts: { clears?: boolean } = {}): void {
+/** What put the recovery card up, for `engine_recovery_shown.via` (analytics/catalog-values.ts ENGINE_RECOVERY_VIA). */
+type EngineVia = "launch" | "swap" | "update" | "start" | "switch" | "setup" | "settings" | "other";
+function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia } = {}): void {
   const failed = engineFailureOf(answer);
   if (failed) {
     engineFailure = { ...failed, at: Date.now() };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
     send("engine:failure", engineFailure);
-    A.localEngineFailed(failed.stage);
+    // The agent's `models` command already sent local_engine_failed for this; the desktop counts the card it showed.
+    A.engineRecoveryShown(failed.stage, opts.via ?? "other");
     return;
   }
   const a = answer as { ok?: unknown; daemon?: unknown } | null;
@@ -1321,7 +1324,7 @@ function wireIpc(client: AgentClient): void {
          as it was, so a server it stopped comes back on that one (keptBackend). */
       const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
       A.runtimeUpdated(via === "settings" ? "settings" : "setup", updateStartedAt, res, own.signal.aborted);
-      if (!own.signal.aborted) noteEngine(res, { clears: true });
+      if (!own.signal.aborted) noteEngine(res, { clears: true, via: via === "settings" ? "settings" : "setup" });
       send("cli:pull", {
         id,
         done: true,
@@ -1583,7 +1586,7 @@ function wireIpc(client: AgentClient): void {
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
-  ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true }), res)));
+  ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true, via: "start" }), res)));
   ipcMain.handle("engine:failure", () => engineFailure);
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
@@ -1688,7 +1691,7 @@ function wireIpc(client: AgentClient): void {
       return (answer = await applySwitch(await run()));
     } finally {
       // An engine pick that succeeded is a new start: the card about the old engine goes.
-      noteEngine(answer, { clears: engine });
+      noteEngine(answer, { clears: engine, via: "switch" });
       switchesOnTheirWay--;
       A.switchEnd(began, answer, kind);   // backend_switched (+ fusion_configured, model_configured)
     }
@@ -2201,7 +2204,7 @@ function wireIpc(client: AgentClient): void {
         },
       );
       A.runtimeUpdated("settings", updateStartedAt, res, own.signal.aborted);
-      if (!own.signal.aborted) noteEngine(res, { clears: true });
+      if (!own.signal.aborted) noteEngine(res, { clears: true, via: "settings" });
     } finally {
       if (settingsUpdate === own) settingsUpdate = null;
     }
@@ -2324,7 +2327,7 @@ function wireIpc(client: AgentClient): void {
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
     // A Core that would not start at launch is told too: the window offers the way out, not a log line.
-    noteEngine(r);
+    noteEngine(r, { via: r.via });
     if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {

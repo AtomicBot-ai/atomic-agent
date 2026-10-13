@@ -23,7 +23,7 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
   NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SWITCH_REFUSALS, uiActionOk, UI_VIA,
@@ -177,11 +177,14 @@ export const EVENTS: Record<string, EventSpec> = {
     owner: "main",
     props: { via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }), engine: en(LOCAL_ENGINES, { nullable: true }) },
   },
-  /* The local engine did not download, verify or start (main/engine-failure.ts): the
-     recovery card is up. Counts how often the default (Atomic Chat Core) fails, and where. */
-  local_engine_failed: {
+  /* The window put up the local engine's recovery card (main/engine-failure.ts):
+     the engine did not download, verify or start. The failure itself is the
+     agent's own `local_engine_failed` (src/analytics), sent by the `models`
+     command that failed; this counts what the person was shown, and where
+     from (`via`), so the two are never the same event counted twice. */
+  engine_recovery_shown: {
     owner: "main",
-    props: { engine: en(LOCAL_ENGINES, { nullable: true }), stage: en(ENGINE_FAILURE_STAGES) },
+    props: { engine: en(LOCAL_ENGINES, { nullable: true }), stage: en(ENGINE_FAILURE_STAGES), via: en(ENGINE_RECOVERY_VIA) },
   },
   backend_switched: {
     owner: "main",

@@ -26,6 +26,8 @@ export const RUN_MODES = ["local", "cloud", "fusion"] as const;
 export const LOCAL_ENGINES = ["atomic-core", "llama-server"] as const;
 /** Why the local engine is not ready (main/engine-failure.ts EngineFailureStage). */
 export const ENGINE_FAILURE_STAGES = ["download", "verify", "backend", "blocked", "start"] as const;
+/** `engine_recovery_shown.via`: what put the recovery card up (main.ts noteEngine). */
+export const ENGINE_RECOVERY_VIA = ["launch", "swap", "update", "start", "switch", "setup", "settings", "other"] as const;
 export const CODING_MODES = ["default", "plan", "auto", "bypass", "other"] as const;
 export const FIT = ["comfortable", "tight", "over"] as const;
 /** `model_picked.host_ram_gb`: ≤12 → 8, ≤24 → 16, ≤48 → 32, else 64 (renderer/analytics.js ramBucket). */
