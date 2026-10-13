@@ -7925,8 +7925,8 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
-  // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike.
-  if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); exaKeyAct('save:' + e.target.dataset.exaKey); return; }
+  // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
+  if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
      too. ⌘N, ⌘0, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
      and Windows already match on a Russian layout; with the page taking

@@ -3829,12 +3829,16 @@ export function exaKeyValueError(value: string): string | null {
 
 /* The window's write guard for `app:dotenvSet`: the key must be one of
    DESKTOP_DOTENV_KEYS and the value a string or null (null removes it). Null
-   when the write may go ahead, else the error to answer with. */
+   when the write may go ahead, else the error to answer with. A line break or
+   NUL is refused for every key: formatDotenvValue quotes whitespace but keeps
+   a newline as is, so "123:abc\nOPENAI_API_KEY=x" would add a second line,
+   that is, a second variable the agent loads. */
 export function desktopDotenvError(key: unknown, value: unknown): string | null {
   if (typeof key !== "string" || !DESKTOP_DOTENV_KEYS.includes(key)) {
     return `only ${DESKTOP_DOTENV_KEYS.join(" and ")} may be written from the desktop`;
   }
   if (value !== null && typeof value !== "string") return "value must be a string or null";
+  if (value !== null && /[\r\n\0]/.test(value)) return "value must be one line";
   if (key === "EXA_API_KEY" && value !== null) return exaKeyValueError(value);
   return null;
 }
