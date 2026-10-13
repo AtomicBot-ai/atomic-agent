@@ -116,3 +116,10 @@ function matchEchoLiteral(input: NormalisedCommand): GuardVerdict | null {
 function hasShellMetachar(value: string): boolean {
   return SHELL_METACHARS.test(value);
 }
+
+/**
+ * Shared with the user rule layer (`rules-user.ts`): an `allow` verdict
+ * must never cover a command line the shell will reinterpret, so both
+ * safe-allow and a user allow pattern reject args carrying these.
+ */
+export { hasShellMetachar };

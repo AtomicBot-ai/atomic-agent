@@ -17,8 +17,9 @@ import {
  * a promise in a PR description.
  *
  * Deliberate additions since v0.2.2 are appended here as they land, so the
- * guard keeps catching *accidental* drift: `/mouse` (the mouse layer) is
- * the only entry that was not in the v0.2.2 palette.
+ * guard keeps catching *accidental* drift: `/mouse` (the mouse layer) and
+ * `/guard` (the shell-guard rule manager) are the only entries that were
+ * not in the v0.2.2 palette.
  */
 const V0_2_2_SLASH_COMMANDS = [
   {
@@ -237,6 +238,13 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "compact",
     description: "summarize older context; show displays the saved summary",
+  },
+  // The operator's own shell-guard rules (issue #229); sits above
+  // `uninstall` in rank order (45 vs 100).
+  {
+    name: "guard",
+    description:
+      "your shell guard rules: `/guard` list | `/guard add allow|deny <pattern>` | `/guard remove allow|deny <pattern>` | `/guard clear [allow|deny]`",
   },
   {
     name: "uninstall",

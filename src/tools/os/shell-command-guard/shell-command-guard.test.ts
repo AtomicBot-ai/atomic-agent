@@ -381,3 +381,178 @@ describe("git remote-sync policy layer", () => {
     expect(guardWith(off, "rm", ["-rf", "/"]).rule).toMatch(/^hardline\./);
   });
 });
+
+/**
+ * The user shell-guard layer (config v77 `shellGuard.*`, issue #229).
+ * Placement is the property the issue thread settled on: after the
+ * built-in dangerous rules (and the trusted read-only allows),
+ * immediately before safe-allow. A pattern can only displace what
+ * safe-allow or the `default` fallthrough would do — never a hardline
+ * block, never a dangerous verdict, never a trusted allow.
+ */
+describe("user shell-guard rules layer", () => {
+  const policyWith = (
+    rules: Partial<{
+      deny: readonly string[];
+      allow: readonly string[];
+    }> = {},
+  ): { isGitRemoteSyncEnabled: () => boolean; userGuardRules: () => { deny: readonly string[]; allow: readonly string[] } } => ({
+    isGitRemoteSyncEnabled: () => true,
+    userGuardRules: () => ({ deny: rules.deny ?? [], allow: rules.allow ?? [] }),
+  });
+  const guardWith = (
+    policy: ReturnType<typeof policyWith>,
+    cmd: string,
+    rawArgs: readonly string[],
+  ) => checkShellCommandGuard({ cmd, rawArgs, cwd: "/tmp" }, policy);
+
+  it("deny outranks safe-allow: a listed command is never allowed silently", () => {
+    // `echo hi` is a safe-allow verdict without user rules; the deny
+    // layer sits before safe-allow and displaces it.
+    expect(guard("echo", ["hi"]).action).toBe("allow");
+    const verdict = guardWith(policyWith({ deny: ["echo *"] }), "echo", ["hi"]);
+    expect(verdict).toMatchObject({
+      action: "approval_required",
+      rule: "user.deny",
+    });
+    expect(verdict.reason).toContain("echo *");
+  });
+
+  it("deny hits the default fallthrough too", () => {
+    expect(guard("git", ["status"])).toMatchObject({ rule: "default" });
+    expect(
+      guardWith(policyWith({ deny: ["git status"] }), "git", ["status"]),
+    ).toMatchObject({ action: "approval_required", rule: "user.deny" });
+  });
+
+  it("allow narrows the default fallthrough into a silent run", () => {
+    expect(
+      guardWith(policyWith({ allow: ["git status"] }), "git", ["status"]),
+    ).toMatchObject({ action: "allow", rule: "user.allow" });
+  });
+
+  it("deny outranks allow when both patterns match", () => {
+    expect(
+      guardWith(
+        policyWith({ deny: ["npm run *"], allow: ["npm run *"] }),
+        "npm",
+        ["run", "build"],
+      ).rule,
+    ).toBe("user.deny");
+  });
+
+  it("allow cannot talk the guard out of a dangerous verdict", () => {
+    expect(
+      guardWith(policyWith({ allow: ["rm *"] }), "rm", ["-r", "./build"]),
+    ).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.rm_recursive",
+    });
+  });
+
+  it("allow cannot talk the guard out of a hardline block", () => {
+    expect(
+      guardWith(policyWith({ allow: ["rm *"] }), "rm", ["-rf", "/"]).rule,
+    ).toMatch(/^hardline\./);
+  });
+
+  it("deny never displaces the dangerous verdict (dangerous is consulted first)", () => {
+    expect(
+      guardWith(policyWith({ deny: ["rm *"] }), "rm", ["-r", "./build"]).rule,
+    ).toBe("dangerous.rm_recursive");
+  });
+
+  it("patterns anchor at argv[0]: a bare subcommand pattern is not a substring probe", () => {
+    expect(
+      guardWith(policyWith({ deny: ["status"] }), "git", ["status"]),
+    ).toMatchObject({ rule: "default" });
+  });
+
+  it("an exact pattern does not match extra arguments", () => {
+    expect(
+      guardWith(policyWith({ allow: ["git status"] }), "git", [
+        "status",
+        "--short",
+      ]),
+    ).toMatchObject({ rule: "default" });
+  });
+
+  it("a trailing * covers every remaining argument, including none", () => {
+    const policy = policyWith({ allow: ["npm run *"] });
+    expect(guardWith(policy, "npm", ["run"])).toMatchObject({
+      action: "allow",
+      rule: "user.allow",
+    });
+    expect(guardWith(policy, "npm", ["run", "build"])).toMatchObject({
+      action: "allow",
+    });
+    expect(guardWith(policy, "npm", ["run", "build", "--silent"])).toMatchObject(
+      { action: "allow" },
+    );
+  });
+
+  it("allow refuses a line the shell would reinterpret (metachars in args)", () => {
+    // Subshell tokenisation keeps `&&` as its own token; an allow must
+    // never cover `echo hi && anything`.
+    expect(
+      guardWith(policyWith({ allow: ["echo *"] }), "echo", [
+        "hi",
+        "&&",
+        "evil",
+      ]),
+    ).toMatchObject({ action: "approval_required", rule: "default" });
+    // Deny matching stays liberal on purpose: matching more is only
+    // ever narrowing.
+    expect(
+      guardWith(policyWith({ deny: ["echo *"] }), "echo", [
+        "hi",
+        "&&",
+        "evil",
+      ]),
+    ).toMatchObject({ action: "approval_required", rule: "user.deny" });
+  });
+
+  it("matches the normalised binary (basename, lowercased) like the guard itself", () => {
+    const policy = policyWith({ allow: ["/usr/bin/GIT status"] });
+    expect(guardWith(policy, "git", ["status"])).toMatchObject({
+      action: "allow",
+      rule: "user.allow",
+    });
+    // ...but argument tokens stay case-sensitive: `git STATUS` is not
+    // the command `git status` names (and not a safe probe either).
+    expect(
+      guardWith(policyWith({ allow: ["git STATUS"] }), "git", ["status"]),
+    ).toMatchObject({ rule: "default" });
+  });
+
+  it("supports a within-argument glob in mid-pattern tokens", () => {
+    const policy = policyWith({ allow: ["git log --max-count=*"] });
+    expect(guardWith(policy, "git", ["log", "--max-count=5"])).toMatchObject({
+      action: "allow",
+      rule: "user.allow",
+    });
+    expect(guardWith(policy, "git", ["log", "--grep=fix"])).toMatchObject({
+      rule: "default",
+    });
+  });
+
+  it("reads the rules on every call, so a /guard edit lands on the next command", () => {
+    let deny: readonly string[] = [];
+    const policy = {
+      isGitRemoteSyncEnabled: () => true,
+      userGuardRules: () => ({ deny, allow: [] }),
+    };
+    expect(guardWith(policy, "echo", ["hi"]).action).toBe("allow");
+    deny = ["echo *"];
+    expect(guardWith(policy, "echo", ["hi"]).rule).toBe("user.deny");
+  });
+
+  it("is absent without userGuardRules (embedders keep the static rule set)", () => {
+    expect(
+      checkShellCommandGuard(
+        { cmd: "echo", rawArgs: ["hi"], cwd: "/tmp" },
+        { isGitRemoteSyncEnabled: () => true },
+      ).action,
+    ).toBe("allow");
+  });
+});

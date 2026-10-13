@@ -547,3 +547,66 @@ describe("context compaction commands", () => {
     expect(dispatchSlashCommand("/help").systemMessage).not.toContain("/compound");
   });
 });
+
+describe("/guard shell-guard rule commands", () => {
+  it("lists rules on bare /guard and /guard list", () => {
+    expect(dispatchSlashCommand("/guard").guardOp).toEqual({ kind: "list" });
+    expect(dispatchSlashCommand("/guard list").guardOp).toEqual({
+      kind: "list",
+    });
+  });
+
+  it("adds to a named list, keeping the pattern verbatim", () => {
+    expect(dispatchSlashCommand("/guard add allow npm run *")).toMatchObject({
+      guardOp: { kind: "add", list: "allow", pattern: "npm run *" },
+    });
+    expect(
+      dispatchSlashCommand("/guard add deny git push --force"),
+    ).toMatchObject({
+      guardOp: { kind: "add", list: "deny", pattern: "git push --force" },
+    });
+    // Multi-word pattern with odd inner spacing arrives whole.
+    expect(
+      dispatchSlashCommand("/guard add deny echo   spaced  arg"),
+    ).toMatchObject({
+      guardOp: { kind: "add", list: "deny", pattern: "echo   spaced  arg" },
+    });
+  });
+
+  it("removes by exact pattern text", () => {
+    expect(
+      dispatchSlashCommand("/guard remove deny npm publish"),
+    ).toMatchObject({
+      guardOp: { kind: "remove", list: "deny", pattern: "npm publish" },
+    });
+  });
+
+  it("clears one list or both", () => {
+    expect(dispatchSlashCommand("/guard clear").guardOp).toEqual({
+      kind: "clear",
+      list: "all",
+    });
+    expect(dispatchSlashCommand("/guard clear allow").guardOp).toEqual({
+      kind: "clear",
+      list: "allow",
+    });
+    expect(dispatchSlashCommand("/guard clear sideways").systemMessage).toContain(
+      "usage: /guard",
+    );
+  });
+
+  it("answers malformed adds with a usage hint, never a guess", () => {
+    expect(dispatchSlashCommand("/guard add npm run *").systemMessage).toContain(
+      "usage: /guard",
+    );
+    expect(
+      dispatchSlashCommand("/guard add sideways npm *").systemMessage,
+    ).toContain("usage: /guard");
+    expect(dispatchSlashCommand("/guard add deny").systemMessage).toContain(
+      "usage: /guard",
+    );
+    expect(dispatchSlashCommand("/guard frobnicate").systemMessage).toContain(
+      "usage: /guard",
+    );
+  });
+});

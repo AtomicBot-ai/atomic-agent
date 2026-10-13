@@ -125,6 +125,7 @@ import {
 } from "./select-chrome-rows.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
+import type { ShellGuardOp } from "./commands/slash-command-handler.js";
 import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
@@ -301,6 +302,13 @@ export interface TuiAppCallbacks {
    * handler owns the escape sequences and the config write.
    */
   onMouseSupportRequested?(enabled: boolean | null): void;
+  /**
+   * `/guard <sub>` — list / add / remove / clear the operator's
+   * shell-guard rules (`shellGuard.*`, issue #229). The handler owns
+   * the config write and the cache reset; a rule lands on the next
+   * shell command without a restart.
+   */
+  onShellGuardRequested?(op: ShellGuardOp): void;
   /**
    * A drag began on a cell no mouse target claims — message text, panel
    * prose, empty rail space. Dragging across inert content is
