@@ -5748,7 +5748,10 @@ function act(a) {
   const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
   /* ATO-165: the chat row's menu is a pick-one menu — whatever verb runs next
      (one of its own items, or anything else) takes it down first. */
-  if (S.overlay === 'sesmenu' && k !== 'sesmenu') S.overlay = null;
+  /* Its layer is repainted on the spot: a pick whose own branch repaints only
+     part of the window, or lands while a full render is held (LIVE_REPLAY),
+     must not leave the menu drawn on top of the row it acted on. */
+  if (S.overlay === 'sesmenu' && k !== 'sesmenu') { S.overlay = null; renderOverlays(); }
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
@@ -7675,8 +7678,10 @@ document.addEventListener('keydown', (e) => {
     const back = SESMENU.id;
     act('close');
     const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(back) : back;
-    const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]');
-    if (ctl) ctl.focus({preventScroll: true});
+    /* After the repaint settles: a sidebar rebuilt in the same frame would
+       replace the control the focus was just put on. */
+    const back2 = () => { const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]'); if (ctl) ctl.focus({preventScroll: true}); };
+    back2(); requestAnimationFrame(back2);
     return;
   }
   // ATO-165: the menu's rows move with the arrows, Home and End.
