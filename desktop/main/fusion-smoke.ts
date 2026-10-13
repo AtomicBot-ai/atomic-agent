@@ -123,9 +123,18 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
   const intro = describeFusionIntro(resolveRunMode(cfgs.fusion));
   const rIntro = await js<string[]>(`window.__fzIntro(${JSON.stringify(cfgs.fusion)})`);
   check("fusion: the first-switch intro names the two resolved legs, on both sides",
-    same(intro, rIntro) && intro[1]!.startsWith("Right now — x-ai/grok-4-6 plans.") && intro[1]!.includes(" qwen/qwen3.7-flash executes:")
+    same(intro, rIntro) && intro[1]!.startsWith("Right now, x-ai/grok-4-6 plans.") && intro[1]!.includes(" qwen/qwen3.7-flash executes:")
       && !intro.join(" ").includes("ctrl+r"),
     intro[1]!.slice(0, 60));
+  /* ATO-261 / ATO-305: Settings › Models states the seats in words and without dashes. */
+  const rLines = await js<Record<string, string>>(
+    `(() => { const c = ${JSON.stringify(cfgs)}; const o = {}; for (const k in c) o[k] = window.__rmSettingsLine(c[k]); return o; })()`,
+  );
+  check("fusion: the Settings line names the seats (This computer, provider names), with no dash or provider id",
+    rLines.fusion === "Fusion. Orchestrator: AI/ML API (x-ai/grok-4-6). Workers (3): OpenRouter (qwen/qwen3.7-flash)"
+      && rLines.fusionLocalWorkers!.includes("Workers (") && rLines.fusionLocalWorkers!.includes("This computer")
+      && !Object.values(rLines).some((t) => t.includes("\u2014") || t.includes("local-llama")),
+    JSON.stringify(rLines));
   const inputs = ["", "status", "swap", "workers 3", "workers 9", "Fusion", " cloud ", "local", "bogus"];
   const mParse = inputs.map(parseRunModeCommand);
   const rParse = await js<unknown[]>(`(${JSON.stringify(inputs)}).map((s) => window.__fzParse(s))`);
@@ -222,7 +231,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
     same(triple(pF.rows.workers), workerCatalogue.map((m) => [m.id, "", m.id === chip(pF, "workers")])),
     JSON.stringify(triple(pF.rows.workers)));
   check("fusion: Settings › LLM marks Fusion active, states it, and offers workers 1–8 on the stored count",
-    pF.settings.active === "runmode:fusion" && pF.settings.status === status.fusion
+    pF.settings.active === "runmode:fusion" && pF.settings.status === rLines.fusion
       && pF.settings.workersOn === "3" && pF.settings.workerButtons === 8,
     JSON.stringify(pF.settings));
 
@@ -248,7 +257,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
      show "Workers: 2 — the default fan-out" under Local and Cloud too). */
   check("fusion: a stored fusion that is not in force draws cloud, and Settings says so; no worker count off Fusion",
     pH.backend === "cloud" && chip(pH, "backend") === "cloud" && pH.settings.active === "runmode:cloud"
-      && pH.settings.status.includes("stored fusion, effective cloud") && pD.settings.workerButtons === 0 && pH.settings.workerButtons === 0,
+      && pH.settings.status.includes("Fusion is saved, but Cloud is in effect") && pD.settings.workerButtons === 0 && pH.settings.workerButtons === 0,
     `${pH.backend} · ${pH.settings.status}`);
 
   /* ---- fusion_worker frames ---- */

@@ -228,16 +228,20 @@ export const FUSION_MARK = [
  * desktop's: the TUI's last paragraph names `ctrl+r`, a terminal chord this
  * window does not have; here each seat has its own engine and model controls.
  * Paragraphs 4 and 6 match fzIntroParagraphs in renderer.js word for word.
+ * A seat with no model pinned is named by `seatWord` (the renderer passes its
+ * human names, ATO-261: "This computer", "AI/ML API"); its id otherwise.
+ * ATO-305: no dashes in the copy.
  */
-export function describeFusionIntro(rm: ResolvedRunMode): string[] {
-  const orchestrator = rm.orchestratorModel ?? rm.orchestratorProviderId ?? "your cloud provider";
-  const worker = rm.workerModel ?? rm.workerProviderId ?? "the local model";
+export function describeFusionIntro(rm: ResolvedRunMode, seatWord: (providerId: string) => string = (id) => id): string[] {
+  const word = (id: string | null | undefined) => (id ? seatWord(id) : null);
+  const orchestrator = rm.orchestratorModel ?? word(rm.orchestratorProviderId) ?? "your cloud provider";
+  const worker = rm.workerModel ?? word(rm.workerProviderId) ?? "the local model";
   return [
     "Fusion splits the work between two models: one decides, the other does.",
-    `Right now — ${orchestrator} plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.`
+    `Right now, ${orchestrator} plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.`
       + ` ${worker} executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.`,
     "How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.",
-    "Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one, even from the same provider. This setup has one managed local engine, which can serve either role.",
+    "Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute: your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one, even from the same provider. This setup has one managed local engine, which can serve either role.",
     "Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.",
     "Each seat has separate inference engine and model controls. Use the swap button to trade the seats. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.",
   ];
