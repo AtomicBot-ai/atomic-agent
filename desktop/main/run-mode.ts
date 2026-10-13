@@ -229,7 +229,7 @@ export const FUSION_MARK = [
  * window does not have; here each seat has its own engine and model controls.
  * Paragraphs 4 and 6 match fzIntroParagraphs in renderer.js word for word.
  * A seat with no model pinned is named by `seatWord` (the renderer passes its
- * human names, ATO-261: "This computer", "AI/ML API"); its id otherwise.
+ * human names, ATO-261: "Local models", "AI/ML API"); its id otherwise.
  * ATO-305: no dashes in the copy.
  */
 export function describeFusionIntro(rm: ResolvedRunMode, seatWord: (providerId: string) => string = (id) => id): string[] {

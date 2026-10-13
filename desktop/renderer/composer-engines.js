@@ -7,7 +7,7 @@ function composerEngineId() { return llmManaged().engine === 'llama-server' ? 'l
 /* The composer never names the engine: a local seat is "this computer" whichever engine runs it, as before Core
    existed, and "Atomic Chat" stays the name of the Atomic Chat (local) provider preset alone. llama.cpp is never
    offered in the app (support-only: `models engine llama-server`); Settings › Models › Advanced leads back. */
-function composerEngineName() { return 'This computer'; }
+function composerEngineName() { return 'Local models'; }
 function composerSeatLocal(seat) { return seat.provider === 'local-llama'; }
 /* Why one seat at most: the managed engine loads one model, and a second local model would split the same memory and GPU. */
 const COMPOSER_ONE_LOCAL = 'Your computer runs one local model at a time, so the local engine can take only one role.';
@@ -27,7 +27,7 @@ function composerLocalEngineRows(leg) {
   const seat = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
   return [{
     type:'localEngine', id:composerEngineId(), label:composerEngineName(), leg,
-    detail:'Local model \u00b7 runs on this machine',
+    detail:'Runs on this machine',
     active: !leg || seat === 'local-llama',
   }];
 }

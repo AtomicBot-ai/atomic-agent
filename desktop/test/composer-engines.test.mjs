@@ -20,9 +20,9 @@ function fixture(engine = 'atomic-core') {
 test('the local seat is one neutral row, with no engine named',()=>{
   const {context:c}=fixture(); const rows=c.composerLocalEngineRows();
   // The engine is not a choice in the composer: one row, the configured engine, never "Atomic Chat".
-  assert.equal(rows.length,1); assert.equal(rows[0].label,'This computer'); assert.equal(rows[0].id,'atomic-core');
-  assert.equal(rows[0].detail,'Local model \u00b7 runs on this machine'); assert.equal(rows[0].active,true);
-  assert.equal(c.composerEngineName(),'This computer');
+  assert.equal(rows.length,1); assert.equal(rows[0].label,'Local models'); assert.equal(rows[0].id,'atomic-core');
+  assert.equal(rows[0].detail,'Runs on this machine'); assert.equal(rows[0].active,true);
+  assert.equal(c.composerEngineName(),'Local models');
 });
 test('Fusion engine and model menus are separate, with catalogs scoped to each role',()=>{
   const {context:c,rm}=fixture();
@@ -62,7 +62,7 @@ test('two cloud seats may share a provider; both seats on the one local slot are
 });
 test('on llama.cpp (after a recovery) the one local row keeps llama.cpp and still names no engine',()=>{
   const {context:c}=fixture('llama-server');
-  assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.label,r.active]),[['llama-server','This computer',true]]);
+  assert.deepEqual(Array.from(c.composerLocalEngineRows(),r=>[r.id,r.label,r.active]),[['llama-server','Local models',true]]);
   assert.equal(c.composerFusionEngineRows('worker').filter(r=>r.type==='localEngine').length,1);
   assert.equal(typeof c.composerCoreChoice,'undefined');
 });

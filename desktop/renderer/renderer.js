@@ -1313,8 +1313,8 @@ const IMP_SOURCE_META = {
   openclaw:{label:'OpenClaw', logo:'openclaw', dir:'~/.openclaw', toggles:['sessions','cron']},
   'claude-code':{label:'Claude Code', logo:'claudecode', dir:'~/.claude', toggles:['skills','memory','mcp','sessions','secrets'], secretsHint:'ANTHROPIC_API_KEY'},
   codex:{label:'Codex', logo:'codex', dir:'~/.codex', toggles:['skills','memory','sessions','secrets'], secretsHint:'OPENAI_API_KEY'},
-  pi:{label:'Pi', logo:'', dir:'~/.pi/agent', toggles:['skills','sessions']},
-  'oh-my-pi':{label:'Oh-My-Pi', logo:'', dir:'~/.omp/agent', toggles:['skills','mcp','sessions']},
+  pi:{label:'Pi', logo:'pi', dir:'~/.pi/agent', toggles:['skills','sessions']},
+  'oh-my-pi':{label:'Oh-My-Pi', logo:'ohmypi', dir:'~/.omp/agent', toggles:['skills','mcp','sessions']},
 };
 const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', sessions:'Sessions', cron:'Cron jobs', secrets:'Secrets'};
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
@@ -1583,6 +1583,7 @@ const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden=
    the server icon for a provider and the CPU icon for a model instead — never
    a monogram. */
 const LOGO_FILES = {
+  pi:'pi.svg', ohmypi:'ohmypi.svg',
   qwen:'qwen-color.svg', google:'google.svg', openai:'openai.svg', claude:'claude-color.svg', anthropic:'anthropic.svg',
   openrouter:'openrouter.svg', aimlapi:'aimlapi.png', gemini:'gemini-color.svg', groq:'groq.svg', deepseek:'deepseek-color.svg',
   mistral:'mistral-color.svg', cerebras:'cerebras-color.svg', together:'together-color.svg', fireworks:'fireworks-color.svg',
@@ -17463,7 +17464,7 @@ function fzSeatId(label) {
   return at >= 0 && at < s.length - 1 ? s.slice(at + 1) : s;
 }
 
-/* ATO-261: a Fusion seat in words. The local seat is "This computer", as the
+/* ATO-261: a Fusion seat in words. The local seat is "Local models", as the
    composer's seat chip says (composer-engines.js), never `local-llama`; a
    cloud seat is its preset's name ("AI/ML API", "DashScope"), never its id. */
 function fzSeatWord(providerId) {
@@ -24905,8 +24906,9 @@ function importTab() {
   else if (report) body += impReportHTML(IMP.report, IMP.mode === 'done');
   return '<div class="sd-pane sd-imp">' + body + '</div>';
 }
-/* Д54: Pi and Oh-My-Pi have no mark in logos/, so they wear a neutral terminal
-   glyph the size of a mark rather than a logo made up for them. */
+/* Oh-My-Pi wears its own mark (can1357/oh-my-pi assets/icon.svg, MIT) on a dark
+   tile; Pi has no published mark, so it wears a plain pi glyph in the same style.
+   A source with no logo key still falls back to the neutral terminal glyph. */
 function impLogoHTML(source, size) {
   return logoHTML(impMeta(source).logo, size) || '<span class="tk-ico tk-ico--' + (size === 'xs' ? 'xs' : 'sm') + ' sd-implogo">' + ic('term') + '</span>';
 }

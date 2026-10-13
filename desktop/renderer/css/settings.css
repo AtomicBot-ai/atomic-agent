@@ -79,8 +79,10 @@ body.electron #settings{-webkit-app-region:no-drag}
 button.menurow{cursor:pointer}
 button.menurow:hover{background:var(--hover);color:var(--ink)}
 button.menurow:hover > svg{color:var(--ink-2)}
-.menurow.on{background:var(--brand-wash);color:var(--blue)}
-.menurow.on > svg{color:var(--blue)}
+/* The picked row stays blue under the pointer: the hover rule above is more specific (button.menurow:hover)
+   and painted the row just clicked grey until the pointer left it. */
+.menurow.on,button.menurow.on:hover{background:var(--brand-wash);color:var(--blue)}
+.menurow.on > svg,button.menurow.on:hover > svg{color:var(--blue)}
 .menurow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .menurow .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* The section switch inside a nav row: its label. */

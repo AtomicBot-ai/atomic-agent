@@ -130,9 +130,9 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
   const rLines = await js<Record<string, string>>(
     `(() => { const c = ${JSON.stringify(cfgs)}; const o = {}; for (const k in c) o[k] = window.__rmSettingsLine(c[k]); return o; })()`,
   );
-  check("fusion: the Settings line names the seats (This computer, provider names), with no dash or provider id",
+  check("fusion: the Settings line names the seats (Local models, provider names), with no dash or provider id",
     rLines.fusion === "Fusion. Orchestrator: AI/ML API (x-ai/grok-4-6). Workers (3): OpenRouter (qwen/qwen3.7-flash)"
-      && rLines.fusionLocalWorkers!.includes("Workers (") && rLines.fusionLocalWorkers!.includes("This computer")
+      && rLines.fusionLocalWorkers!.includes("Workers (") && rLines.fusionLocalWorkers!.includes("Local models")
       && !Object.values(rLines).some((t) => t.includes("\u2014") || t.includes("local-llama")),
     JSON.stringify(rLines));
   const inputs = ["", "status", "swap", "workers 3", "workers 9", "Fusion", " cloud ", "local", "bogus"];
@@ -219,7 +219,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
   /* The engine is not a choice in the composer: one neutral local row, carrying the engine that runs.
      These configs name no engine, so that is Core, marked when the seat is local. */
   const localEngines = (seatIsLocal: boolean) => [
-    ["atomic-core", "Local model · runs on this machine", seatIsLocal],
+    ["atomic-core", "Runs on this machine", seatIsLocal],
   ];
   check("fusion: the orchestrator's engine rows are every cloud provider (the workers' too), then the local row, then Add",
     same(triple(pF.rows.provider), [["aimlapi", "Cloud provider", true], ["openrouter", "Cloud provider", false], ...localEngines(false), ["add", "opens the wizard", false]]),
@@ -248,8 +248,8 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
   // The local row, the busy row and the seat chip all read one neutral name (composerEngineName), never the engine's.
   const localLabels = [...(pL.rows.workerProvider ?? []), ...pL.rows.provider]
     .filter((r) => r.type === "localEngine" || r.type === "localBusy").map((r) => r.label);
-  check("fusion: the local seat is named \"This computer\" in both seats' rows, with no engine name",
-    same(localLabels, ["This computer", "This computer"]), JSON.stringify(localLabels));
+  check("fusion: the local seat is named \"Local models\" in both seats' rows, with no engine name",
+    same(localLabels, ["Local models", "Local models"]), JSON.stringify(localLabels));
 
   const pH = await probe(cfgs.fusionHandSwitched, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [] });
   const pD = await probe(cfgs.cloud, { readyIds: ["aimlapi"], localLoaded: true, local: [] });
