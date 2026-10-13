@@ -175,12 +175,23 @@ export {
   parseListDevices,
   pickBestDevice,
   listVulkanDevices,
+  probeDevices,
   deviceTableOnce,
   resolveManagedDevice,
   sharesSystemMemory,
+  type DeviceProbe,
+  type DeviceProbeSpawn,
+  type DeviceTable,
   type GpuDevice,
   type ListDevices,
 } from "./backend/gpu-devices.js";
+export {
+  describeUnlistedDevices,
+  managedDeviceSource,
+  managedDeviceTable,
+  probeManagedDevices,
+  type ManagedDeviceSource,
+} from "./backend/managed-devices.js";
 export {
   resolveGpuBudgetGb,
   MAC_UNIFIED_GPU_FRACTION,

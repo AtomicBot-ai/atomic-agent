@@ -157,7 +157,9 @@ async function quitChecks(check: Check, standInScript: string, dir: string, real
   mkdirSync(data, { recursive: true });
   const port = await standInPort();
   writeFileSync(join(state, "config.json"), JSON.stringify({
-    localModels: { mode: "managed", managed: { modelId: MODEL, port, stopOnExit: true } },
+    // The agent's own llama-server path: the stand-in plays that server, and
+    // under Atomic Core (the default engine) stop and status ask Core first.
+    localModels: { mode: "managed", managed: { modelId: MODEL, port, stopOnExit: true, engine: "llama-server" } },
     tui: { onboarding: { completedAt: "2026-09-23T00:00:00.000Z" } },
   }, null, 2));
   const log = join(dir, "quit-verbs.log");
@@ -238,7 +240,8 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
   mkdirSync(data, { recursive: true });
   const port = await standInPort();
   writeFileSync(join(state, "config.json"), JSON.stringify({
-    localModels: { mode: "managed", managed: { modelId: MODEL, port } },
+    // The agent's own llama-server path, as in the quit checks above.
+    localModels: { mode: "managed", managed: { modelId: MODEL, port, engine: "llama-server" } },
   }, null, 2));
   const pidFile = join(data, "llama-server.pid");
   const log = join(dir, "revive-verbs.log");
