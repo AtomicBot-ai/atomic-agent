@@ -659,7 +659,11 @@ Honestly degraded, and labelled as such in the UI:
   a one-line key). `atag serve` loads `.env` when it starts, so a save owes
   a restart: the card offers Restart Agent Runtime once no reply is
   running. The session store does not keep the field, so a reopened chat
-  has no card; an agent without the field changes nothing.
+  has no card; an agent without the field changes nothing. The desktop
+  always writes `EXA_API_KEY`: a custom `web.search.exa.apiKeyEnv` (the
+  frame's `envVar`) is not supported from the card or Settings, and such an
+  agent keeps asking until that variable is set by hand. `app:dotenvSet`
+  refuses a line break or NUL in any value.
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).

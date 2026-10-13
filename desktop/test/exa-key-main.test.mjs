@@ -40,12 +40,24 @@ test("the window may write EXA_API_KEY and TELEGRAM_BOT_TOKEN to .env, and no ot
 });
 
 test("an Exa key that is not one line of printable characters is refused, and never quoted back", () => {
-  for (const bad of [KEY + "\nPATH=/tmp/evil", "two words here", "short", "", "k".repeat(257), KEY + "\u0000"]) {
+  for (const bad of ["two words here", "short", "", "k".repeat(257), KEY + "\u0007"]) {
     const err = cli.desktopDotenvError("EXA_API_KEY", bad);
     assert.equal(err, "That does not look like an Exa API key.", JSON.stringify(bad));
   }
+  // A line break is refused before that, with the guard every key shares.
+  assert.equal(cli.desktopDotenvError("EXA_API_KEY", KEY + "\nPATH=/tmp/evil"), "value must be one line");
   assert.equal(cli.exaKeyValueError(KEY), null);
   assert.equal(cli.exaKeyValueError("k".repeat(256)), null);
+});
+
+test("a line break or NUL is refused for every key the window may write, so no second variable gets into .env", () => {
+  for (const name of cli.DESKTOP_DOTENV_KEYS) {
+    for (const bad of ["123:abc\nOPENAI_API_KEY=x", "123:abc\rOPENAI_API_KEY=x", "123:abc\r\n", "123:abc\u0000x"]) {
+      assert.equal(cli.desktopDotenvError(name, bad), "value must be one line", `${name} ${JSON.stringify(bad)}`);
+    }
+  }
+  assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", "123:abc"), null);
+  assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", null), null);
 });
 
 test("the key lands in .env as EXA_API_KEY, owner-only, other keys and comments kept", { skip: !posix }, () => {
