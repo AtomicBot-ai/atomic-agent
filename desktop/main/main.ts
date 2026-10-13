@@ -1074,11 +1074,17 @@ async function shutdownForUpdate(): Promise<boolean> {
   stopForQuit();
   const client = agent;
   agent = null;
-  // close() answers whether the agent and every child it let go of are gone.
-  const gone = client ? await client.close().catch(() => false) : true;
-  await stopLocalDaemonOnQuit();
+  /* close() answers whether the agent and every child it let go of are gone.
+     Bounded, so the model server's stop always runs before the installer
+     starts, inside the updater's own limit (updater.ts SHUTDOWN_TIMEOUT_MS):
+     a close that hangs used to mean no stop at all. */
+  const gone = client ? await settleWithin(client.close().catch(() => false), UPDATE_CLOSE_MS, false) : true;
+  // Whatever stopOnExit says: the update replaces the files the model server and Atomic Core run from.
+  await stopLocalDaemonOnQuit(undefined, { forUpdate: true });
   return gone;
 }
+/** shutdownForUpdate's bound on the agent's close: with the stop after it (≤ ~10.5 s), inside the updater's 15 s. */
+const UPDATE_CLOSE_MS = 4_000;
 
 /** ATO-134: how long a switch waits for /health's busyTurns (asked without the llama probe, so milliseconds) before it counts the agent busy. */
 const SWITCH_BUSY_CHECK_MS = 5_000;
@@ -9489,8 +9495,18 @@ function readQuitConfig(): Promise<Awaited<ReturnType<typeof readWholeConfig>> |
  * the next reboot. The daemon is on the desktop's own state dir and port, so
  * no terminal session shares it. Bounded, so a stuck CLI cannot hold quit.
  */
-async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>): Promise<void> {
+async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>, opts: { forUpdate?: boolean } = {}): Promise<void> {
   if (SMOKE) return;
+  /* An app update: the stop runs whatever the config says (stopOnExit off
+     included) and reads only the data dir from disk, no `atag` call, so it
+     fits the updater's limit. `models stop` also retires an idle Atomic Core. */
+  if (opts.forUpdate) {
+    try {
+      const killed = await stopDaemonForQuit(managedDataDirNow(), { stopMs: 5_000, retryMs: 4_000 });
+      if (killed.length) console.error(`[desktop] killed the model server that outlived its stop before the update (pid ${killed.join(", ")})`);
+    } catch { /* the update goes on */ }
+    return;
+  }
   try {
     /* Item 30: bounded, and a config that cannot be read in time is no reason
        to leave the model server up — the defaults (managed, stopOnExit) stop it.

@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   abortStarts,
@@ -809,13 +811,35 @@ export function stopDaemonNow(): Promise<CliResult> {
  * Backlog 18 (its second review): and no start spawns after this, though its
  * turn began before (closeDaemonTurns; stopForQuit has closed them already).
  */
-export async function stopDaemonForQuit(dataDir: string): Promise<number[]> {
+export async function stopDaemonForQuit(dataDir: string, bounds: { stopMs?: number; retryMs?: number } = {}): Promise<number[]> {
   closeDaemonTurns();
   supersedeBringUp();
   await abortStarts(1_500);
   const named = daemonPidsIn(dataDir);
-  await Promise.race([modelsStop(), new Promise((r) => setTimeout(r, 5_000))]);
+  const first = await settleStop(modelsStop(), bounds.stopMs ?? 5_000);
+  /* Atomic Core owns its model sessions: their pid files are skipped below
+     (daemonPidsIn without includeCore), as only Core's own API may stop them,
+     and the agent's `models stop` is that API's caller (it also retires an
+     idle Core). So a stop that timed out or failed with Core sessions still
+     recorded is asked once more rather than leaving them running behind the
+     app. Core's processes are never killed from here. */
+  if (!first?.ok && coreSessionsRecorded(dataDir)) {
+    const again = await settleStop(modelsStop(), bounds.retryMs ?? 4_000);
+    if (!again?.ok) console.error(`[desktop] local-llm: Atomic Core's model sessions may still be running after the quit (models stop: ${again?.error ?? "timed out"})`);
+  }
   return killDaemonLeftovers([...named, ...daemonPidsIn(dataDir)]);
+}
+/** `stop`'s answer, or null once `ms` have passed. */
+function settleStop(stop: Promise<CliResult>, ms: number): Promise<CliResult | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    stop.catch((): CliResult => ({ ok: false, stdout: "", stderr: "", error: "models stop failed" })),
+    new Promise<null>((r) => { timer = setTimeout(() => r(null), ms); timer.unref?.(); }),
+  ]).finally(() => { if (timer) clearTimeout(timer); });
+}
+/** Whether Atomic Core still records a chat or embedding session it owns (`<dataDir>/core/{chat,embedding}.json`). */
+export function coreSessionsRecorded(dataDir: string): boolean {
+  return ["chat.json", "embedding.json"].some((f) => existsSync(join(dataDir, "core", f)));
 }
 
 /* ---- the agent's restart after a switch (backlog 18, its second review) ----
