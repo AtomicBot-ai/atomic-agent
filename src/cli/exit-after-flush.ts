@@ -3,7 +3,10 @@ import { exit } from "node:process";
 /** How long a flush may take before the process exits anyway (a reader that never drains the pipe). */
 const FLUSH_GRACE_MS = 5_000;
 
-type Flushable = Pick<NodeJS.WriteStream, "write">;
+/** The one call this needs from a stream: an empty write whose callback runs once earlier writes are flushed. */
+export interface Flushable {
+  write(chunk: string, cb: () => void): boolean;
+}
 
 /**
  * Exit with `code` once stdout and stderr have handed everything written so

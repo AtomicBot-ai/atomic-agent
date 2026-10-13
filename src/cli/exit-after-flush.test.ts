@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { exitAfterFlush } from "./exit-after-flush.js";
+import { exitAfterFlush, type Flushable } from "./exit-after-flush.js";
 
-function stream(flush: (cb: () => void) => void) {
-  return { write: vi.fn((_chunk: string, cb?: () => void) => { if (cb) flush(cb); return true; }) };
+function stream(flush: (cb: () => void) => void): Flushable & { write: ReturnType<typeof vi.fn> } {
+  return { write: vi.fn((_chunk: string, cb: () => void) => { flush(cb); return true; }) };
 }
 
 describe("exitAfterFlush", () => {
@@ -21,7 +21,8 @@ describe("exitAfterFlush", () => {
     callbacks[0]!();
     expect(exit).not.toHaveBeenCalled();
     callbacks[1]!();
-    expect(exit).toHaveBeenCalledExactlyOnceWith(3);
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(3);
   });
 
   it("exits anyway once the grace period passes (a reader that never drains)", () => {
@@ -32,7 +33,8 @@ describe("exitAfterFlush", () => {
       vi.advanceTimersByTime(99);
       expect(exit).not.toHaveBeenCalled();
       vi.advanceTimersByTime(1);
-      expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+      expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
     } finally {
       vi.useRealTimers();
     }
@@ -40,9 +42,10 @@ describe("exitAfterFlush", () => {
 
   it("does not wait on a stream whose write throws, and exits once", () => {
     const exit = vi.fn();
-    const broken = { write: vi.fn(() => { throw new Error("EPIPE"); }) };
+    const broken: Flushable = { write: () => { throw new Error("EPIPE"); } };
     exitAfterFlush(1, [broken, stream((cb) => cb())], exit, 60_000);
-    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("hands a pipe reader all of a large stdout before the process exits (ATO-355)", async () => {
