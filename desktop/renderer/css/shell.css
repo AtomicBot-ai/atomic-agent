@@ -176,6 +176,8 @@
 .sesmore svg{width:14px;height:14px}
 .sesrow:hover .sesmore,.sesrow:focus-within .sesmore{visibility:visible}
 .sesrow.on .sesmore,.sesmore[aria-expanded="true"]{visibility:visible}
+/* A menu just closed hands its focus back to this control even on a row that is not hovered or open (chatMenuFocusBack). */
+.sesmore.focusback{visibility:visible}
 .sesmore:hover,.sesmore[aria-expanded="true"]{background:var(--press);color:var(--ink)}
 .sesmore:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .sesrow.on .sesmore{color:var(--blue)}

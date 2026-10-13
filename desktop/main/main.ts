@@ -6977,13 +6977,15 @@ async function settingsTestPartC(
   const st = await modelsStatus();
   const cfg0 = await readCfg();
   const activeText = cfg0.llm?.activeTextProvider ?? "local-llama";
+  // 13.10: the card names the local slot in words (Local models (Atomic Core) or (llama.cpp)); Copy keeps the id.
+  const localRouteWord = `Local models (${(cfg0.localModels?.managed as { engine?: string } | undefined)?.engine === "llama-server" ? "llama.cpp" : "Atomic Core"})`;
   const activeEntry = (cfg0.llm?.providers ?? []).find((p) => p.id === activeText);
   const localRoute = !activeEntry || activeEntry.kind === "llama-server";
   const expectedModel = localRoute ? (st.status?.activeModel ?? cfg0.localModels?.managed?.modelId ?? null) : (activeEntry?.defaultChatModel ?? activeEntry?.model ?? null);
   const expectedDaemon = st.ok && st.status ? (st.status.daemonRunning ? (String(st.status.health).toLowerCase() === "ok" ? "running pid " : "pid ") : "stopped") : null;
   const kvOf = (label: string): string => (localView.kv.find(([k]) => k === label) ?? [label, ""])[1];
   const routeOk = !!expectedDaemon && local.daemonLabel.startsWith(expectedDaemon) && kvOf("local daemon").startsWith(`${local.daemonLabel} · mode ${cfg0.localModels?.mode ?? "external"}`)
-    && kvOf("current") === `${activeText}${expectedModel ? " / " + expectedModel : ""}` && kvOf("tools") === (localRoute ? "grammar · cache local slot/cache_prompt" : "native_tools · cache cloud: no slot affinity");
+    && kvOf("current") === `${activeText === "local-llama" ? localRouteWord : activeText}${expectedModel ? " / " + expectedModel : ""}` && kvOf("tools") === (localRoute ? "grammar · cache local slot/cache_prompt" : "native_tools · cache cloud: no slot affinity");
   check("llm tab: route card follows the user file and atag models status", routeOk, `current ${activeText} / ${expectedModel ?? "—"} · daemon ${JSON.stringify(local.daemonLabel)} vs status ${st.ok ? st.status?.daemon : st.error}${routeOk ? "" : " · card " + JSON.stringify(localView.kv)}`);
 
   // ---- LLM: Cloud pane ----

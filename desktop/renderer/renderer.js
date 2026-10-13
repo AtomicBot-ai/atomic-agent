@@ -2339,7 +2339,14 @@ function openChatMenu(id, point) {
    (a sidebar rebuilt in the same frame would replace the control the focus was just put on). */
 function chatMenuFocusBack(id) {
   const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
-  const back = () => { const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]'); if (ctl) ctl.focus({preventScroll: true}); };
+  // A hidden control (visibility:hidden on a row that is not hovered or open) cannot take focus: show it while it holds it.
+  const back = () => {
+    const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]');
+    if (!ctl) return;
+    ctl.classList.add('focusback');
+    ctl.addEventListener('blur', () => ctl.classList.remove('focusback'), {once: true});
+    ctl.focus({preventScroll: true});
+  };
   back(); requestAnimationFrame(back);
 }
 function focusChatMenu(i) {

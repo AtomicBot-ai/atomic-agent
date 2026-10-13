@@ -455,7 +455,7 @@ async function importPane(js: Js, check: Check): Promise<void> {
       for (const src of IMP_SOURCES) {
         const btn = document.querySelector('#settings .setbody [data-act="import:source:' + src + '"]');
         marks[src] = !!btn && !!btn.querySelector('.logo, .tk-ico');
-        if (src === 'pi' || src === 'oh-my-pi') { const g = btn && btn.querySelector('.tk-ico'); generic.push(!!g && !!g.querySelector('svg') && !g.querySelector('img')); }
+        if (src === 'pi' || src === 'oh-my-pi') { const g = btn && btn.querySelector('.logo img'); generic.push(!!g && ['logos/pi.svg', 'logos/ohmypi.svg'].includes(g.getAttribute('src') || '')); }
       }
       return {pos, scrolled, label: lbl ? lbl.textContent.trim() : '', placeholder: inp ? inp.getAttribute('placeholder') : '', marks, generic,
         oldRun: !!document.querySelector('#settings .sd-run'), order: impFocusOrder('codex').join(',')};
@@ -484,7 +484,7 @@ async function importPane(js: Js, check: Check): Promise<void> {
     r.err ?? show({ label: first?.label, limit: r.label, placeholder: r.placeholder }),
   );
   check(
-    "T49 (Д54): every import source wears a mark — Pi and Oh-My-Pi a neutral glyph, not a made-up logo",
+    "T49 (Д54): every import source wears a mark — Pi its pi glyph, Oh-My-Pi its own MIT mark (13.10)",
     !r.err && Object.values(r.marks).length === 6 && Object.values(r.marks).every(Boolean) && r.generic.length === 2 && r.generic.every(Boolean),
     r.err ?? show({ marks: r.marks, generic: r.generic }),
   );
