@@ -16,9 +16,19 @@
  *     Driven on a stand-in row this check adds itself (the agent answers 200
  *     to a DELETE of an id it does not hold), never on a real chat.
  *
+ * (d) QA 0.0.2: Mark as unread draws the unread dot (brand blue), not the
+ *     failed tone a chat's stored `failed` status or an already-read ATTN
+ *     entry left behind; a failed turn stored after a real read stamp still
+ *     draws red. And the menu's rows light under the pointer: the menu's own
+ *     transparent ground outranked the kit's .tk-mi:hover, so `:hover` is read
+ *     off the stylesheets on disk (it cannot be synthesised from script).
+ *
  * Pins, read stamps and the open chat are put back; nothing of the operator's
  * is deleted.
  */
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -46,6 +56,14 @@ type Menu = {
   sepBeforeDelete: boolean; danger: string[]; focused: string | null;
   box: { left: number; top: number; right: number; bottom: number }; win: { w: number; h: number };
 } | null;
+
+/** The renderer's stylesheets, in the order index.html links them (as t37 reads them). */
+function rendererCss(): string {
+  const dir = join(__dirname, "..", "..", "renderer");
+  const html = readFileSync(join(dir, "index.html"), "utf8");
+  const sheets = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]!);
+  return sheets.map((href) => { try { return readFileSync(join(dir, href), "utf8"); } catch { return ""; } }).join("\n");
+}
 
 const sel = (id: string) => `'.sesrow[data-ses="' + CSS.escape(${show(id)}) + '"]'`;
 
@@ -165,6 +183,41 @@ export async function checks165(js: Js, check: Check): Promise<void> {
         show(flip),
       );
 
+      // ---- (d) Mark as unread is the unread dot, not the failed one ---------
+      const tone = await js<{ marked: string; fresh: string } | null>(`(() => {
+        const id = ${show(a.id)};
+        const row = chatById(id);
+        if (!row) return null;
+        const was = {status: row.status, attn: ATTN.has(id)};
+        const dot = () => { const d = document.querySelector(${sel(a.id)} + ' .sdot'); return d ? d.className : ''; };
+        try {
+          act('read:' + id);
+          row.status = 'failed'; ATTN.add(id);   // a failure already read, as on screen
+          act('unread:' + id);
+          const marked = dot();
+          PREFS.seen[id] = (row.updatedAt || 0) - 1; render();   // a failed turn stored after a real stamp
+          return {marked, fresh: dot()};
+        } finally {
+          row.status = was.status;
+          if (was.attn) ATTN.add(id); else ATTN.delete(id);
+          render();
+        }
+      })()`);
+      if (tone && /running|tone-amber/.test(tone.marked)) {
+        process.stdout.write(`SKIP T165d: ${a.id} is running or waiting on an approval (${tone.marked})\n`);
+      } else {
+        check(
+          "T165d: Mark as unread on a chat whose last turn failed draws the unread dot, not the red one",
+          !!tone && /\bfilled\b/.test(tone.marked) && !/tone-red/.test(tone.marked),
+          show(tone),
+        );
+        check(
+          "T165d: a failed turn stored after the chat was read still draws red",
+          !!tone && /\bfilled\b/.test(tone.fresh) && /tone-red/.test(tone.fresh),
+          show(tone),
+        );
+      }
+
       // ---- (b) the Pinned section -------------------------------------------
       await js<unknown>(`(() => { PREFS.pinned = PREFS.pinned.filter((x) => x !== ${show(a.id)} && x !== ${show(b.id)}); savePrefs(); render(); })()`);
       await js<unknown>(`act('pin:' + ${show(a.id)})`);
@@ -194,6 +247,16 @@ export async function checks165(js: Js, check: Check): Promise<void> {
         show(unpinnedView) + (keep.pinned.length > 0 ? " (the operator has pins of their own; only the row's return is asserted)" : ""),
       );
     }
+
+    // ---- (d) the menu's rows light under the pointer -----------------------
+    const css = rendererCss().replace(/\/\*[\s\S]*?\*\//g, "");
+    const ground = css.indexOf(".sesmenu .sesmenu-item{");
+    const hover = css.indexOf(".sesmenu .sesmenu-item:hover{background:var(--hover)}");
+    check(
+      "T165d: a menu row lights on hover — its own rule, after the menu's transparent ground",
+      ground >= 0 && hover > ground,
+      `ground at ${ground}, hover rule at ${hover}`,
+    );
 
     // ---- (c) Delete… asks, and deleting the open chat leaves an empty one ---
     const probe = `smoke-ato165-${Date.now().toString(16)}`;
