@@ -4,7 +4,8 @@
 // See src/cli/node-env-bootstrap.ts.
 import "./node-env-bootstrap.js";
 import { isSea } from "node:sea";
-import { argv, exit } from "node:process";
+import { argv } from "node:process";
+import { exitAfterFlush } from "./exit-after-flush.js";
 import { runAgentCommand } from "./run-agent.js";
 import { debugReplCommand } from "./debug-repl.js";
 import { skillCommand } from "./skill.js";
@@ -232,10 +233,10 @@ async function main(): Promise<number> {
 }
 
 main()
-  .then((code) => exit(code))
+  .then((code) => exitAfterFlush(code))
   .catch((err) => {
     const message =
       err instanceof Error ? (err.stack ?? err.message) : String(err);
     process.stderr.write(`${message}\n`);
-    exit(1);
+    exitAfterFlush(1);
   });
