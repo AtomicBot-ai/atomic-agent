@@ -9,6 +9,7 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPrefere
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { seedBundledCore } from "./core-seed.js";
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
+import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -450,6 +451,16 @@ const REMOVING_BUSY = "it is being deleted — try again once that has finished"
    its restart of the agent (applySwitch) then left a fresh `atag serve` behind
    the app; nothing restarts the agent once the app is quitting. */
 let quitting = false;
+/* The launch's background Atomic Core update check (watchCoreUpdates): its
+   timers, and the `models engine` child on its way. Nothing of it is waited
+   for by the quit; stopForQuit ends it. */
+const coreChecks: { abort: AbortController; first: NodeJS.Timeout | null; every: NodeJS.Timeout | null } = { abort: new AbortController(), first: null, every: null };
+function stopCoreUpdateChecks(): void {
+  if (coreChecks.first) clearTimeout(coreChecks.first);
+  if (coreChecks.every) clearInterval(coreChecks.every);
+  coreChecks.first = coreChecks.every = null;
+  coreChecks.abort.abort();
+}
 /* Backlog 18 (R1): a download stops with the app rather than writing on
    after it — the next launch resumes the setup download from its partial
    file, and two writers on one partial file is how a resume goes wrong.
@@ -463,6 +474,8 @@ let quitting = false;
    carries on with the undo it hands back. */
 function stopForQuit(): () => void {
   quitting = true;
+  // Background checks are abandoned, never waited for: the Core update check asks GitHub.
+  stopCoreUpdateChecks();
   pull?.cancel();
   pullUpdate?.cancel();
   hfProjector?.controller.abort();
@@ -3724,7 +3737,7 @@ function exitAfterAgentStop(code: number): void {
   const client = agent;
   agent = null;
   // close, not stop: no restart, workspace change or import still on its way starts another agent after it.
-  const shutdown = (client ? client.close() : Promise.resolve(true)).then(stopLocalDaemonOnQuit);
+  const shutdown = (client ? client.close() : Promise.resolve(true)).then(() => stopLocalDaemonOnQuit());
   void Promise.race([shutdown, new Promise((r) => setTimeout(r, 10_000))])
     .catch(() => undefined)
     .finally(() => app.exit(code));
@@ -9192,11 +9205,14 @@ function watchCoreUpdates(): void {
   // Core is the default engine, so every launch checks; the status read below skips it on llama.cpp.
   if (SMOKE || FIRST_RUN_PROBE) return;
   let previous = "";
+  const signal = coreChecks.abort.signal;
   const check = async () => {
+    if (quitting || signal.aborted) return;
     try {
-      const status = await modelsEngine("status");
+      const status = await modelsEngine("status", signal);
       if (!status.ok || (status.value as { engine?: string } | undefined)?.engine !== "atomic-core") return;
-      const result = await modelsEngine("check");
+      if (quitting || signal.aborted) return;
+      const result = await modelsEngine("check", signal);
       const value = result.value as { check?: { currentVersion: string | null; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
       if (!result.ok || !value?.check) return;
       /* Nothing installed yet is a fresh machine on the default engine, not an
@@ -9205,11 +9221,13 @@ function watchCoreUpdates(): void {
          person sees about an engine they never chose. */
       if (value.check.currentVersion === null && !value.check.requiresAgentUpdate) return;
       const signature = JSON.stringify(value.check);
-      if (signature !== previous) { previous = signature; send("core:update", value.check); }
+      if (signature !== previous && !quitting) { previous = signature; send("core:update", value.check); }
     } catch { /* Offline checks are retried at the next scheduled check or manually. */ }
   };
-  setTimeout(() => { void check(); }, 10_000).unref();
-  setInterval(() => { void check(); }, 6 * 60 * 60_000).unref();
+  coreChecks.first = setTimeout(() => { void check(); }, 10_000);
+  coreChecks.every = setInterval(() => { void check(); }, 6 * 60 * 60_000);
+  coreChecks.first.unref();
+  coreChecks.every.unref();
 }
 
 void app.whenReady().then(async () => {
@@ -9354,14 +9372,31 @@ app.on("before-quit", (event) => {
   agent = null;
   const shutdown = { done: false };
   quitShutdown = shutdown;
+  /* The config the model server's stop reads (stopOnExit), asked for now,
+     beside the agent's close rather than after it: one `atag` call less on
+     the quit's own clock. */
+  const quitConfig = readQuitConfig();
   /* close, not stop: a restart, a workspace change or an import whose stop
      this joins would otherwise start `atag serve` again behind the quitting
-     app (agent-client start). */
-  void client.close().catch(() => undefined).then(stopLocalDaemonOnQuit).then(() => analyticsClosed).finally(() => {
+     app (agent-client start). Bounded step by step and as a whole
+     (quit-shutdown.ts): the model server's stop runs whatever the close did,
+     and the app goes even if something stalls. */
+  void runQuitShutdown({
+    closeAgent: () => client.close(),
+    stopModelServer: () => stopLocalDaemonOnQuit(quitConfig),
+    flush: () => analyticsClosed,
+  }).then((outcome) => {
+    if (outcome === "timed-out") console.error("[desktop] the quit's shutdown ran out of time — quitting without waiting further");
+  }).finally(() => {
     shutdown.done = true;
     app.quit();
   });
 });
+
+/** Item 30: the config the quit's model-server stop reads, bounded; null when it could not be read in time. */
+function readQuitConfig(): Promise<Awaited<ReturnType<typeof readWholeConfig>> | null> {
+  return settleWithin(readWholeConfig(), 8_000, null);
+}
 
 /**
  * `localModels.managed.stopOnExit` (default true), honoured on quit. The
@@ -9371,12 +9406,13 @@ app.on("before-quit", (event) => {
  * the next reboot. The daemon is on the desktop's own state dir and port, so
  * no terminal session shares it. Bounded, so a stuck CLI cannot hold quit.
  */
-async function stopLocalDaemonOnQuit(): Promise<void> {
+async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>): Promise<void> {
   if (SMOKE) return;
   try {
     /* Item 30: bounded, and a config that cannot be read in time is no reason
-       to leave the model server up — the defaults (managed, stopOnExit) stop it. */
-    const read = await Promise.race([readWholeConfig(), new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000))]);
+       to leave the model server up — the defaults (managed, stopOnExit) stop it.
+       The quit asks for it as it begins (readQuitConfig), beside the agent's close. */
+    const read = await (config ?? readQuitConfig());
     const lm = read?.ok ? read.config?.localModels : undefined;
     const managed = lm?.managed as { stopOnExit?: boolean; dataDirOverride?: string | null } | undefined;
     if (read?.ok && (lm?.mode !== "managed" || managed?.stopOnExit === false)) return;

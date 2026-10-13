@@ -3856,11 +3856,14 @@ export function backendInstalled(): boolean {
   } catch { return false; }
 }
 
-export async function modelsEngine(action: string): Promise<CliResult & { value?: unknown }> {
+export async function modelsEngine(action: string, signal?: AbortSignal): Promise<CliResult & { value?: unknown }> {
   if (!["status", "check", "atomic-core", "llama-server"].includes(action)) return { ok: false, stdout: "", stderr: "", error: "Unknown engine action" };
   // status and check only read (check also asks GitHub): no config lock, so the background check never holds up a switch.
   const readOnly = action === "status" || action === "check";
-  const result = readOnly ? await cli(["models", "engine", action], 30_000) : await withConfigLock(() => cli(["models", "engine", action], 30_000));
+  /* `signal` (the launch's background Core check, main.ts watchCoreUpdates):
+     the quit ends the child at once rather than leaving a GitHub request
+     running behind the app. */
+  const result = readOnly ? await cli(["models", "engine", action], 30_000, undefined, signal) : await withConfigLock(() => cli(["models", "engine", action], 30_000, undefined, signal));
   if (result.ok && (action === "status" || action === "check")) {
     try { return { ...result, value: JSON.parse(result.stdout) }; }
     catch { return { ...result, ok: false, error: "The agent returned invalid engine status" }; }
