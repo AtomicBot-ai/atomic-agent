@@ -14,8 +14,36 @@ interface Catalog {
   releases?: Array<{ tag: string; variants: Array<{ id: string; asset?: string }> }>;
 }
 
-export function isCoreBackendInstalled(dataDir: string): boolean {
-  return isCoreInstalled(dataDir) && readCoreBackend(dataDir) !== null;
+/** Core and its backend for `version` (default: the active one) are on disk. */
+export function isCoreBackendInstalled(dataDir: string, version = activeCoreVersion(dataDir)): boolean {
+  return isCoreInstalled(dataDir, version) && readCoreBackend(dataDir, version) !== null;
+}
+
+/** The active Core serves no model session (or is not running at all). */
+async function activeCoreIdle(dataDir: string): Promise<boolean> {
+  const current = await connectCore(dataDir, activeCoreVersion(dataDir));
+  return !current || (await current.snapshot()).sessions.length === 0;
+}
+
+function writeActiveVersion(dataDir: string, version: string): void {
+  const previous = activeCoreVersion(dataDir);
+  if (previous === version) return;
+  writeCoreJson(join(coreRoot(dataDir), "active.json"), { version, previous });
+}
+
+/**
+ * Switch the active Core to `version`, already installed beside it, when
+ * the active Core serves no model. Returns false, changing nothing, while
+ * a model runs; the next idle start switches.
+ */
+export async function activateCoreVersion(dataDir: string, version = CORE_VERSION): Promise<boolean> {
+  if (activeCoreVersion(dataDir) === version) return true;
+  if (!isCoreBackendInstalled(dataDir, version)) return false;
+  return withCoreOperation(dataDir, async () => {
+    if (!(await activeCoreIdle(dataDir))) return false;
+    writeActiveVersion(dataDir, version);
+    return true;
+  });
 }
 
 /** A dropped connection or a 5xx from Core is worth another install call; a refusal is not. */
@@ -42,11 +70,19 @@ async function installSelectedBackend(client: CoreControlClient, body: { version
   }, isRetryableCoreCall, opts.signal);
 }
 
-/** Core owns platform/hardware selection and backend acquisition, as in Atomic Chat. */
-export async function installCoreBackend(dataDir: string, opts: DownloadFileOptions = {}, version = CORE_VERSION): Promise<{ ok: true; tag: string }> {
+/**
+ * Core owns platform/hardware selection and backend acquisition, as in
+ * Atomic Chat. Each version installs into its own folder, so a newer pin is
+ * installed beside an older active Core even while that one serves models;
+ * only switching the active version waits until no model runs
+ * (`activated: false`; `activateCoreVersion` switches at the next idle start).
+ * Reinstalling the active version still needs its models stopped. Exclusive:
+ * never waits for another engine operation.
+ */
+export async function installCoreBackend(dataDir: string, opts: DownloadFileOptions = {}, version = CORE_VERSION): Promise<{ ok: true; tag: string; activated: boolean }> {
   return withCoreOperation(dataDir, async () => {
-  const current = await connectCore(dataDir, activeCoreVersion(dataDir));
-  if (current && (await current.snapshot()).sessions.length > 0) {
+  const idle = await activeCoreIdle(dataDir);
+  if (!idle && version === activeCoreVersion(dataDir)) {
     throw new Error("Stop local models before updating the engine. Your running models are unchanged.");
   }
   // The precondition above is not an install failure; everything below is.
@@ -67,10 +103,11 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
     const record: CoreBackend = { coreVersion: version, provider: "llamacpp", version: tag, backend, binary, installedAt: new Date().toISOString() };
     opts.signal?.throwIfAborted();
     writeCoreJson(join(coreVersionDir(dataDir, version), "backend.json"), record);
-    const previous = activeCoreVersion(dataDir);
-    writeCoreJson(join(coreRoot(dataDir), "active.json"), { version, previous });
-    return { ok: true, tag: `Atomic Core ${version} · ${tag}` };
+    // A model may have started on the active Core during the install.
+    const activated = await activeCoreIdle(dataDir);
+    if (activated) writeActiveVersion(dataDir, version);
+    return { ok: true, tag: `Atomic Core ${version} · ${tag}`, activated };
   }, opts.signal);
   } catch (err) { throw toCoreUnavailable(err, "backend", opts.signal); }
-  });
+  }, { waitMs: 0 });
 }

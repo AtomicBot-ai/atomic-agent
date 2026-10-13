@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoreControlClient } from "./core-client.js";
 import { coreAssetName, coreChecksum, checkCoreUpdate } from "./core-install.js";
-import { CORE_VERSION, coreDataDir, coreKeyForUrl, coreSessionPath, writeCoreJson } from "./core-state.js";
+import { CORE_VERSION, coreDataDir, coreKeyForUrl, coreSessionPath, orphanedCoreSession, readCoreSession, writeCoreJson } from "./core-state.js";
 import { coreLoadOverrides, stopCoreSession } from "./core-sessions.js";
 import { withCoreOperation } from "./core-operation.js";
 
@@ -46,6 +46,9 @@ describe("Core host contract", () => {
   it("retains native grammar/slot options while removing Core-owned addressing", () => {
     const o = coreLoadOverrides(["--model", "/m.gguf", "--port", "123", "--host", "127.0.0.1", "--ctx-size", "8192", "--parallel", "2", "--chat-template-file", "/a path/template.jinja", "--cache-type-k", "q8_0"]);
     expect(o).toMatchObject({ ctx_size: 8192, parallel: 2, auto_unload: false });
+    // The vision projector is offloaded as on the llama-server engine, not
+    // kept on the CPU by Core's default --no-mmproj-offload.
+    expect(o).toMatchObject({ offload_mmproj: true });
     expect(o.extra_args).toContain('"/a path/template.jinja"');
     expect(o.extra_args).toContain("--slots");
     expect(o.extra_args).not.toContain("--model");
@@ -63,10 +66,26 @@ describe("Core host contract", () => {
     writeCoreJson(lock, { state: "ready", pid: process.pid, instance_id: "foreign" });
     expect(coreKeyForUrl(dir, "http://127.0.0.1:19091")).toBeNull();
   });
+  it("keeps the key of a model whose Core crashed, and reports it as orphaned", () => {
+    const dir = fixture();
+    writeCoreJson(coreSessionPath(dir, "chat"), { coreVersion: CORE_VERSION, instanceId: "owned", pid: process.pid, port: 19091, api_key: "model-secret" });
+    const lock = join(coreDataDir(dir, CORE_VERSION), "atomic-core", "instance.lock");
+    // Core is gone (no ready owner), its llama-server (this process) lives on.
+    writeCoreJson(lock, { state: "stopped", pid: process.pid, instance_id: "owned" });
+    expect(readCoreSession(dir, "chat")).toBeNull();
+    expect(orphanedCoreSession(dir, "chat")).toMatchObject({ pid: process.pid, port: 19091 });
+    expect(coreKeyForUrl(dir, "http://127.0.0.1:19091")).toBe("model-secret");
+    // A live Core under another instance has reaped what it could: not an orphan.
+    writeCoreJson(lock, { state: "ready", pid: process.pid, instance_id: "foreign" });
+    expect(orphanedCoreSession(dir, "chat")).toBeNull();
+  });
   it("never falls through to killing a live model when its Core cannot be reached", async () => {
     const dir = fixture();
     writeCoreJson(coreSessionPath(dir, "chat"), { coreVersion: CORE_VERSION, pid: process.pid });
-    await expect(stopCoreSession(dir, "chat")).rejects.toThrow("Reconnect");
+    // Core is not installed here, so it cannot be restarted to reap the
+    // model: the stop says so plainly and keeps the record (and this process).
+    await expect(stopCoreSession(dir, "chat")).rejects.toThrow("stopped unexpectedly");
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(true);
   });
   it("stops nothing and takes no engine lock when Core owns no session", async () => {
     const dir = fixture();
@@ -76,14 +95,31 @@ describe("Core host contract", () => {
   it("waits on a Core operation in progress instead of reporting a stop that did nothing", async () => {
     const dir = fixture();
     await withCoreOperation(dir, async () => {
-      await expect(stopCoreSession(dir, "chat")).rejects.toThrow("Another engine operation");
+      await expect(stopCoreSession(dir, "chat", { waitMs: 0 })).rejects.toThrow("Another engine operation");
     });
     await expect(stopCoreSession(dir, "chat")).resolves.toBe(false);
+  });
+  it("lets a stop wait, bounded, for an operation another frontend is running", async () => {
+    const dir = fixture();
+    let release!: () => void;
+    const held = withCoreOperation(dir, () => new Promise<void>(resolve => { release = resolve; }));
+    await new Promise(r => setTimeout(r, 20));
+    const stop = stopCoreSession(dir, "chat", { waitMs: 5_000 });
+    setTimeout(() => release(), 300);
+    await expect(stop).resolves.toBe(false);
+    await held;
+    // Bounded: still held after the wait, it fails instead of hanging.
+    let releaseAgain!: () => void;
+    const again = withCoreOperation(dir, () => new Promise<void>(resolve => { releaseAgain = resolve; }));
+    await new Promise(r => setTimeout(r, 20));
+    await expect(withCoreOperation(dir, async () => {}, { waitMs: 300 })).rejects.toThrow("Another engine operation");
+    releaseAgain();
+    await again;
   });
   it("rejects a concurrent mutation, then releases ownership after an error", async () => {
     const dir = fixture();
     await expect(withCoreOperation(dir, async () => {
-      await expect(withCoreOperation(dir, async () => {})).rejects.toThrow("Another engine operation");
+      await expect(withCoreOperation(dir, async () => {}, { waitMs: 0 })).rejects.toThrow("Another engine operation");
       throw new Error("failed");
     })).rejects.toThrow("failed");
     expect(await withCoreOperation(dir, async () => 42)).toBe(42);

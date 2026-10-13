@@ -2,8 +2,9 @@ import { withCoreOperation } from "./core-operation.js";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CoreUnavailableError } from "./core-errors.js";
-import { activeCoreVersion, coreRoot, coreSessionPath, readCoreBackend, readCoreJson, writeCoreJson, type CoreSession, type CoreSessionRecord } from "./core-state.js";
-import { connectCore, withCoreClient } from "./core-client.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { activeCoreVersion, coreRoot, coreSessionPath, orphanedCoreSession, readCoreBackend, readCoreJson, writeCoreJson, type CoreSession, type CoreSessionRecord } from "./core-state.js";
+import { connectCore, ensureCore, withCoreClient } from "./core-client.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
 
 /** These host arguments are owned by the control contract, never duplicated in extra_args. */
@@ -21,8 +22,10 @@ export function coreLoadOverrides(args: readonly string[]): Record<string, unkno
     extras.push(`"${arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
   }
   extras.push("--slots");
+  // Core's own default keeps the vision projector on the CPU
+  // (`--no-mmproj-offload`); the llama-server engine offloads it.
   return { ctx_size: ctx, parallel, concurrent_mode: false, auto_unload: false,
-    mtp: false, dflash: false, extra_args: extras.join(" ") };
+    mtp: false, dflash: false, offload_mmproj: true, extra_args: extras.join(" ") };
 }
 
 export async function loadCoreSession(dataDir: string, options: {
@@ -83,7 +86,7 @@ export async function loadCoreSession(dataDir: string, options: {
 }
 
 /** Return true even for a stale record: falling through to kill(pid) would bypass Core ownership. */
-export async function stopCoreSession(dataDir: string, role: "chat" | "embedding"): Promise<boolean> {
+export async function stopCoreSession(dataDir: string, role: "chat" | "embedding", opts: { waitMs?: number } = {}): Promise<boolean> {
   // Every llama-server stop asks here first. A user who never ran Core has no
   // core folder, and must not contend for its lock. Otherwise skip the lock only
   // when there is no record and no engine operation: a Core load in another
@@ -100,7 +103,8 @@ export async function stopCoreSession(dataDir: string, role: "chat" | "embedding
   if (!client) {
     let alive = true;
     try { process.kill(record.pid, 0); } catch (err) { alive = (err as NodeJS.ErrnoException).code !== "ESRCH"; }
-    if (alive) throw new Error("Atomic Core is unavailable while its model is still running. Reconnect before stopping it.");
+    // Core crashed and left its model running: a new Core reaps it.
+    if (alive) { await reapThroughNewCore(dataDir, role, record); return true; }
   }
   if (client) {
     const snapshot = await client.snapshot();
@@ -118,6 +122,57 @@ export async function stopCoreSession(dataDir: string, role: "chat" | "embedding
   try { if (readFileSync(pidPath, "utf8").trim() === String(record.pid)) unlinkSync(pidPath); } catch { /* no legacy mirror */ }
   unlinkSync(path);
   return true;
+  }, opts);
+}
+
+const ORPHAN_EXIT_WAIT_MS = 6_000;
+
+async function waitForExit(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try { process.kill(pid, 0); } catch (err) { if ((err as NodeJS.ErrnoException).code === "ESRCH") return true; }
+    if (Date.now() >= deadline) return false;
+    await delay(100);
+  }
+}
+
+/**
+ * Core died while its model server lives on. Starting Core again for that
+ * version makes the new owner reap the children its process journal names
+ * (Core's own identity check, never a signal from here); then the record is
+ * dropped. Throws a plain sentence when Core cannot be started or would not
+ * reap the process. The caller holds the engine operation lock.
+ */
+async function reapThroughNewCore(dataDir: string, role: "chat" | "embedding", record: CoreSessionRecord): Promise<void> {
+  const stuck = `Atomic Core stopped unexpectedly while its model server (pid ${record.pid}) kept running`;
+  try { await ensureCore(dataDir, record.coreVersion); }
+  catch (err) { throw new Error(`${stuck}, and Core could not be restarted to stop it: ${err instanceof Error ? err.message : String(err)}`, { cause: err }); }
+  if (!(await waitForExit(record.pid, ORPHAN_EXIT_WAIT_MS))) {
+    throw new Error(`${stuck}, and the restarted Core could not confirm it as its own. Quit that process, then retry.`);
+  }
+  const pidPath = join(dataDir, role === "chat" ? "llama-server.pid" : "llama-embed.pid");
+  try { if (readFileSync(pidPath, "utf8").trim() === String(record.pid)) unlinkSync(pidPath); } catch { /* no legacy mirror */ }
+  try { unlinkSync(coreSessionPath(dataDir, role)); } catch { /* already gone */ }
+}
+
+/**
+ * Recover from a crashed Core before a start: when a session's Core is gone
+ * but its model server still runs (`orphanedCoreSession`), restart Core so
+ * it reaps the orphan, and forget the record. Returns whether anything was
+ * recovered; throws a plain sentence when it could not be.
+ */
+export async function recoverOrphanedCoreSessions(dataDir: string): Promise<boolean> {
+  if (!existsSync(coreRoot(dataDir))) return false;
+  if (!orphanedCoreSession(dataDir, "chat") && !orphanedCoreSession(dataDir, "embedding")) return false;
+  return withCoreOperation(dataDir, async () => {
+    let recovered = false;
+    for (const role of ["chat", "embedding"] as const) {
+      const record = orphanedCoreSession(dataDir, role);
+      if (!record) continue;
+      await reapThroughNewCore(dataDir, role, record);
+      recovered = true;
+    }
+    return recovered;
   });
 }
 
@@ -137,7 +192,7 @@ export async function coreSessionStatus(dataDir: string, role: "chat" | "embeddi
       if (current?.instanceId !== record.instanceId || current?.generation !== record.generation) return;
       writeCoreJson(coreSessionPath(dataDir, role), { ...session, coreVersion: client.version, instanceId: client.instanceId });
       writeFileSync(join(dataDir, role === "chat" ? "llama-server.pid" : "llama-embed.pid"), String(session.pid), { mode: 0o600 });
-    }).catch(() => {});
+    }, { waitMs: 0 }).catch(() => {});
   }
   return session;
 }
@@ -156,5 +211,20 @@ export async function stopIdleCore(dataDir: string): Promise<boolean> {
     const client = await connectCore(dataDir, activeCoreVersion(dataDir));
     if (!client) return false;
     return shutdownIdleCoreClient(client);
-  });
+  }, { waitMs: 2_000 });
+}
+
+/**
+ * `stopIdleCore` for quit and stop paths: bounded to a few seconds, never
+ * throws, never signals a PID. False when Core was left running (busy,
+ * unreachable, slow to answer).
+ */
+export async function retireIdleCore(dataDir: string, timeoutMs = 5_000): Promise<boolean> {
+  const timer = new AbortController();
+  try {
+    return await Promise.race([
+      stopIdleCore(dataDir).catch(() => false),
+      delay(timeoutMs, false, { signal: timer.signal }).catch(() => false),
+    ]);
+  } finally { timer.abort(); }
 }

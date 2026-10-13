@@ -1,6 +1,6 @@
 import type { ManagedEngine } from "../core/core-state.js";
-import { isCoreBackendInstalled } from "../core/core-backend.js";
-import { activeCoreVersion, CORE_VERSION } from "../core/core-state.js";
+import { activateCoreVersion, isCoreBackendInstalled } from "../core/core-backend.js";
+import { activeCoreVersion, CORE_VERSION, readCoreBackend } from "../core/core-state.js";
 import { CoreUnavailableError, type CoreFailureInfo } from "../core/core-errors.js";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
@@ -318,11 +318,13 @@ export async function maybeAutoUpdateBackend(
  * Core or backend is installed now, with progress, whatever `enabled` says,
  * because nothing else can serve the selected engine. An install of an older
  * pinned Core moves to this build's pin when `enabled` (autoUpdate) allows
- * it and nothing has to be stopped; otherwise it keeps serving. A failure is
- * reported, not thrown, with the structured CoreUnavailableError fields, so
- * the caller can offer "download again". Cancellation
- * propagates as an `update_failed` like the legacy path; the caller checks
- * its own signal.
+ * it: the new pin is installed into its own version folder even while the
+ * older Core serves models, and the active version switches only when no
+ * model runs (`deferred` until then; a later idle start switches without
+ * downloading again). A failure is reported, not thrown, with the structured
+ * CoreUnavailableError fields, so the caller can offer "download again" or,
+ * for a computer without a Core build, fall back. Cancellation propagates as
+ * an `update_failed` like the legacy path; the caller checks its own signal.
  */
 async function ensureCoreEngine(
   dataDir: string,
@@ -338,15 +340,21 @@ async function ensureCoreEngine(
   const active = activeCoreVersion(dataDir);
   const currentTag = `Atomic Core ${active}`;
   if (installed && (active === CORE_VERSION || !opts.enabled)) return { action: "current", tag: currentTag };
-  // Moving to a newer pin needs a Core with no model sessions; never while one serves.
-  if (installed && opts.keepDaemonRunning) return { action: "deferred", reason: "daemon_live" };
   try {
+    if (installed && isCoreBackendInstalled(dataDir, CORE_VERSION)) {
+      // Installed earlier beside the older Core: switch now if nothing runs on it.
+      if (opts.keepDaemonRunning || !(await activateCoreVersion(dataDir, CORE_VERSION))) {
+        return { action: "deferred", reason: "daemon_live" };
+      }
+      return { action: "updated", from: currentTag, to: `Atomic Core ${CORE_VERSION} · ${readCoreBackend(dataDir, CORE_VERSION)?.version ?? "installed"}` };
+    }
     opts.onWillDownload?.();
     const done = await downloadBackend(dataDir, {
       engine: "atomic-core",
       onProgress: opts.onProgress,
       signal: opts.signal,
     });
+    if (done.activated === false) return { action: "deferred", reason: "daemon_live" };
     return { action: "updated", from: installed ? currentTag : null, to: done.tag };
   } catch (err) {
     return {

@@ -1,6 +1,20 @@
 import { mkdirSync, openSync, closeSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { coreRoot } from "./core-state.js";
+
+/**
+ * How long start, stop and engine selection wait for another frontend's
+ * engine operation (a TUI model load, a desktop stop) before giving up.
+ * An install never waits: it is exclusive and says so at once.
+ */
+export const CORE_OPERATION_WAIT_MS = 30_000;
+const CORE_OPERATION_POLL_MS = 250;
+
+/** Another live process holds the engine operation lock: worth waiting for. */
+class CoreOperationBusyError extends Error {
+  override readonly name = "CoreOperationBusyError";
+}
 
 function ownerIsDead(path: string): boolean {
   let pid: number;
@@ -19,9 +33,8 @@ function acquire(dataDir: string): () => void {
   try { gateFd = openSync(gate, "wx", 0o600); }
   catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    throw new Error(ownerIsDead(gate)
-      ? `Engine recovery was interrupted. With Agent closed, remove ${gate} and retry.`
-      : "Another engine operation is starting. Retry shortly.");
+    if (ownerIsDead(gate)) throw new Error(`Engine recovery was interrupted. With Agent closed, remove ${gate} and retry.`);
+    throw new CoreOperationBusyError("Another engine operation is starting. Retry shortly.");
   }
   let fd: number;
   try {
@@ -29,7 +42,7 @@ function acquire(dataDir: string): () => void {
     try { fd = openSync(path, "wx", 0o600); }
     catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      if (!ownerIsDead(path)) throw new Error("Another engine operation is running. Wait for it to finish.");
+      if (!ownerIsDead(path)) throw new CoreOperationBusyError("Another engine operation is running. Wait for it to finish.");
       // No other process can acquire/reclaim path while this gate is held.
       unlinkSync(path);
       fd = openSync(path, "wx", 0o600);
@@ -39,8 +52,24 @@ function acquire(dataDir: string): () => void {
   return () => { closeSync(fd); unlinkSync(path); };
 }
 
-/** Serialize mutations across CLI, TUI and desktop; never steal a live owner's lock. */
-export async function withCoreOperation<T>(dataDir: string, operation: () => Promise<T>): Promise<T> {
-  const release = acquire(dataDir);
+/**
+ * Serialize mutations across CLI, TUI and desktop; never steal a live owner's
+ * lock. While another live process holds it, poll for up to `waitMs`
+ * (default CORE_OPERATION_WAIT_MS), so a desktop `models stop` during a TUI
+ * load waits for the load instead of failing; `waitMs: 0` answers at once.
+ */
+export async function withCoreOperation<T>(dataDir: string, operation: () => Promise<T>, opts: { waitMs?: number } = {}): Promise<T> {
+  const release = await acquireWithin(dataDir, Math.max(0, opts.waitMs ?? CORE_OPERATION_WAIT_MS));
   try { return await operation(); } finally { release(); }
+}
+
+async function acquireWithin(dataDir: string, waitMs: number): Promise<() => void> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try { return acquire(dataDir); }
+    catch (err) {
+      if (!(err instanceof CoreOperationBusyError) || Date.now() >= deadline) throw err;
+      await delay(Math.min(CORE_OPERATION_POLL_MS, Math.max(1, deadline - Date.now())));
+    }
+  }
 }

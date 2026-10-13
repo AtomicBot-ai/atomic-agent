@@ -1,6 +1,6 @@
 import { selectManagedEngine } from "../../local-llm/engine-selection.js";
-import { stopIdleCore } from "../../local-llm/core/core-sessions.js";
-import { CoreUnavailableError, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
+import { retireIdleCore } from "../../local-llm/core/core-sessions.js";
+import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
 import { totalmem } from "node:os";
 
@@ -432,6 +432,7 @@ export class LocalModelsOrchestrator {
     // on Ctrl+C — the only thing that stops it is this explicit kill. If we
     // do not wait for it, the host process exits before the kill lands and
     // llama-server is orphaned in the background.
+    let retired = false;
     if (this.daemonSupervised) {
       this.daemonSupervised = false;
       const cfg = getConfig();
@@ -444,7 +445,15 @@ export class LocalModelsOrchestrator {
         !hasOtherLiveSessions(cfg.paths.localModelsDataDir)
       ) {
         await this.stopDaemonSilent();
+        retired = true;
       }
+    }
+    // An idle Atomic Core exits with the TUI whether or not this session
+    // started a model (a failed load, an install, a status check all start
+    // Core). Core itself refuses while any model session or other client
+    // remains, so a warm `models start` model keeps it. Bounded, no signal.
+    if (!retired && getConfig().localModels.managed.engine === "atomic-core") {
+      await retireIdleCore(getConfig().paths.localModelsDataDir);
     }
   }
 
@@ -1511,8 +1520,32 @@ export class LocalModelsOrchestrator {
         kind: "backend",
         error: msg,
       });
-      this.reportCoreFailure(e);
+      const failure = e instanceof CoreUnavailableError ? e.info : null;
+      if (!(await this.fallBackFromCore(failure))) this.reportCoreFailure(e);
     }
+  }
+
+  /**
+   * This computer has no Atomic Core build (`no_backend`, `unsupported`):
+   * report `local_engine_failed`, switch it to the llama-server engine once
+   * with one feed line, and leave the next backend pull to install
+   * llama.cpp. A retryable failure keeps Core and its "download again"
+   * notice. False when nothing was switched.
+   */
+  private async fallBackFromCore(failure: CoreFailureInfo | null | undefined): Promise<boolean> {
+    const cfg = getConfig();
+    if (this.closing || cfg.localModels.managed.engine !== "atomic-core" || !failure || !shouldFallBackFromCore(failure)) return false;
+    this.hooks?.onLocalEngineFailed?.(failure);
+    try {
+      await selectManagedEngine(cfg.paths.localModelsDataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
+        () => persistUserLocalModelsConfig({ managed: { engine: "llama-server" } }));
+    } catch {
+      return false;
+    }
+    this.clearCoreFailure();
+    this.bus.emit({ type: "runtime_info", line: `local-llm: ${CORE_FALLBACK_LINE}` });
+    await retireIdleCore(cfg.paths.localModelsDataDir);
+    return true;
   }
 
   /**
@@ -1883,7 +1916,9 @@ export class LocalModelsOrchestrator {
     cpuFallbackAttempted?: boolean;
   }): Promise<boolean> {
     if (this.closing) return false;
-    const cfg = getConfig();
+    // Re-read after the backend step: a computer without an Atomic Core
+    // build is switched to llama.cpp there (`fallBackFromCore`).
+    let cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
       this.bus.emit({
         type: "runtime_info",
@@ -1907,7 +1942,11 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: "local-llm: backend missing — downloading…",
       });
+      const engineBefore = getConfig().localModels.managed.engine;
       await this.pullBackend();
+      // Switched to llama.cpp by the failed Core install: install that now.
+      if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine) &&
+          getConfig().localModels.managed.engine !== engineBefore) await this.pullBackend();
       if (!isBackendDownloaded(dataDir, getConfig().localModels.managed.engine)) return false;
       justPulledBackend = true;
     }
@@ -1935,6 +1974,7 @@ export class LocalModelsOrchestrator {
       const updated = await this.applyBackendAutoUpdate(dataDir);
       if (!updated || opts?.signal?.aborted) return false;
     }
+    cfg = getConfig();
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "starting" });
     this.bus.emit({
       type: "runtime_info",
@@ -2055,7 +2095,9 @@ export class LocalModelsOrchestrator {
       if (def.supportsVision) {
         this.bus.emit({
           type: "runtime_info",
-          line: mmprojFile
+          line: mmprojFile && result.chat.projectorDropped
+            ? `local-llm: vision disabled — Atomic Chat could not load ${def.mmprojFilename}; the model runs text-only`
+            : mmprojFile
             ? `local-llm: vision enabled (${def.mmprojFilename})`
             : `local-llm: vision disabled — mmproj not downloaded for ${def.id}`,
         });
@@ -2424,7 +2466,7 @@ export class LocalModelsOrchestrator {
     // With the models unloaded, the idle Atomic Core daemon goes too. Core
     // itself refuses while any model session or other client remains.
     if (cfg.localModels.managed.engine === "atomic-core") {
-      await stopIdleCore(cfg.paths.localModelsDataDir).catch(() => false);
+      await retireIdleCore(cfg.paths.localModelsDataDir);
     }
   }
 
@@ -3009,6 +3051,11 @@ export class LocalModelsOrchestrator {
           error: result.error,
         });
         if (!result.backendUsable) {
+          if (await this.fallBackFromCore(result.coreFailure)) {
+            // Now on llama.cpp: install it and go on with the start.
+            await this.pullBackend();
+            return isBackendDownloaded(dataDir, getConfig().localModels.managed.engine);
+          }
           if (!result.coreFailure || !this.reportCoreFailure(undefined, result.coreFailure)) {
             this.bus.emit({
               type: "runtime_info",

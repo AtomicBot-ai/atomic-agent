@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   atagDataDirOf,
+  coreDataDirOf,
   findPortHolder,
   isStateDirInUse,
   parseLsofPids,
@@ -55,6 +56,39 @@ describe("atagDataDirOf", () => {
     expect(atagDataDirOf("/opt/other/backend/llama-server", exists)).toBeNull();
     // right folder, wrong binary
     expect(atagDataDirOf("/tmp/aa-qa/models/backend/ollama", exists)).toBeNull();
+  });
+});
+
+describe("coreDataDirOf", () => {
+  const CORE_BIN = "/tmp/aa-qa/models/core/versions/0.13.6/data/llamacpp/backends/b9001/macos-arm64/build/bin/llama-server";
+  const verified = (path: string) => path === "/tmp/aa-qa/models/core/versions/0.13.6/verified.json";
+
+  it("recognises Atomic Core's llama-server under <dataDir>/core/versions/<v>/data as ours", () => {
+    expect(coreDataDirOf(CORE_BIN, verified)).toBe("/tmp/aa-qa/models");
+    // The plain llama-server shape is not Core's.
+    expect(coreDataDirOf("/tmp/aa-qa/models/backend/llama-server", verified)).toBeNull();
+  });
+
+  it("needs the version's verified.json and the core/versions/<v>/data shape", () => {
+    expect(coreDataDirOf(CORE_BIN, () => false)).toBeNull();
+    expect(
+      coreDataDirOf("/Users/x/Library/Application Support/Atomic Chat/data/llamacpp/backends/b1/build/bin/llama-server", () => true),
+    ).toBeNull();
+    expect(coreDataDirOf("/tmp/aa-qa/models/core/versions/0.13.6/data/llamacpp/ollama", verified)).toBeNull();
+  });
+
+  it("findPortHolder marks Core's server as Core-managed for our data dir", async () => {
+    const run: RunCommand = async (file) => {
+      if (file === "lsof") return { code: 0, stdout: "777\n" };
+      if (file === "ps") return { code: 0, stdout: `${CORE_BIN}\n` };
+      return null;
+    };
+    expect(await findPortHolder(19092, { run, platform: "darwin", exists: verified })).toEqual({
+      pid: 777,
+      executable: CORE_BIN,
+      atagDataDir: "/tmp/aa-qa/models",
+      coreManaged: true,
+    });
   });
 });
 

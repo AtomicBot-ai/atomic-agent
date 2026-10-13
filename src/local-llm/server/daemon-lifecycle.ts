@@ -1,5 +1,5 @@
-import { loadCoreSession, stopCoreSession, coreSessionStatus } from "../core/core-sessions.js";
-import { coreSessionPath, type ManagedEngine } from "../core/core-state.js";
+import { loadCoreSession, recoverOrphanedCoreSessions, stopCoreSession, coreSessionStatus } from "../core/core-sessions.js";
+import { coreSessionPath, orphanedCoreSession, type ManagedEngine } from "../core/core-state.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
@@ -758,6 +758,11 @@ export interface DaemonStatus {
   port: number;
   healthy: boolean;
   loading: boolean;
+  /**
+   * Atomic Core stopped unexpectedly and this model server outlived it.
+   * It still serves; the next start or stop restarts Core to reap it.
+   */
+  coreOrphaned?: boolean;
 }
 
 export async function probeLlamaHealth(
@@ -883,6 +888,11 @@ export interface DaemonStartResult {
   swaFull: SwaFullDecision;
   /** Whether the model's prompt cache is reusable partially or only whole. */
   prefixReuse: "partial" | "none" | null;
+  /**
+   * Atomic Core only: a projector was requested but Core had to load the
+   * model without it (its session reports no mmproj), so vision is off.
+   */
+  projectorDropped?: boolean;
 }
 
 /**
@@ -948,6 +958,9 @@ async function recordStartThroughput(opts: {
 export async function startDaemon(
   opts: DaemonStartOptions,
 ): Promise<DaemonStartResult> {
+  // A crashed Core may have left its model running on our pid mirror and
+  // port: a new Core reaps it before this start reads either.
+  await recoverOrphanedCoreSessions(opts.dataDir);
   const pidPath = resolvePidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir);
   if (existing !== null) {
@@ -1091,7 +1104,11 @@ export async function startDaemon(
     });
     writeLaunchRecord(opts.dataDir, { pid: session.pid, modelId: model.id, contextSize,
       swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now() });
-    return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond };
+    // Core retries a load that fails with the projector once without it and
+    // reports `mmproj_path: null`; an older Core omits the field.
+    const projectorDropped = Boolean(opts.mmprojFile) && (session.mmproj_path === null || session.mmproj_path === "");
+    return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond,
+      ...(projectorDropped ? { projectorDropped } : {}) };
   }
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
@@ -1276,6 +1293,11 @@ export async function getDaemonStatus(
   port: number,
 ): Promise<DaemonStatus> {
   if (existsSync(coreSessionPath(dataDir, "chat"))) {
+    const orphan = orphanedCoreSession(dataDir, "chat");
+    if (orphan) {
+      const health = await probeLlamaHealth(orphan.port);
+      return { running: true, pid: orphan.pid, port: orphan.port, healthy: health === "ok", loading: health === "loading", coreOrphaned: true };
+    }
     const session = await coreSessionStatus(dataDir, "chat");
     const health = session ? await probeLlamaHealth(session.port) : "down";
     return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,
@@ -1363,6 +1385,7 @@ export function buildEmbeddingServerArgs(
 export async function startEmbeddingDaemon(
   opts: EmbeddingDaemonStartOptions,
 ): Promise<{ pid: number }> {
+  await recoverOrphanedCoreSessions(opts.dataDir);
   const pidPath = resolveEmbeddingPidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir, "embedding");
   if (existing !== null) {
@@ -1544,6 +1567,11 @@ export async function getEmbeddingDaemonStatus(
   port: number,
 ): Promise<DaemonStatus> {
   if (existsSync(coreSessionPath(dataDir, "embedding"))) {
+    const orphan = orphanedCoreSession(dataDir, "embedding");
+    if (orphan) {
+      const health = await probeLlamaHealth(orphan.port);
+      return { running: true, pid: orphan.pid, port: orphan.port, healthy: health === "ok", loading: health === "loading", coreOrphaned: true };
+    }
     const session = await coreSessionStatus(dataDir, "embedding");
     const health = session ? await probeLlamaHealth(session.port) : "down";
     return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,

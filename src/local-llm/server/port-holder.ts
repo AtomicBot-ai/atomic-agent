@@ -21,10 +21,16 @@ export interface PortHolder {
   executable: string | null;
   /**
    * The atomic-agent local-models data dir the holder was launched from
-   * (`<dataDir>/backend/llama-server`), or `null` when it is not an
+   * (`<dataDir>/backend/llama-server`, or Atomic Core's llama-server under
+   * `<dataDir>/core/versions/<v>/data/`), or `null` when it is not an
    * atomic-agent managed llama-server.
    */
   atagDataDir: string | null;
+  /**
+   * True when it is Atomic Core's llama-server: Core owns that process, so
+   * it is adopted or stopped through Core, never signalled from here.
+   */
+  coreManaged?: boolean;
 }
 
 export type RunCommand = (
@@ -68,10 +74,12 @@ export async function findPortHolder(
   const pid = await findListeningPid(port, run, platform);
   if (pid === null) return null;
   const executable = await readExecutablePath(pid, run, platform, deps.readlink);
+  const coreDir = executable ? coreDataDirOf(executable, deps.exists) : null;
   return {
     pid,
     executable,
-    atagDataDir: executable ? atagDataDirOf(executable, deps.exists) : null,
+    atagDataDir: coreDir ?? (executable ? atagDataDirOf(executable, deps.exists) : null),
+    ...(coreDir ? { coreManaged: true } : {}),
   };
 }
 
@@ -165,6 +173,35 @@ export function atagDataDirOf(
   if (basename(backendDir) !== "backend") return null;
   const dataDir = dirname(backendDir);
   return exists(resolveVersionFilePath(dataDir)) ? dataDir : null;
+}
+
+/**
+ * Atomic Core's llama-server for one of our data dirs: the binary sits
+ * somewhere under `<dataDir>/core/versions/<version>/data/` (Core installs
+ * its backends there, e.g. `.../llamacpp/backends/<tag>/<id>/build/bin/`),
+ * with the version's `verified.json` that the agent writes on install.
+ * Returns that data dir, or `null` for anything else.
+ */
+export function coreDataDirOf(
+  executable: string,
+  exists: (path: string) => boolean = existsSync,
+): string | null {
+  const name = basename(executable).toLowerCase();
+  if (name !== "llama-server" && name !== "llama-server.exe") return null;
+  let dir = dirname(executable);
+  for (let depth = 0; depth < 24; depth += 1) {
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    if (basename(dir) === "data") {
+      const versions = dirname(parent);
+      const core = dirname(versions);
+      if (basename(versions) === "versions" && basename(core) === "core") {
+        return exists(join(parent, "verified.json")) ? dirname(core) : null;
+      }
+    }
+    dir = parent;
+  }
+  return null;
 }
 
 /**

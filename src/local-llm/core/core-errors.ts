@@ -1,13 +1,27 @@
 import { classifyDownloadError, DownloadGaveUpError } from "../downloads/download-errors.js";
+import { isWindowsArm64, WINDOWS_ARM64_NO_BACKEND_MESSAGE } from "../backend/platform-assets.js";
 
 /**
- * There is no automatic fallback: with atomic-core selected, a failed Core
- * install or start leaves no working local engine. Every such failure ends
- * with the one way forward people see: download again. llama.cpp stays
- * reachable only through the support command `atomic-agent models engine
- * llama-server`, which no failure message advertises.
+ * A failed Core install or start that a retry can change ends with the one
+ * way forward people see: download again. One that no retry can change
+ * (`no_backend`, `unsupported`: this computer has no Core build) gets a plain
+ * sentence instead; the start paths then fall back to the llama-server
+ * engine for this machine (`shouldFallBackFromCore`).
  */
 export const CORE_RETRY_HINT = "Retry with: atomic-agent models update (TUI: press R in Models).";
+
+/** Reasons this computer cannot run Atomic Core at all. */
+const NO_CORE_FOR_MACHINE: ReadonlySet<CoreFailureReason> = new Set(["no_backend", "unsupported"]);
+
+/**
+ * The plain sentence for a computer Atomic Core cannot serve. Windows on
+ * ARM keeps the ATO-252 sentence the desktop recognises.
+ */
+export function noCoreForMachineSentence(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
+  return isWindowsArm64(platform, arch)
+    ? WINDOWS_ARM64_NO_BACKEND_MESSAGE
+    : "Atomic Chat cannot run local models on this computer.";
+}
 
 /** Where Core became unavailable. */
 export type CoreFailureStage = "download" | "verify" | "backend" | "start";
@@ -56,7 +70,8 @@ export class CoreUnavailableError extends Error {
   constructor(opts: { stage: CoreFailureStage; reasonCode: CoreFailureReason; detail?: string; retryable?: boolean; cause?: unknown }) {
     const detail = opts.detail?.trim().replace(/\.$/, "");
     const reason = detail ? `${STAGE_TEXT[opts.stage]}: ${detail}.` : `${STAGE_TEXT[opts.stage]}.`;
-    super(`${reason} ${CORE_RETRY_HINT}`, opts.cause === undefined ? undefined : { cause: opts.cause });
+    const next = NO_CORE_FOR_MACHINE.has(opts.reasonCode) ? noCoreForMachineSentence() : CORE_RETRY_HINT;
+    super(`${reason} ${next}`, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.stage = opts.stage;
     this.reasonCode = opts.reasonCode;
     this.reason = reason;
@@ -71,6 +86,19 @@ export class CoreUnavailableError extends Error {
 export function isCoreUnavailableError(err: unknown): err is CoreUnavailableError {
   return err instanceof CoreUnavailableError;
 }
+
+/**
+ * Whether a Core failure means this computer has no Core build at all, so
+ * a start should continue on the llama-server engine instead. Never for a
+ * retryable failure (network, server, a partial download): those keep Core
+ * and offer "download again".
+ */
+export function shouldFallBackFromCore(failure: Pick<CoreFailureInfo, "reasonCode" | "retryable"> | null | undefined): boolean {
+  return Boolean(failure && !failure.retryable && NO_CORE_FOR_MACHINE.has(failure.reasonCode));
+}
+
+/** The one line a start prints when it switches this machine to llama.cpp. */
+export const CORE_FALLBACK_LINE = "Atomic Chat has no engine build for this computer, so local models now use the llama.cpp engine (llama-server). Switch back with: atomic-agent models engine atomic-core";
 
 const DISK_ERRNO = new Set(["ENOSPC", "EDQUOT", "EROFS"]);
 
@@ -113,9 +141,4 @@ export function toCoreUnavailable(err: unknown, stage: CoreFailureStage, signal?
   if (isCoreCancellation(err, signal) || !(err instanceof Error)) return err;
   if (err instanceof CoreUnavailableError) return err;
   return new CoreUnavailableError({ stage, reasonCode: classifyCoreFailure(err), detail: err.message, cause: err });
-}
-
-/** Kept for callers that only need the text: the same structured error, stage `start`. */
-export function withSwitchBackHint(err: unknown, signal?: AbortSignal): unknown {
-  return toCoreUnavailable(err, "start", signal);
 }

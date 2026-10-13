@@ -335,7 +335,12 @@ type DownloadBackendOptions = Pick<
 export async function downloadBackend(
   dataDir: string,
   opts?: DownloadBackendOptions & { engine?: ManagedEngine },
-): Promise<{ ok: true; tag: string }> {
+): Promise<{
+  ok: true;
+  tag: string;
+  /** Atomic Core only: false when the new version was installed beside a Core still serving models. */
+  activated?: boolean;
+}> {
   if (opts?.engine === "atomic-core") return installCoreBackend(dataDir, opts);
   const { assetName, binaryName } = resolveDownloadAsset();
   // Always hit GitHub for an actual install so we don't grab a stale

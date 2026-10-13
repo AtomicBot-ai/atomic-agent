@@ -5,6 +5,14 @@ import { CORE_VERSION, activeCoreVersion, readCoreBackend } from "../local-llm/c
 import { checkCoreUpdate } from "../local-llm/core/core-install.js";
 import { isCoreBackendInstalled } from "../local-llm/core/core-backend.js";
 
+/** Write `localModels.managed.engine` to the user config file and drop the cache. */
+export function persistManagedEngine(userConfigFile: string, engine: "atomic-core" | "llama-server"): void {
+  const file = ensureUserConfigFileSync(userConfigFile);
+  file.localModels.managed.engine = engine;
+  writeUserConfigFileSync(userConfigFile, parseUserConfigFile(file));
+  resetConfigCache();
+}
+
 /** A structured surface for both frontends; contains no model-session credentials. */
 export async function modelsEngineCommand(args: string[]): Promise<number> {
   const cfg = getConfig();
@@ -16,12 +24,8 @@ export async function modelsEngineCommand(args: string[]): Promise<number> {
     return 0;
   }
   if (action !== "atomic-core" && action !== "llama-server") throw new Error("Usage: models engine [status|check|atomic-core|llama-server]");
-  await selectManagedEngine(dataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port, () => {
-    const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
-    file.localModels.managed.engine = action;
-    writeUserConfigFileSync(cfg.paths.userConfigFile, parseUserConfigFile(file));
-    resetConfigCache();
-  });
+  await selectManagedEngine(dataDir, cfg.localModels.managed.port, cfg.localModels.embeddings.port,
+    () => persistManagedEngine(cfg.paths.userConfigFile, action));
   process.stdout.write(`engine: ${action}\n`);
   return 0;
 }
