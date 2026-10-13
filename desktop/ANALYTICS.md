@@ -115,6 +115,10 @@ Notes on specific properties:
   The failure itself is the agent's own `local_engine_failed`, sent by the
   `models` command that failed (src/analytics); the desktop no longer sends
   an event of that name, so one failure is never counted twice.
+- `llama_runtime_updated.trigger`: `setup` (the first-run runtime phase),
+  `settings` (Settings' engine install or update, and Download again), or
+  `launch` (the launch installing Atomic Core's backend before it starts the
+  model, when Core is the engine and its backend is not on disk yet).
 
 Transport: PostHog `/batch/` over `fetch`, batched in memory, flushed every
 10 s; at quit up to five batches of 100, bounded at 2 s in total (also when

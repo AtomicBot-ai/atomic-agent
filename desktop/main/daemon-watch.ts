@@ -1,7 +1,7 @@
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
+import { backendInstalled, managedEngineNow, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
 import type { AgentLogLevel } from "./agent-output.js";
 import {
   bringUpAtLaunch,
@@ -330,6 +330,11 @@ export function onAgentFrame(ev: { kind?: unknown; payload?: unknown }): void {
  */
 export async function pairEmbeddingsBeforeServe(limitMs = 20_000): Promise<void> {
   if (!routeNeedsDaemon(readConfig())) return;
+  /* Atomic Core with its backend not on disk yet: an embedding start would
+     install it first, inside its 60 s cap, ahead of the launch's own install
+     with its bar (main.ts startLocalDaemonAtBoot). Skipped; the embedding
+     server is paired after the chat model's first start. */
+  if (managedEngineNow() === "atomic-core" && !backendInstalled()) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const mark = stopsMark();
   const pair = inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), (): { paired: boolean; line?: string } => ({ paired: false }));

@@ -171,7 +171,7 @@ export const EVENTS: Record<string, EventSpec> = {
   llama_runtime_updated: {
     owner: "main",
     // `engine`: which local engine the update installed (Atomic Chat Core installs itself, then its llama.cpp).
-    props: { trigger: en(["setup", "settings"]), result: en(["ok", "up_to_date", "failed", "cancelled"]), ms, engine: en(LOCAL_ENGINES, { nullable: true }) },
+    props: { trigger: en(["setup", "settings", "launch"]), result: en(["ok", "up_to_date", "failed", "cancelled"]), ms, engine: en(LOCAL_ENGINES, { nullable: true }) },
   },
   local_backend_started: {
     owner: "main",

@@ -224,6 +224,9 @@ contextBridge.exposeInMainWorld("atomic", {
   onEngineFailure: (cb: (payload: unknown) => void) => on("engine:failure", cb),
   /** The engine failure main keeps, for a window opened after it happened. */
   engineFailure: () => ipcRenderer.invoke("engine:failure"),
+  /** The launch installing Atomic Core's backend before the model starts: {running}. Its progress comes as `cli:pull` frames (kind runtime). */
+  onEngineLaunchInstall: (cb: (payload: unknown) => void) => on("engine:launchInstall", cb),
+  engineLaunchInstall: () => ipcRenderer.invoke("engine:launchInstall"),
   onUpdatePhase: (cb: (payload: unknown) => void) => on("cli:updatePhase", cb),
   modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
   modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),

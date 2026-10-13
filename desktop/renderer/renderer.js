@@ -7533,6 +7533,29 @@ function engfCardHTML() {
     + (f.detail ? '<span class="llm-note llm-engfail-detail">' + esc(f.detail) + '</span>' : '') + '</span>'
     + '<span class="llm-engfail-acts">' + engfActsHTML('sm') + '</span></div>';
 }
+/**
+ * main's launch install (installEngineAtLaunch): Atomic Core's backend comes
+ * down before the model starts. Drawn as Settings' engine install is
+ * (llmEngineInstall): LLMP.pulling takes its `cli:pull` frames into the
+ * banner's bar, and a toast says why the model is not up yet. The setup
+ * queue, when it is the one downloading, keeps its own bar (DL.job).
+ */
+function engfLaunchInstall(st) {
+  if (typeof LLMP === 'undefined') return;
+  if (st && st.running) {
+    if (LLMP.pulling || (typeof DL !== 'undefined' && DL.job)) return;
+    LLMP.msg = null; LLMP.statusErr = null;
+    LLMP.pulling = {kind: 'runtime', id: 'the local engine', launch: true};
+    LLMP.pullLog = ['starting…'];
+    appSay('local-llm: downloading the local engine before the model starts');
+    toast('Downloading the local engine', 'Your local model starts once it is in. Progress is in Settings \u203a Models.');
+  } else if (LLMP.pulling && LLMP.pulling.launch) {
+    // Its done frame normally ends it first (the LLMP pull subscriber); this is the backstop.
+    LLMP.pulling = null;
+  }
+  render();
+  if (llmVisible()) llmRepaint();
+}
 /* The setup's own failed runtime row, when there is one: during the first run
    the way out goes through the setup queue (its Retry), so the model held
    behind the runtime still starts when it lands. */
@@ -10061,6 +10084,9 @@ if (BR) {
   if (BR.onEngineFailure) BR.onEngineFailure(engfApply);
   // A window opened after the failure (a relaunch, the dock) hears it too.
   if (BR.engineFailure) BR.engineFailure().then((f) => { if (f) engfApply(f); }).catch(() => {});
+  // The launch installing Core's backend before the model starts: its bar, and a word that it is happening.
+  if (BR.onEngineLaunchInstall) BR.onEngineLaunchInstall(engfLaunchInstall);
+  if (BR.engineLaunchInstall) BR.engineLaunchInstall().then((st) => { if (st && st.running) engfLaunchInstall(st); }).catch(() => {});
   if (BR.onCoreUpdate) BR.onCoreUpdate((check) => {
     if (check && (check.updateAvailable || check.requiresAgentUpdate)) toast('Atomic Core update', check.requiresAgentUpdate
       ? 'Core ' + check.latestVersion + ' needs support from a newer Agent build. Your current engine stays in use.'
