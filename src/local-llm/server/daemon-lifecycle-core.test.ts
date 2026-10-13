@@ -38,7 +38,7 @@ function stage(dataDir: string, script: string[]): { runs: string } {
 }
 
 /** The session Core hands back: this process stands in for its llama-server, alive for the pid checks. */
-function coreLoads(port: number): { loaded: () => boolean; args: () => readonly string[] } {
+function coreLoads(port: number): { loaded: () => boolean; args: () => readonly string[]; stop: () => void } {
   let loaded = false;
   let args: readonly string[] = [];
   loadCoreSessionMock.mockImplementation(async (_dataDir: string, opts: { args: readonly string[]; modelId: string; modelPath: string }) => {
@@ -46,7 +46,7 @@ function coreLoads(port: number): { loaded: () => boolean; args: () => readonly 
     args = opts.args;
     return { pid: process.pid, port, model_id: opts.modelId, model_path: opts.modelPath, api_key: "core-session-key", is_embedding: false, provider: "llamacpp" };
   });
-  return { loaded: () => loaded, args: () => args };
+  return { loaded: () => loaded, args: () => args, stop: () => { loaded = false; } };
 }
 
 afterEach(() => {
@@ -83,6 +83,7 @@ describe("startDaemon under Atomic Core", () => {
 
       // The model stopped (its pid file gone) and started again on the same backend.
       unlinkSync(resolvePidFilePath(dataDir));
+      core.stop();
       const second = await startDaemon({ engine: "atomic-core", dataDir, modelId: MODEL, port, device: "cpu" });
       expect(second.tokensPerSecond).toBe(18.5);
       expect(completions).toHaveLength(1);
