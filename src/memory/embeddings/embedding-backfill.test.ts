@@ -121,14 +121,16 @@ describe("backfillEmbeddings", () => {
     expect(vectorFor(a!, "m")).not.toBeNull();
   });
 
-  it("skips notes with empty content without embedding them", async () => {
+  it("leaves notes with empty content out of the run and the counts alike", async () => {
     seed("real note");
     db().prepare(`INSERT INTO memories (content, created_at, updated_at, source) VALUES ('   ', 1, 1, 'agent')`).run();
+    expect(countPendingEmbeddings(db(), "m")).toBe(1);
     const client = new FakeClient("m");
-    const result = await run(client);
-    expect(result).toEqual({ model: "m", embedded: 1, skipped: 1, remaining: 0 });
+    const totals: number[] = [];
+    const result = await run(client, { onProgress: (p) => totals.push(p.embedded + p.skipped - p.total) });
+    expect(result).toEqual({ model: "m", embedded: 1, skipped: 0, remaining: 0 });
     expect(client.requests.map((r) => r.text)).toEqual(["real note"]);
-    expect(countPendingEmbeddings(db(), "m")).toBe(0);
+    expect(totals.every((over) => over <= 0)).toBe(true);
   });
 
   it("is a no-op the second time", async () => {

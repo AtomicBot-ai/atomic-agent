@@ -54,7 +54,7 @@ export type EmbeddingBackfillStopReason = "aborted" | "unavailable" | "failed";
 export interface EmbeddingBackfillResult {
   model: string;
   embedded: number;
-  /** Rows with empty content, and rows removed while the run was on them. */
+  /** Notes removed while the run was on them. */
   skipped: number;
   /** Notes still without a vector for the model. */
   remaining: number;
@@ -69,7 +69,11 @@ const MISSING = `NOT EXISTS (
   SELECT 1 FROM memory_embeddings e WHERE e.memory_id = m.id AND e.model = @model
 )`;
 
-/** Notes with content that have no vector for `model`. */
+/**
+ * Notes with content that have no vector for `model`. Empty content is
+ * left out here and in the run's own query alike (the writer would embed
+ * nothing useful), so progress never passes the total.
+ */
 export function countPendingEmbeddings(db: Database.Database, model: string): number {
   const row = db
     .prepare(
@@ -98,7 +102,7 @@ export async function backfillEmbeddings(
     total = countPendingEmbeddings(db, model);
     const page = db.prepare(
       `SELECT m.id AS id, m.content AS content FROM memories m
-        WHERE m.id < @before AND ${MISSING}
+        WHERE m.id < @before AND trim(m.content) <> '' AND ${MISSING}
         ORDER BY m.id DESC LIMIT @limit`,
     );
     const exists = db.prepare(`SELECT 1 FROM memories WHERE id = ?`);
@@ -120,15 +124,11 @@ export async function backfillEmbeddings(
         }
         const group = rows.slice(i, i + concurrency);
         const outcomes = await Promise.all(
-          group.map(async (row) => {
-            if (row.content.trim().length === 0) return "empty" as const;
-            return writer.write(row.id, row.content, signal);
-          }),
+          group.map((row) => writer.write(row.id, row.content, signal)),
         );
         let stop: EmbeddingBackfillStopReason | undefined;
         for (const [index, outcome] of outcomes.entries()) {
           if (outcome === "stored") embedded += 1;
-          else if (outcome === "empty") skipped += 1;
           // Eviction or a user delete can remove a row between the read
           // and the upsert; its foreign key then fails. Not a reason to stop.
           else if (outcome === "failed" && !exists.get(group[index]!.id)) skipped += 1;

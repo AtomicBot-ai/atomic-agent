@@ -87,8 +87,8 @@ export class CoreControlClient {
     return async () => { controller.abort(); await reader.cancel().catch(() => {}); await done; reader.releaseLock(); };
   }
 
-  async snapshot(dataFolder?: string): Promise<CoreSnapshot> {
-    const snapshot = await this.call<CoreSnapshot>("/snapshot");
+  async snapshot(dataFolder?: string, signal?: AbortSignal): Promise<CoreSnapshot> {
+    const snapshot = await this.call<CoreSnapshot>("/snapshot", undefined, signal ? { signal } : {});
     if (snapshot.protocol !== CORE_PROTOCOL || snapshot.version !== this.version ||
         snapshot.instance_id !== this.instanceId || snapshot.owner_scope !== "cli" ||
         (dataFolder && !sameFolder(snapshot.data_folder, dataFolder))) {
@@ -104,7 +104,8 @@ function sameFolder(a: string, b: string): boolean {
   return a === b || canonical(a) === canonical(b);
 }
 
-export async function connectCore(dataDir: string, version: string): Promise<CoreControlClient | null> {
+/** `signal` cuts the handshake short (its own bound is 15 s): a shutdown must not wait it out. */
+export async function connectCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient | null> {
   const data = coreDataDir(dataDir, version);
   const lock = readCoreJson<CoreLock>(join(data, "atomic-core", "instance.lock"));
   if (!lock || lock.state !== "ready") return null;
@@ -115,7 +116,7 @@ export async function connectCore(dataDir: string, version: string): Promise<Cor
   try { token = readFileSync(join(data, "atomic-core", "control-token"), "utf8").trim(); } catch { return null; }
   if (!token || /\s/.test(token)) throw new Error("Atomic Core control credentials are invalid.");
   const client = new CoreControlClient(`http://127.0.0.1:${lock.control_port}`, token, version, lock.instance_id);
-  try { await client.snapshot(realpathSync(data)); } catch (err) {
+  try { await client.snapshot(realpathSync(data), signal); } catch (err) {
     if (err instanceof TypeError && /fetch failed/.test(err.message)) return null;
     throw err;
   }

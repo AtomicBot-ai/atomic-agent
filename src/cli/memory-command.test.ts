@@ -174,6 +174,32 @@ describe("memoryCommand", () => {
       expect(stderr()).toMatch(/is unreachable; start it with: atomic-agent models start-embedding/);
     });
 
+    it("uses one JSON shape for failures too", async () => {
+      expect(await memoryCommand(["reindex", "--json"])).toBe(1);
+      expect(JSON.parse(stdout())).toEqual({
+        model: null, embedded: 0, skipped: 0, remaining: null, stoppedReason: "disabled",
+        message: expect.stringMatching(/memory embeddings are off/),
+      });
+      stdoutChunks.length = 0;
+      seedNotes("first", "second");
+      const code = await handleReindex(["--json"], {
+        ...noSignal,
+        connect: async () => ({ state: "unreachable", modelId: "m", why: "EmbeddingGemma 2 is not running in Atomic Core" }),
+      });
+      expect(code).toBe(1);
+      expect(JSON.parse(stdout())).toEqual({
+        model: "m", embedded: 0, skipped: 0, remaining: 2, stoppedReason: "unavailable",
+        message: "EmbeddingGemma 2 is not running in Atomic Core; start it with: atomic-agent models start-embedding",
+      });
+    });
+
+    it("says on a terminal that it is waking the model before the first embed", async () => {
+      seedNotes("first");
+      expect(await handleReindex([], { ...noSignal, live: true, connect: reachable(fakeClient("fake")) })).toBe(0);
+      expect(stderr()).toMatch(/waking fake/);
+      expect(stderr()).toMatch(/reindexing fake: 1\/1/);
+    });
+
     it("embeds the notes missing a vector and exits 0", async () => {
       seedNotes("first", "second");
       const code = await handleReindex([], { ...noSignal, connect: reachable(fakeClient("fake")) });

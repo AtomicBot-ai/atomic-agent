@@ -9,7 +9,9 @@ import {
 } from "../memory/index.js";
 import {
   backfillEmbeddings,
+  countPendingEmbeddings,
   type EmbeddingBackfillResult,
+  type EmbeddingBackfillStopReason,
 } from "../memory/embeddings/index.js";
 import {
   connectMemoryEmbeddings,
@@ -49,7 +51,10 @@ const HELP =
     "                            stop and rerun: it resumes where it stopped.",
     "                            --prune then deletes the vectors of every other",
     "                            model, once every note has one for the current",
-    "                            model. --json prints the result as JSON.",
+    "                            model. --json prints one JSON object, on success",
+    "                            and failure alike: model, embedded, skipped,",
+    "                            remaining, and stoppedReason + message when it",
+    "                            did not finish.",
     "",
     "Examples:",
     "  atomic-agent memory export --vault ~/Documents/MyVault",
@@ -118,12 +123,32 @@ function handleExport(args: string[]): number {
 const REINDEX_USAGE = "usage: atomic-agent memory reindex [--prune] [--json]\n";
 const START_EMBEDDING_HINT = "start it with: atomic-agent models start-embedding";
 
+/** Why `memory reindex` did not cover every note: the backfill's reasons, plus embeddings turned off. */
+export type ReindexStopReason = EmbeddingBackfillStopReason | "disabled";
+
+/**
+ * The one `--json` shape, for success and failure alike. `model` is null
+ * and `remaining` unknown (null) only when embeddings are off.
+ */
+export interface ReindexReport {
+  model: string | null;
+  embedded: number;
+  skipped: number;
+  remaining: number | null;
+  stoppedReason?: ReindexStopReason;
+  message?: string;
+  /** With --prune: the other models' vectors deleted (empty when pruning was held back). */
+  pruned?: Array<{ model: string; deleted: number }>;
+}
+
 /** Seams for tests; production uses the configured model and the real backfill. */
 export interface ReindexDeps {
   connect?: typeof connectMemoryEmbeddings;
   backfill?: typeof backfillEmbeddings;
   /** Aborts the run (Ctrl-C). Default: SIGINT. */
   onInterrupt?: (abort: () => void) => () => void;
+  /** Whether progress lines go to stderr. Default: stderr is a terminal. */
+  live?: boolean;
 }
 
 /**
@@ -144,31 +169,52 @@ export async function handleReindex(args: string[], deps: ReindexDeps = {}): Pro
   }
   const json = args.includes("--json");
   const prune = args.includes("--prune");
+  // Progress lines only on a terminal: a pipe (the desktop app, --json)
+  // gets the result alone.
+  const live = !json && (deps.live ?? process.stderr.isTTY === true);
+  const report = (r: ReindexReport, exitCode: number): number => {
+    if (r.message) process.stderr.write(`${r.message}\n`);
+    if (json) process.stdout.write(`${JSON.stringify(r)}\n`);
+    return exitCode;
+  };
   const config = getConfig();
   const connection: MemoryEmbeddingConnection = await (deps.connect ?? connectMemoryEmbeddings)(config);
   if (connection.state === "disabled") {
-    return reindexFailed(json, "disabled",
-      "memory embeddings are off: pick a model with 'atomic-agent models use-embedding <id>' " +
-        "and set memory.embeddings.enabled to true");
-  }
-  if (connection.state === "unreachable") {
-    return reindexFailed(json, "unavailable", `${connection.why}; ${START_EMBEDDING_HINT}`);
+    return report({
+      model: null, embedded: 0, skipped: 0, remaining: null, stoppedReason: "disabled",
+      message: "memory embeddings are off: pick a model with 'atomic-agent models use-embedding <id>' " +
+        "and set memory.embeddings.enabled to true",
+    }, 1);
   }
 
   const notes = new MemoryStore({
     dbFile: config.paths.memoryDbFile,
     maxEntries: config.memory.notes.maxEntries,
   });
+  const db = notes.getDatabaseHandleForEmbeddings();
+  if (connection.state === "unreachable") {
+    try {
+      return report({
+        model: connection.modelId, embedded: 0, skipped: 0,
+        remaining: countPendingEmbeddings(db, connection.modelId),
+        stoppedReason: "unavailable", message: `${connection.why}; ${START_EMBEDDING_HINT}`,
+      }, 1);
+    } finally {
+      notes.close();
+    }
+  }
+
   const controller = new AbortController();
   const release = (deps.onInterrupt ?? onSigint)(() => controller.abort());
   try {
     const client = connection.createClient();
-    const db = notes.getDatabaseHandleForEmbeddings();
     const embeddings = new EmbeddingStore({ db });
     const writer = new EmbeddingWriter({ client, store: embeddings });
-    // A progress line only on a terminal: a pipe (the desktop app, --json)
-    // gets the result alone.
-    const live = !json && process.stderr.isTTY === true;
+    if (live && countPendingEmbeddings(db, client.model) > 0) {
+      // An idle Core module starts on the first request and can take up
+      // to two minutes to answer it: say so rather than sit silent.
+      process.stderr.write(`waking ${client.model} (an idle model can take up to two minutes to answer)...\n`);
+    }
     const result: EmbeddingBackfillResult = await (deps.backfill ?? backfillEmbeddings)(
       { db, writer },
       {
@@ -189,9 +235,7 @@ export async function handleReindex(args: string[], deps: ReindexDeps = {}): Pro
         if (model !== client.model) pruned.push({ model, deleted: embeddings.deleteAllForModel(model) });
       }
     }
-    if (json) {
-      process.stdout.write(`${JSON.stringify({ ...result, ...(prune ? { pruned } : {}) })}\n`);
-    } else {
+    if (!json) {
       process.stdout.write(
         `embedded ${result.embedded} notes with ${result.model}` +
           (result.skipped > 0 ? `, skipped ${result.skipped}` : "") +
@@ -200,32 +244,33 @@ export async function handleReindex(args: string[], deps: ReindexDeps = {}): Pro
       for (const p of pruned) process.stdout.write(`pruned ${p.deleted} vectors of ${p.model}\n`);
       if (prune && !complete) process.stdout.write("nothing pruned: some notes still have no vector for the current model\n");
     }
+    const base: ReindexReport = {
+      model: result.model,
+      embedded: result.embedded,
+      skipped: result.skipped,
+      remaining: result.remaining,
+      ...(result.stoppedReason ? { stoppedReason: result.stoppedReason } : {}),
+      ...(prune ? { pruned } : {}),
+    };
     switch (result.stoppedReason) {
       case undefined:
-        return 0;
+        return report(base, 0);
       case "aborted":
-        if (!json) process.stderr.write("reindex interrupted; run it again to continue\n");
-        return 130;
+        return report({ ...base, message: "reindex interrupted; run it again to continue" }, 130);
       case "unavailable":
-        if (!json) process.stderr.write(`the embedding model stopped answering; ${START_EMBEDDING_HINT}, then run this again\n`);
-        return 1;
+        return report({ ...base, message: `the embedding model stopped answering; ${START_EMBEDDING_HINT}, then run this again` }, 1);
       case "failed":
-        if (!json) process.stderr.write("reindex stopped on an error writing a vector; run it again to retry\n");
-        return 1;
+        return report({ ...base, message: "reindex stopped on an error writing a vector; run it again to retry" }, 1);
     }
   } catch (err) {
-    process.stderr.write(`memory reindex failed: ${err instanceof Error ? err.message : String(err)}\n`);
-    return 1;
+    return report({
+      model: connection.modelId, embedded: 0, skipped: 0, remaining: null, stoppedReason: "failed",
+      message: `memory reindex failed: ${err instanceof Error ? err.message : String(err)}`,
+    }, 1);
   } finally {
     release();
     notes.close();
   }
-}
-
-function reindexFailed(json: boolean, reason: "disabled" | "unavailable", message: string): number {
-  if (json) process.stdout.write(`${JSON.stringify({ stoppedReason: reason, message })}\n`);
-  process.stderr.write(`${message}\n`);
-  return 1;
 }
 
 function onSigint(abort: () => void): () => void {

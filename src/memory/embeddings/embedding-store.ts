@@ -149,6 +149,51 @@ export class EmbeddingStore {
     }));
   }
 
+  /**
+   * The given notes' vectors for `model`, with the same metadata as
+   * `listByModel`. Hybrid recall uses it above the brute-force ceiling:
+   * cosine only re-ranks the BM25 candidates, so their vectors are all it
+   * needs, whatever the corpus size. Ids without a vector are absent.
+   */
+  listByModelForMemories(model: string, memoryIds: readonly number[]): Array<
+    EmbeddingRow & {
+      workingDir: string | null;
+      tags: string[];
+    }
+  > {
+    if (memoryIds.length === 0) return [];
+    type Row = {
+      memory_id: number;
+      model: string;
+      dim: number;
+      embedding: Buffer;
+      created_at: number;
+      working_dir: string | null;
+      tags: string | null;
+    };
+    // One statement per call: the candidate set is a few dozen ids at
+    // most (k * 4 BM25 hits), far under SQLite's bound-parameter limit.
+    const rows = this.db
+      .prepare(
+        `SELECT e.memory_id AS memory_id, e.model AS model, e.dim AS dim,
+                e.embedding AS embedding, e.created_at AS created_at,
+                m.working_dir AS working_dir, m.tags AS tags
+           FROM memory_embeddings e
+           JOIN memories m ON m.id = e.memory_id
+          WHERE e.model = ? AND e.memory_id IN (${memoryIds.map(() => "?").join(", ")})`,
+      )
+      .all(model, ...memoryIds) as Row[];
+    return rows.map((r) => ({
+      memoryId: r.memory_id,
+      model: r.model,
+      dim: r.dim,
+      vector: bufferToFloat32(r.embedding, r.dim),
+      createdAt: r.created_at,
+      workingDir: r.working_dir,
+      tags: parseTags(r.tags),
+    }));
+  }
+
   countByModel(model: string): number {
     const row = this.countByModelStmt.get(model) as { count: number };
     return row.count;

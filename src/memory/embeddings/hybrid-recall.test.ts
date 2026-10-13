@@ -161,7 +161,7 @@ describe("recallHybrid", () => {
     ).toBe(true);
   });
 
-  it("skips cosine + emits brute_force_overflow when corpus > ceiling", async () => {
+  it("emits brute_force_overflow when corpus > ceiling", async () => {
     const client = makeClient(new Map([["lisbon", [1, 0, 0, 0]]]));
     // Seed 5 embedding rows for the model "test-model" so countByModel
     // reports 5 > ceiling 2.
@@ -200,6 +200,55 @@ describe("recallHybrid", () => {
           s.tags?.ceiling === "2",
       ),
     ).toBe(true);
+  });
+
+  it("still re-ranks BM25 hits by cosine above the ceiling, reading only their vectors", async () => {
+    const client = makeClient(new Map([["lisbon", [1, 0, 0, 0]]]));
+    const vectorOf = (memoryId: number, vector: number[]) =>
+      embStore.upsert({ memoryId, model: "test-model", dim: 4, vector: new Float32Array(vector), createdAt: 1 });
+    const aboutLisbon = memStore.store({ content: "lisbon top hit" });
+    vectorOf(aboutLisbon.id, [1, 0, 0, 0]);
+    // Newer filler rows push the corpus past the ceiling.
+    for (let i = 0; i < 5; i += 1) vectorOf(memStore.store({ content: `note ${i}` }).id, [0, 0, 1, 0]);
+    const aboutFood = memStore.store({ content: "food memo" });
+    vectorOf(aboutFood.id, [0, 1, 0, 0]);
+    const fullScan = vi.spyOn(embStore, "listByModel");
+    const result = await recallHybrid(
+      {
+        embeddingClient: client,
+        embeddingStore: embStore,
+        bruteForceCeiling: 2,
+        fts5Weight: 0.3,
+        vectorWeight: 0.7,
+        metrics,
+      },
+      {
+        k: 2,
+        bm25Hits: [
+          { ...aboutFood, bm25Score: -5 },
+          { ...aboutLisbon, bm25Score: -5 },
+        ],
+        query: "lisbon",
+      },
+    );
+    expect(result.map((r) => r.content)).toEqual(["lisbon top hit", "food memo"]);
+    expect(fullScan).not.toHaveBeenCalled();
+    expect(captured.some((s) => s.name === "agent.memory.embeddings.brute_force_overflow" && s.tags?.rows === "7")).toBe(true);
+  });
+
+  it("reads every vector of the model at or below the ceiling", async () => {
+    const client = makeClient(new Map([["lisbon", [1, 0, 0, 0]]]));
+    const m = memStore.store({ content: "lisbon top hit" });
+    embStore.upsert({ memoryId: m.id, model: "test-model", dim: 4, vector: new Float32Array([1, 0, 0, 0]), createdAt: 1 });
+    const fullScan = vi.spyOn(embStore, "listByModel");
+    const targeted = vi.spyOn(embStore, "listByModelForMemories");
+    await recallHybrid(
+      { embeddingClient: client, embeddingStore: embStore, bruteForceCeiling: 200, fts5Weight: 0.5, vectorWeight: 0.5, metrics },
+      { k: 1, bm25Hits: [{ ...m, bm25Score: -5 }], query: "lisbon" },
+    );
+    expect(fullScan).toHaveBeenCalledTimes(1);
+    expect(targeted).not.toHaveBeenCalled();
+    expect(captured.some((s) => s.name === "agent.memory.embeddings.brute_force_overflow")).toBe(false);
   });
 
   it("re-ranks BM25 hits by cosine when corpus is small", async () => {

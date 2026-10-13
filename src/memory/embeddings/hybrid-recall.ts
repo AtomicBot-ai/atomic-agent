@@ -26,10 +26,11 @@ import type { EmbeddingStore } from "./embedding-store.js";
  *     `EmbeddingUnavailableError`, the same fallback path fires and a
  *     single `agent.memory.embeddings.fallback_to_fts5` counter is
  *     emitted per turn so dashboards spot persistent daemon outages.
- *   - When the corpus exceeds `bruteForceCeiling`, the cosine path is
- *     **skipped** (not just slow) and the counter
- *     `agent.memory.embeddings.brute_force_overflow` increments. The
- *     caller still sees a useful FTS5-only result set.
+ *   - When the corpus exceeds `bruteForceCeiling`, the full scan is
+ *     replaced by a read of the BM25 candidates' vectors only (the
+ *     ranking is the same: cosine only re-ranks those candidates) and
+ *     the counter `agent.memory.embeddings.brute_force_overflow`
+ *     increments.
  */
 
 export interface HybridRecallInputEntry extends MemoryEntry {
@@ -54,7 +55,7 @@ export interface HybridRecallOptions {
 export interface HybridRecallDeps {
   embeddingClient: EmbeddingClient | null;
   embeddingStore: EmbeddingStore | null;
-  /** Skip cosine when `memory_embeddings.model` row count exceeds this. */
+  /** Above this many vectors for the model, read only the BM25 candidates' vectors instead of all of them. */
   bruteForceCeiling: number;
   /** 0..1 weight for the normalised BM25 score. */
   fts5Weight: number;
@@ -71,8 +72,8 @@ export interface HybridRecallDeps {
  *     `bm25Hits.slice(0, k)` (graceful fallback).
  *  2. Embed the query (catch `EmbeddingUnavailableError`).
  *  3. Pull row count for the model. If `> bruteForceCeiling` → emit
- *     `brute_force_overflow` and return BM25-only.
- *  4. Otherwise: brute-force cosine over `listByModel`, apply
+ *     `brute_force_overflow` and read only the BM25 candidates' vectors.
+ *  4. Otherwise read the whole model's vectors. Either way: cosine, apply
  *     workingDir + tags filters, blend with normalised BM25 scores,
  *     return top-K.
  */
@@ -104,15 +105,24 @@ export async function recallHybrid(
 
   const model = deps.embeddingClient.model;
   const total = deps.embeddingStore.countByModel(model);
+  // Cosine only re-ranks the BM25 candidates (cosine-only neighbours are
+  // dropped below), so above the ceiling read just their vectors instead
+  // of turning the vector signal off: same ranking, bounded cost. Turning
+  // it off made semantic re-ranking vanish for any corpus over the
+  // ceiling (200 by default, against 1 000 notes allowed).
+  let candidates: ReturnType<EmbeddingStore["listByModel"]>;
   if (total > deps.bruteForceCeiling) {
     deps.metrics?.recordMemoryEmbeddingsBruteForceOverflow({
       rows: total,
       ceiling: deps.bruteForceCeiling,
     });
-    return opts.bm25Hits.slice(0, opts.k);
+    candidates = deps.embeddingStore.listByModelForMemories(
+      model,
+      opts.bm25Hits.map((hit) => hit.id),
+    );
+  } else {
+    candidates = deps.embeddingStore.listByModel(model);
   }
-
-  const candidates = deps.embeddingStore.listByModel(model);
   const requiredTags = opts.requiredTags ?? [];
   // Cosine over filtered candidates only.
   const cosineHits: Array<{ id: number; cosine: number }> = [];

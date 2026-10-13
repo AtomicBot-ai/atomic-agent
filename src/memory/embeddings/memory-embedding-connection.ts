@@ -44,7 +44,10 @@ export async function connectMemoryEmbeddings(
   // its own: ask Core (never starting it) instead of probing `/health`.
   const viaCore = def.requiresCoreEmbeddingModule === true;
   const probe: { reachable: boolean; why?: string } = viaCore
-    ? await probeCoreEmbedding(config.paths.localModelsDataDir, def).catch(() => ({ reachable: false }))
+    ? await probeCoreEmbedding(config.paths.localModelsDataDir, def).catch((err: unknown) => ({
+        reachable: false,
+        why: `Atomic Core status failed: ${err instanceof Error ? err.message : String(err)}`,
+      }))
     : await checkLlamaServer({ url, retries: 0, backoffMs: 0, timeoutMs: 2000 }).catch(() => ({ reachable: false }));
   if (!probe.reachable) {
     return { state: "unreachable", modelId: def.id, why: probe.why ?? `embedding daemon at ${url} is unreachable` };
