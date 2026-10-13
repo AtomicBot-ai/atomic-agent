@@ -188,7 +188,7 @@ describe("starting the module", () => {
       if (path === "/backends/llamacpp-upstream/catalog") return { installed: [{ version: "b11470", backend: "macos-arm64" }], available: [{ version: "b11470", backend: "macos-arm64" }] };
       return {};
     });
-    const err = await startCoreEmbedding(dir, opts).catch((e: unknown) => e as Error);
+    const err = (await startCoreEmbedding(dir, opts).catch((e: unknown) => e)) as Error;
     expect(err.message).toContain("Atomic Core refused llama.cpp b11470/macos-arm64");
     expect(err.message).not.toContain("start-embedding");
     expect(fake.call.mock.calls.some(([path]) => path === "/backends/llamacpp-upstream/install")).toBe(false);
