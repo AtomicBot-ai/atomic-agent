@@ -1591,11 +1591,16 @@ describe("buildPrompt profile section", () => {
       skillCatalog: SKILLS,
       profileFacts: [
         {
+          id: 1,
           key: "hobby_builder",
           value: "true",
+          validFrom: 1,
           updatedAt: 1,
           pinned: true,
           keywords: [],
+          supersedes: null,
+          supersededBy: null,
+          voteScore: 0,
         },
       ],
     });
