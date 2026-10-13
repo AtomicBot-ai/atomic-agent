@@ -46,7 +46,7 @@ export {
 export {
   configureSetup,
   localBackendStarted,
-  localEngineFailed,
+  engineRecoveryShown,
   maybeModelConfigured,
   providerKeyChecked,
   shouldReportSwitch,

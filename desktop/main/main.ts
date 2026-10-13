@@ -7,7 +7,8 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shoul
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
-import { seedBundledCore } from "./core-seed.js";
+import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
+import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
@@ -180,6 +181,8 @@ import {
   // whole-file write, and the four import sources the flow's last step offers.
   modelsUpdateStream,
   managedDataDirNow,
+  managedEngineNow,
+  backendInstalled,
   STAGING_STALE_MS,
   sweepBackendStaging,
   setExternalLlamaUrls,
@@ -570,6 +573,76 @@ const smokeDownloads: SmokeDownloads = {
   },
 };
 
+/**
+ * The engine install, streamed: `models update` in the daemon's turn, its
+ * progress as `cli:pull` frames (kind `runtime`) that the setup queue and
+ * Settings' banner draw as a bar. The setup's runtime phase, Settings' engine
+ * install and the recovery card's Download again (cli:modelsUpdateStream),
+ * and the launch's first Core install (startLocalDaemonAtBoot) all run it.
+ * `done` is how it ended, after the server it stopped is back (afterUpdate).
+ */
+type InstallEnded = CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean };
+function engineInstallStream(
+  via: "setup" | "settings" | "launch",
+  opts: { fresh?: boolean } = {},
+): { ok: true; done: Promise<CliResult> } | { ok: false; error: string; running?: ReturnType<typeof downloadRunning> } {
+  const fresh = opts.fresh === true;
+  const running = downloadRunning();
+  if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+  if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
+  const id = "llama.cpp";
+  const own = new AbortController();
+  const updateStartedAt = Date.now();
+  let slot: DownloadSlot | null = null;
+  // ATO-123: as Settings' update (cli:modelsUpdate) — the update's own stop is on purpose, and the server comes back after it.
+  const held: { hold: UpdateHold | null } = { hold: null };
+  const stopped = (error: string): InstallEnded => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false });
+  const done = updateInTurn<InstallEnded>(
+    own.signal,
+    stopped,
+    async () => {
+      held.hold = updateBegins();
+      // In the daemon's turn: nothing is starting Core while its record goes.
+      if (fresh && managedEngineNow() === "atomic-core") {
+        const reset = await resetCoreForRedownload(managedDataDirNow());
+        console.error(`[desktop] local-llm: Download again: Atomic Core ${reset.version}${reset.removedRecord ? ", its install record removed" : ""}${reset.removedBinary ? ", its binary (it did not run) removed" : ""}`);
+      }
+      if (own.signal.aborted) return stopped(UPDATE_STOPPED);
+      const started = modelsUpdateStream((line) =>
+        pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
+      );
+      own.signal.addEventListener("abort", () => started.cancel(), { once: true });
+      return started.done.then(updateSwept);
+    },
+  );
+  pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
+  const final = done.then(async (ended): Promise<CliResult> => {
+    pullUpdate = null;
+    /* ATO-128: one stopped by its own time limit left a llama.cpp in place
+       as it was, so a server it stopped comes back on that one (keptBackend). */
+    const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
+    A.runtimeUpdated(via, updateStartedAt, res, own.signal.aborted);
+    if (!own.signal.aborted) noteEngine(res, { clears: true, via });
+    send("cli:pull", {
+      id,
+      done: true,
+      ok: res.ok,
+      error: res.error ?? null,
+      kind: "runtime",
+      // Nothing was downloaded: the version file already named the
+      // latest tag. The renderer must not leave a bar standing that it
+      // never drove — it draws the phase as passed instead.
+      sawProgress: ended.sawProgress,
+      upToDate: ended.upToDate,
+      // ATO-128: stopped by its own time limit — with a llama.cpp in place, the model held for it starts on that one (renderer obPullFinished).
+      timedOut: ended.timedOut,
+      keptBackend: ended.keptBackend,
+    });
+    return res;
+  });
+  return { ok: true, done: final };
+}
+
 /** One `cli:pull` progress frame, kept as its slot's last one when it carries a percent. */
 function pullFrame(slot: DownloadSlot | null, frame: Record<string, unknown>): void {
   if (slot && typeof frame["percent"] === "number") slot.last = frame;
@@ -655,13 +728,16 @@ function send(channel: string, payload?: unknown): void {
    instead of leaving a spinner; the next success clears it. A
    window opened later asks for it (engine:failure). */
 let engineFailure: (EngineFailure & { at: number }) | null = null;
-function noteEngine(answer: unknown, opts: { clears?: boolean } = {}): void {
+/** What put the recovery card up, for `engine_recovery_shown.via` (analytics/catalog-values.ts ENGINE_RECOVERY_VIA). */
+type EngineVia = "launch" | "swap" | "update" | "start" | "switch" | "setup" | "settings" | "other";
+function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia } = {}): void {
   const failed = engineFailureOf(answer);
   if (failed) {
     engineFailure = { ...failed, at: Date.now() };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
     send("engine:failure", engineFailure);
-    A.localEngineFailed(failed.stage);
+    // The agent's `models` command already sent local_engine_failed for this; the desktop counts the card it showed.
+    A.engineRecoveryShown(failed.stage, opts.via ?? "other");
     return;
   }
   const a = answer as { ok?: unknown; daemon?: unknown } | null;
@@ -998,11 +1074,17 @@ async function shutdownForUpdate(): Promise<boolean> {
   stopForQuit();
   const client = agent;
   agent = null;
-  // close() answers whether the agent and every child it let go of are gone.
-  const gone = client ? await client.close().catch(() => false) : true;
-  await stopLocalDaemonOnQuit();
+  /* close() answers whether the agent and every child it let go of are gone.
+     Bounded, so the model server's stop always runs before the installer
+     starts, inside the updater's own limit (updater.ts SHUTDOWN_TIMEOUT_MS):
+     a close that hangs used to mean no stop at all. */
+  const gone = client ? await settleWithin(client.close().catch(() => false), UPDATE_CLOSE_MS, false) : true;
+  // Whatever stopOnExit says: the update replaces the files the model server and Atomic Core run from.
+  await stopLocalDaemonOnQuit(undefined, { forUpdate: true });
   return gone;
 }
+/** shutdownForUpdate's bound on the agent's close: with the stop after it (≤ ~10.5 s), inside the updater's 15 s. */
+const UPDATE_CLOSE_MS = 4_000;
 
 /** ATO-134: how long a switch waits for /health's busyTurns (asked without the llama probe, so milliseconds) before it counts the agent busy. */
 const SWITCH_BUSY_CHECK_MS = 5_000;
@@ -1292,53 +1374,14 @@ function wireIpc(client: AgentClient): void {
      The slot is taken at once, and its × (cli:cancelPull) ends it even while
      it waits for that turn: it never begins, and the window is told now. */
   // `via`: the setup's runtime phase (default), or Settings' engine install with its bar (llmEngineInstall).
-  ipcMain.handle("cli:modelsUpdateStream", (_event, via: unknown) => {
-    const running = downloadRunning();
-    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
-    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
-    const id = "llama.cpp";
-    const own = new AbortController();
-    const updateStartedAt = Date.now();
-    let slot: DownloadSlot | null = null;
-    // ATO-123: as Settings' update (cli:modelsUpdate) — the update's own stop is on purpose, and the server comes back after it.
-    const held: { hold: UpdateHold | null } = { hold: null };
-    const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>(
-      own.signal,
-      (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
-      () => {
-        held.hold = updateBegins();
-        const started = modelsUpdateStream((line) =>
-          pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
-        );
-        own.signal.addEventListener("abort", () => started.cancel(), { once: true });
-        return started.done.then(updateSwept);
-      },
-    );
-    pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
-    void done.then(async (ended) => {
-      pullUpdate = null;
-      /* ATO-128: one stopped by its own time limit left a llama.cpp in place
-         as it was, so a server it stopped comes back on that one (keptBackend). */
-      const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
-      A.runtimeUpdated(via === "settings" ? "settings" : "setup", updateStartedAt, res, own.signal.aborted);
-      if (!own.signal.aborted) noteEngine(res, { clears: true });
-      send("cli:pull", {
-        id,
-        done: true,
-        ok: res.ok,
-        error: res.error ?? null,
-        kind: "runtime",
-        // Nothing was downloaded: the version file already named the
-        // latest tag. The renderer must not leave a bar standing that it
-        // never drove — it draws the phase as passed instead.
-        sawProgress: res.sawProgress,
-        upToDate: res.upToDate,
-        // ATO-128: stopped by its own time limit — with a llama.cpp in place, the model held for it starts on that one (renderer obPullFinished).
-        timedOut: res.timedOut,
-        keptBackend: res.keptBackend,
-      });
-    });
-    return { ok: true, started: true };
+  /* `fresh`: the recovery card's Download again. Under Core the active
+     version's verified.json goes first (and a binary that does not run),
+     or the agent's install would find it "installed" and do nothing: a
+     broken seeded copy is replaced, not kept (core-seed.ts resetCoreForRedownload). */
+  ipcMain.handle("cli:modelsUpdateStream", (_event, via: unknown, opts: unknown) => {
+    const fresh = !!(opts && typeof opts === "object" && (opts as { fresh?: unknown }).fresh === true);
+    const r = engineInstallStream(via === "settings" ? "settings" : "setup", { fresh });
+    return r.ok ? { ok: true, started: true } : r;
   });
   ipcMain.handle("cli:cancelPull", () => {
     // Item 7A: the one Cancel button covers both downloads, because the
@@ -1583,8 +1626,9 @@ function wireIpc(client: AgentClient): void {
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
-  ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true }), res)));
+  ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true, via: "start" }), res)));
   ipcMain.handle("engine:failure", () => engineFailure);
+  ipcMain.handle("engine:launchInstall", () => ({ running: launchInstall }));
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
     if (!ownDir(stateDir) || typeof sessionId !== "string") {
@@ -1688,7 +1732,7 @@ function wireIpc(client: AgentClient): void {
       return (answer = await applySwitch(await run()));
     } finally {
       // An engine pick that succeeded is a new start: the card about the old engine goes.
-      noteEngine(answer, { clears: engine });
+      noteEngine(answer, { clears: engine, via: "switch" });
       switchesOnTheirWay--;
       A.switchEnd(began, answer, kind);   // backend_switched (+ fusion_configured, model_configured)
     }
@@ -2201,7 +2245,7 @@ function wireIpc(client: AgentClient): void {
         },
       );
       A.runtimeUpdated("settings", updateStartedAt, res, own.signal.aborted);
-      if (!own.signal.aborted) noteEngine(res, { clears: true });
+      if (!own.signal.aborted) noteEngine(res, { clears: true, via: "settings" });
     } finally {
       if (settingsUpdate === own) settingsUpdate = null;
     }
@@ -2324,7 +2368,7 @@ function wireIpc(client: AgentClient): void {
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
     // A Core that would not start at launch is told too: the window offers the way out, not a log line.
-    noteEngine(r);
+    noteEngine(r, { via: r.via });
     if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
@@ -9020,6 +9064,37 @@ async function backendSwitchTest(
  * <json>`: there is no config-write route, and PATCH /api/config re-defaults
  * every block it does not merge.
  */
+/* The launch's engine install on its way (installEngineAtLaunch): a window
+   opened or reloaded meanwhile asks for it (engine:launchInstall) and draws
+   the same bar. */
+let launchInstall = false;
+/**
+ * Install Atomic Core's backend before the launch start, with its progress
+ * where the window shows it: `engine:launchInstall` tells the window, which
+ * puts the bar in Settings' banner and says so in a toast; the frames are
+ * the install's own `cli:pull` ones. True when the engine is in (or another
+ * download holds the slot, and the start installs it itself under its longer
+ * limit); false when it failed or was stopped.
+ */
+async function installEngineAtLaunch(): Promise<boolean> {
+  const r = engineInstallStream("launch");
+  if (!r.ok) {
+    console.error(`[desktop] local-llm: the local engine is not installed yet, and its install could not begin now (${r.error}); the model's start installs it`);
+    return r.error !== SMOKE_OFFLINE;
+  }
+  launchInstall = true;
+  console.error("[desktop] local-llm: installing the local engine before the model starts");
+  send("engine:launchInstall", { running: true });
+  try {
+    const res = await r.done;
+    if (!res.ok) console.error(`[desktop] local-llm: the local engine install did not finish: ${res.error ?? "unknown error"}`);
+    return res.ok;
+  } finally {
+    launchInstall = false;
+    send("engine:launchInstall", { running: false });
+  }
+}
+
 /**
  * The managed llama daemon, brought up at launch when the chat route needs it.
  *
@@ -9051,6 +9126,16 @@ async function startLocalDaemonAtBoot(): Promise<void> {
     backendUp = false;
     const st = await modelsStatus();
     if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
+    /* Atomic Core with its backend not on disk yet (a fresh machine, a 0.0.1
+       desktop the config migration moved to Core, a backend removed): the
+       start would download it silently first, hundreds of MB, under a spinner.
+       It is installed first, with its bar (engineInstallStream, as the setup
+       and Settings do), and the model starts after it. A failure is the
+       recovery card (noteEngine), and nothing is started on top of it. */
+    if (managedEngineNow() === "atomic-core" && !backendInstalled()) {
+      const installed = await installEngineAtLaunch();
+      if (!installed) return;
+    }
     /* Item 11: as the background bring-up — a ⇄ or a start made while the
        model loads queues behind it rather than starting a second daemon, and
        a stop (a cloud switch, Settings › Stop) ends it at once instead of
@@ -9213,15 +9298,19 @@ function watchCoreUpdates(): void {
       if (!status.ok || (status.value as { engine?: string } | undefined)?.engine !== "atomic-core") return;
       if (quitting || signal.aborted) return;
       const result = await modelsEngine("check", signal);
-      const value = result.value as { check?: { currentVersion: string | null; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
+      const value = result.value as { check?: { currentVersion: string | null; compatibleVersion: string; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
       if (!result.ok || !value?.check) return;
-      /* Nothing installed yet is a fresh machine on the default engine, not an
-         update: Core comes down with the first model start (or the installer
-         placed it). An "update" toast there would be the first thing a new
-         person sees about an engine they never chose. */
-      if (value.check.currentVersion === null && !value.check.requiresAgentUpdate) return;
-      const signature = JSON.stringify(value.check);
-      if (signature !== previous && !quitting) { previous = signature; send("core:update", value.check); }
+      /* Only a real update the person can install toasts, once per version
+         (core-update-notice.ts): never requiresAgentUpdate, which they cannot
+         act on (the app's own update brings the agent and its Core), never a
+         fresh machine with nothing installed yet, and never again for a
+         version already shown, on this launch or the next. */
+      const userData = app.getPath("userData");
+      const version = coreUpdateNoticeVersion(value.check, readDismissedCoreUpdate(userData));
+      if (!version || version === previous || quitting || !win || win.isDestroyed()) return;
+      previous = version;
+      send("core:update", value.check);
+      writeDismissedCoreUpdate(userData, version);
     } catch { /* Offline checks are retried at the next scheduled check or manually. */ }
   };
   coreChecks.first = setTimeout(() => { void check(); }, 10_000);
@@ -9406,8 +9495,18 @@ function readQuitConfig(): Promise<Awaited<ReturnType<typeof readWholeConfig>> |
  * the next reboot. The daemon is on the desktop's own state dir and port, so
  * no terminal session shares it. Bounded, so a stuck CLI cannot hold quit.
  */
-async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>): Promise<void> {
+async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>, opts: { forUpdate?: boolean } = {}): Promise<void> {
   if (SMOKE) return;
+  /* An app update: the stop runs whatever the config says (stopOnExit off
+     included) and reads only the data dir from disk, no `atag` call, so it
+     fits the updater's limit. `models stop` also retires an idle Atomic Core. */
+  if (opts.forUpdate) {
+    try {
+      const killed = await stopDaemonForQuit(managedDataDirNow(), { stopMs: 5_000, retryMs: 4_000 });
+      if (killed.length) console.error(`[desktop] killed the model server that outlived its stop before the update (pid ${killed.join(", ")})`);
+    } catch { /* the update goes on */ }
+    return;
+  }
   try {
     /* Item 30: bounded, and a config that cannot be read in time is no reason
        to leave the model server up — the defaults (managed, stopOnExit) stop it.

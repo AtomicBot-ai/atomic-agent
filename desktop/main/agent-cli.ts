@@ -16,6 +16,7 @@ import { commandOf, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
+import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 
 // Moved next to the key lookup that needs it; main.ts still imports it from here.
 export { managedDataDir } from "./local-llama-key.js";
@@ -832,6 +833,37 @@ export function daemonFoundUp(): void {
   tell("started");
 }
 
+/**
+ * How long a `models start` may take. 300 s covers a model load; it does not
+ * cover Atomic Core installing itself first. Under Core the first start
+ * downloads Core's inference backend (hundreds of MB, CUDA builds on Windows)
+ * whenever it is not on disk: on a fresh machine, for desktop 0.0.1 users the
+ * config migration moves to Core, and after a Core version bump. The agent's
+ * own deadline for that download is 10 minutes (models-handlers.ts
+ * BACKEND_DOWNLOAD_TIMEOUT_MS), so a start that may install gets 20.
+ */
+export const START_TIMEOUT_MS = 300_000;
+export const START_WITH_INSTALL_TIMEOUT_MS = 20 * 60_000;
+/**
+ * Whether the next `models start` may install Atomic Core first: Core is the
+ * engine and its backend is not ready (backendInstalled), or the active Core
+ * is not the version this build carries (a version bump the agent installs on
+ * its next start).
+ */
+export function coreInstallMayRun(): boolean {
+  if (managedEngineNow() !== "atomic-core") return false;
+  if (!backendInstalled()) return true;
+  try {
+    const active = JSON.parse(readFileSync(join(managedDataDirNow(), "core", "active.json"), "utf8")) as { version?: unknown };
+    return active.version !== BUNDLED_CORE_VERSION;
+  } catch {
+    return true;
+  }
+}
+export function startTimeoutMs(): number {
+  return coreInstallMayRun() ? START_WITH_INSTALL_TIMEOUT_MS : START_TIMEOUT_MS;
+}
+
 /** What a start that spawned nothing says: the app is quitting. */
 export const START_REFUSED_QUITTING = "the app is quitting — the model server was not started";
 /** What a start that spawned nothing says: a stop or a switch came after it was asked for. */
@@ -865,7 +897,7 @@ export async function modelsStart(
   /* ATO-157: a smoke's stand-in start — no port of the real server watched,
      nothing added to the starts quitting would end, no speed remembered. */
   if (cliStandIns.getStore()) {
-    const res = await cli(["models", "start", "--interactive"], 300_000, undefined, opts.signal);
+    const res = await cli(["models", "start", "--interactive"], START_TIMEOUT_MS, undefined, opts.signal);
     if (res.ok && !opts.signal?.aborted && (opts.stillWanted?.() ?? true)) tell("started");
     return res;
   }
@@ -876,7 +908,8 @@ export async function modelsStart(
   const port = managedPortFromFile();
   let gone = false;
   const watch = port === null ? null : watchStartedServer(port, () => { gone = true; abort.abort(); });
-  const run = cli(["models", "start", "--interactive"], 300_000, undefined, abort.signal);
+  // Long enough for Core to install itself first when it may (startTimeoutMs).
+  const run = cli(["models", "start", "--interactive"], startTimeoutMs(), undefined, abort.signal);
   const entry = { abort, done: run };
   startsOnTheirWay.add(entry);
   try {
@@ -3220,6 +3253,8 @@ export async function modelsUseEmbedding(idOrDisable: string): Promise<CliResult
  * `started`: this call started it. An agent without the verb (before it) says
  * "unknown subcommand", and nothing is up.
  */
+/** What an embedding start that spawned nothing says: Atomic Core's backend is not installed yet. */
+export const EMBEDDING_WAITS_FOR_ENGINE = "the local engine is not installed yet — the embedding server starts after the model's first start installs it";
 export async function modelsStartEmbedding(
   opts: { stillWanted?: () => boolean } = {},
 ): Promise<CliResult & { up: boolean; started: boolean; notStarted?: boolean }> {
@@ -3233,6 +3268,14 @@ export async function modelsStartEmbedding(
     return { ...res, started, up: started || /^embedding: already running/m.test(res.stdout) };
   };
   if (cliStandIns.getStore()) return read(await cli(["models", "start-embedding"], 60_000));
+  /* Under Atomic Core with its backend not on disk, `models start-embedding`
+     installs the backend first (hundreds of MB) inside this 60 s cap: it was
+     killed half way, every time, and held the daemon's turn meanwhile. The
+     chat model's start installs it with its bar; the embedding server is
+     paired after that start (backend-switch pairEmbeddingServer). */
+  if (managedEngineNow() === "atomic-core" && !backendInstalled()) {
+    return { ok: false, stdout: "", stderr: "", error: EMBEDDING_WAITS_FOR_ENGINE, up: false, started: false, notStarted: true };
+  }
   // One of the starts quitting ends (abortStarts); what it spawned is in its pid file for the stop after.
   const abort = new AbortController();
   const run = cli(["models", "start-embedding"], 60_000, undefined, abort.signal);
@@ -3927,6 +3970,11 @@ function newestMtime(dir: string): number {
     }
   }
   return newest;
+}
+/** The managed engine the desktop's config names; Atomic Chat Core when it names none or cannot be read. */
+export function managedEngineNow(): ManagedEngine {
+  try { return managedEngineOf(JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"))); }
+  catch { return "atomic-core"; }
 }
 /** The managed data dir the desktop's config names (its `dataDirOverride`, or the default). */
 export function managedDataDirNow(): string {

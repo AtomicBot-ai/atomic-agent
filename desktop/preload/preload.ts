@@ -224,6 +224,9 @@ contextBridge.exposeInMainWorld("atomic", {
   onEngineFailure: (cb: (payload: unknown) => void) => on("engine:failure", cb),
   /** The engine failure main keeps, for a window opened after it happened. */
   engineFailure: () => ipcRenderer.invoke("engine:failure"),
+  /** The launch installing Atomic Core's backend before the model starts: {running}. Its progress comes as `cli:pull` frames (kind runtime). */
+  onEngineLaunchInstall: (cb: (payload: unknown) => void) => on("engine:launchInstall", cb),
+  engineLaunchInstall: () => ipcRenderer.invoke("engine:launchInstall"),
   onUpdatePhase: (cb: (payload: unknown) => void) => on("cli:updatePhase", cb),
   modelsDevices: () => ipcRenderer.invoke("cli:modelsDevices"),
   modelsUseDevice: (id: string) => ipcRenderer.invoke("cli:modelsUseDevice", id),
@@ -318,7 +321,8 @@ contextBridge.exposeInMainWorld("atomic", {
   importFromTui: (opts: Record<string, boolean>) => ipcRenderer.invoke("app:importFromTui", opts),
   /** r5 item 7 — setup wizard: the streamed runtime phase, the custom-endpoint
    *  whole-file write, and the first-run import scan. */
-  modelsUpdateStream: (via?: "setup" | "settings") => ipcRenderer.invoke("cli:modelsUpdateStream", via),
+  // `fresh`: the recovery card's Download again (main forgets the active Core's install record first).
+  modelsUpdateStream: (via?: "setup" | "settings", opts?: { fresh?: boolean }) => ipcRenderer.invoke("cli:modelsUpdateStream", via, opts),
   setExternalLlamaUrls: (chatUrl: string, embeddingUrl?: string) =>
     ipcRenderer.invoke("cli:setExternalLlamaUrls", { chatUrl, embeddingUrl: embeddingUrl ?? "" }),
   detectImportAgents: () => ipcRenderer.invoke("app:detectImportAgents"),

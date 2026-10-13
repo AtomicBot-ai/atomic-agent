@@ -154,9 +154,9 @@ export function hfLookupDone(outcome: { choices?: number; error?: string }): voi
   }
 }
 
-/** `models update` finished — the setup's streamed phase or Settings' button. */
+/** `models update` finished — the setup's streamed phase, Settings' button, or the launch's first Atomic Core install. */
 export function runtimeUpdated(
-  trigger: "setup" | "settings",
+  trigger: "setup" | "settings" | "launch",
   startedAt: number,
   res: { ok?: boolean; upToDate?: boolean; error?: string | null } | null,
   cancelled: boolean,

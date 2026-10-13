@@ -457,6 +457,32 @@ jobs:
             if ($expected -notcontains $cn) { Write-Error "signer CN '$cn' is not in publisherName ($($expected -join ' | '))"; exit 1 }
           }
 
+      # The Core the app seeds on first launch must RUN, as packaged and signed:
+      # core-seed.ts writes its install record only when `--version` prints the
+      # bundled version, so a copy that signing or packaging broke would make
+      # every user download Core at first start. Run on each runner's own
+      # architecture; win32-arm64 is built on x64 (package-win32-arm64) and is
+      # not run.
+      - name: Run the packaged Atomic Chat Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(node --input-type=module -e "import('./desktop/scripts/fetch-core.mjs').then((m) => console.log(m.bundledCoreVersion()))")
+          case "${{ matrix.slug }}" in
+            darwin-arm64) core="desktop/release/mac-arm64/Atomic Agent.app/Contents/Resources/core/atomic-chat-core" ;;
+            win32-x64)    core="desktop/release/win-unpacked/resources/core/atomic-chat-core.exe" ;;
+            linux-x64)    core="desktop/release/linux-unpacked/resources/core/atomic-chat-core" ;;
+            linux-arm64)  core="desktop/release/linux-arm64-unpacked/resources/core/atomic-chat-core" ;;
+            *) echo "no packaged Core check for ${{ matrix.slug }}"; exit 0 ;;
+          esac
+          test -f "$core" || { echo "::error::no packaged Core at $core"; exit 1; }
+          got=$("$core" --version | tr -d '\r' | head -n 1 | xargs)
+          echo "packaged Core: $core -> '$got' (expected '$expected')"
+          if [[ "$got" != "$expected" ]]; then
+            echo "::error::the packaged Atomic Chat Core reports '$got', expected '$expected'"
+            exit 1
+          fi
+
       - name: List packages
         run: ls -la desktop/release
 

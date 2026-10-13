@@ -97,3 +97,60 @@ test("the retry hint alone marks a Core failure, and no sentence names llama.cpp
     assert.doesNotMatch(engineFailureIn(`Atomic Core: ${sample}. ${HINT}`).why, /llama/i);
   }
 });
+
+test("every ordinary Core failure is retryable: the card offers Download again", () => {
+  assert.equal(engineFailureIn(`Could not fetch Atomic Core checksums (503). ${HINT}`).retryable, true);
+  assert.equal(engineFailureIn(`Atomic Core did not become ready. ${HINT}`).retryable, true);
+  assert.equal(engineFailureIn("The Atomic Chat engine could not start.").retryable, true);
+});
+
+test("a failure Download again cannot change is not retryable and says why in a plain sentence", () => {
+  // The agent's wording, with the hint (older agents) or without it (newer ones).
+  const cases = [
+    ["The Atomic Chat engine could not be downloaded: Atomic Core does not support ia32.", "unsupported", /does not run on this computer/],
+    [`The downloaded Atomic Chat engine did not pass verification: the binary does not match its release version. ${HINT}`, "version", /Update the app/],
+    ["Atomic Chat could not install its inference backend: Atomic Core found no compatible inference backend for this computer.", "no_backend", /no build that runs/],
+    [`The Atomic Chat engine could not be downloaded: ENOSPC: no space left on device, write. ${HINT}`, "disk", /disk space/],
+  ];
+  for (const [text, reason, why] of cases) {
+    const f = engineFailureIn(text);
+    assert.ok(f, text);
+    assert.equal(f.retryable, false, text);
+    assert.equal(f.reason, reason, text);
+    assert.match(f.why, why);
+    assert.doesNotMatch(f.why, /try again|llama/i);
+  }
+});
+
+test("a structured retryable:false is honoured", () => {
+  assert.equal(engineFailureIn('The Atomic Chat engine could not start. {"stage":"start","retryable":false}').retryable, false);
+});
+
+test("a start the app ended on its time limit while Core was downloading: the download did not finish", () => {
+  const stderr = "[======              ] 30%  0.21 GB / 0.70 GB  Atomic Chat engine\n";
+  const timedOut = {
+    ok: false, stdout: "", stderr,
+    error: "the agent did not answer `atag models start` within 1200s — it may be busy or starting up. Try again. ([======              ] 30%  0.21 GB / 0.70 GB  Atomic Chat engine)",
+  };
+  const f = engineFailureOf(timedOut);
+  assert.equal(f.stage, "download");
+  assert.equal(f.reason, "incomplete");
+  assert.equal(f.retryable, true);
+  assert.match(f.why, /did not finish/);
+  // The update's own stall limit, with the bar printed, reads the same.
+  const stalled = engineFailureOf({ ok: false, stdout: "", stderr, error: "the local engine update made no progress for 300 s and was stopped — there is no local engine installed yet to start the model on; try again once the connection is back" });
+  assert.equal(stalled.reason, "incomplete");
+  // A timeout with no Core progress is not this (llama.cpp, a slow model load).
+  assert.equal(engineFailureOf({ ok: false, stdout: "", stderr: "", error: "the agent did not answer `atag models start` within 300s — it may be busy or starting up. Try again." }), null);
+  // A start killed on purpose (a stop, the quit) is still not a failure.
+  assert.equal(engineFailureOf({ ok: false, stdout: "", stderr, error: "`atag models start` was stopped before it finished" }), null);
+});
+
+test("a launch start's failure is read through its stderr tail (daemonError) too", () => {
+  const f = engineFailureOf({
+    daemon: "start-failed",
+    error: "the agent did not answer `atag models start` within 1200s — it may be busy or starting up. Try again. (note: checking the engine)",
+    daemonError: "note: checking the engine\n[==========          ] 50%  0.35 GB / 0.70 GB  Atomic Chat engine\n",
+  });
+  assert.equal(f.reason, "incomplete");
+});
