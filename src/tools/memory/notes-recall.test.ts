@@ -5,6 +5,9 @@ import { join } from "node:path";
 
 import type { ToolContext } from "../tool-registry.js";
 import { MemoryStore } from "../../memory/memory-store.js";
+import { EmbeddingUnavailableError, type EmbeddingClient } from "../../memory/embeddings/embedding-client.js";
+import { EmbeddingStore } from "../../memory/embeddings/embedding-store.js";
+import { EmbeddingWriter } from "../../memory/embeddings/embedding-writer.js";
 import { buildNotesRecallTool } from "./notes-recall.js";
 
 function makeCtx(workingDir = "/work"): ToolContext {
@@ -107,5 +110,59 @@ describe("memory.notes.recall", () => {
     const result = await tool.run({ id: "abc" }, makeCtx());
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("id");
+  });
+  describe("with embeddings attached", () => {
+    // "pet" and "кот" embed alike; nothing else in these notes shares a word with the query.
+    function attach(embed?: EmbeddingClient["embed"]): void {
+      const client: EmbeddingClient = {
+        dim: 2,
+        model: "fake",
+        embed: embed ?? (async ({ text }) => {
+          const lower = text.toLowerCase();
+          const pet = lower.includes("pet") || lower.includes("кот") ? 1 : 0;
+          return { vector: new Float32Array([pet, 1 - pet]), model: "fake" };
+        }),
+      };
+      const vectors = new EmbeddingStore({ db: store.getDatabaseHandleForEmbeddings() });
+      store.attachEmbeddings({ writer: new EmbeddingWriter({ client, store: vectors }), store: vectors });
+    }
+
+    it("returns a note found by meaning alone, in the same output shape", async () => {
+      attach();
+      const cat = await store.storeAsync({ content: "мой кот Барсик любит огурцы" }, 1);
+      await store.storeAsync({ content: "рецепт борща" }, 2);
+      const tool = buildNotesRecallTool({ store, defaultK: 5 });
+      const result = await tool.run({ query: "what does my pet like?" }, makeCtx());
+      expect(result.status).toBe("ok");
+      expect(result.fullOutput).toBe(`- #${cat.id} мой кот Барсик любит огурцы`);
+      expect(result.details).toMatchObject({
+        count: 1,
+        scope: "all",
+        entries: [{ id: cat.id, content: "мой кот Барсик любит огурцы", tags: [], workingDir: null, updatedAt: 1 }],
+      });
+    });
+
+    it("falls back to keyword recall when the model is unavailable", async () => {
+      store.store({ content: "the cat sat on the mat" }, 1);
+      attach(async () => { throw new EmbeddingUnavailableError("down"); });
+      const tool = buildNotesRecallTool({ store, defaultK: 5 });
+      const result = await tool.run({ query: "cat" }, makeCtx());
+      expect(result.fullOutput).toBe("- #1 the cat sat on the mat");
+      expect(result.details.count).toBe(1);
+    });
+  });
+
+  it("keeps the keyword output unchanged without embeddings", async () => {
+    store.store({ content: "the cat sat on the mat" }, 1);
+    store.store({ content: "мой кот Барсик любит огурцы" }, 2);
+    const tool = buildNotesRecallTool({ store, defaultK: 5 });
+    const result = await tool.run({ query: "cat" }, makeCtx());
+    expect(result.fullOutput).toBe("- #1 the cat sat on the mat");
+    expect(result.details).toMatchObject({
+      count: 1,
+      scope: "all",
+      entries: [{ id: 1, content: "the cat sat on the mat", tags: [], workingDir: null, updatedAt: 1 }],
+    });
+    expect((await tool.run({ query: "what does my pet like?" }, makeCtx())).fullOutput).toBe("(no matches)");
   });
 });

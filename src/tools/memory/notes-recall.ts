@@ -1,7 +1,10 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { EmbeddingUnavailableError } from "../../memory/embeddings/embedding-client.js";
 import {
   MemoryStore,
   MemoryValidationError,
+  type MemoryEntry,
+  type MemoryRecallOptions,
 } from "../../memory/memory-store.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
@@ -13,9 +16,11 @@ export interface NotesRecallToolOptions {
 
 /**
  * `memory.notes.recall { query?, id?, k?, scope?, tags? }` — two modes:
- *   - keyword search (default): BM25-ranked over the FTS5 index, driven
- *     by `query`. `scope` defaults to `"all"`; pass `"project"` to
- *     restrict to the current working directory.
+ *   - search (default): BM25-ranked over the FTS5 index, driven by
+ *     `query`; with embeddings attached, the same hybrid recall as the
+ *     prompt's auto-recall, which also returns notes close in meaning
+ *     that share no keyword. `scope` defaults to `"all"`; pass
+ *     `"project"` to restrict to the current working directory.
  *   - direct fetch (when `id` is supplied): return the full note for
  *     that id, ignoring `query` / `k` / `scope`. Used by the agent when
  *     drilling into a pointer shown in `### memory-index`.
@@ -26,7 +31,7 @@ export function buildNotesRecallTool(
   return {
     name: "memory.notes.recall",
     description:
-      "Search or fetch durable notes. Pass { id } to fetch a single note by id (e.g. after spotting it in `### memory-index`). Otherwise pass { query } for a BM25 keyword search. Default scope is 'all' (cross-project); pass scope='project' to restrict to the current working directory.",
+      "Search or fetch durable notes. Pass { id } to fetch a single note by id (e.g. after spotting it in `### memory-index`). Otherwise pass { query } to search by keywords (and by meaning when embeddings are on). Default scope is 'all' (cross-project); pass scope='project' to restrict to the current working directory.",
     readonly: true,
     async run(rawArgs, ctx) {
       if (rawArgs.id !== undefined) {
@@ -47,12 +52,24 @@ export function buildNotesRecallTool(
           : options.defaultK;
       const scope = rawArgs.scope === "project" ? "project" : "all";
       try {
-        const entries = options.store.recall(query, {
+        const recallOpts: MemoryRecallOptions = {
           k,
           scope,
           workingDir: scope === "project" ? ctx.workingDir : null,
           tags: rawArgs.tags as string[] | undefined,
-        });
+        };
+        // Without embeddings `recallHybridAsync` is the keyword recall
+        // (same hits, order and recall_count bump); with them it adds the
+        // cosine side. A model that goes away degrades to keywords inside
+        // it; the catch is the same fallback for a client that throws the
+        // typed error past it.
+        let entries: MemoryEntry[];
+        try {
+          entries = await options.store.recallHybridAsync(query, recallOpts);
+        } catch (error) {
+          if (!(error instanceof EmbeddingUnavailableError)) throw error;
+          entries = options.store.recall(query, recallOpts);
+        }
         const output =
           entries.length === 0
             ? "(no matches)"
