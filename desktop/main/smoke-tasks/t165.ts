@@ -212,10 +212,11 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       show(asked),
     );
     await js<unknown>(`(() => { const b = document.querySelector('.alertbox [data-act="del:' + ${show(probe)} + '"]'); if (b) b.click(); })()`);
-    let gone: { row: boolean; sessionId: string; log: number; pinned: boolean; alert: boolean; focusEntry: boolean } | null = null;
+    type Gone = { row: boolean; sessionId: string; log: number; pinned: boolean; alert: boolean; focusEntry: boolean };
+    let gone: Gone | null = null;
     for (let i = 0; i < 20; i++) {
       await wait(250);
-      gone = await js<typeof gone>(`(() => ({row: SESSIONS.some((s) => s.id === ${show(probe)}), sessionId: S.sessionId,
+      gone = await js<Gone | null>(`(() => ({row: SESSIONS.some((s) => s.id === ${show(probe)}), sessionId: S.sessionId,
         log: S.log.length, pinned: PREFS.pinned.includes(${show(probe)}), alert: !!S.alert,
         focusEntry: document.activeElement && document.activeElement.id === 'entry'}))()`);
       if (gone && !gone.row) break;
