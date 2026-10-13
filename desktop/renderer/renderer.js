@@ -1481,7 +1481,7 @@ const P = {
   /* 13.10: steps on a thread — two nodes joined by a line, a line of text
      beside each. It was the sidebar's panel glyph mirrored, and the owner
      took the inspector button for the sidebar toggle. */
-  inspector:'<circle cx="4.5" cy="4" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><path d="M4.5 5.5v5M8 4h5.5M8 8h4M8 12h5.5"/>',
+  inspector:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
   console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   plus:'<path d="M8 3v10M3 8h10"/>',
   minus:'<path d="M3 8h10"/>',
@@ -2335,6 +2335,13 @@ function openChatMenu(id, point) {
   act('sesmenu:' + id);
 }
 /** Focus the menu's `i`th row (after the paint that drew it). */
+/* ATO-165: a closed chat menu hands the focus back to the "…" it came from, now and after the repaint settles
+   (a sidebar rebuilt in the same frame would replace the control the focus was just put on). */
+function chatMenuFocusBack(id) {
+  const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
+  const back = () => { const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]'); if (ctl) ctl.focus({preventScroll: true}); };
+  back(); requestAnimationFrame(back);
+}
 function focusChatMenu(i) {
   const items = document.querySelectorAll('.sesmenu [role="menuitem"]');
   const el = items[Math.max(0, Math.min(i, items.length - 1))];
@@ -5752,11 +5759,12 @@ function act(a) {
   /* Its layer is repainted on the spot: a pick whose own branch repaints only
      part of the window, or lands while a full render is held (LIVE_REPLAY),
      must not leave the menu drawn on top of the row it acted on. */
-  if (S.overlay === 'sesmenu' && k !== 'sesmenu') { S.overlay = null; renderOverlays(); }
+  const menuWas = S.overlay === 'sesmenu' ? SESMENU.id : null;
+  if (menuWas && k !== 'sesmenu') { S.overlay = null; renderOverlays(); }
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
-  if (a === 'close') { close(); render(); return; }
+  if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   // ATO-229: the update toast and Settings › General's update rows (app-update.js).
   if (k === 'appupd') { appUpdAct(v); return; }
@@ -7676,13 +7684,7 @@ document.addEventListener('keydown', (e) => {
   // ATO-165: Escape closes the menu and hands the focus back to the row's "…" it came from.
   if (S.overlay === 'sesmenu' && k === 'Escape') {
     e.preventDefault();
-    const back = SESMENU.id;
-    act('close');
-    const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(back) : back;
-    /* After the repaint settles: a sidebar rebuilt in the same frame would
-       replace the control the focus was just put on. */
-    const back2 = () => { const ctl = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] [data-sesmenu]'); if (ctl) ctl.focus({preventScroll: true}); };
-    back2(); requestAnimationFrame(back2);
+    act('close');   // the shared close path hands the focus back to the row's "…" (chatMenuFocusBack)
     return;
   }
   // ATO-165: the menu's rows move with the arrows, Home and End.
@@ -23028,11 +23030,15 @@ function llmRouteFacts() {
     {label:'local daemon', value: llmFormatDaemon() + ' · mode ' + mode + (mode === 'external' ? ' · ' + (lm.url || '') : '')},
   ];
 }
+/* The local slot's id (local-llama) is an internal name: the card shows the words people see elsewhere, and Copy keeps the id. */
+function llmRouteWord(id) {
+  return id === 'local-llama' ? 'Local models (' + (llmManaged().engine === 'llama-server' ? 'llama.cpp' : 'Atomic Core') + ')' : id;
+}
 function llmRouteCardHTML() {
   return '<div class="llm-route">' + llmRouteFacts().map((f, i) => '<div class="llm-kv"><span class="llm-k">' + esc(f.label) + '</span>'
     + (f.label === 'current'
-      ? '<b class="mono">' + esc(f.id) + '</b>' + (f.model ? '<span class="llm-slash"> / </span><span class="mono">' + esc(f.model) + '</span>' : '')
-      : '<span class="mono">' + esc(f.value) + '</span>')
+      ? '<b class="mono" title="' + esc(f.id) + '">' + esc(llmRouteWord(f.id)) + '</b>' + (f.model ? '<span class="llm-slash"> / </span><span class="mono">' + esc(f.model) + '</span>' : '')
+      : '<span class="mono">' + esc(f.label === 'provider embeddings' ? f.value.replace(/^local-llama\b/, llmRouteWord('local-llama')) : f.value) + '</span>')
     + '<button class="iconbtn sm llm-copybtn" data-act="llm:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(f.label) + '">' + ic('copy') + '</button></div>').join('')
     + '</div>';
 }
@@ -25231,7 +25237,7 @@ if (typeof window !== 'undefined') {
     const item = pinItem();
     const titleBefore = item ? item.textContent.trim() : null;
     if (item) item.click();
-    const menuClosed = S.overlay !== 'sesmenu' && !document.querySelector('.sesmenu');
+    const menuClosed = S.overlay !== 'sesmenu' && !document.querySelector('#overlays .sesmenu');
     const again = more();
     let titleAfter = null;
     if (again) { again.click(); const it = pinItem(); titleAfter = it ? it.textContent.trim() : null; act('close'); }
@@ -27009,7 +27015,7 @@ if (typeof window !== 'undefined') {
     return {clicked, dot: chatDot(SESSIONS.find((s) => s.id === id))[0],
             seen: PREFS.seen[id] === undefined ? null : PREFS.seen[id],
             opened, stayedPut: S.sessionId === before,
-            menuClosed: S.overlay !== 'sesmenu' && !document.querySelector('.sesmenu')};
+            menuClosed: S.overlay !== 'sesmenu' && !document.querySelector('#overlays .sesmenu')};
   };
   window.__markUnread = (id) => menuPick(id, 'unread');
   window.__markRead = (id) => menuPick(id, 'read');   // ATO-165
