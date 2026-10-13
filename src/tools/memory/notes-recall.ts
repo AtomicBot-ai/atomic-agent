@@ -1,5 +1,4 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
-import { EmbeddingUnavailableError } from "../../memory/embeddings/embedding-client.js";
 import {
   MemoryStore,
   MemoryValidationError,
@@ -60,14 +59,14 @@ export function buildNotesRecallTool(
         };
         // Without embeddings `recallHybridAsync` is the keyword recall
         // (same hits, order and recall_count bump); with them it adds the
-        // cosine side. A model that goes away degrades to keywords inside
-        // it; the catch is the same fallback for a client that throws the
-        // typed error past it.
+        // cosine side. Anything the vector side throws, other than a
+        // validation error (which the keyword path would throw too),
+        // degrades to keyword recall, as the prompt's auto-recall does.
         let entries: MemoryEntry[];
         try {
           entries = await options.store.recallHybridAsync(query, recallOpts);
         } catch (error) {
-          if (!(error instanceof EmbeddingUnavailableError)) throw error;
+          if (error instanceof MemoryValidationError) throw error;
           entries = options.store.recall(query, recallOpts);
         }
         const output =

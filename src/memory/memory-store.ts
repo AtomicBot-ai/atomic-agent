@@ -260,6 +260,7 @@ export class MemoryStore {
   private embeddingFts5Weight: number;
   private embeddingVectorWeight: number;
   private embeddingBruteForceCeiling: number;
+  private embeddingMinCosine: number | undefined;
   private readonly now: () => number;
   private readonly insertStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
@@ -1009,7 +1010,10 @@ export class MemoryStore {
     fts5Weight?: number;
     vectorWeight?: number;
     bruteForceCeiling?: number;
+    /** The model's floor for meaning-only recall; omitted ⇒ the default. */
+    minCosine?: number;
   }): void {
+    this.embeddingMinCosine = args.minCosine;
     this.embeddingWriter = args.writer;
     this.embeddingStore = args.store;
     if (args.fts5Weight !== undefined) this.embeddingFts5Weight = args.fts5Weight;
@@ -1091,6 +1095,7 @@ export class MemoryStore {
       // Notes found by meaning alone come back as full entries, the same
       // shape (and the same recall_count bump below) as keyword hits.
       hydrate: (ids) => this.getMany(ids),
+      ...(this.embeddingMinCosine !== undefined ? { minCosine: this.embeddingMinCosine } : {}),
     };
     const blended = await recallHybrid(deps, {
       k,

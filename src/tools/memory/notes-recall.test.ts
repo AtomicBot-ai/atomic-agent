@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +32,7 @@ describe("memory.notes.recall", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     store.close();
     rmSync(tmp, { recursive: true, force: true });
   });
@@ -150,6 +151,15 @@ describe("memory.notes.recall", () => {
       expect(result.fullOutput).toBe("- #1 the cat sat on the mat");
       expect(result.details.count).toBe(1);
     });
+  });
+
+  it("falls back to keyword recall on any error from the vector side", async () => {
+    store.store({ content: "the cat sat on the mat" }, 1);
+    vi.spyOn(store, "recallHybridAsync").mockRejectedValue(new Error("boom"));
+    const tool = buildNotesRecallTool({ store, defaultK: 5 });
+    const result = await tool.run({ query: "cat" }, makeCtx());
+    expect(result.status).toBe("ok");
+    expect(result.fullOutput).toBe("- #1 the cat sat on the mat");
   });
 
   it("keeps the keyword output unchanged without embeddings", async () => {

@@ -103,6 +103,7 @@ export async function createRuntimeMemoryStores(args: {
         fts5Weight: config.memory.embeddings.fts5Weight,
         vectorWeight: config.memory.embeddings.vectorWeight,
         bruteForceCeiling: config.memory.embeddings.bruteForceCeiling,
+        ...(connection.minCosine !== undefined ? { minCosine: connection.minCosine } : {}),
       });
       embeddingHealth = "ok";
       if (config.memory.embeddings.backfill) {

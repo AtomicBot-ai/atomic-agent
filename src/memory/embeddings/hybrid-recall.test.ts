@@ -373,6 +373,63 @@ describe("recallHybrid: notes found by meaning alone", () => {
     expect(await recall(deps(), { k: 2 })).toHaveLength(2);
   });
 
+  // A note whose cosine with the query [1, 0, 0, 0] is exactly `c`.
+  const at = (c: number) => [c, Math.sqrt(1 - c * c), 0, 0];
+
+  it("never lets meaning-only notes push an exact keyword hit out of the top k", async () => {
+    const exact = note("deploy key path /etc/atomic/key.pem", at(0.05));
+    for (let i = 0; i < 3; i += 1) note(`похожее ${i}`, at(0.4));
+    const result = await recall(deps(), { k: 3, bm25Hits: [{ ...exact, bm25Score: -12 }] });
+    expect(result).toHaveLength(3);
+    expect(result[0]!.id).toBe(exact.id);
+  });
+
+  it("ranks keyword hits by the corrected blend: the strongest BM25 hit scores highest", async () => {
+    const strong = note("strong keyword hit", at(0));
+    const weak = note("weak keyword hit", at(0));
+    const meaning = note("keyword hit close in meaning", at(1));
+    const hits = [
+      { ...weak, bm25Score: -1 },
+      { ...strong, bm25Score: -10 },
+      { ...meaning, bm25Score: -5 },
+    ];
+    // 0.5·(5/10) + 0.5·1 = 0.75 > 0.5·1 = 0.5 > 0.5·0.1 = 0.05
+    const result = await recall(deps({ hydrate: undefined }), { k: 3, bm25Hits: hits });
+    expect(result.map((r) => r.id)).toEqual([meaning.id, strong.id, weak.id]);
+  });
+
+  it("keeps pure BM25 order without embeddings", async () => {
+    const a = note("a", at(1));
+    const b = note("b", at(0));
+    const hits = [{ ...a, bm25Score: -9 }, { ...b, bm25Score: -3 }];
+    const result = await recall(deps({ embeddingClient: null, embeddingStore: null }), { k: 2, bm25Hits: hits });
+    expect(result.map((r) => r.id)).toEqual([a.id, b.id]);
+  });
+
+  it("admits only meaning-only notes close to the query's best match", async () => {
+    const best = note("кот Барсик", at(0.95));
+    note("что-то про животных вообще", at(0.5));
+    expect((await recall(deps())).map((r) => r.id)).toEqual([best.id]);
+  });
+
+  it("honours a model's own floor", async () => {
+    note("кот Барсик", at(0.5));
+    expect(await recall(deps({ minCosine: 0.55 }))).toEqual([]);
+    expect(await recall(deps())).toHaveLength(1);
+  });
+
+  it("admits nothing on meaning alone when the vector weight is zero", async () => {
+    note("кот Барсик", at(1));
+    expect(await recall(deps({ vectorWeight: 0, fts5Weight: 1 }))).toEqual([]);
+  });
+
+  it("skips a vector of another length instead of failing the recall", async () => {
+    const odd = memStore.store({ content: "odd row" });
+    embStore.upsert({ memoryId: odd.id, model: "test-model", dim: 2, vector: new Float32Array([1, 0]), createdAt: 1 });
+    const good = note("кот Барсик", at(1));
+    expect((await recall(deps())).map((r) => r.id)).toEqual([good.id]);
+  });
+
   it("above the ceiling, reaches the newest notes and the keyword hits, not older meaning-only notes", async () => {
     const oldMeaning = note("старый кот", [1, 0, 0, 0]);
     const keyword = note("lisbon pet trip", [0, 1, 0, 0]);

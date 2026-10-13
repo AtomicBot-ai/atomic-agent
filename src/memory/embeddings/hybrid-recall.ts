@@ -33,18 +33,32 @@ import type { EmbeddingStore } from "./embedding-store.js";
  *     increments.
  *
  * Notes found only by meaning (no shared keyword, e.g. another
- * language) join the blend through `deps.hydrate` when they clear
- * `COSINE_ONLY_MIN_SIMILARITY`, at most `k` of them.
+ * language) come in through `deps.hydrate`, only into the slots keyword
+ * hits leave free, and only when they clear the similarity floor and
+ * stay close to the best cosine of the query (`admitsCosineOnly`).
  */
 
 /**
- * The cosine a note needs to be recalled on meaning alone. The embedding
- * models in the catalog (EmbeddingGemma, nomic) are normalised and put
- * unrelated short texts at roughly 0.1–0.3 and paraphrases or
+ * Default cosine a note needs to be recalled on meaning alone, for
+ * models without their own `minCosine` in the catalog. EmbeddingGemma
+ * puts unrelated short texts at roughly 0.1–0.3 and paraphrases or
  * translations well above 0.5; 0.35 keeps the first out without losing
- * the second. Keyword hits are not gated: BM25 already vouched for them.
+ * the second. Models whose unrelated texts score higher (nomic, BGE)
+ * carry a higher floor in the catalog. Keyword hits are not gated: BM25
+ * already vouched for them.
  */
 export const COSINE_ONLY_MIN_SIMILARITY = 0.35;
+
+/**
+ * How far below the query's best cosine a meaning-only note may sit.
+ * The prompt's auto-recall runs on every tool step: when nothing in the
+ * corpus is really close, the floor alone would let the "least
+ * unrelated" notes in each time. Anchoring to the best match keeps only
+ * the notes that are about as close as the best one (0.15 is about the
+ * gap between a paraphrase and a loosely related note on these models;
+ * an estimate, not a measurement).
+ */
+export const COSINE_ONLY_MAX_GAP = 0.15;
 
 export interface HybridRecallInputEntry extends MemoryEntry {
   /** Lower is better — raw BM25 score as returned by `bm25(fts)`. */
@@ -79,6 +93,11 @@ export interface HybridRecallDeps {
   vectorWeight: number;
   metrics?: AgentMetrics;
   /**
+   * The attached model's floor for meaning-only notes (catalog
+   * `minCosine`). Default `COSINE_ONLY_MIN_SIMILARITY`.
+   */
+  minCosine?: number;
+  /**
    * Loads the entries of notes found by cosine alone, by id (ids that no
    * longer exist are left out). Without it, cosine only re-ranks the BM25
    * hits.
@@ -97,8 +116,9 @@ export interface HybridRecallDeps {
  *     up to `bruteForceCeiling`, else the newest that many plus the BM25
  *     candidates', emitting `brute_force_overflow`.
  *  4. Cosine over them, apply workingDir + tags filters (the same ones
- *     the BM25 query applies), blend with normalised BM25 scores, add
- *     the best cosine-only notes above the floor, return top-K.
+ *     the BM25 query applies). Keyword hits are ranked among themselves
+ *     by normalised BM25 blended with cosine and keep their slots; the
+ *     best meaning-only notes fill the slots left, return top-K.
  */
 export async function recallHybrid(
   deps: HybridRecallDeps,
@@ -131,50 +151,54 @@ export async function recallHybrid(
   // Cosine over filtered candidates only. The filters mirror the BM25
   // query (`MemoryStore.recallRaw`): working dir in scope and every
   // required tag. It has no archived/kind filter, so neither does this.
-  const cosineHits: Array<{ id: number; cosine: number }> = [];
+  const cosineById = new Map<number, number>();
   for (const c of candidates) {
     if (!passesFilters(c, opts.workingDir, requiredTags)) continue;
-    const cosine = cosineSimilarity(queryVec, c.vector);
-    if (cosine > 0) cosineHits.push({ id: c.memoryId, cosine });
+    // A vector of another length (a corrupt or foreign row) cannot be
+    // compared: skip it rather than fail the whole recall.
+    if (c.vector.length !== queryVec.length) continue;
+    cosineById.set(c.memoryId, cosineSimilarity(queryVec, c.vector));
   }
 
-  // Blend the two signals. BM25 is "lower is better" and unbounded
-  // below; normalise via `1 / (1 + |bm25|)` so it maps to (0, 1].
-  // Cosine is already in [-1, 1]; clamp to [0, 1] (negative cosine ⇒
-  // unrelated, score 0).
-  const blended = new Map<number, { entry: MemoryEntry; score: number }>();
-  for (const hit of opts.bm25Hits) {
-    const normBm25 = 1 / (1 + Math.abs(hit.bm25Score));
-    blended.set(hit.id, {
-      entry: hit,
-      score: deps.fts5Weight * normBm25,
-    });
-  }
-  const cosineOnly: Array<{ id: number; cosine: number }> = [];
-  for (const c of cosineHits) {
-    const normCos = Math.max(0, Math.min(1, c.cosine));
-    const existing = blended.get(c.id);
-    if (existing) existing.score += deps.vectorWeight * normCos;
-    else if (c.cosine >= COSINE_ONLY_MIN_SIMILARITY) cosineOnly.push(c);
-  }
-  // Notes found by meaning alone: the best `k`, scored on cosine only
-  // (their BM25 part is 0), so a keyword hit that also matches by
-  // meaning still ranks above a meaning-only one of the same cosine.
-  if (deps.hydrate && cosineOnly.length > 0) {
-    cosineOnly.sort((a, b) => b.cosine - a.cosine);
-    const top = cosineOnly.slice(0, opts.k);
-    const cosineById = new Map(top.map((c) => [c.id, c.cosine]));
-    for (const entry of deps.hydrate(top.map((c) => c.id))) {
-      const cosine = cosineById.get(entry.id);
-      // Re-checked on the hydrated row: it may have changed since the scan.
-      if (cosine === undefined || !passesFilters(entry, opts.workingDir, requiredTags)) continue;
-      blended.set(entry.id, { entry, score: deps.vectorWeight * Math.min(1, cosine) });
-    }
-  }
-  return [...blended.values()]
+  // Keyword hits, re-ranked among themselves. FTS5's bm25() is negative
+  // and more negative is better, so the strongest hit has the largest
+  // magnitude: normalise by the set's largest so the best keyword hit
+  // scores 1 (the old `1 / (1 + |bm25|)` gave it the smallest share).
+  // Cosine is clamped to [0, 1] (negative ⇒ unrelated, 0).
+  const maxBm25 = Math.max(0, ...opts.bm25Hits.map((hit) => Math.abs(hit.bm25Score)));
+  const keyword = opts.bm25Hits
+    .map((hit) => {
+      const normBm25 = maxBm25 > 0 ? Math.abs(hit.bm25Score) / maxBm25 : 1;
+      const cosine = Math.max(0, Math.min(1, cosineById.get(hit.id) ?? 0));
+      return { entry: hit as MemoryEntry, score: deps.fts5Weight * normBm25 + deps.vectorWeight * cosine };
+    })
+    // Stable sort: equal scores keep BM25 order.
     .sort((a, b) => b.score - a.score)
     .slice(0, opts.k)
     .map((r) => r.entry);
+
+  // Notes found by meaning alone only fill the slots keyword hits leave
+  // free: an exact keyword hit (an identifier, a path, a URL) is never
+  // pushed out by something that merely sounds alike.
+  const free = opts.k - keyword.length;
+  if (free <= 0 || !deps.hydrate || deps.vectorWeight <= 0) return keyword;
+  const keywordIds = new Set(opts.bm25Hits.map((hit) => hit.id));
+  let bestCosine = 0;
+  for (const cosine of cosineById.values()) if (cosine > bestCosine) bestCosine = cosine;
+  const floor = Math.max(deps.minCosine ?? COSINE_ONLY_MIN_SIMILARITY, bestCosine - COSINE_ONLY_MAX_GAP);
+  const meaningOnly = [...cosineById.entries()]
+    .filter(([id, cosine]) => !keywordIds.has(id) && cosine >= floor)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, free);
+  if (meaningOnly.length === 0) return keyword;
+  const hydrated = new Map(deps.hydrate(meaningOnly.map(([id]) => id)).map((entry) => [entry.id, entry]));
+  const extra: MemoryEntry[] = [];
+  for (const [id] of meaningOnly) {
+    const entry = hydrated.get(id);
+    // Re-checked on the hydrated row: it may have changed since the scan.
+    if (entry && passesFilters(entry, opts.workingDir, requiredTags)) extra.push(entry);
+  }
+  return [...keyword, ...extra];
 }
 
 type Candidate = ReturnType<EmbeddingStore["listByModel"]>[number];

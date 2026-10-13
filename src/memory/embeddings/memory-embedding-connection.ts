@@ -14,7 +14,13 @@ import { createLocalEmbeddingClient } from "./local-embedding-client.js";
 export type MemoryEmbeddingConnection =
   | { state: "disabled" }
   | { state: "unreachable"; modelId: string; why: string }
-  | { state: "reachable"; modelId: string; createClient: () => EmbeddingClient };
+  | {
+      state: "reachable";
+      modelId: string;
+      /** The model's floor for meaning-only recall (catalog `minCosine`), when it has one. */
+      minCosine?: number;
+      createClient: () => EmbeddingClient;
+    };
 
 /**
  * The one way to reach the memory embedding model: the runtime's boot and
@@ -55,6 +61,7 @@ export async function connectMemoryEmbeddings(
   return {
     state: "reachable",
     modelId: def.id,
+    ...(def.minCosine !== undefined ? { minCosine: def.minCosine } : {}),
     // Not a bare `LlamaEmbeddingClient`: a managed embedding daemon
     // requires the key (#582), and `/health` above is exempt from it, so
     // a keyless client would pass the probe and then get 401 on every
