@@ -8,6 +8,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shoul
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
+import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
@@ -9293,13 +9294,17 @@ function watchCoreUpdates(): void {
       const result = await modelsEngine("check", signal);
       const value = result.value as { check?: { currentVersion: string | null; latestVersion: string; updateAvailable: boolean; requiresAgentUpdate: boolean } } | undefined;
       if (!result.ok || !value?.check) return;
-      /* Nothing installed yet is a fresh machine on the default engine, not an
-         update: Core comes down with the first model start (or the installer
-         placed it). An "update" toast there would be the first thing a new
-         person sees about an engine they never chose. */
-      if (value.check.currentVersion === null && !value.check.requiresAgentUpdate) return;
-      const signature = JSON.stringify(value.check);
-      if (signature !== previous && !quitting) { previous = signature; send("core:update", value.check); }
+      /* Only a real update the person can install toasts, once per version
+         (core-update-notice.ts): never requiresAgentUpdate, which they cannot
+         act on (the app's own update brings the agent and its Core), never a
+         fresh machine with nothing installed yet, and never again for a
+         version already shown, on this launch or the next. */
+      const userData = app.getPath("userData");
+      const version = coreUpdateNoticeVersion(value.check, readDismissedCoreUpdate(userData));
+      if (!version || version === previous || quitting || !win || win.isDestroyed()) return;
+      previous = version;
+      send("core:update", value.check);
+      writeDismissedCoreUpdate(userData, version);
     } catch { /* Offline checks are retried at the next scheduled check or manually. */ }
   };
   coreChecks.first = setTimeout(() => { void check(); }, 10_000);

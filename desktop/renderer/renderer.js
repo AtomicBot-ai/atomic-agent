@@ -10087,10 +10087,12 @@ if (BR) {
   // The launch installing Core's backend before the model starts: its bar, and a word that it is happening.
   if (BR.onEngineLaunchInstall) BR.onEngineLaunchInstall(engfLaunchInstall);
   if (BR.engineLaunchInstall) BR.engineLaunchInstall().then((st) => { if (st && st.running) engfLaunchInstall(st); }).catch(() => {});
+  /* main sends only a real update, once per version (core-update-notice.ts).
+     requiresAgentUpdate never toasts: nobody can act on it here, and the
+     app's own update brings the Core it supports. */
   if (BR.onCoreUpdate) BR.onCoreUpdate((check) => {
-    if (check && (check.updateAvailable || check.requiresAgentUpdate)) toast('Atomic Core update', check.requiresAgentUpdate
-      ? 'Core ' + check.latestVersion + ' needs support from a newer Agent build. Your current engine stays in use.'
-      : 'Open Settings › Models › Engine to install the update when you are ready.');
+    if (check && check.updateAvailable) toast('Atomic Core update', 'Atomic Core ' + check.compatibleVersion
+      + ' is ready. Open Settings › Models › Engine to install it when you are ready.');
   });
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
