@@ -17,6 +17,8 @@ import {
 
 import { createSkillsDefaults, parseSkillsConfig, parseClawHubConfigWithDefaults, DEFAULT_SKILLS_CATALOG_BUDGET, type RuntimeSkillsConfig, type UserSkillsConfig } from "./skills-config.js";
 export { DEFAULT_SKILLS_CATALOG_BUDGET, parseSkillNameArray, parseSkillTapArray } from "./skills-config.js";
+import { createShellGuardDefaults, parseShellGuardConfig, type ShellGuardConfig } from "./shell-guard-config.js";
+export { parseShellGuardConfig, type ShellGuardConfig } from "./shell-guard-config.js";
 import { createSessionDefaults, parseSessionConfig, type RuntimeSessionsConfig, type UserSessionsConfig } from "./session-retention-config.js";
 import { createTracingDefaults, parseTracingConfig, type RuntimeTracingConfig, type UserTracingConfig } from "./tracing-config.js";
 
@@ -240,6 +242,13 @@ export interface AtomicAgentConfig {
    * Per-tool operator settings. Mirrors `UserConfigFile.tools`.
    */
   tools: RuntimeToolsConfig;
+  /**
+   * The user's own shell-guard rules. Mirrors `UserConfigFile.shellGuard`.
+   * Read live by the shell guard through the bootstrap's `shellPolicy`
+   * predicate — `/guard` writes the file and resets the config cache, so
+   * the next command sees the new rules without a restart.
+   */
+  shellGuard: ShellGuardConfig;
   log: {
     level: LogLevel;
   };
@@ -589,6 +598,21 @@ export interface UserConfigFile {
    * Per-tool operator settings (config v67).
    */
   tools: UserToolsConfig;
+  /**
+   * The user's own shell-guard rules (config v77, issue #229). `deny`
+   * lists commands that must never run without a person's yes (they go
+   * to the approval ladder instead of running silently); `allow` lists
+   * commands the operator pre-approves for unattended runs. Patterns
+   * are dull globs anchored at argv[0] — `"npm run *"`, `"git status"`.
+   * The layer sits after the built-in dangerous rules and before
+   * safe-allow in the guard's walk, so a pattern can only narrow what
+   * prompts, never widen past a dangerous or hardline verdict. Rules
+   * live here, in the operator's own config, never in a repo-supplied
+   * file: a clone cannot ship guard rules the agent would honour before
+   * anyone read them. Older files are transparently upgraded with empty
+   * lists, which mount no user layer at all.
+   */
+  shellGuard: ShellGuardConfig;
   /**
    * Session retention (config v73). One bounded prune of
    * `sessions.sqlite` at startup, plus the trace file of every row it
@@ -982,7 +1006,13 @@ export interface UserConfigFile {
 // older file has no such entries. An older build that rewrites the list
 // drops `localPath` but keeps the entry's `file://` `huggingFaceUrl`; the
 // parser recovers the path from that URL, so the round trip loses nothing.
-export const USER_CONFIG_VERSION = 76;
+// v77: new `shellGuard` block (issue #229) — the operator's own
+// deny/allow patterns for the shell guard. Additive and inert by
+// default: older files upgrade with empty lists, which mount no user
+// layer and leave the guard byte-identical. Rules sit after the
+// built-in dangerous rules and before safe-allow, so they can only
+// narrow what prompts.
+export const USER_CONFIG_VERSION = 77;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1134,6 +1164,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   73,
   74,
   75,
+  76,
   USER_CONFIG_VERSION,
 ];
 
@@ -1149,6 +1180,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   projects: createProjectsDefaults(),
   tools: createToolsDefaults(),
+  shellGuard: createShellGuardDefaults(),
   sessions: createSessionDefaults(),
   tracing: createTracingDefaults(),
   memory: createMemoryDefaults(),
@@ -1390,6 +1422,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
   const tools = (obj.tools as Record<string, unknown> | undefined) ?? {};
   const toolsShell = (tools.shell as Record<string, unknown> | undefined) ?? {};
+  const shellGuard =
+    (obj.shellGuard as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchInputs = prepareWebSearchInputs(
@@ -1502,6 +1536,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     },
     projects: parseProjectsConfig(projects, () => USER_CONFIG_DEFAULTS.projects),
     tools: parseToolsConfig(toolsShell, () => USER_CONFIG_DEFAULTS.tools),
+    shellGuard: parseShellGuardConfig(shellGuard, () => USER_CONFIG_DEFAULTS.shellGuard),
     sessions: parseSessionConfig(sessionsRetention, () => USER_CONFIG_DEFAULTS.sessions),
     tracing: parseTracingConfig(mergedTrace, () => USER_CONFIG_DEFAULTS.tracing),
     memory: parseMemoryConfig(

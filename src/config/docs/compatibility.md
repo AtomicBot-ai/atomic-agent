@@ -5,7 +5,7 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 76; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 77; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
@@ -72,6 +72,10 @@ Current defaults are read separately at each old fallback expression, retaining 
 User/runtime shapes remain separate. Outputs/default factories have fresh nested objects and arrays. Disabled/external modes still validate all settings; positive ports retain their current bounds, URLs retain general scheme acceptance, and Hugging Face normalization retains path prefixes. No new network/process/filesystem operation, trimming policy, migration or default is introduced. Environment precedence, catalog publication after loading and live server ownership stay with their existing owners.
 
 Custom model entries accept `localPath` (v76): an absolute `.gguf` path added from disk, launched in place and never downloaded or deleted. An entry without it whose `huggingFaceUrl` is a `file:` URL naming an absolute `.gguf` takes the path back from that URL, because an older build rewriting the list drops `localPath` but keeps the URL. Whether the file still exists is checked at launch, not at parse time.
+
+## Shell guard rules
+
+[shell-guard-config](../shell-guard-config.ts) validates the operator's own deny/allow pattern lists (v77, issue #229). Missing/null blocks or lists upgrade to empty arrays, which mount no user layer — the guard behaves exactly as before. Entries must be non-empty strings, are trimmed, keep their first duplicate, and are bounded in count and length so a bloated config cannot tax every shell call. Matching semantics — argv[0]-anchored dull globs, the deny-then-allow placement after the built-in dangerous rules — belong to the shell guard ([rules-user](../../tools/os/shell-command-guard/rules-user.ts)); parsing here never consults approval policy or executes anything. `/guard` writes the block through the standard read → merge → validate → write → reset cache path.
 
 ## Frontend, channel and integration settings
 

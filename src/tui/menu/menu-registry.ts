@@ -637,6 +637,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "setup.guard",
+    label: "Shell guard rules…",
+    group: "setup",
+    slash: {
+      name: "guard",
+      description:
+        "your shell guard rules: `/guard` list | `/guard add allow|deny <pattern>` | `/guard remove allow|deny <pattern>` | `/guard clear [allow|deny]`",
+      rank: 45,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.sidebar",
     label: "Hide or show the sidebar",
     group: "setup",

@@ -37,6 +37,11 @@ import {
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
+import {
+  formatShellGuardRules,
+  persistShellGuardRules,
+} from "./persist-shell-guard.js";
+import type { ShellGuardOp } from "./commands/slash-command-handler.js";
 import { createMouseStdin } from "./mouse/mouse-stdin.js";
 import { makeMouseSource } from "./mouse/mouse-source.js";
 import {
@@ -433,6 +438,73 @@ export async function tuiCommand(args: string[]): Promise<number> {
     });
   };
 
+  // `/guard` — the operator's own shell-guard rules (`shellGuard.*`,
+  // issue #229). Reads and writes live config: a persisted rule is on
+  // the very next shell command, because persistShellGuardRules resets
+  // the config cache the bootstrap's guard predicate reads through.
+  const handleShellGuardOp = (op: ShellGuardOp): void => {
+    try {
+      const rules = getConfig().shellGuard;
+      if (op.kind === "list") {
+        bus.emit({ type: "system_message", text: formatShellGuardRules(rules) });
+        return;
+      }
+      if (op.kind === "add") {
+        const list = [...rules[op.list]];
+        const pattern = op.pattern.trim();
+        if (list.some((entry) => entry === pattern)) {
+          bus.emit({
+            type: "system_message",
+            text: `shell guard ${op.list} already has "${pattern}"`,
+          });
+          return;
+        }
+        list.push(pattern);
+        persistShellGuardRules({ ...rules, [op.list]: list });
+        bus.emit({
+          type: "system_message",
+          text: `shell guard ${op.list} += "${pattern}" — in effect on the next command`,
+        });
+        return;
+      }
+      if (op.kind === "remove") {
+        const pattern = op.pattern.trim();
+        const list = rules[op.list].filter((entry) => entry !== pattern);
+        if (list.length === rules[op.list].length) {
+          bus.emit({
+            type: "system_message",
+            text: `no such shell guard ${op.list} rule: "${pattern}" — /guard to list`,
+          });
+          return;
+        }
+        persistShellGuardRules({ ...rules, [op.list]: list });
+        bus.emit({
+          type: "system_message",
+          text: `shell guard ${op.list} -= "${pattern}"`,
+        });
+        return;
+      }
+      // clear
+      const cleared = op.list === "all" ? { deny: [], allow: [] } : { ...rules, [op.list]: [] };
+      const count =
+        op.list === "all"
+          ? rules.deny.length + rules.allow.length
+          : rules[op.list].length;
+      if (count === 0) {
+        bus.emit({ type: "system_message", text: "no shell guard rules to clear" });
+        return;
+      }
+      persistShellGuardRules(cleared);
+      bus.emit({
+        type: "system_message",
+        text: `cleared ${count} shell guard ${op.list === "all" ? "rules" : `rule(s) from ${op.list}`}`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      bus.emit({ type: "runtime_info", line: `shell guard change not saved: ${msg}` });
+    }
+  };
+
   // Created out here rather than inside the app so the goodbye call
   // survives quit paths that tear the process down without unmounting
   // the React tree; null outside a herdr pane.
@@ -796,6 +868,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           restartRequested = true;
         },
         onMouseSupportRequested: setMouseEnabled,
+        onShellGuardRequested: handleShellGuardOp,
         // A drag that started on dead content (no target claimed the
         // press) — the terminal-agnostic selection trigger. Same
         // window, same timer, same auto-resume as the modifier path;

@@ -309,6 +309,9 @@ export function runSlashCommand(
       result.mouseVerb === "status" ? null : result.mouseVerb === "on",
     );
   }
+  if (result.guardOp) {
+    callbacks.onShellGuardRequested?.(result.guardOp);
+  }
 }
 
 /**

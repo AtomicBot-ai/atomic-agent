@@ -8,6 +8,7 @@ export type {
   OnboardingState,
   ReadScope,
   SessionRailConfig,
+  ShellGuardConfig,
   TelegramConfig,
   NotificationsConfig,
   DownloadNotifyChannelSetting,

@@ -3,11 +3,11 @@
 Status: current
 Owner: src/config/
 
-Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 76. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
+Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 77. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
 
 ## version
 
-- `version` (default `76`).
+- `version` (default `77`).
 
 ## localModels
 
@@ -90,6 +90,11 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 76.
 - `tools.shell.defaultTimeoutMs` (default `600000`).
 - `tools.shell.jobMaxMs` (default `3600000`).
 - `tools.shell.maxJobs` (default `3`).
+
+## shellGuard
+
+- `shellGuard.deny` (default `[]`).
+- `shellGuard.allow` (default `[]`).
 
 ## sessions
 

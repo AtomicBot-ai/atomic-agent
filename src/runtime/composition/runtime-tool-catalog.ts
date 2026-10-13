@@ -94,6 +94,10 @@ export function registerRuntimeCoreTools(input: {
     // restart. The guard never reads config itself.
     shellPolicy: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+      // The operator's own guard rules (`shellGuard.*`, issue #229),
+      // read live the same way: `/guard` writes config.json and resets
+      // the config cache, so the next command runs under the new rules.
+      userGuardRules: () => getConfig().shellGuard,
     },
     shellJobs,
   });

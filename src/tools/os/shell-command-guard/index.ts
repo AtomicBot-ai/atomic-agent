@@ -9,6 +9,11 @@ export {
   buildGitRemotePolicyRule,
   readGitSubcommand,
 } from "./rules-policy.js";
+export {
+  USER_ALLOW_RULE,
+  USER_DENY_RULE,
+  buildUserGuardRules,
+} from "./rules-user.js";
 export { basenameCommand } from "./normalise.js";
 export { execWriteTargets, shellWriteTargets } from "./write-targets.js";
 export type {
@@ -19,5 +24,6 @@ export type {
   NormalisedCommand,
   Rule,
   ShellGuardPolicy,
+  ShellGuardUserRules,
 } from "./guard-types.js";
 export { ShellGuardBlockError } from "./guard-types.js";

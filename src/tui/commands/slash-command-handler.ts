@@ -18,6 +18,17 @@ export interface SlashDispatchCallbacks {
   onQuit(): void;
 }
 
+/**
+ * `/guard <sub>` (issue #229): manage the operator's shell-guard rules
+ * (`shellGuard.*` in config.json). Pure parsing here — the caller hands
+ * the op to `onShellGuardRequested`, which owns the config write.
+ */
+export type ShellGuardOp =
+  | { kind: "list" }
+  | { kind: "add"; list: "allow" | "deny"; pattern: string }
+  | { kind: "remove"; list: "allow" | "deny"; pattern: string }
+  | { kind: "clear"; list: "allow" | "deny" | "all" };
+
 export interface SlashDispatchResult {
   readonly modelModeCommand?: ModelModeCommand;
   /**
@@ -125,6 +136,13 @@ export interface SlashDispatchResult {
    */
   readonly mouseVerb?: "on" | "off" | "status";
   /**
+   * `/guard <sub>` — list / add / remove / clear the operator's
+   * shell-guard rules. The caller owns the config write and the cache
+   * reset (see `persist-shell-guard.ts`); a rule takes effect on the
+   * next shell command without a restart.
+   */
+  readonly guardOp?: ShellGuardOp;
+  /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
    * dialog it opens is what eventually asks for that.
@@ -208,6 +226,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       });
     case "mouse":
       return dispatchMouseSub(parsed.args);
+    case "guard":
+      return dispatchGuardSub(parsed.args);
     case "theme":
       return dispatchThemeSub(parsed.args);
     case "mode":
@@ -533,6 +553,49 @@ function dispatchMouseSub(rawArgs: string): SlashDispatchResult {
   return pureActions([], {
     systemMessage: `usage: /mouse [on|off] (got "${rawArgs.trim()}")`,
   });
+}
+
+/**
+ * `/guard` lists the rules; `add`/`remove` take the list name first,
+ * then the pattern verbatim (everything after the list name — a
+ * pattern is a command line and may contain spaces). Anything else is
+ * a usage hint rather than a guess: a silently dropped rule edit would
+ * leave the operator guarding against a rule that does not exist.
+ */
+function dispatchGuardSub(rawArgs: string): SlashDispatchResult {
+  const trimmed = rawArgs.trim();
+  if (trimmed.length === 0) {
+    return pureActions([], { guardOp: { kind: "list" } });
+  }
+  const usage = pureActions([], {
+    systemMessage:
+      "usage: /guard | /guard add allow|deny <pattern> | /guard remove allow|deny <pattern> | /guard clear [allow|deny]",
+  });
+  // First token is the subcommand; the remainder keeps its inner
+  // spacing so a multi-word pattern arrives whole.
+  const firstSpace = trimmed.indexOf(" ");
+  const sub = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
+  const rest = firstSpace === -1 ? "" : trimmed.slice(firstSpace + 1).trim();
+  if (sub === "list" && rest.length === 0) {
+    return pureActions([], { guardOp: { kind: "list" } });
+  }
+  if (sub === "clear") {
+    if (rest.length === 0) return pureActions([], { guardOp: { kind: "clear", list: "all" } });
+    if (rest === "allow" || rest === "deny") {
+      return pureActions([], { guardOp: { kind: "clear", list: rest } });
+    }
+    return usage;
+  }
+  if (sub === "add" || sub === "remove") {
+    const listSpace = rest.indexOf(" ");
+    if (listSpace === -1) return usage;
+    const list = rest.slice(0, listSpace).toLowerCase();
+    if (list !== "allow" && list !== "deny") return usage;
+    const pattern = rest.slice(listSpace + 1).trim();
+    if (pattern.length === 0) return usage;
+    return pureActions([], { guardOp: { kind: sub, list, pattern } });
+  }
+  return usage;
 }
 
 function dispatchThemeSub(rawArgs: string): SlashDispatchResult {

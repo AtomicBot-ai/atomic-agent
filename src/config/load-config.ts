@@ -619,6 +619,10 @@ export function loadConfig(): AtomicAgentConfig {
     git: {
       remoteSync: user.git.remoteSync,
     },
+    shellGuard: {
+      deny: [...user.shellGuard.deny],
+      allow: [...user.shellGuard.allow],
+    },
     composio: {
       enabled: user.composio.enabled,
       apiKeyEnv: user.composio.apiKeyEnv,
