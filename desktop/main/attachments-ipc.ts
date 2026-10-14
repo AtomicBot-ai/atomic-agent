@@ -19,6 +19,7 @@
  */
 
 import { dialog, ipcMain, shell, type BrowserWindow } from "electron";
+import { readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
@@ -36,6 +37,23 @@ const FILE_EXTS = [
   "log", "diff", "patch",
 ];
 
+/**
+ * TEST ONLY — `--fake-pick=<file.json>` (test/attachments-images.drive.mjs):
+ * the open dialog is not shown, and `attachments:pick` answers with the
+ * paths that file lists, `{"images": [...], "files": [...]}`, read on every
+ * pick. A flag a shipped launch never passes, like `--fake-ram`.
+ */
+function fakePick(kind: "images" | "files"): string[] | null {
+  const hit = process.argv.find((a) => a.startsWith("--fake-pick="));
+  if (!hit) return null;
+  try {
+    const list = (JSON.parse(readFileSync(hit.slice("--fake-pick=".length), "utf8")) as Record<string, unknown>)[kind];
+    return Array.isArray(list) ? list.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /** At most this many paths a dialog returned are remembered (a long session picks a lot). */
 const PICKED_MAX = 500;
 
@@ -47,10 +65,11 @@ export function wireAttachmentIpc(opts: { window: () => BrowserWindow | null; st
   };
 
   ipcMain.handle("attachments:pick", async (_event, kind: unknown) => {
-    const win = opts.window();
-    if (!win) return [];
     const images = kind === "images";
-    const res = await dialog.showOpenDialog(win, {
+    const fake = fakePick(images ? "images" : "files");
+    const win = opts.window();
+    if (!win && !fake) return [];
+    const res = fake ? { canceled: false, filePaths: fake } : await dialog.showOpenDialog(win!, {
       properties: ["openFile", "multiSelections"],
       message: images ? "Choose images to attach" : "Choose files to attach",
       filters: images
