@@ -54,7 +54,7 @@ export const APPROVAL_CATEGORIES = [
   "git_remote", "fusion_fanout", "browser_nonweb", "trust_config", "email", "fs_read_outside", "other",
 ] as const;
 export const SETTINGS_PANES = [
-  "general", "models", "mcp", "telegram", "memory", "tasks", "skills", "privacy", "import", "diagnostics",
+  "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "skills", "privacy", "import", "diagnostics",
 ] as const;
 export const IMPORT_SOURCES = ["tui", "hermes", "openclaw", "claude-code", "codex", "pi", "other"] as const;
 export const IMPORT_PARTS = ["providers", "keys", "skills", "sessions", "memory"] as const;

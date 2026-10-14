@@ -121,6 +121,12 @@ textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/
 .sd-rows .tk-setrow .d{overflow-wrap:anywhere}
 .sd-rows .tk-setrow .d.sd-mono{font-size:12px}
 
+/* ---- Composio (composio.js): the Telegram cards' shapes; the key field sits in the card, so it is not centred ---- */
+.sd-cmpcard.tk-card.pad{width:min(520px,100%)}
+.sd-cmpcard .sd-acts{flex-wrap:wrap}
+.sd-cmp .tk-notice .sd-cap{flex:none}
+.sd-steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px;font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+
 /* ---- Import · ST-31, ST-32 ---- */
 .sd-imphead{gap:10px}
 /* Д51: the header carries Preview import and stays at the top of the pane

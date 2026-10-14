@@ -239,6 +239,10 @@ contextBridge.exposeInMainWorld("atomic", {
   envPresent: (names: string[]) => ipcRenderer.invoke("app:envPresent", names),
   dotenvSet: (stateDir: string, key: string, value: string | null) =>
     ipcRenderer.invoke("app:dotenvSet", { stateDir, key, value }),
+  /** Settings › Connections › Composio (main/composio-key.ts): the key goes in once and never comes back out. */
+  composioSaveKey: (stateDir: string, value: string) => ipcRenderer.invoke("composio:saveKey", { stateDir, value }),
+  composioRemoveKey: (stateDir: string) => ipcRenderer.invoke("composio:removeKey", stateDir),
+  composioCheck: (stateDir: string) => ipcRenderer.invoke("composio:check", stateDir),
 
   platform: process.platform,
   /** Windows: repaint the overlaid window controls for the page's theme. */

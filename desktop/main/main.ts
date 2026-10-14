@@ -174,6 +174,8 @@ import {
   dotenvKeys,
   dotenvSet,
   envPresent,
+  // Settings › Connections › Composio: composio.userId / sessionId / mcpUrl in one write
+  configSetPaths,
   // Item 7A — the HF_TOKEN asymmetry note on a gated listing (names only)
   stateDirPath,
   type ImportRunInput,
@@ -192,6 +194,7 @@ import {
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
+import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
@@ -1332,6 +1335,7 @@ function wireIpc(client: AgentClient): void {
     // Analytics: the write first; only a successful analytics.enabled false then says analytics_disabled and stops sending.
     const res = await A.analyticsConfigWrite(key, value, via, () => configSet(key, value));
     A.telegramConfigWrite(key, value, res);
+    A.composioConfigWrite(key, value, res);
     return res;
   });
   ipcMain.handle("cli:modelsList", () => modelsList());
@@ -2490,6 +2494,41 @@ function wireIpc(client: AgentClient): void {
     if (value !== null && typeof value !== "string") return { ok: false, error: "value must be a string or null" };
     const res = await dotenvSet(stateDir, key, value);
     A.telegramStep(value === null ? "token_cleared" : "token_saved", res);   // never the token
+    return res;
+  });
+
+  /* Settings › Connections › Composio (composio-key.ts). The key comes in
+     once, on Save, and goes to <stateDir>/.env and Composio's x-api-key
+     header only: none of these answers, logs or analytics carries it, and
+     `app:dotenvSet` above still refuses COMPOSIO_API_KEY, so this is the one
+     way in. The agent loads the key when it starts; the window offers the
+     restart. */
+  const composioDeps = (stateDir: string): ComposioDeps => ({
+    stateDir,
+    env: process.env,
+    dotenvSet,
+    readComposio: () => configGetKey("composio"),
+    writeComposio: (patch) => configSetPaths(Object.entries(patch).map(([leaf, v]) => [`composio.${leaf}`, v] as const)),
+  });
+  const composioOutcome = (res: ComposioKeyResult): "ok" | "unverified" | "rejected" | "error" =>
+    res.ok ? (res.verified ? "ok" : "unverified") : res.rejected ? "rejected" : "error";
+  ipcMain.handle("composio:saveKey", async (_event, payload: unknown) => {
+    const { stateDir, value } = (payload ?? {}) as { stateDir?: unknown; value?: unknown };
+    if (!ownDir(stateDir)) return { ok: false, verified: false, shadowed: false, error: "state dir required" };
+    const res = await saveComposioKey(composioDeps(stateDir), typeof value === "string" ? value.trim() : value);
+    A.composioStep("key_saved", composioOutcome(res));   // never the key
+    return res;
+  });
+  ipcMain.handle("composio:removeKey", async (_event, stateDir: unknown) => {
+    if (!ownDir(stateDir)) return { ok: false, verified: false, shadowed: false, error: "state dir required" };
+    const res = await removeComposioKey(composioDeps(stateDir));
+    A.composioStep("key_removed", res.ok ? "ok" : "error");
+    return res;
+  });
+  ipcMain.handle("composio:check", async (_event, stateDir: unknown) => {
+    if (!ownDir(stateDir)) return { ok: false, verified: false, shadowed: false, error: "state dir required" };
+    const res = await checkSavedComposioKey(composioDeps(stateDir));
+    A.composioStep("key_checked", composioOutcome(res));
     return res;
   });
 
@@ -4951,15 +4990,15 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "memory", "tasks", "skills", "privacy", "import", "diagnostics"];
+  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "privacy", "import", "diagnostics"];
   const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Privacy", "Import", "Diagnostics"];
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", memory: "memory",
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", memory: "memory",
     tasks: "tasks", skills: "skills", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: the panes are General, Models, Connections (MCP, Telegram) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
@@ -7295,6 +7334,22 @@ async function settingsTestPartC(
       await js<void>("window.__telegramRefresh()");
     }
   }
+
+  // ---- Composio (composio.js, composio-key.ts) ----
+  // Read-only here: a real save would send a key to Composio. The key paths are test/composio-key.test.mjs.
+  await js<void>("window.__settingsOpen('composio')");
+  type CmpState = { hasKey: boolean | null; enabled: boolean | null; status: string; mode: string };
+  const cmp = await until(() => js<CmpState>("window.__composio()"), (c) => c.hasKey !== null, 10_000);
+  const cmpBody = await js<string>("window.__settingsBody()");
+  const cmpSub = await js<string>("(() => { const s = document.querySelector('#settings .set-subseg button.on'); return s ? s.textContent.trim() : ''; })()");
+  const cmpHasKey = envPresent(["COMPOSIO_API_KEY"]).length > 0 || (stateDir ? dotenvKeys(stateDir).keys.includes("COMPOSIO_API_KEY") : false);
+  check(
+    "composio tab: under Connections, the setup card without a key and the status with one; the field is empty",
+    cmpSub === "Composio" && cmp.hasKey === cmpHasKey
+      && (cmpHasKey ? cmp.status !== "none" && cmpBody.includes("Use Composio") : cmp.status === "none" && cmpBody.includes("Connect apps with Composio"))
+      && !cmpBody.includes("nothing leaves") && await js<boolean>("(() => { const n = document.getElementById('cmp-key'); return !n || n.value === ''; })()"),
+    `sub=${cmpSub} state=${JSON.stringify(cmp)}`,
+  );
 
   // ---- Import ----
   await js<void>("window.__settingsOpen('import')");

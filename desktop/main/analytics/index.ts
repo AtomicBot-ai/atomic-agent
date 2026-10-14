@@ -55,6 +55,8 @@ export {
 } from "./setup.js";
 export {
   agentImportDone,
+  composioConfigWrite,
+  composioStep,
   debugReportSaved,
   skillAction,
   skillInstalled,
