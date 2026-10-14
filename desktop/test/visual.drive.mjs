@@ -11,8 +11,10 @@
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { launch, sleep } from './drive.mjs';
+import { assertThrowawayStateDir } from './state-guard.mjs';
 
 const DIR = process.env.ATAG_SHOT_DIR || '/tmp/atag-shots-state';
+assertThrowawayStateDir(DIR); // before anything below wipes or seeds it
 const OUT = process.env.ATAG_SHOT_OUT || '/tmp/atag-shots';
 const PORT = Number(process.env.ATAG_SHOT_PORT || 9490);
 const W = 1470, H = 923;

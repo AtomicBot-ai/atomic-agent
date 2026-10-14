@@ -13,8 +13,10 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { launch, sleep } from './drive.mjs';
+import { assertThrowawayStateDir } from './state-guard.mjs';
 
 const DIR = process.env.ATAG_F6_DIR || '/tmp/atag-drive-f6';
+assertThrowawayStateDir(DIR); // before anything below wipes or seeds it
 const PORT = Number(process.env.ATAG_F6_PORT || 9488);
 const results = [];
 const check = (name, pass, detail) => {
