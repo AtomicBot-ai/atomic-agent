@@ -128,12 +128,45 @@ describe("ProviderRegistry", () => {
     expect(registry.listIds()).toContain("embed-only");
   });
 
-  it("rejects non-embedding openai-compatible provider without defaultChatModel", async () => {
+  it("allows a defaultEmbeddingModel-only provider with no userModels (#410)", async () => {
     registerBuiltInProviderKinds();
     const fakeConfig = {
       ...getConfig(),
       llm: {
         activeTextProvider: "chat-provider",
+        activeEmbeddingProvider: "embed-pin",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "embed-pin",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultEmbeddingModel: "nomic-embed-text",
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    });
+    expect(registry.listIds()).toContain("embed-pin");
+  });
+
+  it("rejects non-embedding openai-compatible provider without defaultChatModel", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "bad-provider",
         activeEmbeddingProvider: "embed-only",
         toolTransport: "auto" as const,
         providers: [
@@ -226,7 +259,7 @@ describe("ProviderRegistry with an incomplete provider entry", () => {
         getProfile: () => ({}) as never,
         logger,
       }),
-    ).rejects.toThrow(/requires baseUrl and defaultChatModel/);
+    ).rejects.toThrow(/requires defaultChatModel/);
   });
 
   it("skips the broken entry on a hot merge too", async () => {

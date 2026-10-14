@@ -68,6 +68,23 @@ function modelVisionOptions(
   return { supportsVision: verdict.vision, visionSource: verdict.visionSource };
 }
 
+
+/**
+ * An entry that never serves chat: either every declared `userModels` row
+ * is an embedding, or it pins `defaultEmbeddingModel` and declares no chat
+ * model. Those may omit `defaultChatModel` (#410).
+ */
+function isEmbeddingOnlyEntry(entry: LlmProviderConfigEntry): boolean {
+  const rows = entry.userModels;
+  if (rows !== undefined && rows.length > 0) {
+    return rows.every((m) => m.kind === "embedding");
+  }
+  return (
+    entry.defaultEmbeddingModel !== undefined &&
+    entry.defaultChatModel === undefined
+  );
+}
+
 export function registerBuiltInProviderKinds(): void {
   if (registered) return;
   registered = true;
@@ -102,10 +119,7 @@ export function registerBuiltInProviderKinds(): void {
 
   registerProviderKind("openai-compatible", (ctx) => {
     const entry = ctx.entry;
-    const isEmbeddingOnly =
-      entry.userModels !== undefined &&
-      entry.userModels.length > 0 &&
-      entry.userModels.every((m) => m.kind === "embedding");
+    const isEmbeddingOnly = isEmbeddingOnlyEntry(entry);
     if (!entry.baseUrl) {
       throw new Error(
         `openai-compatible provider "${entry.id}" requires baseUrl`,
@@ -116,6 +130,7 @@ export function registerBuiltInProviderKinds(): void {
         `openai-compatible provider "${entry.id}" requires defaultChatModel`,
       );
     }
+    const chatModel = entry.defaultChatModel ?? "";
     return new OpenAiProvider({
       id: entry.id,
       providerKind: "openai-compatible",
@@ -124,7 +139,7 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
-      ...modelVisionOptions(entry, entry.defaultChatModel),
+      ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -132,17 +147,14 @@ export function registerBuiltInProviderKinds(): void {
       strictTools: entry.strictTools,
       promptCache: entry.promptCache,
       messageShape: entry.messageShape,
-      ...modelWireOptions(entry, entry.defaultChatModel),
+      ...(chatModel ? modelWireOptions(entry, chatModel) : {}),
       logger: ctx.logger,
     });
   });
 
   registerProviderKind("qwen-openai-compatible", (ctx) => {
     const entry = ctx.entry;
-    const isEmbeddingOnly =
-      entry.userModels !== undefined &&
-      entry.userModels.length > 0 &&
-      entry.userModels.every((m) => m.kind === "embedding");
+    const isEmbeddingOnly = isEmbeddingOnlyEntry(entry);
     if (!entry.baseUrl) {
       throw new Error(
         `qwen-openai-compatible provider "${entry.id}" requires baseUrl`,
@@ -153,6 +165,7 @@ export function registerBuiltInProviderKinds(): void {
         `qwen-openai-compatible provider "${entry.id}" requires defaultChatModel`,
       );
     }
+    const chatModel = entry.defaultChatModel ?? "";
     return new OpenAiProvider({
       id: entry.id,
       providerKind: "qwen-openai-compatible",
@@ -161,7 +174,7 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
-      ...modelVisionOptions(entry, entry.defaultChatModel),
+      ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
@@ -170,7 +183,7 @@ export function registerBuiltInProviderKinds(): void {
       strictTools: entry.strictTools,
       promptCache: entry.promptCache,
       messageShape: entry.messageShape,
-      ...modelWireOptions(entry, entry.defaultChatModel),
+      ...(chatModel ? modelWireOptions(entry, chatModel) : {}),
       logger: ctx.logger,
     });
   });
