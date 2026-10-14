@@ -1,6 +1,6 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
-import { createContextCompaction } from "./context-compaction.js";
+import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
@@ -390,9 +390,7 @@ export async function createAgentRuntime(
     },
     warn: (sessionId, message) => logger.warn(message, { sessionId }),
     emit: (event) => {
-      if (event.type === "compaction_failed" && event.result.status === "failed") {
-        logger.warn("context compaction failed", { sessionId: event.sessionId, reason: event.result.message });
-      }
+      logCompactionOutcome(logger, event);
       emitAgentLoopEventFor(event.sessionId, event);
     },
   });

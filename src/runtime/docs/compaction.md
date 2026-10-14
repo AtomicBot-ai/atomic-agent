@@ -31,7 +31,9 @@ and approval waits. The loop consumes a request before its next inference, after
 the previous batch has been committed. A request left at turn exit is enqueued
 without awaiting it while holding the lock. Idle operations load the session
 inside FIFO. Duplicate pending/running compactions return `busy`. Turn abort and
-runtime shutdown cancel owned operations. Steers arriving during a subcall are
+runtime shutdown cancel owned operations. A started compaction that ends
+`failed` logs a warning and one that ends `cancelled` an info line
+(`logCompactionOutcome`); a request cancelled while still queued logs nothing. Steers arriving during a subcall are
 drained and budgeted before the next inference.
 
 ## State and prompt

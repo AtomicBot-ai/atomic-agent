@@ -14,7 +14,7 @@ import { planCompaction } from "../prompt/plan-compaction.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { buildNativeMessages } from "../llm/provider/openai/openai-native-messages.js";
-import { createContextCompaction } from "./context-compaction.js";
+import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
 import { TurnController } from "./turn-controller.js";
 import type { CompactionEvent } from "../agent/compaction-control.js";
 import { estimateTokens } from "../prompt/token-budget.js";
@@ -389,5 +389,28 @@ describe("compaction control inbox", () => {
     const third = f.compactSession("chat"); f.shutdown();
     expect(await third).toMatchObject({ status: "cancelled" });
     expect(f.persist).not.toHaveBeenCalled();
+  });
+});
+
+describe("compaction outcome logging", () => {
+  const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  it("warns on a failure and leaves an info line for a cancellation", () => {
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    logCompactionOutcome(logger, { type: "compaction_failed", sessionId: "s1", usage, calls: 0,
+      result: { status: "failed", reason: "manual", message: "summary was empty" } });
+    expect(logger.warn).toHaveBeenCalledWith("context compaction failed", { sessionId: "s1", reason: "summary was empty" });
+    logCompactionOutcome(logger, { type: "compaction_failed", sessionId: "s1", usage, calls: 2,
+      result: { status: "cancelled", reason: "manual", tokensBefore: 30000 } });
+    expect(logger.info).toHaveBeenCalledWith("context compaction cancelled",
+      { sessionId: "s1", reason: "manual", calls: 2, tokensBefore: 30000 });
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+  it("says nothing for progress or a finished compaction", () => {
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    logCompactionOutcome(logger, { type: "compaction_started", sessionId: "s1", reason: "manual", tokensBefore: 10 });
+    logCompactionOutcome(logger, { type: "compaction_completed", sessionId: "s1", usage, calls: 1,
+      result: { status: "compacted", reason: "manual", tokensBefore: 10, tokensAfter: 5 } });
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

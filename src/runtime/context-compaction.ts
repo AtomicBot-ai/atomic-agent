@@ -1,4 +1,4 @@
-import type { ContextCompactionControl, CompactionStepOptions } from "../agent/compaction-control.js";
+import type { CompactionEvent, ContextCompactionControl, CompactionStepOptions } from "../agent/compaction-control.js";
 import type { CompactionConfig } from "../config/agent/compaction-config.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
@@ -8,6 +8,7 @@ import type { SessionState } from "../session/session-state.js";
 import type { SessionStore } from "../session/session-store.js";
 import type { TurnController } from "./turn-controller.js";
 import { SessionNotFoundError } from "./session-not-found-error.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { runContextCompaction, type CompactionRunnerDependencies } from "./context-compaction-runner.js";
 
 interface ManualRequest {
@@ -24,6 +25,28 @@ export interface ContextCompactionDependencies extends CompactionRunnerDependenc
   sessionStore: Pick<SessionStore, "load">;
   turnController: Pick<TurnController, "enqueue">;
   promptInput(state: SessionState): BuildPromptInput;
+}
+
+/**
+ * The log line for a compaction that ended without a checkpoint. A failure
+ * is a warning. A cancellation is an info line: it is not an error (the
+ * caller went away, the turn was stopped or the runtime is shutting down),
+ * but without a line a manual compaction whose HTTP request was dropped
+ * left nothing in the log while the client reported that it could not
+ * compact. Only a compaction that had started emits an event; one cancelled
+ * while still queued settles without one.
+ */
+export function logCompactionOutcome(logger: Pick<StructuredLogger, "info" | "warn">, event: CompactionEvent): void {
+  if (event.type !== "compaction_failed") return;
+  const { result } = event;
+  if (result.status === "failed") {
+    logger.warn("context compaction failed", { sessionId: event.sessionId, reason: result.message });
+  } else if (result.status === "cancelled") {
+    logger.info("context compaction cancelled", {
+      sessionId: event.sessionId, reason: result.reason, calls: event.calls,
+      ...(result.tokensBefore !== undefined ? { tokensBefore: result.tokensBefore } : {}),
+    });
+  }
 }
 
 /** A control inbox, separate from user messages and from the FIFO's occupied lock. */
