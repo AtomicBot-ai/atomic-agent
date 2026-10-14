@@ -1,4 +1,4 @@
-import { validSessionCompaction } from "./session-compaction.js";
+import { validRollingSummary, validSessionCompaction } from "./session-compaction.js";
 import type { SessionState } from "./session-state.js";
 
 /**
@@ -33,5 +33,8 @@ export function normalizeSessionState(raw: unknown): SessionState {
     delete normalized.compaction;
     normalized.compactionWarning = "Ignored an invalid context compaction checkpoint.";
   }
+  // A stale rolling summary (edited, forked or already compacted history) is
+  // routine and only costs speed at the next compaction: dropped silently.
+  if (normalized.rollingSummary && !validRollingSummary(normalized)) delete normalized.rollingSummary;
   return normalized;
 }

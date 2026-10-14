@@ -12,13 +12,40 @@ export interface SessionCompaction {
   createdAt: number;
   reason: CompactionReason;
   model: string | null;
-  /** `extractive`: built from the records without a model (`model` is null). Absent: a model summary. */
-  kind?: "extractive";
+  /**
+   * `extractive`: built from the records without a model (`model` is null).
+   * `rolling`: a background model summary made between turns, plus an
+   * extractive summary of the records after it. Absent: a model summary.
+   */
+  kind?: "extractive" | "rolling";
   costUsd?: number;
   tokensBefore: number;
   tokensAfter: number;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
   calls?: number;
+}
+
+/**
+ * A summary kept ahead of compaction, extended in the background between
+ * turns. It is never shown to the model: only the next compaction consumes
+ * it, and a successful compaction removes it. Valid only while it still
+ * extends the current checkpoint (`from`, `baseHash`) and its boundary
+ * record is unchanged.
+ */
+export interface RollingCompactionSummary {
+  version: 1;
+  summary: string;
+  /** The checkpoint offset it extends (0 without a checkpoint). */
+  from: number;
+  /** {@link summaryTextHash} of that checkpoint's summary, or of "" without one. */
+  baseHash: string;
+  /** Exclusive end of the covered records: the watermark. */
+  coveredThrough: number;
+  /** {@link compactionBoundaryHash} of the last covered record. */
+  boundaryHash: string;
+  createdAt: number;
+  /** The model that wrote the latest extension. */
+  model: string | null;
 }
 
 export interface CompactionResult {
@@ -32,6 +59,23 @@ export interface CompactionResult {
 
 export function compactionBoundaryHash(turn: ConversationTurn): string {
   return createHash("sha256").update(JSON.stringify(turn)).digest("hex");
+}
+
+export function summaryTextHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+/** The rolling summary when it still extends the current checkpoint up to an unchanged, safe boundary. */
+export function validRollingSummary(state: Pick<SessionState, "turns" | "compaction" | "rollingSummary">): RollingCompactionSummary | null {
+  const r = state.rollingSummary;
+  if (!r || r.version !== 1 || typeof r.summary !== "string" || !r.summary.trim() || !Number.isFinite(r.createdAt) ||
+      !Number.isInteger(r.from) || !Number.isInteger(r.coveredThrough) || r.coveredThrough <= r.from ||
+      r.coveredThrough > state.turns.length || (r.model !== null && typeof r.model !== "string")) return null;
+  const base = validSessionCompaction(state);
+  if (r.from !== (base?.coveredThrough ?? 0) || r.baseHash !== summaryTextHash(base?.summary ?? "")) return null;
+  const last = state.turns[r.coveredThrough - 1];
+  if (!last || compactionBoundaryHash(last) !== r.boundaryHash || !safeCompactionCuts(state.turns).includes(r.coveredThrough)) return null;
+  return r;
 }
 
 export function validSessionCompaction(state: Pick<SessionState, "turns" | "compaction">): SessionCompaction | null {
