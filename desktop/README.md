@@ -96,7 +96,11 @@ adds one line saying so and pointing at `/compact`. `/compact` in the composer
 and "Compact now" in the context popover call the compact route through main
 (`agent:compactSession`); both are off while a turn runs, while a compaction
 is going, and before the chat is saved. Words and rules:
-[context-compaction.js](renderer/context-compaction.js).
+[context-compaction.js](renderer/context-compaction.js). The route answers
+only when the summary is written, which can take longer than five minutes on
+a local model, so main sends it over `node:http` and not `fetch`: Node's fetch
+gives up on headers after 300 s with a bare `fetch failed`, and the dropped
+request cancels the compaction on the agent's side.
 
 **The session's model stamp.** The same row carries `metadata.llm` — the
 provider and model that session last ran on. It is reported and never applied:

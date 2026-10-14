@@ -1,6 +1,7 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -125,6 +126,67 @@ const LINGER_WAIT_MS = 5_000;
  * (compaction.maxTotalTimeoutMs); one more minute covers the queue wait.
  */
 const COMPACT_TIMEOUT_MS = 11 * 60_000;
+
+/**
+ * POST to the agent over `node:http`, for a route that answers only when
+ * its work is done. Not `fetch`: Node's built-in fetch is undici, whose
+ * `headersTimeout` and `bodyTimeout` are 300 000 ms each by default and
+ * sit below every `AbortSignal` this file arms. A compaction that took
+ * longer than five minutes died at the five-minute mark as a bare
+ * `fetch failed` (cause `UND_ERR_HEADERS_TIMEOUT`), the dropped request
+ * cancelled the compaction on the agent's side, and the window reported a
+ * failure the agent never had.
+ *
+ * Why not a dispatcher with longer deadlines: the desktop does not ship
+ * `undici`, and the agent measured that Node's fetch rejects a
+ * per-request dispatcher from the npm package outright
+ * (`UND_ERR_INVALID_ARG`, src/llm/transport-deadlines.ts). The other way
+ * is `setGlobalDispatcher`, which would lift the ceiling for every fetch
+ * in the main process. `node:http` has no response deadline of its own,
+ * so the caller's signal is the only clock, and nothing else changes.
+ */
+export function postAndWait(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  signal: AbortSignal,
+): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      url,
+      { method: "POST", headers: { ...headers, "content-length": String(Buffer.byteLength(body)) }, signal },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") }));
+        res.on("error", reject);
+        res.on("close", () => {
+          if (!res.complete) reject(new Error("the agent closed the connection before it answered"));
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+/**
+ * A failed request in words, with its cause. Node's fetch throws
+ * `TypeError: fetch failed` for every transport failure and puts what
+ * happened (`ECONNREFUSED`, `UND_ERR_HEADERS_TIMEOUT`, …) on `err.cause`,
+ * so the bare message names nothing. The message stays first, so the
+ * renderer's `fetch failed` matching keeps working.
+ */
+export function requestErrorText(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as { cause?: unknown }).cause;
+  if (!cause || typeof cause !== "object") return err.message;
+  const { code, message } = cause as { code?: unknown; message?: unknown };
+  const said = typeof message === "string" ? message.trim() : "";
+  const id = typeof code === "string" ? code : "";
+  const detail = id && said && !said.includes(id) ? `${id}: ${said}` : said || id;
+  return detail && !err.message.includes(detail) ? `${err.message} (${detail})` : err.message;
+}
 
 /**
  * Where the agent might be, in order of preference.
@@ -1034,7 +1096,7 @@ export class AgentClient extends EventEmitter {
       };
       return { ok: true, supported: true, ...body };
     } catch (err) {
-      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, supported: true, error: requestErrorText(err) };
     }
   }
 
@@ -1073,7 +1135,7 @@ export class AgentClient extends EventEmitter {
       }
       return { ok: true, n_ctx: null, model, slots };
     } catch (err) {
-      return { ok: false, n_ctx: null, model: null, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, n_ctx: null, model: null, error: requestErrorText(err) };
     }
   }
 
@@ -1118,7 +1180,7 @@ export class AgentClient extends EventEmitter {
       };
       return { ok: true, supported: true, ...body };
     } catch (err) {
-      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, supported: true, error: requestErrorText(err) };
     }
   }
 
@@ -1126,7 +1188,9 @@ export class AgentClient extends EventEmitter {
    * ATO-259: compact a session's context now, through the agent's
    * `POST /api/sessions/{id}/compact` (PR #618). The route waits for the
    * summary, so the bound is the agent's own ten-minute ceiling plus a
-   * margin; closing the request would cancel the compaction. A 409 is the
+   * margin; closing the request would cancel the compaction, which is why
+   * it goes over `postAndWait` and not `fetch` (whose own five-minute
+   * deadlines closed it early). A 409 is the
    * agent's "busy" (one already running). An agent without the route
    * answers its unknown-route 404 and is reported as unsupported; the
    * route's own 404 is an unknown session.
@@ -1136,17 +1200,24 @@ export class AgentClient extends EventEmitter {
     status?: "compacted" | "noop" | "busy" | "failed" | "cancelled";
     tokensBefore?: number; tokensAfter?: number; message?: string; error?: string;
   }> {
+    const signal = AbortSignal.timeout(COMPACT_TIMEOUT_MS);
     try {
-      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/compact`, {
-        method: "POST",
-        headers: this.headers(),
-        body: "{}",
-        signal: AbortSignal.timeout(COMPACT_TIMEOUT_MS),
-      });
-      const body = (await res.json().catch(() => null)) as {
+      const answer = await postAndWait(
+        `${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/compact`,
+        this.headers(),
+        "{}",
+        signal,
+      );
+      const res = { status: answer.status, ok: answer.status >= 200 && answer.status < 300 };
+      let body: {
         status?: string; tokensBefore?: unknown; tokensAfter?: unknown; message?: unknown;
         error?: { message?: string };
-      } | null;
+      } | null = null;
+      try {
+        body = answer.text ? JSON.parse(answer.text) : null;
+      } catch {
+        /* not JSON */
+      }
       if (res.status === 404) {
         const detail = body?.error?.message ?? "";
         if (/session not found/i.test(detail)) return { ok: false, supported: true, error: "This chat is not saved yet" };
@@ -1163,7 +1234,10 @@ export class AgentClient extends EventEmitter {
       }
       return { ok: false, supported: true, error: body?.error?.message || `HTTP ${res.status}` };
     } catch (err) {
-      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+      if (signal.aborted) {
+        return { ok: false, supported: true, error: `the agent did not answer within ${COMPACT_TIMEOUT_MS / 60_000} minutes` };
+      }
+      return { ok: false, supported: true, error: requestErrorText(err) };
     }
   }
 
