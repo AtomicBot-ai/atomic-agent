@@ -74,7 +74,7 @@ function modelVisionOptions(
  * is an embedding, or it pins `defaultEmbeddingModel` and declares no chat
  * model. Those may omit `defaultChatModel` (#410).
  */
-function isEmbeddingOnlyEntry(entry: LlmProviderConfigEntry): boolean {
+export function isEmbeddingOnlyEntry(entry: LlmProviderConfigEntry): boolean {
   const rows = entry.userModels;
   if (rows !== undefined && rows.length > 0) {
     return rows.every((m) => m.kind === "embedding");

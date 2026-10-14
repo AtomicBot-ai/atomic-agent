@@ -468,6 +468,20 @@ function resolveTarget(
       message: `Usage: ${code("/model <provider> <model-id>")}.`,
     };
   }
+  if (
+    modelId === null &&
+    (entry.kind === "openai-compatible" ||
+      entry.kind === "qwen-openai-compatible") &&
+    !entry.defaultChatModel
+  ) {
+    return {
+      ok: false,
+      message: [
+        `${code(entry.id)} is an openai-compatible provider with no chat model, so it cannot be the active text provider.`,
+        `Pin a chat model first (${code(`/model ${entry.id} <model-id>`)}) or keep using it for embeddings only.`,
+      ].join(" "),
+    };
+  }
   if (modelId !== null && MODEL_PIN_IGNORED_KINDS.has(entry.kind)) {
     return {
       ok: false,

@@ -126,6 +126,10 @@ describe("ProviderRegistry", () => {
       logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
     });
     expect(registry.listIds()).toContain("embed-only");
+    await expect(registry.swapActive("embed-only")).rejects.toThrow(
+      /has no chat model and cannot be the active text provider/,
+    );
+    expect(registry.activeTextProviderId).toBe("chat-provider");
   });
 
   it("allows a defaultEmbeddingModel-only provider with no userModels (#410)", async () => {
