@@ -3375,8 +3375,8 @@ function composer() {
     : WAIT
     ? '<div class="statusstrip waiting">'
       + '<span class="ss-ic"><span class="ss-dot"></span></span>'
-      + '<span class="ann">' + esc(waitAnn(WAIT)) + '</span>'
-      + ((badKeyForWait(WAIT) || waitWhy(WAIT)) ? '<span class="ob-help ss-why">' + esc(badKeyForWait(WAIT) ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
+      + '<span class="ann"' + (waitAnnCode(WAIT) ? ' title="' + esc(waitAnnCode(WAIT)) + '"' : '') + '>' + esc(waitAnn(WAIT)) + '</span>'
+      + ((badKeyForWait(WAIT) || waitWhy(WAIT)) ? '<span class="ob-help ss-why"' + (!badKeyForWait(WAIT) && waitWhyCode(WAIT) ? ' title="' + esc(waitWhyCode(WAIT)) + '"' : '') + '>' + esc(badKeyForWait(WAIT) ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
       + '<span class="ss-grow"></span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + '</div>'
@@ -7436,6 +7436,23 @@ function waitIsLocalServer(id) {
   const entry = all.find((p) => p && p.id === id);
   return !!entry && entry.kind === 'llama-server';
 }
+/* ATO-383: a provider's HTTP status in words. "HTTP 429" told the person
+   nothing; the number stays on hover (waitCauseCode). null for a status
+   with no words of its own, which keeps its number. */
+function httpStatusWords(status) {
+  if (status === 429) return 'the provider is overloaded right now';
+  if (status === 503) return 'the provider is temporarily unavailable';
+  if (status === 401) return 'API key rejected';
+  // 403 is also moderation, region and model access, not only a bad key.
+  if (status === 403) return 'the provider refused the request';
+  if (typeof status === 'number' && status >= 500 && status <= 599) return 'the provider\u2019s server had a problem';
+  return null;
+}
+/** The code behind worded words, for the hover title: "HTTP 429", or '' when the words already carry it. */
+function waitCauseCode(cause) {
+  const status = cause && typeof cause.status === 'number' ? cause.status : null;
+  return cause && cause.kind === 'http' && httpStatusWords(status) ? 'HTTP ' + status : '';
+}
 /** The agent's cause in words (the TUI's describeCause), or null when there is none to word. */
 function waitCauseWords(cause, providerId) {
   const kind = cause && typeof cause.kind === 'string' ? cause.kind : '';
@@ -7446,7 +7463,7 @@ function waitCauseWords(cause, providerId) {
   if (kind === 'dropped') return 'connection dropped mid-reply';
   if (kind === 'timeout') return 'the request timed out';
   if (kind === 'loading') return 'the server is still loading the model';
-  if (kind === 'http') return status !== null ? 'HTTP ' + status : null;
+  if (kind === 'http') return status !== null ? httpStatusWords(status) || 'HTTP ' + status : null;
   if (kind === 'stream_error') return 'the provider reported an error mid-reply' + (status !== null ? ' (' + status + ')' : '');
   if (kind === 'error_finish') return 'the provider ended its reply with an error';
   return null;   // `unknown`, or a kind this window does not know yet
@@ -7609,6 +7626,11 @@ function waitWhy(wait) {
   if (said) return said;
   return wait.reason ? humanWaitReason(wait.reason) : '';
 }
+/** The hover title for waitWhy: the HTTP code its words stand for, or ''. */
+function waitWhyCode(wait) {
+  if (!wait || dwatchWords(wait) || !wait.cause || !waitCauseWords(wait.cause, wait.providerId)) return '';
+  return waitCauseCode(wait.cause);
+}
 
 /* Backlog 40: the provider the person picked failed before the link the turn
    waits on. AI/ML API answered "You've run out of funds", the chain fell over
@@ -7620,8 +7642,15 @@ function waitWhy(wait) {
 function failedLinkWhy(f) {
   const c = f && f.cause && typeof f.cause.kind === 'string' ? f.cause : null;
   if (c && c.kind === 'billing') return 'out of funds';
-  if (c && c.kind === 'http' && c.status === 401) return 'API key rejected';
   return (c && waitCauseWords(c, f.providerId)) || 'failed';
+}
+/** The hover title for waitAnn: the HTTP code behind the picked provider's failure, or ''. */
+function waitAnnCode(wait) {
+  if (badKeyForWait(wait) || !waitPickedFailure(wait)) return '';
+  const picked = selActiveProviderId();
+  const f = (wait.fallbackFailures || []).find((x) => x && x.providerId === picked);
+  const c = f && f.cause && typeof f.cause.kind === 'string' ? f.cause : null;
+  return c && c.kind !== 'billing' ? waitCauseCode(c) : '';
 }
 /** The picked provider's own failure when the turn waits on a later link: {name, why}, or null. */
 function waitPickedFailure(wait) {
