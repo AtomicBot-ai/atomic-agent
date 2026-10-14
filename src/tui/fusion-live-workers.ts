@@ -195,6 +195,66 @@ export function fanoutExpectation(
   };
 }
 
+/**
+ * How many times its own expectation a leg may run before the readout
+ * calls it stuck.
+ *
+ * Past the estimate is only late; twice past it is the point where the
+ * operator stops reading the two clocks and starts deciding — cancel it,
+ * narrow the task, go and look at the daemon. Saying that in the row is
+ * the difference between a number the reader has to compare and an
+ * answer they can act on.
+ */
+export const STUCK_ETA_MULTIPLE = 2;
+
+/**
+ * What this leg was expected to take, in ms, on the same basis the
+ * readout prints: the orchestrator's estimate corrected by this wave,
+ * or the wave's own median of finished siblings when it gave none.
+ * `null` when it has neither.
+ */
+export function expectedMsFor(
+  worker: FusionLiveWorker,
+  measured: FanoutExpectation,
+): number | null {
+  return worker.etaSeconds !== null
+    ? worker.etaSeconds * 1000 * (measured.correction ?? 1)
+    : measured.medianMs;
+}
+
+/**
+ * Whether this leg has run long enough to be worth interrupting.
+ *
+ * A finished leg is never stuck — it ended, which is the opposite. A leg
+ * with no expectation is never stuck either: nothing has been blown,
+ * and a flag that fires without a comparison behind it is noise.
+ *
+ * Deliberately only the estimate rule. "No new token arrived for N
+ * minutes" would need token-granular events, and the `fusion_worker`
+ * feed has none: `phase: "tool"` fires at tool boundaries, so a local
+ * 27B writing one long file runs a single generation for minutes with
+ * the row otherwise silent. An idle threshold read off that feed would
+ * fire on every slow-but-healthy leg, which is worse than not having
+ * one.
+ */
+export function isFusionWorkerStuck(
+  worker: FusionLiveWorker,
+  now: number = Date.now(),
+  expectation: FanoutExpectation | number | null = null,
+): boolean {
+  if (worker.done) return false;
+  const measured: FanoutExpectation =
+    expectation === null
+      ? { correction: null, medianMs: null }
+      : typeof expectation === "number"
+        ? { correction: expectation, medianMs: null }
+        : expectation;
+  const expectedMs = expectedMsFor(worker, measured);
+  if (expectedMs === null) return false;
+  const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
+  return elapsedMs >= expectedMs * STUCK_ETA_MULTIPLE;
+}
+
 export function formatFusionLiveWorker(
   worker: FusionLiveWorker,
   now: number = Date.now(),
@@ -210,8 +270,11 @@ export function formatFusionLiveWorker(
       : typeof expectation === "number"
         ? { correction: expectation, medianMs: null }
         : expectation;
-  // Last, so a narrow terminal truncates the count before the clock:
-  // "is this stuck?" is the question this row answers first.
+  // Before the context count, which is the most truncatable thing on
+  // the row: whether the leg needs attention is the question the
+  // operator is asking, and it must not be the thing that falls off a
+  // narrow terminal.
+  const stuck = isFusionWorkerStuck(worker, now, measured) ? " · stuck" : "";
   const context =
     worker.contextTokens === null
       ? ""
@@ -220,7 +283,7 @@ export function formatFusionLiveWorker(
     worker,
     elapsedMs,
     measured,
-  )}${context}`;
+  )}${stuck}${context}`;
 }
 
 /**
@@ -241,10 +304,7 @@ function describeExpectation(
   // The orchestrator's estimate, corrected by this wave — and when it
   // gave none, the wave's own median, which is a measurement rather
   // than a guess.
-  const expectedMs =
-    worker.etaSeconds !== null
-      ? worker.etaSeconds * 1000 * (measured.correction ?? 1)
-      : measured.medianMs;
+  const expectedMs = expectedMsFor(worker, measured);
   if (expectedMs === null) return "";
   if (elapsedMs >= expectedMs) {
     return ` (past the ~${formatElapsed(expectedMs)} expected)`;
