@@ -41,7 +41,8 @@ drained and budgeted before the next inference.
 The optional version-1 `SessionState.compaction` lives in the existing SQLite JSON
 payload. It contains summary text, an exclusive `coveredThrough` transcript index,
 a boundary-record hash, timestamp, reason, model, before/after token estimates,
-usage/call count, and estimated cost when pricing is available. Loading rejects
+usage/call count, and estimated cost when pricing is available. An extractive
+checkpoint has `model: null` and the optional `kind: "extractive"`. Loading rejects
 unsupported versions, invalid boundaries and cuts through tool/result pairs;
 `compactionWarning` carries the diagnostic. Transcript records are never rewritten.
 
@@ -73,10 +74,10 @@ completion of a manual operation never replaces the running loop's live state.
 ## Budget and model calls
 
 Defaults are owned by [compaction-config.ts](../../config/agent/compaction-config.ts):
-`auto=true`, `triggerRatio=0.9`, `targetRatio=0.65`, `summaryMaxTokens=2048`,
+`auto=true`, `mode="auto"`, `triggerRatio=0.9`, `targetRatio=0.65`, `summaryMaxTokens=2048`,
 `timeoutMs=600000`, `maxTotalTimeoutMs=600000`.
-Validation requires `0 < targetRatio < triggerRatio < 1`.
-Older configs receive these defaults.
+Validation requires `0 < targetRatio < triggerRatio < 1` and a known mode.
+Older configs receive these defaults; adding `mode` did not change the config version.
 
 The pure planner checks projected history **before** mechanical trimming against
 the prompt builder's remaining history budget, including non-history sections
@@ -113,7 +114,7 @@ without replacing the checkpoint rather than silently truncating the requests.
 defaults for missing fields. The overall deadline is the smaller of `maxTotalTimeoutMs` and
 `timeoutMs` times the planned call count. Small histories keep a single-call
 budget; by default the whole operation has a ten-minute ceiling. Each call
-carries `timeoutMs` as its own request deadline, replacing the provider's
+carries `timeoutMs` (plus a few seconds, so the part limit reports first) as its own request deadline, replacing the provider's
 `requestTimeoutMs` (five minutes for local llama-server by default) for that
 request only, and the process transport ceiling is raised to cover it. Timeouts
 report the failing part or total deadline and completed-call count. Cancellation
@@ -128,14 +129,43 @@ The prompt asks for goal, constraints/preferences, decisions/reasons, completed
 work with evidence, unfinished work/blockers, next actions and essential paths,
 IDs/errors, in the conversation's language. Intentions must be distinguished from
 actions and verified results. Empty, truncated, oversized and non-reducing
-summaries are rejected, as are failed checkpoint writes. Automatic failures warn
+summaries are rejected, as are failed checkpoint writes. Automatic failures that
+leave no checkpoint warn
 and suppress further automatic attempts until the next turn; manual requests
 remain available. An automatic attempt that timed out is held longer, across
 turns: the next automatic attempt waits until projected history has grown by 25%
-over the timed-out attempt's size, or the provider, model or window changed.
+over the timed-out attempt's size, or the provider, model, window, `timeoutMs` or
+`mode` changed.
 A success (manual included) or runtime restart clears the hold. Cancellation is reported distinctly. A provider context-size
 refusal allows one compaction retry of the inference; committed tools are not
 replayed, and repeat refusal follows ordinary error handling.
+
+## Summary method
+
+`mode` chooses how the summary is made. `model` asks the active model, as described
+below. `extractive` builds it in one pass without inference
+([builder](../compaction-extractive.ts), [tool step lines](../compaction-extractive-steps.ts)):
+every user request in the covered records verbatim (over 1200 characters, the
+middle is cut), one line per tool step with its target and outcome (`read X`,
+`edited Y`, ``ran `cmd` → exit N: first error line``), assistant replies trimmed
+to 600 characters, files changed and read, URLs, and the first line of each error.
+Tool output bodies, written content and reasoning are dropped. The previous
+checkpoint is carried as a bounded block. Sections have fixed shares of
+`summaryMaxTokens` and keep the newest entries when the share binds, so the text
+never exceeds the planned summary reserve and passes the same reduction check.
+It runs in milliseconds on a 150k-token history, makes no calls and reports no
+progress events. Cloud state updates are not part of it.
+
+`auto` ([choice](../compaction-mode.ts)) extracts when the serving link is a
+llama-server whose prefix reuse is `none`, or whose serialized source is at least
+32k estimated tokens: prompt evaluation speed is unknown in advance and that much
+input already takes minutes on a laptop model. Cloud and other routes keep the
+model summary. Under `auto`, a model summary that fails or times out (not a
+cancellation) is replaced by an extractive checkpoint instead of leaving the
+packer's mechanical cut, and the completed result says so. After a model summary
+times out on a provider/model/window, later `auto` compactions on it extract
+directly until the runtime restarts or `timeoutMs`/`mode` change. A fallback is
+logged as a warning. `model` keeps the original failure behavior.
 
 ## Observability and validation
 
@@ -151,6 +181,8 @@ ordinary provider cost accounting. Local token usage falls back to completion
 timing counts when no provider usage block is returned.
 
 Contract tests: [planner/service](../context-compaction.test.ts),
+[extractive/auto service](../context-compaction-extractive.test.ts),
+[extractive builder](../compaction-extractive.test.ts),
 [HTTP/runtime/persistence](../../http/route-compaction.test.ts),
 [NDJSON](../../sidecar/compaction.test.ts),
 [TUI commands](../../tui/commands/slash-command-handler.test.ts),

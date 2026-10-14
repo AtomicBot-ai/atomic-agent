@@ -40,6 +40,7 @@ it.each([
   const config = getConfig();
   config.agent.compaction.auto = false;
   config.agent.compaction.summaryMaxTokens = 250;
+  config.agent.compaction.mode = "model";
   config.agent.conversationMaxTokens = 4000;
   config.agent.nameSessions = false;
   config.memory.reflection.enabled = false;

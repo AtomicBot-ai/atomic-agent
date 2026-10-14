@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { createCompactionDefaults, parseCompactionConfig } from "../config/agent/compaction-config.js";
+import { createCompactionDefaults, parseCompactionConfig, type CompactionConfig } from "../config/agent/compaction-config.js";
 import { createEmptySessionState, recordTurn, type SessionState } from "../session/session-state.js";
 import { assistantReplyTurn, assistantToolCallTurn, toolResultTurn, userTurn, steeredUserTurn } from "../session/conversation-turn.js";
 import { normalizeSessionState } from "../session/normalize-session-state.js";
@@ -51,7 +51,8 @@ function input(session: SessionState): BuildPromptInput {
 }
 function fixture(state = history(), promptInput = input) {
   let stored = state;
-  const config = { ...createCompactionDefaults(), summaryMaxTokens: 250 };
+  // These contracts are about model summaries; extractive and auto have their own file.
+  const config: CompactionConfig = { ...createCompactionDefaults(), mode: "model", summaryMaxTokens: 250 };
   const events: CompactionEvent[] = [];
   const complete = vi.fn(async (_params: LlmStreamParams) => completion());
   const persist = vi.fn((next: SessionState) => { stored = next; });
@@ -68,9 +69,10 @@ describe("compaction configuration and projection", () => {
   it("defaults old config and rejects invalid ratios", () => {
     expect(getConfig().agent.compaction).toEqual(createCompactionDefaults());
     expect(parseCompactionConfig(undefined, createCompactionDefaults())).toEqual(createCompactionDefaults());
-    expect(createCompactionDefaults()).toMatchObject({ timeoutMs: 600000, maxTotalTimeoutMs: 600000 });
-    expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
-    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }]) {
+    expect(createCompactionDefaults()).toMatchObject({ mode: "auto", timeoutMs: 600000, maxTotalTimeoutMs: 600000 });
+    expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ mode: "auto", timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
+    for (const mode of ["auto", "model", "extractive"]) expect(parseCompactionConfig({ mode }, createCompactionDefaults()).mode).toBe(mode);
+    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { mode: "fast" }, { mode: 1 }]) {
       expect(() => parseCompactionConfig(raw, createCompactionDefaults())).toThrow();
     }
   });
@@ -251,7 +253,7 @@ describe("atomic compaction", () => {
     const f = fixture(); f.config.timeoutMs = 900_000;
     expect((await f.compactSession("chat")).status).toBe("compacted");
     expect(f.complete.mock.calls.length).toBeGreaterThan(0);
-    expect(f.complete.mock.calls.every(([p]) => p.requestTimeoutMs === 900_000)).toBe(true);
+    expect(f.complete.mock.calls.every(([p]) => p.requestTimeoutMs! >= 900_000)).toBe(true);
   });
   it("bounds chunked input to the model window and covers original records without omissions", async () => {
     const state = history();

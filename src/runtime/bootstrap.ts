@@ -372,7 +372,8 @@ export async function createAgentRuntime(
       const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
       const slice = resolveActiveLlmSlice(providerId);
       return {
-        providerId, transport: slice.transport,
+        providerId, transport: slice.transport, local: slice.isLlamaServer,
+        ...(slice.isLlamaServer ? { prefixReuse: connectedLocal.getLiveProfile().prefixReuse ?? "partial" } : {}),
         contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
         serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
       };
@@ -391,6 +392,9 @@ export async function createAgentRuntime(
     warn: (sessionId, message) => logger.warn(message, { sessionId }),
     emit: (event) => {
       logCompactionOutcome(logger, event);
+      if (event.type === "compaction_completed" && event.result.message) {
+        logger.warn("context compaction fell back to an extractive summary", { sessionId: event.sessionId, reason: event.result.message });
+      }
       emitAgentLoopEventFor(event.sessionId, event);
     },
   });

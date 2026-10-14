@@ -12,6 +12,8 @@ export interface SessionCompaction {
   createdAt: number;
   reason: CompactionReason;
   model: string | null;
+  /** `extractive`: built from the records without a model (`model` is null). Absent: a model summary. */
+  kind?: "extractive";
   costUsd?: number;
   tokensBefore: number;
   tokensAfter: number;

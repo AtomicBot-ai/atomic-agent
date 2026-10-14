@@ -64,6 +64,8 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
   const autoFailed = new Set<string>();
   // Outlives the turn, unlike autoFailed: a timeout is not a transient failure.
   const autoTimedOut = new Map<string, { tokens: number; route: string }>();
+  // Routes whose model summary ran out of time: `auto` extracts there directly.
+  const slowRoutes = new Set<string>();
   let stopped = false;
   const warned = new Set<string>();
   function diagnose(state: SessionState) {
@@ -91,7 +93,8 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     const routeKey = () => {
       let providerId: string | null = null;
       try { providerId = deps.route(id, options.providerId).providerId; } catch { /* The attempt reports it. */ }
-      return JSON.stringify([providerId, input.modelMode?.modelId ?? null, input.profile?.id ?? null, prompt.contextWindow ?? null]);
+      return JSON.stringify([providerId, input.modelMode?.modelId ?? null, input.profile?.id ?? null, prompt.contextWindow ?? null,
+        config.timeoutMs, config.mode]);
     };
     const stalled = autoTimedOut.get(id);
     if (stalled && !request && !options.requested && stalled.route === routeKey() &&
@@ -104,10 +107,12 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     if (request) request.running = true;
     const signal = AbortSignal.any([options.signal, request?.signal ?? controller.signal]);
     const release = () => { if (active.get(input.session.id) === controller) active.delete(input.session.id); };
-    return runContextCompaction(input, plan, config, { ...options, signal, inTurn }, deps)
+    const preferExtractive = slowRoutes.size > 0 && slowRoutes.has(routeKey());
+    return runContextCompaction(input, plan, config, { ...options, signal, inTurn, preferExtractive }, deps)
       .then(({ state, result, timedOut }) => {
         if (result.status === "failed" && plan.reason !== "manual") autoFailed.add(id);
-        if (timedOut && plan.reason !== "manual") autoTimedOut.set(id, { tokens: plan.tokensBefore, route: routeKey() });
+        if (timedOut) slowRoutes.add(routeKey());
+        if (timedOut && result.status === "failed" && plan.reason !== "manual") autoTimedOut.set(id, { tokens: plan.tokensBefore, route: routeKey() });
         if (result.status === "compacted") autoTimedOut.delete(id);
         release();
         request?.settle(result);
@@ -189,6 +194,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
       accepting.clear();
       autoFailed.clear();
       autoTimedOut.clear();
+      slowRoutes.clear();
       warned.clear();
     },
   };
