@@ -212,6 +212,41 @@ describe("atomic compaction", () => {
     expect(await f.compactSession("chat")).toMatchObject({ status: "failed", message: expect.stringContaining("part 1/") });
     expect(f.persist).not.toHaveBeenCalled();
   });
+  it("does not retry a timed-out auto compaction every turn, only after growth or a model change", async () => {
+    const state = history();
+    const f = fixture(state); f.config.timeoutMs = 10;
+    f.complete.mockImplementation(() => new Promise(() => {}));
+    const signal = new AbortController().signal;
+    const turn = async (session: SessionState, promptInput = input(session)) => {
+      f.control.open(session.id, signal);
+      try { return await f.control.beforeStep(promptInput, { signal }); } finally { f.control.close(session.id); }
+    };
+    expect(await turn(state)).toBe(state);
+    expect(f.events.at(-1)).toMatchObject({ type: "compaction_failed", result: { message: expect.stringContaining("timed out") } });
+    let calls = f.complete.mock.calls.length;
+    expect(await turn(state)).toBeUndefined();
+    let grown = state;
+    for (const t of history(2).turns.slice(1)) grown = recordTurn(grown, t);
+    expect(await turn(grown)).toBeUndefined();
+    expect(f.complete).toHaveBeenCalledTimes(calls);
+    // Manual /compact is always allowed.
+    expect(await f.compactSession(state.id)).toMatchObject({ status: "failed" });
+    expect(f.complete.mock.calls.length).toBeGreaterThan(calls);
+    calls = f.complete.mock.calls.length;
+    // A different window is a different attempt.
+    expect(await turn(grown, { ...input(grown), contextWindow: 16000 })).toBe(grown);
+    expect(f.complete.mock.calls.length).toBeGreaterThan(calls);
+    calls = f.complete.mock.calls.length;
+    expect(await turn(grown, { ...input(grown), contextWindow: 16000 })).toBeUndefined();
+    expect(f.complete).toHaveBeenCalledTimes(calls);
+    // So is a history that grew meaningfully since the timed-out attempt.
+    for (const t of history(10).turns.slice(1)) grown = recordTurn(grown, t);
+    expect(await turn(grown, { ...input(grown), contextWindow: 16000 })).toBe(grown);
+    expect(f.complete.mock.calls.length).toBeGreaterThan(calls);
+    // A success clears the hold.
+    f.complete.mockImplementation(async () => completion());
+    expect((await f.compactSession(state.id)).status).toBe("compacted");
+  });
   it("hands its part limit to the provider so a shorter request timeout cannot cut it", async () => {
     const f = fixture(); f.config.timeoutMs = 900_000;
     expect((await f.compactSession("chat")).status).toBe("compacted");

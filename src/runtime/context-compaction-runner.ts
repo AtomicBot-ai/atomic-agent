@@ -61,7 +61,7 @@ export async function runContextCompaction(
   config: CompactionConfig,
   options: CompactionStepOptions & { inTurn: boolean },
   deps: CompactionRunnerDependencies,
-): Promise<{ state: SessionState; result: CompactionResult }> {
+): Promise<{ state: SessionState; result: CompactionResult; timedOut?: boolean }> {
   const state = input.session;
   const usage: CompletionUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let calls = 0;
@@ -177,17 +177,18 @@ export async function runContextCompaction(
     emit({ type: "compaction_completed", sessionId: state.id, result, usage, calls, contextUsage: next.contextUsage });
     return { state: next, result };
   } catch (error) {
+    const timedOut = !options.signal.aborted && (deadline.signal.aborted || timedOutChunk !== undefined);
     const result: CompactionResult = {
       status: options.signal.aborted ? "cancelled" : "failed", reason: plan.reason,
       tokensBefore: plan.tokensBefore, ...(costUsd !== undefined ? { costUsd } : {}),
-      message: !options.signal.aborted && (deadline.signal.aborted || timedOutChunk !== undefined)
+      message: timedOut
         ? timedOutChunk !== undefined
           ? `Compaction part ${timedOutChunk}/${chunkCount} timed out after ${config.timeoutMs} ms (${calls} completed).`
           : `Compaction total time limit (${totalTimeoutMs} ms) reached after ${calls}/${chunkCount} parts.`
         : error instanceof Error ? error.message : String(error),
     };
     emit({ type: "compaction_failed", sessionId: state.id, result, usage, calls });
-    return { state, result };
+    return { state, result, ...(timedOut ? { timedOut } : {}) };
   } finally {
     clearTimeout(timer);
   }

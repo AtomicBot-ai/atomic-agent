@@ -11,6 +11,13 @@ import { SessionNotFoundError } from "./session-not-found-error.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { runContextCompaction, type CompactionRunnerDependencies } from "./context-compaction-runner.js";
 
+/**
+ * After an automatic compaction times out, history must grow by this factor
+ * (or the model/window change) before another automatic attempt: the same
+ * input on the same model would time out again and spend the turn's time.
+ */
+export const AUTO_RETRY_AFTER_TIMEOUT_GROWTH = 1.25;
+
 interface ManualRequest {
   controller: AbortController;
   signal: AbortSignal;
@@ -55,6 +62,8 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
   const requests = new Map<string, ManualRequest>();
   const active = new Map<string, AbortController>();
   const autoFailed = new Set<string>();
+  // Outlives the turn, unlike autoFailed: a timeout is not a transient failure.
+  const autoTimedOut = new Map<string, { tokens: number; route: string }>();
   let stopped = false;
   const warned = new Set<string>();
   function diagnose(state: SessionState) {
@@ -77,6 +86,16 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     const config = deps.config();
     if (!request && !options.requested && (autoFailed.has(input.session.id) || !config.auto)) return undefined;
     const prompt = buildPrompt(input);
+    const id = input.session.id;
+    // Which model and window an attempt ran against; a change earns a new attempt.
+    const routeKey = () => {
+      let providerId: string | null = null;
+      try { providerId = deps.route(id, options.providerId).providerId; } catch { /* The attempt reports it. */ }
+      return JSON.stringify([providerId, input.modelMode?.modelId ?? null, input.profile?.id ?? null, prompt.contextWindow ?? null]);
+    };
+    const stalled = autoTimedOut.get(id);
+    if (stalled && !request && !options.requested && stalled.route === routeKey() &&
+        (prompt.compactionBudget?.activeTokens ?? 0) < stalled.tokens * AUTO_RETRY_AFTER_TIMEOUT_GROWTH) return undefined;
     if (prompt.cloudContext) input = { ...input, session: { ...input.session, cloudContext: prompt.cloudContext } };
     const plan = planCompaction(input.session, prompt, config, request ? "manual" : options.requested);
     if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: "No safe, useful reduction is available." }); return undefined; }
@@ -86,8 +105,10 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     const signal = AbortSignal.any([options.signal, request?.signal ?? controller.signal]);
     const release = () => { if (active.get(input.session.id) === controller) active.delete(input.session.id); };
     return runContextCompaction(input, plan, config, { ...options, signal, inTurn }, deps)
-      .then(({ state, result }) => {
-        if (result.status === "failed" && plan.reason !== "manual") autoFailed.add(input.session.id);
+      .then(({ state, result, timedOut }) => {
+        if (result.status === "failed" && plan.reason !== "manual") autoFailed.add(id);
+        if (timedOut && plan.reason !== "manual") autoTimedOut.set(id, { tokens: plan.tokensBefore, route: routeKey() });
+        if (result.status === "compacted") autoTimedOut.delete(id);
         release();
         request?.settle(result);
         return state;
@@ -167,6 +188,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
       for (const controller of active.values()) controller.abort();
       accepting.clear();
       autoFailed.clear();
+      autoTimedOut.clear();
       warned.clear();
     },
   };

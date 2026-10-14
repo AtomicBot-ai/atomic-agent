@@ -130,7 +130,10 @@ IDs/errors, in the conversation's language. Intentions must be distinguished fro
 actions and verified results. Empty, truncated, oversized and non-reducing
 summaries are rejected, as are failed checkpoint writes. Automatic failures warn
 and suppress further automatic attempts until the next turn; manual requests
-remain available. Cancellation is reported distinctly. A provider context-size
+remain available. An automatic attempt that timed out is held longer, across
+turns: the next automatic attempt waits until projected history has grown by 25%
+over the timed-out attempt's size, or the provider, model or window changed.
+A success (manual included) or runtime restart clears the hold. Cancellation is reported distinctly. A provider context-size
 refusal allows one compaction retry of the inference; committed tools are not
 replayed, and repeat refusal follows ordinary error handling.
 
