@@ -20,6 +20,7 @@ async function setup(options: HarnessOptions = {}) {
   h = await startTestHarness({ llamaComplete: async (p) => p.sessionId.startsWith("compaction:") ? answer(SUMMARY) : reply(), ...options });
   h.runtime.config.agent.conversationMaxTokens = 4000;
   h.runtime.config.agent.compaction.summaryMaxTokens = 250;
+  h.runtime.config.agent.compaction.mode = "model";
   h.runtime.config.memory.reflection.enabled = false;
   h.runtime.config.agent.nameSessions = false;
   return h;

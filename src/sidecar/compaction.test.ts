@@ -20,6 +20,7 @@ it("correlates compaction controls and reloads the checkpoint inside send_messag
   const config = getConfig();
   config.agent.compaction.auto = false;
   config.agent.compaction.summaryMaxTokens = 250;
+  config.agent.compaction.mode = "model";
   config.agent.conversationMaxTokens = 4000;
   config.agent.nameSessions = false;
   config.memory.reflection.enabled = false;

@@ -87,6 +87,113 @@ describe("ProviderRegistry", () => {
       }),
     ).rejects.toThrow(/unknown llm provider kind/);
   });
+
+  it("allows embedding-only openai-compatible provider without defaultChatModel", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "chat-provider",
+        activeEmbeddingProvider: "embed-only",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "embed-only",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultEmbeddingModel: "nomic-embed-text",
+            userModels: [
+              {
+                id: "nomic-embed-text",
+                kind: "embedding" as const,
+                dim: 768,
+              },
+            ],
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
+    });
+    expect(registry.listIds()).toContain("embed-only");
+  });
+
+  it("allows a defaultEmbeddingModel-only provider with no userModels (#410)", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "chat-provider",
+        activeEmbeddingProvider: "embed-pin",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "embed-pin",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultEmbeddingModel: "nomic-embed-text",
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
+    });
+    expect(registry.listIds()).toContain("embed-pin");
+  });
+
+  it("rejects non-embedding openai-compatible provider without defaultChatModel", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "bad-provider",
+        activeEmbeddingProvider: "embed-only",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "bad-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            userModels: [{ id: "gpt-4", kind: "chat" as const }],
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    await expect(
+      ProviderRegistry.fromConfig(fakeConfig, {
+        config: fakeConfig,
+        llamaClient: {} as never,
+        getProfile: () => ({}) as never,
+        logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
+      }),
+    ).rejects.toThrow(/requires defaultChatModel/);
+  });
 });
 
 describe("ProviderRegistry with an incomplete provider entry", () => {
@@ -152,7 +259,7 @@ describe("ProviderRegistry with an incomplete provider entry", () => {
         getProfile: () => ({}) as never,
         logger,
       }),
-    ).rejects.toThrow(/requires baseUrl and defaultChatModel/);
+    ).rejects.toThrow(/requires defaultChatModel/);
   });
 
   it("skips the broken entry on a hot merge too", async () => {

@@ -41,7 +41,7 @@ export function buildOsFsRestoreTool(
       const copy = await store.latestCopy(ctx.workingDir, absolute);
       if (copy === null) {
         throw new Error(
-          `os.fs.restore: nothing saved for \`${path}\` in this working directory — only a pre-existing file replaced by os.fs.write / edit / patch (by any session working here) has a copy`,
+          `os.fs.restore: nothing saved for \`${path}\` in this working directory — only a pre-existing file replaced by os.fs.write / edit / patch / move (by any session working here) has a copy`,
         );
       }
       let content: Buffer;

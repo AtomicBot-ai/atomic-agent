@@ -550,7 +550,9 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text).toBe(withReportHint("Turn failed [tool]: boom"));
+    expect(errMsg?.text).toBe(
+      withReportHint("Turn failed: a tool call failed.\nDetails: boom"),
+    );
   });
 
   it("names the primary's failure in the chat line when the fallback chain fell over first", () => {
@@ -576,9 +578,10 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text.split("\n")[0]).toBe(
-      'Turn failed [transport]: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
-    );
+    expect(errMsg?.text.split("\n").slice(0, 2)).toEqual([
+      "Turn failed: couldn't get a reply from the provider.",
+      'Details: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
+    ]);
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
@@ -659,7 +662,9 @@ describe("reduceTuiState", () => {
       (m) => m.role === "system" && m.variant === "warn",
     );
     expect(warn?.text).toBe(
-      withReportHint("Turn failed [model]: model returned empty content"),
+      withReportHint(
+        "Turn failed: the model didn't give a usable answer.\nDetails: model returned empty content",
+      ),
     );
   });
 
@@ -810,6 +815,49 @@ describe("reduceTuiState", () => {
     expect(notice?.retryText).toBeUndefined();
   });
 
+  it("carries the failed turn's request as retryText on the Turn failed notice", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    expect(next.runHistory[0]?.outcome).toBe("failed");
+    const notice = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(notice?.text).toContain("Turn failed");
+    expect(notice?.retryText).toBe("count the stars");
+  });
+
+  it("leaves retryText off the Turn failed notice when no user message exists to re-run", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const notice = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(notice).toBeDefined();
+    expect(notice?.retryText).toBeUndefined();
+  });
+
   it("appends the llama hint on transport failure for a custom-id llama-server route", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
@@ -880,7 +928,9 @@ describe("reduceTuiState", () => {
     // would assert a reply was cut off on a turn that may have completed
     // zero steps.
     expect(errMsg?.text).toBe(
-      withReportHint("Turn failed [transport]: fetch failed"),
+      withReportHint(
+        "Turn failed: couldn't get a reply from the provider.\nDetails: fetch failed",
+      ),
     );
   });
 
@@ -913,7 +963,9 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text).toContain("Turn failed [transport]: terminated");
+    expect(errMsg?.text).toContain(
+      "Turn failed: couldn't get a reply from the provider.\nDetails: terminated",
+    );
     expect(errMsg?.text).toContain(
       "the connection to the model dropped before the reply finished",
     );
@@ -2325,7 +2377,9 @@ describe("a parked turn in the chat", () => {
     ]);
     const failure = systemTexts(next).at(-1) ?? "";
     expect(failure.startsWith("Stopped waiting for the model (wait budget 5 min")).toBe(true);
-    expect(failure).toContain("Turn failed [transport]: fetch failed");
+    expect(failure).toContain(
+      "Turn failed: couldn't get a reply from the provider.\nDetails: fetch failed",
+    );
   });
 
   it("a background thread's park lands in its own thread; the visible one gets a pointer", () => {

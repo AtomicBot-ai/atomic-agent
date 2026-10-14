@@ -89,11 +89,15 @@ export function transportDeadlinesFor(config?: AtomicAgentConfig): {
   );
   // Headers cover the whole wait before the first byte, which for a
   // local stream is queueing behind busy slots plus prompt evaluation.
+  // A context-compaction summary is a unary request: its first header
+  // arrives only after the whole summary is generated, under the
+  // compaction's own per-part limit (`agent.compaction.timeoutMs`).
   const headers = largest([
     local.firstTokenTimeoutMs,
     local.requestTimeoutMs,
     OPENAI_DEFAULT_REQUEST_TIMEOUT_MS,
     ...providerTimeouts,
+    config?.agent?.compaction?.timeoutMs,
   ]);
   // The body deadline is re-armed on every chunk, exactly like the
   // client's own `idle` budget — so it is that budget it has to clear,

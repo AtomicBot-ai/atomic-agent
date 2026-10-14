@@ -562,7 +562,7 @@ The TUI MCP panel supports live add / remove without restarting the process. Whe
 
 Everything Atomic Agent does is inspectable and interruptible:
 
-- **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, untrusted MCP tools (except ones the server marks read-only), git writes and remote sync, trash and restore, GitHub and e-mail sends, reads outside the working scope, Fusion fan-out, and non-web browser navigation are gated by policy.
+- **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, untrusted MCP tools (except ones the server marks read-only), git writes and remote sync, move, trash and restore, GitHub and e-mail sends, reads outside the working scope, Fusion fan-out, and non-web browser navigation are gated by policy.
 - **Append-only traces:** prompts, completions, tool invocations, outcomes, failure categories, votes, and lifecycle events recorded as local NDJSON.
 - **Prompt drift replay:** `atomic-agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces.
 - **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures classified across events, traces, metrics, TUI, sidecar, and HTTP.
@@ -571,6 +571,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 - **Explicit state:** sessions, memory, tasks, skills, browser profile, MCP config, and traces are ordinary local files or SQLite databases.
 - **Replaced files come back:** before a write replaces a file the agent did not create this session, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per working directory, files up to 5 MB), and `os.fs.restore` puts it back.
 - **Deletes go to the Trash:** `os.fs.trash` moves files to the system Trash or Recycle Bin instead of deleting them, behind approval.
+- **Moves without the shell:** `os.fs.move` moves or renames files and folders, creating missing folders, as one approval for a whole batch; it never replaces an existing file unless asked, and its result lists the moves to undo it.
 - **Long commands detach:** a shell command still running after 10 minutes becomes a background job the agent can wait on or kill; it stops when the turn ends unless kept (1-hour cap from start, 3 jobs per session).
 - **Reads stay in the workspace:** with `agent.readScope` at its default, `working-dir`, a read outside the working directory asks first; `unrestricted` turns this off.
 

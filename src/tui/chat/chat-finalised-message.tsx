@@ -11,7 +11,7 @@ import { ReasoningBubble } from "./reasoning-bubble.js";
 import { ChatConfigureFallbackButton } from "./chat-configure-fallback-button.js";
 import { ChatSwitchBackButton } from "./chat-switch-back-button.js";
 import { SystemBubble } from "./system-bubble.js";
-import { ToolCard } from "./tool-card.js";
+import { ToolCard, ToolCardsAnnotationLine } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
 
 /**
@@ -84,6 +84,7 @@ export function FinalisedMessage({
                       expanded={toolsExpandedById[card.id] ?? false}
                     />
                   ))}
+                  <ToolCardsAnnotationLine cards={visible} />
                 </Box>
               );
             })()
@@ -117,9 +118,9 @@ export function FinalisedMessage({
       <Box flexDirection="row">
         <ChatCopyButton text={message.text} />
         {/*
-          Only the abort notice sets `retryText`, and the button resends
-          THAT — the stopped turn's user prompt — not the notice's own
-          text. Same shared footer row as every other role, so
+          Only the stopped and failed turn notices set `retryText`, and
+          the button resends THAT (the dead turn's user prompt), not the
+          notice's own text. Same shared footer row as every other role, so
           `estimateMessageHeight` stays role-blind.
         */}
         {message.retryText !== undefined ? (

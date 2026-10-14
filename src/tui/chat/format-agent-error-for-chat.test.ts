@@ -15,18 +15,46 @@ import type {
 } from "../../prompt/stable-prefix.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 
+const TRANSPORT = "Turn failed: couldn't get a reply from the provider.";
+const MODEL = "Turn failed: the model didn't give a usable answer.";
+const TOOL = "Turn failed: a tool call failed.";
+const GENERIC = "Turn failed: this turn could not be completed.";
+
 describe("formatAgentErrorForChat", () => {
-  it("prefixes category and message", () => {
+  it("leads with a plain phrase and moves the raw error to a Details line", () => {
     expect(formatAgentErrorForChat("transport", "connection reset")).toBe(
-      "Turn failed [transport]: connection reset",
+      `${TRANSPORT}\nDetails: connection reset`,
     );
+  });
+
+  // ATO-390: the first line used to be `Turn failed [<category>]: <raw>`,
+  // runtime vocabulary the operator had to decode. Each category now
+  // reads as one phrase, with no bracketed enum name anywhere.
+  it.each([
+    ["transport", "Turn failed: couldn't get a reply from the provider."],
+    ["model", "Turn failed: the model didn't give a usable answer."],
+    ["tool", "Turn failed: a tool call failed."],
+    ["grammar", "Turn failed: this turn could not be completed."],
+    ["cancelled", "Turn failed: this turn could not be completed."],
+    ["runtime", "Turn failed: this turn could not be completed."],
+    ["something-new", "Turn failed: this turn could not be completed."],
+  ])("phrases the %s category without naming it", (category, phrase) => {
+    const text = formatAgentErrorForChat(category, "boom");
+    const [head, details] = text.split("\n");
+    expect(head).toBe(phrase);
+    expect(details).toBe("Details: boom");
+    expect(text).not.toContain(`[${category}]`);
+  });
+
+  it("omits the Details line when there is nothing to show", () => {
+    expect(formatAgentErrorForChat("model", "   ")).toBe(MODEL);
   });
 
   it("replaces HTML error bodies with a short hint", () => {
     const html =
       "chat completion stream failed: 404 <!DOCTYPE html><html><body>x</body></html>";
     expect(formatAgentErrorForChat("grammar", html)).toBe(
-      "Turn failed [grammar]: upstream HTTP 404 (wrong API URL or provider config)",
+      `${GENERIC}\nDetails: upstream HTTP 404 (wrong API URL or provider config)`,
     );
   });
 
@@ -35,7 +63,7 @@ describe("formatAgentErrorForChat", () => {
       activeProviderIsLocal: true,
       llamaUrl: "http://127.0.0.1:19091",
     });
-    expect(text).toContain("Turn failed [transport]: fetch failed");
+    expect(text).toContain(`${TRANSPORT}\nDetails: fetch failed`);
     expect(text).toContain(
       "llama-server is not reachable at http://127.0.0.1:19091",
     );
@@ -55,7 +83,7 @@ describe("formatAgentErrorForChat", () => {
         activeProviderIsLocal: false,
         llamaUrl: "http://127.0.0.1:19091",
       }),
-    ).toBe("Turn failed [transport]: fetch failed");
+    ).toBe(`${TRANSPORT}\nDetails: fetch failed`);
   });
 
   it("keeps every hint away from a cloud transport failure that is not a drop", () => {
@@ -64,7 +92,7 @@ describe("formatAgentErrorForChat", () => {
         activeProviderIsLocal: false,
         llamaUrl: "http://127.0.0.1:19091",
       }),
-    ).toBe("Turn failed [transport]: upstream HTTP 503");
+    ).toBe(`${TRANSPORT}\nDetails: upstream HTTP 503`);
   });
 
   describe("with a fallback note", () => {
@@ -72,10 +100,10 @@ describe("formatAgentErrorForChat", () => {
     const note =
       ' (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)';
 
-    it("follows the last link's message on the same line", () => {
+    it("follows the last link's message on the same Details line", () => {
       expect(
         formatAgentErrorForChat("transport", "fetch failed", cloud, note),
-      ).toBe(`Turn failed [transport]: fetch failed${note}`);
+      ).toBe(`${TRANSPORT}\nDetails: fetch failed${note}`);
     });
 
     it("is never judged by the HTML wall, which is about the last link", () => {
@@ -83,12 +111,15 @@ describe("formatAgentErrorForChat", () => {
         ' (after "openrouter" failed: openai provider 404: <!DOCTYPE html><html><body>Not Found</body></html>)';
       expect(
         formatAgentErrorForChat("transport", "fetch failed", cloud, htmlNote),
-      ).toBe(`Turn failed [transport]: fetch failed${htmlNote}`);
+      ).toBe(`${TRANSPORT}\nDetails: fetch failed${htmlNote}`);
     });
 
     it("leaves the drop hint keyed on what the last link said", () => {
       const text = formatAgentErrorForChat("transport", "terminated", cloud, note);
-      expect(text.split("\n")[0]).toBe(`Turn failed [transport]: terminated${note}`);
+      expect(text.split("\n").slice(0, 2)).toEqual([
+        TRANSPORT,
+        `Details: terminated${note}`,
+      ]);
       expect(text).toContain(
         "the connection to the model dropped before the reply finished",
       );
@@ -101,7 +132,10 @@ describe("formatAgentErrorForChat", () => {
         { ...cloud, activeProviderIsLocal: true },
         note,
       );
-      expect(text.split("\n")[0]).toBe(`Turn failed [transport]: fetch failed${note}`);
+      expect(text.split("\n").slice(0, 2)).toEqual([
+        TRANSPORT,
+        `Details: fetch failed${note}`,
+      ]);
       expect(text).toContain(
         "llama-server is not reachable at http://127.0.0.1:19091",
       );
@@ -119,7 +153,7 @@ describe("formatAgentErrorForChat", () => {
       activeProviderIsLocal: false,
       llamaUrl: "http://127.0.0.1:19091",
     });
-    expect(text).toContain("Turn failed [transport]: terminated");
+    expect(text).toContain(`${TRANSPORT}\nDetails: terminated`);
     expect(text).toContain(
       "the connection to the model dropped before the reply finished",
     );
@@ -158,7 +192,7 @@ describe("formatAgentErrorForChat", () => {
         activeProviderIsLocal: false,
         llamaUrl: "http://127.0.0.1:19091",
       }),
-    ).toBe(`Turn failed [transport]: ${message}`);
+    ).toBe(`${TRANSPORT}\nDetails: ${message}`);
   });
 
   it("keys the hint off the raw message, not the truncated body", () => {
@@ -173,8 +207,8 @@ describe("formatAgentErrorForChat", () => {
       activeProviderIsLocal: false,
       llamaUrl: "http://127.0.0.1:19091",
     });
-    const [head, ...hint] = text.split("\n");
-    expect(head).not.toContain("socket hang up");
+    const [, details, ...hint] = text.split("\n");
+    expect(details).not.toContain("socket hang up");
     expect(hint.join("\n")).toBe(
       [
         "the connection to the model dropped before the reply finished",
@@ -223,7 +257,7 @@ describe("formatAgentErrorForChat", () => {
           activeProviderIsLocal: false,
           llamaUrl: "http://127.0.0.1:19091",
         }),
-      ).toBe(`Turn failed [transport]: ${body}`);
+      ).toBe(`${TRANSPORT}\nDetails: ${body}`);
     },
   );
 
@@ -241,9 +275,10 @@ describe("formatAgentErrorForChat", () => {
       activeProviderIsLocal: false,
       llamaUrl: "http://127.0.0.1:19091",
     });
-    expect(text.split("\n")[0]).toBe(
-      `Turn failed [transport]: ${WALL_EDGE.slice(0, 480)}…`,
-    );
+    expect(text.split("\n").slice(0, 2)).toEqual([
+      TRANSPORT,
+      `Details: ${WALL_EDGE.slice(0, 480)}…`,
+    ]);
     expect(text).toContain(
       "the connection to the model dropped before the reply finished",
     );
@@ -258,7 +293,7 @@ describe("formatAgentErrorForChat", () => {
         llamaUrl: "http://127.0.0.1:19091",
       }),
     ).toBe(
-      "Turn failed [transport]: upstream returned HTML instead of JSON (check API URL and provider)",
+      `${TRANSPORT}\nDetails: upstream returned HTML instead of JSON (check API URL and provider)`,
     );
   });
 
@@ -275,7 +310,8 @@ describe("formatAgentErrorForChat", () => {
       }),
     ).toBe(
       [
-        "Turn failed [transport]: socket hang up",
+        TRANSPORT,
+        "Details: socket hang up",
         "the connection to the model dropped before the reply finished",
         "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
       ].join("\n"),
@@ -290,7 +326,7 @@ describe("formatAgentErrorForChat", () => {
       // `formatAgentErrorForChat("runtime", msg)` with no provider
       // context, so it can never reach the transport branch at all.
       expect(formatAgentErrorForChat(category, "terminated")).toBe(
-        `Turn failed [${category}]: terminated`,
+        `${category === "tool" ? TOOL : GENERIC}\nDetails: terminated`,
       );
     },
   );
@@ -304,7 +340,8 @@ describe("formatAgentErrorForChat", () => {
     });
     expect(text).toBe(
       [
-        "Turn failed [transport]: terminated",
+        TRANSPORT,
+        "Details: terminated",
         "llama-server is not reachable at http://127.0.0.1:19091",
         "  start it with:       atomic-agent models start",
         "  or point elsewhere:  atomic-agent config set localModels.url <url>",
@@ -319,13 +356,12 @@ describe("formatAgentErrorForChat", () => {
       activeProviderIsLocal: false,
       llamaUrl: "http://127.0.0.1:19091",
     });
-    const [head, ...hint] = text.split("\n");
-    expect(head!.startsWith("Turn failed [transport]: socket hang up")).toBe(
-      true,
-    );
-    expect(head!.endsWith("…")).toBe(true);
-    // 480-char body cap + the "Turn failed [transport]: " prefix + "…".
-    expect(head!.length).toBe("Turn failed [transport]: ".length + 480 + 1);
+    const [head, details, ...hint] = text.split("\n");
+    expect(head).toBe(TRANSPORT);
+    expect(details!.startsWith("Details: socket hang up")).toBe(true);
+    expect(details!.endsWith("…")).toBe(true);
+    // 480-char body cap + the "Details: " prefix + "…".
+    expect(details!.length).toBe("Details: ".length + 480 + 1);
     expect(hint.join("\n")).toBe(
       [
         "the connection to the model dropped before the reply finished",
@@ -340,7 +376,7 @@ describe("formatAgentErrorForChat", () => {
         activeProviderIsLocal: true,
         llamaUrl: "http://127.0.0.1:19091",
       }),
-    ).toBe("Turn failed [model]: empty completion");
+    ).toBe(`${MODEL}\nDetails: empty completion`);
   });
 });
 
@@ -380,7 +416,7 @@ describe("formatAgentErrorForChat — llama failures through the real pipeline",
   //
   // The `toLlmFailure` link is the point of the exercise. It used to carry
   // its own hardcoded copy of the llama status split, so a 404 reached the
-  // user as `Turn failed [grammar]` however `classifyFailure` was written —
+  // user as a grammar failure however `classifyFailure` was written —
   // and a test that called `formatAgentErrorForChat(classifyFailure(err), …)`
   // directly stayed green while production stayed broken. Route the
   // assertion through the loop and that gap cannot hide.
@@ -445,7 +481,7 @@ describe("formatAgentErrorForChat — llama failures through the real pipeline",
     // advice — a wrong `localModels.url`, or a server that is not a
     // llama-server — was the one failure that never got it.
     const text = await chatTextForLlamaStatus(404);
-    expect(text).toContain("Turn failed [transport]");
+    expect(text.split("\n")[0]).toBe(TRANSPORT);
     expect(text).toContain(
       "llama-server is not reachable at http://127.0.0.1:19091",
     );
@@ -453,7 +489,7 @@ describe("formatAgentErrorForChat — llama failures through the real pipeline",
 
   it("carries the unreachable hint for a llama 405 on a local provider", async () => {
     const text = await chatTextForLlamaStatus(405);
-    expect(text).toContain("Turn failed [transport]");
+    expect(text.split("\n")[0]).toBe(TRANSPORT);
     expect(text).toContain(
       "llama-server is not reachable at http://127.0.0.1:19091",
     );
@@ -464,6 +500,6 @@ describe("formatAgentErrorForChat — llama failures through the real pipeline",
     // 400 is the server rejecting THIS request, and the next link would
     // reject it identically.
     const text = await chatTextForLlamaStatus(400);
-    expect(text).toBe("Turn failed [grammar]: llama-server returned http 400");
+    expect(text).toBe(`${GENERIC}\nDetails: llama-server returned http 400`);
   });
 });

@@ -16,7 +16,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 
 ToolRegistry owns registered definitions and invocation; role predicates and discovery determine offered schemas. OS/browser/memory/conversation tool families implement operations using explicit ToolContext dependencies. Agent dispatch owns approval, batching and progress guards; prompt owns descriptors and LLM adapters own wire schemas. A catalog change crosses these boundaries.
 
-[Core filesystem contracts](os/fs/docs/contracts.md) group 13 operations' metadata and pure argument semantics. [Global conformance](tool-contract-conformance.test.ts) inspects actual static registrations before replacement and catalog/schema/class surfaces; [runtime composition tests](../runtime/tool-contract-composition.test.ts) pin feature gates and read-scope decoration. See [contracts](docs/contracts.md) for validation limits and existing catalog debt.
+[Core filesystem contracts](os/fs/docs/contracts.md) group 14 operations' metadata and pure argument semantics. [Global conformance](tool-contract-conformance.test.ts) inspects actual static registrations before replacement and catalog/schema/class surfaces; [runtime composition tests](../runtime/tool-contract-composition.test.ts) pin feature gates and read-scope decoration. See [contracts](docs/contracts.md) for validation limits and existing catalog debt.
 
 ## Task-specific reading
 

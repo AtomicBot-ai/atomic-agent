@@ -657,8 +657,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // A user-initiated abort is not a failure and must not dress like
       // one: the operator pressed stop (the chip, Esc, Ctrl+C or
       // `/abort`) and already knows the turn is dead. Instead of the
-      // warn-styled `Turn failed [cancelled]: This operation was
-      // aborted` wall, leave a calm system notice that says who stopped
+      // warn-styled "Turn failed" wall over `Details: This operation
+      // was aborted`, leave a calm system notice that says who stopped
       // it — and carry the aborted turn's user message as `retryText`,
       // so a mistaken click is one `[try again]` away from undone.
       //
@@ -728,6 +728,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             providerOutage: { ...state.providerOutage, givenUp: true },
           }
         : state;
+      // Same `[try again]` the stopped notice carries: a turn that died
+      // on a dropped network or a provider hiccup is the case the button
+      // is for, and retyping the request is the only other way back.
+      const failedPrompt = lastTurnRequest(state);
       return finishRun(
         appendChatMessage(
           appendFeed(outageState, {
@@ -736,7 +740,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             line: `» ${lastRunStatus}`,
             color: "red",
           }),
-          { role: "system", text: withReportHint(failureText), variant: "warn" },
+          {
+            role: "system",
+            text: withReportHint(failureText),
+            variant: "warn",
+            retryText: failedPrompt.length > 0 ? failedPrompt : undefined,
+          },
         ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );

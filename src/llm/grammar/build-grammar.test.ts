@@ -201,9 +201,9 @@ describe("the reasoning budget (F49)", () => {
   const GEMMA = (body: string): string =>
     `<|channel>thought\n${body}<channel|>\n${CALL}`;
 
-  it("bounds the think prelude at the default budget: 6,000 single-width units, then only the close sentinel", async () => {
+  it("bounds the think prelude at the default budget, clamped to llama.cpp's 1,999-char GBNF limit (#600)", async () => {
     const qwen = await buildGrammar(QWEN_THINK_PROFILE);
-    expect(qwen).toContain("think-body ::= think-char{0,6000}");
+    expect(qwen).toContain("think-body ::= think-char{0,1999}");
     expect(qwen).toContain(
       'think-char ::= [^<] | "<" [^/] | "</" [^t] | "</t" [^h] | "</th" [^i] | "</thi" [^n] | "</thin" [^k] | "</think" [^>]',
     );
@@ -213,7 +213,7 @@ describe("the reasoning budget (F49)", () => {
     expect(qwen).not.toContain("think-fragment");
     // Gemma's channel prelude is bounded the same way.
     const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
-    expect(gemma).toContain("channel-body ::= channel-char{0,6000}");
+    expect(gemma).toContain("channel-body ::= channel-char{0,1999}");
     expect(gemma).toContain('channel-char ::= [^<] | "<" [^c]');
     expect(gemma).not.toContain("channel-fragment");
   });
@@ -412,6 +412,32 @@ describe("os-tool names the local-model grammar admits", () => {
         grammar,
         "root",
         '[{"tool":"os.fs.restore","args":{"path":"sales.csv"}}]',
+      ),
+    ).toBe(true);
+  });
+
+  it("includes os.fs.move, single and batched — the shell-free way to sort files (#602)", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const grammar = readFileSync(
+      resolve(__dirname, "../../../grammars/tool-call.gbnf"),
+      "utf8",
+    );
+    const osToolLine =
+      grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
+    expect(osToolLine).toContain('"fs.move"');
+    expect(
+      gbnfAccepts(
+        grammar,
+        "root",
+        '[{"tool":"os.fs.move","args":{"from":"C:\\\\Users\\\\me\\\\Q1 report.pdf","to":"C:\\\\Users\\\\me\\\\Reports 2026\\\\"}}]',
+      ),
+    ).toBe(true);
+    expect(
+      gbnfAccepts(
+        grammar,
+        "root",
+        '[{"tool":"os.fs.move","args":{"moves":[{"from":"a.pdf","to":"Docs/"},{"from":"b.jpg","to":"Images/"}]}}]',
       ),
     ).toBe(true);
   });
