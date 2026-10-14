@@ -394,6 +394,14 @@ jobs:
             exit 1
           fi
           xcrun stapler staple "$dmg"
+          # ATO-369: stapling rewrote the DMG after electron-builder wrote
+          # stable-mac.yml, so refresh the DMG's size and sha512 there. Its
+          # blockmap is stale now too and nothing reads it (updates use the zip).
+          rm -f "$dmg.blockmap"
+          for yml in desktop/release/*-mac.yml; do
+            [[ -f "$yml" ]] || continue
+            (cd desktop && node scripts/refresh-update-entry.mjs "../$yml" "../$dmg")
+          done
 
       # What a user's Mac checks: the signature over every nested binary, the
       # hardened runtime, and that Gatekeeper accepts the app as a notarized
