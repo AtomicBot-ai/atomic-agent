@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   readFileSync,
@@ -13,6 +14,8 @@ import {
   ensureUserConfigFileSync,
   getUserConfigPath,
   readUserConfigFileSync,
+  readUserConfigSnapshotSync,
+  userConfigFileSha256Sync,
   writeUserConfigFileSync,
 } from "./config-file.js";
 import {
@@ -728,5 +731,59 @@ describe("user config file IO", () => {
     expect(warn).not.toHaveBeenCalled();
     expect(statSync(path).mtimeMs).toBe(before);
     warn.mockRestore();
+  });
+});
+
+// ATO-416: compare-and-swap for clients sharing one state dir.
+describe("config file sha256", () => {
+  let dir: string;
+  const sha256 = (bytes: Buffer | string) =>
+    createHash("sha256").update(bytes).digest("hex");
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-config-sha-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("hashes a missing file as the empty string", () => {
+    const path = getUserConfigPath(dir);
+    expect(userConfigFileSha256Sync(path)).toBe(sha256(""));
+    expect(userConfigFileSha256Sync(path)).toBe(
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    expect(readUserConfigSnapshotSync(path)).toEqual({
+      sha256: sha256(""),
+      config: USER_CONFIG_DEFAULTS,
+    });
+  });
+
+  it("hashes the raw bytes, not the parsed config", () => {
+    const path = getUserConfigPath(dir);
+    const text = `{"version": ${USER_CONFIG_VERSION}, "log": {"level": "debug"}}`;
+    writeFileSync(path, text);
+    expect(userConfigFileSha256Sync(path)).toBe(sha256(text));
+    writeFileSync(path, `${text}\n`);
+    expect(userConfigFileSha256Sync(path)).toBe(sha256(`${text}\n`));
+  });
+
+  it("snapshots the parsed config with the hash of the same bytes", () => {
+    const path = getUserConfigPath(dir);
+    const text = `{"version": ${USER_CONFIG_VERSION}, "log": {"level": "debug"}}`;
+    writeFileSync(path, text);
+    const snapshot = readUserConfigSnapshotSync(path);
+    expect(snapshot.sha256).toBe(sha256(text));
+    expect(snapshot.config.log.level).toBe("debug");
+    // Pure read: no migration, the file is untouched.
+    expect(readFileSync(path, "utf8")).toBe(text);
+  });
+
+  it("names the file when the snapshot cannot be parsed", () => {
+    const path = getUserConfigPath(dir);
+    writeFileSync(path, "{nope");
+    expect(() => readUserConfigSnapshotSync(path)).toThrow(ConfigValidationError);
+    expect(() => readUserConfigSnapshotSync(path)).toThrow(/not valid JSON/);
   });
 });

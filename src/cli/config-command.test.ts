@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -205,6 +206,144 @@ describe("configCommand", () => {
       expect(code).toBe(1);
       expect(stderr).toContain("invalid JSON");
       expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(before);
+    });
+  });
+
+  // ATO-416: the desktop and the terminal agent share one state dir and
+  // both write config.json; the desktop reads with a hash and writes only
+  // while the file still has it.
+  describe("compare-and-swap (get --with-sha256 / set - --expect-sha256)", () => {
+    const stdinOf = (...chunks: string[]) => Readable.from(chunks);
+    const configPath = () => join(stateDir, "config.json");
+    const sha256 = (bytes: Buffer | string) =>
+      createHash("sha256").update(bytes).digest("hex");
+    const payload = (url: string) =>
+      JSON.stringify({ version: USER_CONFIG_VERSION, localModels: { url } });
+
+    async function readWithHash(): Promise<{ sha256: string; config: Record<string, unknown> }> {
+      stdout = "";
+      expect(await configCommand(["get", "--with-sha256"])).toBe(0);
+      const out = JSON.parse(stdout);
+      stdout = "";
+      return out;
+    }
+
+    it("get --with-sha256 prints the config and the hash of the raw file bytes", async () => {
+      const { sha256: hash, config } = await readWithHash();
+      expect(hash).toBe(sha256(readFileSync(configPath())));
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(await configCommand(["get"])).toBe(0);
+      expect(config).toEqual(JSON.parse(stdout));
+    });
+
+    it("get --with-sha256 takes no key", async () => {
+      expect(await configCommand(["get", "agent.maxSteps", "--with-sha256"])).toBe(1);
+      expect(stderr).toContain("--with-sha256 prints the whole file");
+      expect(stdout).toBe("");
+    });
+
+    it("writes when the file still has the expected hash", async () => {
+      const { sha256: hash } = await readWithHash();
+      const code = await configCommand(
+        ["set", "-", "--expect-sha256", hash],
+        stdinOf(payload("http://cas:1")),
+      );
+      expect(code).toBe(0);
+      expect(JSON.parse(readFileSync(configPath(), "utf8")).localModels.url).toBe(
+        "http://cas:1",
+      );
+      // The write changed the bytes: the old hash is spent.
+      const again = await configCommand(
+        ["set", "-", "--expect-sha256", hash],
+        stdinOf(payload("http://cas:2")),
+      );
+      expect(again).toBe(3);
+    });
+
+    it("refuses with exit 3 and writes nothing when another client wrote in between", async () => {
+      const { sha256: hash } = await readWithHash();
+      // The other client (the TUI, say) changes one key after our read.
+      expect(await configCommand(["set", "agent.maxSteps", "33"])).toBe(0);
+      const before = readFileSync(configPath(), "utf8");
+      stdout = "";
+      stderr = "";
+      const code = await configCommand(
+        ["set", "-", "--expect-sha256", hash],
+        stdinOf(payload("http://stale:1")),
+      );
+      expect(code).toBe(3);
+      // The exact line clients match on (config loading may log above it).
+      expect(stderr).toMatch(/(^|\n)config changed since it was read\n$/);
+      expect(stdout).toBe("");
+      expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
+    it("any byte change counts, even one that parses the same", async () => {
+      const { sha256: hash } = await readWithHash();
+      writeFileSync(configPath(), `${readFileSync(configPath(), "utf8")}\n`);
+      const code = await configCommand(
+        ["set", "-", "--expect-sha256", hash],
+        stdinOf(payload("http://x:3")),
+      );
+      expect(code).toBe(3);
+    });
+
+    it("accepts the =value spelling, uppercase hex and the flag before the dash", async () => {
+      const first = await readWithHash();
+      expect(
+        await configCommand(
+          ["set", "-", `--expect-sha256=${first.sha256.toUpperCase()}`],
+          stdinOf(payload("http://eq:1")),
+        ),
+      ).toBe(0);
+      const second = await readWithHash();
+      expect(
+        await configCommand(
+          ["set", "--expect-sha256", second.sha256, "-"],
+          stdinOf(payload("http://eq:2")),
+        ),
+      ).toBe(0);
+      expect(JSON.parse(readFileSync(configPath(), "utf8")).localModels.url).toBe(
+        "http://eq:2",
+      );
+    });
+
+    it("a missing file matches the hash of the empty string", async () => {
+      await readWithHash();
+      unlinkSync(configPath());
+      const code = await configCommand(
+        ["set", "-", "--expect-sha256", sha256("")],
+        stdinOf(payload("http://fresh:1")),
+      );
+      expect(code).toBe(0);
+      expect(JSON.parse(readFileSync(configPath(), "utf8")).localModels.url).toBe(
+        "http://fresh:1",
+      );
+    });
+
+    it.each<[string[], string]>([
+      [["set", "-", "--expect-sha256"], "64-character hex"],
+      [["set", "-", "--expect-sha256", "abc"], "64-character hex"],
+      [["set", "-", "--expect-sha256", "g".repeat(64)], "64-character hex"],
+      [["set", "-", "--expect-sha256", "a".repeat(64), "--expect-sha256", "a".repeat(64)], "given twice"],
+      [["set", "agent.maxSteps", "40", "--expect-sha256", "a".repeat(64)], "applies only to `config set -`"],
+      [["set", "--expect-sha256", "a".repeat(64), payload("http://argv:1")], "applies only to `config set -`"],
+    ])("rejects %j without writing", async (args, message) => {
+      await readWithHash();
+      const before = readFileSync(configPath(), "utf8");
+      const code = await configCommand(args, stdinOf(payload("http://never:1")));
+      expect(code).toBe(1);
+      expect(stderr).toContain(message);
+      expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
+    it("leaves set - without the flag unconditional", async () => {
+      await readWithHash();
+      expect(await configCommand(["set", "agent.maxSteps", "33"])).toBe(0);
+      expect(await configCommand(["set", "-"], stdinOf(payload("http://plain:1")))).toBe(0);
+      expect(JSON.parse(readFileSync(configPath(), "utf8")).localModels.url).toBe(
+        "http://plain:1",
+      );
     });
   });
 
