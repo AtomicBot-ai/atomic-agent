@@ -6800,6 +6800,8 @@ document.addEventListener('click', (e) => {
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
   if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; repaintEntry(m, m.k === 'tool' ? '.cardhead' : '.disc'); } return; }
+  const sd = t.closest('[data-sysdet]');   // ATO-380: a failed turn's Details (sysDetailHTML)
+  if (sd) { const m = S.log.find((x) => x.id === sd.dataset.sysdet); if (m) { m.detOpen = !m.detOpen; repaintEntry(m, '.sys-det-t'); } return; }
   const go = t.closest('[data-goto]');
   if (go) { const el = document.getElementById('card-' + go.dataset.goto);
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
@@ -8631,7 +8633,7 @@ function liveFailureRows(rec, ev, wait) {
   S.turnStartedAt = rec.startedAt;
   try {
     return (wait ? [tpWaitGaveUpEntry(wait)] : []).concat([{id:nid(), k:'system', sev:'err',
-      text: turnFailureLine(ev), tried: tpFallbackFailures(ev.payload), open: false,
+      ...turnFailure(ev), tried: tpFallbackFailures(ev.payload), open: false,
       act: providerFailure(ev) ? 'switch-provider' : null}]);
   } finally {
     S.turnStartedAt = keep;
@@ -8777,6 +8779,26 @@ function turnWaited() {
   return s2 >= 60 ? ' after ' + Math.floor(s2 / 60) + ' min ' + (s2 % 60) + ' s' : ' after ' + s2 + ' s';
 }
 
+/** ATO-380: a failed turn's row. `detail` keeps the agent's raw words under
+    Details when the line is a short phrase; '' when the line is the reason. */
+function turnFailure(ev) {
+  const line = turnFailureLine(ev);
+  if (line !== null) return {text: line, detail: ''};
+  const cat = String((ev && ev.category) || '');
+  return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
+    detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
+}
+
+/** ATO-380: Details under the phrase (own flag `detOpen`). Folded, the text is
+    clipped, not removed, so selecting and copying the row still copies it. */
+function sysDetailHTML(m) {
+  return ' <span class="sys-det"><button class="sys-det-t" data-sysdet="' + m.id + '" aria-expanded="' + (!!m.detOpen) + '">'
+    + ic(m.detOpen ? 'chevD' : 'chevR') + '<span>Details</span></button>'
+    + '<span class="sys-det-x' + (m.detOpen ? '' : ' shut') + '"> ' + esc(m.detail) + '</span></span>';
+}
+
+/** The failure line when it names the reason (a key, a balance, an endpoint
+    not answering); null for anything else, which turnFailure words. */
 function turnFailureLine(ev) {
   const id = selActiveProviderId();
   const entry = (selProviders() || []).find((p) => p.id === id);
@@ -8802,11 +8824,10 @@ function turnFailureLine(ev) {
     return esc((id ? providerWord(id) : 'The provider') + ' is not answering'
       + (host ? ' — ' + host : '') + '.' + (waited ? ' The turn gave up' + waited + '.' : ''));
   }
-  /* Anything else is the turn going wrong rather than the endpoint, and the
-     agent's own sentence is the best thing available. The category is dropped
-     either way: it is an enum name, not a word for a person. */
-  return esc('The turn could not be completed' + waited + ': '
-    + (ev.error || 'the agent gave no reason'));
+  /* Anything else is the turn going wrong rather than the endpoint. The
+     agent's sentence is raw (codes, stack words), so the row says one short
+     phrase and keeps the sentence under Details (turnFailure). */
+  return null;
 }
 
 /* Backlog 40: a turn that ended because a provider refused for money. The
@@ -9300,7 +9321,7 @@ function onChatEvent(ev) {
     if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
     else if (item) tpDropRecoveredNote(item.id);   // ATO-204: failed or stopped, it did not "continue" (tui-parity.js)
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
-      text: turnFailureLine(ev),
+      ...turnFailure(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
       act: providerFailure(ev) ? 'switch-provider' : null});
     // A turn ended: the steer watermark belongs to the turn that is over
@@ -18848,7 +18869,7 @@ function renderItems() {
        would move it in time. */
     if (m.k === 'system') {
       let j = i;
-      while (j + 1 < items.length && items[j + 1].k === 'system' && items[j + 1].text === m.text) j++;
+      while (j + 1 < items.length && items[j + 1].k === 'system' && items[j + 1].text === m.text && items[j + 1].detail === m.detail) j++;
       const times = j - i + 1;
       if (times >= 2) { html += systemRun(m, times); i = j; continue; }
     }
@@ -18887,7 +18908,7 @@ function sysRowHTML(m, times) {
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
   return '<div class="sysrow' + (m.sev ? ' ' + m.sev : '') + '">' + sysGlyph(m)
-    + '<span class="sys-tx">' + m.text + rep + (m.tried ? tpTriedHTML(m) : '') + '</span>'
+    + '<span class="sys-tx">' + m.text + rep + (m.detail ? sysDetailHTML(m) : '') + (m.tried ? tpTriedHTML(m) : '') + '</span>'
     + (acts ? '<span class="sys-acts">' + acts + '</span>' : '') + '</div>';
 }
 
