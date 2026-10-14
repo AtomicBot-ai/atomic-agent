@@ -24,9 +24,13 @@
  *      so a failed attempt leaves the old directory's data as it was.
  *
  * WHAT CROSSES (a whitelist; anything not named here stays where it is):
- *   config.json         copied as is (nothing on the other side) or merged
- *                       field by field (see mergeConfigs)
- *   .env                names the shared .env lacks (or has empty)
+ *   config.json         copied (nothing on the other side), FIRST, minus the
+ *                       desktop-only ports 19191/19192; or merged field by
+ *                       field (see mergeConfigs)
+ *   .env                names the shared .env lacks (or has empty); into a
+ *                       terminal setup, not a name the agent reads as part
+ *                       of a chain the terminal already resolves, nor
+ *                       ATOMIC_AGENT_LLAMA_API_KEY (envNameCrosses)
  *   sessions/memory/tasks.sqlite
  *                       a consistent snapshot when the shared side has no
  *                       such database; otherwise the agent's own importer,
@@ -56,6 +60,10 @@
  * outcome. `ok:true` ends it for good. `ok:false` is retried on the next
  * launch, at most MAX_ATTEMPTS times in all; every step is idempotent, so a
  * retry after a half-done attempt finishes the job rather than doubling it.
+ * A retry keeps the first attempt's backup and its mode (a copy that wrote
+ * config.json and then failed is still a copy). An agent without the
+ * importer does not count as an attempt. A lock file keeps two launches
+ * from merging at once.
  * Whatever happens the app keeps working: it runs on the shared directory
  * either way. A note, `MOVED-TO-.atomic-agent.txt`, is left in the old
  * directory on success.
@@ -92,7 +100,7 @@ import {
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
-import { dotenvSet, normaliseLlmBlock, providerHasKey, type KeyEnvNames, type ProviderEntry } from "./agent-cli.js";
+import { daemonPidsIn, dotenvSet, normaliseLlmBlock, providerHasKey, type KeyEnvNames, type ProviderEntry } from "./agent-cli.js";
 import { parseDotenv } from "./tui-import.js";
 
 /* Local names for the two directories, so this file merges cleanly with the
@@ -161,6 +169,8 @@ export interface StateMergeRecord {
     modelsMoved: number;
   };
   imported: ImporterReport | null;
+  /** Set when the desktop's settings could not be merged (the run still finished). */
+  settingsSkipped?: string;
   warnings: string[];
   error?: string;
   noticeShown: boolean;
@@ -269,7 +279,7 @@ export interface ConfigMergeResult {
  *
  * `names` is what the shared directory resolves once its .env merge is done.
  */
-export function mergeConfigs(terminal: Obj, desktop: Obj, names: KeyEnvNames, paths?: { legacyModels: string; targetModels: string }): ConfigMergeResult {
+export function mergeConfigs(terminal: Obj, desktop: Obj, names: KeyEnvNames): ConfigMergeResult {
   const out = clone(terminal);
   const warnings: string[] = [];
   let providersAdded = 0;
@@ -330,7 +340,7 @@ export function mergeConfigs(terminal: Obj, desktop: Obj, names: KeyEnvNames, pa
     const ids = new Set(tCustom.map((m) => m["id"]).filter((n): n is string => typeof n === "string"));
     for (const m of dCustom) {
       if (typeof m["id"] !== "string" || ids.has(m["id"])) continue;
-      tCustom.push(rehomeLocalPath(clone(m), paths));
+      tCustom.push(clone(m));
       ids.add(m["id"]);
       customModelsAdded++;
     }
@@ -358,15 +368,6 @@ export function mergeConfigs(terminal: Obj, desktop: Obj, names: KeyEnvNames, pa
 function paired(block: "telegram" | "discord", cfg: Obj): boolean {
   if (block === "telegram") return typeof cfg["ownerUserId"] === "number";
   return Array.isArray(cfg["ownerUserIds"]) && cfg["ownerUserIds"].length > 0;
-}
-
-/** A custom model registered from a file inside the old weights folder points at where that file is moved to. */
-function rehomeLocalPath(model: Obj, paths?: { legacyModels: string; targetModels: string }): Obj {
-  const p = model["localPath"];
-  if (!paths || typeof p !== "string") return model;
-  const from = paths.legacyModels + sep;
-  if (p.startsWith(from)) model["localPath"] = join(paths.targetModels, p.slice(from.length));
-  return model;
 }
 
 /* ----------------------------------------------------------- helpers --- */
@@ -477,15 +478,15 @@ export function sqliteSnapshot(src: string, dst: string): void {
   if (existsSync(`${src}-wal`)) copyFileSync(`${src}-wal`, `${dst}-wal`);
 }
 
-/** Move `name` from `fromDir` to `toDir` for each entry the destination lacks. */
-function moveMissing(fromDir: string, toDir: string, warnings: string[], what: string): number {
+/** Move each entry of `fromDir` the destination lacks, except the `pinned` ones. */
+function moveMissing(fromDir: string, toDir: string, warnings: string[], what: string, pinned: Set<string>): number {
   let moved = 0;
   const names = entries(fromDir).filter((n) => !n.startsWith("."));
   if (names.length === 0) return 0;
   mkdirSync(toDir, { recursive: true });
   for (const name of names) {
     const dst = join(toDir, name);
-    if (existsSync(dst)) continue;
+    if (existsSync(dst) || pinned.has(name)) continue;
     try {
       renameSync(join(fromDir, name), dst);
       moved++;
@@ -556,38 +557,71 @@ function lastJsonObject(stdout: string): Obj | null {
  * The caller has already checked mergeGate.
  */
 export function migrateDesktopState(legacyDir: string, targetDir: string, deps: MigrateDeps): MigrateOutcome {
+  // 0. One merge at a time. The app takes no single-instance lock, and a
+  //    launch that looks hung (this runs before any window) may be started
+  //    again: a second process waits for the next launch instead.
+  const lock = takeMergeLock(targetDir, deps);
+  if (!lock.ok) return { ran: false, reason: lock.reason };
+  try {
+    return migrateLocked(legacyDir, targetDir, deps);
+  } finally {
+    try { rmSync(mergeLockPath(targetDir), { force: true }); } catch { /* the next launch reclaims a dead pid's lock */ }
+  }
+}
+
+function migrateLocked(legacyDir: string, targetDir: string, deps: MigrateDeps): MigrateOutcome {
   const previous = readMergeMarker(targetDir);
   const startedAt = deps.now();
   const stamp = new Date(startedAt).toISOString();
-  const record = emptyRecord(legacyDir, targetDir, (previous?.ok === false ? previous.attempts ?? 0 : 0) + 1, stamp);
+  const retry = previous?.ok === false ? previous : null;
+  const record = emptyRecord(legacyDir, targetDir, (retry?.attempts ?? 0) + 1, stamp);
   const w = record.warnings;
 
-  // 1. Nothing may still be running out of the old directory.
+  const legacyCfgRaw = readJson(join(legacyDir, "config.json"));
+  if (!legacyCfgRaw) return { ran: false, reason: `could not read ${join(legacyDir, "config.json")}` };
+  const legacyData = dataDirOf(legacyCfgRaw, legacyDir);
+  const legacyModels = join(legacyData, "models");
+
+  // 1. Nothing may still be running out of the old directory. `models stop`
+  //    only when a pid file there names a live server: any `atag` run on a
+  //    directory rewrites its config.json up to the agent's schema, and the
+  //    old directory is not to be touched for nothing.
   try { deps.reapServe(join(legacyDir, "serve.json")); } catch { /* nothing to reap */ }
-  const stop = deps.runAtag(["models", "stop"], { stateDir: legacyDir, timeoutMs: 30_000 });
-  if (stop.status !== 0) w.push(`models stop in the old directory said: ${(stop.error || stop.stderr || `exit ${stop.status}`).trim().slice(0, 200)}`);
+  if (daemonPidsIn(legacyData, true).some((pid) => deps.pidAlive(pid))) {
+    const stop = deps.runAtag(["models", "stop"], { stateDir: legacyDir, timeoutMs: 30_000 });
+    if (stop.status !== 0) w.push(`models stop in the old directory said: ${(stop.error || stop.stderr || `exit ${stop.status}`).trim().slice(0, 200)}`);
+  }
   const held = liveChannelLock(legacyDir, deps);
   if (held) return { ran: false, reason: `a running process still holds ${held} in the old directory; trying again next launch` };
 
   const scratch = join(targetDir, `.desktop-merge-tmp-${startedAt}`);
+  let countAttempt = true;
   try {
     mkdirSync(targetDir, { recursive: true, mode: 0o700 });
     const targetHadConfig = existsSync(join(targetDir, "config.json"));
-    record.mode = targetHadConfig ? "merge" : "copy";
+    // Sticky across retries: a copy that wrote config.json and then failed
+    // finds that config.json on the retry, and it is still the desktop's.
+    record.mode = retry?.mode === "copy" || !targetHadConfig ? "copy" : "merge";
 
-    // 2. Backup of what the shared directory already holds.
-    const toBackUp = [
-      ...["config.json", ".env"].filter((f) => existsSync(join(targetDir, f))),
-      ...DBS.filter((f) => existsSync(join(targetDir, f))),
-    ];
-    if (toBackUp.length > 0) {
-      const backupDir = join(targetDir, "backups", `pre-desktop-merge-${stamp.replace(/[:.]/g, "-")}`);
-      mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-      for (const f of toBackUp) {
-        if ((DBS as readonly string[]).includes(f)) sqliteSnapshot(join(targetDir, f), join(backupDir, f));
-        else { copyFileSync(join(targetDir, f), join(backupDir, f)); try { chmodSync(join(backupDir, f), 0o600); } catch { /* no chmod */ } }
+    // 2. Backup of what the shared directory held BEFORE the first attempt.
+    //    A retry keeps the first attempt's backup rather than backing up
+    //    what that attempt half wrote.
+    if (retry?.backupDir && existsSync(retry.backupDir)) {
+      record.backupDir = retry.backupDir;
+    } else {
+      const toBackUp = [
+        ...["config.json", ".env"].filter((f) => existsSync(join(targetDir, f))),
+        ...DBS.filter((f) => existsSync(join(targetDir, f))),
+      ];
+      if (toBackUp.length > 0) {
+        const backupDir = join(targetDir, "backups", `pre-desktop-merge-${stamp.replace(/[:.]/g, "-")}`);
+        mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+        for (const f of toBackUp) {
+          if ((DBS as readonly string[]).includes(f)) sqliteSnapshot(join(targetDir, f), join(backupDir, f));
+          else { copyFileSync(join(targetDir, f), join(backupDir, f)); try { chmodSync(join(backupDir, f), 0o600); } catch { /* no chmod */ } }
+        }
+        record.backupDir = backupDir;
       }
-      record.backupDir = backupDir;
     }
 
     // 3. .env: the names the shared side lacks or holds empty. Before the
@@ -597,33 +631,21 @@ export function migrateDesktopState(legacyDir: string, targetDir: string, deps: 
     let targetEnv = new Map<string, string>();
     try { targetEnv = parseDotenv(readFileSync(join(targetDir, ".env"), "utf8")); } catch { /* no .env */ }
     for (const [name, value] of legacyEnv) {
-      if (targetEnv.has(name)) continue;
+      if (!envNameCrosses(name, targetEnv, record.mode === "merge")) continue;
       const res = dotenvSet(targetDir, name, value);
       if (!res.ok) throw new Error(`could not write ${name} to the shared .env: ${res.error ?? "unknown error"}`);
       record.counts.envKeysAdded++;
     }
 
-    // Where the weights live on each side (a dataDirOverride moves them).
-    const legacyCfgRaw = readJson(join(legacyDir, "config.json"));
-    if (!legacyCfgRaw) throw new Error(`could not read ${join(legacyDir, "config.json")}`);
-    const dataDirOf = (cfg: Obj | null, stateDir: string): string => {
-      const o = asObj(asObj(cfg?.["localModels"])?.["managed"])?.["dataDirOverride"];
-      return typeof o === "string" && isAbsolute(o) ? o : join(stateDir, "models");
-    };
-    const legacyModels = join(dataDirOf(legacyCfgRaw, legacyDir), "models");
-
-    // 4. config.json. A copy when the shared side has none: written LAST
-    //    (step 7), so an attempt that fails before it retries as a copy.
-    let copyConfig: Obj | null = null;
+    // 4. config.json. A copy is written FIRST, so an attempt that fails
+    //    after it leaves a config that is still the desktop's whole one (and
+    //    the app does not take the shared directory for a fresh install).
     if (!targetHadConfig) {
-      copyConfig = clone(legacyCfgRaw);
-      const copyTargetModels = join(targetDir, "models", "models");
-      const lm = asObj(copyConfig["localModels"]);
-      if (lm && Array.isArray(lm["customModels"])) {
-        lm["customModels"] = arr(lm["customModels"]).map((m) => rehomeLocalPath(m, { legacyModels, targetModels: copyTargetModels }));
-      }
-    } else {
-      mergeConfigInto(legacyDir, targetDir, scratch, legacyModels, deps, record);
+      const copy = clone(legacyCfgRaw);
+      dropDesktopPorts(copy);
+      writeFileAtomic(join(targetDir, "config.json"), `${JSON.stringify(copy, null, 2)}\n`);
+    } else if (record.mode === "merge") {
+      mergeConfigInto(legacyDir, targetDir, scratch, deps, record);
     }
 
     // 5. Databases: a snapshot where the shared side has none, the agent's
@@ -642,7 +664,11 @@ export function migrateDesktopState(legacyDir: string, targetDir: string, deps: 
       const r = deps.runAtag(["import", "atomic-desktop", "--source", legacyDir, "--json"], { stateDir: targetDir, timeoutMs: 300_000 });
       const report = lastJsonObject(r.stdout) as unknown as ImporterReport | null;
       if (r.status !== 0 || !report || report.ok === false) {
-        throw new Error(`the chats and memory import failed: ${(r.error || r.stderr || (report ? JSON.stringify(report).slice(0, 200) : `exit ${r.status}`)).trim().slice(0, 300)}`);
+        const said = (r.error || r.stderr || (report ? JSON.stringify(report).slice(0, 200) : `exit ${r.status}`)).trim();
+        // An agent without the importer is not this attempt's failure: it is
+        // retried, uncounted, until an agent that has it is installed.
+        if (/unknown import source|unknown (sub)?command|no such import/i.test(said)) countAttempt = false;
+        throw new Error(`the chats and memory import failed: ${said.slice(0, 300)}`);
       }
       record.imported = report;
       for (const msg of Array.isArray(report.warnings) ? report.warnings : []) w.push(`import: ${String(msg)}`);
@@ -669,37 +695,116 @@ export function migrateDesktopState(legacyDir: string, targetDir: string, deps: 
       if (!isDir(join(legacyDir, d))) continue;
       // force:false keeps every file the shared side already has.
       cpSync(join(legacyDir, d), join(targetDir, d), { recursive: true, force: false, errorOnExist: false });
-      record.counts.filesCopied++;
     }
 
-    // 7. The copied config, now that everything it describes is in place.
-    if (copyConfig) writeFileAtomic(join(targetDir, "config.json"), `${JSON.stringify(copyConfig, null, 2)}\n`);
-
-    // 8. The two moves, last: traces, then the weights.
-    record.counts.tracesMoved = moveMissing(join(legacyDir, "traces"), join(targetDir, "traces"), w, "trace");
-    const targetCfg = readJson(join(targetDir, "config.json"));
-    const targetModels = join(dataDirOf(targetCfg, targetDir), "models");
+    // 7. The two moves, last: traces, then the weights. A model folder a
+    //    custom model was registered from (its `localPath`) stays where that
+    //    path points.
+    record.counts.tracesMoved = moveMissing(join(legacyDir, "traces"), join(targetDir, "traces"), w, "trace", new Set());
+    const targetModels = join(dataDirOf(readJson(join(targetDir, "config.json")), targetDir), "models");
     if (isSymlink(legacyModels)) {
       // The r5 seed linked the old weights folder to the shared one: nothing to move.
     } else if (!isInside(legacyModels, legacyDir)) {
       // A folder the operator chose (dataDirOverride) is theirs, not the old directory's: left alone.
       w.push(`the desktop's models are in ${legacyModels}, a folder of your own; they were left there`);
     } else if (isDir(legacyModels) && !sameRealPath(legacyModels, targetModels)) {
-      record.counts.modelsMoved = moveMissing(legacyModels, targetModels, w, "model");
+      record.counts.modelsMoved = moveMissing(legacyModels, targetModels, w, "model", pinnedModelFolders(legacyCfgRaw, legacyModels));
     }
 
     record.ok = true;
   } catch (err) {
     record.ok = false;
     record.error = err instanceof Error ? err.message : String(err);
+    if (!countAttempt) record.attempts = retry?.attempts ?? 0;
   } finally {
-    try { rmSync(scratch, { recursive: true, force: true }); } catch { /* our own tmp; a later launch tidies nothing else */ }
+    try { rmSync(scratch, { recursive: true, force: true }); } catch { /* our own tmp */ }
   }
 
   writeMarker(targetDir, record);
   if (record.ok) leaveNote(legacyDir, targetDir, stamp);
   appendLog(targetDir, stateMergeLogLine(record));
   return { ran: true, record };
+}
+
+/* The desktop moved its managed servers off the agent's defaults while it had
+   a directory of its own (state-dir.ts DESKTOP_MANAGED_PORT / _EMBEDDING_PORT).
+   On the shared directory those ports would only collide with nothing and
+   confuse everything: dropped, so the agent's defaults apply. */
+const DESKTOP_ONLY_PORTS = new Set([19191, 19192]);
+const portOfUrl = (u: unknown): number | null => {
+  if (typeof u !== "string") return null;
+  const m = /:(\d+)(?:\/|$)/.exec(u);
+  return m ? Number(m[1]) : null;
+};
+export function dropDesktopPorts(cfg: Obj): void {
+  const lm = asObj(cfg["localModels"]);
+  const managed = asObj(lm?.["managed"]);
+  if (managed && DESKTOP_ONLY_PORTS.has(managed["port"] as number)) delete managed["port"];
+  const emb = asObj(lm?.["embeddings"]);
+  if (emb && DESKTOP_ONLY_PORTS.has(emb["port"] as number)) delete emb["port"];
+  if (emb && DESKTOP_ONLY_PORTS.has(portOfUrl(emb["url"]) ?? -1)) delete emb["url"];
+  const local = arr(asObj(cfg["llm"])?.["providers"]).find((p) => p["id"] === "local-llama");
+  if (local) {
+    // The entry is what normaliseLlmBlock would synthesize; its URLs follow the ports.
+    if (DESKTOP_ONLY_PORTS.has(portOfUrl(local["url"]) ?? -1)) local["url"] = "http://127.0.0.1:19091";
+    if (DESKTOP_ONLY_PORTS.has(portOfUrl(local["baseUrl"]) ?? -1)) delete local["baseUrl"];
+  }
+}
+
+/* Env names that do not cross into a terminal setup even when its .env lacks
+   them, because the agent reads them as a CHAIN (resolve-llm-api-key.ts) or
+   as an override of its own files (local-llama-key.ts): one from the desktop
+   would outrank a key the terminal already resolves. */
+const ENV_CHAINS = [["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"]];
+const ENV_NEVER_INTO_TERMINAL = new Set(["ATOMIC_AGENT_LLAMA_API_KEY"]);
+export function envNameCrosses(name: string, target: Map<string, string>, terminalSetup: boolean): boolean {
+  if (target.has(name)) return false;
+  if (!terminalSetup) return true;
+  if (ENV_NEVER_INTO_TERMINAL.has(name)) return false;
+  const chain = ENV_CHAINS.find((c) => c.includes(name));
+  return !chain || !chain.some((n) => target.has(n) || (process.env[n] ?? "").length > 0);
+}
+
+/** Top-level folders of the old weights folder that a custom model's localPath points into. */
+function pinnedModelFolders(cfg: Obj, legacyModels: string): Set<string> {
+  const out = new Set<string>();
+  const from = resolve(legacyModels) + sep;
+  for (const m of arr(asObj(cfg["localModels"])?.["customModels"])) {
+    const p = m["localPath"];
+    if (typeof p === "string" && resolve(p).startsWith(from)) out.add(resolve(p).slice(from.length).split(sep)[0]!);
+  }
+  return out;
+}
+
+const dataDirOf = (cfg: Obj | null, stateDir: string): string => {
+  const o = asObj(asObj(cfg?.["localModels"])?.["managed"])?.["dataDirOverride"];
+  return typeof o === "string" && isAbsolute(o) ? o : join(stateDir, "models");
+};
+
+function mergeLockPath(targetDir: string): string {
+  return join(targetDir, ".desktop-merge.lock");
+}
+
+function takeMergeLock(targetDir: string, deps: MigrateDeps): { ok: true } | { ok: false; reason: string } {
+  const path = mergeLockPath(targetDir);
+  try {
+    mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+  } catch { /* the write below says why */ }
+  for (let turn = 0; turn < 2; turn++) {
+    try {
+      writeFileSync(path, String(process.pid), { flag: "wx" });
+      return { ok: true };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") return { ok: false, reason: `could not take the merge lock: ${String(err)}` };
+    }
+    let pid = NaN;
+    try { pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10); } catch { /* unreadable: stale */ }
+    if (Number.isInteger(pid) && pid > 1 && pid !== process.pid && deps.pidAlive(pid)) {
+      return { ok: false, reason: `another launch (pid ${pid}) is merging right now` };
+    }
+    try { rmSync(path, { force: true }); } catch { /* the retry says why */ }
+  }
+  return { ok: false, reason: "could not take the merge lock" };
 }
 
 function isInside(child: string, parent: string): boolean {
@@ -725,29 +830,33 @@ function sameRealPath(a: string, b: string): boolean {
  * terminal's file did not change in between; one re-read and re-merge if it
  * did.
  */
-function mergeConfigInto(legacyDir: string, targetDir: string, scratch: string, legacyModels: string, deps: MigrateDeps, record: StateMergeRecord): void {
+function mergeConfigInto(legacyDir: string, targetDir: string, scratch: string, deps: MigrateDeps, record: StateMergeRecord): void {
   const w = record.warnings;
   mkdirSync(scratch, { recursive: true, mode: 0o700 });
   copyFileSync(join(legacyDir, "config.json"), join(scratch, "config.json"));
   let desktop: Obj;
+  // The agent's own schema version, as `config get` brought the desktop's
+  // file up to it. Unknown when that read failed: then the write below is
+  // what refuses a terminal file newer than the agent.
+  let bundledVersion: number | null = null;
   try {
     desktop = atagJson(deps, ["config", "get"], scratch, "reading the desktop settings");
+    bundledVersion = typeof desktop["version"] === "number" ? (desktop["version"] as number) : null;
   } catch (err) {
     desktop = readJson(join(legacyDir, "config.json")) ?? {};
     w.push(`${err instanceof Error ? err.message : String(err)}; read the file as it is`);
   }
-  const bundledVersion = typeof desktop["version"] === "number" ? (desktop["version"] as number) : null;
 
   for (let turn = 0; turn < 2; turn++) {
     const terminal = atagJson(deps, ["config", "get"], targetDir, "reading the terminal settings");
     const shaBefore = sha256Of(join(targetDir, "config.json"));
     const tVersion = typeof terminal["version"] === "number" ? (terminal["version"] as number) : null;
     if (bundledVersion !== null && tVersion !== null && tVersion > bundledVersion) {
-      w.push(`the terminal's settings are from a newer version (v${tVersion}) than this app's agent (v${bundledVersion}); the desktop's settings were not merged`);
+      record.settingsSkipped = `the terminal's settings are from a newer version (v${tVersion}) than this app's agent (v${bundledVersion})`;
+      w.push(`${record.settingsSkipped}; the desktop's settings were not merged`);
       return;
     }
-    const targetModels = join(targetDir, "models", "models");
-    const merged = mergeConfigs(terminal, desktop, keyNamesIn(targetDir), { legacyModels, targetModels });
+    const merged = mergeConfigs(terminal, desktop, keyNamesIn(targetDir));
     w.push(...merged.warnings);
     const nothing = merged.providersAdded + merged.keysFilled + merged.mcpServersAdded + merged.customModelsAdded === 0
       && JSON.stringify(merged.config) === JSON.stringify(normalised(terminal));
@@ -757,7 +866,8 @@ function mergeConfigInto(legacyDir: string, targetDir: string, scratch: string, 
     if (r.status !== 0) {
       const said = (r.error || r.stderr || `exit ${r.status}`).trim();
       if (/newer than this build/i.test(said)) {
-        w.push(`the terminal's settings are from a newer version than this app's agent; the desktop's settings were not merged`);
+        record.settingsSkipped = "the terminal's settings are from a newer version than this app's agent";
+        w.push(`${record.settingsSkipped}; the desktop's settings were not merged`);
         return;
       }
       throw new Error(`writing the merged settings failed: ${said.slice(0, 300)}`);
@@ -768,7 +878,8 @@ function mergeConfigInto(legacyDir: string, targetDir: string, scratch: string, 
     record.counts.customModelsAdded = merged.customModelsAdded;
     return;
   }
-  w.push("the terminal agent kept changing its settings while they were being merged; the desktop's settings were not merged");
+  record.settingsSkipped = "the terminal agent kept changing its settings while they were being merged";
+  w.push(`${record.settingsSkipped}; the desktop's settings were not merged`);
 }
 
 function normalised(cfg: Obj): Obj {
@@ -860,9 +971,22 @@ export function stateMergeNoticeFor(r: StateMergeRecord): StateMergeNotice {
   return {
     title: "Your desktop data moved",
     text: `Your desktop chats, memory and settings now live with the terminal agent in ${tilde(r.targetDir)}. `
-      + `A backup of the earlier files is in ${tilde(backup)}.`,
+      + `A backup of the earlier files is in ${tilde(backup)}.`
+      + (r.settingsSkipped ? ` Your desktop settings were not merged, because ${r.settingsSkipped}; they are still in ${tilde(r.legacyDir)}.` : ""),
     log: stateMergeLogLine(r),
   };
+}
+
+/**
+ * Whether the shared config.json is the DESKTOP's own, copied over by the
+ * merge because the terminal had none. For the "already set up in the
+ * terminal" notice (shared-state-notice.ts): a config.json that exists at
+ * boot is not proof of a terminal setup when this merge just wrote it.
+ * Sticky across launches (it reads the marker), and true from the attempt
+ * that wrote the copy on, even if that attempt then failed.
+ */
+export function configCameFromDesktop(targetDir: string): boolean {
+  return readMergeMarker(targetDir)?.mode === "copy";
 }
 
 /**

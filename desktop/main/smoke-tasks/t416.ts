@@ -7,6 +7,7 @@ import {
   MAX_ATTEMPTS,
   MERGE_MARKER,
   MOVED_NOTE,
+  configCameFromDesktop,
   mergeGate,
   migrateDesktopState,
   readMergeMarker,
@@ -89,7 +90,7 @@ interface Stub {
   calls: Array<{ args: string[]; stateDir: string }>;
 }
 /** The agent, as far as the merge uses it. `config get` brings an older file up to V; `config set -` refuses a newer one, as the real one does. */
-function stubAtag(opts: { importFails?: boolean } = {}): Stub {
+function stubAtag(opts: { importFails?: boolean; importUnknown?: boolean } = {}): Stub {
   const calls: Stub["calls"] = [];
   const run: RunAtag = (args, o) => {
     calls.push({ args, stateDir: o.stateDir });
@@ -108,6 +109,7 @@ function stubAtag(opts: { importFails?: boolean } = {}): Stub {
     if (args[0] === "models" && args[1] === "stop") return { status: 0, stdout: "", stderr: "" };
     if (args[0] === "import" && args[1] === "atomic-desktop") {
       if (opts.importFails) return { status: 1, stdout: "", stderr: "import failed: stand-in says no" };
+      if (opts.importUnknown) return { status: 1, stdout: "", stderr: "unknown import source: atomic-desktop" };
       return {
         status: 0,
         stdout: "progress line\n" + JSON.stringify({ ok: true, sessions: { imported: 2, skipped: 0 }, tasks: { imported: 0, skipped: 0 }, notes: { imported: 1, skipped: 0 }, profileFacts: { imported: 0, skipped: 0 }, warnings: [] }),
@@ -135,7 +137,7 @@ function makeLegacy(dir: string): void {
     version: V,
     llm: {
       providers: [
-        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19191" },
+        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19191", baseUrl: "http://127.0.0.1:19192" },
         { id: "shared-prov", kind: "openai-compatible", baseUrl: "https://desk.invalid/v1", apiKey: "sk-desk-shared" },
         { id: "term-keyed", kind: "openai-compatible", baseUrl: "https://desk.invalid/v1", apiKey: "sk-desk-must-not-win" },
         { id: "desk-only", kind: "openai-compatible", baseUrl: "https://desk.invalid/v1", apiKey: "sk-desk-only", defaultChatModel: "m" },
@@ -146,12 +148,17 @@ function makeLegacy(dir: string): void {
       { name: "desk-mcp", enabled: true, transport: { type: "stdio", command: "desk" } },
       { name: "shared-mcp", enabled: false, transport: { type: "stdio", command: "desk" } },
     ] },
-    localModels: { mode: "managed", managed: { port: 19191 }, customModels: [{ id: "c-desk", filename: "a.gguf", huggingFaceUrl: "https://h.invalid/a.gguf" }] },
+    localModels: {
+      mode: "managed",
+      managed: { port: 19191 },
+      embeddings: { port: 19192, url: "http://127.0.0.1:19192", model: "embeddinggemma-2" },
+      customModels: [{ id: "c-desk", filename: "a.gguf", huggingFaceUrl: "https://h.invalid/a.gguf" }],
+    },
     tui: { onboarding: { desktop: true } },
     telegram: { enabled: true, ownerUserId: 42 },
     analytics: { enabled: false },
   }, null, 2));
-  put(join(dir, ".env"), "AA_T416_DESK_ONLY=desk1\nAA_T416_TERM_KEY=desk-value\n");
+  put(join(dir, ".env"), "AA_T416_DESK_ONLY=desk1\nAA_T416_TERM_KEY=desk-value\nOPENAI_COMPAT_API_KEY=sk-desk-compat\nATOMIC_AGENT_LLAMA_API_KEY=desk-llama\n");
   put(join(dir, "skills", "desk-skill", "SKILL.md"), "desk skill\n");
   put(join(dir, "skills", "shared-skill", "SKILL.md"), "desk version\n");
   put(join(dir, "traces", "t1.jsonl"), "{}\n");
@@ -186,7 +193,7 @@ function makeTerminal(dir: string, version = V): void {
     telegram: { enabled: false, ownerUserId: null },
     analytics: { enabled: true },
   }, null, 2));
-  put(join(dir, ".env"), "AA_T416_TERM_KEY=term-value\n");
+  put(join(dir, ".env"), "AA_T416_TERM_KEY=term-value\nOPENAI_API_KEY=sk-term\n");
   put(join(dir, "skills", "shared-skill", "SKILL.md"), "terminal version\n");
   put(join(dir, "models", "models", "shared-model", "w.gguf"), "terminal copy");
   makeDb(join(dir, "sessions.sqlite"), ["t1"]);
@@ -241,14 +248,29 @@ export async function checks416(js: Js, check: Check): Promise<void> {
     const a = migrateDesktopState(legacyA, targetA, depsWith(stubA, new Set(), reaped));
     const ra = a.ran ? a.record : null;
     check("T416 (b): the copy finishes", !!ra && ra.ok && ra.mode === "copy", show(ra ?? a));
-    check("T416 (b): it stopped the old directory's agent and model server first",
+    check("T416 (b): it reaped the old directory's agent, and ran no models stop with no model server alive there",
       reaped.length === 1 && reaped[0] === join(legacyA, "serve.json")
-        && stubA.calls.some((c) => c.args.join(" ") === "models stop" && c.stateDir === legacyA),
+        && !stubA.calls.some((c) => c.args.join(" ") === "models stop"),
       show({ reaped, calls: stubA.calls }));
     const cfgA = existsSync(join(targetA, "config.json")) ? readJson(join(targetA, "config.json")) : {};
     check("T416 (b): config.json arrives whole, keys inline",
       byId(cfgA, "desk-only")?.["apiKey"] === "sk-desk-only" && (cfgA["telegram"] as Obj | undefined)?.["ownerUserId"] === 42,
       show(cfgA["llm"]));
+    const lmA = (cfgA["localModels"] ?? {}) as Obj;
+    const ports = {
+      managed: (lmA["managed"] as Obj | undefined)?.["port"] ?? null,
+      embPort: (lmA["embeddings"] as Obj | undefined)?.["port"] ?? null,
+      embUrl: (lmA["embeddings"] as Obj | undefined)?.["url"] ?? null,
+      embModel: (lmA["embeddings"] as Obj | undefined)?.["model"] ?? null,
+      localUrl: byId(cfgA, "local-llama")?.["url"] ?? null,
+      localBase: byId(cfgA, "local-llama")?.["baseUrl"] ?? null,
+    };
+    check("T416 (b): the desktop-only ports 19191/19192 do not survive into the shared config",
+      ports.managed === null && ports.embPort === null && ports.embUrl === null && ports.embModel === "embeddinggemma-2"
+        && ports.localUrl === "http://127.0.0.1:19091" && ports.localBase === null,
+      show(ports));
+    check("T416 (b): the shared config is marked as the desktop's own (no 'set up in the terminal' notice)",
+      configCameFromDesktop(targetA), show(readMergeMarker(targetA)?.mode));
     const envA = existsSync(join(targetA, ".env")) ? readFileSync(join(targetA, ".env"), "utf8") : "";
     check("T416 (b): .env arrives", /AA_T416_DESK_ONLY=desk1/.test(envA) && /AA_T416_TERM_KEY=desk-value/.test(envA), envA);
     const dbs = { sessions: rowCount(join(targetA, "sessions.sqlite")), memory: rowCount(join(targetA, "memory.sqlite")) };
@@ -321,9 +343,11 @@ export async function checks416(js: Js, check: Check): Promise<void> {
       live.exec("INSERT INTO sessions (id) VALUES ('t2-in-wal')");
     }
     const stubB = stubAtag();
+    // A model server still alive in the old directory: models stop runs there.
+    put(join(legacyB, "models", "llama-server.pid"), "5151");
     let b: ReturnType<typeof migrateDesktopState> | null = null;
     try {
-      b = migrateDesktopState(legacyB, targetB, depsWith(stubB));
+      b = migrateDesktopState(legacyB, targetB, depsWith(stubB, new Set([5151])));
     } finally {
       live?.close();
     }
@@ -367,6 +391,12 @@ export async function checks416(js: Js, check: Check): Promise<void> {
       facts.telegramOwner === 42 && facts.analytics === false, show(facts));
     const envB = readFileSync(join(targetB, ".env"), "utf8");
     check("T416 (d): .env gains the missing names only", /AA_T416_TERM_KEY=term-value/.test(envB) && !/desk-value/.test(envB) && /AA_T416_DESK_ONLY=desk1/.test(envB), envB);
+    check("T416 (d): a key the terminal resolves through a chain, and the desktop's llama key, do not cross",
+      !/OPENAI_COMPAT_API_KEY/.test(envB) && !/ATOMIC_AGENT_LLAMA_API_KEY/.test(envB) && /OPENAI_COMPAT_API_KEY=sk-desk-compat/.test(envA),
+      envB);
+    check("T416 (d): a live model server in the old directory is stopped there first",
+      stubB.calls.some((c) => c.args.join(" ") === "models stop" && c.stateDir === legacyB), show(stubB.calls.map((c) => c.args.join(" "))));
+    check("T416 (d): a merge into a terminal setup is not marked as the desktop's config", !configCameFromDesktop(targetB), "");
     check("T416 (d): a skill folder the terminal has keeps the terminal's copy",
       readFileSync(join(targetB, "skills", "shared-skill", "SKILL.md"), "utf8") === "terminal version\n" && existsSync(join(targetB, "skills", "desk-skill")), "");
     const imp = stubB.calls.find((c) => c.args[0] === "import");
@@ -404,11 +434,40 @@ export async function checks416(js: Js, check: Check): Promise<void> {
       existsSync(join(legacyE, "traces", "t1.jsonl")) && existsSync(join(legacyE, "models", "models", "desk-model", "w.gguf")) && !existsSync(join(legacyE, MOVED_NOTE)),
       "");
 
-    /* (f) a live Telegram poller, and a newer terminal config */
+    /* (e2) an agent without the importer, on a copy: uncounted, and the retry stays a copy */
+    const legacyE2 = join(root, "e2-legacy");
+    const targetE2 = join(root, "e2-shared");
+    makeLegacy(legacyE2);
+    mkdirSync(targetE2, { recursive: true });
+    makeDb(join(targetE2, "sessions.sqlite"), ["t1"]);   // the shared side has chats but no config
+    const e1 = migrateDesktopState(legacyE2, targetE2, depsWith(stubAtag({ importUnknown: true })));
+    const re1 = e1.ran ? e1.record : null;
+    const cfgE2 = existsSync(join(targetE2, "config.json")) ? readJson(join(targetE2, "config.json")) : {};
+    check("T416 (e2): an agent without the importer fails the attempt without counting it",
+      !!re1 && !re1.ok && re1.attempts === 0 && re1.mode === "copy" && mergeGate({ currentDir: targetE2, sharedDir: targetE2, legacyDir: legacyE2, fromEnv: false }).run,
+      show(re1));
+    check("T416 (e2): the desktop's config is already in place, so the next launch is not a first run",
+      byId(cfgE2, "desk-only")?.["apiKey"] === "sk-desk-only" && configCameFromDesktop(targetE2), show(cfgE2["llm"]));
+    const stubE2 = stubAtag();
+    const e2 = migrateDesktopState(legacyE2, targetE2, depsWith(stubE2));
+    const re2 = e2.ran ? e2.record : null;
+    check("T416 (e2): the retry finishes as a copy, keeps the first backup, and does not re-merge the config",
+      !!re2 && re2.ok && re2.mode === "copy" && re2.backupDir === re1?.backupDir && !!re2.backupDir
+        && !stubE2.calls.some((c) => c.args[0] === "config") && stubE2.calls.some((c) => c.args[0] === "import"),
+      show({ re2, calls: stubE2.calls.map((c) => c.args.join(" ")) }));
+
+    /* (f) a second launch merging at the same time, a live Telegram poller, and a newer terminal config */
     const legacyF = join(root, "f-legacy");
     const targetF = join(root, "f-shared");
     makeLegacy(legacyF);
     makeTerminal(targetF, V + 5);
+    mkdirSync(targetF, { recursive: true });
+    put(join(targetF, ".desktop-merge.lock"), "4343");
+    const busy = migrateDesktopState(legacyF, targetF, depsWith(stubAtag(), new Set([4343])));
+    check("T416 (f): a second launch does not merge while another one is", !busy.ran && /another launch/.test(busy.reason), show(busy));
+    const stale = migrateDesktopState(legacyF, targetF, depsWith(stubAtag({ importFails: true }), new Set()));
+    rmSync(join(targetF, MERGE_MARKER), { force: true });
+    check("T416 (f): a dead launch's lock is taken over, and released after", stale.ran && !existsSync(join(targetF, ".desktop-merge.lock")), show(stale));
     put(join(legacyF, "telegram.lock"), "4242");
     const held = migrateDesktopState(legacyF, targetF, depsWith(stubAtag(), new Set([4242])));
     check("T416 (f): a live Telegram lock postpones the merge without counting an attempt",
@@ -422,6 +481,9 @@ export async function checks416(js: Js, check: Check): Promise<void> {
         && !stubF.calls.some((c) => c.args[0] === "config" && c.args[1] === "set")
         && rf.warnings.some((x) => /newer version/.test(x)) && existsSync(join(targetF, "skills", "desk-skill")),
       show(rf?.warnings));
+    const nF = takeStateMergeNotice(targetF);
+    check("T416 (f): the notice says the desktop settings were not merged and where they are",
+      !!nF && /settings were not merged, because .*newer version/.test(nF.text) && nF.text.includes("f-legacy"), show(nF));
   } catch (err) {
     check("T416: its checks ran to the end", false, err instanceof Error ? err.stack ?? err.message : String(err));
   } finally {

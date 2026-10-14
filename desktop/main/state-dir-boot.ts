@@ -72,7 +72,7 @@ import { ipcMain } from "electron";
 
 import { reapOrphanedServe, resolveBinary } from "./agent-client.js";
 import { DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR } from "./state-dir.js";
-import { runDesktopStateMigrationAtBoot, takeStateMergeNotice } from "./state-migrate.js";
+import { configCameFromDesktop, runDesktopStateMigrationAtBoot, takeStateMergeNotice } from "./state-migrate.js";
 
 process.env.ATOMIC_AGENT_STATE_DIR = DESKTOP_STATE_DIR;
 
@@ -91,6 +91,14 @@ export const DESKTOP_STATE_MERGE = runDesktopStateMigrationAtBoot(DESKTOP_STATE_
 });
 /* The one-time "your desktop data moved" notice, for the first window that asks. */
 ipcMain.handle("app:stateMergeNotice", () => takeStateMergeNotice(DESKTOP_STATE_DIR));
+/**
+ * ATO-416: the shared config.json is the desktop's own, copied over by the
+ * merge (the terminal had none). DESKTOP_STATE_WAS_FRESH below is false for
+ * such an upgrader on purpose (it is not a first run: no wizard, no port
+ * claim), so the "already set up in the terminal" notice must also check
+ * this before it says the terminal set anything up.
+ */
+export const SHARED_CONFIG_FROM_DESKTOP = configCameFromDesktop(DESKTOP_STATE_DIR);
 
 /** Was this a genuine first run? Latched before anything can write. */
 export const DESKTOP_STATE_WAS_FRESH = !existsSync(join(DESKTOP_STATE_DIR, "config.json"));
