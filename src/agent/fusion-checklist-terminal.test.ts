@@ -30,6 +30,7 @@ describe("Fusion checklist at the actual turn terminal", () => {
     });
     let step = 0;
     const replies: string[] = [];
+    const endings: string[] = [];
     const loop = new AgentLoop({
       registry, slotManager: new SlotManager(1), grammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
       profile: PLAIN_INSTRUCT_PROFILE, isFusionMode: () => true,
@@ -48,12 +49,18 @@ describe("Fusion checklist at the actual turn terminal", () => {
       ],
       capabilities: { platform: "win32", arch: "x64", browserChannel: "chrome", workingDir: process.cwd(), hasClipboard: false, hasWmctrl: false, hasNotifications: false },
       skillCatalog: [],
-      onEvent: (event) => { if (event.type === "llm_event" && event.event.type === "assistant_reply") replies.push(event.event.text); },
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "assistant_reply") replies.push(event.event.text);
+        if (event.type === "loop_completed" || event.type === "turn_finished") endings.push(`${event.type}:${event.reason}`);
+      },
     });
     const result = await loop.runTurn(createEmptySessionState({ id: "s-checklist", workingDir: process.cwd() }), {
       userMessage: "build the scenes", maxSteps: 4, autoContinue: false, signal: new AbortController().signal,
     });
     const transcript = JSON.stringify(result.session.turns);
+    const expectedReason = repair ? terminal : "failed";
+    expect(endings).toEqual([`loop_completed:${expectedReason}`, `turn_finished:${expectedReason}`]);
+    expect(result.session.turnCount).toBe(1);
     expect(invoke).toHaveBeenCalledWith(terminal, expect.objectContaining(
       terminal === "reply"
         ? { text: expect.stringContaining("SUCCESS_ALL_DONE"), attachments: [] }

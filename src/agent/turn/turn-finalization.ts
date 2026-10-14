@@ -134,6 +134,11 @@ export function finalizeAgentTurn(
             : `task_stopped:${stopCause}: ${stepsTaken} steps without reply`,
       };
     }
+  } else if (reason === "failed") {
+    // A rejected completion still owes subscribers one terminal event.
+    // Keep the existing reply/checklist evidence rather than synthesizing a new reply.
+    state = { ...state, status: "failed" };
+    deps.onEvent?.({ type: "loop_completed", reason });
   } else if (reason === "reply") {
     state = { ...state, status: "pending" };
     deps.onEvent?.({ type: "loop_completed", reason });
@@ -157,8 +162,8 @@ export function finalizeAgentTurn(
   // Phase 6 — bump success/failure counters on surfaced lessons.
   // `reply` / `finish` are positive outcomes; `cancelled` /
   // `max_steps` are filtered out (neither a success nor failure
-  // signal). The `failed` branch already fired the hook above
-  // before its early `return`.
+  // signal). Thrown failures fire their hook in finalizeFailedAgentTurn;
+  // a checklist-blocked terminal must not be counted as a success.
   if (!options.ephemeral && (reason === "reply" || reason === "finish")) {
     invokeLessonLifecycle(deps, state.id, surfacedLessonIds, "success");
   }
