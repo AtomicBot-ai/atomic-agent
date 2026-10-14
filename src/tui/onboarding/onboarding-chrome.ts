@@ -37,9 +37,9 @@ export function onboardingFooterFor(
   const quit = ctrlCArmed ? "ctrl+c press again to quit" : "ctrl+c quit";
   switch (onboarding.step) {
     case "choose":
-      return // `t theme` takes the place of the `1–3 jump` hint (the numbers sit
-      // next to the options already) so the armed ctrl+c tail still fits
-      // 80 columns and the 60-column pin keeps `ctrl+c` in view.
+      // `t theme` takes the `1–3 jump` slot (the digits still work) so the
+      // armed ctrl+c tail still fits 80 columns and `ctrl+c` stays in view
+      // at 60.
       return `↑/↓ move   enter select   t theme   esc skip   ${quit}`;
     case "cloud":
       // "/ search" tracks the wizard phase, not the onboarding step: on
