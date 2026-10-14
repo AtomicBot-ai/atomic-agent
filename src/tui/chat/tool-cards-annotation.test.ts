@@ -134,6 +134,22 @@ describe("toolCardsAnnotation", () => {
     ).toBe("edited 1 file, moved 3 files to the trash");
   });
 
+  it("names a move as its own step, counted by source file, single or batched", () => {
+    expect(
+      toolCardsAnnotation([
+        card("os.fs.move", { from: "a.pdf", to: "Docs/" }),
+        card("os.fs.move", {
+          moves: [
+            { from: "b.pdf", to: "Docs/" },
+            { from: "./a.pdf", to: "Docs/" },
+            { from: "c.jpg", to: "Images/" },
+          ],
+        }),
+        card("os.fs.edit", { path: "x.ts" }),
+      ]),
+    ).toBe("edited 1 file, moved 3 files");
+  });
+
   it("files read-only fs tools under read / search and GitHub on its own", () => {
     expect(
       toolCardsAnnotation([

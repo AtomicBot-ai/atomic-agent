@@ -46,6 +46,7 @@ describe("tool roles", () => {
       "memory.notes.recall",
       "browser.navigate",
       "os.fs.trash",
+      "os.fs.move",
       "os.git.commit",
       "os.web.search",
       "vision.describe",

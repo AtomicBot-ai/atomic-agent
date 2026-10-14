@@ -56,6 +56,17 @@ function patchPaths(patch: string): string[] {
   return [...found];
 }
 
+/** The `{ from, to }` pairs of an `os.fs.move` call, single or batched. */
+function movePairs(args: Record<string, unknown>): { from: string; to: string }[] {
+  const raw = Array.isArray(args.moves) ? args.moves : [args];
+  return raw.flatMap((item: unknown) => {
+    if (typeof item !== "object" || item === null) return [];
+    const from = stringArg(item as Record<string, unknown>, "from");
+    const to = stringArg(item as Record<string, unknown>, "to");
+    return from && to ? [{ from, to }] : [];
+  });
+}
+
 /** The first line that reads like an error, else the first non-empty line. */
 export function firstErrorLine(summary: string): string {
   const lines = summary.slice(0, ERROR_SCAN_CHARS).split("\n").map((line) => line.trim()).filter(Boolean);
@@ -94,6 +105,11 @@ export function describeToolStep(call: ToolCall, result: ToolResult | undefined)
     const argv = Array.isArray(args.args) ? args.args.filter((a): a is string => typeof a === "string") : [];
     verb = "ran";
     target = `\`${short([stringArg(args, "cmd") ?? "", ...argv].join(" "), TARGET_MAX_CHARS)}\``;
+  } else if (call.tool === "os.fs.move") {
+    const pairs = movePairs(args);
+    verb = "moved";
+    target = pairs.length === 1 ? `${pairs[0]!.from} → ${pairs[0]!.to}` : `${pairs.length} items`;
+    if (result?.status !== "error") facts.changed.push(...pairs.map((pair) => pair.to));
   } else if (CHANGES.has(call.tool)) {
     const paths = path ? [path] : call.tool === "os.fs.patch" ? patchPaths(stringArg(args, "patch") ?? "") : [];
     verb = CHANGES.get(call.tool)!;

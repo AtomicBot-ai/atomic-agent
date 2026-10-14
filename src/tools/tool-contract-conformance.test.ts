@@ -59,6 +59,7 @@ import { OS_FS_EDIT_CONTRACT } from "./os/fs/fs-edit-contract.js";
 import { OS_FS_PATCH_CONTRACT } from "./os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "./os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "./os/fs/fs-restore-contract.js";
+import { OS_FS_MOVE_CONTRACT } from "./os/fs/fs-move-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "./os/fs/fs-locate-project-contract.js";
 
 const CORE_CONTRACTS = [
@@ -75,6 +76,7 @@ const CORE_CONTRACTS = [
   OS_FS_TRASH_CONTRACT,
   OS_FS_RESTORE_CONTRACT,
   OS_FS_LOCATE_PROJECT_CONTRACT,
+  OS_FS_MOVE_CONTRACT,
 ];
 
 const unexpected = (): never => { throw new Error("Catalog assembly must not execute an external operation"); };
@@ -220,7 +222,7 @@ function conformanceErrors(catalog: Catalog): string[] {
   for (const definition of catalog.registrations) {
     if (definition.description.length === 0) errors.push(`empty description: ${definition.name}`);
   }
-  // Canonical semantic oracle is deliberately bounded to the 13 filesystem contracts.
+  // Canonical semantic oracle is deliberately bounded to the 14 filesystem contracts.
   // Other built-ins have no canonical owner yet: presence/formats do not prove their semantics.
   for (const contract of CORE_CONTRACTS) {
     const definition = catalog.registrations.find((item) => item.name === contract.name);
@@ -319,8 +321,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(88);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(85);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(89);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(86);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
@@ -456,6 +458,7 @@ describe("whole built-in tool catalog conformance", () => {
     }
     expect(roleAdmits("builder", "os.fs.locate_project")).toBe(false);
     expect(roleAdmits("builder", "os.fs.trash")).toBe(false);
+    expect(roleAdmits("builder", "os.fs.move")).toBe(false);
     for (const name of ["os.fs.write", "os.fs.edit", "os.fs.patch", "os.fs.restore"]) expect(roleAdmits("builder", name)).toBe(true);
     for (const name of ["os.fs.read", "os.fs.hash", "os.fs.diff", "os.fs.watch", "os.fs.locate_project"]) expect(roleAdmits("orchestrator", name)).toBe(true);
   });

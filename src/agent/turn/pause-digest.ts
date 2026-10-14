@@ -31,6 +31,7 @@ const FILE_CHANGING_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.patch",
   "os.fs.restore",
   "os.fs.trash",
+  "os.fs.move",
 ]);
 
 type ToolCallTurn = Extract<ConversationTurn, { kind: "assistant_tool_call" }>;
@@ -124,10 +125,24 @@ function changedFiles(steps: readonly StepRecord[]): string[] {
   for (const step of steps) {
     if (!FILE_CHANGING_TOOLS.has(step.call.tool)) continue;
     if (step.result?.status !== "ok") continue;
-    const path = step.call.args["path"];
-    if (typeof path === "string" && path.length > 0) seen.add(path);
+    for (const path of changedPathsOf(step.call.tool, step.call.args)) {
+      seen.add(path);
+    }
   }
   return Array.from(seen);
+}
+
+/** `path`, or for `os.fs.move` every destination (`to`, or each of `moves`). */
+function changedPathsOf(tool: string, args: Record<string, unknown>): string[] {
+  const raw: unknown[] =
+    tool === "os.fs.move"
+      ? (Array.isArray(args["moves"]) ? args["moves"] : [args]).map((item: unknown) =>
+          typeof item === "object" && item !== null
+            ? (item as Record<string, unknown>)["to"]
+            : undefined,
+        )
+      : [args["path"]];
+  return raw.filter((p): p is string => typeof p === "string" && p.length > 0);
 }
 
 function describeStep(step: StepRecord): string {

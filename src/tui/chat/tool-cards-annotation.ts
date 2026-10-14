@@ -112,6 +112,7 @@ type BucketId =
   | "read"
   | "search"
   | "edit"
+  | "move"
   | "trash"
   | "shell"
   | "git"
@@ -132,6 +133,7 @@ const BUCKET_ORDER: readonly BucketId[] = [
   "read",
   "search",
   "edit",
+  "move",
   "trash",
   "shell",
   "git",
@@ -170,6 +172,7 @@ function bucketOf(tool: string): BucketId {
   if (READ_TOOLS.has(tool)) return "read";
   if (SEARCH_TOOLS.has(tool)) return "search";
   if (EDIT_TOOLS.has(tool)) return "edit";
+  if (tool === "os.fs.move") return "move";
   if (tool === "os.fs.trash") return "trash";
   if (tool === "os.shell.run") return "shell";
   if (tool.startsWith("os.git.")) return "git";
@@ -186,7 +189,12 @@ function bucketOf(tool: string): BucketId {
 }
 
 /** Buckets whose phrase counts files rather than calls. */
-const FILE_BUCKETS: ReadonlySet<BucketId> = new Set(["read", "edit", "trash"]);
+const FILE_BUCKETS: ReadonlySet<BucketId> = new Set([
+  "read",
+  "edit",
+  "move",
+  "trash",
+]);
 
 /**
  * Files are counted by distinct path, so reading one file three times
@@ -200,7 +208,8 @@ function countFor(id: BucketId, bucket: Bucket): number {
 
 /**
  * Every file a call names, normalised: `path`, the `paths` of a trash,
- * the two sides of a diff, and the `+++` headers of an inline patch.
+ * the sources of a move, the two sides of a diff, and the `+++`
+ * headers of an inline patch.
  */
 function pathsOf(card: AnnotatedCard): string[] {
   const args = card.args;
@@ -208,6 +217,13 @@ function pathsOf(card: AnnotatedCard): string[] {
   if (card.tool === "os.fs.patch") {
     const patch = args["patch"];
     if (typeof patch === "string") raw.push(...patchTargets(patch));
+  } else if (card.tool === "os.fs.move") {
+    const moves = Array.isArray(args["moves"]) ? (args["moves"] as unknown[]) : [args];
+    for (const move of moves) {
+      if (typeof move === "object" && move !== null) {
+        raw.push((move as Record<string, unknown>)["from"]);
+      }
+    }
   } else if (card.tool === "os.fs.diff") {
     raw.push(args["aPath"], args["bPath"]);
   } else if (Array.isArray(args["paths"])) {
@@ -268,6 +284,7 @@ const PHRASES: Record<BucketId, (n: number) => string> = {
   read: (n) => `read ${plural(n, "file", "files")}`,
   search: (n) => `ran ${plural(n, "search", "searches")}`,
   edit: (n) => `edited ${plural(n, "file", "files")}`,
+  move: (n) => `moved ${plural(n, "file", "files")}`,
   trash: (n) => `moved ${plural(n, "file", "files")} to the trash`,
   shell: (n) => `ran ${plural(n, "command", "commands")}`,
   git: (n) => `ran ${plural(n, "git command", "git commands")}`,

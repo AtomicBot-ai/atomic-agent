@@ -49,6 +49,21 @@ describe("session read scope (the check)", () => {
     );
   });
 
+  it("checks a move's sources like reads, so an outside file cannot be carried in unasked", () => {
+    const secret = join(elsewhere, ".ssh", "id_ed25519");
+    expect(outside("os.fs.move", { from: secret, to: "src/" })).toBe(secret);
+    expect(
+      outside("os.fs.move", {
+        moves: [
+          { from: "src/main.ts", to: "lib/" },
+          { from: secret, to: "lib/" },
+        ],
+      }),
+    ).toBe(secret);
+    // Moving the workspace's own files anywhere is not a read outside.
+    expect(outside("os.fs.move", { from: "src/main.ts", to: elsewhere })).toBeNull();
+  });
+
   it("allows reads inside the working directory, by relative or absolute path", () => {
     for (const [tool, args] of [
       ["os.fs.read", { path: "src/main.ts" }],

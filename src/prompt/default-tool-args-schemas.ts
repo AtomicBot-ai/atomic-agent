@@ -9,6 +9,7 @@ import { OS_FS_EDIT_CONTRACT } from "../tools/os/fs/fs-edit-contract.js";
 import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Per-tool JSON Schemas for the cloud `native_tools` transport.
@@ -151,6 +152,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   [OS_FS_READ_CONTRACT.name, OS_FS_READ_CONTRACT.argsJsonSchema],
   [OS_FS_WRITE_CONTRACT.name, OS_FS_WRITE_CONTRACT.argsJsonSchema],
   [OS_FS_RESTORE_CONTRACT.name, OS_FS_RESTORE_CONTRACT.argsJsonSchema],
+  [OS_FS_MOVE_CONTRACT.name, OS_FS_MOVE_CONTRACT.argsJsonSchema],
   [OS_FS_TRASH_CONTRACT.name, OS_FS_TRASH_CONTRACT.argsJsonSchema],
   [OS_FS_LIST_CONTRACT.name, OS_FS_LIST_CONTRACT.argsJsonSchema],
   [OS_FS_GLOB_CONTRACT.name, OS_FS_GLOB_CONTRACT.argsJsonSchema],

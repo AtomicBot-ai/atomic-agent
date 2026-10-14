@@ -88,6 +88,8 @@ describe("tool step lines", () => {
     expect(failed).toMatchObject({ line: "fetched https://example.com/x → error: HTTP 404 not found", urls: ["https://example.com/x"] });
     expect(failed.error).toContain("HTTP 404 not found");
     expect(describeToolStep({ tool: "os.fs.edit", args: { path: "/d.ts" } }, undefined).line).toBe("edited /d.ts → no result recorded");
+    expect(describeToolStep({ tool: "os.fs.move", args: { from: "/a.pdf", to: "/Docs/a.pdf" } }, ok("os.fs.move"))).toMatchObject({ line: "moved /a.pdf → /Docs/a.pdf → ok", changed: ["/Docs/a.pdf"] });
+    expect(describeToolStep({ tool: "os.fs.move", args: { moves: [{ from: "/a", to: "/x/" }, { from: "/b", to: "/y/" }] } }, ok("os.fs.move"))).toMatchObject({ line: "moved 2 items → ok", changed: ["/x/", "/y/"] });
     expect(firstErrorLine("$ make\nexit: 2\ncompiling\nmake: *** [all] Error 2")).toBe("make: *** [all] Error 2");
   });
 });
