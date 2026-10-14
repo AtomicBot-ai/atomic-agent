@@ -1,6 +1,7 @@
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { DrainOutcome } from "../tasks/task-runner.js";
+import type { SchedulerLeadership } from "./scheduler-leadership.js";
 
 /**
  * Minimal clock surface the scheduler depends on. Production wiring
@@ -46,6 +47,13 @@ export interface SchedulerOptions {
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   clock?: SchedulerClock;
+  /**
+   * Gate for the interval ticks when several processes share one state
+   * dir (ATO-416, see `scheduler-leadership.ts`): only the leader drains.
+   * Absent: always drain, the single-process behaviour. An explicit
+   * `tickOnce()` is never gated — it is an operator asking for a drain.
+   */
+  leadership?: SchedulerLeadership;
 }
 
 const DEFAULT_CLOCK: SchedulerClock = {
@@ -74,6 +82,8 @@ export class Scheduler {
   private running = false;
   private stopping = false;
   private inFlight: Promise<void> | null = null;
+  /** Last leadership answer, to log hand-overs once rather than per tick. */
+  private leading: boolean | null = null;
   /**
    * Handed to every tick's `runDue` and aborted by `stop()`: the drain
    * stops claiming, and the turn of the task it is running is stopped
@@ -94,6 +104,7 @@ export class Scheduler {
     if (this.timer !== null) return;
     if (this.stopping) return;
     const handler = () => {
+      if (!this.leads()) return;
       void this.tickOnce();
     };
     this.timer = this.clock.setInterval(handler, this.options.tickMs);
@@ -119,6 +130,16 @@ export class Scheduler {
       this.timer = null;
     }
     this.stopController.abort();
+    try {
+      await this.settleInFlight(graceMs);
+    } finally {
+      // After the drain, so the other process takes over only once this
+      // one has stopped claiming (or the grace ran out).
+      this.options.leadership?.release();
+    }
+  }
+
+  private async settleInFlight(graceMs: number | undefined): Promise<void> {
     const inFlight = this.inFlight;
     if (!inFlight) return;
     const settled = inFlight.catch(() => {
@@ -139,6 +160,33 @@ export class Scheduler {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Ask the leadership gate (if any) whether this process drains now.
+   * A gate that throws fails open: running as before beats never running.
+   */
+  private leads(): boolean {
+    const leadership = this.options.leadership;
+    if (!leadership) return true;
+    let leader: boolean;
+    try {
+      leader = leadership.isLeader();
+    } catch (err) {
+      this.options.logger?.warn("scheduler leadership check failed; running", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      leader = true;
+    }
+    if (leader !== this.leading) {
+      this.leading = leader;
+      this.options.logger?.info(
+        leader
+          ? "scheduler: running due tasks in this process"
+          : "scheduler: another process runs due tasks; standing by",
+      );
+    }
+    return leader;
   }
 
   /**

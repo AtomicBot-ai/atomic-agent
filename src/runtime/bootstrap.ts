@@ -633,7 +633,9 @@ export async function createAgentRuntime(
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
   });
 
-  const scheduler = createRuntimeScheduler({ config, taskRunner, logger, metrics });
+  const scheduler = createRuntimeScheduler({
+    config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
+  });
   const consolidatorJob = createRuntimeMemoryConsolidator({
     config, notesStore, linkStore, lessonStore, procedureStore, voteStore,
     slotManager, llmComplete, logger, metrics, traceBus,

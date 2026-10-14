@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { TaskStore, TaskRunner } from "../../tasks/index.js";
 import type { TaskRunnerRuntime } from "../../tasks/task-runner.js";
-import { Scheduler } from "../../scheduler/index.js";
+import { createSchedulerLeadership, Scheduler } from "../../scheduler/index.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import { registerTaskTools } from "../../tools/tasks/index.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
@@ -107,21 +107,35 @@ export function createRuntimeTaskRunner(args: {
 }
 
 export function createRuntimeScheduler(args: {
-  config: Pick<AtomicAgentConfig, "tasks">;
+  config: Pick<AtomicAgentConfig, "tasks" | "paths">;
   taskRunner: TaskRunner;
   logger: StructuredLogger;
   metrics: AgentMetrics;
+  /**
+   * The live Telegram channel, resolved per tick (it is constructed
+   * after the scheduler). Absent or `null`: Telegram is not wanted here.
+   */
+  resolveTelegram?: () => Pick<TelegramChannel, "hasToken" | "state"> | null;
 }): Scheduler | null {
-  const { config, taskRunner, logger, metrics } = args;
-  const scheduler =
-    config.tasks.enabled && config.tasks.schedulerEnabled
-      ? new Scheduler({
-          taskRunner,
-          tickMs: config.tasks.schedulerTickMs,
-          batch: config.tasks.schedulerBatch,
-          logger,
-          metrics,
-        })
-      : null;
-  return scheduler;
+  const { config, taskRunner, logger, metrics, resolveTelegram } = args;
+  if (!config.tasks.enabled || !config.tasks.schedulerEnabled) return null;
+  // ATO-416: the desktop's `atag serve` and the TUI can share this state
+  // dir, each with a scheduler. Only one drains due tasks — the Telegram
+  // owner when this process wants Telegram, else the holder of
+  // `scheduler.lock` (see `scheduler-leadership.ts`).
+  const leadership = createSchedulerLeadership({
+    stateDir: config.paths.stateDir,
+    telegramWanted: () => {
+      const channel = resolveTelegram?.() ?? null;
+      return channel !== null && channel.hasToken() && channel.state() !== "disabled";
+    },
+  });
+  return new Scheduler({
+    taskRunner,
+    tickMs: config.tasks.schedulerTickMs,
+    batch: config.tasks.schedulerBatch,
+    logger,
+    metrics,
+    leadership,
+  });
 }
