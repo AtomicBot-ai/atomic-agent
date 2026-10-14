@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { applyPendingEmbeddingDisable, connectCore, CoreRequestError, ensureCore, type CoreControlClient } from "./core-client.js";
 import {
   chooseUpstreamEngine,
@@ -16,7 +16,7 @@ import {
   type CoreEmbeddingStatus,
 } from "./core-embedding.js";
 import { retireIdleCore } from "./core-sessions.js";
-import { CORE_VERSION, coreRoot, writeCoreJson } from "./core-state.js";
+import { CORE_VERSION, activeCoreVersion, coreBinary, coreRoot, coreVersionDir, writeCoreJson } from "./core-state.js";
 import { EmbeddingUnavailableError } from "../../memory/embeddings/embedding-client.js";
 
 const fake = vi.hoisted(() => ({ call: vi.fn(), downloadEvents: vi.fn(), snapshot: vi.fn() }));
@@ -230,6 +230,50 @@ describe("starting the module", () => {
     writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.11.2" });
     await expect(startCoreEmbedding(dir, opts)).rejects.toThrow(`needs Atomic Core ${CORE_VERSION}. Install it with: atomic-agent models update`);
     expect(fake.call).not.toHaveBeenCalled();
+  });
+
+  /** Core `version` and its backend on disk, as an install leaves them. */
+  function installed(version: string) {
+    mkdirSync(dirname(coreBinary(dir, version)), { recursive: true });
+    writeFileSync(coreBinary(dir, version), "fixture");
+    writeCoreJson(join(coreVersionDir(dir, version), "verified.json"), { version, sha256: "a".repeat(64) });
+    const server = join(coreVersionDir(dir, version), "llama-server");
+    writeFileSync(server, "fixture");
+    writeCoreJson(join(coreVersionDir(dir, version), "backend.json"), { coreVersion: version, provider: "llamacpp", version: "b1", backend: "test", binary: server, installedAt: "2026-10-01T00:00:00.000Z" });
+  }
+
+  it("keeps the module on an older active Core that has it while the pin is not installed (updates off)", async () => {
+    installed("0.13.6");
+    writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.13.6" });
+    fake.call.mockImplementation(async (path: string) => (path === "/embedding/load" ? ready : {}));
+    await expect(startCoreEmbedding(dir, opts)).resolves.toMatchObject({ state: "ready" });
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ coreVersion: "0.13.6", modelId: "embeddinggemma-2" });
+    expect(activeCoreVersion(dir)).toBe("0.13.6");
+  });
+
+  it("restarts the module on an older active Core that is busy with it, leaving the installed pin deferred", async () => {
+    installed("0.13.6");
+    installed(CORE_VERSION);
+    writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.13.6" });
+    vi.mocked(connectCore).mockResolvedValue(client);
+    fake.snapshot.mockResolvedValue({ sessions: [] });
+    fake.call.mockImplementation(async (path: string) => {
+      if (path === "/embedding/status") return { ...ready, enabled: true };
+      return path === "/embedding/load" ? ready : {};
+    });
+    await expect(startCoreEmbedding(dir, opts)).resolves.toMatchObject({ state: "ready" });
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ coreVersion: "0.13.6" });
+    expect(activeCoreVersion(dir)).toBe("0.13.6");
+  });
+
+  it("switches an idle older Core to the installed pin before starting the module", async () => {
+    installed("0.13.6");
+    installed(CORE_VERSION);
+    writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.13.6" });
+    fake.call.mockImplementation(async (path: string) => (path === "/embedding/load" ? ready : {}));
+    await startCoreEmbedding(dir, opts);
+    expect(activeCoreVersion(dir)).toBe(CORE_VERSION);
+    expect(readCoreEmbeddingRecord(dir)).toMatchObject({ coreVersion: CORE_VERSION });
   });
 });
 
