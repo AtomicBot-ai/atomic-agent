@@ -216,6 +216,7 @@ export interface RecentWorkingDirRow {
 export class SessionStore {
   private readonly db: Database.Database;
   private readonly insertStmt: Database.Statement;
+  private readonly insertIfAbsentStmt: Database.Statement;
   private readonly updateStmt: Database.Statement;
   private readonly selectStmt: Database.Statement;
   private readonly selectStoredStmt: Database.Statement;
@@ -271,6 +272,11 @@ export class SessionStore {
     this.dbIdentity = databaseIdentity(file);
     this.insertStmt = this.db.prepare(
       `INSERT INTO sessions (id, working_dir, status, payload, created_at, updated_at)
+       VALUES (@id, @working_dir, @status, @payload, @created_at, @updated_at)`,
+    );
+    // Names no `turn_owner`: a copied row never carries a turn mark.
+    this.insertIfAbsentStmt = this.db.prepare(
+      `INSERT OR IGNORE INTO sessions (id, working_dir, status, payload, created_at, updated_at)
        VALUES (@id, @working_dir, @status, @payload, @created_at, @updated_at)`,
     );
     this.updateStmt = this.db.prepare(
@@ -631,6 +637,39 @@ export class SessionStore {
     };
   }
 
+  /**
+   * Copy sessions from another state dir into this one, keeping their
+   * ids: the desktop's own dir merged into the shared one (ATO-416). A
+   * row whose id is already here is left exactly as it is — what this
+   * store holds wins — and the copy is dropped.
+   *
+   * A copied row never carries a turn: no `turn_owner` is written, and a
+   * live status (a turn that was running when the other dir's process
+   * stopped) is ended the way the boot sweep ends one whose process is
+   * gone (`INTERRUPTED_TURN_ENDING`). Otherwise the lists would show a
+   * turn nothing here is running.
+   *
+   * One `BEGIN IMMEDIATE` transaction per call, so the write lock is
+   * waited for (busy timeout) rather than failing on an upgrade while a
+   * TUI or `serve` writes the same file; callers keep batches small so
+   * the lock is never held for long. Returns the ids inserted.
+   */
+  insertMissing(states: readonly SessionState[]): string[] {
+    const insert = this.db.transaction(
+      (batch: readonly SessionState[]): string[] => {
+        const inserted: string[] = [];
+        for (const state of batch) {
+          const result = this.insertIfAbsentStmt.run(
+            this.serialize(endLiveTurn(state)),
+          ) as { changes: number };
+          if (result.changes > 0) inserted.push(state.id);
+        }
+        return inserted;
+      },
+    );
+    return insert.immediate(states);
+  }
+
   load(id: string): SessionState | null {
     const row = this.selectStmt.get(id) as StoredPayloadRow | undefined;
     if (!row) return null;
@@ -778,6 +817,16 @@ export class SessionStore {
       updated_at: persistable.updatedAt,
     };
   }
+}
+
+/** `state` with a live status ended as an interrupted turn; others as they are. */
+function endLiveTurn(state: SessionState): SessionState {
+  if (!LIVE_STATUSES.has(state.status)) return state;
+  return {
+    ...state,
+    status: INTERRUPTED_TURN_ENDING.status,
+    lastError: INTERRUPTED_TURN_ENDING.lastError ?? state.lastError,
+  };
 }
 
 /**
