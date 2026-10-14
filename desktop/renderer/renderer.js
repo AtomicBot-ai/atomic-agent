@@ -18878,9 +18878,21 @@ function sysGlyph(m) {
   const name = sev === 'err' || sev === 'warn' ? 'alert' : sev === 'pause' ? 'pause' : sev === 'stop' ? 'stop' : m.fusion ? 'fusion' : 'info';
   return '<span class="sys-ic' + (sev ? ' ' + sev : '') + '">' + ic(name) + '</span>';
 }
+/** ATO-381: "Try again" on a failed turn's row sends the person's message
+    before it once more, through the same data-resend path as the message's
+    own "Send this message again" (resendUser). A steer is folded into the
+    turn, so it is skipped like the palette's retry. '' when there is none. */
+function sysRetryHTML(m) {
+  const at = S.log.indexOf(m);
+  for (let i = (at < 0 ? S.log.length : at) - 1; i >= 0; i--) {
+    const u = S.log[i];
+    if (u.k === 'user' && !u.steered && String(u.text || '').trim()) return ' <button class="btn xs btn-s sysact" data-resend="' + esc(u.id) + '">Try again</button>';
+  }
+  return '';
+}
 function sysRowHTML(m, times) {
-  const acts = m.act === 'switch-provider'
-    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '';
+  const acts = (m.act === 'switch-provider'
+    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' ? sysRetryHTML(m) : '');
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
     + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts + '</span></div></div>';
