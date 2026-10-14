@@ -55,7 +55,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { assertThrowawayStateDir } from './state-guard.mjs';
+import { assertThrowawayStateDir, driveEnv } from './state-guard.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
@@ -345,12 +345,18 @@ export async function launch({ port = 9401, stateDir, args = [], env = {}, cwd =
   }
   const child = spawn(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['electron', '.', `--remote-debugging-port=${port}`, ...args],
+    /* A throwaway Chromium profile inside the throwaway state dir, as
+       drive.mjs does: without it `electron .` shares ~/Library/Application
+       Support/Atomic Agent with the operator's installed app (prefs.json,
+       voice.json, unverified.json, localStorage) and two windows fight over
+       one profile. */
+    ['electron', '.', `--remote-debugging-port=${port}`, `--user-data-dir=${join(stateDir, '.chromium-profile')}`, ...args],
     {
       cwd,
       // Its own process group, so `close` can take the whole tree down.
       detached: process.platform !== 'win32',
-      env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...env },
+      // The guarded state dir is applied last, so `env` cannot swap it.
+      env: driveEnv(stateDir, env),
       stdio: quiet ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     },
   );

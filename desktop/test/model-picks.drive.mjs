@@ -32,6 +32,7 @@
 import { mkdtempSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { launch, sleep } from './drive.mjs';
+import { assertThrowawayStateDir } from './state-guard.mjs';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -41,6 +42,7 @@ const PORT = Number(arg('port', '9410'));
 const SHOTS = arg('shots', null);
 const CONFIGURED = arg('state', process.env.ATOMIC_AGENT_STATE_DIR || null);
 if (!CONFIGURED) throw new Error('set ATOMIC_AGENT_STATE_DIR (or pass --state=DIR) — never the operator’s own');
+assertThrowawayStateDir(CONFIGURED); // before SCRATCH below is made inside it
 /* The wizard legs need a state dir with no backend configured, and they
    must not disturb the configured one the Settings leg uses. */
 const SCRATCH = join(CONFIGURED, 'drive-model-picks');

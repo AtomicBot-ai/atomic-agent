@@ -6,11 +6,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { assertThrowawayStateDir } from './state-guard.mjs';
+import { assertThrowawayStateDir, driveEnv } from './state-guard.mjs';
 import { launch as launchDrive } from './drive.mjs';
 import { launch as launchUx } from './drive-ux.mjs';
 import { launch as launchSelector } from './drive-selector-lib.mjs';
@@ -97,3 +98,35 @@ for (const [name, launch] of Object.entries(launchers)) {
     await assert.rejects(launch('relative-lane'), /relative state dir/);
   });
 }
+
+// ATO-385: the guarded dir has to be the one the app actually gets.
+test('a caller env cannot swap the guarded state dir', () => {
+  const scratch = mkdtempSync(join(root, 'lane-'));
+  const got = driveEnv(scratch, { ATOMIC_AGENT_BIN: '/x/agent' }, { ATOMIC_AGENT_STATE_DIR: live, EXTRA: '1' }, undefined);
+  assert.equal(got.ATOMIC_AGENT_STATE_DIR, scratch);
+  assert.equal(got.ATOMIC_AGENT_BIN, '/x/agent');
+  assert.equal(got.EXTRA, '1');
+  assert.equal(driveEnv(scratch, { EXTRA: 'a' }, { EXTRA: 'b' }).EXTRA, 'b', 'later layers still win among themselves');
+});
+
+/* Spawn arguments and the spawn env are only observable by starting
+   Electron, which these tests never do, so the four drivers are read as
+   source: each must give Electron a throwaway --user-data-dir (otherwise it
+   writes ~/Library/Application Support/Atomic Agent) and build its env
+   through driveEnv. */
+const HERE = dirname(fileURLToPath(import.meta.url));
+for (const name of Object.keys(launchers)) {
+  test(`${name} spawns Electron with a throwaway profile and the guarded env`, () => {
+    const src = readFileSync(join(HERE, name), 'utf8');
+    assert.match(src, /--user-data-dir=\$\{(join\()?(o\.)?stateDir/, 'no --user-data-dir inside the state dir');
+    assert.match(src, /env: driveEnv\(/, 'spawn env is not built by driveEnv');
+    assert.doesNotMatch(src, /ATOMIC_AGENT_STATE_DIR: (o\.)?stateDir,[^}]*\.\.\.(o\.)?env\b/, 'caller env spread after the state dir');
+  });
+}
+
+test('model-picks.drive.mjs checks its state dir before making anything inside it', () => {
+  const src = readFileSync(join(HERE, 'model-picks.drive.mjs'), 'utf8');
+  const guard = src.indexOf('assertThrowawayStateDir(CONFIGURED)');
+  assert.ok(guard > 0, 'no guard on CONFIGURED');
+  assert.ok(guard < src.indexOf('mkdirSync(SCRATCH'), 'SCRATCH is made before the guard');
+});

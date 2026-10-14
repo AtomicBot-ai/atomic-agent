@@ -78,3 +78,17 @@ export function assertThrowawayStateDir(stateDir, o = {}) {
   const hit = real.find((r) => canonical(r, platform) === mine);
   if (hit) throw new Error(`refusing to launch against ${stateDir}: that is real app data (${hit})`);
 }
+
+/**
+ * The environment a driven app starts with: this process's own, then each
+ * of `layers` in order, and `ATOMIC_AGENT_STATE_DIR` set LAST to the
+ * guarded `stateDir`. A caller's `env: { ATOMIC_AGENT_STATE_DIR: ... }`
+ * used to be spread after it and win, so the app ran on a dir nobody had
+ * checked. Every launch() builds its env here so that cannot come back.
+ *
+ * @param {string} stateDir  already passed through assertThrowawayStateDir
+ * @param {...object} layers  extra variables, later ones winning
+ */
+export function driveEnv(stateDir, ...layers) {
+  return Object.assign({}, process.env, ...layers.filter(Boolean), { ATOMIC_AGENT_STATE_DIR: stateDir });
+}

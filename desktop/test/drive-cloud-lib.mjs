@@ -45,7 +45,7 @@ import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { assertThrowawayStateDir } from './state-guard.mjs';
+import { assertThrowawayStateDir, driveEnv } from './state-guard.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = join(HERE, '..');
@@ -463,9 +463,17 @@ export async function launch({ stateDir, port, args = [], env = {}, timeoutMs = 
       + 'An app from an earlier run is still up — quit it (pkill -f desktop) before driving.');
   }
   const out = [];
-  const proc = spawn('npx', ['electron', '.', `--remote-debugging-port=${port}`, ...args], {
+  /* A throwaway Chromium profile inside the throwaway state dir, as
+     drive.mjs does: without it `electron .` shares ~/Library/Application
+     Support/Atomic Agent with the operator's installed app (prefs.json,
+     voice.json, unverified.json, localStorage) and two windows fight over
+     one profile. */
+  const electronArgs = ['electron', '.', `--remote-debugging-port=${port}`,
+    `--user-data-dir=${join(stateDir, '.chromium-profile')}`, ...args];
+  const proc = spawn('npx', electronArgs, {
     cwd,
-    env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...agentBinEnv(stateDir), ...env },
+    // The guarded state dir is applied last, so `env` cannot swap it.
+    env: driveEnv(stateDir, agentBinEnv(stateDir), env),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.on('data', (b) => out.push(String(b)));

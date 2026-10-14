@@ -39,7 +39,7 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { assertThrowawayStateDir } from './state-guard.mjs';
+import { assertThrowawayStateDir, driveEnv } from './state-guard.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
@@ -611,13 +611,13 @@ export async function launch(o) {
   ], {
     cwd: DESKTOP_DIR,
     detached: true,
-    env: {
-      ...process.env,
-      ATOMIC_AGENT_STATE_DIR: o.stateDir,
-      ...(o.workspace ? { ATOMIC_AGENT_WORKSPACE: o.workspace } : {}),
-      ...agentBinEnv(o.stateDir),
-      ...(o.env || {}),
-    },
+    /* The guarded state dir is applied last, so `o.env` cannot swap it. */
+    env: driveEnv(
+      o.stateDir,
+      o.workspace ? { ATOMIC_AGENT_WORKSPACE: o.workspace } : {},
+      agentBinEnv(o.stateDir),
+      o.env,
+    ),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const app = new App(proc, o);

@@ -45,7 +45,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { assertThrowawayStateDir } from './state-guard.mjs';
+import { assertThrowawayStateDir, driveEnv } from './state-guard.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
@@ -89,7 +89,8 @@ export async function launch({
     ['electron', '.', `--remote-debugging-port=${port}`, `--user-data-dir=${stateDir}/.chromium-profile`, ...args],
     {
       cwd: DESKTOP_DIR,
-      env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...env },
+      // The guarded state dir is applied last, so `env` cannot swap it.
+      env: driveEnv(stateDir, env),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     },
