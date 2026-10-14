@@ -10,7 +10,14 @@
  * bound is stated in characters at a fixed ratio; the same ratio prices
  * the reasoning a completion actually carried, so a step that hit the
  * bound reads as `reasoningTokens >= reasoningBudgetTokens` in its trace.
+ *
+ * The grammar bound is also capped by llama.cpp itself: a `{0,N}`
+ * quantifier above 1,999 is rejected or ignored (#600), so the bound a
+ * model actually gets is at most `MAX_REASONING_BUDGET_TOKENS`, whatever
+ * the config asks for.
  */
+
+import { LLAMA_SERVER_GBNF_MAX_REPETITION } from "./grammar/reasoning-prelude.js";
 
 /** `localModels.reasoningBudgetTokens` when the file predates the field. */
 export const DEFAULT_REASONING_BUDGET_TOKENS = 1500;
@@ -22,7 +29,15 @@ export const DEFAULT_REASONING_BUDGET_TOKENS = 1500;
  */
 export const REASONING_CHARS_PER_TOKEN = 4;
 
-/** The character bound the grammar enforces for `budgetTokens`; `0` stays `0` (unbounded). */
+/**
+ * The largest budget llama.cpp can enforce: 1,999 grammar characters,
+ * 499 tokens. A configured budget above it is clamped in the grammar.
+ */
+export const MAX_REASONING_BUDGET_TOKENS = Math.floor(
+  LLAMA_SERVER_GBNF_MAX_REPETITION / REASONING_CHARS_PER_TOKEN,
+);
+
+/** The character bound requested for `budgetTokens`, before the llama.cpp cap; `0` stays `0` (unbounded). */
 export function reasoningBudgetChars(budgetTokens: number): number {
   if (!Number.isFinite(budgetTokens) || budgetTokens <= 0) return 0;
   return Math.floor(budgetTokens) * REASONING_CHARS_PER_TOKEN;
@@ -37,4 +52,37 @@ export function reasoningBudgetChars(budgetTokens: number): number {
 export function estimateReasoningTokens(reasoningText: string): number {
   if (reasoningText.length === 0) return 0;
   return Math.ceil(reasoningText.length / REASONING_CHARS_PER_TOKEN);
+}
+
+/**
+ * The budget a grammar-served model really gets for `budgetTokens`, in
+ * tokens: `0` (unbounded) stays `0`, anything above the llama.cpp cap
+ * comes back as `MAX_REASONING_BUDGET_TOKENS`.
+ */
+export function effectiveReasoningBudgetTokens(budgetTokens: number): number {
+  const chars = reasoningBudgetChars(budgetTokens);
+  if (chars === 0) return 0;
+  return Math.floor(
+    Math.min(chars, LLAMA_SERVER_GBNF_MAX_REPETITION) / REASONING_CHARS_PER_TOKEN,
+  );
+}
+
+/**
+ * Note once, at boot, that the configured budget is above what llama.cpp
+ * can enforce, so the config value is not mistaken for the real bound.
+ * `info`, not `warn`: the shipped default (1,500) is above the cap too,
+ * and this is a fact about the engine, not a fault in the config. Logged
+ * through the runtime logger because stdout belongs to the TUI.
+ */
+export function logReasoningBudgetCap(
+  logger: { info(message: string, context?: Record<string, unknown>): void },
+  budgetTokens: number,
+): void {
+  const effective = effectiveReasoningBudgetTokens(budgetTokens);
+  if (effective === 0 || effective >= Math.floor(budgetTokens)) return;
+  logger.info("reasoning budget capped by llama.cpp grammar limit", {
+    configuredTokens: Math.floor(budgetTokens),
+    effectiveTokens: effective,
+    grammarChars: LLAMA_SERVER_GBNF_MAX_REPETITION,
+  });
 }

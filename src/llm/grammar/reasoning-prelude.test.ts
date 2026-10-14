@@ -19,6 +19,11 @@ describe("buildReasoningPreludeRules budget clamp (llama.cpp GBNF MAX_REPETITION
     expect(rules).toContain("think-body ::= think-char{0,1999}");
   });
 
+  it("clamps exactly 2,000, the value older llama-server builds reject", () => {
+    const rules = buildReasoningPreludeRules("think", SENTINEL, undefined, 2000);
+    expect(rules).toContain("think-body ::= think-char{0,1999}");
+  });
+
   it("leaves budgets at or below the limit unchanged", () => {
     // 1,999 is the boundary — not clamped. 2,000 is not safe: older
     // llama-server builds reject exactly MAX_REPETITION_THRESHOLD.

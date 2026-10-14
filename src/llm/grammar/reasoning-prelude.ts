@@ -9,9 +9,6 @@
  */
 export const LLAMA_SERVER_GBNF_MAX_REPETITION = 1999;
 
-/** True once per process, so a clamped budget is visible without spamming. */
-let clampWarningEmitted = false;
-
 /**
  * The reasoning prelude of a grammar-served thinking model: the rules
  * that admit a think block ahead of the tool-call array, and the two
@@ -27,7 +24,9 @@ let clampWarningEmitted = false;
  *
  * `budgetChars` is clamped to `LLAMA_SERVER_GBNF_MAX_REPETITION` (1,999,
  * one under `MAX_REPETITION_THRESHOLD`) so the GBNF parser never rejects
- * the grammar (#600). A clamp emits a one-time warning.
+ * the grammar (#600). The clamp is silent here: this module builds
+ * strings and owns no logger. The runtime logs the effective bound once
+ * at boot (`logReasoningBudgetCap`).
  */
 
 /** `think-body ::= think-char{0,N}` — the line the bounded base grammar carries. */
@@ -54,18 +53,10 @@ export function buildReasoningPreludeRules(
   const bounded = budgetChars > 0;
   // Above MAX_REPETITION_THRESHOLD (2,000) older llama-server builds
   // reject the grammar (HTTP 400) and current master treats it as
-  // unbounded. Clamp to 1,999 and say so once.
+  // unbounded. Clamp to 1,999.
   const clampedBudgetChars = bounded
     ? Math.min(budgetChars, LLAMA_SERVER_GBNF_MAX_REPETITION)
     : 0;
-  if (bounded && clampedBudgetChars < budgetChars && !clampWarningEmitted) {
-    clampWarningEmitted = true;
-    console.warn(
-      `reasoning budget of ${budgetChars} characters exceeds llama.cpp's ` +
-        `MAX_REPETITION_THRESHOLD (2000); clamped the GBNF bound to ` +
-        `${LLAMA_SERVER_GBNF_MAX_REPETITION}`,
-    );
-  }
   // Bounded: one character per repetition (a `<`-led alternative still
   // spans its whole prefix), so `{0,N}` is a bound in characters.
   // Unbounded: today's greedy `[^<]+` fragment, byte for byte.

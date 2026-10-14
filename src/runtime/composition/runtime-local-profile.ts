@@ -7,6 +7,7 @@ import {
   buildGrammar,
   detectModelProfile,
   extractTotalSlots,
+  logReasoningBudgetCap,
   ModelProfileManager,
   PLAIN_INSTRUCT_PROFILE,
 } from "../../llm/index.js";
@@ -178,6 +179,7 @@ export async function connectRuntimeLocalProfile(
     browserEnabled: config.browser.enabled,
     reasoningBudgetTokens: config.localModels.reasoningBudgetTokens,
   });
+  logReasoningBudgetCap(logger, config.localModels.reasoningBudgetTokens);
   const grammarViolations = checkProfileGrammarAligned(profile, grammar);
   if (grammarViolations.length > 0) {
     logger.warn("profile/grammar invariant violated", {
