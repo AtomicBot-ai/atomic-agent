@@ -129,6 +129,12 @@ function writeLlmConfig(stateDir: string, over: ConfigOverrides = {}): void {
         // The one cloud entry with no model of its own, so the rollback
         // test below can prove a pin is *cleared* and not just reverted.
         { id: "aimlapi", kind: "aimlapi" },
+        {
+          id: "embed-only",
+          kind: "openai-compatible",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          defaultEmbeddingModel: "nomic-embed-text",
+        },
         ...(over.extraProviders ?? []),
       ],
     },
@@ -137,7 +143,7 @@ function writeLlmConfig(stateDir: string, over: ConfigOverrides = {}): void {
 }
 
 /** Every configured id, in fixture order, for the "Configured:" lines. */
-const ALL_IDS = "local-llama, openrouter, openai-compat, groq, aimlapi";
+const ALL_IDS = "local-llama, openrouter, openai-compat, groq, aimlapi, embed-only";
 
 function makeRuntime(sessions: SessionState[]) {
   const busy = new Set<string>();
@@ -365,6 +371,13 @@ describe("/model over Telegram", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
   });
 
+  it("refuses a bare /model <id> that names an embedding-only openai-compatible provider", async () => {
+    await say("/model embed-only");
+    expect(sent[0]).toContain("cannot be the active text provider");
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    expect(fake.activated).toEqual([]);
+  });
+
   it("switches provider without touching its pinned model", async () => {
     await say("/model openai-compat");
     expect(sent[0]).toBe(
@@ -395,6 +408,7 @@ describe("/model over Telegram", () => {
       "openai-compat",
       "groq",
       "aimlapi",
+      "embed-only",
     ]);
   });
 

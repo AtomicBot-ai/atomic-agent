@@ -11,5 +11,8 @@ export {
   activeTextProviderIsLlamaServer,
   providerIdIsLlamaServer,
 } from "./active-text-provider.js";
-export { registerBuiltInProviderKinds } from "./register-built-in-providers.js";
+export {
+  registerBuiltInProviderKinds,
+  isEmbeddingOnlyEntry,
+} from "./register-built-in-providers.js";
 export { resolveActiveToolTransport } from "./resolve-tool-transport.js";
