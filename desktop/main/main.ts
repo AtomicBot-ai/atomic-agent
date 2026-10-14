@@ -210,6 +210,7 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
+import { imageDataUrl, imageTarget } from "./image-data-url.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
@@ -1890,6 +1891,39 @@ function wireIpc(client: AgentClient): void {
     ]);
     const sender = BrowserWindow.fromWebContents(event.sender);
     menu.popup(sender ? { window: sender } : {});
+  });
+
+  /* ATO-408: a picture in the chat. The window's CSP allows only `data:`
+     images, so main reads the file and inlines it (image-data-url.ts): only
+     inside the home folder or the agent's state folder, only PNG/JPEG/WebP/GIF
+     by their first bytes, at most 15 MB. Shared with the person's own
+     attachments (ATO-404–406):
+       BR.imageDataUrl(path) → {ok:true, dataUrl} | {ok:false, reason:'missing'|'too-large'|'outside'}
+     The viewer's Save As… and Reveal check the same path the same way. */
+  const imageRoots = (): string[] => [homedir(), DESKTOP_STATE_DIR];
+  ipcMain.handle("app:imageDataUrl", (_event, p: unknown) =>
+    imageDataUrl(p, imageRoots(), homedir(), process.platform));
+  ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
+    const target = await imageTarget(p, imageRoots(), homedir(), process.platform);
+    if (!target.ok) return { ok: false, reason: target.reason };
+    const { basename } = await import("node:path");
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? win;
+    const opts = { defaultPath: basename(target.real) };
+    const picked = owner ? await dialog.showSaveDialog(owner, opts) : await dialog.showSaveDialog(opts);
+    if (picked.canceled || !picked.filePath) return { ok: false, reason: "canceled" };
+    try {
+      const { copyFile } = await import("node:fs/promises");
+      await copyFile(target.real, picked.filePath);
+      return { ok: true, path: picked.filePath };
+    } catch (e) {
+      return { ok: false, reason: "failed", error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  ipcMain.handle("app:imageReveal", async (_event, p: unknown) => {
+    const target = await imageTarget(p, imageRoots(), homedir(), process.platform);
+    if (!target.ok) return { ok: false, reason: target.reason };
+    shell.showItemInFolder(target.real);
+    return { ok: true };
   });
 
   /* The microphone, the way macOS actually works.
