@@ -193,7 +193,36 @@ describe("formatProviderWaitNotice", () => {
       { kind: "loading" },
       "The model is not answering (the server is still loading the model).",
     ],
-    [{ kind: "http", status: 503 }, "The model is not answering (HTTP 503)."],
+    [
+      { kind: "http", status: 429 },
+      "The model is not answering (the provider is overloaded right now).",
+    ],
+    [
+      { kind: "http", status: 503 },
+      "The model is not answering (the provider is temporarily unavailable).",
+    ],
+    [
+      { kind: "http", status: 500 },
+      "The model is not answering (the provider's server had a problem).",
+    ],
+    [
+      { kind: "http", status: 502 },
+      "The model is not answering (the provider's server had a problem).",
+    ],
+    [{ kind: "http", status: 401 }, "The model is not answering (API key rejected)."],
+    [
+      { kind: "http", status: 403 },
+      "The model is not answering (the provider refused the request).",
+    ],
+    [{ kind: "http", status: 404 }, "The model is not answering (HTTP 404)."],
+    [
+      { kind: "billing", status: 403 },
+      "The model is not answering (the account is out of funds).",
+    ],
+    [
+      { kind: "billing", status: 429 },
+      "The model is not answering (the account is out of funds).",
+    ],
     [
       { kind: "stream_error", status: 504 },
       "The model is not answering (the provider reported an error mid-reply (504)).",
@@ -261,5 +290,23 @@ describe("formatProviderWaitNotice", () => {
         NOW,
       ),
     ).toBe("waiting for provider 0s/300s — the provider ended its reply with an error");
+  });
+
+  it("the meta row words a status the same way", () => {
+    expect(
+      formatProviderOutage(
+        outage({ reason: "HTTP 429", cause: { kind: "http", status: 429 } }),
+        NOW,
+      ),
+    ).toBe("waiting for provider 0s/300s — the provider is overloaded right now");
+    expect(
+      formatProviderOutageParts(
+        outage({ reason: "HTTP 503", cause: { kind: "http", status: 503 }, givenUp: true }),
+        NOW,
+      ),
+    ).toEqual({
+      head: "provider unreachable",
+      tail: " — the provider is temporarily unavailable",
+    });
   });
 });

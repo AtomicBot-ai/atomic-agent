@@ -47,7 +47,7 @@ function describeCause(cause: ProviderWaitCause): string | null {
     case "loading":
       return "the server is still loading the model";
     case "http":
-      return `HTTP ${cause.status}`;
+      return describeHttpStatus(cause.status);
     case "stream_error":
       return cause.status === null
         ? "the provider reported an error mid-reply"
@@ -57,6 +57,23 @@ function describeCause(cause: ProviderWaitCause): string | null {
     case "unknown":
       return null;
   }
+}
+
+/**
+ * A response status in words, for the statuses whose meaning does not
+ * depend on the provider. The same words as the desktop app. Anything
+ * else stays a bare `HTTP <n>`: a guess at a 404 or a 400 is worse than
+ * the number. An account that cannot pay never reaches here, whatever
+ * its status (402, AI/ML API's 403, OpenAI's 429 `insufficient_quota`):
+ * the classifier types it `billing` first.
+ */
+function describeHttpStatus(status: number): string {
+  if (status === 429) return "the provider is overloaded right now";
+  if (status === 503) return "the provider is temporarily unavailable";
+  if (status >= 500 && status <= 599) return "the provider's server had a problem";
+  if (status === 401) return "API key rejected";
+  if (status === 403) return "the provider refused the request";
+  return `HTTP ${status}`;
 }
 
 /**
