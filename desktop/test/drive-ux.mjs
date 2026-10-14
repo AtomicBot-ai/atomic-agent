@@ -55,6 +55,8 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assertThrowawayStateDir } from './state-guard.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
 
@@ -326,6 +328,7 @@ export async function attach(port, { child = null } = {}) {
  */
 export async function launch({ port = 9401, stateDir, args = [], env = {}, cwd = DESKTOP_DIR, quiet = true } = {}) {
   if (!stateDir) throw new Error('launch() needs an explicit stateDir — never the operator\'s own');
+  assertThrowawayStateDir(stateDir);
   /* Refuse to start on a port somebody else is already listening on. The
      alternative is worse than a crash: the new Electron cannot bind, and
      `attach` finds the OLD app's page target and drives that instead —

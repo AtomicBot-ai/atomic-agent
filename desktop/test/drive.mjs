@@ -39,6 +39,8 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assertThrowawayStateDir } from './state-guard.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
 /** The agent repo this desktop lives in. */
@@ -575,11 +577,7 @@ function agentBinEnv(stateDir) {
 export async function launch(o) {
   if (!o || !o.port) throw new Error('launch(): a port is required (one per lane)');
   if (!o.stateDir) throw new Error('launch(): a stateDir is required — never run against the operator’s');
-  const real = join(process.env.HOME || '', '.atomic-agent');
-  const live = join(process.env.HOME || '', '.atomic-agent-desktop');
-  if (resolve(o.stateDir) === resolve(real) || resolve(o.stateDir) === resolve(live)) {
-    throw new Error(`launch(): refusing to run against ${o.stateDir} — that is real app data`);
-  }
+  assertThrowawayStateDir(o.stateDir);
   mkdirSync(o.stateDir, { recursive: true });
   if (o.workspace) mkdirSync(o.workspace, { recursive: true });
 

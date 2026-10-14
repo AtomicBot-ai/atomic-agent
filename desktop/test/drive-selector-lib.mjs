@@ -45,6 +45,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assertThrowawayStateDir } from './state-guard.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
 
@@ -64,6 +66,7 @@ export async function launch({
   timeoutMs = 60000,
 } = {}) {
   if (!stateDir) throw new Error('launch(): stateDir is required — never write the operator’s own');
+  assertThrowawayStateDir(stateDir);
   // A window left over from an earlier run answers on this port, and
   // `attach` would happily talk to IT instead of the app about to start —
   // which is how a scenario ends up driving yesterday's build and reporting

@@ -95,8 +95,12 @@ ATOMIC_AGENT_STATE_DIR=/tmp/some-throwaway-state \
 ```
 
 `--state` is required and never defaults: the desktop's own default state
-directory is the operator's live app data. `drive.mjs` refuses outright to
-launch against `~/.atomic-agent` or `~/.atomic-agent-desktop`.
+directory is the operator's live app data. Every driver's `launch()` goes
+through `state-guard.mjs` and refuses outright a missing or relative state
+dir (the app ignores a relative one and falls back to its default) and
+anything that resolves, symlinks followed, to `~/.atomic-agent`,
+`~/.atomic-agent-desktop`, `ATOMIC_AGENT_DESKTOP_STATE_DIR` or, on macOS,
+`~/Library/Application Support/Atomic Agent`.
 
 `cloud-setup.drive.mjs` is driven by environment instead:
 

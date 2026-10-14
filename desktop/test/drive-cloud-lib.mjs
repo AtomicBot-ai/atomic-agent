@@ -45,6 +45,8 @@ import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+import { assertThrowawayStateDir } from './state-guard.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = join(HERE, '..');
 /** The agent repo this desktop lives in. */
@@ -449,6 +451,7 @@ function agentBinEnv(stateDir) {
 
 export async function launch({ stateDir, port, args = [], env = {}, timeoutMs = 90000, cwd = DESKTOP_DIR } = {}) {
   if (!stateDir) throw new Error('launch: stateDir is required — never drive the operator’s real state dir');
+  assertThrowawayStateDir(stateDir);
   /* A leftover app from an earlier run keeps the debugging port bound, and
      the second Electron then silently loses the race for it: `attach`
      latches onto the CORPSE, whose `/json/list` is empty or stale, and the
