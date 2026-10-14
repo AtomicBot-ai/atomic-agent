@@ -23,8 +23,8 @@ const { BUNDLED_CORE_VERSION } = require("../out/main/core-bundle.js");
 const models = join(home, "models");
 const EXE = process.platform === "win32" ? "atomic-chat-core.exe" : "atomic-chat-core";
 
-function config(engine) {
-  writeFileSync(join(home, "config.json"), JSON.stringify({ localModels: { mode: "managed", managed: engine ? { engine } : {} } }));
+function config(engine, extra = {}) {
+  writeFileSync(join(home, "config.json"), JSON.stringify({ localModels: { mode: "managed", managed: { ...(engine ? { engine } : {}), ...extra } } }));
 }
 function installCore(version, { backend = true } = {}) {
   const dir = join(models, "core", "versions", version);
@@ -70,6 +70,19 @@ test("Core installed with its backend, at the version this build carries: a plai
 test("an older Core active after a version bump: the start may install the new one", () => {
   config("atomic-core");
   installCore("0.0.1");
+  assert.equal(cli.coreInstallMayRun(), true);
+});
+
+test("an older Core active with engine updates off: the agent keeps it, so a plain model load", () => {
+  config("atomic-core", { autoUpdate: false });
+  installCore("0.0.1");
+  assert.equal(cli.managedAutoUpdateNow(), false);
+  assert.equal(cli.coreInstallMayRun(), false);
+  assert.equal(cli.startTimeoutMs(), cli.START_TIMEOUT_MS);
+});
+
+test("updates off still installs a missing backend first", () => {
+  config("atomic-core", { autoUpdate: false });
   assert.equal(cli.coreInstallMayRun(), true);
 });
 

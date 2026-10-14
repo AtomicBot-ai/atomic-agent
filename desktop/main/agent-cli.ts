@@ -848,11 +848,13 @@ export const START_WITH_INSTALL_TIMEOUT_MS = 20 * 60_000;
  * Whether the next `models start` may install Atomic Core first: Core is the
  * engine and its backend is not ready (backendInstalled), or the active Core
  * is not the version this build carries (a version bump the agent installs on
- * its next start).
+ * its next start, only while `localModels.managed.autoUpdate` is on: with it
+ * off the agent keeps the working older Core and downloads nothing).
  */
 export function coreInstallMayRun(): boolean {
   if (managedEngineNow() !== "atomic-core") return false;
   if (!backendInstalled()) return true;
+  if (!managedAutoUpdateNow()) return false;
   try {
     const active = JSON.parse(readFileSync(join(managedDataDirNow(), "core", "active.json"), "utf8")) as { version?: unknown };
     return active.version !== BUNDLED_CORE_VERSION;
@@ -4016,6 +4018,15 @@ function newestMtime(dir: string): number {
 export function managedEngineNow(): ManagedEngine {
   try { return managedEngineOf(JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"))); }
   catch { return "atomic-core"; }
+}
+/** `localModels.managed.autoUpdate` as the agent reads it: on unless the config says `false`. */
+export function managedAutoUpdateNow(): boolean {
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { autoUpdate?: unknown } } };
+    return cfg.localModels?.managed?.autoUpdate !== false;
+  } catch {
+    return true;
+  }
 }
 /** The managed data dir the desktop's config names (its `dataDirOverride`, or the default). */
 export function managedDataDirNow(): string {
