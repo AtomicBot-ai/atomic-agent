@@ -123,7 +123,7 @@ describe("ProviderRegistry", () => {
       config: fakeConfig,
       llamaClient: {} as never,
       getProfile: () => ({}) as never,
-      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
     });
     expect(registry.listIds()).toContain("embed-only");
   });
@@ -156,7 +156,7 @@ describe("ProviderRegistry", () => {
       config: fakeConfig,
       llamaClient: {} as never,
       getProfile: () => ({}) as never,
-      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
     });
     expect(registry.listIds()).toContain("embed-pin");
   });
@@ -190,7 +190,7 @@ describe("ProviderRegistry", () => {
         config: fakeConfig,
         llamaClient: {} as never,
         getProfile: () => ({}) as never,
-        logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+        logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
       }),
     ).rejects.toThrow(/requires defaultChatModel/);
   });
