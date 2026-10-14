@@ -24,7 +24,10 @@ import {
   estimateTokens,
   truncateToTokens,
 } from "./token-budget.js";
-import { ALSO_AVAILABLE_VIA_TOOL_VIEW } from "./stable-prefix.js";
+import {
+  ALSO_AVAILABLE_VIA_TOOL_VIEW,
+  DEFAULT_SYSTEM_PERSONA,
+} from "./stable-prefix.js";
 import {
   REQUEST_FOLLOW_UP_MARKER,
   REQUEST_SECTION_CHAR_BUDGET,
@@ -191,6 +194,12 @@ describe("buildPrompt", () => {
     expect(windows.stablePrefix).toContain("`Move-Item`");
     expect(windows.stablePrefix).toContain('mkdir "C:\\path\\Folder"');
     expect(darwin.stablePrefix).not.toContain("New-Item");
+    // #602 again: 72 files took 24 minutes of cmd.exe quoting. Moves and
+    // new folders go through os.fs.move; the shell keeps only the empty
+    // folder, and no longer teaches `move "…" "…"`.
+    expect(windows.stablePrefix).toContain("To move, rename or sort files into folders, call `os.fs.move`");
+    expect(windows.stablePrefix).not.toContain('move "C:');
+    expect(windows.stablePrefix).not.toContain("`copy`/`move`/`ren`");
     // The Windows hint changes the stable prefix deterministically by
     // platform — the two hashes differ but each is stable per platform.
     expect(windows.stablePrefix).not.toBe(darwin.stablePrefix);
@@ -2457,5 +2466,17 @@ describe("os.fs.write descriptor (#602)", () => {
     const write = DEFAULT_TOOL_DESCRIPTORS.find((d) => d.name === "os.fs.write");
     expect(write?.summary).toContain("never a folder");
     expect(write?.summary).toContain("`mkdir`");
+    // Files into a new folder go through os.fs.move; mkdir is only for an empty one.
+    expect(write?.summary).toContain("os.fs.move them there");
+  });
+});
+
+describe("os.fs.move in the prompt (#602)", () => {
+  it("is a rare one-liner, and both the persona and the shell descriptor point to it", () => {
+    const move = DEFAULT_TOOL_DESCRIPTORS.find((d) => d.name === "os.fs.move");
+    expect(move?.tier).toBe("rare");
+    const shell = DEFAULT_TOOL_DESCRIPTORS.find((d) => d.name === "os.shell.run");
+    expect(shell?.summary).toContain("use os.fs.move");
+    expect(DEFAULT_SYSTEM_PERSONA).toContain("use `os.fs.move` (it creates missing folders)");
   });
 });

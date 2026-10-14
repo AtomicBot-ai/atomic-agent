@@ -593,6 +593,7 @@ describe("registerOsTools", () => {
         "os.fs.hash",
         "os.fs.list",
         "os.fs.locate_project",
+        "os.fs.move",
         "os.fs.patch",
         "os.fs.read",
         "os.fs.read_document",

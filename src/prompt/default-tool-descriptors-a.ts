@@ -9,6 +9,7 @@ import { OS_FS_EDIT_CONTRACT } from "../tools/os/fs/fs-edit-contract.js";
 import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
@@ -56,7 +57,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.shell.run",
     summary:
-      "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.",
+      "Run a shell command in the working directory (may require approval). Not for deleting user files (use os.fs.trash when the user wants paths removed) or for moving, renaming or sorting them into folders (use os.fs.move). A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.",
     argsSchema:
       "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
   },
@@ -316,4 +317,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
       '{"url":"https://docs.example.com/guide","extractMode":"text","maxChars":20000}',
     ],
   },
+  // Appended rather than placed beside the other os.fs entries: the
+  // frozen Git duplicates above are pinned by catalog position
+  // (`tool-contract-conformance.test.ts`), and a rare tool renders as
+  // one line in `# extras` wherever it sits.
+  OS_FS_MOVE_CONTRACT.descriptor,
 ];
