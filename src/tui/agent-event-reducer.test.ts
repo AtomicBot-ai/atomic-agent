@@ -810,6 +810,49 @@ describe("reduceTuiState", () => {
     expect(notice?.retryText).toBeUndefined();
   });
 
+  it("carries the failed turn's request as retryText on the Turn failed notice", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    expect(next.runHistory[0]?.outcome).toBe("failed");
+    const notice = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(notice?.text).toContain("Turn failed");
+    expect(notice?.retryText).toBe("count the stars");
+  });
+
+  it("leaves retryText off the Turn failed notice when no user message exists to re-run", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const notice = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(notice).toBeDefined();
+    expect(notice?.retryText).toBeUndefined();
+  });
+
   it("appends the llama hint on transport failure for a custom-id llama-server route", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [

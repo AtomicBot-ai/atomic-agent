@@ -170,8 +170,8 @@ export function dropPendingSteer(state: TuiState, text: string): TuiState {
 
 /**
  * The request the latest turn was opened with: the newest user message
- * that is not a steer. Both callers name the turn by it — the stopped
- * notice's `retryText` and the run-history entry — and a steer is a
+ * that is not a steer. Its callers name the turn by it — the stopped and
+ * Turn failed notices' `retryText` and the run-history entry — and a steer is a
  * correction folded into that turn, not what it was asked to do.
  * Re-sending only the steer (`Test`) as a fresh turn would drop the
  * request it corrected.
