@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 /**
  * The whole surface the renderer gets. No `ipcRenderer`, no `require`,
@@ -150,6 +150,19 @@ contextBridge.exposeInMainWorld("atomic", {
   // Chat review Д23: which paths a reply names are files in the home folder, and opening one
   replyPaths: (paths: string[]) => ipcRenderer.invoke("app:replyPaths", paths),
   openReplyPath: (path: string) => ipcRenderer.invoke("app:openReplyPath", path),
+  /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */
+  attachPick: (kind: "images" | "files") => ipcRenderer.invoke("attachments:pick", kind),
+  attachReadPicked: (path: string) => ipcRenderer.invoke("attachments:readPicked", path),
+  attachSave: (source: { path?: string; bytes?: Uint8Array; name?: string }) => ipcRenderer.invoke("attachments:save", source),
+  attachDiscard: (path: string) => ipcRenderer.invoke("attachments:discard", path),
+  /** A dropped File's path on disk ("" for one that has none); the sandboxed window cannot read it itself. */
+  pathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
   micStatus: () => ipcRenderer.invoke("app:micStatus"),
   micRequest: () => ipcRenderer.invoke("app:micRequest"),
   resetMicPermission: () => ipcRenderer.invoke("app:resetMicPermission"),

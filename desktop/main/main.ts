@@ -26,6 +26,7 @@ import { promisify } from "node:util";
 
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
+import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { buildMenu } from "./menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
@@ -2019,6 +2020,8 @@ function wireIpc(client: AgentClient): void {
   });
   // 0.6.6 live routes: MCP restart / enable / disable and the deep-merge config patch.
   wireAgentLiveIpc(client);
+  // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
+  wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {

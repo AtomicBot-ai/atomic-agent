@@ -2512,7 +2512,8 @@ function item(m) {
   /* B4: a message folded into the running turn says so, in the TUI's words
      (user-bubble.tsx STEERED_LABEL_SUFFIX). The reply that follows answers
      the turn's opening request; drawn bare, it reads as the answer to this. */
-  if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '"><div class="prose usr bubble">' + esc(m.text) + '</div>'
+  // ATO-406: a message with files is its caption and chips (attachments.js), never the raw `[attachments]` block.
+  if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '">' + attUserBody(m.text)
     + (m.steered ? '<div class="usrcap">steered into the running turn</div>' : '') + msgActs(m) + '</div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
   /* r5 item 4: the action row goes after the attachment strip — the actions
@@ -2773,14 +2774,18 @@ function resendUser(id) {
   // A half-written draft is the operator's, and nothing here may destroy it
   // with no undo — the same rule that keeps Escape from clearing the composer.
   const draft = String((e ? e.value : S.draft) || '').trim();
-  if (draft && draft !== text) {
+  // ATO-405: a message with files goes back as its caption, its files as chips.
+  const split = attSplitMessage(text);
+  const caption = split ? split.caption.trim() : text;
+  // Chips of a message not yet sent are a draft too.
+  if ((draft && draft !== caption) || ATT.items.some((i) => !i.restored)) {
     toast('Your draft is in the way', 'send or clear the composer, then retry', 'bad');
     if (e) e.focus();
     return;
   }
   if (S.busy || S.pending) {
-    S.draft = text;
-    if (e) { e.value = text; autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+    S.draft = attToEditor(text);
+    if (e) { e.value = S.draft; autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
     // Review fix: the composer has to be repainted, not just filled. While a
     // turn runs sendButton() draws the ■ Stop control for an EMPTY draft and
     // the ↑ steer control for a non-empty one, and nothing else renders during
@@ -2800,8 +2805,8 @@ function resendUser(id) {
   // stale text the textarea happens to hold. Going through submit() rather
   // than startLiveTurn keeps every gate: slash commands, the disconnected
   // agent line and the local-model turn gate.
-  S.draft = text;
-  if (e) { e.value = text; autosize(e); }
+  S.draft = attToEditor(text);
+  if (e) { e.value = S.draft; autosize(e); }
   submit();
 }
 
@@ -3431,7 +3436,7 @@ function composer() {
        strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
-      '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(t) + '</span>'
+      '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
   return '<div class="composerwrap">' + status + fzLiveHTML() + q
@@ -3450,8 +3455,11 @@ function composer() {
        It hangs off `.composerwrap` now, which is the same anchor visually
        (the composer is its last child) and does not clip. */
     + (S.slash ? slashPopover() : '')
+    // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
+    + attMenuHTML()
     + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
       + loaderHTML()
+      + attStripHTML()
       // Item 1 (plan hand-off): src/tui/tui-app.tsx:2011 verbatim while the
       // offer stands. It is the user's third clause — "texting in the input
       // field would reconfigure the plan" — said where they are about to type.
@@ -3459,7 +3467,7 @@ function composer() {
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
-      + micButton() + sendButton() + '</div>'
+      + attButtonHTML() + micButton() + sendButton() + '</div>'
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
@@ -3666,17 +3674,17 @@ function sendButton() {
   }
   if (swxWaitsForRoute()) {
     const say = 'Send — the model is switching, so the reply may take longer';
-    return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="' + say
+    return '<button class="sendbtn' + (S.draft.trim() || attHasReady() ? '' : ' mute') + '" data-act="send" title="' + say
       + '" aria-label="' + say + '">' + ic('up') + '</button>';
   }
   if (S.busy || S.pending) {
     // Item 7C: this sends a steer into the running turn. It is parked as
     // the next turn only when the agent refuses it, which is a fact the
     // route answers and this button cannot know in advance.
-    if (S.draft.trim()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
+    if (S.draft.trim() || attHasReady()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
     return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
   }
-  return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
+  return '<button class="sendbtn' + (S.draft.trim() || attHasReady() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
 }
 
 
@@ -6228,8 +6236,8 @@ async function steerOrQueueRun(text, post, typedIn) {
     // draft is worse than losing a steer that could not be parked.
     const e = $('#entry');
     if (here || (!S.draft && !(e && e.value))) {
-      S.draft = text;
-      if (e) { e.value = text; autosize(e); }
+      S.draft = attToEditor(text);
+      if (e) { e.value = S.draft; autosize(e); }
       ctxDraftChanged();
     }
     if (here) placeInLiveTurn({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
@@ -6299,7 +6307,13 @@ function submit(preparedSkillText) {
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
   const e = $('#entry');
-  const text = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
+  const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
+  /* ATO-405: files in the composer ride in the message itself, as the
+     `[attachments]` block the channels send (attachments.js). A slash command
+     typed with files waiting runs alone; the chips stay for the next message. */
+  const rawSlash = typeof preparedSkillText !== 'string' && typed.startsWith('/');
+  if (!rawSlash && attPreparing()) { toast('Attachments are still being prepared', 'Send once every chip is ready. Your message stays in the box', 'bad'); return; }
+  const text = rawSlash ? typed : attComposeMessage(typed);
   if (!text) return;
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
@@ -6333,10 +6347,11 @@ function submit(preparedSkillText) {
     if (!S.sessionId) {
       S.sessionId = 'waiting-' + crypto.randomUUID();
       S.agentSession = S.sessionId;
-      noteWaitingChat(S.sessionId, text);
+      noteWaitingChat(S.sessionId, attQueueLabel(text));
     }
     S.queued.push(text); DRAIN_OWED = true;
     S.draft = ''; if (e) { e.value = ''; autosize(e); }
+    attClearSent();
     ctxDraftChanged(); S.slash = false;
     toast('Message sent', SWX.sendError || 'The model is switching, so the reply may take longer');
     render(); drainOwed(); return;
@@ -6359,6 +6374,7 @@ function submit(preparedSkillText) {
     return;
   }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
+  attClearSent();
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
   // 13: with the box empty the button beside it is Stop again while a turn
@@ -6426,7 +6442,8 @@ function submit(preparedSkillText) {
 function gatedTurnLeft(text) {
   const e = $('#entry');
   const typed = String((e ? e.value : S.draft) || '');
-  S.draft = typed.trim() ? text + '\n\n' + typed : text;
+  const back = attToEditor(text);
+  S.draft = typed.trim() ? (back ? back + '\n\n' + typed : typed) : back;
   if (e) { e.value = S.draft; autosize(e); }
   ctxDraftChanged();
   toast('Not sent', 'The chat changed before the local model check finished. Your message is back in the box', 'bad');
@@ -6453,7 +6470,7 @@ function bswGatedTurn(text) {
     // B02: one refusal on screen at a time; `gateNotice` lets it go once the route can run (dropStaleGateNotices).
     dropStaleGateNotices();
     S.log.push({id:nid(), k:'system', gateNotice:true, text: esc(gate.text + ' (message returned to the editor)')});
-    S.draft = text;
+    S.draft = attToEditor(text);
     ctxDraftChanged();
     render(); // afterChat() puts S.draft back into #entry
     const e = $('#entry');
