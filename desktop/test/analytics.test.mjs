@@ -69,9 +69,10 @@ test("the local engine is a known value: Atomic Chat Core (the default) and llam
   assert.equal(up.engine, "atomic-core");
   assert.equal(V.validateEvent("local_backend_started", { via: "launch", result: "started", model_id: "hf_custom", ms: 10, engine: "llama-server" }, "main").props.engine, "llama-server");
   assert.deepEqual(V.validateEvent("engine_recovery_shown", { engine: "atomic-core", stage: "download", via: "launch" }, "main").props, { engine: "atomic-core", stage: "download", via: "launch" });
-  // An unknown stage or via is not invented: the property is dropped.
+  // An unknown stage is not invented: the list has no `other`, so the property is dropped.
   assert.equal(V.validateEvent("engine_recovery_shown", { engine: "atomic-core", stage: "melted", via: "launch" }, "main").props.stage, undefined);
-  assert.equal(V.validateEvent("engine_recovery_shown", { engine: "atomic-core", stage: "start", via: "telepathy" }, "main").props.via, undefined);
+  // An unknown via becomes `other`: it is one of the documented values (main.ts noteEngine defaults to it).
+  assert.equal(V.validateEvent("engine_recovery_shown", { engine: "atomic-core", stage: "start", via: "telepathy" }, "main").props.via, "other");
   // The agent sends local_engine_failed itself; the desktop's catalog no longer has it, so one failure is never counted twice.
   assert.equal(V.validateEvent("local_engine_failed", { engine: "atomic-core", stage: "download" }, "main"), null);
 });
