@@ -6,32 +6,39 @@
  * read it and inlined it. The path comes from the agent's reply or from the
  * window, so it is checked the way a reply chip is (reply-paths.ts): written
  * `~/…` or absolute, never a URL, `..` and symlinks resolved, and only inside
- * the allowed roots (the home folder and the agent's state folder). The file is
- * read only when it is a regular file under the size cap, and its type is taken
- * from its first bytes, not its name: PNG, JPEG, WebP or GIF, nothing else (no
- * SVG, which can carry script).
+ * the allowed roots (the home folder, the agent's state folder and the system's
+ * temporary folders, where models often write). The file is opened once, the
+ * opened handle is checked to be the very file the path check passed (a link
+ * swapped in between is refused), and it is used only when it is a regular file
+ * under the size cap whose first bytes say PNG, JPEG, WebP or GIF — never by its
+ * name, and never SVG, which can carry script. Save As… and Reveal go through
+ * the same check, so they cannot be pointed at a file that is not a picture.
  *
  * Shared contract (ATO-404–406 use it for the person's own attachments):
- *   BR.imageDataUrl(path) → {ok:true, dataUrl} | {ok:false, reason:'missing'|'too-large'|'outside'}
+ *   BR.imageDataUrl(path) → {ok:true, dataUrl, mime, size, mtimeMs}
+ *                         | {ok:false, reason:'missing'|'too-large'|'outside'}
  * `missing` covers everything that leaves no picture to show: not there, not a
- * file, not a path, or not one of the four image types.
+ * file, not a path, or not one of the four image types. `size` and `mtimeMs`
+ * say which version of the file the picture is, so a cache can tell when the
+ * file was overwritten.
  *
  * Pure but for the file system reads: no Electron import, so the unit suite
  * loads it from `out/main` and drives it against a throwaway "home".
  */
 
+import type { FileHandle } from "node:fs/promises";
 import { open, realpath, stat } from "node:fs/promises";
 
 import { expandHome, isAbsoluteOn, isUnder, pathFor, type Platform } from "./platform.js";
 
+export type ImageMime = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+
 export type ImageDataUrlResult =
-  | { ok: true; dataUrl: string }
+  | { ok: true; dataUrl: string; mime: ImageMime; size: number; mtimeMs: number }
   | { ok: false; reason: "missing" | "too-large" | "outside" };
 
 /** Bigger than any picture worth showing inline; the data URL is a third larger again. */
 export const IMAGE_DATA_URL_MAX_BYTES = 15 * 1024 * 1024;
-
-export type ImageMime = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 
 /** The image type its first bytes say, or null for anything else. */
 export function sniffImageMime(b: Uint8Array): ImageMime | null {
@@ -45,13 +52,20 @@ export function sniffImageMime(b: Uint8Array): ImageMime | null {
   return null;
 }
 
-/** The real path of a file the window may read for a picture, or why not. */
-export async function imageTarget(
+/** The roots pictures are read from: home, the agent's state folder, the temporary folders. */
+export function imageRootsFor(platform: Platform, home: string, stateDir: string, tmp: string): string[] {
+  const roots = [home, stateDir, tmp];
+  if (platform !== "win32") roots.push("/tmp", "/var/tmp");
+  return roots.filter((r) => typeof r === "string" && r.length > 0);
+}
+
+/** Where a path stands against the roots, before anything is opened. */
+async function imageTarget(
   raw: unknown,
   roots: readonly string[],
   home: string,
   platform: Platform,
-): Promise<{ ok: true; real: string; size: number } | { ok: false; reason: "missing" | "outside" }> {
+): Promise<{ ok: true; real: string; dev: number; ino: number } | { ok: false; reason: "missing" | "outside" }> {
   if (typeof raw !== "string" || !raw || raw.length > 4096 || /[\0\r\n]/.test(raw)) return { ok: false, reason: "missing" };
   // A URL, a file: URL, or a Windows network path is never a file to read from here.
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(raw) || /^file:/i.test(raw)) return { ok: false, reason: "outside" };
@@ -75,7 +89,64 @@ export async function imageTarget(
   if (!inside(real, realRoots)) return { ok: false, reason: "outside" };
   const st = await stat(real).catch(() => null);
   if (!st || !st.isFile()) return { ok: false, reason: "missing" };
-  return { ok: true, real, size: st.size };
+  return { ok: true, real, dev: st.dev, ino: st.ino };
+}
+
+export type OpenedImage = {
+  real: string;
+  mime: ImageMime;
+  size: number;
+  mtimeMs: number;
+  /** The open file: the caller reads it from here and closes it. */
+  fh: FileHandle;
+};
+
+/**
+ * The picture at `raw`, opened and checked: inside the roots, the same file
+ * the check passed (dev/inode of the open handle), a regular file under the
+ * cap, and an image by its first bytes. The caller closes `fh`.
+ */
+export async function openImage(
+  raw: unknown,
+  roots: readonly string[],
+  home: string,
+  platform: Platform,
+  maxBytes: number = IMAGE_DATA_URL_MAX_BYTES,
+): Promise<{ ok: true; image: OpenedImage } | { ok: false; reason: "missing" | "too-large" | "outside" }> {
+  const target = await imageTarget(raw, roots, home, platform);
+  if (!target.ok) return target;
+  const fh = await open(target.real, "r").catch(() => null);
+  if (!fh) return { ok: false, reason: "missing" };
+  let keep = false;
+  try {
+    const st = await fh.stat();
+    // Swapped for another file (a link put in its place) since it was checked.
+    if (st.dev !== target.dev || st.ino !== target.ino) return { ok: false, reason: "outside" };
+    if (!st.isFile()) return { ok: false, reason: "missing" };
+    if (st.size > maxBytes) return { ok: false, reason: "too-large" };
+    const head = Buffer.alloc(16);
+    const { bytesRead } = await fh.read(head, 0, 16, 0);
+    const mime = sniffImageMime(head.subarray(0, bytesRead));
+    if (!mime) return { ok: false, reason: "missing" };
+    keep = true;
+    return { ok: true, image: { real: target.real, mime, size: st.size, mtimeMs: st.mtimeMs, fh } };
+  } catch {
+    return { ok: false, reason: "missing" };
+  } finally {
+    if (!keep) await fh.close().catch(() => undefined);
+  }
+}
+
+/** The whole of an opened picture, never more than one byte past the cap if it grew since. */
+export async function readOpenedImage(image: OpenedImage, maxBytes: number = IMAGE_DATA_URL_MAX_BYTES): Promise<Buffer | null> {
+  const buf = Buffer.alloc(Math.min(image.size, maxBytes) + 1);
+  let filled = 0;
+  while (filled < buf.length) {
+    const { bytesRead } = await image.fh.read(buf, filled, buf.length - filled, filled);
+    if (bytesRead === 0) break;
+    filled += bytesRead;
+  }
+  return filled > maxBytes ? null : buf.subarray(0, filled);
 }
 
 /** `raw` as a `data:` URL the window can put in an <img>, or why not. */
@@ -86,28 +157,19 @@ export async function imageDataUrl(
   platform: Platform,
   maxBytes: number = IMAGE_DATA_URL_MAX_BYTES,
 ): Promise<ImageDataUrlResult> {
-  const target = await imageTarget(raw, roots, home, platform);
-  if (!target.ok) return target;
-  if (target.size > maxBytes) return { ok: false, reason: "too-large" };
-  const fh = await open(target.real, "r").catch(() => null);
-  if (!fh) return { ok: false, reason: "missing" };
+  const opened = await openImage(raw, roots, home, platform, maxBytes);
+  if (!opened.ok) return opened;
+  const { image } = opened;
   try {
-    // Read what stat promised, and never more than one byte past the cap if it grew since.
-    const buf = Buffer.alloc(Math.min(target.size, maxBytes) + 1);
-    let filled = 0;
-    while (filled < buf.length) {
-      const { bytesRead } = await fh.read(buf, filled, buf.length - filled, filled);
-      if (bytesRead === 0) break;
-      filled += bytesRead;
-    }
-    if (filled > maxBytes) return { ok: false, reason: "too-large" };
-    const bytes = buf.subarray(0, filled);
+    const bytes = await readOpenedImage(image, maxBytes);
+    if (!bytes) return { ok: false, reason: "too-large" };
+    // Re-sniffed from what was read: the file may have been rewritten since its head was looked at.
     const mime = sniffImageMime(bytes.subarray(0, 16));
     if (!mime) return { ok: false, reason: "missing" };
-    return { ok: true, dataUrl: `data:${mime};base64,${bytes.toString("base64")}` };
+    return { ok: true, dataUrl: `data:${mime};base64,${bytes.toString("base64")}`, mime, size: bytes.length, mtimeMs: image.mtimeMs };
   } catch {
     return { ok: false, reason: "missing" };
   } finally {
-    await fh.close().catch(() => undefined);
+    await image.fh.close().catch(() => undefined);
   }
 }

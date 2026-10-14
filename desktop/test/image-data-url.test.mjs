@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { imageDataUrl, imageTarget, sniffImageMime } = require("../out/main/image-data-url.js");
+const { imageDataUrl, imageRootsFor, openImage, readOpenedImage, sniffImageMime } = require("../out/main/image-data-url.js");
 
 const home = mkdtempSync(join(tmpdir(), "image-home-"));
 const state = mkdtempSync(join(tmpdir(), "image-state-"));
@@ -90,9 +90,46 @@ test("over the cap is too-large and is not read", async () => {
   assert.equal(r.ok, true);
 });
 
-test("imageTarget gives the real path for the viewer's Save As and Reveal", async () => {
-  const t = await imageTarget(join(home, "Pictures", "chart.png"), roots, home, "darwin");
-  assert.equal(t.ok, true);
-  assert.match(t.real, /chart\.png$/);
-  assert.equal((await imageTarget(join(outside, "secret.png"), roots, home, "darwin")).ok, false);
+test("the data URL says which version of the file it is", async () => {
+  const r = await read(join(home, "Pictures", "chart.png"));
+  assert.equal(r.mime, "image/png");
+  assert.equal(r.size, PNG.length);
+  assert.equal(typeof r.mtimeMs, "number");
+  assert.ok(r.mtimeMs > 0);
+});
+
+test("openImage is what Save As and Reveal use: pictures only, the checked file, under the cap", async () => {
+  const opened = await openImage(join(home, "Pictures", "chart.png"), roots, home, "darwin");
+  assert.equal(opened.ok, true);
+  try {
+    assert.match(opened.image.real, /chart\.png$/);
+    assert.equal(opened.image.mime, "image/png");
+    const bytes = await readOpenedImage(opened.image);
+    assert.deepEqual(Buffer.from(bytes), PNG);
+  } finally {
+    await opened.image.fh.close();
+  }
+  // A private key named like anything is not a picture, so it cannot be saved or revealed from the viewer.
+  writeFileSync(join(home, "id_rsa"), "-----BEGIN OPENSSH PRIVATE KEY-----");
+  assert.deepEqual(await openImage(join(home, "id_rsa"), roots, home, "darwin"), { ok: false, reason: "missing" });
+  assert.deepEqual(await openImage(join(outside, "secret.png"), roots, home, "darwin"), { ok: false, reason: "outside" });
+  assert.deepEqual(await openImage(join(home, "big.gif"), roots, home, "darwin", 16), { ok: false, reason: "too-large" });
+});
+
+test("the roots are home, the agent's folder and the temporary folders", () => {
+  assert.deepEqual(imageRootsFor("darwin", "/Users/a", "/Users/a/.atomic-agent-desktop", "/var/folders/x/T"),
+    ["/Users/a", "/Users/a/.atomic-agent-desktop", "/var/folders/x/T", "/tmp", "/var/tmp"]);
+  assert.deepEqual(imageRootsFor("win32", "C:\\Users\\a", "C:\\Users\\a\\.atomic-agent-desktop", "C:\\Users\\a\\AppData\\Local\\Temp"),
+    ["C:\\Users\\a", "C:\\Users\\a\\.atomic-agent-desktop", "C:\\Users\\a\\AppData\\Local\\Temp"]);
+});
+
+test("a picture in a temporary root is shown", async () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), "image-tmp-root-"));
+  try {
+    writeFileSync(join(tmpRoot, "plot.png"), PNG);
+    const r = await imageDataUrl(join(tmpRoot, "plot.png"), [home, tmpRoot], home, "darwin");
+    assert.equal(r.ok, true);
+  } finally {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });

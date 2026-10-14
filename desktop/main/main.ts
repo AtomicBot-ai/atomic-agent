@@ -12,7 +12,7 @@ import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpd
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
@@ -210,7 +210,7 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
-import { imageDataUrl, imageTarget } from "./image-data-url.js";
+import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
@@ -1895,34 +1895,43 @@ function wireIpc(client: AgentClient): void {
 
   /* ATO-408: a picture in the chat. The window's CSP allows only `data:`
      images, so main reads the file and inlines it (image-data-url.ts): only
-     inside the home folder or the agent's state folder, only PNG/JPEG/WebP/GIF
-     by their first bytes, at most 15 MB. Shared with the person's own
-     attachments (ATO-404–406):
-       BR.imageDataUrl(path) → {ok:true, dataUrl} | {ok:false, reason:'missing'|'too-large'|'outside'}
-     The viewer's Save As… and Reveal check the same path the same way. */
-  const imageRoots = (): string[] => [homedir(), DESKTOP_STATE_DIR];
+     inside the home folder, the agent's state folder or the system's
+     temporary folders, only PNG/JPEG/WebP/GIF by their first bytes, at most
+     15 MB, and only the very file the path check passed. Shared with the
+     person's own attachments (ATO-404–406):
+       BR.imageDataUrl(path) → {ok:true, dataUrl, mime, size, mtimeMs} | {ok:false, reason:'missing'|'too-large'|'outside'}
+     The viewer's Save As… and Reveal go through the same check, so a window
+     cannot use them on a file that is not a picture, and Save As… writes the
+     bytes of the file it checked rather than copying the path again. */
+  const imageRoots = (): string[] => imageRootsFor(process.platform, homedir(), DESKTOP_STATE_DIR, tmpdir());
   ipcMain.handle("app:imageDataUrl", (_event, p: unknown) =>
     imageDataUrl(p, imageRoots(), homedir(), process.platform));
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
-    const target = await imageTarget(p, imageRoots(), homedir(), process.platform);
-    if (!target.ok) return { ok: false, reason: target.reason };
-    const { basename } = await import("node:path");
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? win;
-    const opts = { defaultPath: basename(target.real) };
-    const picked = owner ? await dialog.showSaveDialog(owner, opts) : await dialog.showSaveDialog(opts);
-    if (picked.canceled || !picked.filePath) return { ok: false, reason: "canceled" };
+    const opened = await openImage(p, imageRoots(), homedir(), process.platform);
+    if (!opened.ok) return { ok: false, reason: opened.reason };
+    const { image } = opened;
     try {
-      const { copyFile } = await import("node:fs/promises");
-      await copyFile(target.real, picked.filePath);
+      const { basename } = await import("node:path");
+      const owner = BrowserWindow.fromWebContents(event.sender) ?? win;
+      const opts = { defaultPath: basename(image.real) };
+      const picked = owner ? await dialog.showSaveDialog(owner, opts) : await dialog.showSaveDialog(opts);
+      if (picked.canceled || !picked.filePath) return { ok: false, reason: "canceled" };
+      const bytes = await readOpenedImage(image);
+      if (!bytes) return { ok: false, reason: "too-large" };
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(picked.filePath, bytes);
       return { ok: true, path: picked.filePath };
     } catch (e) {
       return { ok: false, reason: "failed", error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      await image.fh.close().catch(() => undefined);
     }
   });
   ipcMain.handle("app:imageReveal", async (_event, p: unknown) => {
-    const target = await imageTarget(p, imageRoots(), homedir(), process.platform);
-    if (!target.ok) return { ok: false, reason: target.reason };
-    shell.showItemInFolder(target.real);
+    const opened = await openImage(p, imageRoots(), homedir(), process.platform);
+    if (!opened.ok) return { ok: false, reason: opened.reason };
+    await opened.image.fh.close().catch(() => undefined);
+    shell.showItemInFolder(opened.image.real);
     return { ok: true };
   });
 

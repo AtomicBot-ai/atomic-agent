@@ -462,3 +462,5 @@
 .imgview-bar{display:flex;align-items:center;gap:8px;padding:12px 16px 16px;color:#fff;flex-wrap:wrap}
 .imgview-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;opacity:.85}
 .imgview-bar .iconbtn{color:#fff}
+/* A picture that could not be shown: a chip, quieter, its tooltip says why. */
+.replyfiles .filechip.unshown{opacity:.7}
