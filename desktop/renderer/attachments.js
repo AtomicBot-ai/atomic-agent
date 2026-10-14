@@ -566,12 +566,21 @@ function attMarkGone(el) {
   el.removeAttribute('data-att-file');
 }
 /**
- * A sent image, large. ATO-408 owns the viewer: its global, else an event it
- * can answer, else the file opens in the system's own viewer.
+ * A sent image, large, in ATO-408's viewer: `openImageViewer(path)` shows a
+ * picture its CHAT_IMG cache holds, so the one this chip already loaded is
+ * handed over first. Without that viewer (or when it declines), an event a
+ * later viewer can answer, else the file opens in the system's own viewer.
  */
 function attOpenViewer(path, name) {
   const dataUrl = attImgCache(path);
-  if (typeof window.openImageViewer === 'function') { window.openImageViewer({path, dataUrl, name}); return; }
+  if (typeof openImageViewer === 'function') {
+    try {
+      if (dataUrl && typeof CHAT_IMG !== 'undefined' && !(CHAT_IMG.get(path) && CHAT_IMG.get(path).state === 'ok')) {
+        CHAT_IMG.set(path, {state: 'ok', url: dataUrl, node: null, reason: null});
+      }
+      if (openImageViewer(path) !== false) return;
+    } catch (e) { /* fall through to the file */ }
+  }
   const ev = new CustomEvent('atomic:image-open', {detail: {path, dataUrl, name}, cancelable: true});
   if (!document.dispatchEvent(ev)) return;
   attOpenFile(path);
