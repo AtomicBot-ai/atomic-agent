@@ -42,9 +42,12 @@ The optional version-1 `SessionState.compaction` lives in the existing SQLite JS
 payload. It contains summary text, an exclusive `coveredThrough` transcript index,
 a boundary-record hash, timestamp, reason, model, before/after token estimates,
 usage/call count, and estimated cost when pricing is available. An extractive
-checkpoint has `model: null` and the optional `kind: "extractive"`. Loading rejects
+checkpoint has `model: null` and the optional `kind: "extractive"`; one made from a
+rolling summary has `kind: "rolling"`. Loading rejects
 unsupported versions, invalid boundaries and cuts through tool/result pairs;
 `compactionWarning` carries the diagnostic. Transcript records are never rewritten.
+The optional `SessionState.rollingSummary` (see Rolling summary) is never part of
+the prompt; loading drops it silently when stale.
 
 `projectSessionConversation` supplies checkpoint plus original suffix to both flat
 and native prompts, token estimates and pure preview. The summary is historical
@@ -75,9 +78,9 @@ completion of a manual operation never replaces the running loop's live state.
 
 Defaults are owned by [compaction-config.ts](../../config/agent/compaction-config.ts):
 `auto=true`, `mode="auto"`, `triggerRatio=0.9`, `targetRatio=0.65`, `summaryMaxTokens=2048`,
-`timeoutMs=600000`, `maxTotalTimeoutMs=600000`.
+`timeoutMs=600000`, `maxTotalTimeoutMs=600000`, `background=true` (optional; absent means on).
 Validation requires `0 < targetRatio < triggerRatio < 1` and a known mode.
-Older configs receive these defaults; adding `mode` did not change the config version.
+Older configs receive these defaults; adding `mode` and `background` did not change the config version.
 
 The pure planner checks projected history **before** mechanical trimming against
 the prompt builder's remaining history budget, including non-history sections
@@ -170,6 +173,44 @@ times out on a provider/model/window, later `auto` compactions on it extract
 directly until the runtime restarts or `timeoutMs`/`mode` change. A fallback is
 logged as a warning. `model` keeps the original failure behavior.
 
+## Rolling summary
+
+Under `auto`, with `auto` and `background` on, the runtime extends a per-session
+rolling summary between turns ([scheduler](../compaction-background.ts),
+[records and checkpoint](../compaction-rolling.ts)) so that a later compaction
+needs no model call. A turn's end schedules a job after 2 s of quiet (not for
+Fusion worker sessions). It runs only
+while no turn runs on any session, one job at a time across the runtime; any turn
+or step start, compaction request or shutdown aborts it (timers cleared, request
+cancelled) and nothing is written. A job never blocks a turn.
+
+A job starts once projected history reaches half the automatic trigger (cloud
+routes, which bill per call: also half the history allowance). It never runs on a
+local llama-server route without a free side slot: a side call on the main slot
+would evict the conversation's cache. It reads the previous rolling summary (or the
+current checkpoint) plus only the records after its watermark, rendered as
+history (the prompt's capped renderer, each record at most 2000 characters), up to
+the cut a compaction would make now and at most 12k estimated tokens; the rest is
+left to the next job. Fewer than 256 tokens of new records do not start a call. The call uses the compaction route, provider framing, side
+slot and `compaction:<sessionId>` usage, with `timeoutMs` capped at five minutes
+per job; a job that times out stops jobs for that session until restart. The
+summary may use 60% of the planned summary size. It is saved only if no turn runs
+on that session and the checkpoint, boundary record and watermark are unchanged.
+
+`SessionState.rollingSummary` holds the text, the checkpoint it extends (`from` and
+a hash of its summary), the exclusive watermark `coveredThrough`, the boundary
+record hash and the model. It is valid only while all of these still match and the
+watermark is a safe cut, so edits, forks and compaction make it stale. At
+compaction under `auto`, a valid one is used without a call: its text plus an
+extractive summary of the records from its watermark to the cut (a watermark past
+the planned cut becomes the cut, keeping at least one record outside it). When it
+is stale, too large, leaves under 96 tokens for those records, covers less than
+half of the checkpoint's records (by rendered size), or its checkpoint would not
+reach the target, compaction proceeds as described above. Every successful compaction removes it; an applied
+checkpoint is never replaced later by a rolling summary. Cloud state updates are
+not in it. Its background calls are counted as they run, not in the checkpoint's
+`calls`.
+
 ## Observability and validation
 
 Session-scoped `compaction_started`, `compaction_progress`, `compaction_completed` and
@@ -186,6 +227,9 @@ timing counts when no provider usage block is returned.
 Contract tests: [planner/service](../context-compaction.test.ts),
 [extractive/auto service](../context-compaction-extractive.test.ts),
 [extractive builder](../compaction-extractive.test.ts),
+[rolling summary](../context-compaction-rolling.test.ts),
+[rolling records](../compaction-rolling.test.ts),
+[rolling state](../../session/session-compaction-rolling.test.ts),
 [HTTP/runtime/persistence](../../http/route-compaction.test.ts),
 [NDJSON](../../sidecar/compaction.test.ts),
 [TUI commands](../../tui/commands/slash-command-handler.test.ts),
