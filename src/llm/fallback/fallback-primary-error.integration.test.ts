@@ -222,10 +222,13 @@ describe("an exhausted fallback chain, through the agent loop", () => {
     );
     expect(both.calls).toEqual(["openrouter", "local"]);
 
-    // A lone link renders byte for byte as before; the fallover says why.
-    expect(chatText(alone.events)).toBe("Turn failed [transport]: fetch failed");
+    // A lone link gets the transport headline and its own error on the
+    // Details line; the fallover adds why the primary was skipped.
+    expect(chatText(alone.events)).toBe(
+      "Turn failed: couldn't get a reply from the provider.\nDetails: fetch failed",
+    );
     expect(chatText(both.events)).toBe(
-      `Turn failed [transport]: fetch failed (after "openrouter" failed: ${CLOUD_404})`,
+      `Turn failed: couldn't get a reply from the provider.\nDetails: fetch failed (after "openrouter" failed: ${CLOUD_404})`,
     );
 
     expect(lastErrorRow(alone.trace)).not.toHaveProperty("fallbackFailures");
@@ -262,7 +265,7 @@ describe("an exhausted fallback chain, through the agent loop", () => {
     expect(calls).toEqual(["openrouter", "local", "openrouter", "local"]);
 
     expect(chatText(events)).toBe(
-      `Turn failed [transport]: fetch failed (after "openrouter" failed: ${CLOUD_404})`,
+      `Turn failed: couldn't get a reply from the provider.\nDetails: fetch failed (after "openrouter" failed: ${CLOUD_404})`,
     );
     expect(lastErrorRow(trace)).toMatchObject({
       message: "fetch failed",

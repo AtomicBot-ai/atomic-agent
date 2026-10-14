@@ -657,8 +657,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // A user-initiated abort is not a failure and must not dress like
       // one: the operator pressed stop (the chip, Esc, Ctrl+C or
       // `/abort`) and already knows the turn is dead. Instead of the
-      // warn-styled `Turn failed [cancelled]: This operation was
-      // aborted` wall, leave a calm system notice that says who stopped
+      // warn-styled "Turn failed" wall over `Details: This operation
+      // was aborted`, leave a calm system notice that says who stopped
       // it — and carry the aborted turn's user message as `retryText`,
       // so a mistaken click is one `[try again]` away from undone.
       //
