@@ -532,7 +532,7 @@ describe("toStrictJsonSchema", () => {
    * knowingly — either the schema loses a bound it does not need, or
    * the tool joins this list.
    */
-  it("converts all but six of the sampled built-in tool schemas", () => {
+  it("converts all but seven of the sampled built-in tool schemas", () => {
     const refused: string[] = [];
     let converted = 0;
     for (const name of DEFAULT_TOOL_NAMES) {
@@ -548,6 +548,8 @@ describe("toStrictJsonSchema", () => {
       "mcp.prompt.get",
       // `limits` is deliberately an open object.
       "os.fs.archive.extract",
+      // minItems/maxItems on `moves`, whose items nest an object.
+      "os.fs.move",
       // `headers` is a map; `body` may be any object.
       "os.http.request",
       // `env` is a map of arbitrary variable names.
@@ -556,10 +558,10 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 86 registered schemas, 80 of them strict. Pinned as a number so
+    // 86 registered schemas, 79 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
     expect(DEFAULT_TOOL_NAMES.length).toBe(86);
-    expect(converted).toBe(80);
+    expect(converted).toBe(79);
   });
 
   /**

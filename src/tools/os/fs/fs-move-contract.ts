@@ -22,6 +22,10 @@ export const OS_FS_MOVE_CONTRACT = {
       },
       moves: {
         type: "array",
+        // Bounds the strict compilers cannot express: they keep this
+        // tool non-strict, as the nested item object requires.
+        minItems: 1,
+        maxItems: 500,
         items: {
           type: "object",
           properties: {
