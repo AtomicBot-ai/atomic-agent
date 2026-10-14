@@ -130,7 +130,8 @@ test('Composio is the third pane of Connections, in the tab list and the palette
   }
   // index.html loads the helpers before renderer.js.
   const index = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
-  assert.ok(index.indexOf('composio.js') > 0 && index.indexOf('composio.js') < index.indexOf('renderer.js'));
+  const helper = index.indexOf('<script src="composio.js">');
+  assert.ok(helper > 0 && helper < index.indexOf('<script src="renderer.js">'));
 });
 
 test('analytics: the pane verbs are kept, nothing after them is', () => {
