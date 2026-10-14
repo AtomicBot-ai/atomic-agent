@@ -435,3 +435,11 @@
 .sysrow .sys-tried-t svg{width:12px;height:12px}
 .sysrow .sys-tried-l{display:flex;flex-direction:column;gap:2px;margin:4px 0 0 16px;font-size:12px;color:var(--ink-3)}
 .sysrow .sys-tried-i b{font-weight:600;color:var(--ink)}
+/* ATO-380: a failed turn's Details (sysDetailHTML). Folded, the text is
+   clipped, not removed, so copying the row still copies it. */
+.sysrow .sys-det{display:block;position:relative;margin-top:4px}
+.sysrow .sys-det-t{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:var(--ink-3);font:inherit;font-size:12px;cursor:pointer}
+.sysrow .sys-det-t:hover{color:var(--ink)}
+.sysrow .sys-det-t svg{width:12px;height:12px}
+.sysrow .sys-det-x{display:block;margin:4px 0 0 16px;font:400 12px/1.45 var(--font-mono);color:var(--ink-3);white-space:pre-wrap;overflow-wrap:anywhere}
+.sysrow .sys-det-x.shut{position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
