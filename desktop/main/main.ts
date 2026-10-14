@@ -86,6 +86,7 @@ import {
   resolveHuggingFaceGgufChoices,
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
+import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import {
   activateProvider,
   agentStarting,
@@ -960,6 +961,19 @@ function hfBuildDef(
 }
 
 /**
+ * The Hugging Face mirror's sources, read fresh (hf-mirror.ts): a mirror
+ * saved from a terminal with `atag config set` reaches the next lookup
+ * without a restart, as it reaches the next `atag models pull`.
+ */
+function hfMirrorSources(): HfMirrorSources {
+  let config: unknown = null;
+  try { config = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")); } catch { /* no file yet: the default */ }
+  let dotenv: string | undefined;
+  try { dotenv = parseDotenv(readFileSync(join(DESKTOP_STATE_DIR, ".env"), "utf8")).get("HF_ENDPOINT"); } catch { /* no .env */ }
+  return { config, env: process.env.HF_ENDPOINT, dotenv };
+}
+
+/**
  * The one honest thing this window can add to a gated-repo refusal.
  *
  * `atag models pull` reads HF_TOKEN out of <stateDir>/.env — load-config
@@ -1425,6 +1439,7 @@ function wireIpc(client: AgentClient): void {
     hfLookup?.abort();
     hfLookup = controller;
     try {
+      syncHfEndpoint(hfMirrorSources());
       const repo = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
       hfLookup = null;
@@ -1439,6 +1454,18 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: hfGatedTokenHint(message, stateDirPath()) };
     }
   });
+  /* The Hugging Face mirror (hf-mirror.ts): what the field shows, and its
+     save. The listing above and the projector below read it per request;
+     `atag models pull` reads the same key from the same file itself. */
+  ipcMain.handle("cli:hfMirror", () => syncHfEndpoint(hfMirrorSources()));
+  ipcMain.handle("cli:hfMirrorSet", async (_event, value: unknown) =>
+    writeHfMirror(value, {
+      sources: hfMirrorSources,
+      write: async (key, v) => {
+        const res = await configSetPath(key, v);
+        return { ok: res.ok, error: res.error ?? (res.stderr || null) };
+      },
+    }));
   ipcMain.handle("cli:hfCancel", () => {
     // Escape mid-lookup: drop the socket, keep what was typed.
     if (!hfLookup) return false;
@@ -1530,6 +1557,7 @@ function wireIpc(client: AgentClient): void {
         send("cli:pull", { id, line: `${label} 0%` });
         try {
           mkdirSync(dir, { recursive: true });
+          syncHfEndpoint(hfMirrorSources());
           await downloadProjector(mmprojUrl, dest, {
             signal: controller.signal,
             onProgress: (percent, transferred, total) =>
@@ -5909,7 +5937,8 @@ async function hfAndDeltaTest(
     mmproj: string | null; hidden: string | null; cursor: number; ram: number; pendingMmproj: string | null;
     rows: number; pulling: { id: string; phase?: string } | null; daemonPhase: string | null; confirm: string | null;
   };
-  const networkDown = (e: string | null) => !!e && e.startsWith("Could not reach huggingface.co");
+  // Whichever host serves Hugging Face here: a mirror set in Settings or HF_ENDPOINT included.
+  const networkDown = (e: string | null) => !!e && e.startsWith("Could not reach ");
 
   // ---- the row and the key are live ----
   await js<Hf>("window.__llmOpen('local')");

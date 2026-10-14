@@ -549,6 +549,16 @@ Honestly degraded, and labelled as such in the UI:
   If the projector download fails or is cancelled the model is **not**
   activated at all: the weights are on disk and the pane says so, rather than
   starting a daemon that would serve a vision model text-only.
+  **Hugging Face mirror.** The listing and the projector honour the same
+  endpoint as `atag models pull`: `HF_ENDPOINT` in the environment, then
+  `HF_ENDPOINT` in `<stateDir>/.env`, then `localModels.download.hfEndpoint`
+  in config.json, then huggingface.co (`main/hf-mirror.ts`, with the port of
+  `huggingface-endpoint.ts` in `huggingface.ts`). Stored definitions keep
+  canonical huggingface.co URLs; only the request is rewritten. The Hugging
+  Face card and the wizard's Hugging Face step both carry a "Hugging Face
+  mirror" field that writes the config key through the whole-file `config
+  set`, refusing anything that is not an http(s) origin; empty writes the
+  default. An unreachable huggingface.co says where that field is.
   The pick list follows the TUI's `MouseListRow` contract rather than the
   Local pane's model rows: the first click on a file selects it, a second
   click on the selected one starts the download — the rows above it activate
