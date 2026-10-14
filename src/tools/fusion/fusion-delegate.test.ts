@@ -1819,11 +1819,12 @@ describe("fusion.delegate", () => {
     });
 
     it("keeps a declared checklist pinned after fan-out denial without spending a full round", async () => {
-      const tool = buildFusionDelegateTool(deps({ approvalRequired: true,
-        approvals: { request: async () => { throw new Error("denied"); }, setSessionPolicy: () => {}, clearSessionPolicy: () => {} },
-      }));
+      const approvals = new ApprovalGate({ emit: () => {}, level: 1 });
+      const request = vi.spyOn(approvals, "request").mockRejectedValue(new Error("denied"));
+      const tool = buildFusionDelegateTool(deps({ approvalRequired: true, approvals }));
       const callCtx = ctx();
       const denied = await tool.run({ tasks: TASKS, contract: { checks: [{ item: "build", kind: "command", cmd: "node" }] } }, callCtx);
+      expect(request).toHaveBeenCalledOnce();
       expect(denied.details.checklistPassed).toBe(false);
       expect(denied.summary).toContain("build=UNCHECKED");
       expect(denied.details.behaviorRepair).toBeUndefined();

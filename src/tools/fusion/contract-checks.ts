@@ -1,8 +1,9 @@
+import { describeMissing } from "./contract-finding.js";
+export { describeMissing } from "./contract-finding.js";
 import { readFile, stat } from "node:fs/promises";
 
 import { resolveUserPath } from "../os/expand-home.js";
 import {
-  describeProvide,
   provideSearchPaths,
   type ContractProvide,
   type DelegateContract,
@@ -244,20 +245,6 @@ export async function inspectContractProvides(
 }
 
 /** `[ship_js] symbol HD.Ship.reset not in js/ship.js` */
-export function describeMissing(finding: ContractFinding): string {
-  if (finding.kind === "file") {
-    return `[${finding.task}] file ${finding.name} does not exist`;
-  }
-  const what = describeProvide({
-    task: finding.task,
-    kind: finding.kind,
-    name: finding.name,
-  });
-  const where =
-    finding.where.length > 0 ? `not in ${finding.where.join(", ")}` : "nowhere";
-  const detail = finding.detail === undefined ? "" : ` (${finding.detail})`;
-  return `[${finding.task}] ${what} ${where}${detail}`;
-}
 
 /**
  * Put each missing provide on its owner's row as a note. The status is

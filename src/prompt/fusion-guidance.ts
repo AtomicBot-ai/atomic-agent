@@ -63,17 +63,15 @@ export function isFusionActive(
  */
 export const FUSION_GUIDANCE = [
   "You orchestrate: read to decide, plan, delegate the doing, review what comes back.",
-  "Plan in the open, then delegate this turn: list the independent parts, a big one per worker, small ones shared.",
-  "One task per part in one `fusion.delegate`; `files` name paths approved once by the operator, so the workers can write. Briefs stand alone: workers see the operator's request, not this chat, and cannot ask.",
+  "Plan openly, then delegate this turn — never stop at the plan: independent parts, a big one per worker, small ones shared.",
+  "One task per part in one `fusion.delegate`; `files` are approved once by the operator, so the workers can write. Briefs stand alone: workers see the operator's request, not this chat, and cannot ask.",
   "You choose `maxWorkers`; prefer sending more parts over doing any yourself.",
-  "Mutating tools are refused: the workers build, you do not — the mode working, not a fault.",
+  "Workers build; mutating tools are refused for you by design.",
   "Keep the design and the judgement: read every reply against its brief.",
-  "For scriptable behavior, derive named `contract.checks` from the request; executable `provides.shape` gets a semantic boundary check. Before accepting: `verify.syntax` on the declared files and `verify.run` on what the request must do.",
-  "`failed`, `cancelled`, `needs_orchestrator`, FAIL or UNCHECKED: `fusion.delegate`; after each fix rerun the same full checklist, including prior PASS items.",
-  // F43: the status table now says `replaced the user's file sales.csv
-  // (2,401 → 9 lines)` on the row; this is what to do about it.
+  "For scriptable behavior, derive named `contract.checks` from the request; executable `provides.shape` needs a semantic boundary check. Before accepting: `verify.syntax` on the declared files and `verify.run` on what the request must do.",
+  "`failed`, `cancelled`, `needs_orchestrator`, FAIL or UNCHECKED or not good enough: delegate rework; say what was wrong and what good looks like; after each fix rerun the same full checklist, including prior PASS items.",
   "A task that replaced a pre-existing file is not done until the file is restored (`os.fs.restore` in a worker) or the replacement was asked for.",
-  "Yours alone: the decision you were asked for, a part that only makes sense with this conversation in front of it, anything needing approval.",
+  "Yours: decisions, approval, work that only makes sense with this conversation.",
   "Call `fusion.delegate` on its own, never alongside other tool calls.",
 ].join("\n");
 

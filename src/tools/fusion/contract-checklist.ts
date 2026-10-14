@@ -1,6 +1,7 @@
 import type { ContractCheck } from "./contract.js";
 import type { WorkerTaskResult } from "./worker-result.js";
-import { describeMissing, type ContractCheckRunner, type ContractCheckResult, type ContractCheckOutcome, type ContractReport } from "./contract-checks.js";
+import { describeMissing } from "./contract-finding.js";
+import type { ContractCheckRunner, ContractCheckResult, ContractCheckOutcome, ContractReport } from "./contract-checks.js";
 const CHECK_DETAIL_CHARS = 400;
 const CONTRACT_LINE_CHARS = 1200;
 

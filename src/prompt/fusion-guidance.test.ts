@@ -153,6 +153,19 @@ describe("the ### fusion prefix section", () => {
     expect(FUSION_GUIDANCE).toContain("For scriptable behavior");
   });
 
+  it("never stops at the plan when Fusion is available (#605 maintainer)", () => {
+    const prefix = prefixWith([descriptor(FUSION_DELEGATE_TOOL)]);
+    expect(prefix).toContain("never stop at the plan");
+    expect(prefix).toContain("delegate this turn");
+  });
+
+  it("sends inadequate work back with a concrete repair brief (#605 maintainer)", () => {
+    const prefix = prefixWith([descriptor(FUSION_DELEGATE_TOOL)]);
+    expect(prefix).toContain("not good enough");
+    expect(prefix).toContain("say what was wrong and what good looks like");
+    expect(prefix).toContain("after each fix rerun the same full checklist");
+  });
+
   it("stays short enough to live in every turn's prefix", () => {
     // Every byte here is paid on every step of every fusion turn. The
     // machine lines carry capacity as well as a count — slots, a

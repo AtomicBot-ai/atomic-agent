@@ -673,9 +673,8 @@ export class AgentLoop {
           ...(stallSignal !== null ? { reviewStall: stallSignal } : {}),
         });
         if (outcome.terminal !== null && fusionState.blockedChecklist !== undefined) {
-          reason = "failed";
+          turn.reason = "failed";
           state = { ...state, status: "failed", lastError: "fusion_checklist: failing or unchecked behavior items" };
-          this.deps.onEvent?.({ type: "loop_completed", reason });
           break;
         }
         if (outcome.terminal === "session") {
