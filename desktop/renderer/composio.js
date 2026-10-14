@@ -20,13 +20,13 @@ const COMPOSIO_SIGNUP_URL = 'https://composio.dev';
 const COMPOSIO_SEARCH_TOOL = 'mcp.composio.COMPOSIO_SEARCH_TOOLS';
 
 /* A key as pasted: '' when nothing was, null when it cannot be a key
-   (spaces or line breaks inside, too short or too long), else the key. The
-   same rule main applies before it writes (main/composio-key.ts
-   composioKeyValueError). */
+   (spaces, quotes or line breaks inside, too short or too long), else the
+   key. The same rule main applies before it writes (main/composio-key.ts
+   composioKeyValueError): letters, digits and `_ - . : + / =`, 8 to 512. */
 function composioKeyClean(raw) {
   const v = String(raw == null ? '' : raw).trim();
   if (!v) return '';
-  return /^[\x21-\x7e]{8,512}$/.test(v) ? v : null;
+  return /^[A-Za-z0-9_.:+\/=-]{8,512}$/.test(v) ? v : null;
 }
 
 /* Is Composio mounted in the running agent? From GET /api/capabilities'
@@ -53,14 +53,15 @@ function composioStatus(st) {
   // The TUI's "no key: Composio tools are not loaded".
   if (st.hasKey === false) return {level:'none', chip:'Not connected', line:'No key: Composio tools are not loaded.'};
   if (st.enabled === false) return {level:'off', chip:'Off', line:'Turned off: the agent does not load Composio until you turn it on below.'};
+  // A failed Check again outranks what the running agent shows: Composio just refused or could not take the key.
+  if (st.checkError) return {level:'error', chip:'Not connected', line: st.checkError};
   if (st.toolsUp === true) {
     return {level:'connected', chip:'Connected',
       line:'Ask the agent to use an app, for example "connect my Gmail". The first time, it replies with a sign-in link.'};
   }
   if (st.toolsUp === false) {
     // The TUI's "key saved, but the connection failed", with what to do here.
-    return {level:'error', chip:'Not connected', line: st.checkError
-      || 'Key saved, but the connection failed when the agent started. Check the key, then restart the agent.'};
+    return {level:'error', chip:'Not connected', line:'Key saved, but the connection failed when the agent started. Check the key, then restart the agent.'};
   }
   return {level:'unknown', chip:'Key saved', line:'The status shows once the agent is running.'};
 }

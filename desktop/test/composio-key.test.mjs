@@ -87,8 +87,10 @@ test("401 and 403 are a refused key; other failures could not check it; the key 
   for (const r of [five, down, noUrl, noId]) assert.ok(!JSON.stringify(r).includes(KEY));
 });
 
-test("a key that is not one line of printable characters is refused before anything happens", async () => {
-  for (const bad of [KEY + "\nPATH=/tmp/evil", "two words here", "short", "", "k".repeat(513), KEY + "\u0000", "ключ-ключ-ключ", null, 42]) {
+test("a key outside letters, digits and _ - . : + / = is refused before anything happens", async () => {
+  // Quotes, # and backslash would be quoted or escaped in .env in a way load-dotenv.ts does not undo.
+  for (const bad of [KEY + "\nPATH=/tmp/evil", "two words here", "short", "", "k".repeat(513), KEY + "\u0000", "ключ-ключ-ключ",
+    KEY + '"', KEY + "'", KEY + "#c", KEY + "\\", null, 42]) {
     assert.equal(K.composioKeyValueError(bad), "That does not look like a Composio API key.", JSON.stringify(bad));
     const { d, checks } = deps();
     const res = await K.saveComposioKey(d, bad);
@@ -97,6 +99,7 @@ test("a key that is not one line of printable characters is refused before anyth
   }
   assert.equal(K.composioKeyValueError(KEY), null);
   assert.equal(K.composioKeyValueError("k".repeat(512)), null);
+  assert.equal(K.composioKeyValueError("ak_AZaz09-._:+/="), null);
 });
 
 /* ---------------- save ---------------- */
@@ -158,10 +161,13 @@ test("save: a failed .env write is an error; a failed config write is a warning 
   assert.equal(r2.warning, "The key is saved, but the Composio settings could not be updated: locked");
 });
 
-test("save: a key in this app's environment is reported, because the agent uses that one", async () => {
-  const { d } = deps({ env: { COMPOSIO_API_KEY: "ak_env_dummy_0000" } });
+test("save: a key in this app's environment is reported, and the typed key's session is not cached for it", async () => {
+  const { d, writes } = deps({ config: { userId: "u" }, env: { COMPOSIO_API_KEY: "ak_env_dummy_0000" } });
   const res = await K.saveComposioKey(d, KEY);
   assert.equal(res.shadowed, true);
+  assert.equal(res.verified, true);
+  // The agent loads the environment's key; a session made with the typed one would not match it.
+  assert.deepEqual(writes, [{ userId: "u", sessionId: null, mcpUrl: null }]);
 });
 
 /* ---------------- remove ---------------- */
@@ -209,6 +215,8 @@ test("readDotenvValue reads .env the way the agent does", () => {
   assert.equal(K.readDotenvValue(dir, "COMPOSIO_API_KEY"), "ak_one_two");
   writeFileSync(join(dir, ".env"), "COMPOSIO_API_KEY=\n");
   assert.equal(K.readDotenvValue(dir, "COMPOSIO_API_KEY"), undefined, "empty is unset");
+  writeFileSync(join(dir, ".env"), "COMPOSIO_API_KEY=ak_first_one\nCOMPOSIO_API_KEY=ak_second_one\n");
+  assert.equal(K.readDotenvValue(dir, "COMPOSIO_API_KEY"), "ak_first_one", "the first non-empty line wins, as in load-dotenv.ts");
 });
 
 test("analytics: composio_setup carries a step and an outcome, never anything else; the pane is a settings pane", () => {

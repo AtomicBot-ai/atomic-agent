@@ -41,14 +41,18 @@ const CHECK_TIMEOUT_MS = 15_000;
 
 export const COMPOSIO_KEY_INVALID = "That does not look like a Composio API key.";
 
-/* Why a key cannot be written as given, or null. One line of printable
-   ASCII, no spaces, 8 to 512 characters: the window's composioKeyClean rule
+/* Why a key cannot be written as given, or null. Letters, digits and
+   `_ - . : + / =`, 8 to 512 characters: the window's composioKeyClean rule
    (renderer/composio.js), checked again here because the value crosses IPC.
-   A line break would end the .env line and start another variable, and the
-   core sends the key as a header value, which must be ASCII
-   (src/integrations/composio-integration.ts). The value is never quoted back. */
+   A line break would end the .env line and start another variable; the core
+   sends the key as a header value, which must be ASCII
+   (src/integrations/composio-integration.ts); and a quote, `#` or backslash
+   would be quoted or escaped by the dotenv writer in a way load-dotenv.ts
+   does not undo, so the agent would load a different string than the one
+   Composio accepted. The value is never quoted back. */
+const COMPOSIO_KEY_RE = /^[A-Za-z0-9_.:+\/=-]{8,512}$/;
 export function composioKeyValueError(value: unknown): string | null {
-  return typeof value === "string" && /^[\x21-\x7e]{8,512}$/.test(value) ? null : COMPOSIO_KEY_INVALID;
+  return typeof value === "string" && COMPOSIO_KEY_RE.test(value) ? null : COMPOSIO_KEY_INVALID;
 }
 
 export type ComposioCheck =
@@ -133,7 +137,6 @@ export function readDotenvValue(stateDir: string, key: string): string | undefin
   } catch {
     return undefined;
   }
-  let found: string | undefined;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -143,9 +146,10 @@ export function readDotenvValue(stateDir: string, key: string): string | undefin
     if (value.length >= 2 && ((value[0] === '"' && value.endsWith('"')) || (value[0] === "'" && value.endsWith("'")))) {
       value = value.slice(1, -1);
     }
-    found = value; // the last line wins, as each line overwrites the one before in load-dotenv
+    // The first non-empty line wins: load-dotenv.ts skips a name once it is set, and dotenvSet edits the first match.
+    if (value.trim()) return value.trim();
   }
-  return found && found.trim() ? found.trim() : undefined;
+  return undefined;
 }
 
 /** The effects saveComposioKey / removeComposioKey / checkSavedComposioKey need. */
@@ -176,9 +180,10 @@ export interface ComposioKeyResult {
   shadowed: boolean;
 }
 
+/* load-dotenv.ts skips a .env line whenever the variable is already non-empty in the environment. */
 function shadowedBy(env: NodeJS.ProcessEnv): boolean {
   const v = env[COMPOSIO_API_KEY_ENV];
-  return typeof v === "string" && v.trim().length > 0;
+  return typeof v === "string" && v.length > 0;
 }
 
 /* The install's user id: the saved one, else a new random UUID (never an
@@ -208,7 +213,10 @@ export async function saveComposioKey(deps: ComposioDeps, value: unknown): Promi
   if (!verdict.ok && verdict.rejected) return { ok: false, verified: false, rejected: true, error: verdict.error, shadowed };
   const wrote = deps.dotenvSet(deps.stateDir, COMPOSIO_API_KEY_ENV, apiKey);
   if (!wrote.ok) return { ok: false, verified: false, error: `Could not save the key: ${wrote.error ?? "unknown error"}`, shadowed };
-  const persisted = await deps.writeComposio(verdict.ok
+  /* The session belongs to the key that made it. With COMPOSIO_API_KEY in
+     this app's environment the agent loads that key, not this one, so the
+     typed key's session is not cached; the agent mints one for its own key. */
+  const persisted = await deps.writeComposio(verdict.ok && !shadowed
     ? { userId: id.userId, sessionId: verdict.sessionId, mcpUrl: verdict.mcpUrl }
     : { userId: id.userId, sessionId: null, mcpUrl: null });
   const warnings: string[] = [];
@@ -237,7 +245,8 @@ export async function removeComposioKey(deps: ComposioDeps): Promise<ComposioKey
  */
 export async function checkSavedComposioKey(deps: ComposioDeps): Promise<ComposioKeyResult> {
   const shadowed = shadowedBy(deps.env);
-  const apiKey = shadowed ? deps.env[COMPOSIO_API_KEY_ENV]!.trim() : readDotenvValue(deps.stateDir, COMPOSIO_API_KEY_ENV);
+  const fromEnv = shadowed ? deps.env[COMPOSIO_API_KEY_ENV]!.trim() : "";
+  const apiKey = shadowed ? fromEnv : readDotenvValue(deps.stateDir, COMPOSIO_API_KEY_ENV);
   if (!apiKey) return { ok: false, verified: false, error: "No Composio API key is saved.", shadowed };
   const id = await userIdOf(deps);
   if ("error" in id) return { ok: false, verified: false, error: id.error, shadowed };

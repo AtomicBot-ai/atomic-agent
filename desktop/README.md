@@ -611,7 +611,11 @@ Honestly degraded, and labelled as such in the UI:
   (the dotenv writer, 0600) and `composio.userId` / `sessionId` / `mcpUrl`
   are written together (`configSetPaths`): the new session when the check
   passed, nulls when Composio could not be reached (the old session belonged
-  to the old key, as `applyComposio` drops it). Remove key deletes the line
+  to the old key, as `applyComposio` drops it; nulls too when
+  `COMPOSIO_API_KEY` is set in the app's own environment, which the agent
+  loads instead, and the pane says so). The key must be letters, digits and
+  `_ - . : + / =`: a quote, `#` or backslash would be rewritten by the dotenv
+  writer in a way the agent's loader does not undo. Remove key deletes the line
   and the session and keeps the user id, which connected accounts hang off.
   "Check again" re-runs the check on the key the agent would load (this
   app's environment first, then `.env`) and caches a fresh session. The

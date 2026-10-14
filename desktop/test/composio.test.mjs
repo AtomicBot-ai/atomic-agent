@@ -18,13 +18,14 @@ const KEY = 'ak_dummy0123456789abcdef';
 const base = {hasKey:true, enabled:true, toolsUp:true, restartOwed:false, checkError:null, mode:'list', busy:null,
   keyError:null, message:null, warning:null, lastError:null, shadowed:false, running:false};
 
-test('the key rule matches main: one line of printable ASCII, 8 to 512 characters', () => {
+test('the key rule matches main: letters, digits and _ - . : + / =, 8 to 512 characters', () => {
   assert.equal(C.composioKeyClean('  ' + KEY + '\n'), KEY, 'surrounding whitespace is trimmed');
   assert.equal(C.composioKeyClean(''), '');
   assert.equal(C.composioKeyClean('   '), '');
   assert.equal(C.composioKeyClean(null), '');
-  for (const bad of ['short', 'two words here', KEY + '\nX=1', 'k'.repeat(513), 'ключ-ключ-ключ']) assert.equal(C.composioKeyClean(bad), null, bad);
+  for (const bad of ['short', 'two words here', KEY + '\nX=1', 'k'.repeat(513), 'ключ-ключ-ключ', KEY + '"', KEY + "'", KEY + '#x', KEY + '\\x']) assert.equal(C.composioKeyClean(bad), null, bad);
   assert.equal(C.composioKeyClean('k'.repeat(512)), 'k'.repeat(512));
+  assert.equal(C.composioKeyClean('ak_AZaz09-._:+/='), 'ak_AZaz09-._:+/=');
 });
 
 test('Composio counts as mounted only when its search tool is offered', () => {
@@ -49,6 +50,9 @@ test('status: loading, none, restart, off, connected, error, unknown', () => {
   assert.match(C.composioStatus(Object.assign({}, base, {enabled:false, restartOwed:true})).line, /Turned off/);
   assert.equal(C.composioStatus(Object.assign({}, base, {toolsUp:false, checkError:'Composio rejected the API key (HTTP 401).'})).line,
     'Composio rejected the API key (HTTP 401).', 'a real error message is shown as it came');
+  // A failed Check again outranks the running agent's tools: no green chip beside a refused key.
+  assert.equal(lv({toolsUp:true, checkError:'Composio rejected the API key (HTTP 401).'}), 'error');
+  assert.equal(lv({restartOwed:true, checkError:'x'}), 'restart');
 });
 
 test('no key: the setup card with the TUI walkthrough, the key link and an empty password field', () => {
