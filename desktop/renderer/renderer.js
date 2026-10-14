@@ -1091,14 +1091,15 @@ const MENU_ACTS = {
 };
 /* Calm (S5): Settings is ordinary app preferences. Nine sections, in a
    fixed order; a section shows one pane, except Connections, which holds
-   two (MCP servers and Telegram) behind a segmented control in its header.
+   three (MCP servers, Telegram and Composio) behind a segmented control in
+   its header.
    The pane ids are the ones the rest of the file already keys on (the TUI's
    MANAGE_TABS, plus `general` and `diagnostics`), so every pane's own state,
    poll and write path is untouched: [section id, label, icon, pane ids]. */
 const SETTINGS_SECTIONS = [
   ['general','General','sliders',['general']],
   ['models','Models','cpu',['llm']],
-  ['connections','Connections','plug',['mcp','telegram']],
+  ['connections','Connections','plug',['mcp','telegram','composio']],
   ['memory','Memory','memory',['memory']],
   ['tasks','Tasks','tasks',['tasks']],
   ['skills','Skills','skills',['skills']],
@@ -1107,7 +1108,7 @@ const SETTINGS_SECTIONS = [
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
-const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['memory','Memory'],
+const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['memory','Memory'],
                        ['tasks','Tasks'],['skills','Skills'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
@@ -1296,6 +1297,20 @@ const TG = {
   // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
+};
+/* Composio pane (composio.js, main/composio-key.ts). `dotenvHas` / `envHas`:
+   COMPOSIO_API_KEY is in <stateDir>/.env / this app's environment (names
+   only, never the value). `draft`: what is typed in the key field, kept so a
+   repaint does not wipe it and dropped once saved or cancelled; never put
+   into markup, a message or a log. `busy`: the action running (save,
+   remove, check, enable). `owedGen`: the agent generation a change was made
+   under, so a restart is owed while it lasts; `msgGen` / `warnGen` retire
+   the lines once a new agent is up. */
+const CMP = {
+  keysKnown:false, dotenvHas:false, envHas:false, cfgEnabled:null, chain:null,
+  mode:'list', busy:null, draft:'', keyError:null,
+  message:null, msgGen:0, warning:null, warnGen:0, lastError:null, owedGen:null,
+  checkError:null, checkGen:0, // the last failed Check again, for this agent generation only
 };
 /* Import panel — the TUI's ImportPanelState; the form is
    createInitialImportFormState (hermes, ~/.hermes, sessions+cron on). */
@@ -1768,6 +1783,7 @@ const PAL = [
     ['cpu','Models','Settings','/llm','settings:models'],
     ['plug','MCP servers','Settings · Connections','/mcp','settings:mcp'],
     ['send','Telegram','Settings · Connections','/telegram','settings:telegram'],
+    ['link','Composio','Settings · Connections','','settings:composio'],
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
     ['tasks','Tasks','Settings','','settings:tasks'],
     ['skills','Skills','Settings','','settings:skills'],
@@ -4948,6 +4964,8 @@ function renderSettings() {
     + '</div>'
     + '</div>';
   $('#window').appendChild(el);
+  // Composio: a half-typed key goes back into its field (the markup carries it empty) before the focus and caret do.
+  composioKeyRestore();
   // Item 36: back where the nav was; on a new section or a fresh opening, its row is brought into view.
   const menu = el.querySelector('.setmenu');
   if (menu) {
@@ -5219,6 +5237,7 @@ function settingsPaneEntered(opened) {
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
+  else if (pane === 'composio') composioTabEntered();
   else if (pane === 'import') importTabEntered();
 }
 
@@ -5235,6 +5254,7 @@ function settingsPane() {
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
+  if (p === 'composio') return composioTab();
   if (p === 'import') return importTab();
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
@@ -5993,6 +6013,7 @@ function act(a) {
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
+  if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
@@ -6848,7 +6869,7 @@ document.addEventListener('click', (e) => {
    space, or a letter from the other keyboard layout. A paste that is fine
    goes in where the caret is and is announced as typing, so the field's own
    `input` handling (state, errors cleared) runs exactly as for a keystroke. */
-const KEY_FIELDS = new Set(['wiz-key', 'sel-key', 'mp-key']);
+const KEY_FIELDS = new Set(['wiz-key', 'sel-key', 'mp-key', 'cmp-key']);
 document.addEventListener('paste', (e) => {
   const el = e.target;
   if (!el || !KEY_FIELDS.has(el.id) || !e.clipboardData) return;
@@ -6857,6 +6878,7 @@ document.addEventListener('paste', (e) => {
   if (!keyCharsOk(text)) {
     if (el.id === 'wiz-key') { WIZ.error = KEY_CHAR_ERROR; WIZ.errorDetail = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; }
     else if (el.id === 'sel-key') SEL.err = KEY_CHAR_ERROR;
+    else if (el.id === 'cmp-key') { CMP.keyError = KEY_CHAR_ERROR; composioRepaint(); return; }
     else MP.err = KEY_CHAR_ERROR;
     render();
     return;
@@ -6899,6 +6921,8 @@ document.addEventListener('input', (e) => {
   }
   if (e.target.id === 'llm-url') { LLMP.externalDraft = e.target.value; if (LLMP.externalInvalid) { LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } } return; }
   if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
+  // Composio: the key field keeps its draft in memory only (composioKeyRestore puts it back after a repaint).
+  if (e.target.id === 'cmp-key') { CMP.draft = e.target.value; if (CMP.keyError) CMP.keyError = null; return; }
   if (e.target.dataset && e.target.dataset.impField) { IMP.form[e.target.dataset.impField] = e.target.value; return; }
   if (e.target.id === 'tk-search') { TK.search = e.target.value; TK.cursor = 0; const at = e.target.selectionStart; tkRepaint();
     const n = $('#tk-search'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
@@ -20380,6 +20404,7 @@ function settingsKey(e, k, inText) {
   // Item 7 part C: the LLM / Telegram / Import tabs' keys (the LLM pane's ←/→ switch its mode, not the tab).
   if (pane === 'llm' && llmKey(e, k, inText)) return true;
   if (pane === 'telegram' && telegramKey(e, k, inText)) return true;
+  if (pane === 'composio' && composioKey(e, k, inText)) return true;
   if (pane === 'import' && importKey(e, k, inText)) return true;
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
   if (inText) return false;
@@ -24930,6 +24955,205 @@ function telegramKey(e, k, inText) {
   return false;
 }
 
+/* ---------------- Composio tab (composio.js for the markup, main/composio-key.ts for the key).
+   The TUI's Integrations › Composio row (src/integrations/composio-integration.ts,
+   integrations-orchestrator.ts applyComposio). The TUI mounts the new key live; the
+   desktop's agent has no route for that, so a change here is owed a restart, the
+   Telegram tab's way. Whether Composio is up is read off the running agent's offered
+   tools (GET /api/capabilities): its search tool is there only while a session is
+   mounted. ---------------- */
+
+function composioVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'composio'; }
+function cmpHasKey() { return CMP.keysKnown ? (CMP.dotenvHas || CMP.envHas) : null; }
+/* `composio.enabled`: what the last refresh read (`atag config get`, defaults
+   filled in), else the agent's own config. */
+function cmpEnabled() {
+  if (typeof CMP.cfgEnabled === 'boolean') return CMP.cfgEnabled;
+  const c = LIVE_CONFIG && LIVE_CONFIG.composio;
+  return c && typeof c === 'object' && typeof c.enabled === 'boolean' ? c.enabled : null;
+}
+/* The key and composio.enabled are read by the agent when it starts: a change is owed a
+   restart until a new agent process is up (AGENT_GEN moves when one connects). */
+function cmpRestartOwed() { return CMP.owedGen !== null && CMP.owedGen === AGENT_GEN; }
+function cmpRunning() { return !!S.busy || RUNNING.size > 0; }
+function cmpSetMessage(text, owesRestart) {
+  CMP.message = text; CMP.msgGen = AGENT_GEN;
+  if (owesRestart) CMP.owedGen = AGENT_GEN;
+}
+function cmpSetWarning(text) { CMP.warning = text || null; CMP.warnGen = AGENT_GEN; }
+function composioState() {
+  return {
+    hasKey: cmpHasKey(), enabled: cmpEnabled(), toolsUp: composioToolsUp(LIVE_CAPS), restartOwed: cmpRestartOwed(),
+    checkError: CMP.checkError && CMP.checkGen === AGENT_GEN ? CMP.checkError : null, mode: CMP.mode, busy: CMP.busy, keyError: CMP.keyError,
+    message: CMP.message && CMP.msgGen === AGENT_GEN ? CMP.message : null,
+    warning: CMP.warning && CMP.warnGen === AGENT_GEN ? CMP.warning : null,
+    lastError: CMP.lastError, shadowed: CMP.envHas, running: cmpRunning(),
+  };
+}
+function composioTab() { return composioPaneHTML(composioState(), {esc, ic}); }
+/* A half-typed key is not kept across visits: it lives in memory only while the pane is in use. */
+function composioTabEntered() { CMP.draft = ''; CMP.keyError = null; composioRefresh(); }
+/* The state dir main's key writes are checked against: the running agent's, else the one the first-run read. */
+function cmpStateDir() { return memStateDir() || (FIRSTRUN && FIRSTRUN.stateDir) || null; }
+function composioRepaint() {
+  if (!composioVisible()) return;
+  paneRepaintKeepFocus(composioTab());
+  composioKeyRestore();
+}
+/* The key field is emitted empty; the draft goes back from memory, the caret to its end. */
+function composioKeyRestore() {
+  const n = document.getElementById('cmp-key');
+  if (!n || !CMP.draft || n.value === CMP.draft) return;
+  n.value = CMP.draft;
+  if (document.activeElement === n) { try { n.setSelectionRange(n.value.length, n.value.length); } catch (e) { /* a password field may refuse */ } }
+}
+function composioFocusKey() { const n = document.getElementById('cmp-key'); if (n && !n.disabled) n.focus(); }
+/* Config and the key's NAME in the env and .env. Serialized, as tgRefresh is: a save
+   awaits its own refresh, which must not be swallowed by one already in flight. */
+function composioRefresh() {
+  if (!BR) return Promise.resolve();
+  const once = () => composioRefreshOnce().catch(() => { CMP.lastError = CMP.lastError || 'Could not read the Composio settings. Try again in a moment.'; composioRepaint(); });
+  CMP.chain = (CMP.chain || Promise.resolve()).then(once, once);
+  return CMP.chain;
+}
+const CMP_READ_ERROR = 'Could not read the saved key: ';
+async function composioRefreshOnce() {
+  if (!BR) return;
+  const stateDir = cmpStateDir();
+  const [cfg, env, dotenv, caps] = await Promise.all([
+    BR.configGet(), BR.envPresent([COMPOSIO_KEY_ENV]), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve(null),
+    // What the running agent offers now, so Connected is not read off a list from before a restart.
+    S.live && S.live.state === 'connected' && BR.capabilities ? BR.capabilities().catch(() => null) : Promise.resolve(null),
+  ]);
+  if (cfg && cfg.ok && cfg.config) {
+    LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared();
+    const c = cfg.config.composio;
+    CMP.cfgEnabled = c && typeof c === 'object' && typeof c.enabled === 'boolean' ? c.enabled : null;
+  }
+  if (caps && caps.ok && caps.data) LIVE_CAPS = caps.data;
+  CMP.envHas = Array.isArray(env) && env.includes(COMPOSIO_KEY_ENV);
+  // Without a state dir the .env cannot be read: the pane keeps loading rather than saying there is no key.
+  if (!dotenv) { composioRepaint(); return; }
+  CMP.dotenvHas = !!(dotenv.ok && Array.isArray(dotenv.keys) && dotenv.keys.includes(COMPOSIO_KEY_ENV));
+  if (dotenv.ok === false) CMP.lastError = CMP_READ_ERROR + (dotenv.error || 'unknown error');
+  else if (CMP.lastError && CMP.lastError.startsWith(CMP_READ_ERROR)) CMP.lastError = null;
+  CMP.keysKnown = true;
+  composioRepaint();
+}
+/* Save: main checks the key with Composio first (a key Composio refuses is never
+   written), then writes it to <stateDir>/.env and caches the session it made. */
+async function composioKeySave() {
+  if (CMP.busy) return;
+  const field = document.getElementById('cmp-key');
+  const value = composioKeyClean(field ? field.value : CMP.draft);
+  CMP.keyError = null; CMP.lastError = null; CMP.warning = null;
+  const fail = (text) => { CMP.keyError = text; composioRepaint(); composioFocusKey(); };
+  if (value === '') return fail('Paste the key first.');
+  if (value === null) return fail('That does not look like a Composio API key. Copy it again from the Composio dashboard.');
+  const stateDir = cmpStateDir();
+  if (!BR || !BR.composioSaveKey || !stateDir) return fail('The app is still starting. Try again in a moment.');
+  CMP.busy = 'save'; composioRepaint();
+  let res;
+  try { res = await BR.composioSaveKey(stateDir, value); }
+  catch (e) { res = {ok:false, error: 'Could not save the key.'}; }
+  CMP.busy = null;
+  if (!res || !res.ok) return fail((res && res.error) || 'Could not save the key.');
+  CMP.draft = ''; CMP.mode = 'list'; CMP.checkError = null;
+  if (field) field.value = '';
+  const said = res.verified ? 'Key saved. Composio accepted it' : 'Key saved';
+  cmpSetMessage(res.shadowed
+    ? said + '. ' + COMPOSIO_KEY_ENV + ' is also set in this app\'s environment, and the agent uses that key instead.'
+    : said + '.', true);
+  cmpSetWarning(res.warning);
+  await composioRefresh();
+  // Saving a key means using it (the Telegram token's connect chain): turn Composio on if it was off.
+  if (cmpEnabled() === false) {
+    let w;
+    try { w = await BR.configSet('composio.enabled', 'true'); } catch (e) { w = {ok:false, error: e && e.message ? e.message : String(e)}; }
+    if (!w || w.ok === false) CMP.lastError = 'Could not turn Composio on: ' + ((w && w.error) || 'unknown error');
+    else if (!res.shadowed) cmpSetMessage(said + ', and Composio is turned on.', true);
+    await composioRefresh();
+  }
+}
+async function composioRemoveKey() {
+  const stateDir = cmpStateDir();
+  if (!BR || !BR.composioRemoveKey || !stateDir || CMP.busy) return;
+  CMP.busy = 'remove'; CMP.lastError = null; CMP.warning = null; composioRepaint();
+  let res;
+  try { res = await BR.composioRemoveKey(stateDir); }
+  catch (e) { res = {ok:false, error: 'Could not remove the key.'}; }
+  CMP.busy = null;
+  if (!res || !res.ok) CMP.lastError = (res && res.error) || 'Could not remove the key.';
+  else {
+    CMP.mode = 'list'; CMP.draft = ''; CMP.checkError = null;
+    cmpSetMessage(res.shadowed
+      ? 'Key removed from this computer. ' + COMPOSIO_KEY_ENV + ' is still set in this app\'s environment, so the agent keeps using that key.'
+      : 'Key removed.', true);
+    cmpSetWarning(res.warning);
+  }
+  await composioRefresh();
+}
+async function composioSetEnabled(on) {
+  if (!BR || CMP.busy) return;
+  CMP.busy = 'enable'; CMP.lastError = null; composioRepaint();
+  let res;
+  try { res = await BR.configSet('composio.enabled', String(!!on)); }
+  catch (e) { res = {ok:false, error: e && e.message ? e.message : String(e)}; }
+  CMP.busy = null;
+  if (!res || res.ok === false) CMP.lastError = 'Could not turn Composio ' + (on ? 'on' : 'off') + ': ' + ((res && res.error) || 'unknown error');
+  else cmpSetMessage(on ? 'Composio turned on.' : 'Composio turned off.', true);
+  await composioRefresh();
+}
+/* Check again: main checks the key the agent would load and caches a fresh session,
+   so a restart after a session Composio dropped starts on a new one. */
+async function composioCheck() {
+  const stateDir = cmpStateDir();
+  if (!BR || !BR.composioCheck || !stateDir || CMP.busy) return;
+  CMP.busy = 'check'; CMP.lastError = null; CMP.warning = null; composioRepaint();
+  let res;
+  try { res = await BR.composioCheck(stateDir); }
+  catch (e) { res = {ok:false, error: 'Could not check the key.'}; }
+  CMP.busy = null;
+  // A failure goes on the status line (composioStatus puts a failed check first), not in a second, red copy.
+  if (!res || !res.ok) {
+    CMP.checkError = (res && res.error) || 'Could not check the key.'; CMP.checkGen = AGENT_GEN;
+    await composioRefresh();
+    return;
+  }
+  CMP.checkError = null;
+  if (cmpEnabled() === false) cmpSetMessage('The key works. Turn Composio on to use it.', false);
+  else if (composioToolsUp(LIVE_CAPS) === true && !cmpRestartOwed()) cmpSetMessage('The key works, and the agent is connected to Composio.', false);
+  else cmpSetMessage('The key works. Restart the agent so it connects to Composio.', true);
+  cmpSetWarning(res.warning);
+  await composioRefresh();
+}
+function composioAct(what) {
+  const [verb] = String(what || '').split(':');
+  if (verb === 'key') { CMP.mode = 'key'; CMP.keyError = null; composioRepaint(); composioFocusKey(); return; }
+  if (verb === 'keySave') { composioKeySave(); return; }
+  if (verb === 'keyCancel') { CMP.mode = 'list'; CMP.keyError = null; CMP.draft = ''; composioRepaint(); return; }
+  if (verb === 'removeKey') { composioRemoveKey(); return; }
+  if (verb === 'enable') { const e = cmpEnabled(); if (e !== null) composioSetEnabled(!e); return; }
+  if (verb === 'check') { composioCheck(); return; }
+  // Restarting stops every running reply, so it waits for them, as the notice says.
+  if (verb === 'restart') { if (cmpRestartOwed() && !cmpRunning()) act('agent:restart'); return; }
+  if (verb === 'refresh') { composioRefresh(); return; }
+}
+/* The Telegram tab's letters where they mean the same thing: e on/off, t replace key,
+   r restart, R check. Removing the key is a button only. The key field owns its keys. */
+function composioKey(e, k, inText) {
+  if (e.target && e.target.id === 'cmp-key') {
+    if (k === 'Enter') { e.preventDefault(); composioKeySave(); return true; }
+    if (k === 'Escape' && CMP.mode === 'key') { e.preventDefault(); composioAct('keyCancel'); return true; }
+    return false;
+  }
+  if (inText || e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (CMP.mode === 'key' && k === 'Escape') { e.preventDefault(); composioAct('keyCancel'); return true; }
+  const map = {e:'enable', t:'key', r:'restart', R:'check'};
+  if (map[k] && cmpHasKey() === true) { e.preventDefault(); composioAct(map[k]); return true; }
+  return false;
+}
+
 /* ---------------- Import tab (import-panel.tsx, import-panel-state.ts, import-key-bindings.ts,
    import-orchestrator.ts). The run is `atag import <hermes|openclaw> … --dry-run|--yes` (the
    HTTP API has no import route); its report lines are parsed into the TUI's rows. ---------------- */
@@ -25152,6 +25376,11 @@ if (typeof window !== 'undefined') {
   window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };
   window.__telegramClearToken = async () => { await tgClearToken(); return window.__telegram(); };
   window.__telegramRefresh = async () => { await tgRefresh(); return window.__telegram(); };
+  // Composio: the pane's state, never the key (the drafts and saves go through the field, as a person types).
+  window.__composio = () => ({hasKey: cmpHasKey(), enabled: cmpEnabled(), toolsUp: composioToolsUp(LIVE_CAPS), mode: CMP.mode, busy: CMP.busy,
+    status: composioStatus(composioState()).level, message: composioState().message || '', restart: cmpRestartOwed(), lastError: CMP.lastError, keyError: CMP.keyError});
+  window.__composioAct = (what) => { composioAct(what); return window.__composio(); };
+  window.__composioRefresh = async () => { await composioRefresh(); return window.__composio(); };
   window.__import = () => ({mode: IMP.mode, form: Object.assign({}, IMP.form), runs: IMP.runs, notice: IMP.notice, state: IMP.state, busy: IMP.busy,
     report: IMP.report ? {items: IMP.report.items.length, summary: Object.assign({}, IMP.report.summary), first: IMP.report.items[0] || null} : null,
     painted: document.querySelectorAll('#settings [data-import-row]').length});

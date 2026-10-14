@@ -600,6 +600,38 @@ Honestly degraded, and labelled as such in the UI:
   token, unset the owner and flip `telegram.enabled`, each with the restart
   note. The channel state, bot identity and pairing live inside the serve
   process: the state reads `unknown`, and pairing says to use `atag tui`.
+- **Composio** (Settings › Connections, beside MCP servers and Telegram; the
+  palette's Composio row) is the TUI Integrations tab's Composio row
+  (`src/integrations/composio-integration.ts`, its setup walkthrough and
+  copy). Without a key it is one card: what Composio is (1,500+ apps, each
+  app's sign-in handled by Composio, requests going through Composio's
+  servers), the TUI's four setup steps, "Get an API key" (composio.dev in the
+  system browser) and a password field. Save goes to main
+  (`composio:saveKey`, `main/composio-key.ts`), which checks the key with the
+  core's own call (`POST /tool_router/session` with the install's
+  `composio.userId`, workbench off: `src/composio/composio-api.ts`; the agent
+  has no CLI verb or route for it). A key Composio refuses (401/403) is never
+  written. Otherwise it goes to `<stateDir>/.env` as `COMPOSIO_API_KEY`
+  (the dotenv writer, 0600) and `composio.userId` / `sessionId` / `mcpUrl`
+  are written together (`configSetPaths`): the new session when the check
+  passed, nulls when Composio could not be reached (the old session belonged
+  to the old key, as `applyComposio` drops it; nulls too when
+  `COMPOSIO_API_KEY` is set in the app's own environment, which the agent
+  loads instead, and the pane says so). The key must be letters, digits and
+  `_ - . : + / =`: a quote, `#` or backslash would be rewritten by the dotenv
+  writer in a way the agent's loader does not undo. Remove key deletes the line
+  and the session and keeps the user id, which connected accounts hang off.
+  "Check again" re-runs the check on the key the agent would load (this
+  app's environment first, then `.env`) and caches a fresh session. The
+  "Use Composio" switch is `composio.enabled`. The agent mounts Composio
+  when it starts, so each change says so and offers Restart Agent Runtime
+  once no reply is running. Connected means the running agent offers
+  `mcp.composio.COMPOSIO_SEARCH_TOOLS` (GET /api/capabilities); a key with no
+  such tool reads "the connection failed" with Check again for the real
+  error. Apps are connected in the chat: the agent answers "connect my
+  Gmail" with a sign-in link. The key never comes back to the window, and
+  no message, log or analytics event (`composio_setup`: step and outcome)
+  carries it. `app:dotenvSet` still writes only the Telegram token.
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).

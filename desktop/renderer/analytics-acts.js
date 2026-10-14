@@ -65,7 +65,7 @@ const ANX_ACTS = (() => {
       privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L},
       // ATO-229: the update toast and General's update rows
       appupd:{update:L, notnow:L, skip:L, cancel:L, install:L, later:L, check:L, auto:L},
-      // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / importAct)
+      // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / composioAct / importAct)
       mcp:{add:L, addSubmit:L, addCancel:L, auto:L, back:L, detail:L, refresh:L, remove:L,
         removeCancel:L, removeConfirm:L, restart:L, toggle:L, enable:L, disable:L,
         dtab:Object.assign(set(mcpTabs), {cycle:L})},
@@ -85,6 +85,8 @@ const ANX_ACTS = (() => {
         hf:{add:L, back:L, cancel:L, clear:L, close:L, look:L, row:L}},
       telegram:{advanced:L, clearOwner:L, clearToken:L, enable:L, disable:L, pair:L, refresh:L,
         restart:L, start:L, stop:L, token:L, tokenCancel:L, tokenSave:L},
+      // Settings › Connections › Composio (renderer.js composioAct); never the key.
+      composio:{check:L, enable:L, key:L, keyCancel:L, keySave:L, refresh:L, removeKey:L, restart:L},
       import:{apply:L, field:L, focus:L, preview:L, reset:L, source:Object.assign(set(impSources), {tui:L}),
         toggle:set(impFields)},
     };

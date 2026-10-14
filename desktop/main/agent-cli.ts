@@ -2664,6 +2664,37 @@ async function configSetPathNow(key: string, value: unknown): Promise<CliResult>
   return writeWholeConfig(tree);
 }
 
+/**
+ * configSetPath for several dotted keys in ONE whole-file write: one read,
+ * every path set, one write, all under the config lock. Settings ›
+ * Connections › Composio keeps `composio.userId` / `sessionId` / `mcpUrl`
+ * together (persist-composio-session.ts writes them as one), and three
+ * separate writes would be three agent processes and a window in which the
+ * file names a session for the wrong key.
+ */
+export function configSetPaths(entries: ReadonlyArray<readonly [string, unknown]>): Promise<CliResult> {
+  return withConfigLock(async () => {
+    for (const [key, value] of entries) {
+      if (!/^[a-zA-Z][\w.]{0,80}$/.test(key) || !isSafeConfigPath(key) || key === "llm" || key.startsWith("llm.")) {
+        return { ok: false, stdout: "", stderr: "", error: `refusing to write a suspicious key: ${key}` };
+      }
+      if (value === undefined) return { ok: false, stdout: "", stderr: "", error: `value required for ${key}` };
+    }
+    if (entries.length === 0) return { ok: true, stdout: "", stderr: "" };
+    const current = await configGet();
+    if (!current.ok || !current.config || typeof current.config !== "object") {
+      return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
+    }
+    const tree = current.config as Record<string, unknown>;
+    try {
+      for (const [key, value] of entries) writeConfigPath(tree, key, value);
+    } catch (err) {
+      return { ok: false, stdout: "", stderr: "", error: err instanceof Error ? err.message : String(err) };
+    }
+    return writeWholeConfig(tree);
+  });
+}
+
 const SKILL_NAME_RE = /^[\w.-]{1,64}$/;
 
 /**

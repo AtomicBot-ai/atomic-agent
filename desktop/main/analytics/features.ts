@@ -1,5 +1,5 @@
 /**
- * Feature usage counted in main: voice, tasks, skills, Telegram, import,
+ * Feature usage counted in main: voice, tasks, skills, Telegram, Composio, import,
  * the workspace chooser and the debug bundle. Each takes the IPC's own
  * answer and keeps only an enum or a count from it — never a skill name, a
  * task id, a token, a transcript or a path.
@@ -87,6 +87,23 @@ export function telegramStep(step: "enable" | "token_saved" | "token_cleared" | 
 export function telegramConfigWrite(key: string, value: string | null, res: unknown): void {
   if (key === "telegram.enabled" && value === "true") telegramStep("enable", res);
   if (key === "telegram.ownerUserId" && value === null) telegramStep("owner_cleared", res);
+}
+
+/* ---- composio (never the key) ---- */
+
+/** Settings › Connections › Composio. `result`: unverified = saved, but Composio could not be reached to check it. */
+export function composioStep(
+  step: "key_saved" | "key_removed" | "key_checked" | "enable" | "disable",
+  result: "ok" | "unverified" | "rejected" | "error",
+): void {
+  track("composio_setup", { step, result });
+}
+
+/** Config writes that are Composio steps: `composio.enabled true|false`. */
+export function composioConfigWrite(key: string, value: string | null, res: unknown): void {
+  if (key === "composio.enabled" && (value === "true" || value === "false")) {
+    composioStep(value === "true" ? "enable" : "disable", ok(res) ? "ok" : "error");
+  }
 }
 
 /* ---- import ---- */

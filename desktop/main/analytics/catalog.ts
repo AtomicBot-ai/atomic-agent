@@ -301,6 +301,13 @@ export const EVENTS: Record<string, EventSpec> = {
       result: en(["ok", "error"]),
     },
   },
+  composio_setup: {
+    owner: "main",
+    props: {
+      step: en(["key_saved", "key_removed", "key_checked", "enable", "disable"]),
+      result: en(["ok", "unverified", "rejected", "error"]),
+    },
+  },
   import_run: {
     owner: "main",
     props: {
