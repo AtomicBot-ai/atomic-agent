@@ -68,9 +68,29 @@
 import { cpSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import { ipcMain } from "electron";
+
+import { reapOrphanedServe, resolveBinary } from "./agent-client.js";
 import { DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR } from "./state-dir.js";
+import { runDesktopStateMigrationAtBoot, takeStateMergeNotice } from "./state-migrate.js";
 
 process.env.ATOMIC_AGENT_STATE_DIR = DESKTOP_STATE_DIR;
+
+/**
+ * ATO-416: a desktop that kept its data in ~/.atomic-agent-desktop brings it
+ * into the shared directory once (state-migrate.ts). It runs HERE, before the
+ * fresh-run latch below, so a directory that has just been filled is not
+ * taken for a first run, and before anything is started on it. A no-op unless
+ * this app runs on the shared directory by default (not one named by the
+ * environment) and the old directory holds a setup not merged yet. Never
+ * throws: on failure the app runs on the shared directory anyway.
+ */
+export const DESKTOP_STATE_MERGE = runDesktopStateMigrationAtBoot(DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, {
+  resolveBinary,
+  reapServe: (path) => { reapOrphanedServe(path); },
+});
+/* The one-time "your desktop data moved" notice, for the first window that asks. */
+ipcMain.handle("app:stateMergeNotice", () => takeStateMergeNotice(DESKTOP_STATE_DIR));
 
 /** Was this a genuine first run? Latched before anything can write. */
 export const DESKTOP_STATE_WAS_FRESH = !existsSync(join(DESKTOP_STATE_DIR, "config.json"));

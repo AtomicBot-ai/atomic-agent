@@ -319,6 +319,8 @@ contextBridge.exposeInMainWorld("atomic", {
    *  `tuiSetupPresent` reports env var NAMES only; `importFromTui` copies only
    *  the flags that are ticked and never touches the source. */
   firstRun: () => ipcRenderer.invoke("app:firstRun"),
+  /** ATO-416: {title, text, log} once after the desktop's data moved into the shared directory, else null. */
+  stateMergeNotice: () => ipcRenderer.invoke("app:stateMergeNotice"),
   /** Backlog 03 — `firstRun().fresh`, handed over with the window rather than
    *  asked for, so the renderer can open the wizard before its first paint. */
   freshAtBoot: process.argv.includes("--atomic-fresh-state"),

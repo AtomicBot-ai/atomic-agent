@@ -10181,6 +10181,13 @@ if (BR) {
     if (check && check.updateAvailable) toast('Atomic Core update', 'Atomic Core ' + check.compatibleVersion
       + ' is ready. Open Settings › Models › Engine to install it when you are ready.');
   });
+  /* ATO-416: once, after this launch moved the desktop's own folder into the
+     shared one (main/state-migrate.ts): a toast, and the counts in Diagnostics. */
+  if (BR.stateMergeNotice) BR.stateMergeNotice().then((n) => {
+    if (!n || !n.text) return;
+    toast(n.title || 'Your desktop data moved', n.text);
+    if (n.log) { LOGS.push([new Date().toTimeString().slice(0, 8), 'warn', n.log]); if (LOGS.length > 300) LOGS.shift(); }
+  }).catch(() => {});
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
   if (BR.daemonWatch) BR.daemonWatch().then((st) => {

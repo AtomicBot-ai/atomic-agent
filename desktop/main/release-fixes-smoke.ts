@@ -68,6 +68,7 @@ import { checks114 } from "./smoke-tasks/t114.js";
 import { checks115 } from "./smoke-tasks/t115.js";
 import { checks116 } from "./smoke-tasks/t116.js";
 import { checks165 } from "./smoke-tasks/t165.js";
+import { checks416 } from "./smoke-tasks/t416.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -104,7 +105,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "165"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "165", "416"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -789,6 +790,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   // 165 (ATO-165) — the sidebar chat row's "…" menu (Pin / Unpin, Mark as read / unread, Delete…), the same menu on a
   // right-click, keyboard-driven; a Pinned section above Chats ordered by pin time; deleting the open chat leaves an empty one.
   if (want.has("165")) await guarded("165", check, () => checks165(js, check));
+  // 416 (ATO-416) — the one-time move of ~/.atomic-agent-desktop into the shared ~/.atomic-agent, on throwaway directories.
+  if (want.has("416")) await guarded("416", check, () => checks416(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));
