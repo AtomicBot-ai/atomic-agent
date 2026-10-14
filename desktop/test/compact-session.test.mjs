@@ -10,7 +10,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { AgentClient } = require("../out/main/agent-client.js");
+const { AgentClient, requestErrorText } = require("../out/main/agent-client.js");
 
 /** An agent stand-in answering one route; the client is pointed at it. */
 async function standIn(answer) {
@@ -85,4 +85,57 @@ test("the route's own 404 is an unknown chat; the server's is an agent without t
     assert.equal(r.supported, false);
     assert.equal(r.ok, false);
   } finally { await old.close(); }
+});
+
+// A compaction can take longer than five minutes. Node's fetch (undici) gives
+// up on any answer whose headers take over 300 s and throws a bare
+// "fetch failed", which also cancels the compaction on the agent's side. The
+// call therefore must not go through fetch at all: with fetch broken, it
+// still gets the agent's answer.
+test("the compaction does not go through fetch and its five-minute deadline", async () => {
+  const s = await standIn(() => [200, { status: "compacted", tokensBefore: 2000, tokensAfter: 500 }]);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  try {
+    const r = await s.client.compactSession("s1");
+    assert.equal(r.status, "compacted");
+    assert.equal(s.seen[0].body, "{}");
+  } finally {
+    globalThis.fetch = realFetch;
+    await s.close();
+  }
+});
+
+test("an answer that is not JSON is a failure with its HTTP status", async () => {
+  const server = createServer((_req, res) => { res.writeHead(502); res.end("bad gateway"); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const client = new AgentClient(process.cwd());
+  client.port = server.address().port;
+  client.token = "t0ken";
+  try {
+    const r = await client.compactSession("s1");
+    assert.deepEqual(r, { ok: false, supported: true, error: "HTTP 502" });
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});
+
+test("an agent that is gone is named by its cause, not a bare failure", async () => {
+  const server = createServer(() => {});
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  const client = new AgentClient(process.cwd());
+  client.port = port;
+  client.token = "t0ken";
+  const r = await client.compactSession("s1");
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ECONNREFUSED/);
+});
+
+test("requestErrorText adds fetch's cause and keeps the message first", () => {
+  const timedOut = new TypeError("fetch failed", { cause: Object.assign(new Error("Headers Timeout Error"), { code: "UND_ERR_HEADERS_TIMEOUT" }) });
+  assert.equal(requestErrorText(timedOut), "fetch failed (UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error)");
+  const refused = new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:1"), { code: "ECONNREFUSED" }) });
+  assert.equal(requestErrorText(refused), "fetch failed (connect ECONNREFUSED 127.0.0.1:1)");
+  assert.equal(requestErrorText(new Error("plain")), "plain");
+  assert.equal(requestErrorText("text"), "text");
 });
