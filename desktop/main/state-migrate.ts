@@ -102,6 +102,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 
 import { daemonPidsIn, dotenvSet, normaliseLlmBlock, providerHasKey, type KeyEnvNames, type ProviderEntry } from "./agent-cli.js";
 import { parseDotenv } from "./tui-import.js";
+import { agentAnalyticsEnv } from "./analytics/environment.js";
 
 /* Local names for the two directories, so this file merges cleanly with the
    ATO-416 change to state-dir.ts (which makes ~/.atomic-agent the default and
@@ -211,6 +212,10 @@ export function mergeGate(input: {
   if (!samePath(input.currentDir, input.sharedDir)) return { run: false, reason: "this app does not run on the shared directory" };
   if (samePath(input.legacyDir, input.sharedDir)) return { run: false, reason: "the old and the shared directory are the same" };
   if (!existsSync(join(input.legacyDir, "config.json"))) return { run: false, reason: "no earlier desktop setup" };
+  // The note a successful merge leaves in the old directory. The marker lives
+  // in the shared one, so without this an agent reset (wiping ~/.atomic-agent)
+  // would bring the old desktop keys and chats back into the clean directory.
+  if (existsSync(join(input.legacyDir, MOVED_NOTE))) return { run: false, reason: "already merged (the old directory says so)" };
   const marker = readMergeMarker(input.sharedDir);
   if (marker?.ok === true) return { run: false, reason: "already merged" };
   if (marker && marker.ok === false && (marker.attempts ?? 0) >= MAX_ATTEMPTS) {
@@ -660,6 +665,12 @@ function migrateLocked(legacyDir: string, targetDir: string, deps: MigrateDeps):
       record.counts.databasesCopied.push(db);
     }
     if (!nodeSqlite() && record.counts.databasesCopied.length > 0) w.push("node:sqlite was not available; the databases were copied as files");
+    // A failed import does not hold back steps 6 and 7: skills, files, traces
+    // and weights do not depend on the databases, and a user whose chats did
+    // not come over should not also have to download their models again. The
+    // attempt still fails at the end, so the import is retried (it inserts
+    // only what is missing, so a retry doubles nothing).
+    let importFailure: Error | null = null;
     if (both.length > 0) {
       const r = deps.runAtag(["import", "atomic-desktop", "--source", legacyDir, "--json"], { stateDir: targetDir, timeoutMs: 300_000 });
       const report = lastJsonObject(r.stdout) as unknown as ImporterReport | null;
@@ -668,10 +679,11 @@ function migrateLocked(legacyDir: string, targetDir: string, deps: MigrateDeps):
         // An agent without the importer is not this attempt's failure: it is
         // retried, uncounted, until an agent that has it is installed.
         if (/unknown import source|unknown (sub)?command|no such import/i.test(said)) countAttempt = false;
-        throw new Error(`the chats and memory import failed: ${said.slice(0, 300)}`);
+        importFailure = new Error(`the chats and memory import failed: ${said.slice(0, 300)}`);
+      } else {
+        record.imported = report;
+        for (const msg of Array.isArray(report.warnings) ? report.warnings : []) w.push(`import: ${String(msg)}`);
       }
-      record.imported = report;
-      for (const msg of Array.isArray(report.warnings) ? report.warnings : []) w.push(`import: ${String(msg)}`);
     }
 
     // 6. Skills and the small things, copied where the shared side lacks them.
@@ -711,6 +723,7 @@ function migrateLocked(legacyDir: string, targetDir: string, deps: MigrateDeps):
       record.counts.modelsMoved = moveMissing(legacyModels, targetModels, w, "model", pinnedModelFolders(legacyCfgRaw, legacyModels));
     }
 
+    if (importFailure) throw importFailure;
     record.ok = true;
   } catch (err) {
     record.ok = false;
@@ -970,6 +983,16 @@ export interface StateMergeNotice {
 
 /** What the window says once after a merge. Pure. */
 export function stateMergeNoticeFor(r: StateMergeRecord): StateMergeNotice {
+  if (!r.ok) {
+    return {
+      title: "Some desktop data was not moved",
+      text: `Your earlier desktop chats and memory could not be brought over to ${tilde(r.targetDir)}. `
+        + `Nothing was deleted: they are still in ${tilde(r.legacyDir)}`
+        + (r.backupDir ? `, and a backup is in ${tilde(r.backupDir)}.` : ".")
+        + " The Diagnostics log has the reason.",
+      log: stateMergeLogLine(r),
+    };
+  }
   const backup = r.mode === "merge" && r.backupDir ? r.backupDir : r.legacyDir;
   return {
     title: "Your desktop data moved",
@@ -993,12 +1016,15 @@ export function configCameFromDesktop(targetDir: string): boolean {
 }
 
 /**
- * The notice, the first time a window asks after a successful merge; null
- * every time after (the marker records that it was shown).
+ * The notice, the first time a window asks after a successful merge, or
+ * after the last attempt failed (so a merge that gave up is never silent);
+ * null while attempts remain and every time after (the marker records that
+ * it was shown).
  */
 export function takeStateMergeNotice(targetDir: string): StateMergeNotice | null {
   const r = readMergeMarker(targetDir);
-  if (!r || r.ok !== true || r.noticeShown) return null;
+  if (!r || r.noticeShown) return null;
+  if (r.ok !== true && (r.attempts ?? 0) < MAX_ATTEMPTS) return null;
   writeMarker(targetDir, { ...r, noticeShown: true });
   return stateMergeNoticeFor(r);
 }
@@ -1025,7 +1051,7 @@ export function runDesktopStateMigrationAtBoot(
         const bin = real.resolveBinary();
         if (!bin) return { status: null, stdout: "", stderr: "", error: "no atomic-agent binary found" };
         const r = spawnSync(bin, args, {
-          env: { ...process.env, ATOMIC_AGENT_STATE_DIR: opts.stateDir },
+          env: { ...process.env, ...agentAnalyticsEnv(opts.stateDir), ATOMIC_AGENT_STATE_DIR: opts.stateDir },
           encoding: "utf8",
           timeout: opts.timeoutMs ?? 60_000,
           maxBuffer: 16 * 1024 * 1024,

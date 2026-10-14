@@ -38,8 +38,9 @@ import {
  *      copy of a database a live connection holds in WAL), the terminal wins
  *      every clash, the desktop fills only what is missing, the importer is
  *      asked for the databases;
- *  (e) a failed importer: ok:false, the old directory's traces and models not
- *      moved, retried, and given up after MAX_ATTEMPTS;
+ *  (e) a failed importer: ok:false, retried, and given up after MAX_ATTEMPTS;
+ *      traces and models still move, the old directory is not marked done,
+ *      and the give-up is said once in a notice;
  *  (f) a live Telegram lock in the old directory postpones the merge without
  *      counting an attempt; a terminal config newer than the agent is left
  *      unmerged with a warning;
@@ -309,6 +310,10 @@ export async function checks416(js: Js, check: Check): Promise<void> {
     /* (c) idempotent */
     const gateAgain = mergeGate({ currentDir: targetA, sharedDir: targetA, legacyDir: legacyA, fromEnv: false });
     check("T416 (c): the next launch does not merge again", !gateAgain.run && /already merged/.test(gateAgain.reason), show(gateAgain));
+    const resetDir = join(root, "c-reset-shared");
+    mkdirSync(resetDir, { recursive: true });   // an agent reset: a clean shared directory, no marker in it
+    const gateReset = mergeGate({ currentDir: resetDir, sharedDir: resetDir, legacyDir: legacyA, fromEnv: false });
+    check("T416 (c): after an agent reset the old desktop data does not come back", !gateReset.run && /old directory/.test(gateReset.reason), show(gateReset));
     rmSync(join(targetA, MERGE_MARKER));
     const a2 = migrateDesktopState(legacyA, targetA, depsWith(stubAtag()));
     const r2 = a2.ran ? a2.record : null;
@@ -430,9 +435,12 @@ export async function checks416(js: Js, check: Check): Promise<void> {
       runs.every((r, i) => r.ok === false && r.attempts === i + 1) && /import failed/.test(String(runs[0]?.error)),
       show(runs));
     check("T416 (e): after MAX_ATTEMPTS it gives up and the app carries on", !finalGate.run && /gave up/.test(finalGate.reason), show(finalGate));
-    check("T416 (e): nothing was moved out of the old directory",
-      existsSync(join(legacyE, "traces", "t1.jsonl")) && existsSync(join(legacyE, "models", "models", "desk-model", "w.gguf")) && !existsSync(join(legacyE, MOVED_NOTE)),
+    check("T416 (e): the rest still came over (traces, weights), but the old directory is not marked done",
+      existsSync(join(targetE, "traces", "t1.jsonl")) && !existsSync(join(legacyE, "traces", "t1.jsonl")) && !existsSync(join(legacyE, MOVED_NOTE)),
       "");
+    const nE = takeStateMergeNotice(targetE);
+    check("T416 (e): a merge that gave up says so once, and names the old directory",
+      !!nE && /not moved/.test(nE.title) && nE.text.includes("e-legacy") && takeStateMergeNotice(targetE) === null, show(nE));
 
     /* (e2) an agent without the importer, on a copy: uncounted, and the retry stays a copy */
     const legacyE2 = join(root, "e2-legacy");
