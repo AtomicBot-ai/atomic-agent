@@ -194,7 +194,7 @@ export async function checks116(js: Js, check: Check): Promise<void> {
           // Another writer lands between this hold's read and its write.
           if (world.moves > 0) {
             world.moves--;
-            world.file = { ...world.file, terminalWrites: ((world.file["terminalWrites"] as number) ?? 0) + 1 };
+            world.file = { ...world.file, terminalWrites: Number(world.file["terminalWrites"] ?? 0) + 1 };
           }
           if (expect !== null && expect !== hashOf()) {
             return { ok: false, stdout: "", stderr: "config changed since it was read\n", error: "config changed since it was read", exitCode: 3 };
