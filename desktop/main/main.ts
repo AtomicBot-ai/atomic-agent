@@ -3,7 +3,7 @@
    the directory was fresh; tsc hoists every require above the file body, so
    only an import placed first is guaranteed to run before the modules below
    take their own side effects. */
-import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
+import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
@@ -205,7 +205,7 @@ import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 import { curatedMetaIds } from "./model-catalog.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
-import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
+import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
 // ATO-416 — one state directory with the terminal agent: the shared model's session marker, and the one-time notice.
 import { registerModelSession } from "./model-sessions.js";
 import { readConfigFile, readStateDirsRecord, recordStateDirRun, sharedSetupNoticeDue, stateDirsRecordPath } from "./shared-state-notice.js";
@@ -9297,6 +9297,7 @@ function latchSharedSetupNotice(): void {
       fresh: DESKTOP_STATE_WAS_FRESH,
       config: readConfigFile(DESKTOP_STATE_DIR),
       ranHereBefore: readStateDirsRecord(record).includes(DESKTOP_STATE_DIR),
+      hadDesktopSetup: SHARED_CONFIG_FROM_DESKTOP || existsSync(join(LEGACY_DESKTOP_STATE_DIR, "config.json")),
     });
     if (!SMOKE && !FIRST_RUN_PROBE) recordStateDirRun(record, DESKTOP_STATE_DIR);
   } catch {

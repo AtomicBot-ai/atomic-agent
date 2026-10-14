@@ -266,6 +266,7 @@ export async function checks116(js: Js, check: Check): Promise<void> {
       skipped: cell(true, false, { tui: { onboarding: { skippedAt: "2026-10-01T10:00:00.000Z" } } }, false),
       noStamps: cell(true, false, { tui: { onboarding: {} } }, false),
       noConfig: cell(true, false, null, false),
+      hadDesktop: sharedSetupNoticeDue({ shared: true, fresh: false, config: done, ranHereBefore: false, hadDesktopSetup: true }),
     };
     const dir = mkdtempSync(join(tmpdir(), "aa-t116-record-"));
     let recorded: string[] = [];
@@ -278,7 +279,7 @@ export async function checks116(js: Js, check: Check): Promise<void> {
       recorded = readStateDirsRecord(file);
       chk(
         "T116: the notice is owed only to a shared, existing, finished setup this desktop never ran on, and is then recorded",
-        table.due && !table.ranBefore && !table.fresh && !table.notShared && !table.skipped && !table.noStamps && !table.noConfig
+        table.due && !table.ranBefore && !table.fresh && !table.notShared && !table.skipped && !table.noStamps && !table.noConfig && !table.hadDesktop
           && before.length === 0 && show(recorded) === show(["/a", "/b"]),
         `${show(table)}; record ${show(recorded)}`,
       );

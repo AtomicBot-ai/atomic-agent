@@ -826,9 +826,9 @@ function sameRealPath(a: string, b: string): boolean {
  * (`config get`), so both arrive at the bundled agent's schema version: the
  * terminal's in place (that is what any run of this agent there does), the
  * desktop's from a scratch copy, so the old directory is not rewritten.
- * Written back with `config set -` (stdin: it carries keys), only if the
- * terminal's file did not change in between; one re-read and re-merge if it
- * did.
+ * Written back with `config set - --expect-sha256` (stdin: it carries keys),
+ * so the agent writes only if the terminal's file did not change in between;
+ * one re-read and re-merge if it did.
  */
 function mergeConfigInto(legacyDir: string, targetDir: string, scratch: string, deps: MigrateDeps, record: StateMergeRecord): void {
   const w = record.warnings;
@@ -862,9 +862,12 @@ function mergeConfigInto(legacyDir: string, targetDir: string, scratch: string, 
       && JSON.stringify(merged.config) === JSON.stringify(normalised(terminal));
     if (nothing) return;
     if (sha256Of(join(targetDir, "config.json")) !== shaBefore) continue;   // the terminal wrote it meanwhile: again
-    const r = deps.runAtag(["config", "set", "-"], { stateDir: targetDir, input: JSON.stringify(merged.config) });
+    // The agent itself refuses the write if the file moved after shaBefore (exit 3), closing the gap left after the check above.
+    const expect = shaBefore ? ["--expect-sha256", shaBefore] : [];
+    const r = deps.runAtag(["config", "set", "-", ...expect], { stateDir: targetDir, input: JSON.stringify(merged.config) });
     if (r.status !== 0) {
       const said = (r.error || r.stderr || `exit ${r.status}`).trim();
+      if (r.status === 3 || /config changed since it was read/i.test(said)) continue;
       if (/newer than this build/i.test(said)) {
         record.settingsSkipped = "the terminal's settings are from a newer version than this app's agent";
         w.push(`${record.settingsSkipped}; the desktop's settings were not merged`);

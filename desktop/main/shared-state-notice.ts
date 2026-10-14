@@ -21,7 +21,11 @@
  *     Electron's userData, not in config.json: the agent's schema would drop
  *     a key it does not know, and the question is about THIS app on THIS
  *     machine. Every launch writes it, so a desktop that ran its own wizard
- *     here last time is never told the terminal set it up.
+ *     here last time is never told the terminal set it up;
+ *   - this machine had no desktop setup of its own in ~/.atomic-agent-desktop.
+ *     Such a person used the desktop before: state-migrate.ts merges that
+ *     setup and says so in its own notice, so this one would be a second
+ *     notice about the same thing (or, after a copy, simply untrue).
  *
  * Known and accepted: a desktop from before ATO-416 has no record yet, so an
  * operator upgrading with a finished terminal setup sees the notice once
@@ -75,8 +79,10 @@ export function sharedSetupNoticeDue(input: {
   fresh: boolean;
   config: unknown;
   ranHereBefore: boolean;
+  /** An old desktop setup existed here (state-migrate.ts brings it in and has its own notice). */
+  hadDesktopSetup?: boolean;
 }): boolean {
-  return input.shared && !input.fresh && !input.ranHereBefore && onboardingCompleted(input.config);
+  return input.shared && !input.fresh && !input.ranHereBefore && !input.hadDesktopSetup && onboardingCompleted(input.config);
 }
 
 /** config.json as it is on disk, or null. Read straight from the file: no `atag` process at boot. */
