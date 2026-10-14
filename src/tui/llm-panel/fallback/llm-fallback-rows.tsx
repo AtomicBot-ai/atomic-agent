@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { formatFallbackStatusLine } from "../format-provider-fallover.js";
+import { formatFallbackStatusLine } from "../../format-provider-fallover.js";
 import {
   selectFallbackPaneRows,
   type FallbackPaneRow,
