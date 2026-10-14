@@ -4,14 +4,18 @@
  * A VENDORED PORT. Every function below is copied, identifier for
  * identifier and string for string, from the agent's own modules:
  *
- *   src/local-llm/huggingface-ref.ts        → parseHuggingFaceModelRef & co.
- *   src/local-llm/huggingface-api.ts        → huggingFaceToken, listHuggingFaceGgufFiles,
- *                                             resolveHuggingFaceFileUrl
- *   src/local-llm/huggingface-fit.ts        → judgeGgufFile, describeRejectedGgufFiles,
- *                                             ramWarningFor and the four predicates
- *   src/local-llm/huggingface-model-def.ts  → buildCustomModelId, buildCustomModelDef
- *   src/local-llm/huggingface-resolve.ts    → resolveHuggingFaceGgufChoices
- *   src/local-llm/download-file.ts          → downloadProjector (a trim of downloadFile)
+ *   src/local-llm/catalog/huggingface-ref.ts       → parseHuggingFaceModelRef & co.
+ *   src/local-llm/catalog/huggingface-endpoint.ts  → the mirror: normalize/set/resolve
+ *                                                    the endpoint, rewriteHuggingFaceUrl,
+ *                                                    isHuggingFaceUrl, huggingFaceEndpointHost
+ *   src/local-llm/catalog/huggingface-api.ts       → huggingFaceToken, listHuggingFaceGgufFiles,
+ *                                                    resolveHuggingFaceFileUrl
+ *   src/local-llm/catalog/huggingface-fit.ts       → judgeGgufFile, describeRejectedGgufFiles,
+ *                                                    ramWarningFor and the four predicates
+ *   src/local-llm/catalog/huggingface-model-def.ts → buildCustomModelId, buildCustomModelDef
+ *   src/local-llm/catalog/huggingface-resolve.ts   → resolveHuggingFaceGgufChoices
+ *   src/local-llm/downloads/download-file.ts       → downloadProjector (a trim of downloadFile,
+ *                                                    with download-attempt.ts's rewrite)
  *
  * It is a copy and not an import because desktop/tsconfig.json compiles
  * CommonJS with `rootDir: "."` and includes only main/** and preload/**,
@@ -26,6 +30,15 @@
  * The smoke asserts four of the user-visible strings verbatim so at least
  * those cannot drift silently.
  *
+ * Two deliberate departures from the agent, both about the mirror. The
+ * configured endpoint is pushed in by main.ts from the desktop profile's
+ * config.json (`huggingFaceEndpointFromConfig`) before every lookup and
+ * projector download, where the agent pushes it from load-config.ts. And
+ * "Could not reach huggingface.co" carries one more sentence naming the
+ * mirror setting (`huggingFaceUnreachableMessage`): this window is where
+ * someone behind a block first meets the failure, and the agent's
+ * sentence alone gives them nowhere to go.
+ *
  * The renderer cannot do any of this itself: its CSP is
  * `connect-src 'none'` (desktop/renderer/index.html:7), so every listing
  * and every download crosses IPC into here.
@@ -36,7 +49,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 /* ------------------------------------------------------------------ *
- * src/local-llm/huggingface-ref.ts
+ * src/local-llm/catalog/huggingface-ref.ts
  * ------------------------------------------------------------------ */
 
 const HF_HOSTS = new Set(["huggingface.co", "www.huggingface.co", "hf.co"]);
@@ -161,10 +174,126 @@ export function parseHuggingFaceModelRef(raw: string): HuggingFaceModelRef {
 }
 
 /* ------------------------------------------------------------------ *
- * src/local-llm/huggingface-api.ts
+ * src/local-llm/catalog/huggingface-endpoint.ts
  * ------------------------------------------------------------------ */
 
-const HF_API = "https://huggingface.co/api";
+/**
+ * Which host serves Hugging Face for this install. Catalogue entries,
+ * custom models and download sidecars all keep canonical
+ * `https://huggingface.co/...` URLs; the endpoint is applied at request
+ * time only, so switching to a mirror (or back) never invalidates a
+ * partial download or a stored model definition.
+ *
+ * `HF_ENDPOINT` is the variable `huggingface_hub` itself honours, so an
+ * operator who already points Python tooling at a mirror gets the same
+ * behaviour here without learning a second knob.
+ */
+export const DEFAULT_HF_ENDPOINT = "https://huggingface.co";
+
+const CANONICAL_HOSTS = [
+  "https://huggingface.co",
+  "https://hf.co",
+  "https://www.huggingface.co",
+];
+
+let configuredEndpoint = DEFAULT_HF_ENDPOINT;
+
+/** Origin form: scheme + host [+ port], no path, no trailing slash. */
+export function normalizeHuggingFaceEndpoint(raw: string): string | null {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return `${url.protocol}//${url.host}${url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Push-in from config load (`localModels.download.hfEndpoint`). */
+export function setDefaultHuggingFaceEndpoint(endpoint: string): void {
+  configuredEndpoint =
+    normalizeHuggingFaceEndpoint(endpoint) ?? DEFAULT_HF_ENDPOINT;
+}
+
+/** `HF_ENDPOINT` env var first, then the configured value. */
+export function resolveHuggingFaceEndpoint(): string {
+  const env = process.env.HF_ENDPOINT;
+  if (env) {
+    const normalized = normalizeHuggingFaceEndpoint(env);
+    if (normalized) return normalized;
+  }
+  return configuredEndpoint;
+}
+
+/** Whether `url` names Hugging Face — canonically or via the active endpoint. */
+export function isHuggingFaceUrl(url: string): boolean {
+  const endpoint = resolveHuggingFaceEndpoint();
+  return (
+    CANONICAL_HOSTS.some((h) => url.startsWith(`${h}/`)) ||
+    url.startsWith(`${endpoint}/`)
+  );
+}
+
+/**
+ * The URL to actually request for a canonical Hugging Face URL. Anything
+ * that is not a canonical HF URL — a GitHub release asset, a mirror URL
+ * the operator typed themselves — passes through untouched.
+ */
+export function rewriteHuggingFaceUrl(url: string): string {
+  const endpoint = resolveHuggingFaceEndpoint();
+  if (endpoint === DEFAULT_HF_ENDPOINT) return url;
+  for (const host of CANONICAL_HOSTS) {
+    if (url.startsWith(`${host}/`))
+      return `${endpoint}${url.slice(host.length)}`;
+  }
+  return url;
+}
+
+/** Host shown in messages ("Could not reach hf-mirror.com"). */
+export function huggingFaceEndpointHost(): string {
+  try {
+    return new URL(resolveHuggingFaceEndpoint()).host;
+  } catch {
+    return "huggingface.co";
+  }
+}
+
+/* ---- desktop only: where the push-in comes from, and the hint ---- */
+
+/**
+ * `localModels.download.hfEndpoint` out of a parsed config.json, the way
+ * the agent's parser reads it (local-models-parser.ts parseHfEndpoint),
+ * except that a value the parser would refuse falls back to the default
+ * here instead of throwing: this only decides where a lookup goes, and
+ * the agent itself reports a bad file the next time it loads it.
+ */
+export function huggingFaceEndpointFromConfig(config: unknown): string {
+  const localModels = (config as { localModels?: unknown } | null)?.localModels;
+  const download = (localModels as { download?: unknown } | null | undefined)?.download;
+  const raw = (download as { hfEndpoint?: unknown } | null | undefined)?.hfEndpoint;
+  return (typeof raw === "string" && normalizeHuggingFaceEndpoint(raw)) || DEFAULT_HF_ENDPOINT;
+}
+
+/** The sentence that points someone behind a block at the mirror field. */
+export const HF_MIRROR_HINT =
+  "If it is blocked where you are, set a mirror in Settings › Models (for example https://hf-mirror.com).";
+
+/**
+ * The agent's "Could not reach <host>: <why>", plus the mirror hint when
+ * the host is huggingface.co itself. A mirror that is down gets no hint:
+ * whoever set it already knows where the setting is.
+ */
+export function huggingFaceUnreachableMessage(host: string, detail: string): string {
+  const base = `Could not reach ${host}: ${detail}`;
+  if (host !== new URL(DEFAULT_HF_ENDPOINT).host) return base;
+  return `${base.replace(/[.\s]+$/, "")}. ${HF_MIRROR_HINT}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * src/local-llm/catalog/huggingface-api.ts
+ * ------------------------------------------------------------------ */
 
 export interface HuggingFaceFile {
   path: string;
@@ -191,7 +320,7 @@ async function fetchHfJson(
   const timeout = AbortSignal.timeout(opts?.timeoutMs ?? 15_000);
   let res: Response;
   try {
-    res = await fetch(`${HF_API}${path}`, {
+    res = await fetch(`${resolveHuggingFaceEndpoint()}/api${path}`, {
       headers: {
         "User-Agent": "atomic-agent/local-llm",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -204,7 +333,10 @@ async function fetchHfJson(
     // difference from huggingface.co being down.
     if (opts?.signal?.aborted) throw err;
     throw new Error(
-      `Could not reach huggingface.co: ${err instanceof Error ? err.message : String(err)}`,
+      huggingFaceUnreachableMessage(
+        huggingFaceEndpointHost(),
+        err instanceof Error ? err.message : String(err),
+      ),
     );
   }
   if (res.status === 401 || res.status === 403) {
@@ -252,6 +384,11 @@ export async function listHuggingFaceGgufFiles(
   });
 }
 
+/**
+ * Always the canonical host: stored model definitions and download
+ * sidecars keep `huggingface.co` URLs, and the endpoint is applied at
+ * request time (`rewriteHuggingFaceUrl`).
+ */
 export function resolveHuggingFaceFileUrl(
   repoId: string,
   revision: string,
@@ -262,7 +399,7 @@ export function resolveHuggingFaceFileUrl(
 }
 
 /* ------------------------------------------------------------------ *
- * src/local-llm/huggingface-fit.ts
+ * src/local-llm/catalog/huggingface-fit.ts
  * ------------------------------------------------------------------ */
 
 export type GgufVerdict =
@@ -391,7 +528,7 @@ export function ramWarningFor(fileSizeGb: number, hostRamGb: number): string | n
 }
 
 /* ------------------------------------------------------------------ *
- * src/local-llm/huggingface-model-def.ts
+ * src/local-llm/catalog/huggingface-model-def.ts
  * ------------------------------------------------------------------ */
 
 const BYTES_PER_GB = 1024 * 1024 * 1024;
@@ -483,7 +620,7 @@ export function buildCustomModelDef(input: {
 }
 
 /* ------------------------------------------------------------------ *
- * src/local-llm/huggingface-resolve.ts
+ * src/local-llm/catalog/huggingface-resolve.ts
  * ------------------------------------------------------------------ */
 
 /** One servable GGUF, in the shape the picker draws. */
@@ -600,7 +737,7 @@ export async function resolveHuggingFaceGgufChoices(
 }
 
 /* ------------------------------------------------------------------ *
- * src/local-llm/download-file.ts, trimmed to the projector case
+ * src/local-llm/downloads/download-file.ts, trimmed to the projector case
  * ------------------------------------------------------------------ */
 
 /**
@@ -613,7 +750,8 @@ export async function resolveHuggingFaceGgufChoices(
  * So the desktop fetches the projector itself, or a model this window
  * just labelled vision-capable would run text-only forever with nothing
  * anywhere saying why. The GitHub branch of the original is dropped: a
- * projector URL is always huggingface.co.
+ * projector URL is always a canonical huggingface.co one, and like the
+ * agent's download-attempt.ts only the wire request goes to the mirror.
  */
 export async function downloadProjector(
   url: string,
@@ -624,14 +762,27 @@ export async function downloadProjector(
   },
 ): Promise<void> {
   if (opts?.signal?.aborted) throw abortError();
-  const token = huggingFaceToken();
+  // download-attempt.ts baseHeaders: the token goes only to Hugging Face,
+  // the canonical host or the configured endpoint.
+  const token = isHuggingFaceUrl(url) ? huggingFaceToken() : null;
   const headers: Record<string, string> = {
     "User-Agent": "atomic-agent/local-llm",
     // Gated repos answer 401 without this; public ones ignore it, so it
     // costs nothing to send whenever the operator has a token exported.
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
-  const res = await fetch(url, { headers, redirect: "follow", signal: opts?.signal });
+  let res: Response;
+  try {
+    res = await fetch(rewriteHuggingFaceUrl(url), { headers, redirect: "follow", signal: opts?.signal });
+  } catch (err) {
+    if (opts?.signal?.aborted) throw abortError();
+    // The host, but not the hint: the projector follows a lookup that
+    // already reached it, and the wizard's download has no Settings to
+    // point at.
+    throw new Error(
+      `Could not reach ${huggingFaceEndpointHost()}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   if (opts?.signal?.aborted) throw abortError();
   if (!res.ok || !res.body) {
     throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);

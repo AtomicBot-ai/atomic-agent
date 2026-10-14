@@ -54,7 +54,8 @@ export function keyCheckResult(res: { ok?: boolean; checked?: boolean; status?: 
 
 /** hf_lookup.result from the lookup's thrown message (huggingface.ts). */
 export function hfLookupResult(message: string): "unreachable" | "gated" | "not_found" | "no_gguf" | "none_servable" | "other" {
-  if (/Could not reach huggingface\.co/i.test(message)) return "unreachable";
+  // huggingface.co or the mirror that stands in for it (huggingface.ts names the host).
+  if (/^Could not reach \S+:/i.test(message)) return "unreachable";
   if (/returned (401|403)/.test(message)) return "gated";
   if (/returned 404/.test(message)) return "not_found";
   if (/No \.gguf files/i.test(message)) return "no_gguf";

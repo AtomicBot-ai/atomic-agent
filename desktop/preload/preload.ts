@@ -307,6 +307,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),
   hfCancel: () => ipcRenderer.invoke("cli:hfCancel"),
+  /** The Hugging Face mirror (main/hf-mirror.ts): where lookups and downloads go, and its save. */
+  hfMirror: () => ipcRenderer.invoke("cli:hfMirror"),
+  hfMirrorSet: (value: string) => ipcRenderer.invoke("cli:hfMirrorSet", value),
   hfDef: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfDef", { repo, index }),
   hfAdd: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfAdd", { repo, index }),
   hfProjector: (id: string, mmprojUrl: string, mmprojFilename: string, name?: string) =>

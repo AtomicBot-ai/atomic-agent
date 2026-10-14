@@ -246,6 +246,18 @@
 .llm-pane .llm-mmproj{display:flex;align-items:center;gap:8px}
 .llm-pane .llm-mmproj > svg{width:15px;height:15px;color:var(--ink-2)}
 
+/* ---- Hugging Face mirror (hf-mirror.js): under the Hugging Face card here, and on the wizard's Hugging Face step ---- */
+.hfm{display:flex;flex-direction:column;gap:8px;min-width:0}
+.llm-pane .hfm{padding-top:14px;border-top:1px solid var(--bd)}
+#onboarding .hfm{width:100%;max-width:var(--ob-col);margin-top:18px}
+.hfm-lbl{font-size:12.5px;font-weight:600;color:var(--ink)}
+.hfm-row{display:flex;align-items:center;gap:8px}
+.hfm-inp{flex:1;min-width:0;background:var(--lift)}
+.hfm-inp input{font:400 13px/1 var(--font-mono)}
+.hfm-inp input:disabled{color:var(--ink-3)}
+.hfm-note{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-2);overflow-wrap:anywhere}
+.hfm-err .grow{white-space:pre-wrap;overflow-wrap:anywhere}
+
 /* ---- Thinking (gap 11): three knobs, a title and one help line each, the choice on the right ---- */
 .llm-pane .llm-tune-card{display:flex;flex-direction:column;border-radius:var(--r-block);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd)}
 .llm-pane .llm-tune-row{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;min-height:46px;padding:10px 12px 10px 16px}

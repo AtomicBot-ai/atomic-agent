@@ -1437,6 +1437,10 @@ let VOICE_MIC_KEY = null;
    `pendingMmproj` carries the projector across the weights download,
    because `atag models pull` never fetches it. */
 const LLMHF = {open:false, step:'ref', reference:'', busy:false, error:null, repo:null, cursor:0, ram:0, pendingMmproj:null};
+/* The Hugging Face mirror field (hf-mirror.js), one state for its two
+   places: Settings › Models' Hugging Face card and the wizard's step.
+   `state` is main's answer (main/hf-mirror.ts); `draft` what is typed. */
+const HFM = {state:null, draft:'', error:null, saving:false, saved:false, loading:false, failed:false, edited:false};
 const HF_PICK_WINDOW = 6;   // hf-pick-list.tsx HF_PICK_WINDOW
 const HF_REF_TITLE_TAIL = '(it has to be a GGUF build)';               // hf-reference-editor.tsx HF_REF_TITLE_LINE
 const HF_REF_EXAMPLES_LINE = 'unsloth/Qwen3.5-4B-GGUF · https://huggingface.co/owner/repo · a link to one .gguf'; // :11-12
@@ -6919,6 +6923,7 @@ document.addEventListener('input', (e) => {
     if (LLMHF.error) { LLMHF.error = null; llmRepaint(); llmHfFocus(); }
     return;
   }
+  if (e.target.id === 'llm-hf-mirror') { hfMirrorTyped(e.target.value, llmHfMirrorRepaint, 'llm-hf-mirror'); return; }
   if (e.target.id === 'llm-url') { LLMP.externalDraft = e.target.value; if (LLMP.externalInvalid) { LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } } return; }
   if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
   // Composio: the key field keeps its draft in memory only (composioKeyRestore puts it back after a repaint).
@@ -12391,6 +12396,8 @@ function obInlineErrHTML() {
 
 /** hf-reference-editor.tsx, as its own step rather than a jump into Settings. */
 function obHfRefHTML() {
+  // The mirror field's saved value, read once per window (hf-mirror.js).
+  if (!HFM.state && !HFM.loading && !HFM.failed) hfMirrorLoad(obHfMirrorRepaint);
   /* r6 UX: a `<label for>` rather than a paragraph that happens to sit
      above a box — so clicking the words puts the caret in the field.
      Soft Tactile: the field is a 52px pill wearing the Hugging Face mark,
@@ -12406,8 +12413,9 @@ function obHfRefHTML() {
       + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '>'
       + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + clear + '</div>'
     + obInlineErrHTML()
-    + (OB.busy ? '<div class="ob-explain ob-help">asking huggingface.co…</div>' : '')
-    + '<div class="ob-explain ob-examples">' + esc(HF_REF_EXAMPLES_LINE) + '</div>';
+    + (OB.busy ? '<div class="ob-explain ob-help">' + esc('asking ' + hfMirrorHost(HFM) + '…') + '</div>' : '')
+    + '<div class="ob-explain ob-examples">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
+    + hfMirrorHTML(HFM, {esc, ic}, {input:'ob-hf-mirror', save:'data-obact="hf:mirror"'});
 }
 
 /** hf-pick-list.tsx, ported column for column. */
@@ -13981,7 +13989,10 @@ async function obHfLook() {
   OB.busy = false;
   if (!res || res.ok !== true) {
     if (res && res.cancelled) { render(); return; }
-    obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'the lookup failed'});
+    /* huggingface.ts points a blocked huggingface.co at Settings › Models;
+       on this step the mirror field is right under the error instead. */
+    const said = (res && res.error) || 'the lookup failed';
+    obDispatch({type:'onboarding_error_set', error: said.replace('set a mirror in Settings › Models', 'set a mirror below')});
     return;
   }
   obDispatch({type:'onboarding_hf_repo_resolved', repo: res.repo});
@@ -14506,7 +14517,9 @@ function obIntroMounted() {
        makes a person click the box before they can paste, which no
        desktop dialog asks of them. The URL box comes first when the
        provider is a custom one, because it is the first field. */
-    const field = document.getElementById('ob-url') || document.getElementById('ob-hf-ref')
+    const mirror = OB_FOCUS === 'field:ob-hf-mirror' ? document.getElementById('ob-hf-mirror') : null;
+    const field = (mirror && !mirror.disabled ? mirror : null)
+      || document.getElementById('ob-url') || document.getElementById('ob-hf-ref')
       || document.getElementById('wiz-q') || document.getElementById('wiz-url')
       || document.getElementById('wiz-key');
     if (field && document.activeElement !== field) {
@@ -14615,8 +14628,10 @@ function obKeydown(e) {
   }
   if (obStepOwnsKeyboard(OB.step)) {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); obOwnEscape(); return; }
+    // The mirror field's Enter saves the mirror; it is not a lookup.
+    if (e.key === 'Enter' && target.id === 'ob-hf-mirror') { e.preventDefault(); e.stopPropagation(); obControlClick('hf:mirror'); return; }
     if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); obOwnEnter(); return; }
-    if (e.ctrlKey && (e.key === 'l' || e.key === 'L') && OB.step === 'local_hf_ref') {
+    if (e.ctrlKey && (e.key === 'l' || e.key === 'L') && OB.step === 'local_hf_ref' && target.id !== 'ob-hf-mirror') {
       e.preventDefault(); e.stopPropagation();
       obDispatch({type:'onboarding_hf_reference_changed', value:''});
       obDispatch({type:'onboarding_error_set', error:null});
@@ -14678,6 +14693,8 @@ function obScrollCursorIntoView() {
 /** How the ring on `node` should be remembered across a repaint. */
 function obFocusKey(node) {
   if (!node || !node.closest || !node.closest('#onboarding')) return null;
+  // The Hugging Face step's second field: a repaint puts the caret back in it, not in the reference.
+  if (node.id === 'ob-hf-mirror') return 'field:ob-hf-mirror';
   if (node.closest('#onboarding .ob-row, #onboarding .modelrow')) return 'row';
   const act = node.closest('#onboarding [data-obact]');
   if (act) return 'act:' + act.dataset.obact;
@@ -14778,6 +14795,11 @@ function obControlClick(spec) {
      obOwnEscape, everything else through the key table — so the button and
      the key cannot mean two different things. */
   if (spec === 'key:esc') { if (obStepOwnsKeyboard(OB.step)) obOwnEscape(); else obKey('', {escape:true}); return; }
+  if (spec === 'hf:mirror') {
+    const n = document.getElementById('ob-hf-mirror');
+    hfMirrorSave(n ? n.value : HFM.draft, obHfMirrorRepaint, 'ob-hf-mirror');
+    return;
+  }
   if (spec === 'hf:clear') {
     const field = document.getElementById('ob-hf-ref');
     if (field) field.value = '';
@@ -14973,6 +14995,7 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('input', (e) => {
   if (!OB.open) return;
+  if (e.target.id === 'ob-hf-mirror') { hfMirrorTyped(e.target.value, obHfMirrorRepaint, 'ob-hf-mirror'); return; }
   if (e.target.id === 'ob-hf-ref') {
     /* r5 item 7 review fix: both the footer's `ctrl+l clear` chord and the
        on-screen `[ clear ]` control are gated on there being something to
@@ -23631,6 +23654,55 @@ function llmSteerPresetId(url) {
    huggingface-ref.ts says in as many words that the caller prints them.
    ============================================================ */
 
+/* The mirror field's two verbs, for both of its places. `repaint` redraws
+   whichever surface holds it; `field` is the input's id there. */
+function hfMirrorLoad(repaint) {
+  if (!BR || !BR.hfMirror || HFM.loading) return;
+  HFM.loading = true;
+  BR.hfMirror().then((state) => {
+    HFM.loading = false;
+    if (!state || typeof state !== 'object') { HFM.failed = true; return; }
+    HFM.state = state;
+    // What is typed and not yet saved is never overwritten by a re-read.
+    if (!HFM.edited) HFM.draft = state.configured || '';
+    repaint();
+  }, () => { HFM.loading = false; HFM.failed = true; });
+}
+async function hfMirrorSave(value, repaint, field) {
+  if (!BR || !BR.hfMirrorSet || HFM.saving) return;
+  HFM.draft = String(value == null ? HFM.draft : value);
+  HFM.saving = true; HFM.error = null; HFM.saved = false;
+  repaint();
+  let res = null;
+  try { res = await BR.hfMirrorSet(HFM.draft); } catch (err) { res = {ok:false, error: String(err && err.message || err)}; }
+  HFM.saving = false;
+  if (!res || res.ok !== true) {
+    HFM.error = (res && res.error) || 'could not save the mirror';
+    repaint();
+    const n = document.getElementById(field);
+    if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
+    return;
+  }
+  HFM.state = res.state; HFM.edited = false; HFM.saved = true;
+  HFM.draft = (res.state && res.state.configured) || '';
+  repaint();
+  // The field was disabled while it saved, which dropped the caret; give it back.
+  const n = document.getElementById(field);
+  if (n && document.activeElement !== n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
+}
+/* Typing in the field: keep the draft, drop a stale error or "Saved." in
+   place. Only that transition repaints, so the caret stays where it is. */
+function hfMirrorTyped(value, repaint, field) {
+  HFM.draft = value; HFM.edited = true;
+  if (!HFM.error && !HFM.saved) return;
+  HFM.error = null; HFM.saved = false;
+  repaint();
+  const n = document.getElementById(field);
+  if (n && document.activeElement !== n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
+}
+function llmHfMirrorRepaint() { llmRepaint(); }
+function obHfMirrorRepaint() { if (OB.open) render(); }
+
 function llmHfInputValue() {
   const n = document.getElementById('llm-hf-ref');
   return n ? n.value : LLMHF.reference;
@@ -23661,7 +23733,7 @@ async function llmHfResolve(raw) {
   if (!LLMHF.open) return;
   /* Review fix: the cancelled arm has to come BEFORE `busy = false`. Escape
      cancels lookup A and Enter starts B; A's late reply then cleared B's busy
-     flag, so the editor lost `asking huggingface.co…`, got `[ clear ]` back
+     flag, so the editor lost its `asking <host>…` line, got `[ clear ]` back
      and offered `esc back to the list` while B was still in flight. Whoever
      cancelled A already put the flag where it belongs. */
   if (res && res.cancelled) { llmRepaint(); llmHfFocus(); return; }
@@ -23705,13 +23777,14 @@ function llmHfHTML() {
         + '<input id="llm-hf-ref" value="' + esc(LLMHF.reference) + '" autocomplete="off" spellcheck="false" placeholder="owner/repo"' + (busy ? ' disabled' : '') + '></label>'
         + (!busy && LLMHF.reference.length > 0 ? '<button class="btn btn-g sm" data-act="llm:hf:clear">Clear</button>' : '')
       + '</div>'
-      + (busy ? '<div class="llm-loading"><span class="tk-spin"></span><span>asking huggingface.co…</span></div>' : '')
+      + (busy ? '<div class="llm-loading"><span class="tk-spin"></span><span>' + esc('asking ' + hfMirrorHost(HFM) + '…') + '</span></div>' : '')
       + (LLMHF.error ? '<div class="tk-notice tk-notice--red llm-hf-err">' + ic('alert') + '<span class="grow">' + esc(LLMHF.error) + '</span></div>' : '')
       + '<div class="llm-hf-acts">'
         + (busy ? '<button class="btn btn-s sm" data-act="llm:hf:cancel">Cancel</button>'
           : '<button class="btn btn-g sm" data-act="llm:hf:close">Back to the list</button>'
             + '<button class="btn btn-p sm" data-act="llm:hf:look">Look it up</button>')
       + '</div>'
+      + hfMirrorHTML(HFM, {esc, ic}, {input:'llm-hf-mirror', save:'data-act="llm:hf:mirror"'})
     + '</div>'
     + (busy ? tuiHints([['esc cancel', 'llm:hf:cancel']])
             : tuiHints([['enter look it up', 'llm:hf:look'], ['ctrl+l clear', 'llm:hf:clear'], ['esc back to the list', 'llm:hf:close']]))
@@ -24435,6 +24508,7 @@ function llmAct(what) {
     if (arg === 'close') { llmHfClose(); return; }
     if (arg === 'look') { llmHfResolve(llmHfInputValue()); return; }
     if (arg === 'add') { llmHfAdd(); return; }
+    if (arg === 'mirror') { const n = document.getElementById('llm-hf-mirror'); hfMirrorSave(n ? n.value : HFM.draft, llmHfMirrorRepaint, 'llm-hf-mirror'); return; }
     if (arg.startsWith('row:')) {
       // MouseListRow's contract in the TUI (src/tui/mouse/mouse-list-row.tsx):
       // the first click selects, a second click on the SELECTED row activates.
@@ -24447,8 +24521,10 @@ function llmAct(what) {
     }
     llmSetMode('local');
     LLMHF.open = true; LLMHF.step = 'ref'; LLMHF.error = null; LLMHF.repo = null; LLMHF.cursor = 0; LLMHF.busy = false;
+    HFM.error = null; HFM.saved = false;
     llmRepaint();
     llmHfFocus();
+    hfMirrorLoad(llmHfMirrorRepaint);
     if (BR && BR.hostRam && !LLMHF.ram) BR.hostRam().then((n) => { LLMHF.ram = Number(n) || 0; if (LLMHF.open) llmRepaint(); });
     return;
   }
@@ -24557,6 +24633,13 @@ function llmKey(e, k, inText) {
      is not (the least destructive reading first); ctrl+l — not ctrl+u,
      which the editor itself binds — clears the reference and its error.
      Ordinary typing falls through so the field types. */
+  /* The mirror field under it: Enter saves it, Escape leaves the branch the
+     way it does from the reference. Everything else types. */
+  if (e.target.id === 'llm-hf-mirror') {
+    if (k === 'Enter' && !e.shiftKey) { e.preventDefault(); llmAct('hf:mirror'); return true; }
+    if (k === 'Escape') { e.preventDefault(); if (LLMHF.busy) llmHfCancel(); else llmHfClose(); return true; }
+    return false;
+  }
   if (e.target.id === 'llm-hf-ref') {
     if (k === 'Escape') { e.preventDefault(); if (LLMHF.busy) llmHfCancel(); else llmHfClose(); return true; }
     if (k === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!LLMHF.busy) llmHfResolve(e.target.value); return true; }
