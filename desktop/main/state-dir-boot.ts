@@ -2,6 +2,16 @@
  * r5 item 9 — the one side effect that makes the desktop's state directory
  * real, and the FIRST import in main.ts.
  *
+ * ATO-416: on a default install that directory is now the terminal agent's
+ * own ~/.atomic-agent (state-dir.ts). Where this header says the desktop
+ * never writes ~/.atomic-agent, or calls the weights link the only way in,
+ * it describes a desktop pointed at a directory of its own. On the shared
+ * default, step 4 is a no-op: seedFreshStateDir returns when the two
+ * directories are equal (there is nothing to link to itself), and the
+ * fresh latch in step 2 is "no config.json yet", which a terminal user's
+ * directory never is, so the wizard does not open over their setup
+ * (main.ts latchSharedSetupNotice says it once instead).
+ *
  * Why its own module rather than three statements at the top of main.ts:
  * the desktop is CommonJS, and tsc hoists every `require` above the file's
  * own body — out/main/main.js has its requires first and its first

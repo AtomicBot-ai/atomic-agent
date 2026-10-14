@@ -2477,7 +2477,7 @@ function emptyChat() {
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
-  return '<div class="emptychat">' + emptyPlateHTML()
+  return '<div class="emptychat">' + sharedSetupNoticeHTML() + emptyPlateHTML()
     + '<div class="ghost">'
       + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
@@ -5115,10 +5115,10 @@ function diagLine() {
   // in both cases. It sits before the approval segment deliberately: the
   // TUI's line ends `approval L<n> | skills <n>` and the smoke pins that
   // tail.
-  /* r5 item 9: which directory this app owns. The desktop runs on its own
-     state dir (~/.atomic-agent-desktop by default), and "why does the
-     desktop not see what the terminal agent sees" has to be answerable
-     from the window. Abbreviated against $HOME like the cwd above, and
+  /* r5 item 9: which directory this app runs on. Since ATO-416 that is the
+     terminal agent's own ~/.atomic-agent by default, and "does the desktop
+     see what the terminal agent sees" has to be answerable from the
+     window (a desktop pointed elsewhere by an env var does not). Abbreviated against $HOME like the cwd above, and
      placed BEFORE the agent segment so the tail this line's smoke pins —
      `approval L<n> | skills <n>` — is unmoved. */
   const sd = (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || (FIRSTRUN && FIRSTRUN.stateDir) || '';
@@ -14487,11 +14487,32 @@ async function obBootGate(fr, freshAtBoot) {
   if (freshAtBoot || (fr && fr.fresh)) obSetupPullForget();
   if (freshAtBoot) return;
   if (fr && fr.fresh) { openOnboarding(); return; }
+  /* ATO-416 (C16): the desktop shares the terminal agent's directory, and the
+     terminal already finished setup there. No wizard: one line in the chat
+     area saying what this window is looking at (main decides when, once). */
+  if (fr && fr.sharedSetupNotice) { sharedSetupNoticeShow(); return; }
   const res = await BR.configGet();
   let ids = null;
   try { const ready = await BR.providersReady(); if (ready && ready.ok) ids = ready.ids || []; } catch (e) { ids = null; }
   if (res && res.ok && obSetupPullResume(res.config)) return;
   if (res && res.ok && needsOnboarding(res.config, ids)) openOnboarding();
+}
+
+/* ATO-416 (C16): main/shared-state-notice.ts SHARED_SETUP_NOTICE, verbatim.
+   Drawn as a blue notice over the empty chat's greeting (emptyChat), so it
+   is the first thing the window says and leaves with the greeting when the
+   first message is sent: it is about this window, not any one chat, so it
+   is never written into a transcript. Main hands it out once. */
+const SHARED_SETUP_NOTICE = 'Atomic Agent on this computer is already set up. The desktop app uses the same chats, memory, skills and settings as the terminal.';
+const SHARED_SETUP = { show: false };
+function sharedSetupNoticeShow() {
+  SHARED_SETUP.show = true;
+  render();
+}
+function sharedSetupNoticeHTML() {
+  return SHARED_SETUP.show
+    ? '<div class="tk-notice tk-notice--blue shared-setup" role="status">' + ic('info') + '<span class="grow">' + esc(SHARED_SETUP_NOTICE) + '</span></div>'
+    : '';
 }
 
 async function openOnboarding(at) {
@@ -26825,6 +26846,15 @@ if (typeof window !== 'undefined') {
   window.__unverified = () => (BR && BR.unverified ? BR.unverified() : Promise.resolve(null));
   // item 9 — the fresh-install predicate, drivable without an agent.
   window.__needsOnboarding = (cfg) => needsOnboarding(cfg);
+  // ATO-416 (C16) — the one-time "already set up in the terminal" notice, drivable without a terminal setup.
+  window.__sharedSetupNotice = (on) => {
+    const was = SHARED_SETUP.show;
+    if (typeof on === 'boolean') { SHARED_SETUP.show = on; render(); }
+    const host = document.createElement('div');
+    host.innerHTML = emptyChat();
+    const el = host.querySelector('.shared-setup');
+    return {was, show: SHARED_SETUP.show, text: el ? el.textContent : null, firstInEmptyChat: !!el && host.querySelector('.emptychat').firstElementChild === el};
+  };
   // item 9 — the cross-lane import contract, straight through the bridge.
   window.__tuiSetupPresent = () => BR.tuiSetupPresent();
   window.__importFromTui = (opts) => BR.importFromTui(opts || {});

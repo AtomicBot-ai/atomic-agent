@@ -58,6 +58,7 @@ import {
   type RunModeVerdict,
 } from "./run-mode.js";
 import { isIncompleteProvider } from "./provider-hygiene.js";
+import { quitMayStopModel } from "./model-sessions.js";
 
 /**
  * Lane B — backend switch.
@@ -816,11 +817,23 @@ export function stopDaemonNow(): Promise<CliResult> {
  * not finish in time. Answers the pids that last step had to kill.
  * Backlog 18 (its second review): and no start spawns after this, though its
  * turn began before (closeDaemonTurns; stopForQuit has closed them already).
+ *
+ * ATO-416: the data dir is the terminal agent's too now, and a terminal
+ * session may be chatting with this very server. When another live session
+ * marker sits beside the desktop's own (model-sessions.ts), the stop and the
+ * kill are both skipped: the desktop's own starts are still ended above, but
+ * the server stays up for the session that holds it, which stops it itself
+ * when it exits last. Quit and the update's shutdown both come through here.
  */
 export async function stopDaemonForQuit(dataDir: string, bounds: { stopMs?: number; retryMs?: number } = {}): Promise<number[]> {
   closeDaemonTurns();
   supersedeBringUp();
   await abortStarts(1_500);
+  const shared = quitMayStopModel(dataDir);
+  if (!shared.stop) {
+    console.error(`[desktop] local-llm: left the model server running: another Atomic Agent session uses it (pid ${shared.others.join(", ")})`);
+    return [];
+  }
   const named = daemonPidsIn(dataDir);
   const first = await settleStop(modelsStop(), bounds.stopMs ?? 5_000);
   /* Atomic Core owns its model sessions: their pid files are skipped below
