@@ -1,11 +1,16 @@
 /**
- * The maximum repetition depth `llama.cpp`'s GBNF parser supports in a
- * `{0,N}` quantifier. `llama-server` rejects grammars whose expanded
- * repetition exceeds ~1,000 rules with HTTP 400 "failed to parse grammar".
- * The default budget (1,500 tokens × 4 = 6,000 chars) exceeds this limit.
- * See: https://github.com/AtomicBot-ai/atomic-agent/issues/600.
+ * Safe ceiling for a `{0,N}` quantifier against `llama.cpp`.
+ *
+ * `llama-grammar.cpp` defines `MAX_REPETITION_THRESHOLD = 2000`. Builds
+ * before September 2025 reject exactly 2,000, and current master silently
+ * treats anything above 2,000 as unbounded. 1,999 parses everywhere and
+ * keeps a real bound. The default budget (1,500 tokens × 4 = 6,000 chars)
+ * exceeds it. See: https://github.com/AtomicBot-ai/atomic-agent/issues/600.
  */
-const LLAMA_SERVER_GBNF_MAX_REPETITION = 1000;
+export const LLAMA_SERVER_GBNF_MAX_REPETITION = 1999;
+
+/** True once per process, so a clamped budget is visible without spamming. */
+let clampWarningEmitted = false;
 
 /**
  * The reasoning prelude of a grammar-served thinking model: the rules
@@ -20,8 +25,9 @@ const LLAMA_SERVER_GBNF_MAX_REPETITION = 1000;
  * small; the expansion is linear in N. The unbounded form (`budgetChars
  * === 0`) is the pre-F49 text, kept byte-identical.
  *
- * `budgetChars` is clamped to `LLAMA_SERVER_GBNF_MAX_REPETITION` so the
- * GBNF parser (depth ≤ 1,000) never rejects the grammar (#600).
+ * `budgetChars` is clamped to `LLAMA_SERVER_GBNF_MAX_REPETITION` (1,999,
+ * one under `MAX_REPETITION_THRESHOLD`) so the GBNF parser never rejects
+ * the grammar (#600). A clamp emits a one-time warning.
  */
 
 /** `think-body ::= think-char{0,N}` — the line the bounded base grammar carries. */
@@ -46,11 +52,20 @@ export function buildReasoningPreludeRules(
   const preludeRule = `${ruleStem}-prelude`;
   const bodyRule = `${ruleStem}-body`;
   const bounded = budgetChars > 0;
-  // llama.cpp's GBNF parser rejects `{0,N}` when N > 1,000 (HTTP 400).
-  // Clamp so the default 6,000-char budget stays within the parser limit.
+  // Above MAX_REPETITION_THRESHOLD (2,000) older llama-server builds
+  // reject the grammar (HTTP 400) and current master treats it as
+  // unbounded. Clamp to 1,999 and say so once.
   const clampedBudgetChars = bounded
     ? Math.min(budgetChars, LLAMA_SERVER_GBNF_MAX_REPETITION)
     : 0;
+  if (bounded && clampedBudgetChars < budgetChars && !clampWarningEmitted) {
+    clampWarningEmitted = true;
+    console.warn(
+      `reasoning budget of ${budgetChars} characters exceeds llama.cpp's ` +
+        `MAX_REPETITION_THRESHOLD (2000); clamped the GBNF bound to ` +
+        `${LLAMA_SERVER_GBNF_MAX_REPETITION}`,
+    );
+  }
   // Bounded: one character per repetition (a `<`-led alternative still
   // spans its whole prefix), so `{0,N}` is a bound in characters.
   // Unbounded: today's greedy `[^<]+` fragment, byte for byte.

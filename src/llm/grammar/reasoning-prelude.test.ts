@@ -5,10 +5,10 @@ import {
   withUnboundedReasoningPrelude,
 } from "./reasoning-prelude.js";
 
-describe("buildReasoningPreludeRules budget clamp (llama.cpp GBNF depth ≤ 1,000, #600)", () => {
+describe("buildReasoningPreludeRules budget clamp (llama.cpp GBNF MAX_REPETITION_THRESHOLD = 2000, safe ceiling 1,999, #600)", () => {
   const SENTINEL = "</think";
 
-  it("clamps budgets above the llama.cpp GBNF limit to 1,000", () => {
+  it("clamps budgets above llama.cpp's safe GBNF ceiling to 1,999", () => {
     // Default production budget: 1,500 tokens × 4 = 6,000 chars → clamped.
     const rules = buildReasoningPreludeRules(
       "think",
@@ -16,18 +16,19 @@ describe("buildReasoningPreludeRules budget clamp (llama.cpp GBNF depth ≤ 1,00
       undefined,
       6000,
     );
-    expect(rules).toContain("think-body ::= think-char{0,1000}");
+    expect(rules).toContain("think-body ::= think-char{0,1999}");
   });
 
   it("leaves budgets at or below the limit unchanged", () => {
-    // 1,000 is the boundary — not clamped.
+    // 1,999 is the boundary — not clamped. 2,000 is not safe: older
+    // llama-server builds reject exactly MAX_REPETITION_THRESHOLD.
     const atBoundary = buildReasoningPreludeRules(
       "think",
       SENTINEL,
       undefined,
-      1000,
+      1999,
     );
-    expect(atBoundary).toContain("think-char{0,1000}");
+    expect(atBoundary).toContain("think-char{0,1999}");
 
     // A small budget stays as-is.
     const small = buildReasoningPreludeRules("think", SENTINEL, undefined, 8);
@@ -49,6 +50,6 @@ describe("buildReasoningPreludeRules budget clamp (llama.cpp GBNF depth ≤ 1,00
     const clamped = buildReasoningPreludeRules("think", SENTINEL, undefined, 6000);
     const lifted = withUnboundedReasoningPrelude(clamped);
     expect(lifted).toContain("think-body ::= think-char*");
-    expect(lifted).not.toContain("think-char{0,1000}");
+    expect(lifted).not.toContain("think-char{0,1999}");
   });
 });
