@@ -1,6 +1,7 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
+import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
@@ -22,6 +23,7 @@ import { resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
 import type { SessionState } from "../session/session-state.js";
+import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 
 import { TurnController } from "./turn-controller.js";
@@ -364,25 +366,37 @@ export async function createAgentRuntime(
     profileWindowApplies: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).isLlamaServer,
     resolveCatalogContextWindow: (id?: string) => resolveCatalogContextWindow(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined),
   };
+  const compactionPromptInput = (state: SessionState) => buildRuntimePromptInput(getConfig(), promptPreviewDeps, state);
+  const compactionRoute = (id: string, pin?: string) => {
+    const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
+    const slice = resolveActiveLlmSlice(providerId);
+    return {
+      providerId, transport: slice.transport, local: slice.isLlamaServer,
+      ...(slice.isLlamaServer ? { prefixReuse: connectedLocal.getLiveProfile().prefixReuse ?? "partial" } : {}),
+      contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
+      serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
+    };
+  };
+  const compactionSideSlot = () => slotManager.sideCallSlotId();
+  const compactionCost = (result: CompletionResult, providerId: string) => {
+    const pricing = resolveModelPricing(result.modelId, providerId)?.pricing;
+    return pricing && result.usage ? estimateUsageCostUsd(result.usage, pricing) : undefined;
+  };
   const compaction = createContextCompaction({
     config: () => getConfig().agent.compaction,
     sessionStore, turnController, complete: llmComplete,
-    promptInput: (state) => buildRuntimePromptInput(getConfig(), promptPreviewDeps, state),
-    route: (id, pin) => {
-      const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
-      const slice = resolveActiveLlmSlice(providerId);
-      return {
-        providerId, transport: slice.transport, local: slice.isLlamaServer,
-        ...(slice.isLlamaServer ? { prefixReuse: connectedLocal.getLiveProfile().prefixReuse ?? "partial" } : {}),
-        contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
-        serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
-      };
-    },
-    sideCallSlotId: () => slotManager.sideCallSlotId(),
-    costOf: (result, providerId) => {
-      const pricing = resolveModelPricing(result.modelId, providerId)?.pricing;
-      return pricing && result.usage ? estimateUsageCostUsd(result.usage, pricing) : undefined;
-    },
+    promptInput: compactionPromptInput,
+    route: compactionRoute,
+    sideCallSlotId: compactionSideSlot,
+    costOf: compactionCost,
+    background: createBackgroundCompaction({
+      config: () => getConfig().agent.compaction,
+      sessionStore, complete: llmComplete, promptInput: compactionPromptInput,
+      route: (id) => compactionRoute(id), sideCallSlotId: compactionSideSlot, costOf: compactionCost,
+      isIdle: () => turnController.busySessionIds().length === 0,
+      isBusy: (id) => turnController.isBusy(id),
+      log: (level, message, fields) => logger[level](message, fields),
+    }),
     persist: (state, inTurn) => {
       const existed = sessionStore.load(state.id) !== null;
       sessionStore.save(state);

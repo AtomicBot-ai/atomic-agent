@@ -10,6 +10,7 @@ import type { TurnController } from "./turn-controller.js";
 import { SessionNotFoundError } from "./session-not-found-error.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { runContextCompaction, type CompactionRunnerDependencies } from "./context-compaction-runner.js";
+import type { BackgroundCompaction } from "./compaction-background.js";
 
 /**
  * After an automatic compaction times out, history must grow by this factor
@@ -32,6 +33,8 @@ export interface ContextCompactionDependencies extends CompactionRunnerDependenc
   sessionStore: Pick<SessionStore, "load">;
   turnController: Pick<TurnController, "enqueue">;
   promptInput(state: SessionState): BuildPromptInput;
+  /** Rolling summaries between turns; absent, compaction works as before. */
+  background?: BackgroundCompaction;
 }
 
 /**
@@ -145,15 +148,17 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
   }
 
   const control: ContextCompactionControl = {
-    open(id, signal) { accepting.set(id, signal); autoFailed.delete(id); },
+    open(id, signal) { deps.background?.cancel(id); accepting.set(id, signal); autoFailed.delete(id); },
     close(id) {
       accepting.delete(id);
       autoFailed.delete(id);
       const request = requests.get(id);
       // Enqueue without awaiting: the caller still owns the turn lock here.
       if (request && !request.running && !request.queued) enqueue(id, request);
+      deps.background?.schedule(id);
     },
     beforeStep(input, options) {
+      deps.background?.cancel(input.session.id);
       const request = requests.get(input.session.id);
       return perform(input, options, request?.queued ? undefined : request);
     },
@@ -164,6 +169,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     compactSession(id: string, options: { signal?: AbortSignal } = {}): Promise<CompactionResult> {
       if (stopped || options.signal?.aborted) return Promise.resolve(cancelled());
       if (requests.has(id) || active.has(id)) return Promise.resolve({ status: "busy", reason: "manual" });
+      deps.background?.cancel(id);
       const turnSignal = accepting.get(id);
       if (!turnSignal) load(id);
       const controller = new AbortController();
@@ -192,6 +198,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     },
     shutdown() {
       stopped = true;
+      deps.background?.shutdown();
       for (const request of requests.values()) request.controller.abort();
       for (const controller of active.values()) controller.abort();
       accepting.clear();
