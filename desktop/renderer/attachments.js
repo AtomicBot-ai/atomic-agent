@@ -9,6 +9,9 @@
    ATO-406  a user message is drawn from that string: the block and its hint
             line come off, chips go in their place, live and on reopen.
 
+   A workspace skill (/name args) carries the chips like any message; a
+   built-in slash command, Continue and the plan hand-off do not.
+
    Loaded before renderer.js and only declares: it reads renderer.js globals
    (S, BR, ANX, SEL, render, refreshSend, toast, esc, ic, $) when a function
    runs. The pure part (classification, the message format, the size bucket)
@@ -436,6 +439,7 @@ function attChipHTML(i) {
 }
 /** The strip and the send button, in place: a render() here would move the caret. */
 function attRepaint() {
+  if (typeof document === 'undefined') return;
   const strip = document.getElementById('attstrip');
   if (strip) {
     const tmp = document.createElement('div');
@@ -641,7 +645,8 @@ if (typeof document !== 'undefined') {
   });
   document.addEventListener('dragleave', (e) => {
     if (!attDragHasFiles(e)) return;
-    ATT.drag = Math.max(0, ATT.drag - 1);
+    // Out of the window (or a cancelled drag): no element is entered next.
+    ATT.drag = e.relatedTarget ? Math.max(0, ATT.drag - 1) : 0;
     if (!ATT.drag) attSetDragging(false);
   });
   document.addEventListener('drop', (e) => {
@@ -660,6 +665,10 @@ if (typeof document !== 'undefined') {
     if (!e.target || e.target.id !== 'entry' || !e.clipboardData) return;
     const files = Array.from(e.clipboardData.files || []);
     if (!files.length) return;
+    /* Word, Excel, Numbers and Keynote put a picture of the copied cells next
+       to their text: that paste is text. A screenshot carries no text. */
+    const plain = e.clipboardData.getData('text/plain');
+    if (plain && plain.trim() && files.every((f) => !f.name || /^image\.(png|jpe?g|gif|webp|tiff?)$/i.test(f.name))) return;
     e.preventDefault();
     attAdd(files.map((file) => {
       // A screenshot on the clipboard is called `image.png`; say where it came from.
@@ -677,6 +686,8 @@ if (typeof document !== 'undefined') {
     attHydrate(document);
     new MutationObserver((records) => {
       for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1) attHydrate(n.parentElement || n);
+      // A render() mid-drag draws a new composer: it keeps the highlight.
+      if (ATT.drag) { const c = document.getElementById('composer'); if (c && !c.classList.contains('att-dragging')) c.classList.add('att-dragging'); }
       attPlaceMenu();
     }).observe(document.body, {childList: true, subtree: true});
   };

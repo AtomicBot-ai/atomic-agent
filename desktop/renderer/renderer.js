@@ -1962,7 +1962,7 @@ const PENDING_CHATS = new Map();
 /** A local outbox chat remains reachable before its first HTTP turn exists. */
 function noteWaitingChat(id, text) {
   if (PENDING_CHATS.has(id)) return;
-  PENDING_CHATS.set(id, {id, t:String(text).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
+  PENDING_CHATS.set(id, {id, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, waiting:true, endedAt:null});
 }
 for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) noteWaitingChat(id, q.queued[0]);
@@ -2778,7 +2778,8 @@ function resendUser(id) {
   const split = attSplitMessage(text);
   const caption = split ? split.caption.trim() : text;
   // Chips of a message not yet sent are a draft too.
-  if ((draft && draft !== caption) || ATT.items.some((i) => !i.restored)) {
+  const own = new Set(split ? split.items.map((i) => i.path) : []);
+  if ((draft && draft !== caption) || ATT.items.some((i) => !(i.saved && own.has(i.saved.path)))) {
     toast('Your draft is in the way', 'send or clear the composer, then retry', 'bad');
     if (e) e.focus();
     return;
@@ -6235,7 +6236,7 @@ async function steerOrQueueRun(text, post, typedIn) {
     // one the user has not typed into since. Stamping over another chat's
     // draft is worse than losing a steer that could not be parked.
     const e = $('#entry');
-    if (here || (!S.draft && !(e && e.value))) {
+    if (here || (!S.draft && !(e && e.value) && !ATT.items.length)) {
       S.draft = attToEditor(text);
       if (e) { e.value = S.draft; autosize(e); }
       ctxDraftChanged();
@@ -6293,7 +6294,7 @@ async function submitSkillCommand(text) {
   } finally { SK_SUBMITTING = false; }
 }
 
-function submit(preparedSkillText) {
+function submit(preparedSkillText, opts) {
   // Item 2 (voice input): Enter, the Send button and Ctrl+Enter all land
   // here. While the microphone is open they stop the recording and insert
   // the text instead of sending — sending would post the draft as it stood
@@ -6312,8 +6313,10 @@ function submit(preparedSkillText) {
      `[attachments]` block the channels send (attachments.js). A slash command
      typed with files waiting runs alone; the chips stay for the next message. */
   const rawSlash = typeof preparedSkillText !== 'string' && typed.startsWith('/');
-  if (!rawSlash && attPreparing()) { toast('Attachments are still being prepared', 'Send once every chip is ready. Your message stays in the box', 'bad'); return; }
-  const text = rawSlash ? typed : attComposeMessage(typed);
+  // Continue and the plan hand-off send their own fixed words (`plain`): the chips wait for a message of the person's.
+  const withFiles = !rawSlash && !(opts && opts.plain);
+  if (withFiles && attPreparing()) { toast('Attachments are still being prepared', 'Send once every chip is ready. Your message stays in the box', 'bad'); return; }
+  const text = withFiles ? attComposeMessage(typed) : typed;
   if (!text) return;
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
@@ -6347,11 +6350,11 @@ function submit(preparedSkillText) {
     if (!S.sessionId) {
       S.sessionId = 'waiting-' + crypto.randomUUID();
       S.agentSession = S.sessionId;
-      noteWaitingChat(S.sessionId, attQueueLabel(text));
+      noteWaitingChat(S.sessionId, text);
     }
     S.queued.push(text); DRAIN_OWED = true;
     S.draft = ''; if (e) { e.value = ''; autosize(e); }
-    attClearSent();
+    if (withFiles) attClearSent();
     ctxDraftChanged(); S.slash = false;
     toast('Message sent', SWX.sendError || 'The model is switching, so the reply may take longer');
     render(); drainOwed(); return;
@@ -6374,7 +6377,7 @@ function submit(preparedSkillText) {
     return;
   }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
-  attClearSent();
+  if (withFiles) attClearSent();
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
   // 13: with the box empty the button beside it is Stop again while a turn
@@ -8100,7 +8103,7 @@ async function loadResources() {
 function taskEntry(t) {
   return {
     id:t.id,
-    t:(t.userMessage || '').trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+    t:attQueueLabel(t.userMessage || '').trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
     when:t.schedule ? formatScheduleLabel(t.schedule) : 'once',
     status:t.status || 'pending',
     recurring:!!t.recurring,
@@ -8177,7 +8180,7 @@ function nameVisibleSessions() {
       const title = sessionTitleFromState(res.data); // an agent whose list rows carry no `title`
       const first = turns.find((t) => t.kind === 'user' && t.text);
       if (title) { cur.t = title; cur.titled = true; }
-      else if (!cur.titled) cur.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      else if (!cur.titled) cur.t = first ? attQueueLabel(first.text).trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
       cur.named = true;
       render();
     });
@@ -8292,7 +8295,7 @@ function noteFirstPrompt(turnId, sid) {
   if (text === undefined) return;
   FIRST_TURNS.delete(turnId);
   if (!sid || PENDING_CHATS.has(sid) || SESSIONS.some((s) => s.id === sid)) return;
-  PENDING_CHATS.set(sid, {id:sid, t:String(text).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+  PENDING_CHATS.set(sid, {id:sid, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, endedAt:null});
 }
 
@@ -17058,7 +17061,7 @@ async function executePlan(mode) {
   S.draft = EXECUTE_PLAN_MESSAGE;
   const e = $('#entry');
   if (e) { e.value = EXECUTE_PLAN_MESSAGE; autosize(e); }
-  submit();
+  submit(undefined, {plain:true});
 }
 
 /* B5 — a paused task. The agent ends a task it stopped at a ceiling (steps,
@@ -17163,7 +17166,7 @@ function continueTurn() {
   }
   S.draft = 'continue';
   if (e) { e.value = 'continue'; autosize(e); }
-  submit();
+  submit(undefined, {plain:true});
 }
 
 /** Put the plan away. Stays in plan mode — src/tui/reduce-ui-actions.ts. */
