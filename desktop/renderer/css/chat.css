@@ -435,3 +435,30 @@
 .sysrow .sys-tried-t svg{width:12px;height:12px}
 .sysrow .sys-tried-l{display:flex;flex-direction:column;gap:2px;margin:4px 0 0 16px;font-size:12px;color:var(--ink-3)}
 .sysrow .sys-tried-i b{font-weight:600;color:var(--ink)}
+
+/* ---------------- a reply's own files (ATO-408) ----------------
+   Pictures the reply delivers, up to 320px tall, a click opens the viewer;
+   other files are the usual chips. The <img> is put in by the renderer
+   (hydrateChatImages), so the button is sized by it once it is there. */
+.replyfiles{margin-top:10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.replyfiles-pics{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+.chat-img{display:block;padding:0;border:0;background:var(--well);border-radius:var(--r-well);
+  overflow:hidden;cursor:zoom-in;max-width:100%;line-height:0;box-shadow:inset 0 0 0 1px var(--line-hair)}
+.chat-img.loading{width:240px;height:160px}
+.chat-img-pic{display:block;max-width:100%;max-height:320px;width:auto;height:auto}
+.chat-img:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){
+  .chat-img.loading{animation:chat-img-wait 1.2s ease-in-out infinite}
+}
+@keyframes chat-img-wait{0%,100%{opacity:.55}50%{opacity:1}}
+
+/* The full-screen viewer: on the body, above every overlay. The bar sits at
+   the bottom, clear of the traffic lights and the toolbar's drag region. */
+.imgview{position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;
+  background:rgba(8,10,16,.9);-webkit-app-region:no-drag}
+.imgview-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+  padding:48px 24px 12px;cursor:zoom-out}
+.imgview-img{max-width:100%;max-height:100%;object-fit:contain;cursor:default;border-radius:8px}
+.imgview-bar{display:flex;align-items:center;gap:8px;padding:12px 16px 16px;color:#fff;flex-wrap:wrap}
+.imgview-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;opacity:.85}
+.imgview-bar .iconbtn{color:#fff}
