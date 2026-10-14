@@ -22,7 +22,11 @@ export interface GrepArgs {
   timeoutMs: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * ripgrep's time limit when the call names none. The grep contract quotes
+ * it to the model (contracts stay import-free); a test keeps them in step.
+ */
+export const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_HEAD_LIMIT = 200;
 
 export function parseArgs(

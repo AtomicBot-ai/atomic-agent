@@ -2,12 +2,12 @@ const NAME = "os.fs.grep";
 
 export const OS_FS_GREP_CONTRACT = {
   name: NAME,
-  description: "Fast regex search across files using bundled ripgrep (`literal: true` searches for the pattern as a fixed string). Supports three output modes (`content`, `files_with_matches`, `count`), glob filtering, file-type filtering, multiline mode, context lines, and pagination. Read-only.",
+  description: "Fast regex search across files using bundled ripgrep (`literal: true` searches for the pattern as a fixed string). Supports three output modes (`content`, `files_with_matches`, `count`), glob filtering, file-type filtering, multiline mode, context lines, and pagination. The search stops after `timeoutMs` (default 30 s); when it stops early the result holds the matches found so far, `details.truncated` is true and a leading note says so, so narrow the pattern, the path or the glob. Read-only.",
   readonly: true,
   resourceClass: "pure_read",
   descriptor: {
     name: NAME,
-    summary: "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.",
+    summary: "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set. A search that runs past timeoutMs (default 30 s) returns the matches found so far with a note; then narrow the pattern, path or glob instead of retrying as is.",
     argsSchema: "{ pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }"
   },
   argsJsonSchema: {

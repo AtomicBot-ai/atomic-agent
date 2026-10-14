@@ -14,6 +14,7 @@ import {
 } from "./fs-grep-args.js";
 import { formatGrepResult } from "./fs-grep-format.js";
 import { parseRipgrepJson } from "./fs-grep-ripgrep-json.js";
+import { withTimeoutNote } from "./fs-grep-timeout.js";
 
 export type { GrepOutputMode } from "./fs-grep-args.js";
 export { parseRipgrepJson } from "./fs-grep-ripgrep-json.js";
@@ -69,11 +70,26 @@ export function buildOsFsGrepTool(
       }
 
       const rgArgs = buildRgArgs(args, target.searchTarget);
+      // The runner only listens for an abort that happens after spawn.
+      ctx.signal.throwIfAborted();
       const result = await runCommand(rgPath, rgArgs, {
         cwd: target.cwd,
         timeoutMs: args.timeoutMs,
         signal: ctx.signal,
       });
+      // The runner resolves on abort with whatever it captured; a
+      // cancelled search is not a result, so it rejects like other fs tools.
+      ctx.signal.throwIfAborted();
+
+      // Checked before the exit code: a killed ripgrep reports `null`,
+      // and the matches it already printed are still worth returning.
+      if (result.timedOut) {
+        const files = parseRipgrepJson(result.stdout);
+        return withTimeoutNote(
+          formatGrepResult(args, files, rgPath, rgArgs, result),
+          { elapsedMs: result.durationMs },
+        );
+      }
 
       // ripgrep exits 1 on no matches, 0 on matches, 2+ on error.
       if (result.exitCode === 1) {
