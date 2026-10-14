@@ -337,6 +337,57 @@ describe("configCommand", () => {
       expect(readFileSync(configPath(), "utf8")).toBe(before);
     });
 
+    // ATO-416: an older build (the desktop's bundled atag) saving a file a
+    // newer build (the TUI) already migrated.
+    describe("payload version vs this build and the file on disk", () => {
+      const NEWER = USER_CONFIG_VERSION + 5;
+      const seedOnDisk = (version: number) =>
+        writeFileSync(configPath(), JSON.stringify({ version, log: { level: "info" } }));
+      const versioned = (version: number, url: string) =>
+        JSON.stringify({ version, localModels: { url } });
+
+      it("allows a version this build does not know when the file on disk already has it", async () => {
+        seedOnDisk(NEWER);
+        const code = await configCommand(["set", "-"], stdinOf(versioned(NEWER, "http://older:1")));
+        expect(code).toBe(0);
+        const onDisk = JSON.parse(readFileSync(configPath(), "utf8"));
+        expect(onDisk.version).toBe(NEWER);
+        expect(onDisk.localModels.url).toBe("http://older:1");
+      });
+
+      it("allows the round trip through get --with-sha256 and the compare-and-swap", async () => {
+        seedOnDisk(NEWER);
+        const { sha256: hash, config } = await readWithHash();
+        expect(config.version).toBe(NEWER);
+        const code = await configCommand(
+          ["set", "-", "--expect-sha256", hash],
+          stdinOf(JSON.stringify({ ...config, localModels: { url: "http://older:2" } })),
+        );
+        expect(code).toBe(0);
+        expect(JSON.parse(readFileSync(configPath(), "utf8")).version).toBe(NEWER);
+      });
+
+      it("still refuses a version newer than both this build and the file on disk", async () => {
+        seedOnDisk(NEWER);
+        const before = readFileSync(configPath(), "utf8");
+        const code = await configCommand(["set", "-"], stdinOf(versioned(NEWER + 1, "http://never:2")));
+        expect(code).toBe(1);
+        expect(stderr).toContain(`version ${NEWER + 1} is newer than this build understands (${NEWER})`);
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+      });
+
+      it("still refuses a version newer than this build when the file is current", async () => {
+        await readWithHash();
+        const before = readFileSync(configPath(), "utf8");
+        const code = await configCommand(["set", "-"], stdinOf(versioned(USER_CONFIG_VERSION + 1, "http://never:3")));
+        expect(code).toBe(1);
+        expect(stderr).toContain(
+          `version ${USER_CONFIG_VERSION + 1} is newer than this build understands (${USER_CONFIG_VERSION})`,
+        );
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+      });
+    });
+
     it("leaves set - without the flag unconditional", async () => {
       await readWithHash();
       expect(await configCommand(["set", "agent.maxSteps", "33"])).toBe(0);

@@ -4,6 +4,7 @@ import {
   getConfig,
   parseUserConfigFile,
   readUserConfigSnapshotSync,
+  readUserConfigVersionOnDiskSync,
   resetConfigCache,
   USER_CONFIG_VERSION,
   userConfigFileSha256Sync,
@@ -186,17 +187,29 @@ async function setWholeFile(
   // the write path will not let a later `config set` lower it again, and
   // the file would sit permanently above every future schema, skipping
   // every migration.
-  if (
-    typeof (parsed as { version?: unknown } | null)?.version === "number" &&
-    (parsed as { version: number }).version > USER_CONFIG_VERSION
-  ) {
-    process.stderr.write(
-      `config set failed: version ${(parsed as { version: number }).version} is newer than this build understands (${USER_CONFIG_VERSION})\n`,
+  //
+  // ATO-416: a version already on disk is not invented, though. The
+  // desktop's bundled atag can be older than the TUI sharing its state
+  // dir; once the TUI has migrated the file, `config get` reports that
+  // newer version and the desktop sends it back unchanged. Refusing it
+  // would block every desktop save, so only a version newer than BOTH
+  // this build and the file on disk is refused. (The write keeps the
+  // on-disk version anyway — see `writeUserConfigFileSync`.)
+  const path = getConfig().paths.userConfigFile;
+  const payloadVersion = (parsed as { version?: unknown } | null)?.version;
+  if (typeof payloadVersion === "number") {
+    const accepted = Math.max(
+      USER_CONFIG_VERSION,
+      readUserConfigVersionOnDiskSync(path) ?? USER_CONFIG_VERSION,
     );
-    return 1;
+    if (payloadVersion > accepted) {
+      process.stderr.write(
+        `config set failed: version ${payloadVersion} is newer than this build understands (${accepted})\n`,
+      );
+      return 1;
+    }
   }
   const next = parseUserConfigFile(parsed);
-  const path = getConfig().paths.userConfigFile;
   // ATO-416 compare-and-swap. Checked before the opt-out report too, so
   // a refused write never sends `analytics_disabled` for a change that
   // did not happen, and again right before the write, after that report

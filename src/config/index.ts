@@ -37,6 +37,7 @@ export type { ConfigNoticeSink, UserConfigSnapshot } from "./config-file.js";
 export {
   ensureUserConfigFileSync,
   readUserConfigSnapshotSync,
+  readUserConfigVersionOnDiskSync,
   userConfigFileSha256Sync,
   setConfigNoticeSink,
   getDotenvPath,

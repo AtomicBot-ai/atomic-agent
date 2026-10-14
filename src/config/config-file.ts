@@ -287,6 +287,10 @@ function readRawUserConfigFileSync(path: string): RawUserConfigFile | null {
  * total: this runs on the write path, where a malformed existing file
  * must not stop the caller from replacing it.
  */
+export function readUserConfigVersionOnDiskSync(path: string): number | null {
+  return readVersionFieldFromFileSync(path);
+}
+
 function readVersionFieldFromFileSync(path: string): number | null {
   if (!existsSync(path)) return null;
   try {
