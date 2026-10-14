@@ -6785,7 +6785,8 @@ document.addEventListener('click', (e) => {
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   // ATO-408: a picture in a reply opens full screen (its menu is the file chip's).
   const cimg = t.closest('[data-img-open]');
-  if (cimg) { openImageViewer(cimg.dataset.imgOpen); return; }
+  // Still loading: it opens as the file it is, through the chip's path below.
+  if (cimg && openImageViewer(cimg.dataset.imgOpen)) return;
   const fchip = t.closest('[data-file]');
   // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
   if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
@@ -19538,6 +19539,7 @@ function hydrateChatImages() {
   const slots = document.querySelectorAll('[data-chat-img]:not([data-hyd])');
   if (!slots.length) return;
   const sc = $('#scroller');
+  let put = false;
   slots.forEach((slot) => {
     const st = CHAT_IMG.get(slot.dataset.chatImg);
     if (!st || st.state !== 'ok' || !st.node) return;
@@ -19546,8 +19548,9 @@ function hydrateChatImages() {
     // One node per picture; a second copy on screen at once gets a clone.
     const node = st.node.isConnected && !slot.contains(st.node) ? st.node.cloneNode(false) : st.node;
     slot.appendChild(node);
+    put = true;
   });
-  if (sc && S.stick) sc.scrollTop = sc.scrollHeight;
+  if (put && sc && S.stick) sc.scrollTop = sc.scrollHeight;
 }
 if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
   new MutationObserver(hydrateChatImages).observe(document.documentElement, {childList:true, subtree:true});
@@ -19583,9 +19586,10 @@ let IMG_VIEW = null;
 function fileManagerName() {
   return IS_MAC ? 'Show in Finder' : PLATFORM === 'win32' ? 'Show in Explorer' : 'Show in Folder';
 }
+/** Opens the viewer; false when the picture is not read yet. */
 function openImageViewer(path) {
   const st = CHAT_IMG.get(path);
-  if (!st || st.state !== 'ok') return;
+  if (!st || st.state !== 'ok') return false;
   closeImageViewer();
   const name = pathBase(path) || path;
   const el = document.createElement('div');
@@ -19629,6 +19633,7 @@ function openImageViewer(path) {
   window.addEventListener('keydown', imageViewerKey, true);
   const close = el.querySelector('.imgview-bar [data-iv="close"]');
   if (close) close.focus();
+  return true;
 }
 function imageViewerKey(e) {
   if (!IMG_VIEW) return;
