@@ -8,6 +8,7 @@ import { getConfig, resetConfigCache } from "../../config/index.js";
 import { arrowKey, plainKey, returnKey } from "../mouse/synthetic-key.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { fakeSession } from "../test-fixtures.js";
+import { getActiveThemeName, setActiveTheme, THEMES } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import {
@@ -114,6 +115,28 @@ describe("handleOnboardingStepKey", () => {
       type: "onboarding_finished",
       outcome: "skipped",
     });
+  });
+
+  it("choose: t swaps to the next palette, persists it and records it", () => {
+    try {
+      setActiveTheme(THEMES["classic-dark"]);
+      const state = { ...stateAt("choose"), themeName: "classic-dark" };
+      const actions: TuiAction[] = [];
+      const persisted: string[] = [];
+      const handled = handleOnboardingStepKey("t", plainKey(), {
+        state,
+        dispatch: (action) => actions.push(action),
+        callbacks: {
+          onThemePersistRequested: (name) => persisted.push(name),
+        },
+      });
+      expect(handled).toBe(true);
+      expect(getActiveThemeName()).toBe("classic-light");
+      expect(persisted).toEqual(["classic-light"]);
+      expect(actions).toEqual([{ type: "theme_set", name: "classic-light" }]);
+    } finally {
+      setActiveTheme(THEMES["classic-dark"]);
+    }
   });
 
   it("choose: an arrow moves the cursor exactly as before", () => {

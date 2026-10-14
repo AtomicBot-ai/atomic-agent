@@ -258,6 +258,16 @@ export const THEME_NAMES: readonly ThemeName[] = [
   "moon-yellow",
 ];
 
+/**
+ * The theme after `current` in {@link THEME_NAMES}, wrapping at the end.
+ * An unknown name (e.g. `"auto"`) starts the cycle at the first entry.
+ * Used by keys that step through palettes without opening the picker.
+ */
+export function nextThemeName(current: string): ThemeName {
+  const index = (THEME_NAMES as readonly string[]).indexOf(current);
+  return THEME_NAMES[(index + 1) % THEME_NAMES.length]!;
+}
+
 /** Type guard: is `name` a registered {@link ThemeName}? */
 export function isThemeName(name: string): name is ThemeName {
   return Object.prototype.hasOwnProperty.call(THEMES, name);

@@ -4,6 +4,7 @@ export {
   getActiveTheme,
   getActiveThemeName,
   isThemeName,
+  nextThemeName,
   THEMES,
   THEME_NAMES,
 } from "./theme.js";

@@ -67,6 +67,25 @@ describe("handleOnboardingKey", () => {
     });
   });
 
+  it("maps t to the theme cycle on the choice screen", () => {
+    expect(handleOnboardingKey("t", NO_KEY, base())).toEqual({
+      handled: true,
+      actions: [],
+      intent: { kind: "cycle_theme" },
+    });
+  });
+
+  it("does not read ctrl+t or alt+t as the theme key", () => {
+    expect(handleOnboardingKey("t", key({ ctrl: true }), base())).toEqual({
+      handled: true,
+      actions: [],
+    });
+    expect(handleOnboardingKey("t", key({ meta: true }), base())).toEqual({
+      handled: true,
+      actions: [],
+    });
+  });
+
   it("treats Esc as skip", () => {
     expect(handleOnboardingKey("", key({ escape: true }), base())).toEqual({
       handled: true,

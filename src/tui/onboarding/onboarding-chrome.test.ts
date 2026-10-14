@@ -22,4 +22,10 @@ describe("onboardingFooterFor", () => {
     expect(footer).not.toContain("s skip");
     expect(footer).toContain("enter start or add a provider");
   });
+
+  it("advertises the theme key on the choice screen", () => {
+    const footer = onboardingFooterFor(at("choose"), false, null);
+    expect(footer).toContain("t theme");
+    expect(footer).toContain("esc skip");
+  });
 });

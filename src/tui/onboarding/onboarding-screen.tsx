@@ -56,6 +56,8 @@ export interface OnboardingScreenCallbacks {
   onOnboardingImportRequested?(
     plan: import("./import-step.js").OnboardingImportPlan,
   ): void;
+  /** Persist a palette picked on the choice screen (`tui.theme`). */
+  onThemePersistRequested?(themeName: string): void;
 }
 
 /** Named once — the offer screens quote it back at the operator. */

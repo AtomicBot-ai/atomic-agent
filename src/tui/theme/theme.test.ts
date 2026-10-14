@@ -6,6 +6,7 @@ import {
   getActiveThemeName,
   isRetiredThemeName,
   isThemeName,
+  nextThemeName,
   resolveThemeName,
   setActiveTheme,
   theme,
@@ -115,5 +116,17 @@ describe("theme proxy", () => {
     expect(getActiveThemeName()).toBe("toxic-green");
     setActiveTheme(THEMES["moon-yellow"]);
     expect(getActiveThemeName()).toBe("moon-yellow");
+  });
+
+  it("nextThemeName steps through the registry and wraps", () => {
+    expect(nextThemeName(THEME_NAMES[0]!)).toBe(THEME_NAMES[1]);
+    expect(nextThemeName(THEME_NAMES[THEME_NAMES.length - 1]!)).toBe(
+      THEME_NAMES[0],
+    );
+  });
+
+  it("nextThemeName starts the cycle from an unregistered name", () => {
+    expect(nextThemeName("auto")).toBe(THEME_NAMES[0]);
+    expect(nextThemeName("not-a-theme")).toBe(THEME_NAMES[0]);
   });
 });

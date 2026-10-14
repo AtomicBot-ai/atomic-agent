@@ -8,6 +8,7 @@ import {
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
+import { nextThemeName, setActiveTheme, THEMES } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import {
@@ -116,6 +117,19 @@ function pickBackend(
   ctx.dispatch({ type: "onboarding_step_set", step: "local_pick" });
 }
 
+/**
+ * Step to the next palette from the choice screen. Same three moves the
+ * `/theme <name>` command makes (see `submit-handler`): swap the live
+ * palette first so the forced re-render paints with it, persist through
+ * the host's callback, then record the name on state.
+ */
+function cycleTheme(ctx: OnboardingKeyContext): void {
+  const next = nextThemeName(ctx.state.themeName);
+  setActiveTheme(THEMES[next]);
+  ctx.callbacks.onThemePersistRequested?.(next);
+  ctx.dispatch({ type: "theme_set", name: next });
+}
+
 function handleChooseKey(
   input: string,
   key: Key,
@@ -129,6 +143,10 @@ function handleChooseKey(
   if (!intent || intent.kind === "intro_key") return true;
   if (intent.kind === "skip") {
     ctx.dispatch({ type: "onboarding_finished", outcome: "skipped" });
+    return true;
+  }
+  if (intent.kind === "cycle_theme") {
+    cycleTheme(ctx);
     return true;
   }
   pickBackend(intent.choice, ctx);

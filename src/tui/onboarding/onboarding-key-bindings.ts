@@ -15,6 +15,8 @@ import {
 export type OnboardingIntent =
   | { kind: "pick"; choice: "local" | "cloud" | "custom" }
   | { kind: "skip" }
+  /** `t` on the choice screen: preview and keep the next palette. */
+  | { kind: "cycle_theme" }
   /** Any key on the splash: finish the reveal, or move on if it is done. */
   | { kind: "intro_key" };
 
@@ -72,6 +74,9 @@ export function handleOnboardingKey(
       actions: [],
       intent: { kind: "pick", choice: choice.id },
     };
+  }
+  if (input === "t" && !key.ctrl && !key.meta) {
+    return { handled: true, actions: [], intent: { kind: "cycle_theme" } };
   }
   const digit = Number.parseInt(input, 10);
   if (

@@ -37,7 +37,7 @@ export function onboardingFooterFor(
   const quit = ctrlCArmed ? "ctrl+c press again to quit" : "ctrl+c quit";
   switch (onboarding.step) {
     case "choose":
-      return `↑/↓ move   enter select   1–3 jump   esc skip   ${quit}`;
+      return `↑/↓ move   enter select   1–3 jump   t theme   esc skip   ${quit}`;
     case "cloud":
       // "/ search" tracks the wizard phase, not the onboarding step: on
       // the key/URL/model text screens `/` is just a typed character.
