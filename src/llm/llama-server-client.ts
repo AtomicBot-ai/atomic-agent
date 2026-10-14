@@ -855,6 +855,9 @@ export class LlamaServerClient {
       async () => {
         const { controller, cleanup, timedOut } = this.createRequestController(
           request.signal,
+          "total",
+          undefined,
+          request.requestTimeoutMs,
         );
         try {
           const response = await this.fetchImpl(url, {
@@ -870,7 +873,7 @@ export class LlamaServerClient {
           this.recordThroughput(json);
           return normaliseCompletionResponse(json);
         } catch (err) {
-          throw this.wrapTransportError(err, url, timedOut());
+          throw this.wrapTransportError(err, url, timedOut(), request.requestTimeoutMs);
         } finally {
           cleanup();
         }
@@ -1116,6 +1119,8 @@ export class LlamaServerClient {
     externalSignal?: AbortSignal,
     initialKind: "total" | "first-token" = "total",
     watch?: { slotId: number },
+    /** A per-request `total` budget (`CompletionRequest.requestTimeoutMs`). */
+    totalBudgetMs?: number,
   ): {
     controller: AbortController;
     cleanup: () => void;
@@ -1147,7 +1152,7 @@ export class LlamaServerClient {
       setTimeout(() => {
         expired = kind;
         controller.abort();
-      }, this.budgetFor(kind));
+      }, kind === "total" && totalBudgetMs !== undefined ? totalBudgetMs : this.budgetFor(kind));
     let timer = arm();
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const timedOut = (): LlamaTimeoutKind | null => expired;
@@ -1406,6 +1411,7 @@ export class LlamaServerClient {
     err: unknown,
     url: string,
     timedOut: LlamaTimeoutKind | null,
+    totalBudgetMs: number = this.requestTimeoutMs,
   ): LlamaServerError {
     if (err instanceof LlamaServerError) return err;
     // Each deadline needs its own advice. "Lower completionMaxTokens"
@@ -1502,7 +1508,7 @@ export class LlamaServerClient {
     }
     if (timedOut === "total") {
       return new LlamaServerError(
-        `llama-server request exceeded requestTimeoutMs (${this.requestTimeoutMs}ms) — ` +
+        `llama-server request exceeded requestTimeoutMs (${totalBudgetMs}ms) — ` +
           `raise localModels.requestTimeoutMs or lower completionMaxTokens`,
         null,
         url,

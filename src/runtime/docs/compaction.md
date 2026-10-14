@@ -112,7 +112,10 @@ without replacing the checkpoint rather than silently truncating the requests.
 `timeoutMs` limits each call; old configs retain explicit values and gain the new
 defaults for missing fields. The overall deadline is the smaller of `maxTotalTimeoutMs` and
 `timeoutMs` times the planned call count. Small histories keep a single-call
-budget; by default the whole operation has a ten-minute ceiling. Timeouts
+budget; by default the whole operation has a ten-minute ceiling. Each call
+carries `timeoutMs` as its own request deadline, replacing the provider's
+`requestTimeoutMs` (five minutes for local llama-server by default) for that
+request only, and the process transport ceiling is raised to cover it. Timeouts
 report the failing part or total deadline and completed-call count. Cancellation
 aborts the current provider request; neither partial progress nor a late response
 can publish a checkpoint. No intermediate checkpoint is published. The current provider route or

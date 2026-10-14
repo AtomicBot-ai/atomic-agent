@@ -465,6 +465,53 @@ describe("LlamaServerClient.complete", () => {
     expect(calls).toBe(1);
   });
 
+  // Context compaction owns a longer deadline than the client's
+  // `requestTimeoutMs` (600 s against 300 s by default) and passes it per
+  // request: the client's own timer must not cut that summary first.
+  it("lets a per-request requestTimeoutMs replace the client's own budget", async () => {
+    const slow = (delayMs: number) =>
+      createMockFetch(
+        (_url, init) =>
+          new Promise((resolve, reject) => {
+            const timer = setTimeout(
+              () =>
+                resolve(
+                  new Response(JSON.stringify({ content: "summary", stop: true }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                  }),
+                ),
+              delayMs,
+            );
+            init.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+            });
+          }),
+      );
+    const longer = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs: 5,
+      fetchImpl: slow(40),
+      completionRetries: 1,
+      sleep: async () => {},
+    });
+    await expect(longer.complete({ prompt: "hi" })).rejects.toMatchObject({ timedOut: true });
+    const result = await longer.complete({ prompt: "hi", requestTimeoutMs: 2_000 });
+    expect(result.content).toBe("summary");
+
+    const shorter = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs: 60_000,
+      fetchImpl: slow(2_000),
+      completionRetries: 1,
+      sleep: async () => {},
+    });
+    const err = await shorter.complete({ prompt: "hi", requestTimeoutMs: 10 }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "LlamaServerError", timedOut: true });
+    expect((err as Error).message).toContain("requestTimeoutMs (10ms)");
+  });
+
   it("still retries genuine transport failures", async () => {
     let calls = 0;
     const client = new LlamaServerClient({

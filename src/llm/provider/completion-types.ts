@@ -127,6 +127,14 @@ export interface CompletionRequest {
   repeatLastN?: number;
   sessionId?: string;
   signal?: AbortSignal;
+  /**
+   * This request's own transport deadline, in place of the provider's
+   * configured `requestTimeoutMs`, for a caller that owns a longer
+   * deadline through `signal` (context compaction's per-part limit).
+   * Honoured by llama-server unary completions and OpenAI-compatible
+   * requests; never serialized.
+   */
+  requestTimeoutMs?: number;
   imageData?: ReadonlyArray<{ id: number; data: string }>;
   /** OpenAI tools path — ignored by grammar-only providers. */
   tools?: ReadonlyArray<Record<string, unknown>>;

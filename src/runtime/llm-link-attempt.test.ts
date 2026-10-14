@@ -62,6 +62,17 @@ describe("llm-link-attempt — the structured prompt", () => {
     expect(requests[0]?.grammar).toBe(params.grammar);
     expect(requests[0]?.prompt).toBe("flat");
   });
+
+  it("forwards a caller's own request deadline on both transports", async () => {
+    for (const transport of ["grammar", "native_tools"] as const) {
+      const { requests, provider } = recording(transport);
+      const deps = { resolveSlice: () => ({ provider, transport }) };
+      await completeOnLink(deps, { ...params, requestTimeoutMs: 600_000 }, transport);
+      await completeOnLink(deps, params, transport);
+      expect(requests[0]?.requestTimeoutMs).toBe(600_000);
+      expect(requests[1]).not.toHaveProperty("requestTimeoutMs");
+    }
+  });
 });
 
 function answer(request: CompletionRequest) {

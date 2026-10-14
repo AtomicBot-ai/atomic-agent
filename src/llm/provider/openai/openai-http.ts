@@ -513,7 +513,7 @@ export async function openAiPostJson(
   deps: OpenAiHttpDeps,
   path: string,
   body: Record<string, unknown>,
-  request: { signal?: AbortSignal },
+  request: { signal?: AbortSignal; requestTimeoutMs?: number },
   onSend?: OnOpenAiRequestBody,
 ): Promise<Record<string, unknown>> {
   return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
@@ -710,7 +710,7 @@ export async function openAiFetch(
   deps: OpenAiHttpDeps,
   path: string,
   body: Record<string, unknown> | null,
-  request: { signal?: AbortSignal },
+  request: { signal?: AbortSignal; requestTimeoutMs?: number },
   stream: boolean,
   method: "GET" | "POST" = "POST",
 ): Promise<Response> {
@@ -738,10 +738,12 @@ export async function openAiFetch(
   }
   const controller = new AbortController();
   let timedOut = false;
+  // A caller that owns a longer deadline (context compaction) replaces ours.
+  const timeoutMs = request.requestTimeoutMs ?? deps.requestTimeoutMs;
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, deps.requestTimeoutMs);
+  }, timeoutMs);
   const externalSignal = request.signal;
   const onAbort = (): void => controller.abort();
   if (externalSignal) {
@@ -765,7 +767,7 @@ export async function openAiFetch(
     if (externalSignal?.aborted) throw err;
     if (timedOut) {
       throw new OpenAiHttpError(
-        `openai provider timed out after ${deps.requestTimeoutMs}ms: ${deps.baseUrl}${path}`,
+        `openai provider timed out after ${timeoutMs}ms: ${deps.baseUrl}${path}`,
         null,
         `${deps.baseUrl}${path}`,
         true,

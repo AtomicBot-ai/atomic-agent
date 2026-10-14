@@ -212,6 +212,12 @@ describe("atomic compaction", () => {
     expect(await f.compactSession("chat")).toMatchObject({ status: "failed", message: expect.stringContaining("part 1/") });
     expect(f.persist).not.toHaveBeenCalled();
   });
+  it("hands its part limit to the provider so a shorter request timeout cannot cut it", async () => {
+    const f = fixture(); f.config.timeoutMs = 900_000;
+    expect((await f.compactSession("chat")).status).toBe("compacted");
+    expect(f.complete.mock.calls.length).toBeGreaterThan(0);
+    expect(f.complete.mock.calls.every(([p]) => p.requestTimeoutMs === 900_000)).toBe(true);
+  });
   it("bounds chunked input to the model window and covers original records without omissions", async () => {
     const state = history();
     const f = fixture(state);

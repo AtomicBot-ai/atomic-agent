@@ -132,6 +132,8 @@ export async function runContextCompaction(
           sessionId: `compaction:${state.id}`, providerId: route.providerId,
           maxTokens: plan.summaryMaxTokens, maxOutputTokens: plan.summaryMaxTokens,
           reasoningEffort: "low", signal: AbortSignal.any([signal, partDeadline.signal]),
+          // The part limit is ours: the provider's own request timer must not cut it first.
+          requestTimeoutMs: config.timeoutMs,
         });
       } finally {
         clearTimeout(partTimer);

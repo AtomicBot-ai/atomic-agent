@@ -111,6 +111,8 @@ export interface LlmStreamParams {
    * instead of waiting for the current step to finish on its own.
    */
   signal?: AbortSignal;
+  /** Per-request transport deadline; see `CompletionRequest.requestTimeoutMs`. */
+  requestTimeoutMs?: number;
   /**
    * Pins this completion to one configured provider id, bypassing the
    * provider fallback chain entirely. A fusion worker turn runs on the
