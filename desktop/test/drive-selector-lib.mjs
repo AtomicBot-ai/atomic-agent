@@ -45,6 +45,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assertThrowawayStateDir, driveEnv } from './state-guard.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
 
@@ -64,6 +66,7 @@ export async function launch({
   timeoutMs = 60000,
 } = {}) {
   if (!stateDir) throw new Error('launch(): stateDir is required — never write the operator’s own');
+  assertThrowawayStateDir(stateDir);
   // A window left over from an earlier run answers on this port, and
   // `attach` would happily talk to IT instead of the app about to start —
   // which is how a scenario ends up driving yesterday's build and reporting
@@ -86,7 +89,8 @@ export async function launch({
     ['electron', '.', `--remote-debugging-port=${port}`, `--user-data-dir=${stateDir}/.chromium-profile`, ...args],
     {
       cwd: DESKTOP_DIR,
-      env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...env },
+      // The guarded state dir is applied last, so `env` cannot swap it.
+      env: driveEnv(stateDir, env),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     },

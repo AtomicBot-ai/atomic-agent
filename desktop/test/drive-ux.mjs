@@ -55,6 +55,8 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assertThrowawayStateDir, driveEnv } from './state-guard.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DESKTOP_DIR = resolve(HERE, '..');
 
@@ -326,6 +328,7 @@ export async function attach(port, { child = null } = {}) {
  */
 export async function launch({ port = 9401, stateDir, args = [], env = {}, cwd = DESKTOP_DIR, quiet = true } = {}) {
   if (!stateDir) throw new Error('launch() needs an explicit stateDir — never the operator\'s own');
+  assertThrowawayStateDir(stateDir);
   /* Refuse to start on a port somebody else is already listening on. The
      alternative is worse than a crash: the new Electron cannot bind, and
      `attach` finds the OLD app's page target and drives that instead —
@@ -342,12 +345,18 @@ export async function launch({ port = 9401, stateDir, args = [], env = {}, cwd =
   }
   const child = spawn(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['electron', '.', `--remote-debugging-port=${port}`, ...args],
+    /* A throwaway Chromium profile inside the throwaway state dir, as
+       drive.mjs does: without it `electron .` shares ~/Library/Application
+       Support/Atomic Agent with the operator's installed app (prefs.json,
+       voice.json, unverified.json, localStorage) and two windows fight over
+       one profile. */
+    ['electron', '.', `--remote-debugging-port=${port}`, `--user-data-dir=${join(stateDir, '.chromium-profile')}`, ...args],
     {
       cwd,
       // Its own process group, so `close` can take the whole tree down.
       detached: process.platform !== 'win32',
-      env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...env },
+      // The guarded state dir is applied last, so `env` cannot swap it.
+      env: driveEnv(stateDir, env),
       stdio: quiet ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     },
   );

@@ -22,8 +22,10 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { launch, sleep } from './drive.mjs';
+import { assertThrowawayStateDir } from './state-guard.mjs';
 
 const DIR = process.env.ATAG_F1_DIR || '/tmp/atag-drive-f1';
+assertThrowawayStateDir(DIR); // before anything below wipes or seeds it
 const PORT = Number(process.env.ATAG_F1_PORT || 9470);
 const results = [];
 const check = (name, pass, detail) => {
