@@ -8,6 +8,7 @@ import {
   splitReadLines,
   type ReadCoverageDetail,
 } from "./fs-read-coverage.js";
+import { notARegularFileMessage } from "./fs-read-not-a-file.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 
 export const osFsReadTool: ToolDefinition = {
@@ -20,7 +21,7 @@ export const osFsReadTool: ToolDefinition = {
     const absolute = resolveUserPath(args.path, ctx.workingDir);
     const info = await stat(absolute);
     if (!info.isFile()) {
-      throw new Error(`os.fs.read: ${absolute} is not a regular file`);
+      throw new Error(notARegularFileMessage(absolute, info));
     }
     const canonical = await canonicalize(absolute);
 
