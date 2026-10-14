@@ -86,7 +86,10 @@ and reply reserve. Token pressure at the trigger ratio or impending
 window pressure after schemas, message overhead, reply reserve and safety margin;
 the local pair/section caps do not trigger it. The target is the
 target ratio of that allowance; manual requests use the smaller of allowance and
-current volume. Summary reserve is bounded by the configured maximum, 20% of the
+current volume. When the step's model profile has prefix reuse `none` (and
+applies to that step's route), the ratio is at most 0.35: every later step
+re-reads the whole prompt there, so a smaller kept tail is cheaper per step and
+postpones the next compaction. Summary reserve is bounded by the configured maximum, 20% of the
 history allowance, and half the target so small manual operations remain useful.
 When no safe reduction with a fresh complete tail exists, the result is `noop`.
 

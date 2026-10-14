@@ -100,7 +100,10 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     if (stalled && !request && !options.requested && stalled.route === routeKey() &&
         (prompt.compactionBudget?.activeTokens ?? 0) < stalled.tokens * AUTO_RETRY_AFTER_TIMEOUT_GROWTH) return undefined;
     if (prompt.cloudContext) input = { ...input, session: { ...input.session, cloudContext: prompt.cloudContext } };
-    const plan = planCompaction(input.session, prompt, config, request ? "manual" : options.requested);
+    // The same profile the step's own prompt budget follows (`buildPrompt`'s low water).
+    const prefixReuse = input.profileWindowApplies === false ? undefined : input.profile?.prefixReuse;
+    const plan = planCompaction(input.session, prompt, config, request ? "manual" : options.requested,
+      prefixReuse ? { prefixReuse } : {});
     if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: "No safe, useful reduction is available." }); return undefined; }
     const controller = request?.controller ?? new AbortController();
     active.set(input.session.id, controller);

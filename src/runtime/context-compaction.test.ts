@@ -10,7 +10,7 @@ import { normalizeSessionState } from "../session/normalize-session-state.js";
 import { compactionBoundaryHash, projectSessionConversation, safeCompactionCuts, validSessionCompaction } from "../session/session-compaction.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { planCompaction } from "../prompt/plan-compaction.js";
+import { NO_PREFIX_REUSE_TARGET_RATIO, planCompaction } from "../prompt/plan-compaction.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { buildNativeMessages } from "../llm/provider/openai/openai-native-messages.js";
@@ -110,6 +110,26 @@ describe("compaction configuration and projection", () => {
     expect(planCompaction(state, unknown, config, "manual")).not.toBeNull();
     const hugeLast = recordTurn(state, userTurn("x".repeat(100000)));
     expect(planCompaction(hugeLast, buildPrompt(input(hugeLast)), config, "manual")).toBeNull();
+  });
+  it("keeps a smaller tail for a model without prefix reuse, unless the operator chose smaller", async () => {
+    const state = history();
+    const wide = (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: 32000, conversationMaxTokens: 8000 });
+    const noReuse = (session: SessionState): BuildPromptInput => ({ ...wide(session), profile: { ...PLAIN_INSTRUCT_PROFILE, prefixReuse: "none" } });
+    const prompt = buildPrompt(noReuse(state));
+    const cap = prompt.compactionBudget!.cap;
+    const config = { ...createCompactionDefaults(), summaryMaxTokens: 250 };
+    const partial = planCompaction(state, prompt, config, "manual")!;
+    const none = planCompaction(state, prompt, config, "manual", { prefixReuse: "none" })!;
+    expect(partial.targetTokens).toBe(Math.floor(config.targetRatio * cap));
+    expect(none.targetTokens).toBe(Math.floor(NO_PREFIX_REUSE_TARGET_RATIO * cap));
+    expect(none.through).toBeGreaterThanOrEqual(partial.through);
+    expect(planCompaction(state, prompt, config, "manual", { prefixReuse: "partial" })).toEqual(partial);
+    const lower = planCompaction(state, prompt, { ...config, targetRatio: 0.2 }, "manual", { prefixReuse: "none" });
+    expect(lower?.targetTokens).toBe(Math.floor(0.2 * cap));
+    const f = fixture(state, noReuse);
+    expect(await f.compactSession(state.id)).toMatchObject({ status: "compacted" });
+    expect(f.stored().compaction!.tokensAfter).toBeLessThanOrEqual(none.targetTokens);
+    expect(f.stored().compaction!.coveredThrough).toBe(none.through);
   });
 });
 
