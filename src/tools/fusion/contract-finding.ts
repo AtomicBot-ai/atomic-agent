@@ -15,4 +15,3 @@ export function describeMissing(finding: ContractFinding): string {
   const detail = finding.detail === undefined ? "" : ` (${finding.detail})`;
   return `[${finding.task}] ${what} ${where}${detail}`;
 }
-
