@@ -8,7 +8,12 @@ import { getConfig, resetConfigCache } from "../../config/index.js";
 import { arrowKey, plainKey, returnKey } from "../mouse/synthetic-key.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { fakeSession } from "../test-fixtures.js";
-import { getActiveThemeName, setActiveTheme, THEMES } from "../theme/theme.js";
+import {
+  getActiveTheme,
+  getActiveThemeName,
+  setActiveTheme,
+  THEMES,
+} from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import {
@@ -118,6 +123,7 @@ describe("handleOnboardingStepKey", () => {
   });
 
   it("choose: t swaps to the next palette, persists it and records it", () => {
+    const previous = getActiveTheme();
     try {
       setActiveTheme(THEMES["classic-dark"]);
       const state = { ...stateAt("choose"), themeName: "classic-dark" };
@@ -135,7 +141,7 @@ describe("handleOnboardingStepKey", () => {
       expect(persisted).toEqual(["classic-light"]);
       expect(actions).toEqual([{ type: "theme_set", name: "classic-light" }]);
     } finally {
-      setActiveTheme(THEMES["classic-dark"]);
+      setActiveTheme(previous);
     }
   });
 
