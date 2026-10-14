@@ -57,6 +57,7 @@ const ATT_MAX_DIMENSION_PX = 2048;
 const ATT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;     // main/attachments.ts IMAGE_MAX_BYTES
 const ATT_DOCUMENT_MAX_BYTES = 20 * 1024 * 1024;  // main/attachments.ts DOCUMENT_MAX_BYTES
 const ATT_MAX_ITEMS = 10;
+const ATT_IMAGE_READ_MAX = 64 * 1024 * 1024;      // main/attachments.ts PICKED_IMAGE_READ_MAX: never decoded past this
 const ATT_THUMB_PX = 112;                         // a 56 px tile at 2x
 const ATT_HINT_LINE = 'The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images.';
 
@@ -116,6 +117,9 @@ function attBuildMessage(caption, items) {
 const ATT_STANDIN = /^The user sent (?:a file|\d+ files) without a message\.$/;
 const ATT_SAVED_LINE = /^- (.+) \(([^,()]+), (\d+(?:\.\d+)? (?:B|KB|MB))\)$/;
 const ATT_FAILED_LINE = /^- (.+): not saved \((.*)\)$/;
+/* Only a block whose files sit in an inbox (`…/inbox/<channel>/<yyyy-mm-dd>/<HHMMSS>-<name>`)
+   is one this format wrote: text someone typed that merely looks like one is shown as typed. */
+const ATT_INBOX_PATH = /[\\/]inbox[\\/][a-z0-9_-]+[\\/]\d{4}-\d{2}-\d{2}[\\/]\d{6}-[^\\/]+$/;
 /**
  * A user message that carries an `[attachments]` block, taken apart:
  * `{caption, items:[{path, name, mimeType, size, kind} | {name, reason, failed:true}]}`.
@@ -132,7 +136,7 @@ function attSplitMessage(text) {
   const items = [];
   for (const line of lines) {
     let m = ATT_SAVED_LINE.exec(line);
-    if (m) {
+    if (m && ATT_INBOX_PATH.test(m[1])) {
       const name = m[1].split(/[\\/]/).pop();
       const mimeType = m[2] === 'unknown type' ? null : m[2];
       items.push({path: m[1], name: attDisplayName(name), mimeType, size: m[3],
@@ -143,6 +147,7 @@ function attSplitMessage(text) {
     if (m) { items.push({name: m[1], reason: m[2], failed: true}); continue; }
     return null;
   }
+  if (!items.some((i) => !i.failed)) return null;
   const head = s.slice(0, at);
   return {caption: ATT_STANDIN.test(head) ? '' : head, items};
 }
@@ -290,7 +295,10 @@ async function attPrepare(item, src) {
   let saveArg;
   if (item.kind === 'image') {
     let bytes;
-    if (src.file) bytes = new Uint8Array(await src.file.arrayBuffer());
+    if (src.file) {
+      if (src.file.size > ATT_IMAGE_READ_MAX) return attFail(item, 'Images can be up to 10 MB; this one is ' + attFormatBytes(src.file.size));
+      bytes = new Uint8Array(await src.file.arrayBuffer());
+    }
     else {
       const res = BR && BR.attachReadPicked ? await BR.attachReadPicked(src.path) : null;
       if (!res || !res.ok) return attFail(item, (res && res.error) || 'The file could not be read');
@@ -325,6 +333,7 @@ async function attPrepare(item, src) {
   }
   if (!res || !res.ok) return attFail(item, (res && res.error) || 'The file could not be saved');
   item.saved = {path: res.path, mimeType: res.mimeType, bytes: res.bytes};
+  ATT_OWNED.add(res.path);
   item.kind = res.kind === 'image' ? 'image' : 'document';
   item.size = res.bytes;
   item.status = 'ready';
@@ -337,9 +346,36 @@ function attRemove(id) {
   const item = ATT.items.find((i) => i.id === id);
   if (!item) return;
   ATT.items = ATT.items.filter((i) => i !== item);
-  // A chip brought back from a sent message (resend) points at that message's file: it stays.
-  if (item.saved && !item.restored && BR && BR.attachDiscard) BR.attachDiscard(item.saved.path);
+  if (item.saved) attMaybeDiscard(item.saved.path);
   attRepaint();
+}
+
+/* Files this window saved into the inbox. One goes from the disk once nothing
+   still names it: no chip, no message in the transcript (a sent message, or a
+   resend's original), no queued message of any chat. A file this window did
+   not save (a chip brought back from a stored message) is never deleted. */
+const ATT_OWNED = new Set();
+function attNamed(path) {
+  const has = (t) => typeof t === 'string' && t.indexOf(path) >= 0;
+  try {
+    if (ATT.items.some((i) => i.saved && i.saved.path === path)) return true;
+    if (typeof S !== 'undefined') {
+      if ((S.log || []).some((m) => m && m.k === 'user' && has(m.text))) return true;
+      if ((S.queued || []).some(has)) return true;
+    }
+    if (typeof QUEUES !== 'undefined') for (const q of QUEUES.values()) if (q && (q.queued || []).some(has)) return true;
+  } catch (e) { return true; }   // unsure: keep the file
+  return false;
+}
+function attMaybeDiscard(path) {
+  if (!ATT_OWNED.has(path) || attNamed(path)) return;
+  ATT_OWNED.delete(path);
+  if (BR && BR.attachDiscard) BR.attachDiscard(path);
+}
+/** A queued message removed before it ran: the files only it named go. */
+function attForgetMessage(text) {
+  const split = attSplitMessage(text);
+  if (split) for (const it of split.items) if (!it.failed) attMaybeDiscard(it.path);
 }
 
 /** False only when the catalogue says the composer's model has no vision; null when nobody knows. */
@@ -380,7 +416,7 @@ function attToEditor(text) {
   if (!split) return text;
   for (const it of split.items) {
     if (it.failed || ATT.items.some((i) => i.saved && i.saved.path === it.path)) continue;
-    ATT.items.push({id: 'att' + (++ATT.seq), key: it.path, name: it.name, size: 0, method: 'restored', restored: true,
+    ATT.items.push({id: 'att' + (++ATT.seq), key: it.path, name: it.name, size: 0, method: 'restored',
       kind: it.kind, status: 'ready', thumb: null, error: '', warn: '', sizeText: it.size,
       saved: {path: it.path, mimeType: it.mimeType, bytes: attParseSize(it.size)}});
   }
@@ -391,6 +427,14 @@ function attParseSize(text) {
   const m = /^(\d+(?:\.\d+)?) (B|KB|MB)$/.exec(String(text || ''));
   if (!m) return 0;
   return Math.round(parseFloat(m[1]) * (m[2] === 'MB' ? 1024 * 1024 : m[2] === 'KB' ? 1024 : 1));
+}
+/** What a person reads of a message: its caption, or a word for its files when it has none. */
+function attPlainText(text) {
+  const split = attSplitMessage(text);
+  if (!split) return text;
+  if (split.caption) return split.caption;
+  const n = split.items.filter((i) => !i.failed).length;
+  return n === 1 ? '(1 file)' : '(' + n + ' files)';
 }
 /** A queued message's tray line: its caption, and how many files ride with it. */
 function attQueueLabel(text) {
@@ -464,11 +508,15 @@ function attPlaceMenu() {
 
 /* ---------- a user message in the transcript (ATO-406) ---------- */
 
-/** The image data: URLs main has handed back, by path (ATO-408's `imageDataUrl`). */
+/** Thumbnails of sent images, by path: `{ok:true, thumb}` (a 112 px data: URL,
+    never the full picture) or `{ok:false, reason}` from ATO-408's `imageDataUrl`.
+    The full picture is read again only to open the viewer, under ATO-408's own budget. */
 const ATT_IMG = new Map();
+/** Reads in flight, by path, so a redraw during one does not ask again. */
+const ATT_IMG_LOADING = new Map();
 function attImgCache(path) {
   const r = ATT_IMG.get(path);
-  return r && r.ok ? r.dataUrl : null;
+  return r && r.ok ? r.thumb : null;
 }
 /**
  * The inside of a user turn: the bubble with the caption as typed, and the
@@ -488,7 +536,7 @@ function attSentChipHTML(it) {
       + '</span><span class="attsub">Not attached</span></span></span>';
   }
   const known = ATT_IMG.get(it.path);
-  if (known && !known.ok && known.reason === 'missing') return attGoneChipHTML(it);
+  if ((known && !known.ok && known.reason === 'missing') || ATT_FILE_STATE.get(it.path) === 'missing') return attGoneChipHTML(it);
   if (it.kind === 'image' && !(known && !known.ok)) {
     const src = attImgCache(it.path);
     return '<button class="attchip is-img is-sent" data-att-open="' + esc(it.path) + '" title="' + esc(it.name + ' · ' + it.size) + '" aria-label="Open ' + esc(it.name) + '">'
@@ -511,6 +559,22 @@ function attGoneChipHTML(it) {
    (`data-att-check`) asks once whether its file is still there. Watching the
    DOM keeps this out of render(), which redraws the transcript wholesale. */
 const ATT_FILE_STATE = new Map();   // path → 'ok' | 'missing'
+/** One read per path: the picture is decoded once and only its thumbnail is kept. */
+function attLoadThumb(path) {
+  if (ATT_IMG.has(path)) return Promise.resolve(ATT_IMG.get(path));
+  if (ATT_IMG_LOADING.has(path)) return ATT_IMG_LOADING.get(path);
+  const p = Promise.resolve(BR.imageDataUrl(path)).then(async (res) => {
+    let r;
+    if (res && res.ok && typeof res.dataUrl === 'string') {
+      try { r = {ok: true, thumb: attThumb(await attLoadImage(res.dataUrl))}; } catch (e) { r = {ok: false, reason: 'missing'}; }
+      if (r.ok && !r.thumb) r = {ok: false, reason: 'too-large'};
+    } else r = {ok: false, reason: (res && res.reason) || 'missing'};
+    ATT_IMG.set(path, r);
+    return r;
+  }, () => ({ok: false, reason: 'missing'})).finally(() => ATT_IMG_LOADING.delete(path));
+  ATT_IMG_LOADING.set(path, p);
+  return p;
+}
 function attHydrate(root) {
   const scope = root && root.querySelectorAll ? root : document;
   scope.querySelectorAll('[data-att-hydrate]:not([data-att-asked])').forEach((el) => {
@@ -519,9 +583,7 @@ function attHydrate(root) {
     const known = ATT_IMG.get(path);
     if (known) { attApplyImage(el, path, known); return; }
     if (!(BR && BR.imageDataUrl)) return;   // ATO-408 not in this build: the icon stays
-    BR.imageDataUrl(path).then((res) => {
-      const r = res && typeof res === 'object' ? res : {ok: false, reason: 'missing'};
-      ATT_IMG.set(path, r);
+    attLoadThumb(path).then((r) => {
       document.querySelectorAll('[data-att-hydrate]').forEach((node) => {
         if (node.getAttribute('data-att-hydrate') === path) attApplyImage(node, path, r);
       });
@@ -532,9 +594,11 @@ function attHydrate(root) {
     const path = el.getAttribute('data-att-check');
     const st = ATT_FILE_STATE.get(path);
     if (st) { if (st === 'missing') attMarkGone(el); return; }
-    if (!(BR && BR.replyPaths)) return;
-    BR.replyPaths([path]).then((res) => {
-      const v = res && res.ok && res.files && res.files[0];
+    // The inbox check first: the state dir need not be under the home folder.
+    const ask = BR && BR.attachCheck ? BR.attachCheck(path) : BR && BR.replyPaths
+      ? BR.replyPaths([path]).then((res) => (res && res.ok && res.files && res.files[0]) || null) : null;
+    if (!ask) return;
+    ask.then((v) => {
       const missing = !!(v && v.why === 'missing');
       ATT_FILE_STATE.set(path, missing ? 'missing' : 'ok');
       if (missing) document.querySelectorAll('[data-att-check]').forEach((node) => { if (node.getAttribute('data-att-check') === path) attMarkGone(node); });
@@ -543,11 +607,11 @@ function attHydrate(root) {
 }
 function attApplyImage(el, path, r) {
   const chip = el.closest('.attchip');
-  if (r.ok && r.dataUrl) {
+  if (r.ok && r.thumb) {
     const img = document.createElement('img');
     img.className = 'attthumb';
     img.alt = '';
-    img.src = r.dataUrl;
+    img.src = r.thumb;
     el.replaceWith(img);
     return;
   }
@@ -566,29 +630,43 @@ function attMarkGone(el) {
   el.removeAttribute('data-att-file');
 }
 /**
- * A sent image, large, in ATO-408's viewer: `openImageViewer(path)` shows a
- * picture its CHAT_IMG cache holds, so the one this chip already loaded is
- * handed over first. Without that viewer (or when it declines), an event a
- * later viewer can answer, else the file opens in the system's own viewer.
+ * A sent image, large, in ATO-408's viewer. `openImageViewer(path)` shows what
+ * its own cache (`chatImage`, CHAT_IMG, with its memory budget) holds, so the
+ * picture is loaded there and the viewer opens once it has decoded. Without
+ * that viewer (or when it declines), an event a later viewer can answer, else
+ * the file opens in the system's own viewer.
  */
+const ATT_VIEW_WAIT_MS = 10000;
 function attOpenViewer(path, name) {
-  const dataUrl = attImgCache(path);
-  if (typeof openImageViewer === 'function') {
-    try {
-      if (dataUrl && typeof CHAT_IMG !== 'undefined' && !(CHAT_IMG.get(path) && CHAT_IMG.get(path).state === 'ok')) {
-        CHAT_IMG.set(path, {state: 'ok', url: dataUrl, node: null, reason: null});
-      }
-      if (openImageViewer(path) !== false) return;
-    } catch (e) { /* fall through to the file */ }
+  if (typeof openImageViewer === 'function' && typeof chatImage === 'function') {
+    const started = Date.now();
+    const tryOpen = () => {
+      let st;
+      try { st = chatImage(path); } catch (e) { st = null; }
+      if (st && st.state === 'loading' && Date.now() - started < ATT_VIEW_WAIT_MS) { setTimeout(tryOpen, 100); return; }
+      try { if (st && st.state === 'ok' && openImageViewer(path) !== false) return; } catch (e) { /* the file instead */ }
+      attOpenElsewhere(path, name);
+    };
+    tryOpen();
+    return;
   }
-  const ev = new CustomEvent('atomic:image-open', {detail: {path, dataUrl, name}, cancelable: true});
+  attOpenElsewhere(path, name);
+}
+function attOpenElsewhere(path, name) {
+  const ev = new CustomEvent('atomic:image-open', {detail: {path, name}, cancelable: true});
   if (!document.dispatchEvent(ev)) return;
   attOpenFile(path);
 }
+/** A sent file, opened (never run): the inbox route first, the reply route for a path outside it. */
 function attOpenFile(path) {
-  if (!(BR && BR.openReplyPath)) return;
-  BR.openReplyPath(path).then((res) => {
-    if (res && !res.ok) toast('Could not open the file', res.error || '', 'bad');
+  const viaInbox = BR && BR.attachOpen ? BR.attachOpen(path) : Promise.resolve({ok: false, why: 'outside-home'});
+  viaInbox.then((res) => {
+    if (res && res.ok) return;
+    if (res && res.why !== 'outside-home') { toast('Could not open the file', res.error || '', 'bad'); return; }
+    if (!(BR && BR.openReplyPath)) return;
+    return BR.openReplyPath(path).then((r) => {
+      if (r && !r.ok) toast('Could not open the file', r.error || '', 'bad');
+    });
   }).catch(() => {});
 }
 
@@ -705,5 +783,5 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {attClassifyName, attClassifyDroppedPaths, attBuildMessage, attSplitMessage, attFormatBytes,
-    attSizeBucket, attDisplayName, attQueueLabel, attParseSize, ATT_HINT_LINE};
+    attSizeBucket, attDisplayName, attQueueLabel, attPlainText, attParseSize, ATT_HINT_LINE};
 }

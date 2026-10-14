@@ -155,6 +155,8 @@ contextBridge.exposeInMainWorld("atomic", {
   attachReadPicked: (path: string) => ipcRenderer.invoke("attachments:readPicked", path),
   attachSave: (source: { path?: string; bytes?: Uint8Array; name?: string }) => ipcRenderer.invoke("attachments:save", source),
   attachDiscard: (path: string) => ipcRenderer.invoke("attachments:discard", path),
+  attachCheck: (path: string) => ipcRenderer.invoke("attachments:check", path),
+  attachOpen: (path: string) => ipcRenderer.invoke("attachments:open", path),
   /** A dropped File's path on disk ("" for one that has none); the sandboxed window cannot read it itself. */
   pathForFile: (file: File) => {
     try {

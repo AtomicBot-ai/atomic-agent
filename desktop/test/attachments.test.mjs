@@ -50,7 +50,7 @@ test("the block and the message are byte-identical to the channel inbox's", () =
 test("a stored message splits back into its caption and files", () => {
   const items = [
     { path: "/Users/n/My Files (old)/inbox/desktop/2026-10-14/090507-shot one.png", mimeType: "image/png", bytes: 2048 },
-    { path: "/x/090507-notes.md", mimeType: "text/markdown", bytes: 10 },
+    { path: "C:\\Users\\n\\.atomic-agent-desktop\\inbox\\desktop\\2026-10-14\\090507-notes.md", mimeType: "text/markdown", bytes: 10 },
   ];
   const s = R.attSplitMessage(R.attBuildMessage("line one\n\nline two", items));
   assert.equal(s.caption, "line one\n\nline two");
@@ -64,9 +64,17 @@ test("a stored message splits back into its caption and files", () => {
   // Plain text, a typed block that this format did not write: drawn as typed.
   assert.equal(R.attSplitMessage("hello"), null);
   assert.equal(R.attSplitMessage("see\n\n[attachments]\nmy own list"), null);
-  // The channels' failed line parses too.
-  const failed = R.attSplitMessage(M.buildAttachmentUserMessage("x", [{ status: "failed", name: "big.zip", reason: "too large" }]));
-  assert.deepEqual(failed.items, [{ name: "big.zip", reason: "too large", failed: true }]);
+  // The channels' failed line parses too, next to a file that landed.
+  const failed = R.attSplitMessage(M.buildAttachmentUserMessage("x", [
+    { status: "saved", saved: { path: "/s/inbox/telegram/2026-10-14/090507-a.jpg", mimeType: "image/jpeg", bytes: 5 } },
+    { status: "failed", name: "big.zip", reason: "too large" },
+  ]));
+  assert.deepEqual(failed.items[1], { name: "big.zip", reason: "too large", failed: true });
+  // Text that only looks like a block (paths outside an inbox, or nothing landed) is shown as typed.
+  assert.equal(R.attSplitMessage(R.attBuildMessage("x", [{ path: "/etc/hosts", mimeType: "text/plain", bytes: 1 }])), null);
+  assert.equal(R.attSplitMessage(M.buildAttachmentUserMessage("x", [{ status: "failed", name: "big.zip", reason: "too large" }])), null);
+  assert.equal(R.attPlainText(R.attBuildMessage("", items)), "(2 files)");
+  assert.equal(R.attPlainText(R.attBuildMessage("caption", items)), "caption");
   assert.equal(R.attQueueLabel(R.attBuildMessage("hi", items)), "hi · 2 files");
   assert.equal(R.attParseSize("120 KB"), 122880);
 });

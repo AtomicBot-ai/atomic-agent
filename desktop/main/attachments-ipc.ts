@@ -7,17 +7,23 @@
  *   attachments:save     a picked path or bytes the window holds → saved into
  *                        the inbox (attachments.ts saveAttachment)
  *   attachments:discard  a chip removed before sending: its inbox file goes
+ *   attachments:check / attachments:open  a sent file in the inbox: still
+ *                        there? / opened, never run (reply-paths.ts rules, with
+ *                        the inbox as the only folder allowed). The state dir
+ *                        need not be under the home folder, which is all
+ *                        `app:openReplyPath` allows.
  *
  * The window never names an arbitrary path to read: a path is only accepted
  * when this process's own dialog returned it. A drop and a paste hand over
  * bytes (the window has them: a dropped File, a clipboard image).
  */
 
-import { dialog, ipcMain, type BrowserWindow } from "electron";
+import { dialog, ipcMain, shell, type BrowserWindow } from "electron";
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
-import { discardAttachment, readPickedImage, saveAttachment, type AttachmentSource } from "./attachments.js";
+import { discardAttachment, inboxDir, readPickedImage, saveAttachment, type AttachmentSource } from "./attachments.js";
+import { replyPathVerdict } from "./reply-paths.js";
 
 /** The open dialog's two filters, mirroring renderer/attachments.js. */
 const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
@@ -90,4 +96,17 @@ export function wireAttachmentIpc(opts: { window: () => BrowserWindow | null; st
   ipcMain.handle("attachments:discard", (_event, p: unknown) =>
     typeof p === "string" ? discardAttachment(opts.stateDir, p) : false,
   );
+
+  const inboxVerdict = (p: unknown) => replyPathVerdict(p, inboxDir(opts.stateDir), process.platform);
+  ipcMain.handle("attachments:check", async (_event, p: unknown) => {
+    const v = await inboxVerdict(p);
+    return { ok: v.ok, why: v.why ?? null };
+  });
+  ipcMain.handle("attachments:open", async (_event, p: unknown) => {
+    const v = await inboxVerdict(p);
+    if (!v.ok || !v.abs) return { ok: false, why: v.why, error: v.why === "missing" ? "It is no longer there." : "Not a file in the attachments folder." };
+    if (v.reveal) { shell.showItemInFolder(v.abs); return { ok: true, revealed: true }; }
+    const err = await shell.openPath(v.abs);
+    return err ? { ok: false, why: "failed", error: err } : { ok: true };
+  });
 }

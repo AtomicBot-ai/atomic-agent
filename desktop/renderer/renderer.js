@@ -2741,7 +2741,8 @@ function copyMessage(id) {
   // over desktop prose as the agent's words.
   if (m.placeholder) { toast('Nothing to copy', 'that turn produced no reply', 'bad'); return; }
   ANX.messageAction('copy');
-  copyText(String(m.text || ''), 'Copied message');
+  // ATO-406: a user message with files copies as its caption, not the block of inbox paths.
+  copyText(m.k === 'user' ? attPlainText(String(m.text || '')) : String(m.text || ''), 'Copied message');
 }
 
 /* Retry = send this message's text again as a new turn. It cannot mean
@@ -6512,7 +6513,7 @@ function dropGateNoticesIfCleared() {
 }
 /** droppedPreview (src/tui/detached-turns.ts): one flat line, 60 columns. */
 function droppedPreview(text) {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = attPlainText(text).replace(/\s+/g, ' ').trim();
   return flat.length <= 60 ? flat : flat.slice(0, 59) + '…';
 }
 function answer(key) {
@@ -9516,7 +9517,8 @@ function drainOwed() {
 }
 /** Cancel a locally accepted message, including an unsaved chat's last one. */
 function unqueueMessage(at) {
-  S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1;
+  const gone = S.queued.splice(at, 1)[0]; if (at < STEER.ahead) STEER.ahead -= 1;
+  attForgetMessage(gone);   // ATO-405: files only this queued message named
   if (!S.queued.length) {
     DRAIN_OWED = false;
     const row = PENDING_CHATS.get(S.sessionId);
