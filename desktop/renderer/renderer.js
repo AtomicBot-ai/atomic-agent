@@ -1977,10 +1977,12 @@ let QUEUES_KEPT = null;
    one. */
 const FIRST_TURNS = new Map();
 const PENDING_CHATS = new Map();
+// ATO-430: a chat's title from its first message, cut at 72 characters with an ellipsis.
+function chatTitle(text) { return attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').replace(/^(.{71}).{2,}$/, '$1…'); }
 /** A local outbox chat remains reachable before its first HTTP turn exists. */
 function noteWaitingChat(id, text) {
   if (PENDING_CHATS.has(id)) return;
-  PENDING_CHATS.set(id, {id, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
+  PENDING_CHATS.set(id, {id, t:chatTitle(text) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, waiting:true, endedAt:null});
 }
 for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) noteWaitingChat(id, q.queued[0]);
@@ -4900,7 +4902,7 @@ function sessionSheet() {
   });
   return sheet('Switch session',
     '<label class="tk-inpwrap sesfilter">' + ic('search') + '<input id="sesq" value="' + esc(S.sesQ || '') + '" placeholder="Filter sessions…" spellcheck="false"></label>'
-    + '<div class="rows sesrows">' + (rows || '<div class="sesempty">No chats in this workspace yet.</div>') + '</div>',
+    + '<div class="rows sesrows">' + (rows || '<div class="sesempty">' + (q ? 'No chats match.' : 'No chats in this workspace yet.') + '</div>') + '</div>',
     '<button class="btn btn-g sm" data-act="close">Cancel</button><button class="btn btn-p sm" data-act="sesopen">Open</button>');
 }
 
@@ -7954,6 +7956,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (S.overlay || S.settings || S.menuOpen !== null) {
     if (k === 'Escape') { e.preventDefault(); if (S.settings) { S.settings = null; render(); } else act('close'); return; }
+    if (k === 'Enter' && e.target.id === 'sesq') { e.preventDefault(); act('sesopen'); return; }  // ATO-430
     return;
   }
 
@@ -8249,7 +8252,7 @@ function nameVisibleSessions() {
       const title = sessionTitleFromState(res.data); // an agent whose list rows carry no `title`
       const first = turns.find((t) => t.kind === 'user' && t.text);
       if (title) { cur.t = title; cur.titled = true; }
-      else if (!cur.titled) cur.t = first ? attQueueLabel(first.text).trim().replace(/\s+/g, ' ').replace(/^(.{71}).{2,}$/, '$1…') : '(empty)';
+      else if (!cur.titled) cur.t = first ? chatTitle(first.text) : '(empty)';
       cur.named = true;
       render();
     });
@@ -8364,7 +8367,7 @@ function noteFirstPrompt(turnId, sid) {
   if (text === undefined) return;
   FIRST_TURNS.delete(turnId);
   if (!sid || PENDING_CHATS.has(sid) || SESSIONS.some((s) => s.id === sid)) return;
-  PENDING_CHATS.set(sid, {id:sid, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+  PENDING_CHATS.set(sid, {id:sid, t:chatTitle(text) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, endedAt:null});
 }
 
@@ -19340,8 +19343,8 @@ function renderMarkdown(escaped) {
   const held = [];
   let t = escaped
     // ATO-430: the fence's info string (```js) is the language, not code: it moves to a small label.
-    .replace(/```(?:([\w+#.-]+)[ \t]*(?=\n))?([\s\S]*?)```/g, (m, lang, code) =>
-      '\u0000' + (held.push('<pre class="mdpre"' + (lang ? ' data-lang="' + lang + '"' : '') + '><code>' + code.replace(/^\n/, '') + '</code></pre>') - 1) + '\u0000')
+    .replace(/```(?:([\w+#.-]+)[ \t]*(?=\r?\n))?([\s\S]*?)```/g, (m, lang, code) =>
+      '\u0000' + (held.push('<pre class="mdpre"' + (lang ? ' data-lang="' + lang + '"' : '') + '><code>' + code.replace(/^\r?\n/, '') + '</code></pre>') - 1) + '\u0000')
     .replace(/`([^`\n]+)`/g, (m, code) =>
       '\u0000' + (held.push('<code class="mdcode">' + code + '</code>') - 1) + '\u0000');
 
