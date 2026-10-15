@@ -4890,7 +4890,8 @@ function sessionSheet() {
   let rows = '';
   // item 6: the "N turns" subtitle is gone everywhere, so this sheet carries
   // the same dot and the same one-word state the sidebar row carries.
-  SESSIONS.forEach((s) => {
+  const q = (S.sesQ || '').trim().toLowerCase();  // ATO-430: the filter box narrows the rows by title
+  SESSIONS.filter((s) => !q || String(s.t).toLowerCase().includes(q)).forEach((s) => {
     const [state, tip] = chatDot(s);
     rows += '<button class="row' + (s.id === S.sessionId ? ' on' : '') + '" data-ses="' + esc(s.id) + '" title="' + esc(s.t + ' · ' + tip) + '">'
       + '<span class="' + ovDotCls(state, tip) + '"></span>'
@@ -4898,9 +4899,9 @@ function sessionSheet() {
       + '<span class="meta">' + esc(chatStatusWord(s)) + '</span></button>';
   });
   return sheet('Switch session',
-    '<label class="tk-inpwrap sesfilter">' + ic('search') + '<input placeholder="Filter sessions…" spellcheck="false"></label>'
+    '<label class="tk-inpwrap sesfilter">' + ic('search') + '<input id="sesq" value="' + esc(S.sesQ || '') + '" placeholder="Filter sessions…" spellcheck="false"></label>'
     + '<div class="rows sesrows">' + (rows || '<div class="sesempty">No chats in this workspace yet.</div>') + '</div>',
-    '<button class="btn btn-g sm" data-act="close">Cancel</button><button class="btn btn-p sm" data-act="close">Open</button>');
+    '<button class="btn btn-g sm" data-act="close">Cancel</button><button class="btn btn-p sm" data-act="sesopen">Open</button>');
 }
 
 function shortcutsSheet() {
@@ -5939,7 +5940,9 @@ function act(a) {
                              render(); chatToast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); refreshSkillList(); return; }
-  if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
+  if (a === 'session:switch') { close(); S.sesQ = ''; S.overlay = 'sessions'; render(); return; }
+  // ATO-430: Open opens the first row the filter left (Cancel only closes).
+  if (a === 'sesopen') { const r = document.querySelector('.sesrows > .row[data-ses]'); if (r) act('ses:' + r.dataset.ses); else { close(); render(); } return; }
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
                         S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
@@ -6959,6 +6962,7 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
+  if (e.target.id === 'sesq') { S.sesQ = e.target.value; renderOverlays(); return; }
   // Item 7: Tasks tab inputs edit state in place; only the preview block repaints.
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
   // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
@@ -7980,8 +7984,9 @@ document.addEventListener('keydown', (e) => {
     if (!OB.open && (SEL.open || WIZ.phase || S.alert)) { act('close'); return; }
     const sc = $('#scroller');
     if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
-    if (S.busy) { abort(); return; }
+    // ATO-430: an open toast goes first, so closing it never stops a running answer.
     if (S.toasts.length) { S.toasts.pop(); renderToasts(); return; }
+    if (S.busy) { abort(); return; }
     // r4-ui item 5: renderOverlays draws four surfaces that are NOT S.overlay,
     // so the gate above (S.overlay || S.settings || S.menuOpen) does not catch
     // them and Escape reaches this block with a modal on screen. The selector,
@@ -8244,7 +8249,7 @@ function nameVisibleSessions() {
       const title = sessionTitleFromState(res.data); // an agent whose list rows carry no `title`
       const first = turns.find((t) => t.kind === 'user' && t.text);
       if (title) { cur.t = title; cur.titled = true; }
-      else if (!cur.titled) cur.t = first ? attQueueLabel(first.text).trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      else if (!cur.titled) cur.t = first ? attQueueLabel(first.text).trim().replace(/\s+/g, ' ').replace(/^(.{71}).{2,}$/, '$1…') : '(empty)';
       cur.named = true;
       render();
     });
@@ -19334,8 +19339,9 @@ function mdTableAt(lines, at) {
 function renderMarkdown(escaped) {
   const held = [];
   let t = escaped
-    .replace(/```([\s\S]*?)```/g, (m, code) =>
-      '\u0000' + (held.push('<pre class="mdpre"><code>' + code.replace(/^\n/, '') + '</code></pre>') - 1) + '\u0000')
+    // ATO-430: the fence's info string (```js) is the language, not code: it moves to a small label.
+    .replace(/```(?:([\w+#.-]+)[ \t]*(?=\n))?([\s\S]*?)```/g, (m, lang, code) =>
+      '\u0000' + (held.push('<pre class="mdpre"' + (lang ? ' data-lang="' + lang + '"' : '') + '><code>' + code.replace(/^\n/, '') + '</code></pre>') - 1) + '\u0000')
     .replace(/`([^`\n]+)`/g, (m, code) =>
       '\u0000' + (held.push('<code class="mdcode">' + code + '</code>') - 1) + '\u0000');
 

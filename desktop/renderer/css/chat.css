@@ -125,6 +125,8 @@
 .prose .mdpre{display:inline-block;width:100%;vertical-align:top;margin:4px 0;padding:10px 12px;
   background:var(--panel-2);border-radius:var(--r-well);overflow-x:auto;white-space:pre;font-size:12px;line-height:1.6}
 .prose .mdpre code{font:400 12px/1.6 var(--font-mono);white-space:pre}
+/* ATO-430: the fence's language, as a small label above the code. */
+.prose .mdpre[data-lang]::before{content:attr(data-lang);display:block;margin-bottom:4px;font:500 11px/16px var(--font-ui);color:var(--ink-3)}
 /* ATO-163: markdown tables. One line of markup, so the wrapper sets white-space back to normal;
    it scrolls sideways rather than widening the reply. Cells wrap; the header row is the quiet one. */
 .prose .mdtbl{display:inline-block;width:100%;vertical-align:top;margin:4px 0;overflow-x:auto;white-space:normal}
