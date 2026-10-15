@@ -84,7 +84,7 @@ test("provider import migrates old cloud entries without resetting desktop choic
       { id: "inherit", kind: "openrouter" },
     ] } };
     const result = await withCliStandIn(async (args, input) => {
-      if (args.join(" ") === "config get") return { ok: true, stdout: JSON.stringify(config), stderr: "" };
+      if (args[0] === "config" && args[1] === "get") return { ok: true, stdout: JSON.stringify(config), stderr: "" };
       assert.deepEqual(args, ["config", "set", "-"]);
       config = JSON.parse(input);
       return { ok: true, stdout: "", stderr: "" };
