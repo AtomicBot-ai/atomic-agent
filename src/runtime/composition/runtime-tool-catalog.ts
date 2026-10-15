@@ -26,6 +26,9 @@ import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
+import { openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
+import { captureImageGenerated } from "../../analytics/analytics-events.js";
+import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
 import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
@@ -161,6 +164,26 @@ export function registerRuntimeVisionTools(input: {
       return entry ? visionCapableAlternatives(entry) : [];
     },
     logger,
+  });
+}
+
+/**
+ * `image.generate`: registered always, offered while an OpenRouter key is
+ * configured (the `image` gate below). Key, data folder and analytics
+ * client are read per call, so a key saved or analytics turned off
+ * mid-session applies to the next picture.
+ */
+export function registerRuntimeImageTools(input: {
+  toolRegistry: ToolRegistry;
+  dangerous: DangerousToolOptions;
+  getAnalytics: () => AnalyticsClient | null;
+}): void {
+  const { toolRegistry, dangerous, getAnalytics } = input;
+  registerImageTools(toolRegistry, {
+    ...dangerous,
+    dataDir: () => getConfig().paths.localModelsDataDir,
+    openRouterKey: () => openRouterImageKey(getConfig()),
+    report: (event) => captureImageGenerated(getAnalytics(), event),
   });
 }
 
@@ -321,6 +344,7 @@ export async function connectRuntimeMcpCatalog(input: {
       // keys off it) only exists while the resolver says fusion — an
       // orchestrator that cannot delegate must not be told it can.
       fusion: { enabled: resolveCurrentRunMode().effective === "fusion" },
+      image: { available: openRouterImageKey(getConfig()) !== undefined },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -354,9 +378,10 @@ export async function connectRuntimeMcpCatalog(input: {
   // The vision gate is memoised the same way and for the same reason:
   // switching to a provider that cannot see drops `vision.describe`
   // from the prompt, switching back restores it — one prefix change per
-  // flip, none while the route holds.
+  // flip, none while the route holds. The image gate too: saving or
+  // removing an OpenRouter key adds or drops `image.generate`.
   const liveDescriptorGates = (): string =>
-    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}`;
+    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}`;
   let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
   let cachedDescriptorGates = liveDescriptorGates();
   const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {

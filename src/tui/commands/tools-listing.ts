@@ -4,6 +4,7 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { resolveGithubToken } from "../../github/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "../../runtime/filter-disabled-tools.js";
+import { openRouterImageKey } from "../../tools/image/openrouter-key.js";
 
 /**
  * Human-readable grouping for `/tools`. Built-in tools are namespaced
@@ -39,8 +40,9 @@ const FAMILY_ALIASES: ReadonlyMap<string, string> = new Map([
   ["memory", "memory"],
   ["notes", "memory.notes"],
   ["vision", "vision"],
-  ["image", "vision"],
-  ["images", "vision"],
+  ["picture", "vision"],
+  ["images", "image"],
+  ["draw", "image"],
   ["git", "os.git"],
 ]);
 
@@ -65,7 +67,10 @@ export interface ToolGateSourceConfig {
     readonly agentToolsEnabled: boolean;
   };
   readonly mcp: { readonly servers: readonly unknown[] };
-  readonly llm?: { readonly runMode?: { readonly mode?: string } };
+  readonly llm?: {
+    readonly runMode?: { readonly mode?: string };
+    readonly providers?: readonly { readonly kind: string; readonly apiKey?: string; readonly baseUrl?: string }[];
+  };
 }
 
 /**
@@ -113,6 +118,7 @@ export function effectiveToolDescriptors(
     // exact rather than approximated.
     github: { connected: resolveGithubToken(undefined, env) !== null },
     fusion: { enabled: config.llm?.runMode?.mode === "fusion" },
+    image: { available: openRouterImageKey(config, env) !== undefined },
   });
 }
 
