@@ -83,6 +83,16 @@ const PLAN = { on:false, itemId:null, sessionId:null, startedMode:null, busy:fal
    when it accepts the execute message — so ["mode:auto","send"] is the whole
    record that the mode change went first. */
 const PLAN_TRACE = [];
+
+/* ATO-416 (C16): main/shared-state-notice.ts SHARED_SETUP_NOTICE, verbatim.
+   Drawn as a blue notice over the empty chat's greeting (emptyChat), so it
+   is the first thing the window says and leaves with the greeting when the
+   first message is sent: it is about this window, not any one chat, so it
+   is never written into a transcript. Main hands it out once. Declared up
+   here, with the window's other state: render() runs while this file is
+   still loading, and emptyChat reads these. */
+const SHARED_SETUP_NOTICE = 'Atomic Agent on this computer is already set up. The desktop app uses the same chats, memory, skills and settings as the terminal.';
+const SHARED_SETUP = { show: false };
 /* src/tui/components/plan-handoff.tsx EXECUTE_PLAN_MESSAGE, verbatim. */
 const EXECUTE_PLAN_MESSAGE = 'Carry out the plan you just described. Plan mode is off now, so your tools work again — go ahead and make the changes.';
 /* The composer's stance. Read from and written to /api/coding-mode, which
@@ -14505,13 +14515,6 @@ async function obBootGate(fr, freshAtBoot) {
   if (res && res.ok && needsOnboarding(res.config, ids)) openOnboarding();
 }
 
-/* ATO-416 (C16): main/shared-state-notice.ts SHARED_SETUP_NOTICE, verbatim.
-   Drawn as a blue notice over the empty chat's greeting (emptyChat), so it
-   is the first thing the window says and leaves with the greeting when the
-   first message is sent: it is about this window, not any one chat, so it
-   is never written into a transcript. Main hands it out once. */
-const SHARED_SETUP_NOTICE = 'Atomic Agent on this computer is already set up. The desktop app uses the same chats, memory, skills and settings as the terminal.';
-const SHARED_SETUP = { show: false };
 function sharedSetupNoticeShow() {
   SHARED_SETUP.show = true;
   render();
