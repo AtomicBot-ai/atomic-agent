@@ -87,6 +87,11 @@ const ANX = (() => {
 
   /* ---------- message actions ---------- */
   function messageAction(action) { track('message_action', {action}); }
+  /* ATO-406: kind, a size bucket and the way in; nothing about the file itself. */
+  function attachmentAdded(kind, bytes, method) {
+    const size = bytes < 100 * 1024 ? 'lt_100kb' : bytes < 1024 * 1024 ? 'lt_1mb' : bytes < 10 * 1024 * 1024 ? 'lt_10mb' : 'gte_10mb';
+    track('attachment_added', {kind: kind === 'image' ? 'image' : 'document', size, method: method === 'drop' || method === 'paste' ? method : 'button'});
+  }
 
   /* ---------- approvals ---------- */
   const apprShownAt = new WeakMap();
@@ -249,7 +254,7 @@ const ANX = (() => {
   }
 
   return {
-    track, via, viaNow, sanitizeAct, aroundAct, slashUsed, messageAction,
+    track, via, viaNow, sanitizeAct, aroundAct, slashUsed, messageAction, attachmentAdded,
     apprShown, apprAnswered, apprClosed, modeVia, modeChanged, planHandoff, paneTick,
     obStep, obSkipped, modelPicked, ramBucket, endpointTested, providerStarted, providerFailed,
     mcpAdded, mcpAction,

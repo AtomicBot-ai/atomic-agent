@@ -258,6 +258,16 @@ export const EVENTS: Record<string, EventSpec> = {
     },
   },
   plan_handoff: { owner: "ui", props: { choice: en(["auto", "bypass", "dismiss"]) } },
+  /* ATO-406: a file added to the composer and saved for the agent. What kind,
+     a size bucket (never the size), and how it came in; never its name or path. */
+  attachment_added: {
+    owner: "ui",
+    props: {
+      kind: en(["image", "document"]),
+      size: en(["lt_100kb", "lt_1mb", "lt_10mb", "gte_10mb"]),
+      method: en(["button", "drop", "paste"]),
+    },
+  },
 
   /* ---- navigation and features ---- */
   /* `prefix`, `prefix:tail` or `runmode:workers:N` — the renderer keeps only enum tails; uiActionOk refuses anything id-like. */

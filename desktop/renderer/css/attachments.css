@@ -1,0 +1,83 @@
+/* ============================================================
+   ATO-403 — attachments (renderer/attachments.js).
+   The "+" button beside the mic and its two-row menu, the chips above the
+   message box, the drop zone, and the chips under a sent message.
+   Loaded after composer.css. Colours come from tokens only.
+   ============================================================ */
+
+/* ---- "+" and its menu -------------------------------------------------- */
+.attbtn{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:50%;
+  background:transparent;color:var(--ink);
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.attbtn svg{width:16px;height:16px}
+.attbtn:hover,.attbtn.is-open{background:var(--hover)}
+
+.composerwrap > .attmenu{position:absolute;bottom:calc(100% - 4px);z-index:40;min-width:160px;
+  display:flex;flex-direction:column;gap:1px;padding:6px;border-radius:var(--r-pop);
+  background:var(--lift);box-shadow:var(--sh-pop)}
+.composerwrap > .attmenu[hidden]{display:none}
+.attmenurow{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:var(--r-row);
+  background:transparent;color:var(--ink);font:500 13px/1 var(--font-ui);text-align:left}
+.attmenurow svg{width:15px;height:15px;color:var(--ink-2)}
+.attmenurow:hover{background:var(--hover)}
+
+/* ---- Chips above the box ------------------------------------------------ */
+.attstrip{display:flex;flex-wrap:wrap;gap:8px;min-width:0;padding:2px 0 2px}
+.attstrip[hidden]{display:none}
+
+.attchip{position:relative;flex:none;display:inline-flex;align-items:center;min-width:0;
+  border-radius:12px;background:var(--panel-2);color:var(--ink)}
+.attchip.is-img{width:56px;height:56px;overflow:hidden;padding:0}
+.attthumb{display:block;width:56px;height:56px;object-fit:cover}
+.attico{display:grid;place-items:center;color:var(--ink-3)}
+.attico svg{width:20px;height:20px}
+.attchip.is-doc{gap:8px;height:48px;max-width:240px;padding:0 30px 0 8px}
+.atticon{flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:8px;
+  background:var(--paper);color:var(--ink-2)}
+.atticon svg{width:16px;height:16px}
+.attmeta{display:flex;flex-direction:column;gap:2px;min-width:0}
+.attname{font:500 12.5px/1.25 var(--font-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.attsub{font:400 11.5px/1.25 var(--font-ui);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-variant-numeric:tabular-nums}
+.attchip.is-err{background:var(--critical-wash)}
+.attchip.is-err .atticon{color:var(--critical)}
+.attchip.is-err .attsub{color:var(--critical);white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.attchip.is-err.is-doc{height:auto;min-height:48px;padding-top:6px;padding-bottom:6px}
+.attchip.is-busy .attthumb{opacity:.55}
+
+.attx{position:absolute;top:4px;right:4px;width:20px;height:20px;display:grid;place-items:center;border-radius:50%;
+  background:color-mix(in srgb, var(--ink) 72%, transparent);color:var(--paper);opacity:.0;
+  transition:opacity var(--t-state) var(--ease)}
+.attx svg{width:11px;height:11px;stroke-width:2.4}
+.attchip:hover .attx,.attx:focus-visible,.attchip.is-err .attx{opacity:1}
+.attchip.is-doc .attx{top:50%;margin-top:-10px;background:transparent;color:var(--ink-2);opacity:1}
+.attchip.is-doc .attx:hover{background:var(--hover);color:var(--ink)}
+
+.attspin{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;
+  border:2px solid color-mix(in srgb, var(--paper) 60%, transparent);border-top-color:var(--ink);
+  animation:att-spin .9s linear infinite}
+@keyframes att-spin{to{transform:rotate(360deg)}}
+.attwarn{position:absolute;left:4px;bottom:4px;width:18px;height:18px;display:grid;place-items:center;border-radius:50%;
+  background:var(--paper);color:var(--amber-text)}
+.attwarn svg{width:11px;height:11px}
+
+/* ---- The drop zone ------------------------------------------------------ */
+.attdrop{display:none}
+.composer.att-dragging{box-shadow:0 0 0 2px var(--brand),var(--sh-comp)}
+.composer.att-dragging .attdrop{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;gap:8px;
+  border-radius:inherit;pointer-events:none;
+  background:color-mix(in srgb, var(--brand) 12%, var(--lift));color:var(--ink);font:500 13.5px/1 var(--font-ui)}
+.composer.att-dragging .attdrop svg{width:16px;height:16px;color:var(--brand)}
+
+/* ---- Under a sent message ---------------------------------------------- */
+.turn.usr .attsent{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:74%;margin:6px 0 0 auto}
+.turn.usr .attsent:first-child{margin-top:0}
+.attchip.is-sent{cursor:pointer;text-align:left}
+.attchip.is-sent.is-img{width:96px;height:96px}
+.attchip.is-sent .attthumb{width:96px;height:96px}
+.attchip.is-sent.is-doc{padding-right:12px}
+.attchip.is-sent:hover{filter:brightness(.97)}
+.attchip.is-gone{cursor:default;opacity:.6}
+.attchip.is-gone .attsub{color:var(--ink-3)}
+
+@media (prefers-reduced-motion: reduce){.attspin{animation:none}}
