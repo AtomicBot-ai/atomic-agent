@@ -8573,6 +8573,18 @@ function liveSetWait(w) {
   if (WAIT && !WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
   if (!WAIT && WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
 }
+/* ATO-428: the turn's first output (reply text, reasoning, a tool call) is
+   the proof the model answers. On a cold local start `provider_recovered`
+   came only with the turn's end, so the strip ("attempt 5 · next try 0s")
+   and the "No answer from …" lines stood over a reply already streaming.
+   They go here as that frame takes them; a later wait raises them again,
+   and a failure still gets its own row at the turn's end. */
+function waitOverByOutput(item) {
+  if (!WAIT) return;
+  liveSetWait(null);
+  if (item) tpDropWaitNotes(item.id);
+  render();
+}
 
 /** Chat `id`'s turn this window started: running (`live`), or the last one, ended. */
 function liveTurnOf(id, live) {
@@ -9258,6 +9270,7 @@ function onChatEvent(ev) {
   if (ev.kind === 'reasoning_progress') {
     const text = pick(ev.payload, 'delta', 'text', 'content') || '';
     if (!text || !item) return;   // review fix: no streaming item on screen, nothing to splice against
+    waitOverByOutput(item);   // ATO-428
     let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
     if (!block) {
       // ATO-207: one row per step — a tool call ends the step (tool_progress clears S.reasonId).
@@ -9274,6 +9287,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'tool_progress') {
     const name = pick(ev.payload, 'tool', 'name') || 'tool';
+    waitOverByOutput(item);   // ATO-428
     if (name === 'reply' || name === 'finish' || !item) return;   // review fix: see above
     // The stream carries the args as `label` (stringified, clipped to 120).
     const arg = pick(ev.payload, 'label') || '';
@@ -9307,6 +9321,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'delta') {
     if (item) { item.text += ev.text; streamPaint('chat'); }   // 13/14: the transcript, once per frame
+    if (ev.text) waitOverByOutput(item);   // ATO-428
     return;
   }
   /* ATO-408: the files the reply that ends the turn delivers (agent with
