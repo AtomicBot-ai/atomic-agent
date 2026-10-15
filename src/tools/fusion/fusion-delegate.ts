@@ -516,6 +516,33 @@ export function buildFusionDelegateTool(
           });
         }
       }
+      // A parsed checklist is not yet executable. Missing verifier arguments
+      // must remain repairable while captured item names and values stay pinned.
+      const incompleteCheckIndex = checklist.findIndex((check) => {
+        const { item: _item, task: _task, ...spec } = check;
+        return !completeVerifySpec(spec);
+      });
+      if (incompleteCheckIndex >= 0) {
+        const items = behaviorChecklistItems(checklist);
+        const line = uncheckedChecklistVerdict(
+          items, "not run — verify.run arguments are incomplete or invalid",
+        );
+        if (pendingChecklist !== undefined) {
+          pendingChecklistBySession.set(ctx.sessionId, {
+            ...pendingChecklist, remaining: [...items], lastVerdict: line,
+          });
+        }
+        return error(
+          "contract.checks[" + incompleteCheckIndex +
+            "] has incomplete or invalid verify.run arguments; fill missing fields without replacing captured values\n" + line,
+          {
+            reason: "behavior-checklist-invalid",
+            checklistPassed: false,
+            checklistVerdict: line,
+            requiredChecklistItems: items,
+          },
+        );
+      }
       // Pin before dispatch too: a refused or interrupted fan-out cannot erase
       // the checklist. No full-checklist round has failed yet.
       if (checklist.length > 0 && pendingChecklist?.signature === undefined) {

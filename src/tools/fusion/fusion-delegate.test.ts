@@ -1802,6 +1802,47 @@ describe("fusion.delegate", () => {
       } finally { rmSync(dir, { recursive: true, force: true }); }
     });
 
+
+    it("repairs a named incomplete command check without changing captured assertions", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "fusion-check-incomplete-cmd-"));
+      const runTurn = vi.fn(async () => turnResult());
+      const runChecks = vi.fn((specs, context) => runVerifyChecks(specs, context));
+      const tool = buildFusionDelegateTool(deps({
+        resolveOperatorTurnId: () => "turn-incomplete-command",
+        runTurn, runChecks,
+      }));
+      const incomplete = {
+        item: "wall", kind: "command",
+        args: ["-e", "process.exit(0)"], checks: ["exit 0"],
+      };
+      const callCtx = ctx({ workingDir: dir });
+      try {
+        const first = await tool.run({ tasks: [TASKS[0]], contract: { checks: [incomplete] } }, callCtx);
+        expect(first.status).toBe("error");
+        expect(first.summary).toContain("wall=UNCHECKED");
+        expect(runTurn).not.toHaveBeenCalled();
+        expect(runChecks).not.toHaveBeenCalled();
+
+        const altered = await tool.run({
+          tasks: [TASKS[0]], contract: {
+            checks: [{ ...incomplete, args: ["-e", "process.exit(1)"], cmd: process.execPath }],
+          },
+        }, callCtx);
+        expect(altered.details.reason).toBe("behavior-checklist-changed");
+        expect(runTurn).not.toHaveBeenCalled();
+
+        const fixed = await tool.run({
+          tasks: [TASKS[0]], contract: { checks: [{ ...incomplete, cmd: process.execPath }] },
+        }, callCtx);
+        expect(fixed.status).toBe("ok");
+        expect(fixed.details.checklistPassed).toBe(true);
+        expect(runChecks).toHaveBeenCalledOnce();
+        expect(runTurn).toHaveBeenCalledOnce();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it("returns only failing or unchecked items after three full rounds", async () => {
       const runTurn = vi.fn(async () => turnResult());
       const tool = buildFusionDelegateTool(deps({ runTurn,
