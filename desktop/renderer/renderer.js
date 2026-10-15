@@ -5944,7 +5944,7 @@ function act(a) {
                              refreshContext(); refreshSkillList(); return; }
   if (a === 'session:switch') { close(); S.sesQ = ''; S.overlay = 'sessions'; render(); return; }
   // ATO-430: Open opens the first row the filter left (Cancel only closes).
-  if (a === 'sesopen') { const r = document.querySelector('.sesrows > .row[data-ses]'); if (r) act('ses:' + r.dataset.ses); else { close(); render(); } return; }
+  if (a === 'sesopen') { const r = S.sesQ ? document.querySelector('.sesrows > .row[data-ses]') : null; if (r) act('ses:' + r.dataset.ses); else { close(); render(); } return; }
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
                         S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
