@@ -8849,6 +8849,18 @@ function providerFailure(ev) {
     || /fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|socket hang up|network|timed out/i.test(msg);
 }
 
+/** ATO-391: a `transport` failure the provider answered. The agent files
+    every cloud HTTP error (401, 402, 404, 429, 400) and a missing or
+    signed-out CLI as `transport`; its sentence names the status, e.g.
+    '"openrouter" answered 404 (not found).' or '... (429).' (openai-http.ts
+    humanizeOpenAiHttpError). No status ("fetch failed", a refused
+    connection, a timeout) is the endpoint not answering. */
+function providerReplied(ev) {
+  const msg = String((ev && ev.error) || '');
+  return String((ev && ev.category) || '') === 'transport'
+    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|isn't installed \(the|is not signed in\./.test(msg);
+}
+
 /** How long this turn had been going, in words. */
 function turnWaited() {
   if (!S.turnStartedAt) return '';
@@ -8862,6 +8874,15 @@ function turnWaited() {
 function turnFailure(ev) {
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
+  /* ATO-391: the provider replied, with an error (a 404 for a model it does
+     not have, a 429, a 400) or a CLI provider is missing or signed out. The
+     same neutral phrase as the terminal; the agent's sentence goes under
+     Details. */
+  if (providerReplied(ev)) {
+    const id = selActiveProviderId();
+    return {text: esc("Couldn't get a reply from " + (id ? providerWord(id) : 'the provider') + '.'
+      + (turnWaited() ? ' The turn gave up' + turnWaited() + '.' : '')), detail: String(ev.error)};
+  }
   const cat = String((ev && ev.category) || '');
   return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
     detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
@@ -8897,7 +8918,7 @@ function turnFailureLine(ev) {
   if (/can't use its API key|rejected the API key|needs an API key and none is set/i.test(said)) {
     return esc(said.replace(/the Providers panel/g, 'Settings › Models') + (waited ? ' The turn gave up' + waited + '.' : ''));
   }
-  if (providerFailure(ev)) {
+  if (providerFailure(ev) && !providerReplied(ev)) {
     const host = providerHost(entry);
     return esc((id ? providerWord(id) : 'The provider') + ' is not answering'
       + (host ? ' — ' + host : '') + '.' + (waited ? ' The turn gave up' + waited + '.' : ''));
