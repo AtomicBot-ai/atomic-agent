@@ -28,6 +28,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "trust_config",
   "email",
   "fs_read_outside",
+  "paid_generation",
   "other",
 ];
 
@@ -64,12 +65,15 @@ describe("approval ladder", () => {
       proc_kill: 4,
       publish: 4,
       git_remote: 4,
+      fusion_fanout: 4,
       browser_nonweb: 5,
       trust_config: 5,
       email: 5,
       // Reads outside the working directory ask until full trust: a
       // wandering read is what the read scope exists to stop.
       fs_read_outside: 5,
+      // Money leaves the operator's cloud account: the lowest two levels ask.
+      paid_generation: 3,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [

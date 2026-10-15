@@ -558,10 +558,10 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 86 registered schemas, 79 of them strict. Pinned as a number so
+    // 87 registered schemas, 80 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(86);
-    expect(converted).toBe(79);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(87);
+    expect(converted).toBe(80);
   });
 
   /**
@@ -672,6 +672,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "tasks.cancel",
   "tasks.show",
   "vision.describe",
+  "image.generate",
   "mcp.resource.list",
   "mcp.resource.read",
   "mcp.prompt.list",
