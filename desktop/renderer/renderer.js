@@ -8715,6 +8715,7 @@ function liveWaitOf(rec) {
   for (const f of rec.missed) {
     if (f.kind === 'provider_waiting') w = {maxWaitMs: Number((f.payload || {}).max_wait_ms) || 0};
     else if (f.kind === 'provider_recovered') w = null;
+    else if ((f.kind === 'delta' && f.text) || (f.kind === 'reasoning_progress' && f.payload && f.payload.text) || f.kind === 'tool_progress') w = null;
   }
   return w;
 }
