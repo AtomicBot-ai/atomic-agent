@@ -1303,6 +1303,7 @@ const TG = {
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
   mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
+  confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   // The message's kind ('owed' carries a change the agent loads at start, 'restarting' is the restart's own line,
   // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
@@ -6711,6 +6712,7 @@ function runSlash(parts) {
     S.log.push({id:nid(), k:'system', text:'usage: /privacy | /privacy analytics on|off|status'}); render(); return;
   }
   if (name === 'analytics') { analyticsSlash(rest); return; }
+  if (name === 'telegram' && rest[0] === 'pair') { act('settings:telegram'); telegramAct('pair'); return; } // ATO-426
   if (name === 'compact') {
     if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
     compactNow(); return;
@@ -25312,7 +25314,7 @@ function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t 
 function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
 function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
-function telegramTabEntered() { tgRefresh(); }
+function telegramTabEntered() { TG.confirm = null; tgRefresh(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
 /* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
    Review fix: a refresh asked for while one was in flight used to be DROPPED
@@ -25369,7 +25371,8 @@ function telegramTab() {
     // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
     if (owner === null) {
       body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-        + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
+        // ATO-426: no agent route pairs from here, so the card says where pairing happens instead of promising a DM works.
+        + '<p>The desktop app can\'t pair yet. Pair once from the terminal: start pairing there, DM your bot, and it recognises you as the owner. Then press Check again above.</p>'
         + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
     }
     body += tgRowsHTML(enabled, owner);
@@ -25411,13 +25414,13 @@ function tgRowsHTML(enabled, owner) {
       '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Answer in Telegram" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button>')
     + row('Bot token', 'Saved on this computer.',
       '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
-      + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>Remove token</button>')
+      + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearToken' ? 'Click again to remove' : 'Remove token') + '</button>')
     + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
       '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>'
-      + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>Clear owner</button>') : '')
+      + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearOwner' ? 'Click again to clear' : 'Clear owner') + '</button>') : '')
     + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
     + '</div>'
-    + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token', 'T clear token', 'O clear owner']);
+    + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token']);
 }
 /* What the last action left: an error, its message, and the restart a
    change is still owed. Once a new agent is up, the restart's own line and
@@ -25510,6 +25513,9 @@ async function tgClearOwner() {
 function telegramAct(what) {
   const [verb] = what.split(':');
   const arg = what.slice(verb.length + 1);
+  // ATO-426: removing the token or the owner takes a second click on the same button; any other action disarms it.
+  const armed = TG.confirm; TG.confirm = null;
+  if ((verb === 'clearToken' || verb === 'clearOwner') && armed !== verb) { TG.confirm = verb; tgRepaint(); return; }
   if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
   if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
   if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
@@ -25520,7 +25526,7 @@ function telegramAct(what) {
   // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
   if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
-  if (verb === 'pair') return; // disabled: pairing needs the live channel
+  if (verb === 'pair') { tgSetMessage(TG_PAIRING_NOTE, 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
 }
 /* telegram-key-bindings.ts: list-mode letters; the token prompt owns its input. */
 function telegramKey(e, k, inText) {
@@ -25533,7 +25539,8 @@ function telegramKey(e, k, inText) {
   if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
   // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
   if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIRING_NOTE, 'info'), tgRepaint(); return true; }
-  const map = {e:'enable', t:'token', T:'clearToken', o:'pair', O:'clearOwner', r:'restart', R:'refresh'};
+  // ATO-426: no T / O here; removing the token or the owner is a button that asks for a second click.
+  const map = {e:'enable', t:'token', o:'pair', r:'restart', R:'refresh'};
   if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
   return false;
 }
