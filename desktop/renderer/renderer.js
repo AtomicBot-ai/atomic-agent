@@ -1740,8 +1740,9 @@ const SLASH = [
   ['quit','exit Atomic Agent'],
   ['debug','toggle debug pane (feed / logs / world …)'],
   ['chat','return to single-view chat mode'],
-  // ATO-431 (U-33): short enough for one row; the hint column carries the arguments.
-  ['runmode','choose where the chat runs: local, cloud or Fusion','local|cloud|fusion|swap|workers N|status'],
+  // ATO-431 (U-33): the row is ~560px, so a short hint leaves the description room;
+  // the full usage (swap, workers N, status) is RUN_MODE_USAGE.
+  ['runmode','where the chat runs: local, cloud or Fusion','local|cloud|fusion'],
   ['observe','switch to the Observe section'],
   ['manage','switch to the Manage section'],
   ['feed','jump to the Observe → Feed tab'],
@@ -14640,6 +14641,7 @@ async function openOnboarding(at) {
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
+  obRailPhase = '01';
   // A new flow: any settle still out for the previous one must not touch it (obSettle).
   OB.openGen = (OB.openGen || 0) + 1;
   const gen = OB.openGen;
@@ -27584,6 +27586,7 @@ if (typeof window !== 'undefined') {
    */
   window.__obOpen = (step, opts) => {
     OB.open = true;
+    obRailPhase = '01';
     OB.openGen = (OB.openGen || 0) + 1;
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
