@@ -55,7 +55,7 @@ describe("tool roles", () => {
     }
   });
 
-  it("orchestrator: read-only files, the checks, the fan-out, memory reads, both terminals — never a build tool", () => {
+  it("orchestrator: read-only files, the web reads, the checks, the fan-out, memory reads, both terminals — never a build tool", () => {
     for (const name of [
       "os.fs.read",
       "os.fs.read_document",
@@ -75,6 +75,11 @@ describe("tool roles", () => {
       "memory.notes.recall",
       "memory.lessons.recall",
       "memory.procedures.recall",
+      // Planning a job about a site starts with reading it; without these
+      // a local orchestrator's grammar turned "fetch the page" into reads
+      // of /dev/null (ATO-308).
+      "os.web.fetch",
+      "os.web.search",
       "reply",
       "finish",
     ]) {
