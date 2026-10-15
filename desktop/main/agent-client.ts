@@ -1313,6 +1313,20 @@ export class AgentClient extends EventEmitter {
             });
             continue;
           }
+          /* ATO-408: the files the turn's reply delivers, as absolute
+             paths (agent with ATO-408; an older one never sends it, and
+             the window then finds them on the stored turn). Lifted to the
+             top level like the error's fields; `payload` stays. */
+          if (frame.event === "reply_attachments") {
+            const list = Array.isArray(chunk.attachments) ? chunk.attachments : [];
+            this.emit("chat", {
+              turnId,
+              kind: "reply_attachments",
+              attachments: list.filter((p): p is string => typeof p === "string" && p.length > 0).slice(0, 10),
+              payload: chunk,
+            });
+            continue;
+          }
           this.emit("chat", { turnId, kind: frame.event, payload: chunk });
           continue;
         }

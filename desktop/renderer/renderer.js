@@ -1997,7 +1997,7 @@ for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) 
 const LIVE_TURNS = new Map();
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'fusion_worker',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
   'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
@@ -2071,6 +2071,7 @@ S.log = [
    ============================================================ */
 function render() {
   if (LIVE_REPLAY) return;   // Item 38: the chat being opened renders once, after its kept frames
+  imageViewerFollowsChat();   // ATO-408: the picture viewer closes when its chat is left
   ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
@@ -2545,7 +2546,7 @@ function item(m) {
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
   if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
-    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + replyDot(m) + msgActs(m)
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + replyFilesStrip(m) + attachStrip(m) + replyDot(m) + msgActs(m)
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -6797,6 +6798,10 @@ document.addEventListener('click', (e) => {
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
+  // ATO-408: a picture in a reply opens full screen (its menu is the file chip's).
+  const cimg = t.closest('[data-img-open]');
+  // Still loading: it opens as the file it is, through the chip's path below.
+  if (cimg && openImageViewer(cimg.dataset.imgOpen)) return;
   const fchip = t.closest('[data-file]');
   // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
   if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
@@ -9248,6 +9253,18 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'delta') {
     if (item) { item.text += ev.text; streamPaint('chat'); }   // 13/14: the transcript, once per frame
+    return;
+  }
+  /* ATO-408: the files the reply that ends the turn delivers (agent with
+     ATO-408, `event: reply_attachments`, right after the reply's text). An
+     older agent sends nothing, and the chat shows them once reopened. */
+  if (ev.kind === 'reply_attachments') {
+    const files = replyFilesOf(Array.isArray(ev.attachments) ? ev.attachments : pick(ev.payload, 'attachments'));
+    if (!files.length || !item) return;
+    item.replyFiles = files;
+    // A path an earlier reply showed may be a file the agent has since overwritten.
+    void revalidateChatImages(files);
+    render();
     return;
   }
   /* B1 — a progress note (agent ≥ 0.6.3, `event: progress_note`). The model
@@ -18022,6 +18039,7 @@ if (typeof window !== 'undefined') {
    chats simply show no receipt, as before. */
 function sessionTurnsToLog(turns) {
   const log = [];
+  const named = [];   // ATO-408: the files the replies deliver, looked at again below
   (Array.isArray(turns) ? turns : []).forEach((t) => {
     if (!t || typeof t !== 'object') return;
     // B4: a stored steer (agent ≥ 0.6.3 `steered: true`) keeps its caption.
@@ -18030,7 +18048,14 @@ function sessionTurnsToLog(turns) {
     // reopened chat draws the same "(stopped)" placeholder the live turn showed.
     if (t.kind === 'assistant_reply' && t.stopped) { log.push({id:nid(), k:'assistant', text:'(stopped)', placeholder:true}); return; }
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
-    if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_reply') {
+      const entry = {id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''};
+      // ATO-408: the files the reply delivered (`reply.attachments`), drawn under it.
+      const files = t.progressNote ? [] : replyFilesOf(t.attachments);
+      if (files.length) { entry.replyFiles = files; named.push(...files); }
+      log.push(entry);
+      return;
+    }
     if (t.kind === 'assistant_tool_call') {
       if (t.reasoning) log.push({id:nid(), k:'reason', steps:reasonStepAt(log, log.length), open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
@@ -18073,6 +18098,8 @@ function sessionTurnsToLog(turns) {
       }
     }
   });
+  // ATO-408: a picture read earlier whose file changed, or that failed, is read again.
+  if (named.length) void revalidateChatImages(named);
   return log;
 }
 
@@ -19534,7 +19561,9 @@ async function refreshAttachments(cwd) {
 
 /** The attachment footer: his sentence per file, then the chips. */
 function attachStrip(m) {
-  const files = m.attach || [];
+  // ATO-408: a file the reply delivers is drawn by replyFilesStrip, once.
+  const own = m.replyFiles || [];
+  const files = (m.attach || []).filter((f) => !own.includes(f.path));
   if (!files.length) return '';
   const shown = files.slice(0, ATTACH_MAX_LINES);
   const lines = shown.map((f) => '<div class="attach-label">Saved to <span class="mono">' + esc(f.path) + '</span></div>').join('')
@@ -19546,6 +19575,331 @@ function attachStrip(m) {
     + files.map((f) => '<button class="filechip" data-file="' + esc(f.path) + '" title="' + esc(f.path) + '">'
         + ic(f.kind === 'dir' ? 'folder' : 'doc') + '<span>' + esc(f.name) + '</span></button>').join('')
     + '</div></div>';
+}
+
+/* ---------------- ATO-408: the files a reply delivers ----------------
+   The agent's `reply` can carry files (`attachments`, absolute paths, at most
+   10): Telegram and Discord post them, and the desktop hears of them from
+   `event: reply_attachments` live (agent with ATO-408) and from the stored
+   turn's `attachments` when a chat is opened. A picture is drawn in the reply,
+   up to 320px tall, and opens full screen on a click; anything else, or a
+   picture that cannot be read, is a file chip like a reply's own paths
+   (`data-reply`, so main checks the path again before opening it).
+
+   The window's CSP allows only `data:` images, so main reads the file
+   (BR.imageDataUrl, main/image-data-url.ts). The transcript is rebuilt from
+   HTML strings on every stream frame, so the data URL never goes into that
+   string: the reply draws an empty slot (`data-chat-img`) and the slot is
+   given the picture's one decoded <img> before the next frame is painted
+   (hydrateChatImages), so a repaint moves a decoded picture instead of
+   decoding it again. An agent without the frame still shows the pictures once
+   the chat is reopened. */
+const CHAT_IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
+const REPLY_FILES_MAX = 10;
+/* path → the picture as this window holds it:
+     {state:'loading'|'ok'|'fail', url, node, reason, mime, size, mtimeMs, w, h, used}
+   `url` is the DISPLAY copy (at most 1600px on its longer side, re-encoded;
+   a GIF stays as it is so it still moves), `node` its one decoded <img>,
+   `size`/`mtimeMs` the version of the file it was read from, `used` when a
+   reply last drew it. The full file is read again only for the viewer. A path
+   named again by a new reply, or by a chat being opened, is looked at again
+   (revalidateChatImages): a file the agent overwrote is read anew, and one
+   that failed is tried again. */
+const CHAT_IMG = new Map();
+/* Display copies kept, in data-URL characters, on screen or not; the ones no
+   reply on screen shows go first, least recently drawn first. */
+const CHAT_IMG_KEEP_CHARS = 96 * 1024 * 1024;
+const CHAT_IMG_DISPLAY_EDGE = 1600;
+
+/** The reply's file paths, as the agent sent or stored them: strings, at most 10, once each. */
+function replyFilesOf(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const p of list) if (typeof p === 'string' && p && !out.includes(p)) out.push(p);
+  return out.slice(0, REPLY_FILES_MAX);
+}
+
+/** The pictures replies on screen show. */
+function chatImagesInUse() {
+  const used = new Set();
+  for (const m of S.log) for (const p of (m.replyFiles || [])) used.add(p);
+  return used;
+}
+
+function trimChatImages() {
+  let total = 0;
+  const held = [];
+  for (const [p, st] of CHAT_IMG) if (st.state === 'ok') { total += st.url.length; held.push([p, st]); }
+  if (total <= CHAT_IMG_KEEP_CHARS) return;
+  const onScreen = chatImagesInUse();
+  // Off screen first, then the least recently drawn; what is on screen is never dropped.
+  held.sort((a, b) => (onScreen.has(a[0]) - onScreen.has(b[0])) || (a[1].used - b[1].used));
+  for (const [p, st] of held) {
+    if (total <= CHAT_IMG_KEEP_CHARS) break;
+    if (onScreen.has(p)) break;
+    total -= st.url.length;
+    CHAT_IMG.delete(p);
+  }
+}
+
+/** A decoded picture as a display copy: no longer side past 1600px, a GIF untouched. */
+function chatImageDisplayCopy(img, mime, fullUrl) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const edge = Math.max(w, h);
+  if (mime === 'image/gif' || !edge || (edge <= CHAT_IMG_DISPLAY_EDGE && fullUrl.length <= 2 * 1024 * 1024)) return fullUrl;
+  try {
+    const k = Math.min(1, CHAT_IMG_DISPLAY_EDGE / edge);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * k));
+    c.height = Math.max(1, Math.round(h * k));
+    const g = c.getContext('2d');
+    if (!g) return fullUrl;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(img, 0, 0, c.width, c.height);
+    const out = c.toDataURL('image/webp', 0.9);
+    return out.startsWith('data:image/webp') && out.length < fullUrl.length ? out : fullUrl;
+  } catch {
+    return fullUrl;
+  }
+}
+
+/** Decode a data URL; null when it is not a picture after all. */
+function decodeChatImage(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/** A picture's state, its read started the first time it is asked for. */
+function chatImage(path) {
+  let st = CHAT_IMG.get(path);
+  if (st) { st.used = Date.now(); return st; }
+  st = {state:'loading', url:'', node:null, reason:null, mime:null, size:0, mtimeMs:0, w:0, h:0, used:Date.now()};
+  CHAT_IMG.set(path, st);
+  // An entry dropped or replaced while this read was out writes nothing.
+  const mine = () => CHAT_IMG.get(path) === st;
+  const fail = (reason) => { if (!mine()) return; st.state = 'fail'; st.reason = reason || 'missing'; chatImagesChanged(); };
+  if (!BR || !BR.imageDataUrl) { fail('missing'); return st; }
+  Promise.resolve(BR.imageDataUrl(path)).then(async (r) => {
+    if (!mine()) return;
+    if (!r || !r.ok || typeof r.dataUrl !== 'string') { fail(r && r.reason); return; }
+    const full = await decodeChatImage(r.dataUrl);
+    if (!full) { fail('missing'); return; }
+    const url = chatImageDisplayCopy(full, r.mime, r.dataUrl);
+    const node = url === r.dataUrl ? full : await decodeChatImage(url);
+    if (!mine()) return;
+    if (!node) { fail('missing'); return; }
+    node.className = 'chat-img-pic';
+    node.alt = pathBase(path) || path;
+    node.draggable = false;
+    Object.assign(st, {state:'ok', url, node, mime:r.mime || null, size:Number(r.size) || 0,
+      mtimeMs:Number(r.mtimeMs) || 0, w:full.naturalWidth, h:full.naturalHeight});
+    trimChatImages();
+    chatImagesChanged();
+  }, () => fail('missing'));
+  return st;
+}
+
+/** The paths a new reply or an opened chat names: a picture whose file changed
+    since it was read is read again, one that failed is tried again. */
+async function revalidateChatImages(paths) {
+  const list = (paths || []).filter((p) => CHAT_IMG.has(p) && CHAT_IMG.get(p).state !== 'loading');
+  if (!list.length) return;
+  let changed = false;
+  for (const p of list) if (CHAT_IMG.get(p).state === 'fail') { CHAT_IMG.delete(p); changed = true; }
+  const held = list.filter((p) => CHAT_IMG.has(p));
+  if (held.length && BR && BR.statPaths) {
+    for (let i = 0; i < held.length; i += ATTACH_STAT_CHUNK) {
+      const chunk = held.slice(i, i + ATTACH_STAT_CHUNK);
+      const r = await Promise.resolve(BR.statPaths(chunk)).catch(() => null);
+      const files = (r && r.ok && Array.isArray(r.files)) ? r.files : [];
+      for (const p of chunk) {
+        const st = CHAT_IMG.get(p);
+        if (!st || st.state !== 'ok') continue;
+        const f = files.find((x) => x && x.path === p);
+        if (!f) continue;
+        if (!f.exists || f.size !== st.size || Math.abs(f.mtimeMs - st.mtimeMs) > 1) { CHAT_IMG.delete(p); changed = true; }
+      }
+    }
+  }
+  if (changed) chatImagesChanged();
+}
+
+/** A picture was read or refused: the transcript draws it, or its chip. */
+function chatImagesChanged() {
+  if (LIVE_REPLAY) return;
+  streamPaint('chat');
+}
+
+/** Put each picture's decoded <img> into the slots the last paint left empty. */
+function hydrateChatImages() {
+  HYDRATE_RAF = 0;
+  const slots = document.querySelectorAll('[data-chat-img]:not([data-hyd])');
+  if (!slots.length) return;
+  const sc = $('#scroller');
+  let put = false;
+  slots.forEach((slot) => {
+    const st = CHAT_IMG.get(slot.dataset.chatImg);
+    if (!st || st.state !== 'ok' || !st.node) return;
+    slot.dataset.hyd = '1';
+    slot.classList.remove('loading');
+    // One node per picture; a second copy on screen at once gets a clone.
+    const node = st.node.isConnected && !slot.contains(st.node) ? st.node.cloneNode(false) : st.node;
+    slot.appendChild(node);
+    put = true;
+  });
+  if (put && sc && S.stick) sc.scrollTop = sc.scrollHeight;
+}
+/* One look per frame, however many mutations a stream frame makes, and before
+   that frame is painted, so a repaint never shows an empty slot. `var`: read
+   by the observer before this line has run on the first paint. */
+var HYDRATE_RAF = 0;
+function hydrateChatImagesSoon() {
+  if (HYDRATE_RAF || !CHAT_IMG.size) return;
+  HYDRATE_RAF = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(hydrateChatImages) : (hydrateChatImages(), 0);
+}
+if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
+  new MutationObserver(hydrateChatImagesSoon).observe(document.documentElement, {childList:true, subtree:true});
+}
+
+/** Why a picture is a chip, for its tooltip. */
+function chatImageWhy(st, path) {
+  if (st.reason === 'outside') return 'Only pictures in your home folder, the agent\'s folder or a temporary folder are shown here.\n' + path;
+  if (st.reason === 'too-large') return 'Too large to show here (over 15 MB).\n' + path;
+  return 'Not a picture this window can show, or no longer there.\n' + path;
+}
+
+/** A reply's own files: pictures inline, anything else a chip. */
+function replyFilesStrip(m) {
+  const files = m.replyFiles || [];
+  if (!files.length) return '';
+  const pics = [], chips = [];
+  for (const p of files) {
+    const name = pathBase(p) || p;
+    const st = CHAT_IMG_EXT.test(p) ? chatImage(p) : null;
+    if (st && st.state !== 'fail') {
+      // A known size draws the slot at its size before the picture is put in.
+      const box = st.state === 'ok' && st.w && st.h ? ' style="aspect-ratio:' + st.w + ' / ' + st.h + '"' : '';
+      pics.push('<button class="chat-img' + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
+        + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
+        + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>');
+    } else {
+      chips.push('<button class="filechip' + (st ? ' unshown' : '') + '" data-file="' + esc(p) + '" data-reply="1" title="' + esc(st ? chatImageWhy(st, p) : p) + '">'
+        + ic(st ? 'image' : 'file') + '<span>' + esc(name) + '</span></button>');
+    }
+  }
+  return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
+    + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
+    + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
+    + '</div>';
+}
+
+/* The full-screen viewer: the picture (the display copy at once, the full
+   file once main has read it again), Save As…, Show in Finder/Explorer, and
+   Escape, a click beside the picture or × to close. Built outside render(),
+   on the body, so a repaint behind it does not touch it. While it is open the
+   keys are its own (Tab goes round its buttons, nothing reaches the composer
+   or the window's shortcuts), and leaving the chat closes it.
+   `var`: render() reads it, and may run before this line has. */
+var IMG_VIEW = null;
+function fileManagerName() {
+  return IS_MAC ? 'Show in Finder' : PLATFORM === 'win32' ? 'Show in Explorer' : 'Show in Folder';
+}
+/** Opens the viewer; false when the picture is not read yet. */
+function openImageViewer(path) {
+  const st = CHAT_IMG.get(path);
+  if (!st || st.state !== 'ok') return false;
+  closeImageViewer();
+  const name = pathBase(path) || path;
+  const el = document.createElement('div');
+  el.className = 'imgview';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', name);
+  el.innerHTML = '<div class="imgview-stage" data-iv="close"></div>'
+    + '<div class="imgview-bar">'
+      + '<span class="imgview-name" title="' + esc(path) + '">' + esc(name) + '</span>'
+      + '<button class="btn btn-s sm" data-iv="save">' + ic('download') + 'Save As…</button>'
+      + '<button class="btn btn-s sm" data-iv="reveal">' + ic('folder') + esc(fileManagerName()) + '</button>'
+      + '<button class="iconbtn" data-iv="close" title="Close" aria-label="Close">' + ic('x') + '</button>'
+    + '</div>';
+  const img = new Image();
+  img.className = 'imgview-img';
+  img.alt = name;
+  img.src = st.url;
+  el.querySelector('.imgview-stage').appendChild(img);
+  el.addEventListener('click', (e) => {
+    // The viewer's clicks are its own: the window's click handler never sees them.
+    e.stopPropagation();
+    if (e.target === img) return;
+    const b = e.target.closest && e.target.closest('[data-iv]');
+    const what = b ? b.dataset.iv : null;
+    if (what === 'close') { closeImageViewer(); return; }
+    if (what === 'save' && BR && BR.imageSaveAs) {
+      Promise.resolve(BR.imageSaveAs(path)).then((r) => {
+        if (r && r.ok) toast('Saved', r.path || '');
+        else if (!r || r.reason !== 'canceled') toast('Could not save', (r && r.error) || 'The picture is no longer there.');
+      });
+      return;
+    }
+    if (what === 'reveal' && BR && BR.imageReveal) {
+      Promise.resolve(BR.imageReveal(path)).then((r) => { if (!r || !r.ok) toast('Could not show it', 'The picture is no longer there.'); });
+    }
+  });
+  el.addEventListener('contextmenu', (e) => e.stopPropagation());
+  document.body.appendChild(el);
+  const view = {el, back: document.activeElement, sid: S.sessionId, room: S.room};
+  IMG_VIEW = view;
+  window.addEventListener('keydown', imageViewerKey, true);
+  const close = el.querySelector('.imgview-bar [data-iv="close"]');
+  if (close) close.focus();
+  // The display copy may be smaller than the file: the full picture replaces it once read.
+  if (st.url && BR && BR.imageDataUrl) {
+    Promise.resolve(BR.imageDataUrl(path)).then((r) => {
+      if (IMG_VIEW !== view || !r || !r.ok || typeof r.dataUrl !== 'string' || r.dataUrl === st.url) return;
+      const full = new Image();
+      full.onload = () => { if (IMG_VIEW === view) img.src = full.src; };
+      full.src = r.dataUrl;
+    }, () => undefined);
+  }
+  return true;
+}
+function imageViewerKey(e) {
+  if (!IMG_VIEW) return;
+  const {el} = IMG_VIEW;
+  // Nothing behind the viewer hears a key while it is open: not the composer, not a shortcut.
+  e.stopPropagation();
+  if (e.key === 'Escape') { e.preventDefault(); closeImageViewer(); return; }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const stops = [...el.querySelectorAll('button')];
+    if (!stops.length) return;
+    const at = stops.indexOf(document.activeElement);
+    const next = at < 0 ? 0 : (at + (e.shiftKey ? stops.length - 1 : 1)) % stops.length;
+    stops[next].focus();
+    return;
+  }
+  // Focus somehow outside it (a click on nothing): back in, and the key goes nowhere.
+  if (!el.contains(document.activeElement)) {
+    e.preventDefault();
+    const close = el.querySelector('.imgview-bar [data-iv="close"]');
+    if (close) close.focus();
+  }
+}
+/** The viewer belongs to the chat it was opened in: another chat or room closes it. */
+function imageViewerFollowsChat() {
+  if (IMG_VIEW && (S.room !== IMG_VIEW.room || S.sessionId !== IMG_VIEW.sid)) closeImageViewer();
+}
+function closeImageViewer() {
+  if (!IMG_VIEW) return;
+  window.removeEventListener('keydown', imageViewerKey, true);
+  const {el, back} = IMG_VIEW;
+  IMG_VIEW = null;
+  el.remove();
+  if (back && back.isConnected && typeof back.focus === 'function') back.focus();
 }
 
 
