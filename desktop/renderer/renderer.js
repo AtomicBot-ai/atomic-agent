@@ -10260,7 +10260,7 @@ if (BR) {
     if (!r || !r.daemon) return;
     if (r.daemon === 'start-failed') {
       appSay('Local model daemon did not start', 'caution');
-      toast('The local model did not start', r.error || '', 'bad');
+      toast('The local model did not start', daemonFail(r.error).line, 'bad');
     } else if (r.daemon === 'started') appSay(r.daemonLine || 'local-llm: daemon started');
   });
   /* ATO-123: main brings the local model server back when it stops under a
@@ -15715,16 +15715,20 @@ function restartStopsLine(held) {
 function restartRefusedToast(held) {
   toast('Not while a turn is running', restartStopsLine(held) || undefined);
 }
-/** ATO-429: the strip says messages are waiting only when some are (S.queued). */
+function swxFailLine(lane, waiting) {
+  return 'The ' + (lane === 'mode' ? 'mode' : 'model') + ' switch did not finish. '
+    + (waiting ? 'Your messages are waiting; choose again or cancel them.' : 'Choose again.');
+}
+/** ATO-429: the strip says messages are waiting only when a chat has some queued. */
 function swxErrLine() {
   const t = SWX.err || SWX.sendError || '';
-  return S.queued.length ? t : t.replace(' Your messages are waiting; choose again or cancel them.', ' Choose again.');
+  if (t !== SWX.sendError || Object.keys(queuesSnapshot()).length) return t;
+  return swxFailLine(SWX.sendErrors.route ? 'route' : 'mode', false);
 }
 /** A failed route or mode never releases messages into the previous choice. */
 function swxMessageOutcome(lane, ok) {
   if (!SWX.sendErrors) SWX.sendErrors = {};
-  SWX.sendErrors[lane] = ok ? null : 'The ' + (lane === 'mode' ? 'mode' : 'model')
-    + ' switch did not finish. Your messages are waiting; choose again or cancel them.';
+  SWX.sendErrors[lane] = ok ? null : swxFailLine(lane, true);
   SWX.sendError = SWX.sendErrors.route || SWX.sendErrors.mode || null;
   if (SWX.sendError && !SWX.err) SWX.err = SWX.sendError;
 }
@@ -16293,7 +16297,7 @@ async function selActivate(row) {
     // A composer download lands here (selPull's listener), maybe under a provider setup opened meanwhile.
     closeSelectorUnlessSetup(res.selectorView);
     bswReport(res);
-    if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+    if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line);
     // r5 item 10: the live config is already re-read inside swxRun.
   }
 }
@@ -17443,7 +17447,7 @@ async function selChooseBackend(id) {
     return res;
   }
   bswReport(res);
-  if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+  if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line);
   // r5 item 10: swxRun re-read the live config before it resolved, so the
   // rows below are drawn from the file the switch just wrote.
   if (res.needsModel) {
@@ -20131,20 +20135,25 @@ function bswReport(res, extra) {
      so it keeps its place in the transcript as well as the strip. */
   if (res.daemon === 'start-failed' && res.error) {
     appSay('Local model daemon did not start', 'caution');
-    /* ATO-429: one red line people can read; the start's own words (without
-       Core's download bars) fold under Details. */
-    const why = daemonFailWords(res.error), port = /port (\d+) is already served/.exec(why);
-    S.log.push({id:nid(), k:'system', sev:'err', noRetry:true, detail: why || String(res.error),
-      text: esc('The local model did not start' + (port ? ': port ' + port[1] + ' is used by another app.' : '.'))});
+    // ATO-429: one red line people can read; a long rest folds under Details.
+    const f = daemonFail(res.error);
+    S.log.push({id:nid(), k:'system', sev:'err', noRetry:true, detail: f.detail, text: esc(f.line)});
   }
   // No "restarting" line: main has already restarted `atag serve` by the
   // time this runs, and applyStatus reports the reconnect itself.
   render();
 }
 
-/** ATO-429: a failed start's words without the "[==  ] 10% 0.01 GB / 0.06 GB" bar lines. */
-function daemonFailWords(err) {
-  return String(err || '').split('\n').filter((l) => !/\[[=>#.\s-]*\]|\d GB \/ /.test(l)).join('\n').trim();
+/** ATO-429: a failed start as one short line, and the rest for Details. The
+    download bars (renderPullProgress: "[==  ] 30%  0.21 GB / 0.70 GB  label")
+    are cut out of the words, not the lines they share with the reason. */
+function daemonFail(err) {
+  const why = String(err || '').replace(/\s*\(?\[[= ]{20}\] \d+%\s+[\d.]+ GB(?: \/ [\d.]+ GB)?  [^)\n]*\)?/g, '')
+    .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+  const port = /port (\d+) is already served/.exec(why);
+  if (port) return {line: 'The local model did not start: port ' + port[1] + ' is used by another app.', detail: why};
+  if (why && !why.includes('\n') && why.length <= 160) return {line: 'The local model did not start: ' + why, detail: ''};
+  return {line: 'The local model did not start.', detail: why || String(err || '')};
 }
 
 /** The TUI's answer to a provider without a key: its configure step. Backlog 32: a saved key the agent will not send opens the same step, saying so. */
