@@ -1352,6 +1352,8 @@ const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null, s
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
+// ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
+const TG_PAIR_HOWTO = 'The desktop app can\'t pair yet. Quit it, run `atag tui`, open Telegram under Integrations and press p to start pairing, then DM your bot. Reopen the app and press Check again.';
 
 /* ---- Item 5: file attachments — what a turn actually wrote ----
    The strip under an assistant reply is sourced ONLY from write-tool cards.
@@ -25372,7 +25374,7 @@ function telegramTab() {
     if (owner === null) {
       body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
         // ATO-426: no agent route pairs from here, so the card says where pairing happens instead of promising a DM works.
-        + '<p>The desktop app can\'t pair yet. Pair once from the terminal: start pairing there, DM your bot, and it recognises you as the owner. Then press Check again above.</p>'
+        + '<p>' + esc(TG_PAIR_HOWTO) + '</p>'
         + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
     }
     body += tgRowsHTML(enabled, owner);
@@ -25526,7 +25528,7 @@ function telegramAct(what) {
   // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
   if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
-  if (verb === 'pair') { tgSetMessage(TG_PAIRING_NOTE, 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
+  if (verb === 'pair') { tgSetMessage(TG_PAIR_HOWTO, 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
 }
 /* telegram-key-bindings.ts: list-mode letters; the token prompt owns its input. */
 function telegramKey(e, k, inText) {
@@ -25538,7 +25540,7 @@ function telegramKey(e, k, inText) {
   if (inText || e.metaKey || e.ctrlKey || e.altKey) return false;
   if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
   // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
-  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIRING_NOTE, 'info'), tgRepaint(); return true; }
+  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIR_HOWTO, 'info'), tgRepaint(); return true; }
   // ATO-426: no T / O here; removing the token or the owner is a button that asks for a second click.
   const map = {e:'enable', t:'token', o:'pair', r:'restart', R:'refresh'};
   if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
