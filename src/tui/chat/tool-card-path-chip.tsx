@@ -8,10 +8,10 @@ import { theme } from "../theme/theme.js";
 
 /**
  * Single-file tools whose card gets a `[copy path]` chip. Each takes
- * the file as a plain string `path` argument, so the chip copies
- * exactly what the agent asked for. Multi-path tools (patch, move,
- * trash, diff) are left for a later slice: one chip cannot say which
- * of several files it would copy.
+ * the file as a plain string `path` argument and, on success, reports
+ * the file it actually touched as `details.path`. Multi-path tools
+ * (patch, move, trash, diff) are left for a later slice: one chip
+ * cannot say which of several files it would copy.
  */
 const SINGLE_PATH_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.read",
@@ -23,13 +23,27 @@ const SINGLE_PATH_TOOLS: ReadonlySet<string> = new Set([
  * The file a finished tool card is about, or `null` when the card has
  * no single file to offer. Pure, so the "which cards get a chip"
  * decision is testable without rendering.
+ *
+ * `details.path` wins over `args.path`: it is the absolute file the
+ * tool really touched, resolved against the agent's working directory
+ * (so it pastes anywhere, not only in that directory), and for a write
+ * the operator moved in the approval prompt it is the new target, not
+ * the path the model first asked for. Cards without details (a failed
+ * call, or a chat replayed from disk) fall back to the argument.
  */
 export function toolCardFilePath(card: {
   readonly tool: string;
   readonly args: Record<string, unknown>;
+  readonly details?: Record<string, unknown>;
 }): string | null {
   if (!SINGLE_PATH_TOOLS.has(card.tool)) return null;
-  const raw = card.args["path"];
+  return (
+    nonEmptyString(card.details?.["path"]) ??
+    nonEmptyString(card.args["path"])
+  );
+}
+
+function nonEmptyString(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const path = raw.trim();
   return path.length > 0 ? path : null;
@@ -63,8 +77,9 @@ interface ToolCardPathChipProps {
  *
  * **Its own target, beside the header, never inside a `Text`.** A
  * `MouseTarget` nested in a `Text` does not get its own hit box, so the
- * chip sits in the header row as a sibling of the expand toggle. Same
- * row, so the card's height estimate does not change.
+ * chip sits in the header row as a sibling of the expand toggle. It
+ * adds no row of its own; a long header wraps a little sooner, which
+ * the chat log's measured height already accounts for.
  *
  * **Without a mouse provider** the chip still renders as a hint and
  * registers no target, like `ChatCopyButton`.

@@ -147,6 +147,26 @@ describe("toolCardFilePath", () => {
     }
   });
 
+  it("prefers the file the tool actually touched over the requested one", () => {
+    // A write the operator moved in the approval prompt: the model asked
+    // for `notes.md`, the file landed elsewhere.
+    expect(
+      toolCardFilePath({
+        tool: "os.fs.write",
+        args: { path: "notes.md" },
+        details: { path: "/home/me/elsewhere/notes.md" },
+      }),
+    ).toBe("/home/me/elsewhere/notes.md");
+    // No usable detail (failed call, replayed chat): fall back to args.
+    expect(
+      toolCardFilePath({
+        tool: "os.fs.read",
+        args: { path: "src/a.ts" },
+        details: { size: 3 },
+      }),
+    ).toBe("src/a.ts");
+  });
+
   it("offers nothing for other tools, missing or non-string paths", () => {
     expect(
       toolCardFilePath({ tool: "os.shell.run", args: { path: "/a" } }),
@@ -205,7 +225,7 @@ describe("ToolCard [copy path]", () => {
     app.unmount();
   });
 
-  it("shows no chip on an in-flight call or a non-file tool", () => {
+  it("shows no chip on an in-flight call or a non-file tool", async () => {
     const pending = mount({
       id: "card-2",
       stepIndex: 0,
@@ -213,13 +233,42 @@ describe("ToolCard [copy path]", () => {
       args: { path: "src/app/main.ts" },
       startedAt: 1_000,
     });
+    await waitUntil(
+      () => pending.frame().includes("os.fs.read"),
+      "the pending header",
+    );
     expect(pending.frame()).not.toContain("[copy path]");
     pending.unmount();
 
     const shell = mount(
       finishedCard({ tool: "os.shell.run", args: { command: "ls" } }),
     );
+    await waitUntil(
+      () => shell.frame().includes("read 42 lines"),
+      "the finished shell card",
+    );
     expect(shell.frame()).not.toContain("[copy path]");
     shell.unmount();
+  });
+
+  it("copies the resolved path the tool reported, not the raw argument", async () => {
+    const app = mount(
+      finishedCard({
+        tool: "os.fs.write",
+        args: { path: "notes.md", content: "hi" },
+        summary: "wrote 2 bytes",
+        details: { path: "/tmp/path-chip/moved/notes.md" },
+      }),
+    );
+    await waitUntil(
+      () => app.frame().includes("[copy path]"),
+      "the copy-path chip",
+    );
+    for (let attempt = 0; attempt < 40 && app.copied.length === 0; attempt += 1) {
+      app.clickAt("[copy path]");
+      await delay(25);
+    }
+    expect(app.copied).toEqual(["/tmp/path-chip/moved/notes.md"]);
+    app.unmount();
   });
 });
