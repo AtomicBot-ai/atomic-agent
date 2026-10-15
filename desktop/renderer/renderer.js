@@ -8858,7 +8858,7 @@ function providerFailure(ev) {
 function providerReplied(ev) {
   const msg = String((ev && ev.error) || '');
   return String((ev && ev.category) || '') === 'transport'
-    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|isn't installed \(the|is not signed in\./.test(msg);
+    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|isn't installed \(the|is not signed in\.|was not found on PATH\.|ended its reply with an error|reported an error in the middle of its reply/.test(msg);
 }
 
 /** How long this turn had been going, in words. */
