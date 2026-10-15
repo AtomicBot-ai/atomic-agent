@@ -3451,7 +3451,7 @@ function composer() {
       + (/has not finished/.test(SWX.err)
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
-      + '<span class="ss-text">' + esc(SWX.err || SWX.sendError) + '</span></div>'
+      + '<span class="ss-text">' + esc(swxErrLine()) + '</span></div>'
     // The local engine did not download or start: its two ways out, before the CPU notice (no model runs at all).
     : engfShown()
     ? engfNoticeHTML()
@@ -15715,6 +15715,11 @@ function restartStopsLine(held) {
 function restartRefusedToast(held) {
   toast('Not while a turn is running', restartStopsLine(held) || undefined);
 }
+/** ATO-429: the strip says messages are waiting only when some are (S.queued). */
+function swxErrLine() {
+  const t = SWX.err || SWX.sendError || '';
+  return S.queued.length ? t : t.replace(' Your messages are waiting; choose again or cancel them.', ' Choose again.');
+}
 /** A failed route or mode never releases messages into the previous choice. */
 function swxMessageOutcome(lane, ok) {
   if (!SWX.sendErrors) SWX.sendErrors = {};
@@ -19096,7 +19101,7 @@ function sysRetryHTML(m) {
 }
 function sysRowHTML(m, times) {
   const acts = (m.act === 'switch-provider'
-    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' ? sysRetryHTML(m) : '');
+    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' && !m.noRetry ? sysRetryHTML(m) : '');
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
     + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts + '</span></div></div>';
@@ -20126,11 +20131,20 @@ function bswReport(res, extra) {
      so it keeps its place in the transcript as well as the strip. */
   if (res.daemon === 'start-failed' && res.error) {
     appSay('Local model daemon did not start', 'caution');
-    S.log.push({id:nid(), k:'system', text: esc('The local model daemon did not start: ' + res.error)});
+    /* ATO-429: one red line people can read; the start's own words (without
+       Core's download bars) fold under Details. */
+    const why = daemonFailWords(res.error), port = /port (\d+) is already served/.exec(why);
+    S.log.push({id:nid(), k:'system', sev:'err', noRetry:true, detail: why || String(res.error),
+      text: esc('The local model did not start' + (port ? ': port ' + port[1] + ' is used by another app.' : '.'))});
   }
   // No "restarting" line: main has already restarted `atag serve` by the
   // time this runs, and applyStatus reports the reconnect itself.
   render();
+}
+
+/** ATO-429: a failed start's words without the "[==  ] 10% 0.01 GB / 0.06 GB" bar lines. */
+function daemonFailWords(err) {
+  return String(err || '').split('\n').filter((l) => !/\[[=>#.\s-]*\]|\d GB \/ /.test(l)).join('\n').trim();
 }
 
 /** The TUI's answer to a provider without a key: its configure step. Backlog 32: a saved key the agent will not send opens the same step, saying so. */
