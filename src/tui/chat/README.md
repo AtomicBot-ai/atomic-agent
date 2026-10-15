@@ -7,7 +7,7 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 ## Ownership and entry points
 
-[chat-log.tsx](chat-log.tsx) composes finalised messages, streaming output and the empty-chat splash. Bubbles/tool cards, copy/link/retry/switch-back/fallback buttons, height measurement and splash fitting belong here. [turns-to-messages.ts](turns-to-messages.ts) projects persisted turns; [format-agent-error-for-chat.ts](format-agent-error-for-chat.ts) formats failures without changing agent policy. waiting-phrases.ts retains its existing exports.
+[chat-log.tsx](chat-log.tsx) composes finalised messages, streaming output and the empty-chat splash. Bubbles/tool cards, copy/link/retry/switch-back/fallback buttons, the `[copy path]` chip on finished read/write/edit cards ([tool-card-path-chip.tsx](tool-card-path-chip.tsx); copies, never opens), height measurement and splash fitting belong here. [turns-to-messages.ts](turns-to-messages.ts) projects persisted turns; [format-agent-error-for-chat.ts](format-agent-error-for-chat.ts) formats failures without changing agent policy. waiting-phrases.ts retains its existing exports.
 
 ChatMessage, pending output, tool expansion, turn marks and active-session attribution remain in [TuiState](../tui-state.ts) and [agent-event-reducer](../agent-event-reducer.ts). [ChatOrchestrator](../chat-orchestrator.ts) is the whole TUI runtime/session coordinator despite its name: switching, replay, detached turns, approvals, cancellation and feature orchestrators remain there. [TuiApp](../tui-app.tsx) composes chat with editor, panels and menus. Do not move runtime resources into bubbles.
 
