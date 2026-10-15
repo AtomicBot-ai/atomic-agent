@@ -9,6 +9,11 @@ fail=0
 step "engine"; $A models engine || true
 step "set managed mode + memory embeddings on (test profile only)"
 node -e 'const f=process.env.ATOMIC_AGENT_STATE_DIR+"/config.json";const fs=require("fs");const c=JSON.parse(fs.readFileSync(f,"utf8"));c.localModels={...(c.localModels||{}),mode:"managed",embeddings:{...((c.localModels||{}).embeddings||{}),enabled:true}};c.memory={...(c.memory||{}),embeddings:{...((c.memory||{}).embeddings||{}),enabled:true}};fs.writeFileSync(f,JSON.stringify(c,null,2));console.log(JSON.stringify({mode:c.localModels.mode,emb:c.localModels.embeddings,mem:c.memory.embeddings}))'
+step "pipe: a >64 KB answer arrives whole (ATO-355)"
+node -e 'const f=process.env.ATOMIC_AGENT_STATE_DIR+"/config.json";const fs=require("fs");const c=JSON.parse(fs.readFileSync(f,"utf8"));c.llm=c.llm||{};c.llm.providers=(c.llm.providers||[]).filter(p=>p.id!=="openrouter").concat([{id:"openrouter",kind:"openrouter",defaultTextModel:"openai/gpt-4o-mini"}]);c.llm.activeTextProvider="openrouter";fs.writeFileSync(f,JSON.stringify(c,null,2))'
+BYTES=$($A models search " " --provider openrouter --limit 5000 --json --refresh 2>/dev/null | tee /tmp/or-pipe.json | wc -c | tr -d " ")
+N=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/or-pipe.json","utf8"));const m=Array.isArray(d)?d:Object.values(d).find(Array.isArray);console.log(m.length)' 2>/dev/null || echo PARSE_FAIL)
+echo "piped bytes=$BYTES models=$N"; if [ "$N" = PARSE_FAIL ] || [ "$BYTES" -le 65536 ]; then echo "FAIL pipe"; fail=1; else echo "OK pipe"; fi
 step "list-embeddings (before)"; $A models list-embeddings || fail=1
 step "pull-embedding"; $A models pull-embedding embeddinggemma-2 || fail=1
 step "use-embedding"; $A models use-embedding embeddinggemma-2 || fail=1

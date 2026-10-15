@@ -183,6 +183,14 @@ export interface FanoutExpectation {
   readonly correction: number | null;
   /** Median duration of the finished legs, for legs with no estimate. */
   readonly medianMs: number | null;
+  /**
+   * How many legs the median is a median of.
+   *
+   * Carried alongside `medianMs` rather than left to the caller, because
+   * one sample is not a median: it is a single leg's duration, and the
+   * stuck flag has to be able to tell the two apart.
+   */
+  readonly finishedCount: number;
 }
 
 /** Both measurements the readout needs, from one pass over the legs. */
@@ -192,7 +200,148 @@ export function fanoutExpectation(
   return {
     correction: etaCorrection(workers),
     medianMs: medianFinishedMs(workers),
+    finishedCount: workers.filter(
+      (w) => w.done && w.finishedAt !== null && w.finishedAt > w.startedAt,
+    ).length,
   };
+}
+
+/**
+ * How many times its own expectation a leg may run before the readout
+ * calls it stuck.
+ *
+ * Past the estimate is only late; twice past it is the point where the
+ * operator stops reading the two clocks and starts deciding — cancel it,
+ * narrow the task, go and look at the daemon. Saying that in the row is
+ * the difference between a number the reader has to compare and an
+ * answer they can act on.
+ */
+export const STUCK_ETA_MULTIPLE = 2;
+
+/**
+ * How long a leg must have run before the flag may fire at all, however
+ * good the comparison looks.
+ *
+ * Both expectations this row is judged against can collapse towards
+ * zero and take the multiple down with them. The orchestrator usually
+ * leaves `etaSeconds` empty, so the number the flag divides by is
+ * usually the wave's own median — and a median of one finished sibling
+ * is that sibling's duration, which for the first leg out of a fan-out
+ * is a thirty-second lookup. Twice thirty seconds is a minute, and every
+ * remaining leg of a four-worker wave would have been told to go and
+ * cancel it before it had finished reading its task.
+ *
+ * `etaCorrection` is the same story: it has an upper clamp and no lower
+ * one, so a wave whose first leg finished ahead of its estimate drags
+ * the expectation under every leg that follows.
+ *
+ * So the flag waits. Three minutes is longer than a trivial tool call
+ * and short enough that an operator watching a real fan-out still sees
+ * the leg flagged well inside the half hour they were willing to wait.
+ */
+export const MIN_STUCK_MS = 3 * 60_000;
+
+/**
+ * How many legs must have finished before their median may carry the
+ * flag.
+ *
+ * One is a sample. Two is still thin, but it is the point at which the
+ * number describes the wave rather than one leg that happened to be
+ * easy — and the `MIN_STUCK_MS` floor is there for the rest.
+ */
+export const MIN_FINISHED_SIBLINGS = 2;
+
+/**
+ * What this leg was expected to take, in ms, on the same basis the
+ * readout prints: the orchestrator's estimate corrected by this wave,
+ * or the wave's own median of finished siblings when it gave none.
+ * `null` when it has neither.
+ */
+export function expectedMsFor(
+  worker: FusionLiveWorker,
+  measured: FanoutExpectation,
+): number | null {
+  return worker.etaSeconds !== null
+    ? worker.etaSeconds * 1000 * (measured.correction ?? 1)
+    : measured.medianMs;
+}
+
+/**
+ * The one place a caller-supplied expectation becomes a measurement.
+ *
+ * Both public readers accept either a `FanoutExpectation` or the bare
+ * correction number, and every one of them needs the same two branches
+ * before it can look at `correction` and `medianMs` — a row and its flag
+ * that resolved the union differently would disagree in public.
+ */
+function asExpectation(
+  expectation: FanoutExpectation | number | null,
+): FanoutExpectation {
+  if (expectation === null) {
+    return { correction: null, medianMs: null, finishedCount: 0 };
+  }
+  if (typeof expectation === "number") {
+    return { correction: expectation, medianMs: null, finishedCount: 0 };
+  }
+  return expectation;
+}
+
+/**
+ * The expectation the flag is allowed to fire on, or `null` when there
+ * is not one worth firing on.
+ *
+ * Same number `describeExpectation` prints, except that a leg the
+ * orchestrator left unestimated needs `MIN_FINISHED_SIBLINGS` legs
+ * behind it first. Printing that median as `expected` is honest — it is
+ * labelled a measurement and it is what the leg is being compared with
+ * — but "stuck" reads as "go and cancel this", and a flag that fires on
+ * one sample costs the operator more than the sentence it saves.
+ */
+function stuckExpectationMs(
+  worker: FusionLiveWorker,
+  measured: FanoutExpectation,
+): number | null {
+  if (
+    worker.etaSeconds === null &&
+    measured.finishedCount < MIN_FINISHED_SIBLINGS
+  ) {
+    return null;
+  }
+  return expectedMsFor(worker, measured);
+}
+
+/**
+ * Whether this leg has run long enough to be worth interrupting.
+ *
+ * A finished leg is never stuck — it ended, which is the opposite. A leg
+ * with no expectation is never stuck either: nothing has been blown,
+ * and a flag that fires without a comparison behind it is noise.
+ *
+ * Past both the multiple and `MIN_STUCK_MS`, and off a median only once
+ * enough siblings have finished to make it one. Both floors exist for
+ * the same reason: the flag asks the operator to give up on a leg, so a
+ * false positive costs more than the words it saves.
+ *
+ * Deliberately only the estimate rule. "No new token arrived for N
+ * minutes" would need token-granular events, and the `fusion_worker`
+ * feed has none: `phase: "tool"` fires at tool boundaries, so a local
+ * 27B writing one long file runs a single generation for minutes with
+ * the row otherwise silent. An idle threshold read off that feed would
+ * fire on every slow-but-healthy leg, which is worse than not having
+ * one.
+ */
+export function isFusionWorkerStuck(
+  worker: FusionLiveWorker,
+  now: number = Date.now(),
+  expectation: FanoutExpectation | number | null = null,
+): boolean {
+  if (worker.done) return false;
+  const expectedMs = stuckExpectationMs(worker, asExpectation(expectation));
+  if (expectedMs === null) return false;
+  const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
+  return (
+    elapsedMs >= expectedMs * STUCK_ETA_MULTIPLE && elapsedMs >= MIN_STUCK_MS
+  );
 }
 
 export function formatFusionLiveWorker(
@@ -204,14 +353,12 @@ export function formatFusionLiveWorker(
   const what = worker.done ? "done" : (worker.tool ?? "working");
   const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
   const elapsed = formatElapsed(elapsedMs);
-  const measured: FanoutExpectation =
-    expectation === null
-      ? { correction: null, medianMs: null }
-      : typeof expectation === "number"
-        ? { correction: expectation, medianMs: null }
-        : expectation;
-  // Last, so a narrow terminal truncates the count before the clock:
-  // "is this stuck?" is the question this row answers first.
+  const measured = asExpectation(expectation);
+  // Before the context count, which is the most truncatable thing on
+  // the row: whether the leg needs attention is the question the
+  // operator is asking, and it must not be the thing that falls off a
+  // narrow terminal.
+  const stuck = isFusionWorkerStuck(worker, now, measured) ? " · stuck" : "";
   const context =
     worker.contextTokens === null
       ? ""
@@ -220,7 +367,7 @@ export function formatFusionLiveWorker(
     worker,
     elapsedMs,
     measured,
-  )}${context}`;
+  )}${stuck}${context}`;
 }
 
 /**
@@ -241,10 +388,7 @@ function describeExpectation(
   // The orchestrator's estimate, corrected by this wave — and when it
   // gave none, the wave's own median, which is a measurement rather
   // than a guess.
-  const expectedMs =
-    worker.etaSeconds !== null
-      ? worker.etaSeconds * 1000 * (measured.correction ?? 1)
-      : measured.medianMs;
+  const expectedMs = expectedMsFor(worker, measured);
   if (expectedMs === null) return "";
   if (elapsedMs >= expectedMs) {
     return ` (past the ~${formatElapsed(expectedMs)} expected)`;

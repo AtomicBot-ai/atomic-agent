@@ -147,6 +147,7 @@ const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
 export class TaskStore {
   private readonly db: Database.Database;
   private readonly insertStmt: Database.Statement;
+  private readonly insertIfAbsentStmt: Database.Statement;
   private readonly selectStmt: Database.Statement;
   private readonly listAllStmt: Database.Statement;
   private readonly listBySessionStmt: Database.Statement;
@@ -186,6 +187,22 @@ export class TaskStore {
 
     this.insertStmt = this.db.prepare(
       `INSERT INTO tasks (
+         id, session_id, user_message, max_steps, status, origin,
+         attempts, max_attempts, last_error, last_error_cat,
+         created_at, updated_at, started_at, completed_at,
+         schedule_kind, schedule_value, scheduled_for, recurring,
+         last_scheduled_at, trigger_source, notify
+       ) VALUES (
+         @id, @session_id, @user_message, @max_steps, @status, @origin,
+         @attempts, @max_attempts, @last_error, @last_error_cat,
+         @created_at, @updated_at, @started_at, @completed_at,
+         @schedule_kind, @schedule_value, @scheduled_for, @recurring,
+         @last_scheduled_at, @trigger_source, @notify
+       )`,
+    );
+    // Names no `run_owner`: a copied row never carries a claim.
+    this.insertIfAbsentStmt = this.db.prepare(
+      `INSERT OR IGNORE INTO tasks (
          id, session_id, user_message, max_steps, status, origin,
          attempts, max_attempts, last_error, last_error_cat,
          created_at, updated_at, started_at, completed_at,
@@ -371,6 +388,37 @@ export class TaskStore {
     };
     this.insertStmt.run(row);
     return rowToRecord(row);
+  }
+
+  /**
+   * Copy tasks from another state dir's queue into this one, keeping
+   * their ids: the desktop's own dir merged into the shared one
+   * (ATO-416). A task whose id is already here is left exactly as it is
+   * — what this queue holds wins — and the copy is dropped.
+   *
+   * A copied row never carries a claim: no `run_owner` is written, and
+   * a task that was `running` there arrives `pending` with no
+   * `started_at`, as the boot sweep puts back a run whose process is
+   * gone, so the scheduler here runs it again. Every other status,
+   * terminal history included, is copied as it is.
+   *
+   * One `BEGIN IMMEDIATE` transaction per call (see
+   * `SessionStore.insertMissing`). Returns the ids inserted.
+   */
+  insertMissing(records: readonly TaskRecord[]): string[] {
+    const insert = this.db.transaction(
+      (batch: readonly TaskRecord[]): string[] => {
+        const inserted: string[] = [];
+        for (const record of batch) {
+          const result = this.insertIfAbsentStmt.run(
+            recordToRow(unclaimed(record)),
+          ) as { changes: number };
+          if (result.changes > 0) inserted.push(record.id);
+        }
+        return inserted;
+      },
+    );
+    return insert.immediate(records);
   }
 
   get(id: string): TaskRecord | null {
@@ -745,6 +793,46 @@ function rowToRecord(row: TaskRow): TaskRecord {
     lastScheduledAt: row.last_scheduled_at,
     triggerSource: row.trigger_source as TriggerSource | null,
     notify: normalizeNotify(row.notify),
+  };
+}
+
+function recordToRow(record: TaskRecord): TaskRow {
+  return {
+    id: record.id,
+    session_id: record.sessionId,
+    user_message: record.userMessage,
+    max_steps: record.maxSteps,
+    status: record.status,
+    origin: record.origin,
+    attempts: record.attempts,
+    max_attempts: record.maxAttempts,
+    last_error: record.lastError,
+    last_error_cat: record.lastErrorCategory,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+    started_at: record.startedAt,
+    completed_at: record.completedAt,
+    schedule_kind: record.schedule?.kind ?? null,
+    schedule_value: record.schedule
+      ? serializeScheduleValue(record.schedule)
+      : null,
+    scheduled_for: record.scheduledFor,
+    recurring: record.recurring ? 1 : 0,
+    last_scheduled_at: record.lastScheduledAt,
+    trigger_source: record.triggerSource,
+    notify: record.notify,
+  };
+}
+
+/** A `running` record put back to `pending`, as `recoverInterrupted` does. */
+function unclaimed(record: TaskRecord): TaskRecord {
+  if (record.status !== "running") return record;
+  return {
+    ...record,
+    status: "pending",
+    startedAt: null,
+    lastError: record.lastError ?? TASK_OWNER_GONE_ERROR,
+    lastErrorCategory: record.lastErrorCategory ?? "transport",
   };
 }
 

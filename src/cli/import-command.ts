@@ -31,6 +31,7 @@ import {
   type OpenclawOptionId,
   type ImportReport,
 } from "../import/index.js";
+import { importAtomicDesktopCommand } from "./import-atomic-desktop-command.js";
 import { importOhMyPi, importPi } from "./import-pi-family-command.js";
 
 const HELP =
@@ -44,6 +45,9 @@ const HELP =
     "  codex [options]           Import skills, instructions + sessions from ~/.codex",
     "  pi [options]              Import skills + sessions from ~/.pi/agent",
     "  oh-my-pi [options]        Import skills, MCP servers + sessions from ~/.omp/agent",
+    "  atomic-desktop --source <dir> [--json]",
+    "                            Merge an old Atomic Agent desktop state dir's sessions, tasks,",
+    "                            memory notes + profile facts into this one (see atomic-desktop --help)",
     "",
     "Options (import hermes):",
     "  --source <dir>            Hermes state dir (default ~/.hermes, env HERMES_STATE_DIR)",
@@ -115,6 +119,7 @@ const HELP =
     "  atomic-agent import codex --limit 50 --yes",
     "  atomic-agent import pi --dry-run",
     "  atomic-agent import oh-my-pi --exclude mcp --yes",
+    "  atomic-agent import atomic-desktop --source ~/.atomic-agent-desktop --json",
   ].join("\n") + "\n";
 
 export async function importCommand(args: string[]): Promise<number> {
@@ -140,6 +145,9 @@ export async function importCommand(args: string[]): Promise<number> {
   }
   if (sub === "oh-my-pi") {
     return importOhMyPi(args.slice(1));
+  }
+  if (sub === "atomic-desktop") {
+    return importAtomicDesktopCommand(args.slice(1));
   }
   process.stderr.write(`unknown import source: ${sub}\n`);
   process.stderr.write(HELP);

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 /**
  * The whole surface the renderer gets. No `ipcRenderer`, no `require`,
@@ -150,6 +150,27 @@ contextBridge.exposeInMainWorld("atomic", {
   // Chat review Д23: which paths a reply names are files in the home folder, and opening one
   replyPaths: (paths: string[]) => ipcRenderer.invoke("app:replyPaths", paths),
   openReplyPath: (path: string) => ipcRenderer.invoke("app:openReplyPath", path),
+  // ATO-408: a picture file as a data: URL (CSP allows only data: images), and the
+  // image viewer's Save As… / Reveal. Shared with ATO-404–406 (the person's attachments):
+  // {ok:true, dataUrl} | {ok:false, reason:'missing'|'too-large'|'outside'}
+  imageDataUrl: (path: string) => ipcRenderer.invoke("app:imageDataUrl", path),
+  imageSaveAs: (path: string) => ipcRenderer.invoke("app:imageSaveAs", path),
+  imageReveal: (path: string) => ipcRenderer.invoke("app:imageReveal", path),
+  /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */
+  attachPick: (kind: "images" | "files") => ipcRenderer.invoke("attachments:pick", kind),
+  attachReadPicked: (path: string) => ipcRenderer.invoke("attachments:readPicked", path),
+  attachSave: (source: { path?: string; bytes?: Uint8Array; name?: string }) => ipcRenderer.invoke("attachments:save", source),
+  attachDiscard: (path: string) => ipcRenderer.invoke("attachments:discard", path),
+  attachCheck: (path: string) => ipcRenderer.invoke("attachments:check", path),
+  attachOpen: (path: string) => ipcRenderer.invoke("attachments:open", path),
+  /** A dropped File's path on disk ("" for one that has none); the sandboxed window cannot read it itself. */
+  pathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
   micStatus: () => ipcRenderer.invoke("app:micStatus"),
   micRequest: () => ipcRenderer.invoke("app:micRequest"),
   resetMicPermission: () => ipcRenderer.invoke("app:resetMicPermission"),
@@ -319,6 +340,8 @@ contextBridge.exposeInMainWorld("atomic", {
    *  `tuiSetupPresent` reports env var NAMES only; `importFromTui` copies only
    *  the flags that are ticked and never touches the source. */
   firstRun: () => ipcRenderer.invoke("app:firstRun"),
+  /** ATO-416: {title, text, log} once after the desktop's data moved into the shared directory, else null. */
+  stateMergeNotice: () => ipcRenderer.invoke("app:stateMergeNotice"),
   /** Backlog 03 — `firstRun().fresh`, handed over with the window rather than
    *  asked for, so the renderer can open the wizard before its first paint. */
   freshAtBoot: process.argv.includes("--atomic-fresh-state"),

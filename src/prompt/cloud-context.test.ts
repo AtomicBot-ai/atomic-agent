@@ -10,6 +10,7 @@ import { planCompaction } from "./plan-compaction.js";
 import { getConfig } from "../config/index.js";
 import { readContextLengthFromRejection } from "../llm/reliability/request-size-rejection.js";
 import { isNativeShapeRejection } from "../llm/provider/openai/openai-native-messages.js";
+import { PROFILE_SECTION_CAPTION } from "../memory/profile-renderer.js";
 
 const mode = { mode: "cloud" as const, source: "provider" as const, providerId: "remote", modelId: "large" };
 function fixture(): BuildPromptInput {
@@ -118,5 +119,13 @@ describe("cloud message retention", () => {
       expect(isNativeShapeRejection(error)).toBe(false);
     }
     expect(() => buildOpenAiChatBody({ ...request, modelMode: { ...mode, mode: "local" } }, "model", false, { max_tokens: 16000 })).not.toThrow();
+  });
+
+  it("captions profile facts so a key does not read as a skill or tool name (ATO-320)", () => {
+    const input = fixture();
+    input.profileFacts = [{ id: 1, key: "hobby_builder", value: "true", validFrom: 1, updatedAt: 1, pinned: true,
+      keywords: [], supersedes: null, supersededBy: null, voteScore: 0 }];
+    expect(buildPrompt(input).text).toContain(`${PROFILE_SECTION_CAPTION}\n- hobby_builder: true`);
+    expect(buildPrompt({ ...input, profileFacts: [] }).text).not.toContain(PROFILE_SECTION_CAPTION);
   });
 });

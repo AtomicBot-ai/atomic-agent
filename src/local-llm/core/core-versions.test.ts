@@ -11,14 +11,13 @@ const dirs: string[] = [];
 function fixture() { const dir = mkdtempSync(join(tmpdir(), "core-versions-")); dirs.push(dir); return dir; }
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-it("pins 0.13.6 as the install target and keeps 0.11.2 readable", () => {
-  expect(CORE_VERSION).toBe("0.13.6");
-  expect(CORE_VERSIONS).toContain("0.11.2");
+it("pins 0.16.0 as the install target and keeps 0.11.2 and 0.13.6 readable", () => {
+  expect(CORE_VERSION).toBe("0.16.0");
+  expect(CORE_VERSIONS).toEqual(["0.11.2", "0.13.6", "0.16.0"]);
 });
 
-it("keeps an existing 0.11.2 install active and usable until it is updated", () => {
+it.each(["0.11.2", "0.13.6"])("keeps an existing %s install active and usable until it is updated", old => {
   const dir = fixture();
-  const old = "0.11.2";
   mkdirSync(dirname(coreBinary(dir, old)), { recursive: true });
   writeFileSync(coreBinary(dir, old), "fixture");
   writeCoreJson(join(coreVersionDir(dir, old), "verified.json"), { version: old, sha256: "a".repeat(64) });
@@ -51,6 +50,7 @@ it("asks an idle older Core to shut down once, without force", async () => {
   await retireOlderCores(dir, connect);
   expect(connect).toHaveBeenCalledTimes(CORE_VERSIONS.length - 1);
   expect(connect).toHaveBeenCalledWith(dir, "0.11.2");
+  expect(connect).toHaveBeenCalledWith(dir, "0.13.6");
   expect(connect).not.toHaveBeenCalledWith(dir, CORE_VERSION);
   expect(call).toHaveBeenCalledWith("/shutdown", { client_id: "me" });
 });

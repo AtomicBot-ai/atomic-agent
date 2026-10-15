@@ -2,6 +2,16 @@
  * r5 item 9 — the one side effect that makes the desktop's state directory
  * real, and the FIRST import in main.ts.
  *
+ * ATO-416: on a default install that directory is now the terminal agent's
+ * own ~/.atomic-agent (state-dir.ts). Where this header says the desktop
+ * never writes ~/.atomic-agent, or calls the weights link the only way in,
+ * it describes a desktop pointed at a directory of its own. On the shared
+ * default, step 4 is a no-op: seedFreshStateDir returns when the two
+ * directories are equal (there is nothing to link to itself), and the
+ * fresh latch in step 2 is "no config.json yet", which a terminal user's
+ * directory never is, so the wizard does not open over their setup
+ * (main.ts latchSharedSetupNotice says it once instead).
+ *
  * Why its own module rather than three statements at the top of main.ts:
  * the desktop is CommonJS, and tsc hoists every `require` above the file's
  * own body — out/main/main.js has its requires first and its first
@@ -58,9 +68,37 @@
 import { cpSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import { ipcMain } from "electron";
+
+import { reapOrphanedServe, resolveBinary } from "./agent-client.js";
 import { DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR } from "./state-dir.js";
+import { configCameFromDesktop, runDesktopStateMigrationAtBoot, takeStateMergeNotice } from "./state-migrate.js";
 
 process.env.ATOMIC_AGENT_STATE_DIR = DESKTOP_STATE_DIR;
+
+/**
+ * ATO-416: a desktop that kept its data in ~/.atomic-agent-desktop brings it
+ * into the shared directory once (state-migrate.ts). It runs HERE, before the
+ * fresh-run latch below, so a directory that has just been filled is not
+ * taken for a first run, and before anything is started on it. A no-op unless
+ * this app runs on the shared directory by default (not one named by the
+ * environment) and the old directory holds a setup not merged yet. Never
+ * throws: on failure the app runs on the shared directory anyway.
+ */
+export const DESKTOP_STATE_MERGE = runDesktopStateMigrationAtBoot(DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, {
+  resolveBinary,
+  reapServe: (path) => { reapOrphanedServe(path); },
+});
+/* The one-time "your desktop data moved" notice, for the first window that asks. */
+ipcMain.handle("app:stateMergeNotice", () => takeStateMergeNotice(DESKTOP_STATE_DIR));
+/**
+ * ATO-416: the shared config.json is the desktop's own, copied over by the
+ * merge (the terminal had none). DESKTOP_STATE_WAS_FRESH below is false for
+ * such an upgrader on purpose (it is not a first run: no wizard, no port
+ * claim), so the "already set up in the terminal" notice must also check
+ * this before it says the terminal set anything up.
+ */
+export const SHARED_CONFIG_FROM_DESKTOP = configCameFromDesktop(DESKTOP_STATE_DIR);
 
 /** Was this a genuine first run? Latched before anything can write. */
 export const DESKTOP_STATE_WAS_FRESH = !existsSync(join(DESKTOP_STATE_DIR, "config.json"));

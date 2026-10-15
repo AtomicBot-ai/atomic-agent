@@ -9,6 +9,7 @@ import {
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
 import { buildPrompt } from "./build-prompt.js";
+import { PROFILE_SECTION_CAPTION } from "../memory/profile-renderer.js";
 import { FUSION_GUIDANCE } from "./fusion-guidance.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 import { createEmptySessionState } from "../session/session-state.js";
@@ -23,7 +24,10 @@ import {
   estimateTokens,
   truncateToTokens,
 } from "./token-budget.js";
-import { ALSO_AVAILABLE_VIA_TOOL_VIEW } from "./stable-prefix.js";
+import {
+  ALSO_AVAILABLE_VIA_TOOL_VIEW,
+  DEFAULT_SYSTEM_PERSONA,
+} from "./stable-prefix.js";
 import {
   REQUEST_FOLLOW_UP_MARKER,
   REQUEST_SECTION_CHAR_BUDGET,
@@ -190,6 +194,12 @@ describe("buildPrompt", () => {
     expect(windows.stablePrefix).toContain("`Move-Item`");
     expect(windows.stablePrefix).toContain('mkdir "C:\\path\\Folder"');
     expect(darwin.stablePrefix).not.toContain("New-Item");
+    // #602 again: 72 files took 24 minutes of cmd.exe quoting. Moves and
+    // new folders go through os.fs.move; the shell keeps only the empty
+    // folder, and no longer teaches `move "…" "…"`.
+    expect(windows.stablePrefix).toContain("To move, rename or sort files into folders, call `os.fs.move`");
+    expect(windows.stablePrefix).not.toContain('move "C:');
+    expect(windows.stablePrefix).not.toContain("`copy`/`move`/`ren`");
     // The Windows hint changes the stable prefix deterministically by
     // platform — the two hashes differ but each is stable per platform.
     expect(windows.stablePrefix).not.toBe(darwin.stablePrefix);
@@ -1582,6 +1592,36 @@ describe("buildPrompt profile section", () => {
     expect(prompt.tail).toContain("- language: ru");
   });
 
+  it("captions the facts so a key does not read as a skill or tool name (ATO-320)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [
+        {
+          id: 1,
+          key: "hobby_builder",
+          value: "true",
+          validFrom: 1,
+          updatedAt: 1,
+          pinned: true,
+          keywords: [],
+          supersedes: null,
+          supersededBy: null,
+          voteScore: 0,
+        },
+      ],
+    });
+    expect(prompt.tail).toContain(
+      `### profile\n${PROFILE_SECTION_CAPTION}\n- hobby_builder: true\n`,
+    );
+    // The caption is part of the section, so the budget pays for it.
+    expect(prompt.tokens.profile).toBe(
+      estimateTokens(`${PROFILE_SECTION_CAPTION}\n- hobby_builder: true`),
+    );
+  });
+
   it("keeps the stable prefix byte-stable across profile edits", () => {
     const empty = buildPrompt({
       session: mkSession(),
@@ -1736,7 +1776,7 @@ describe("buildPrompt profile clip (issue #407)", () => {
         },
       ],
       userMessage: "deploy now",
-      profileMaxTokens: 40,
+      profileMaxTokens: 56,
     });
     const start = prompt.tail.indexOf("### profile\n") + "### profile\n".length;
     const section = prompt.tail.slice(
@@ -1745,6 +1785,7 @@ describe("buildPrompt profile clip (issue #407)", () => {
     );
     expect(section).toBe(
       [
+        PROFILE_SECTION_CAPTION,
         "- z_consent: never share the owner's files without asking",
         "… [truncated] 1 more profile fact not shown (memory.profile.maxTokens)",
       ].join("\n"),
@@ -1754,9 +1795,9 @@ describe("buildPrompt profile clip (issue #407)", () => {
       rendered: 1,
       dropped: 1,
       pinnedDropped: 0,
-      maxTokens: 40,
+      maxTokens: 56,
     });
-    expect(prompt.tokens.profile).toBeLessThanOrEqual(40);
+    expect(prompt.tokens.profile).toBeLessThanOrEqual(56);
   });
 
   it("reports no clip when the profile fits", () => {
@@ -2425,5 +2466,17 @@ describe("os.fs.write descriptor (#602)", () => {
     const write = DEFAULT_TOOL_DESCRIPTORS.find((d) => d.name === "os.fs.write");
     expect(write?.summary).toContain("never a folder");
     expect(write?.summary).toContain("`mkdir`");
+    // Files into a new folder go through os.fs.move; mkdir is only for an empty one.
+    expect(write?.summary).toContain("os.fs.move them there");
+  });
+});
+
+describe("os.fs.move in the prompt (#602)", () => {
+  it("is a rare one-liner, and both the persona and the shell descriptor point to it", () => {
+    const move = DEFAULT_TOOL_DESCRIPTORS.find((d) => d.name === "os.fs.move");
+    expect(move?.tier).toBe("rare");
+    const shell = DEFAULT_TOOL_DESCRIPTORS.find((d) => d.name === "os.shell.run");
+    expect(shell?.summary).toContain("use os.fs.move");
+    expect(DEFAULT_SYSTEM_PERSONA).toContain("use `os.fs.move` (it creates missing folders)");
   });
 });

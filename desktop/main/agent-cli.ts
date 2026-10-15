@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 // r5 integration: `homedir` is back for the wizard's import scan only — it
 // locates the OTHER agents' state dirs (~/.claude, ~/.codex …), never this
 // desktop's own, which is DESKTOP_STATE_DIR (item 9).
@@ -46,6 +47,8 @@ export interface CliResult {
   stdout: string;
   stderr: string;
   error?: string;
+  /** The process's exit code when it exited non-zero (ATO-416: 3 is "config changed since it was read"). */
+  exitCode?: number;
 }
 
 /**
@@ -97,6 +100,13 @@ export function inCliStandIn(): boolean {
 }
 
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
+  /* ATO-416: anything but a read, run inside a config-lock hold, may have
+     changed config.json under the hash that hold last read (a leaf
+     `config set`, `models use`), so the hash is forgotten and the next
+     whole-file write of the hold goes without one, as it always did. Only a
+     `config get` gives it back (configGet). */
+  const cas = casHolds.getStore();
+  if (cas && !(args[0] === "config" && args[1] === "get")) cas.sha = undefined;
   const standIn = cliStandIns.getStore();
   if (standIn) return standIn.cli(args, input);
   const binary = resolveBinary();
@@ -158,6 +168,7 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
       ok: false,
       stdout: e.stdout ?? "",
       stderr: e.stderr ?? "",
+      ...(typeof e.code === "number" ? { exitCode: e.code } : {}),
       error: said
         || (e.message?.startsWith("Command failed")
           ? `\`${verb}\` failed without saying why${typeof e.code === "number" ? ` (exit ${e.code})` : ""}`
@@ -203,17 +214,135 @@ let configWriteChain: Promise<void> = Promise.resolve();
 let configLockAsked = 0;
 /** Run `write` with the config file to itself; every writer here queues on this. */
 export function withConfigLock<T>(write: () => Promise<T>): Promise<T> {
+  const held = () => withConfigRetries(write);
   const h = cliStandIns.getStore();
   if (h) {
     h.configTurns++;
-    const next = h.configChain.then(write, write);
+    const next = h.configChain.then(held, held);
     h.configChain = next.then(() => undefined, () => undefined);
     return next;
   }
   configLockAsked++;
-  const next = configWriteChain.then(write, write);
+  const next = configWriteChain.then(held, held);
   configWriteChain = next.then(() => undefined, () => undefined);
   return next;
+}
+
+/* ---------------------------------------------------------------
+   ATO-416 — and ONE CONFIG FILE FOR TWO APPS.
+
+   The lock above serializes the writes of THIS process. From this release
+   the desktop and the terminal agent share one config.json
+   (state-dir.ts), and a terminal session writes it whenever its person
+   changes a setting there, so a read-modify-write here can still lose a
+   write that landed between its read and its write — the r8 bug above,
+   with the second writer in another process the lock cannot see.
+
+   So every whole-file write is a compare-and-swap. The read gives back the
+   sha256 of the raw config.json bytes it read (readConfigWithSha, the one
+   place that knows how the agent spells that), and the write goes with
+   `atag config set - --expect-sha256 <hex>`: the agent writes only when the
+   file still hashes to that, and otherwise exits 3 with "config changed
+   since it was read" and writes nothing. A refused write is not an error to
+   show: the hold is run again from the top, which READS the file again and
+   PLANS again on what is there now, up to CONFIG_WRITE_TRIES times. Every
+   whole-file helper in this module already reads first inside its hold
+   (configGet / readWholeConfig, then the plan, then writeWholeConfig), so
+   running the hold again is exactly "re-read and re-plan". Only after the
+   last try is the calm sentence below the answer.
+
+   What is NOT compare-and-swap, and why that is the old behaviour rather
+   than a new risk: a write in a hold that read nothing first
+   (`configSetWhole(cfg)` with a tree the caller read outside the lock; the
+   suite's restores use it on purpose), and a write after anything else
+   changed the file inside the same hold (cli() forgets the hash then). Those
+   write without `--expect-sha256`, as every write did before. An agent too
+   old to give a hash gives none, and its writes go the old way too.
+   --------------------------------------------------------------- */
+
+/** How many times one hold may read, plan and write before it gives up. */
+export const CONFIG_WRITE_TRIES = 3;
+
+/** Said when the file kept changing under every try. No dashes, nothing to look up. */
+export const CONFIG_CHANGED_ELSEWHERE =
+  "Your settings were being changed somewhere else, by the terminal agent or another window, so this was not saved. Try again.";
+
+/** What one hold of the config lock knows about the file it read. */
+interface CasHold {
+  /** The hash of the last `config get` in this hold; undefined when unknown (nothing read, or something changed it since). */
+  sha: string | undefined;
+  /** A `--expect-sha256` write of this hold was refused because the file had moved. */
+  conflicted: boolean;
+}
+const casHolds = new AsyncLocalStorage<CasHold>();
+
+async function withConfigRetries<T>(write: () => Promise<T>): Promise<T> {
+  let answer!: T;
+  for (let attempt = 1; attempt <= CONFIG_WRITE_TRIES; attempt++) {
+    const hold: CasHold = { sha: undefined, conflicted: false };
+    answer = await casHolds.run(hold, write);
+    if (!hold.conflicted) return answer;
+    console.error(`[desktop] config.json changed while a change was being saved; reading it again (try ${attempt} of ${CONFIG_WRITE_TRIES})`);
+  }
+  return answer;
+}
+
+/** The agent refused a `--expect-sha256` write because the file moved (exit 3, or its sentence). */
+export function configWriteConflicted(res: CliResult): boolean {
+  return !res.ok && (res.exitCode === 3 || /config changed since it was read/.test(res.stderr));
+}
+
+/** The hash the agent compares against: sha256 of the raw bytes, and of the empty string for a missing file. */
+export function configBytesSha256(raw: string | Buffer | null): string {
+  return createHash("sha256").update(raw ?? "").digest("hex");
+}
+
+/**
+ * The read with its hash, in ONE agent process, so the two describe the
+ * same file. The agent's spelling lives here and nowhere else: today
+ * `atag config get --with-sha256`, answering `{"sha256": "...", "config":
+ * {...}}`. An agent that does not know the flag (it says so, or answers the
+ * plain config) is read the old way and gives no hash, which makes the
+ * write that follows a plain one.
+ */
+let shaReadUnsupported = false;
+export async function readConfigWithSha(): Promise<{ ok: boolean; config?: unknown; sha256: string | null; error?: string }> {
+  // A stand-in (the suite) is always asked the new way, and what it answers never teaches the real agent's flag.
+  const standIn = inCliStandIn();
+  if (standIn || !shaReadUnsupported) {
+    const res = await cli(["config", "get", "--with-sha256"]);
+    if (res.ok) {
+      const parsed = parseConfigWithSha(res.stdout);
+      return parsed ? { ok: true, ...parsed } : { ok: false, sha256: null, error: "config get did not return JSON" };
+    }
+    if (!/unknown option|unknown flag|unexpected argument|with-sha256/i.test(`${res.stderr}\n${res.error ?? ""}`)) {
+      return { ok: false, sha256: null, error: res.error };
+    }
+    if (!standIn) shaReadUnsupported = true;
+  }
+  const plain = await cli(["config", "get"]);
+  if (!plain.ok) return { ok: false, sha256: null, error: plain.error };
+  try {
+    return { ok: true, config: JSON.parse(plain.stdout), sha256: null };
+  } catch {
+    return { ok: false, sha256: null, error: "config get did not return JSON" };
+  }
+}
+
+/** Either answer `config get --with-sha256` may give: the wrapped one, or the plain config of an agent that ignored the flag. */
+export function parseConfigWithSha(stdout: string): { config: unknown; sha256: string | null } | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const o = raw as { sha256?: unknown; config?: unknown } | null;
+  if (o && typeof o === "object" && typeof o.sha256 === "string" && /^[0-9a-f]{64}$/i.test(o.sha256)
+    && o.config && typeof o.config === "object" && Object.keys(o).length === 2) {
+    return { config: o.config, sha256: o.sha256.toLowerCase() };
+  }
+  return { config: raw, sha256: null };
 }
 /**
  * ATO-157: how many holds of the config lock have been asked for. Moved the
@@ -241,13 +370,12 @@ export function configFileHint(): UserConfigShape | null {
 }
 
 export async function configGet(): Promise<{ ok: boolean; config?: unknown; error?: string }> {
-  const res = await cli(["config", "get"]);
-  if (!res.ok) return { ok: false, error: res.error };
-  try {
-    return { ok: true, config: JSON.parse(res.stdout) };
-  } catch {
-    return { ok: false, error: "config get did not return JSON" };
-  }
+  const read = await readConfigWithSha();
+  if (!read.ok) return { ok: false, error: read.error };
+  // ATO-416: inside a hold of the config lock, the write that follows is checked against this read.
+  const cas = casHolds.getStore();
+  if (cas) cas.sha = read.sha256 ?? undefined;
+  return { ok: true, config: read.config };
 }
 
 /** One dotted key at a time, exactly as the CLI documents it. */
@@ -556,10 +684,20 @@ export function configSetWhole(config: unknown): Promise<CliResult> {
 async function writeWholeConfig(config: unknown): Promise<CliResult> {
   normaliseLlmBlock(config);
   const json = JSON.stringify(config);
+  /* ATO-416: against the hash this hold read, when it has one (see
+     withConfigRetries). Taken before the call: cli() forgets it for any
+     command but a read, this one included, and a file this write changed
+     has a hash nobody has read. */
+  const cas = casHolds.getStore();
+  const expect = cas?.sha;
   /* ATO-132: the file goes in on stdin (`config set -`), never as an
      argument. It carries the providers' API keys, and any process on the
      machine can read another's command line for as long as it runs. */
-  const res = await cli(["config", "set", "-"], 30_000, undefined, undefined, json);
+  const res = await cli(["config", "set", "-", ...(expect ? ["--expect-sha256", expect] : [])], 30_000, undefined, undefined, json);
+  if (expect && configWriteConflicted(res)) {
+    if (cas) cas.conflicted = true;
+    return { ...res, error: CONFIG_CHANGED_ELSEWHERE };
+  }
   if (!res.ok && /no value given for -/.test(res.stderr)) {
     // An agent older than `config set -`: only a file holding no API key goes the old way.
     if (holdsProviderKey(config)) return { ...res, error: AGENT_TOO_OLD_FOR_KEYS };
@@ -848,11 +986,13 @@ export const START_WITH_INSTALL_TIMEOUT_MS = 20 * 60_000;
  * Whether the next `models start` may install Atomic Core first: Core is the
  * engine and its backend is not ready (backendInstalled), or the active Core
  * is not the version this build carries (a version bump the agent installs on
- * its next start).
+ * its next start, only while `localModels.managed.autoUpdate` is on: with it
+ * off the agent keeps the working older Core and downloads nothing).
  */
 export function coreInstallMayRun(): boolean {
   if (managedEngineNow() !== "atomic-core") return false;
   if (!backendInstalled()) return true;
+  if (!managedAutoUpdateNow()) return false;
   try {
     const active = JSON.parse(readFileSync(join(managedDataDirNow(), "core", "active.json"), "utf8")) as { version?: unknown };
     return active.version !== BUNDLED_CORE_VERSION;
@@ -4016,6 +4156,15 @@ function newestMtime(dir: string): number {
 export function managedEngineNow(): ManagedEngine {
   try { return managedEngineOf(JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8"))); }
   catch { return "atomic-core"; }
+}
+/** `localModels.managed.autoUpdate` as the agent reads it: on unless the config says `false`. */
+export function managedAutoUpdateNow(): boolean {
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { autoUpdate?: unknown } } };
+    return cfg.localModels?.managed?.autoUpdate !== false;
+  } catch {
+    return true;
+  }
 }
 /** The managed data dir the desktop's config names (its `dataDirOverride`, or the default). */
 export function managedDataDirNow(): string {

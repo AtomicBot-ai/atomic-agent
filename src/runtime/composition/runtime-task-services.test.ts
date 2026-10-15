@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, resetConfigCache } from "../../config/index.js";
@@ -119,5 +119,67 @@ describe("runtime task service phases", () => {
     scheduler?.start(); await vi.advanceTimersByTimeAsync(100);
     expect(due).toHaveBeenCalledWith(expect.any(Number), 3, expect.any(AbortSignal));
     await scheduler?.stop(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  // ATO-416: the desktop's `atag serve` and the TUI share the state dir;
+  // only one of them drains due tasks.
+  describe("scheduler leadership across processes sharing the state dir", () => {
+    const outcome = { drained: 0, completed: 0, failed: 0, blocked: 0, cancelled: 0, retried: 0 };
+    const wantedTelegram = { hasToken: () => true, state: () => "down" as const };
+
+    it("drains and holds scheduler.lock when it is the only process", async () => {
+      const { runner } = runnerFixture(); vi.useFakeTimers();
+      config.tasks.schedulerTickMs = 100;
+      const due = vi.spyOn(runner, "runDue").mockResolvedValue(outcome);
+      scheduler = createRuntimeScheduler({ config, taskRunner: runner, logger, metrics });
+      scheduler?.start(); await vi.advanceTimersByTimeAsync(100);
+      expect(due).toHaveBeenCalledTimes(1);
+      expect(readFileSync(join(dir, "scheduler.lock"), "utf8")).toBe(String(process.pid));
+      await scheduler?.stop();
+      expect(existsSync(join(dir, "scheduler.lock"))).toBe(false);
+    });
+
+    it("stands by while another live process owns the Telegram bot", async () => {
+      const { runner } = runnerFixture(); vi.useFakeTimers();
+      config.tasks.schedulerTickMs = 100;
+      // `process.ppid` is a live pid that is not us: the other app.
+      writeFileSync(join(dir, "telegram.lock"), String(process.ppid));
+      const due = vi.spyOn(runner, "runDue").mockResolvedValue(outcome);
+      scheduler = createRuntimeScheduler({
+        config, taskRunner: runner, logger, metrics, resolveTelegram: () => wantedTelegram,
+      });
+      scheduler?.start(); await vi.advanceTimersByTimeAsync(300);
+      expect(due).not.toHaveBeenCalled();
+      expect(records.some((r) => r.message === "scheduler: another process runs due tasks; standing by")).toBe(true);
+    });
+
+    it("stands by while another live process holds scheduler.lock and Telegram is off here", async () => {
+      const { runner } = runnerFixture(); vi.useFakeTimers();
+      config.tasks.schedulerTickMs = 100;
+      writeFileSync(join(dir, "scheduler.lock"), String(process.ppid));
+      const due = vi.spyOn(runner, "runDue").mockResolvedValue(outcome);
+      scheduler = createRuntimeScheduler({
+        config, taskRunner: runner, logger, metrics,
+        resolveTelegram: () => ({ hasToken: () => true, state: () => "disabled" as const }),
+      });
+      scheduler?.start(); await vi.advanceTimersByTimeAsync(300);
+      expect(due).not.toHaveBeenCalled();
+      await scheduler?.stop();
+      // Not ours: left in place.
+      expect(readFileSync(join(dir, "scheduler.lock"), "utf8")).toBe(String(process.ppid));
+    });
+
+    it("leads when this process owns the Telegram bot", async () => {
+      const { runner } = runnerFixture(); vi.useFakeTimers();
+      config.tasks.schedulerTickMs = 100;
+      writeFileSync(join(dir, "telegram.lock"), String(process.pid));
+      writeFileSync(join(dir, "scheduler.lock"), String(process.ppid));
+      const due = vi.spyOn(runner, "runDue").mockResolvedValue(outcome);
+      scheduler = createRuntimeScheduler({
+        config, taskRunner: runner, logger, metrics, resolveTelegram: () => wantedTelegram,
+      });
+      scheduler?.start(); await vi.advanceTimersByTimeAsync(100);
+      expect(due).toHaveBeenCalledTimes(1);
+    });
   });
 });

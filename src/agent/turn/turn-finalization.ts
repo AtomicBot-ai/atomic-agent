@@ -10,10 +10,11 @@ import type {
 import type { LlmFailureCategory } from "../../llm/index.js";
 import type { SessionState } from "../../session/session-state.js";
 import { incrementTurnCount, recordTurn } from "../../session/session-state.js";
-import { assistantReplyTurn, isFinalReplyTurn, isStoppedTurnMarker, stoppedTurnMarker } from "../../session/conversation-turn.js";
+import { assistantReplyTurn, findCurrentMacroTurnStart, isFinalReplyTurn, isStoppedTurnMarker, stoppedTurnMarker } from "../../session/conversation-turn.js";
 import type { ProfileFact } from "../../memory/profile-store.js";
 import { formatTurnFailedRecord } from "./parse-failure-recovery.js";
 import { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn-memory-context.js";
+import { formatPauseDigest } from "./pause-digest.js";
 
 export type TurnFinalizationDependencies = Pick<
   AgentLoopDependencies,
@@ -97,13 +98,22 @@ export function finalizeAgentTurn(
     state = { ...state, status: "cancelled" };
     deps.onEvent?.({ type: "loop_completed", reason });
   } else if (reason === "max_steps") {
-    const synthetic = formatTaskStoppedReply({
+    const stopped = formatTaskStoppedReply({
       cause: stopCause,
       stepsTaken,
       stepCeiling,
       elapsedMs: Date.now() - taskStartedAt,
       ...(creditStop !== null ? { credit: creditStop } : {}),
     });
+    // A `max_steps` close means the model's own summary never arrived:
+    // the reserved final step overran its deadline or was spent on
+    // refused calls. Say what was done from the turn's records instead,
+    // so the pause is never a bare line. Not for an ephemeral fusion
+    // worker: its orchestrator builds its own hand-back from events.
+    const digest = options.ephemeral
+      ? null
+      : formatPauseDigest(state.turns.slice(findCurrentMacroTurnStart(state.turns)));
+    const synthetic = digest === null ? stopped : `${stopped}\n\n${digest}`;
     state = recordTurn(state, assistantReplyTurn(synthetic));
     deps.onEvent?.({
       type: "llm_event",

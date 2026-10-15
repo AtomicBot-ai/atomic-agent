@@ -11,6 +11,7 @@ import {
 import { activateCoreVersion, installSelectedBackend, isCoreBackendInstalled } from "./core-backend.js";
 import { connectCore, CoreRequestError, withCoreClient, type CoreControlClient } from "./core-client.js";
 import { CORE_OPERATION_WAIT_MS, withCoreOperation } from "./core-operation.js";
+import { isNewerVersion } from "../../update/compare-semver.js";
 import { retireIdleCore } from "./core-sessions.js";
 import {
   activeCoreVersion,
@@ -216,14 +217,22 @@ async function disableOn(client: CoreControlClient, timeoutMs: number): Promise<
   return client.call("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs }).then(() => true, () => false);
 }
 
+/** The first pinned Core with the embedding module (`/atomic/v1/embedding/*`). */
+export const CORE_EMBEDDING_FIRST_VERSION = "0.13.6";
+
 /**
- * The module needs Core with the embedding module (this build's pin). An
- * older active Core is switched when nothing runs on it; otherwise the
- * sentence says what to do.
+ * The Core the module runs on. This build's pin when it is active, or when
+ * an older active Core can be switched to it now (installed, nothing runs).
+ * Otherwise an older active Core that already has the module keeps serving
+ * it: with updates off the pin is never installed, and a Core whose module
+ * is enabled is never idle, so waiting for the pin would leave memory
+ * without embeddings. A Core without the module gets a sentence instead.
  */
 async function moduleCoreVersion(dataDir: string): Promise<string> {
-  if (activeCoreVersion(dataDir) === CORE_VERSION) return CORE_VERSION;
+  const active = activeCoreVersion(dataDir);
+  if (active === CORE_VERSION) return CORE_VERSION;
   if (await activateCoreVersion(dataDir, CORE_VERSION)) return CORE_VERSION;
+  if (!isNewerVersion(CORE_EMBEDDING_FIRST_VERSION, active)) return active;
   throw new Error(isCoreBackendInstalled(dataDir, CORE_VERSION)
     ? `The embedding model needs Atomic Core ${CORE_VERSION}, which is installed but waits until local models stop. Run: atomic-agent models stop, then start again.`
     : `The embedding model needs Atomic Core ${CORE_VERSION}. Install it with: atomic-agent models update`);

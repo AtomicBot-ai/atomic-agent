@@ -18,7 +18,7 @@ export interface LocalProviderErrorContext {
 
 /**
  * What a dropped connection actually means, for an operator who
- * otherwise reads `Turn failed [transport]: terminated` and concludes
+ * otherwise reads `Details: terminated` under a failed turn and concludes
  * the whole task is gone.
  *
  * Keyed off `looksLikeMidStreamDrop`, not the classifier's broader
@@ -51,6 +51,41 @@ const DROPPED_CONNECTION_HINT = [
   "the connection to the model dropped before the reply finished",
   "  the steps that already finished are kept in this session — ask to continue from there; re-sending the whole task starts it over",
 ].join("\n");
+
+/**
+ * The first line of a failed turn: one short phrase in plain words, not
+ * the classifier's category name. The categories (`transport`, `grammar`,
+ * ...) are runtime vocabulary; the operator reads the phrase, and the raw
+ * error follows on its own `Details:` line for anyone who needs it.
+ * Mirrors the desktop's short phrase plus Details shape (ATO-380).
+ *
+ * The transport phrase says only that no reply came back: the
+ * classifier also files cloud HTTP refusals (401, 402, 404, 429, 400)
+ * and a signed-out or missing CLI provider as `transport`, so "not
+ * answering" would be false for those. The Details line carries the
+ * real cause.
+ *
+ * Only categories whose meaning is unambiguous get a specific phrase.
+ * `grammar` stays on the generic one on purpose: it covers both a reply
+ * that could not be parsed and a llama-server 400/413/422 rejecting the
+ * request, so naming one cause would be wrong for the other.
+ * `cancelled` and the orchestrator's `runtime` land there too.
+ *
+ * Every phrase keeps the literal `Turn failed` prefix, which tests and
+ * readers of the chat log match on.
+ */
+function failurePhrase(category: string): string {
+  switch (category) {
+    case "transport":
+      return "Turn failed: couldn't get a reply from the provider.";
+    case "model":
+      return "Turn failed: the model didn't give a usable answer.";
+    case "tool":
+      return "Turn failed: a tool call failed.";
+    default:
+      return "Turn failed: this turn could not be completed.";
+  }
+}
 
 /**
  * Compact, chat-safe agent failure text (strips HTML walls from bad URLs).
@@ -106,7 +141,11 @@ export function formatAgentErrorForChat(
   if (body.length > MAX_CHARS) {
     body = `${body.slice(0, MAX_CHARS)}…`;
   }
-  const base = `Turn failed [${category}]: ${body}${fallbackNote}`;
+  const details = `${body}${fallbackNote}`.trim();
+  const base =
+    details.length > 0
+      ? `${failurePhrase(category)}\nDetails: ${details}`
+      : failurePhrase(category);
   if (category === "transport") {
     // The local arm wins the overlap on purpose, and stays byte-identical
     // to what it has always emitted. A socket that dies on a local route

@@ -30,6 +30,16 @@ export interface RenderProfileOptions {
 export const PROFILE_SECTION_EMPTY = "(no profile)";
 
 /**
+ * First line of a `### profile` section that shows facts. A bare
+ * `- hobby_builder: true` reads like an identifier, and a small model
+ * once called `skill.view("hobby_builder")` on it three times (ATO-320).
+ * The caption says what the lines are. Keys stay verbatim because
+ * `memory.profile.set` / `memory.profile.remove` address facts by key.
+ */
+export const PROFILE_SECTION_CAPTION =
+  "Facts about the user. Keys are labels, not skill or tool names.";
+
+/**
  * Render the contents of the `### profile` prompt section. This lives in
  * the variable tail of the prompt (never the stable prefix) so the KV
  * cache does not invalidate when the profile is edited between turns.

@@ -204,7 +204,7 @@ async function savePath(js: Js, check: Check, bin: string, lb: { base: string; s
     );
     check(
       "T44: the config write reaches the agent on stdin — no key on any `atag` command line",
-      keysOnArgv() === 0 && /^config set -$/m.test(argv()),
+      keysOnArgv() === 0 && /^config set -( --expect-sha256 [0-9a-f]{64})?$/m.test(argv()),   // ATO-416: the write may carry the hash it was read with
       q({ keysOnArgv: keysOnArgv(), lines: argv().split("\n").filter(Boolean).map((l) => l.slice(0, 40)) }),
     );
 

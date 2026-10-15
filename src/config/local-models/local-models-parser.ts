@@ -109,9 +109,10 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
 /**
  * `localModels.reasoningBudgetTokens` — the think-block bound of a local
  * reasoning model, in tokens. `0` means unbounded; anything else is an
- * integer in [64, 32768]. The upper bound keeps the grammar llama.cpp
- * expands server-side (`{0,N}` becomes N nested optional rules, four
- * per token) at a size it parses in milliseconds.
+ * integer in [64, 32768]. Values above 499 parse, but the grammar
+ * clamps the bound to 1,999 characters (499 tokens): llama.cpp rejects or
+ * ignores a larger `{0,N}` repetition (#600). The 32768 ceiling predates
+ * that cap and is kept so existing config files stay valid.
  */
 export function parseReasoningBudgetTokens(
   raw: unknown,

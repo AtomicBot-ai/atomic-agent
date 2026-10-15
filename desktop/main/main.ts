@@ -3,7 +3,7 @@
    the directory was fresh; tsc hoists every require above the file body, so
    only an import placed first is guaranteed to run before the modules below
    take their own side effects. */
-import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
+import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
@@ -12,7 +12,7 @@ import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpd
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
@@ -26,6 +26,7 @@ import { promisify } from "node:util";
 
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
+import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { buildMenu } from "./menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
@@ -205,12 +206,16 @@ import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 import { curatedMetaIds } from "./model-catalog.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
-import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
+import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
+// ATO-416 — one state directory with the terminal agent: the shared model's session marker, and the one-time notice.
+import { registerModelSession } from "./model-sessions.js";
+import { readConfigFile, readStateDirsRecord, recordStateDirRun, sharedSetupNoticeDue, stateDirsRecordPath } from "./shared-state-notice.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
 // Backlog 03 — the first-run probe's frame log, summarised.
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
+import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
@@ -1920,6 +1925,48 @@ function wireIpc(client: AgentClient): void {
     menu.popup(sender ? { window: sender } : {});
   });
 
+  /* ATO-408: a picture in the chat. The window's CSP allows only `data:`
+     images, so main reads the file and inlines it (image-data-url.ts): only
+     inside the home folder, the agent's state folder or the system's
+     temporary folders, only PNG/JPEG/WebP/GIF by their first bytes, at most
+     15 MB, and only the very file the path check passed. Shared with the
+     person's own attachments (ATO-404–406):
+       BR.imageDataUrl(path) → {ok:true, dataUrl, mime, size, mtimeMs} | {ok:false, reason:'missing'|'too-large'|'outside'}
+     The viewer's Save As… and Reveal go through the same check, so a window
+     cannot use them on a file that is not a picture, and Save As… writes the
+     bytes of the file it checked rather than copying the path again. */
+  const imageRoots = (): string[] => imageRootsFor(process.platform, homedir(), DESKTOP_STATE_DIR, tmpdir());
+  ipcMain.handle("app:imageDataUrl", (_event, p: unknown) =>
+    imageDataUrl(p, imageRoots(), homedir(), process.platform));
+  ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
+    const opened = await openImage(p, imageRoots(), homedir(), process.platform);
+    if (!opened.ok) return { ok: false, reason: opened.reason };
+    const { image } = opened;
+    try {
+      const { basename } = await import("node:path");
+      const owner = BrowserWindow.fromWebContents(event.sender) ?? win;
+      const opts = { defaultPath: basename(image.real) };
+      const picked = owner ? await dialog.showSaveDialog(owner, opts) : await dialog.showSaveDialog(opts);
+      if (picked.canceled || !picked.filePath) return { ok: false, reason: "canceled" };
+      const bytes = await readOpenedImage(image);
+      if (!bytes) return { ok: false, reason: "too-large" };
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(picked.filePath, bytes);
+      return { ok: true, path: picked.filePath };
+    } catch (e) {
+      return { ok: false, reason: "failed", error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      await image.fh.close().catch(() => undefined);
+    }
+  });
+  ipcMain.handle("app:imageReveal", async (_event, p: unknown) => {
+    const opened = await openImage(p, imageRoots(), homedir(), process.platform);
+    if (!opened.ok) return { ok: false, reason: opened.reason };
+    await opened.image.fh.close().catch(() => undefined);
+    shell.showItemInFolder(opened.image.real);
+    return { ok: true };
+  });
+
   /* The microphone, the way macOS actually works.
      Electron's renderer getUserMedia does NOT raise the system prompt on its
      own for a packaged app: if TCC has never been asked, the request fails
@@ -2047,6 +2094,8 @@ function wireIpc(client: AgentClient): void {
   });
   // 0.6.6 live routes: MCP restart / enable / disable and the deep-merge config patch.
   wireAgentLiveIpc(client);
+  // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
+  wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {
@@ -2449,7 +2498,10 @@ function wireIpc(client: AgentClient): void {
     fresh: DESKTOP_STATE_WAS_FRESH && event.sender.id === FRESH_WINDOW.id,
     stateDir: DESKTOP_STATE_DIR,
     tuiStateDir: TUI_STATE_DIR,
+    // ATO-416: false on the shared default directory, so the wizard offers no import of the terminal's own setup.
     tuiSetupFound: existsSync(join(TUI_STATE_DIR, "config.json")) && DESKTOP_STATE_DIR !== TUI_STATE_DIR,
+    // ATO-416 (C16): the terminal set this up; say so once, to the first window that asks, instead of the wizard.
+    sharedSetupNotice: takeSharedSetupNotice(),
   }));
   /* The cross-lane import contract. `tuiSetupPresent` reports env var NAMES
      only, never a value; `importFromTui` defaults every flag to false, never
@@ -3786,22 +3838,31 @@ async function smokeTest(): Promise<void> {
        and opens their stores. Observing that and calling it our leak was
        wrong three runs in a row, and each wrong alarm makes the real one
        easier to wave away.
-       So the guarantee is asserted DIRECTLY: the desktop's directory is not
-       theirs, and the environment every subprocess and the serve child
-       inherit names ours. That is deterministic — no other program on the
-       machine can make it pass or fail. */
+       So the guarantee is asserted DIRECTLY: the desktop's directory is the
+       one its resolution names, and the environment every subprocess and the
+       serve child inherit names it. That is deterministic — no other program
+       on the machine can make it pass or fail.
+       ATO-416 inverted the first half. The DEFAULT is now the terminal's own
+       ~/.atomic-agent (one directory for both apps); what still has to hold
+       is that an env-named directory wins — this suite runs on one, and a
+       run that fell back to the default would write the operator's real
+       files — and that a directory the env named is never the operator's.
+       The default cell is asserted on its own, without a launch, in T116. */
+    /* state-dir-boot.ts has already written the resolved value back into
+       process.env, so the environment cannot be re-read here as a second
+       opinion; STATE_DIR_FROM_ENV was latched before that write. */
     check(
-      "state dir: the desktop's directory is not the operator's, and is not inside it",
-      DESKTOP_STATE_DIR !== TUI_STATE_DIR
-        && !DESKTOP_STATE_DIR.startsWith(TUI_STATE_DIR + "/")
-        && !TUI_STATE_DIR.startsWith(DESKTOP_STATE_DIR + "/"),
-      `${DESKTOP_STATE_DIR} vs ${TUI_STATE_DIR}`,
+      "state dir: the default is the terminal agent's directory, and an env override still wins",
+      STATE_DIR_FROM_ENV
+        ? !SHARES_TERMINAL_STATE && DESKTOP_STATE_DIR !== TUI_STATE_DIR
+        : SHARES_TERMINAL_STATE && DESKTOP_STATE_DIR === TUI_STATE_DIR,
+      `${DESKTOP_STATE_DIR} vs ${TUI_STATE_DIR}; named by the env=${STATE_DIR_FROM_ENV} shared=${SHARES_TERMINAL_STATE}`,
     );
     const spawnEnv = agentEnv().ATOMIC_AGENT_STATE_DIR;
     check(
-      "state dir: every subprocess and the serve child inherit the desktop's directory, never the operator's",
-      spawnEnv === DESKTOP_STATE_DIR && spawnEnv !== TUI_STATE_DIR,
-      `agentEnv() names ${spawnEnv}`,
+      "state dir: every subprocess and the serve child inherit the desktop's directory",
+      spawnEnv === DESKTOP_STATE_DIR && agentEnv().ATOMIC_AGENT_SESSION_PARENT_PID === String(process.pid),
+      `agentEnv() names ${spawnEnv}, session parent pid ${agentEnv().ATOMIC_AGENT_SESSION_PARENT_PID}`,
     );
     /* And one narrow tripwire that the operator's own use does NOT trip:
        their keys file, byte for byte. Nothing on their side rewrites .env
@@ -5917,9 +5978,8 @@ async function settingsTestPartB(
  * remove <custom-id>` deletes the files AND drops the config entry for a
  * custom row), in a `finally`, against a snapshot taken first. Run the
  * suite with ATOMIC_AGENT_STATE_DIR pointed somewhere disposable — since
- * r5 item 9 the fallback is `~/.atomic-agent-desktop` (state-dir.ts), not
- * the operator's `~/.atomic-agent`, but these still write a REAL file and
- * a lane run wants its own.
+ * ATO-416 the fallback is the operator's own `~/.atomic-agent` again
+ * (state-dir.ts), and these write a REAL file, so a lane run needs its own.
  *
  * NOTHING HERE DOWNLOADS A MODEL. The heaviest network call is one
  * ~2 KB repo listing; the add is asserted at the config, and the pull is
@@ -8043,14 +8103,17 @@ async function isolationAndSwitchTest(
     return st;
   };
 
-  // ---- item 9: the desktop is on its own directory, live ----
+  // ---- item 9 (ATO-416): the agent runs on the directory main resolved, live ----
   const caps = await js<{ ok: boolean; data?: { paths?: { stateDir?: string } } }>("window.atomic.capabilities()");
   const live = caps?.data?.paths?.stateDir ?? "";
+  /* ATO-416: `live !== TUI_STATE_DIR` was a conjunct here. The default IS
+     the terminal's directory now; this run is on an env-named one, so what
+     it can assert is that the agent runs exactly where main resolved. */
   check(
-    "state dir: the desktop runs on its own directory",
+    "state dir: the agent runs on the directory main resolved",
     live === DESKTOP_STATE_DIR
       && process.env["ATOMIC_AGENT_STATE_DIR"] === DESKTOP_STATE_DIR
-      && live !== TUI_STATE_DIR
+      && (STATE_DIR_FROM_ENV ? live !== TUI_STATE_DIR : live === TUI_STATE_DIR)
       && live.startsWith("/"),
     `agent reports ${JSON.stringify(live)}; main holds ${JSON.stringify(DESKTOP_STATE_DIR)}; env=${JSON.stringify(process.env["ATOMIC_AGENT_STATE_DIR"] ?? null)}`,
   );
@@ -8316,7 +8379,8 @@ async function isolationAndSwitchTest(
     "state dir: the import offer lists key NAMES, never values",
     presence.ok === true && presence.path === TUI_STATE_DIR && namesOnly
       && presence.has.keys.length === realKeys.length
-      && presence.present === existsSync(join(TUI_STATE_DIR, "config.json")),
+      // ATO-416: on the shared default directory there is nothing to import, so nothing is offered.
+      && presence.present === (existsSync(join(TUI_STATE_DIR, "config.json")) && !SHARES_TERMINAL_STATE),
     `present=${presence.present} providers=${presence.has.providers} keys=${JSON.stringify(presence.has.keys)} skills=${presence.has.skills} sessions=${presence.has.sessions} memory=${presence.has.memory}`,
   );
 
@@ -9262,8 +9326,42 @@ function secureStateFilesAtBoot(): void {
   }
 }
 
+/**
+ * ATO-416 (C16): whether this launch owes the "already set up in the
+ * terminal" notice (shared-state-notice.ts has the rule). Latched at boot,
+ * before this launch writes anything, and the record of this directory is
+ * written in the same step, so the next launch owes nothing. A smoke or a
+ * probe run reads the latch but writes no record: Electron's userData is
+ * not covered by ATOMIC_AGENT_STATE_DIR.
+ */
+const SHARED_NOTICE = { due: false, handedOut: false };
+function latchSharedSetupNotice(): void {
+  try {
+    const record = stateDirsRecordPath(app.getPath("userData"));
+    SHARED_NOTICE.due = sharedSetupNoticeDue({
+      shared: SHARES_TERMINAL_STATE,
+      fresh: DESKTOP_STATE_WAS_FRESH,
+      config: readConfigFile(DESKTOP_STATE_DIR),
+      ranHereBefore: readStateDirsRecord(record).includes(DESKTOP_STATE_DIR),
+      hadDesktopSetup: SHARED_CONFIG_FROM_DESKTOP || existsSync(join(LEGACY_DESKTOP_STATE_DIR, "config.json")),
+    });
+    if (!SMOKE && !FIRST_RUN_PROBE) recordStateDirRun(record, DESKTOP_STATE_DIR);
+  } catch {
+    SHARED_NOTICE.due = false;   // a notice is never worth a launch
+  }
+}
+/** The notice for the first window that asks; every later window, and every later ask, gets false. */
+function takeSharedSetupNotice(): boolean {
+  if (!SHARED_NOTICE.due || SHARED_NOTICE.handedOut) return false;
+  SHARED_NOTICE.handedOut = true;
+  return true;
+}
+
 async function claimDesktopPorts(): Promise<void> {
-  if (!DESKTOP_STATE_WAS_FRESH) return;
+  /* ATO-416: never on the terminal agent's own directory. There the desktop
+     and the terminal share one config and one model server on the agent's
+     ports; moving them to 19191/19192 would move the terminal's too. */
+  if (!DESKTOP_STATE_WAS_FRESH || !desktopOwnsItsPorts(DESKTOP_STATE_DIR, TUI_STATE_DIR)) return;
   try {
     // r5 review fix: the port move is one pure function (state-dir.ts
     // claimPortsIn) so the suite can assert it without a fresh directory —
@@ -9413,6 +9511,14 @@ void app.whenReady().then(async () => {
      user only, and the tmp files a write that died half way left beside
      them are removed. Names only in the log, never contents. */
   secureStateFilesAtBoot();
+  /* ATO-416: the desktop's seat in the agent's model-session registry, before
+     anything can start a model server, and gone again with this process. A
+     terminal session that exits while the desktop runs then leaves the
+     shared model up (model-sessions.ts). `exit`, not `will-quit`: it runs
+     on app.exit() as well, synchronously, which an unlink needs. */
+  const releaseModelSession = registerModelSession(managedDataDirNow());
+  process.once("exit", releaseModelSession);
+  latchSharedSetupNotice();
   // Windows attributes notifications to the AppUserModelID; without one set a
   // dev or unpackaged run shows none. Same id as the bundle id on macOS.
   if (process.platform === "win32") app.setAppUserModelId("io.atomicagent.desktop");
@@ -9444,7 +9550,9 @@ void app.whenReady().then(async () => {
        llama ports before `atag serve` boots and reads the file. The agent's
        schema defaults to 19091/19092, which is what the operator's terminal
        agent also holds; two daemons cannot share a port. On every later
-       launch this is skipped entirely, so it costs nothing. */
+       launch this is skipped entirely, so it costs nothing. ATO-416: and on
+       the terminal's own directory it is skipped too: one config, one
+       daemon, the agent's ports (claimDesktopPorts). */
     /* ATO-129: what an update killed in an earlier run left behind (Quit
        mid-download, a crash), once nothing has written it for a while; before
        the agent or a model start, so no update of theirs is writing there. */
@@ -9576,8 +9684,12 @@ function readQuitConfig(): Promise<Awaited<ReturnType<typeof readWholeConfig>> |
  * terminal agent stops its daemon when its last session exits
  * (src/local-llm/session-registry.ts); the desktop never did, so quitting
  * the app left llama-server holding the model's memory — gigabytes — until
- * the next reboot. The daemon is on the desktop's own state dir and port, so
- * no terminal session shares it. Bounded, so a stuck CLI cannot hold quit.
+ * the next reboot. Bounded, so a stuck CLI cannot hold quit.
+ * ATO-416: the daemon is the terminal agent's too now (one state dir, one
+ * data dir). The desktop holds a session marker like any terminal session
+ * (registerModelSession at boot), and stopDaemonForQuit leaves the server
+ * up when another live marker is there: the last one out stops it. That
+ * covers the update's shutdown below as well.
  */
 async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>, opts: { forUpdate?: boolean } = {}): Promise<void> {
   if (SMOKE) return;

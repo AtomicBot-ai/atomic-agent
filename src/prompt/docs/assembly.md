@@ -21,7 +21,7 @@ Empty optional sections are omitted. Notice composition and structured messages 
 
 ## Local budget and packing
 
-Configured caps, context-window detection, reserved completion capacity and section budgets jointly bound the prompt. ConversationMaxTokens=0 means auto; the configured fallback when a window is unknown is not an arbitrary tiny token share. The packer retains its cut between overflows and cuts deeper when prefix reuse is unavailable. Profile, lessons, procedures and loaded sections consume room that must not be counted twice.
+Configured caps, context-window detection, reserved completion capacity and section budgets jointly bound the prompt. ConversationMaxTokens=0 means auto; the configured fallback when a window is unknown is not an arbitrary tiny token share. The packer retains its cut between overflows and cuts deeper when prefix reuse is unavailable; for the same reason [the compaction planner](../plan-compaction.ts) keeps a smaller tail there. Profile, lessons, procedures and loaded sections consume room that must not be counted twice.
 
 Read the implementation for exact defaults; historical ~2.5k targets are not a universal current window ceiling.
 

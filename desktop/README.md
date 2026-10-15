@@ -1142,28 +1142,59 @@ wrapper), and never reaches inside the running app.
 
 ## The state directory
 
-**This app has its own, and it is not the terminal agent's.** The user's
-words: *"Each time I'm running the agent for the first time I should go
-through the setup wizard so I understand how the setup process works. None
-of the keys should be shared between the TUI and the desktop app, at least
-during the testing phase."*
+**Since ATO-416 it is the terminal agent's own `~/.atomic-agent`.** The
+desktop and `atag` in a terminal read and write one `config.json`, one
+`.env`, one set of sessions/memory/tasks databases, skills and model folder,
+and both apps may run at once. (r5 item 9 gave the desktop a directory of
+its own, `~/.atomic-agent-desktop`, for the testing phase: *"None of the keys
+should be shared between the TUI and the desktop app, at least during the
+testing phase."* That phase is over. What an earlier desktop kept in
+`~/.atomic-agent-desktop` is brought over once by `main/state-migrate.ts`;
+`LEGACY_DESKTOP_STATE_DIR` in `main/state-dir.ts` names that directory.)
 
-- The desktop runs on **`~/.atomic-agent-desktop`**, created `0700`. Its own
-  `config.json`, its own `.env`, its own sessions/memory/tasks databases,
-  its own traces and skills. `~/.atomic-agent` is never written by any
-  process this app starts.
+What sharing one directory takes:
+- **No private ports on the shared directory.** `claimDesktopPorts` moves a
+  fresh directory to 19191/19192 only when it is NOT the terminal's
+  (`desktopOwnsItsPorts`): there is one daemon, on the agent's own ports.
+- **Quit does not kill a model the terminal is using.** The desktop drops a
+  marker into the agent's model-session registry
+  (`<dataDir>/sessions/<pid>`, `main/model-sessions.ts`, a port of
+  `src/local-llm/server/session-registry.ts`) and removes it on exit; every
+  `atag` it spawns carries `ATOMIC_AGENT_SESSION_PARENT_PID`. On quit and
+  before an update, `models stop` and the kill of leftovers are skipped while
+  another live marker exists: the last one out stops the server.
+- **Two writers, one config.json.** Every whole-file write is a
+  compare-and-swap: the read gives the file's sha256, the write goes with
+  `atag config set - --expect-sha256 <hex>`, and a write the agent refuses
+  (exit 3, "config changed since it was read") is read, planned and written
+  again, up to three times, before the window says calmly that the settings
+  changed elsewhere (`main/agent-cli.ts`, `withConfigRetries`).
+- **A terminal user is not walked through setup again.** If `config.json`
+  was there before this launch with `tui.onboarding.completedAt` set, and
+  this desktop never ran on the directory before, the window shows one blue
+  line over the empty chat instead of the wizard: *"Atomic Agent on this
+  computer is already set up. The desktop app uses the same chats, memory,
+  skills and settings as the terminal."* (`main/shared-state-notice.ts`). The
+  wizard's import offer for the terminal setup hides itself on the shared
+  directory (`tuiSetupPresent` reports `present: false`); the other agents'
+  rows (Hermes, Claude Code …) are still offered.
+
+Everything below about a separate desktop directory, the weights link and
+the private ports applies to a desktop pointed at a directory of its own
+through an env var.
+
 - Precedence, resolved once in `main/state-dir.ts`: an explicitly set,
   absolute `ATOMIC_AGENT_STATE_DIR` wins (the smoke suite and every parallel
   lane depend on it), then `ATOMIC_AGENT_DESKTOP_STATE_DIR`, then the
-  default above. The desktop directory is the DEFAULT, not an override.
+  default above, `~/.atomic-agent`. The default is not an override.
 - `main/state-dir-boot.ts` is the **first import in `main.ts`** and the only
   place with a side effect: it publishes the value into `process.env`,
   latches whether this is a first run (before `atag config get` can create a
   `config.json` and make it look otherwise), and creates the directory.
   Every spawn site names `agentEnv()` as well, so inheritance is never the
   only guarantee.
-- **The model weights are shared; nothing else is.** On a fresh directory,
-  `~/.atomic-agent-desktop/models/models` is symlinked to the terminal
+- **On a directory of its own, the model weights are shared; nothing else
+  is.** On a fresh such directory, `<dir>/models/models` is symlinked to the terminal
   agent's, so the gigabytes are not downloaded twice, and `models/backend`
   is *copied* rather than linked — `localModels.managed.autoUpdate` defaults
   to true and would otherwise rewrite the operator's llama.cpp binaries. The
@@ -1220,8 +1251,10 @@ during the testing phase."*
   itself reads `process.env` first (`load-dotenv.ts`). The `.env` files are
   fully separate; the *shell* is shared. Launch the desktop from a shell with
   no provider keys exported if that matters for a test.
-- **Making it a first run again is one gesture:** `rm -rf
-  ~/.atomic-agent-desktop`. The wizard opens on the next launch, in the
+- **Making it a first run again:** start the app on an empty directory
+  (`ATOMIC_AGENT_DESKTOP_STATE_DIR=/tmp/fresh-desktop`). On the shared
+  default that would mean removing the terminal agent's setup too, so do not
+  `rm -rf ~/.atomic-agent` for it. The wizard opens on the next launch, in the
   window's first paint: main hands the latched flag to the window as it
   creates it (`app:firstRun` reports the same flag) rather than anything
   inferring one from a file the agent has already written. The suite proves
@@ -1492,7 +1525,7 @@ Run the desktop workflow by hand twice from the same ref, both with
 (or ~/Applications) and open it.
 
 After Restart, ShipIt starts B without the environment A was opened with: B
-uses the default state (`~/.atomic-agent-desktop`) and userData, not an
+uses the default state (`~/.atomic-agent` since ATO-416, the terminal agent's own) and userData, not an
 `ATOMIC_AGENT_STATE_DIR` passed to A. Back both up before the test, or quit B
 as soon as it is up and open it again with the test state.
 

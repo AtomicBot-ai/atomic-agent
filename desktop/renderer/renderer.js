@@ -83,6 +83,16 @@ const PLAN = { on:false, itemId:null, sessionId:null, startedMode:null, busy:fal
    when it accepts the execute message — so ["mode:auto","send"] is the whole
    record that the mode change went first. */
 const PLAN_TRACE = [];
+
+/* ATO-416 (C16): main/shared-state-notice.ts SHARED_SETUP_NOTICE, verbatim.
+   Drawn as a blue notice over the empty chat's greeting (emptyChat), so it
+   is the first thing the window says and leaves with the greeting when the
+   first message is sent: it is about this window, not any one chat, so it
+   is never written into a transcript. Main hands it out once. Declared up
+   here, with the window's other state: render() runs while this file is
+   still loading, and emptyChat reads these. */
+const SHARED_SETUP_NOTICE = 'Atomic Agent on this computer is already set up. The desktop app uses the same chats, memory, skills and settings as the terminal.';
+const SHARED_SETUP = { show: false };
 /* src/tui/components/plan-handoff.tsx EXECUTE_PLAN_MESSAGE, verbatim. */
 const EXECUTE_PLAN_MESSAGE = 'Carry out the plan you just described. Plan mode is off now, so your tools work again — go ahead and make the changes.';
 /* The composer's stance. Read from and written to /api/coding-mode, which
@@ -1966,7 +1976,7 @@ const PENDING_CHATS = new Map();
 /** A local outbox chat remains reachable before its first HTTP turn exists. */
 function noteWaitingChat(id, text) {
   if (PENDING_CHATS.has(id)) return;
-  PENDING_CHATS.set(id, {id, t:String(text).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
+  PENDING_CHATS.set(id, {id, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, waiting:true, endedAt:null});
 }
 for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) noteWaitingChat(id, q.queued[0]);
@@ -1987,7 +1997,7 @@ for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) 
 const LIVE_TURNS = new Map();
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'fusion_worker',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
   'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
@@ -2061,6 +2071,7 @@ S.log = [
    ============================================================ */
 function render() {
   if (LIVE_REPLAY) return;   // Item 38: the chat being opened renders once, after its kept frames
+  imageViewerFollowsChat();   // ATO-408: the picture viewer closes when its chat is left
   ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
@@ -2477,7 +2488,7 @@ function emptyChat() {
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
-  return '<div class="emptychat">' + emptyPlateHTML()
+  return '<div class="emptychat">' + sharedSetupNoticeHTML() + emptyPlateHTML()
     + '<div class="ghost">'
       + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
@@ -2516,7 +2527,8 @@ function item(m) {
   /* B4: a message folded into the running turn says so, in the TUI's words
      (user-bubble.tsx STEERED_LABEL_SUFFIX). The reply that follows answers
      the turn's opening request; drawn bare, it reads as the answer to this. */
-  if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '"><div class="prose usr bubble">' + esc(m.text) + '</div>'
+  // ATO-406: a message with files is its caption and chips (attachments.js), never the raw `[attachments]` block.
+  if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '">' + attUserBody(m.text)
     + (m.steered ? '<div class="usrcap">steered into the running turn</div>' : '') + msgActs(m) + '</div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
   /* r5 item 4: the action row goes after the attachment strip — the actions
@@ -2535,7 +2547,7 @@ function item(m) {
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
   if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
-    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + replyDot(m) + msgActs(m)
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + replyFilesStrip(m) + attachStrip(m) + replyDot(m) + msgActs(m)
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -2744,7 +2756,8 @@ function copyMessage(id) {
   // over desktop prose as the agent's words.
   if (m.placeholder) { toast('Nothing to copy', 'that turn produced no reply', 'bad'); return; }
   ANX.messageAction('copy');
-  copyText(String(m.text || ''), 'Copied message');
+  // ATO-406: a user message with files copies as its caption, not the block of inbox paths.
+  copyText(m.k === 'user' ? attPlainText(String(m.text || '')) : String(m.text || ''), 'Copied message');
 }
 
 /* Retry = send this message's text again as a new turn. It cannot mean
@@ -2777,14 +2790,19 @@ function resendUser(id) {
   // A half-written draft is the operator's, and nothing here may destroy it
   // with no undo — the same rule that keeps Escape from clearing the composer.
   const draft = String((e ? e.value : S.draft) || '').trim();
-  if (draft && draft !== text) {
+  // ATO-405: a message with files goes back as its caption, its files as chips.
+  const split = attSplitMessage(text);
+  const caption = split ? split.caption.trim() : text;
+  // Chips of a message not yet sent are a draft too.
+  const own = new Set(split ? split.items.map((i) => i.path) : []);
+  if ((draft && draft !== caption) || ATT.items.some((i) => !(i.saved && own.has(i.saved.path)))) {
     toast('Your draft is in the way', 'send or clear the composer, then retry', 'bad');
     if (e) e.focus();
     return;
   }
   if (S.busy || S.pending) {
-    S.draft = text;
-    if (e) { e.value = text; autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+    S.draft = attToEditor(text);
+    if (e) { e.value = S.draft; autosize(e); e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
     // Review fix: the composer has to be repainted, not just filled. While a
     // turn runs sendButton() draws the ■ Stop control for an EMPTY draft and
     // the ↑ steer control for a non-empty one, and nothing else renders during
@@ -2804,8 +2822,8 @@ function resendUser(id) {
   // stale text the textarea happens to hold. Going through submit() rather
   // than startLiveTurn keeps every gate: slash commands, the disconnected
   // agent line and the local-model turn gate.
-  S.draft = text;
-  if (e) { e.value = text; autosize(e); }
+  S.draft = attToEditor(text);
+  if (e) { e.value = S.draft; autosize(e); }
   submit();
 }
 
@@ -3435,7 +3453,7 @@ function composer() {
        strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
-      '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(t) + '</span>'
+      '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
   return '<div class="composerwrap">' + status + fzLiveHTML() + q
@@ -3454,8 +3472,11 @@ function composer() {
        It hangs off `.composerwrap` now, which is the same anchor visually
        (the composer is its last child) and does not clip. */
     + (S.slash ? slashPopover() : '')
+    // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
+    + attMenuHTML()
     + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
       + loaderHTML()
+      + attStripHTML()
       // Item 1 (plan hand-off): src/tui/tui-app.tsx:2011 verbatim while the
       // offer stands. It is the user's third clause — "texting in the input
       // field would reconfigure the plan" — said where they are about to type.
@@ -3463,7 +3484,7 @@ function composer() {
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
-      + micButton() + sendButton() + '</div>'
+      + attButtonHTML() + micButton() + sendButton() + '</div>'
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
@@ -3670,17 +3691,17 @@ function sendButton() {
   }
   if (swxWaitsForRoute()) {
     const say = 'Send — the model is switching, so the reply may take longer';
-    return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="' + say
+    return '<button class="sendbtn' + (S.draft.trim() || attHasReady() ? '' : ' mute') + '" data-act="send" title="' + say
       + '" aria-label="' + say + '">' + ic('up') + '</button>';
   }
   if (S.busy || S.pending) {
     // Item 7C: this sends a steer into the running turn. It is parked as
     // the next turn only when the agent refuses it, which is a fact the
     // route answers and this button cannot know in advance.
-    if (S.draft.trim()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
+    if (S.draft.trim() || attHasReady()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
     return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
   }
-  return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
+  return '<button class="sendbtn' + (S.draft.trim() || attHasReady() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
 }
 
 
@@ -5115,10 +5136,10 @@ function diagLine() {
   // in both cases. It sits before the approval segment deliberately: the
   // TUI's line ends `approval L<n> | skills <n>` and the smoke pins that
   // tail.
-  /* r5 item 9: which directory this app owns. The desktop runs on its own
-     state dir (~/.atomic-agent-desktop by default), and "why does the
-     desktop not see what the terminal agent sees" has to be answerable
-     from the window. Abbreviated against $HOME like the cwd above, and
+  /* r5 item 9: which directory this app runs on. Since ATO-416 that is the
+     terminal agent's own ~/.atomic-agent by default, and "does the desktop
+     see what the terminal agent sees" has to be answerable from the
+     window (a desktop pointed elsewhere by an env var does not). Abbreviated against $HOME like the cwd above, and
      placed BEFORE the agent segment so the tail this line's smoke pins —
      `approval L<n> | skills <n>` — is unmoved. */
   const sd = (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || (FIRSTRUN && FIRSTRUN.stateDir) || '';
@@ -6231,9 +6252,9 @@ async function steerOrQueueRun(text, post, typedIn) {
     // one the user has not typed into since. Stamping over another chat's
     // draft is worse than losing a steer that could not be parked.
     const e = $('#entry');
-    if (here || (!S.draft && !(e && e.value))) {
-      S.draft = text;
-      if (e) { e.value = text; autosize(e); }
+    if (here || (!S.draft && !(e && e.value) && !ATT.items.length)) {
+      S.draft = attToEditor(text);
+      if (e) { e.value = S.draft; autosize(e); }
       ctxDraftChanged();
     }
     if (here) placeInLiveTurn({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
@@ -6289,7 +6310,7 @@ async function submitSkillCommand(text) {
   } finally { SK_SUBMITTING = false; }
 }
 
-function submit(preparedSkillText) {
+function submit(preparedSkillText, opts) {
   // Item 2 (voice input): Enter, the Send button and Ctrl+Enter all land
   // here. While the microphone is open they stop the recording and insert
   // the text instead of sending — sending would post the draft as it stood
@@ -6303,7 +6324,15 @@ function submit(preparedSkillText) {
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
   const e = $('#entry');
-  const text = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
+  const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
+  /* ATO-405: files in the composer ride in the message itself, as the
+     `[attachments]` block the channels send (attachments.js). A slash command
+     typed with files waiting runs alone; the chips stay for the next message. */
+  const rawSlash = typeof preparedSkillText !== 'string' && typed.startsWith('/');
+  // Continue and the plan hand-off send their own fixed words (`plain`): the chips wait for a message of the person's.
+  const withFiles = !rawSlash && !(opts && opts.plain);
+  if (withFiles && attPreparing()) { toast('Attachments are still being prepared', 'Send once every chip is ready. Your message stays in the box', 'bad'); return; }
+  const text = withFiles ? attComposeMessage(typed) : typed;
   if (!text) return;
   // Lane B — backend switch: a turn is waiting on the local gate's disk
   // snapshot; the draft stays where it is until that one has been decided.
@@ -6341,6 +6370,7 @@ function submit(preparedSkillText) {
     }
     S.queued.push(text); DRAIN_OWED = true;
     S.draft = ''; if (e) { e.value = ''; autosize(e); }
+    if (withFiles) attClearSent();
     ctxDraftChanged(); S.slash = false;
     toast('Message sent', SWX.sendError || 'The model is switching, so the reply may take longer');
     render(); drainOwed(); return;
@@ -6363,6 +6393,7 @@ function submit(preparedSkillText) {
     return;
   }
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
+  if (withFiles) attClearSent();
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
   // 13: with the box empty the button beside it is Stop again while a turn
@@ -6430,7 +6461,8 @@ function submit(preparedSkillText) {
 function gatedTurnLeft(text) {
   const e = $('#entry');
   const typed = String((e ? e.value : S.draft) || '');
-  S.draft = typed.trim() ? text + '\n\n' + typed : text;
+  const back = attToEditor(text);
+  S.draft = typed.trim() ? (back ? back + '\n\n' + typed : typed) : back;
   if (e) { e.value = S.draft; autosize(e); }
   ctxDraftChanged();
   toast('Not sent', 'The chat changed before the local model check finished. Your message is back in the box', 'bad');
@@ -6457,7 +6489,7 @@ function bswGatedTurn(text) {
     // B02: one refusal on screen at a time; `gateNotice` lets it go once the route can run (dropStaleGateNotices).
     dropStaleGateNotices();
     S.log.push({id:nid(), k:'system', gateNotice:true, text: esc(gate.text + ' (message returned to the editor)')});
-    S.draft = text;
+    S.draft = attToEditor(text);
     ctxDraftChanged();
     render(); // afterChat() puts S.draft back into #entry
     const e = $('#entry');
@@ -6496,7 +6528,7 @@ function dropGateNoticesIfCleared() {
 }
 /** droppedPreview (src/tui/detached-turns.ts): one flat line, 60 columns. */
 function droppedPreview(text) {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = attPlainText(text).replace(/\s+/g, ' ').trim();
   return flat.length <= 60 ? flat : flat.slice(0, 59) + '…';
 }
 function answer(key) {
@@ -6787,6 +6819,10 @@ document.addEventListener('click', (e) => {
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
+  // ATO-408: a picture in a reply opens full screen (its menu is the file chip's).
+  const cimg = t.closest('[data-img-open]');
+  // Still loading: it opens as the file it is, through the chip's path below.
+  if (cimg && openImageViewer(cimg.dataset.imgOpen)) return;
   const fchip = t.closest('[data-file]');
   // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
   if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
@@ -8119,7 +8155,7 @@ async function loadResources() {
 function taskEntry(t) {
   return {
     id:t.id,
-    t:(t.userMessage || '').trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+    t:attQueueLabel(t.userMessage || '').trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
     when:t.schedule ? formatScheduleLabel(t.schedule) : 'once',
     status:t.status || 'pending',
     recurring:!!t.recurring,
@@ -8196,7 +8232,7 @@ function nameVisibleSessions() {
       const title = sessionTitleFromState(res.data); // an agent whose list rows carry no `title`
       const first = turns.find((t) => t.kind === 'user' && t.text);
       if (title) { cur.t = title; cur.titled = true; }
-      else if (!cur.titled) cur.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      else if (!cur.titled) cur.t = first ? attQueueLabel(first.text).trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
       cur.named = true;
       render();
     });
@@ -8311,7 +8347,7 @@ function noteFirstPrompt(turnId, sid) {
   if (text === undefined) return;
   FIRST_TURNS.delete(turnId);
   if (!sid || PENDING_CHATS.has(sid) || SESSIONS.some((s) => s.id === sid)) return;
-  PENDING_CHATS.set(sid, {id:sid, t:String(text).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+  PENDING_CHATS.set(sid, {id:sid, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, endedAt:null});
 }
 
@@ -9240,6 +9276,18 @@ function onChatEvent(ev) {
     if (item) { item.text += ev.text; streamPaint('chat'); }   // 13/14: the transcript, once per frame
     return;
   }
+  /* ATO-408: the files the reply that ends the turn delivers (agent with
+     ATO-408, `event: reply_attachments`, right after the reply's text). An
+     older agent sends nothing, and the chat shows them once reopened. */
+  if (ev.kind === 'reply_attachments') {
+    const files = replyFilesOf(Array.isArray(ev.attachments) ? ev.attachments : pick(ev.payload, 'attachments'));
+    if (!files.length || !item) return;
+    item.replyFiles = files;
+    // A path an earlier reply showed may be a file the agent has since overwritten.
+    void revalidateChatImages(files);
+    render();
+    return;
+  }
   /* B1 — a progress note (agent ≥ 0.6.3, `event: progress_note`). The model
      batched a `reply` with work tools, so the turn goes on past it
      (src/http/openai-chat-completions.ts; the store row is an
@@ -9551,7 +9599,8 @@ function drainOwed() {
 }
 /** Cancel a locally accepted message, including an unsaved chat's last one. */
 function unqueueMessage(at) {
-  S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1;
+  const gone = S.queued.splice(at, 1)[0]; if (at < STEER.ahead) STEER.ahead -= 1;
+  attForgetMessage(gone);   // ATO-405: files only this queued message named
   if (!S.queued.length) {
     DRAIN_OWED = false;
     const row = PENDING_CHATS.get(S.sessionId);
@@ -10181,6 +10230,13 @@ if (BR) {
     if (check && check.updateAvailable) toast('Atomic Core update', 'Atomic Core ' + check.compatibleVersion
       + ' is ready. Open Settings › Models › Engine to install it when you are ready.');
   });
+  /* ATO-416: once, after this launch moved the desktop's own folder into the
+     shared one (main/state-migrate.ts): a toast, and the counts in Diagnostics. */
+  if (BR.stateMergeNotice) BR.stateMergeNotice().then((n) => {
+    if (!n || !n.text) return;
+    toast(n.title || 'Your desktop data moved', n.text);
+    if (n.log) { LOGS.push([new Date().toTimeString().slice(0, 8), 'warn', n.log]); if (LOGS.length > 300) LOGS.shift(); }
+  }).catch(() => {});
   // ATO-229: main's update state, now and on every change (app-update.js).
   appUpdBoot();
   if (BR.daemonWatch) BR.daemonWatch().then((st) => {
@@ -14487,11 +14543,25 @@ async function obBootGate(fr, freshAtBoot) {
   if (freshAtBoot || (fr && fr.fresh)) obSetupPullForget();
   if (freshAtBoot) return;
   if (fr && fr.fresh) { openOnboarding(); return; }
+  /* ATO-416 (C16): the desktop shares the terminal agent's directory, and the
+     terminal already finished setup there. No wizard: one line in the chat
+     area saying what this window is looking at (main decides when, once). */
+  if (fr && fr.sharedSetupNotice) { sharedSetupNoticeShow(); return; }
   const res = await BR.configGet();
   let ids = null;
   try { const ready = await BR.providersReady(); if (ready && ready.ok) ids = ready.ids || []; } catch (e) { ids = null; }
   if (res && res.ok && obSetupPullResume(res.config)) return;
   if (res && res.ok && needsOnboarding(res.config, ids)) openOnboarding();
+}
+
+function sharedSetupNoticeShow() {
+  SHARED_SETUP.show = true;
+  render();
+}
+function sharedSetupNoticeHTML() {
+  return SHARED_SETUP.show
+    ? '<div class="tk-notice tk-notice--blue shared-setup" role="status">' + ic('info') + '<span class="grow">' + esc(SHARED_SETUP_NOTICE) + '</span></div>'
+    : '';
 }
 
 async function openOnboarding(at) {
@@ -17114,7 +17184,7 @@ async function executePlan(mode) {
   S.draft = EXECUTE_PLAN_MESSAGE;
   const e = $('#entry');
   if (e) { e.value = EXECUTE_PLAN_MESSAGE; autosize(e); }
-  submit();
+  submit(undefined, {plain:true});
 }
 
 /* B5 — a paused task. The agent ends a task it stopped at a ceiling (steps,
@@ -17219,7 +17289,7 @@ function continueTurn() {
   }
   S.draft = 'continue';
   if (e) { e.value = 'continue'; autosize(e); }
-  submit();
+  submit(undefined, {plain:true});
 }
 
 /** Put the plan away. Stays in plan mode — src/tui/reduce-ui-actions.ts. */
@@ -17991,6 +18061,7 @@ if (typeof window !== 'undefined') {
    chats simply show no receipt, as before. */
 function sessionTurnsToLog(turns) {
   const log = [];
+  const named = [];   // ATO-408: the files the replies deliver, looked at again below
   (Array.isArray(turns) ? turns : []).forEach((t) => {
     if (!t || typeof t !== 'object') return;
     // B4: a stored steer (agent ≥ 0.6.3 `steered: true`) keeps its caption.
@@ -17999,7 +18070,14 @@ function sessionTurnsToLog(turns) {
     // reopened chat draws the same "(stopped)" placeholder the live turn showed.
     if (t.kind === 'assistant_reply' && t.stopped) { log.push({id:nid(), k:'assistant', text:'(stopped)', placeholder:true}); return; }
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
-    if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_reply') {
+      const entry = {id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''};
+      // ATO-408: the files the reply delivered (`reply.attachments`), drawn under it.
+      const files = t.progressNote ? [] : replyFilesOf(t.attachments);
+      if (files.length) { entry.replyFiles = files; named.push(...files); }
+      log.push(entry);
+      return;
+    }
     if (t.kind === 'assistant_tool_call') {
       if (t.reasoning) log.push({id:nid(), k:'reason', steps:reasonStepAt(log, log.length), open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
@@ -18042,6 +18120,8 @@ function sessionTurnsToLog(turns) {
       }
     }
   });
+  // ATO-408: a picture read earlier whose file changed, or that failed, is read again.
+  if (named.length) void revalidateChatImages(named);
   return log;
 }
 
@@ -19503,7 +19583,9 @@ async function refreshAttachments(cwd) {
 
 /** The attachment footer: his sentence per file, then the chips. */
 function attachStrip(m) {
-  const files = m.attach || [];
+  // ATO-408: a file the reply delivers is drawn by replyFilesStrip, once.
+  const own = m.replyFiles || [];
+  const files = (m.attach || []).filter((f) => !own.includes(f.path));
   if (!files.length) return '';
   const shown = files.slice(0, ATTACH_MAX_LINES);
   const lines = shown.map((f) => '<div class="attach-label">Saved to <span class="mono">' + esc(f.path) + '</span></div>').join('')
@@ -19515,6 +19597,331 @@ function attachStrip(m) {
     + files.map((f) => '<button class="filechip" data-file="' + esc(f.path) + '" title="' + esc(f.path) + '">'
         + ic(f.kind === 'dir' ? 'folder' : 'doc') + '<span>' + esc(f.name) + '</span></button>').join('')
     + '</div></div>';
+}
+
+/* ---------------- ATO-408: the files a reply delivers ----------------
+   The agent's `reply` can carry files (`attachments`, absolute paths, at most
+   10): Telegram and Discord post them, and the desktop hears of them from
+   `event: reply_attachments` live (agent with ATO-408) and from the stored
+   turn's `attachments` when a chat is opened. A picture is drawn in the reply,
+   up to 320px tall, and opens full screen on a click; anything else, or a
+   picture that cannot be read, is a file chip like a reply's own paths
+   (`data-reply`, so main checks the path again before opening it).
+
+   The window's CSP allows only `data:` images, so main reads the file
+   (BR.imageDataUrl, main/image-data-url.ts). The transcript is rebuilt from
+   HTML strings on every stream frame, so the data URL never goes into that
+   string: the reply draws an empty slot (`data-chat-img`) and the slot is
+   given the picture's one decoded <img> before the next frame is painted
+   (hydrateChatImages), so a repaint moves a decoded picture instead of
+   decoding it again. An agent without the frame still shows the pictures once
+   the chat is reopened. */
+const CHAT_IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
+const REPLY_FILES_MAX = 10;
+/* path → the picture as this window holds it:
+     {state:'loading'|'ok'|'fail', url, node, reason, mime, size, mtimeMs, w, h, used}
+   `url` is the DISPLAY copy (at most 1600px on its longer side, re-encoded;
+   a GIF stays as it is so it still moves), `node` its one decoded <img>,
+   `size`/`mtimeMs` the version of the file it was read from, `used` when a
+   reply last drew it. The full file is read again only for the viewer. A path
+   named again by a new reply, or by a chat being opened, is looked at again
+   (revalidateChatImages): a file the agent overwrote is read anew, and one
+   that failed is tried again. */
+const CHAT_IMG = new Map();
+/* Display copies kept, in data-URL characters, on screen or not; the ones no
+   reply on screen shows go first, least recently drawn first. */
+const CHAT_IMG_KEEP_CHARS = 96 * 1024 * 1024;
+const CHAT_IMG_DISPLAY_EDGE = 1600;
+
+/** The reply's file paths, as the agent sent or stored them: strings, at most 10, once each. */
+function replyFilesOf(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const p of list) if (typeof p === 'string' && p && !out.includes(p)) out.push(p);
+  return out.slice(0, REPLY_FILES_MAX);
+}
+
+/** The pictures replies on screen show. */
+function chatImagesInUse() {
+  const used = new Set();
+  for (const m of S.log) for (const p of (m.replyFiles || [])) used.add(p);
+  return used;
+}
+
+function trimChatImages() {
+  let total = 0;
+  const held = [];
+  for (const [p, st] of CHAT_IMG) if (st.state === 'ok') { total += st.url.length; held.push([p, st]); }
+  if (total <= CHAT_IMG_KEEP_CHARS) return;
+  const onScreen = chatImagesInUse();
+  // Off screen first, then the least recently drawn; what is on screen is never dropped.
+  held.sort((a, b) => (onScreen.has(a[0]) - onScreen.has(b[0])) || (a[1].used - b[1].used));
+  for (const [p, st] of held) {
+    if (total <= CHAT_IMG_KEEP_CHARS) break;
+    if (onScreen.has(p)) break;
+    total -= st.url.length;
+    CHAT_IMG.delete(p);
+  }
+}
+
+/** A decoded picture as a display copy: no longer side past 1600px, a GIF untouched. */
+function chatImageDisplayCopy(img, mime, fullUrl) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const edge = Math.max(w, h);
+  if (mime === 'image/gif' || !edge || (edge <= CHAT_IMG_DISPLAY_EDGE && fullUrl.length <= 2 * 1024 * 1024)) return fullUrl;
+  try {
+    const k = Math.min(1, CHAT_IMG_DISPLAY_EDGE / edge);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * k));
+    c.height = Math.max(1, Math.round(h * k));
+    const g = c.getContext('2d');
+    if (!g) return fullUrl;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(img, 0, 0, c.width, c.height);
+    const out = c.toDataURL('image/webp', 0.9);
+    return out.startsWith('data:image/webp') && out.length < fullUrl.length ? out : fullUrl;
+  } catch {
+    return fullUrl;
+  }
+}
+
+/** Decode a data URL; null when it is not a picture after all. */
+function decodeChatImage(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/** A picture's state, its read started the first time it is asked for. */
+function chatImage(path) {
+  let st = CHAT_IMG.get(path);
+  if (st) { st.used = Date.now(); return st; }
+  st = {state:'loading', url:'', node:null, reason:null, mime:null, size:0, mtimeMs:0, w:0, h:0, used:Date.now()};
+  CHAT_IMG.set(path, st);
+  // An entry dropped or replaced while this read was out writes nothing.
+  const mine = () => CHAT_IMG.get(path) === st;
+  const fail = (reason) => { if (!mine()) return; st.state = 'fail'; st.reason = reason || 'missing'; chatImagesChanged(); };
+  if (!BR || !BR.imageDataUrl) { fail('missing'); return st; }
+  Promise.resolve(BR.imageDataUrl(path)).then(async (r) => {
+    if (!mine()) return;
+    if (!r || !r.ok || typeof r.dataUrl !== 'string') { fail(r && r.reason); return; }
+    const full = await decodeChatImage(r.dataUrl);
+    if (!full) { fail('missing'); return; }
+    const url = chatImageDisplayCopy(full, r.mime, r.dataUrl);
+    const node = url === r.dataUrl ? full : await decodeChatImage(url);
+    if (!mine()) return;
+    if (!node) { fail('missing'); return; }
+    node.className = 'chat-img-pic';
+    node.alt = pathBase(path) || path;
+    node.draggable = false;
+    Object.assign(st, {state:'ok', url, node, mime:r.mime || null, size:Number(r.size) || 0,
+      mtimeMs:Number(r.mtimeMs) || 0, w:full.naturalWidth, h:full.naturalHeight});
+    trimChatImages();
+    chatImagesChanged();
+  }, () => fail('missing'));
+  return st;
+}
+
+/** The paths a new reply or an opened chat names: a picture whose file changed
+    since it was read is read again, one that failed is tried again. */
+async function revalidateChatImages(paths) {
+  const list = (paths || []).filter((p) => CHAT_IMG.has(p) && CHAT_IMG.get(p).state !== 'loading');
+  if (!list.length) return;
+  let changed = false;
+  for (const p of list) if (CHAT_IMG.get(p).state === 'fail') { CHAT_IMG.delete(p); changed = true; }
+  const held = list.filter((p) => CHAT_IMG.has(p));
+  if (held.length && BR && BR.statPaths) {
+    for (let i = 0; i < held.length; i += ATTACH_STAT_CHUNK) {
+      const chunk = held.slice(i, i + ATTACH_STAT_CHUNK);
+      const r = await Promise.resolve(BR.statPaths(chunk)).catch(() => null);
+      const files = (r && r.ok && Array.isArray(r.files)) ? r.files : [];
+      for (const p of chunk) {
+        const st = CHAT_IMG.get(p);
+        if (!st || st.state !== 'ok') continue;
+        const f = files.find((x) => x && x.path === p);
+        if (!f) continue;
+        if (!f.exists || f.size !== st.size || Math.abs(f.mtimeMs - st.mtimeMs) > 1) { CHAT_IMG.delete(p); changed = true; }
+      }
+    }
+  }
+  if (changed) chatImagesChanged();
+}
+
+/** A picture was read or refused: the transcript draws it, or its chip. */
+function chatImagesChanged() {
+  if (LIVE_REPLAY) return;
+  streamPaint('chat');
+}
+
+/** Put each picture's decoded <img> into the slots the last paint left empty. */
+function hydrateChatImages() {
+  HYDRATE_RAF = 0;
+  const slots = document.querySelectorAll('[data-chat-img]:not([data-hyd])');
+  if (!slots.length) return;
+  const sc = $('#scroller');
+  let put = false;
+  slots.forEach((slot) => {
+    const st = CHAT_IMG.get(slot.dataset.chatImg);
+    if (!st || st.state !== 'ok' || !st.node) return;
+    slot.dataset.hyd = '1';
+    slot.classList.remove('loading');
+    // One node per picture; a second copy on screen at once gets a clone.
+    const node = st.node.isConnected && !slot.contains(st.node) ? st.node.cloneNode(false) : st.node;
+    slot.appendChild(node);
+    put = true;
+  });
+  if (put && sc && S.stick) sc.scrollTop = sc.scrollHeight;
+}
+/* One look per frame, however many mutations a stream frame makes, and before
+   that frame is painted, so a repaint never shows an empty slot. `var`: read
+   by the observer before this line has run on the first paint. */
+var HYDRATE_RAF = 0;
+function hydrateChatImagesSoon() {
+  if (HYDRATE_RAF || !CHAT_IMG.size) return;
+  HYDRATE_RAF = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(hydrateChatImages) : (hydrateChatImages(), 0);
+}
+if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
+  new MutationObserver(hydrateChatImagesSoon).observe(document.documentElement, {childList:true, subtree:true});
+}
+
+/** Why a picture is a chip, for its tooltip. */
+function chatImageWhy(st, path) {
+  if (st.reason === 'outside') return 'Only pictures in your home folder, the agent\'s folder or a temporary folder are shown here.\n' + path;
+  if (st.reason === 'too-large') return 'Too large to show here (over 15 MB).\n' + path;
+  return 'Not a picture this window can show, or no longer there.\n' + path;
+}
+
+/** A reply's own files: pictures inline, anything else a chip. */
+function replyFilesStrip(m) {
+  const files = m.replyFiles || [];
+  if (!files.length) return '';
+  const pics = [], chips = [];
+  for (const p of files) {
+    const name = pathBase(p) || p;
+    const st = CHAT_IMG_EXT.test(p) ? chatImage(p) : null;
+    if (st && st.state !== 'fail') {
+      // A known size draws the slot at its size before the picture is put in.
+      const box = st.state === 'ok' && st.w && st.h ? ' style="aspect-ratio:' + st.w + ' / ' + st.h + '"' : '';
+      pics.push('<button class="chat-img' + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
+        + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
+        + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>');
+    } else {
+      chips.push('<button class="filechip' + (st ? ' unshown' : '') + '" data-file="' + esc(p) + '" data-reply="1" title="' + esc(st ? chatImageWhy(st, p) : p) + '">'
+        + ic(st ? 'image' : 'file') + '<span>' + esc(name) + '</span></button>');
+    }
+  }
+  return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
+    + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
+    + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
+    + '</div>';
+}
+
+/* The full-screen viewer: the picture (the display copy at once, the full
+   file once main has read it again), Save As…, Show in Finder/Explorer, and
+   Escape, a click beside the picture or × to close. Built outside render(),
+   on the body, so a repaint behind it does not touch it. While it is open the
+   keys are its own (Tab goes round its buttons, nothing reaches the composer
+   or the window's shortcuts), and leaving the chat closes it.
+   `var`: render() reads it, and may run before this line has. */
+var IMG_VIEW = null;
+function fileManagerName() {
+  return IS_MAC ? 'Show in Finder' : PLATFORM === 'win32' ? 'Show in Explorer' : 'Show in Folder';
+}
+/** Opens the viewer; false when the picture is not read yet. */
+function openImageViewer(path) {
+  const st = CHAT_IMG.get(path);
+  if (!st || st.state !== 'ok') return false;
+  closeImageViewer();
+  const name = pathBase(path) || path;
+  const el = document.createElement('div');
+  el.className = 'imgview';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', name);
+  el.innerHTML = '<div class="imgview-stage" data-iv="close"></div>'
+    + '<div class="imgview-bar">'
+      + '<span class="imgview-name" title="' + esc(path) + '">' + esc(name) + '</span>'
+      + '<button class="btn btn-s sm" data-iv="save">' + ic('download') + 'Save As…</button>'
+      + '<button class="btn btn-s sm" data-iv="reveal">' + ic('folder') + esc(fileManagerName()) + '</button>'
+      + '<button class="iconbtn" data-iv="close" title="Close" aria-label="Close">' + ic('x') + '</button>'
+    + '</div>';
+  const img = new Image();
+  img.className = 'imgview-img';
+  img.alt = name;
+  img.src = st.url;
+  el.querySelector('.imgview-stage').appendChild(img);
+  el.addEventListener('click', (e) => {
+    // The viewer's clicks are its own: the window's click handler never sees them.
+    e.stopPropagation();
+    if (e.target === img) return;
+    const b = e.target.closest && e.target.closest('[data-iv]');
+    const what = b ? b.dataset.iv : null;
+    if (what === 'close') { closeImageViewer(); return; }
+    if (what === 'save' && BR && BR.imageSaveAs) {
+      Promise.resolve(BR.imageSaveAs(path)).then((r) => {
+        if (r && r.ok) toast('Saved', r.path || '');
+        else if (!r || r.reason !== 'canceled') toast('Could not save', (r && r.error) || 'The picture is no longer there.');
+      });
+      return;
+    }
+    if (what === 'reveal' && BR && BR.imageReveal) {
+      Promise.resolve(BR.imageReveal(path)).then((r) => { if (!r || !r.ok) toast('Could not show it', 'The picture is no longer there.'); });
+    }
+  });
+  el.addEventListener('contextmenu', (e) => e.stopPropagation());
+  document.body.appendChild(el);
+  const view = {el, back: document.activeElement, sid: S.sessionId, room: S.room};
+  IMG_VIEW = view;
+  window.addEventListener('keydown', imageViewerKey, true);
+  const close = el.querySelector('.imgview-bar [data-iv="close"]');
+  if (close) close.focus();
+  // The display copy may be smaller than the file: the full picture replaces it once read.
+  if (st.url && BR && BR.imageDataUrl) {
+    Promise.resolve(BR.imageDataUrl(path)).then((r) => {
+      if (IMG_VIEW !== view || !r || !r.ok || typeof r.dataUrl !== 'string' || r.dataUrl === st.url) return;
+      const full = new Image();
+      full.onload = () => { if (IMG_VIEW === view) img.src = full.src; };
+      full.src = r.dataUrl;
+    }, () => undefined);
+  }
+  return true;
+}
+function imageViewerKey(e) {
+  if (!IMG_VIEW) return;
+  const {el} = IMG_VIEW;
+  // Nothing behind the viewer hears a key while it is open: not the composer, not a shortcut.
+  e.stopPropagation();
+  if (e.key === 'Escape') { e.preventDefault(); closeImageViewer(); return; }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const stops = [...el.querySelectorAll('button')];
+    if (!stops.length) return;
+    const at = stops.indexOf(document.activeElement);
+    const next = at < 0 ? 0 : (at + (e.shiftKey ? stops.length - 1 : 1)) % stops.length;
+    stops[next].focus();
+    return;
+  }
+  // Focus somehow outside it (a click on nothing): back in, and the key goes nowhere.
+  if (!el.contains(document.activeElement)) {
+    e.preventDefault();
+    const close = el.querySelector('.imgview-bar [data-iv="close"]');
+    if (close) close.focus();
+  }
+}
+/** The viewer belongs to the chat it was opened in: another chat or room closes it. */
+function imageViewerFollowsChat() {
+  if (IMG_VIEW && (S.room !== IMG_VIEW.room || S.sessionId !== IMG_VIEW.sid)) closeImageViewer();
+}
+function closeImageViewer() {
+  if (!IMG_VIEW) return;
+  window.removeEventListener('keydown', imageViewerKey, true);
+  const {el, back} = IMG_VIEW;
+  IMG_VIEW = null;
+  el.remove();
+  if (back && back.isConnected && typeof back.focus === 'function') back.focus();
 }
 
 
@@ -26825,6 +27232,15 @@ if (typeof window !== 'undefined') {
   window.__unverified = () => (BR && BR.unverified ? BR.unverified() : Promise.resolve(null));
   // item 9 — the fresh-install predicate, drivable without an agent.
   window.__needsOnboarding = (cfg) => needsOnboarding(cfg);
+  // ATO-416 (C16) — the one-time "already set up in the terminal" notice, drivable without a terminal setup.
+  window.__sharedSetupNotice = (on) => {
+    const was = SHARED_SETUP.show;
+    if (typeof on === 'boolean') { SHARED_SETUP.show = on; render(); }
+    const host = document.createElement('div');
+    host.innerHTML = emptyChat();
+    const el = host.querySelector('.shared-setup');
+    return {was, show: SHARED_SETUP.show, text: el ? el.textContent : null, firstInEmptyChat: !!el && host.querySelector('.emptychat').firstElementChild === el};
+  };
   // item 9 — the cross-lane import contract, straight through the bridge.
   window.__tuiSetupPresent = () => BR.tuiSetupPresent();
   window.__importFromTui = (opts) => BR.importFromTui(opts || {});

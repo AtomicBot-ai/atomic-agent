@@ -25,7 +25,7 @@ This area owns agent turn and step execution. Read [AGENTS.md](AGENTS.md) before
 
 Session state and dependencies are passed explicitly. Root orchestration retains the original await points: synchronous parse and recovery must not yield before dispatch, retry or steering closure. Read the mechanism documents before changing these decisions.
 
-The 13 core filesystem taxonomy entries select their unchanged classes from [import-free operation contracts](../tools/os/fs/docs/contracts.md). The taxonomy still owns classification lookup and batching policy; it does not import execution/registry or infer role permissions from readonly metadata. Other tools retain their explicit existing entries. [Global conformance](../tools/tool-contract-conformance.test.ts) checks canonical classes and unknown-name behavior alongside actual registrations.
+The 14 core filesystem taxonomy entries select their unchanged classes from [import-free operation contracts](../tools/os/fs/docs/contracts.md). The taxonomy still owns classification lookup and batching policy; it does not import execution/registry or infer role permissions from readonly metadata. Other tools retain their explicit existing entries. [Global conformance](../tools/tool-contract-conformance.test.ts) checks canonical classes and unknown-name behavior alongside actual registrations.
 
 ## Task-specific reading
 

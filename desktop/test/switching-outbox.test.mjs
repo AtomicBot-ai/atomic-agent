@@ -18,6 +18,8 @@ function fixture() {
     nid:()=>String(++id),esc:s=>s,ic:s=>s,notSent:()=>{throw Error('lost an accepted message');},
     bswSnapshot:async()=>{},console,
   });
+  // ATO-405: submit() and sendButton() read the composer's chips (renderer/attachments.js).
+  vm.runInContext(readFileSync(new URL('../renderer/attachments.js',import.meta.url),'utf8'),c);
   for (const name of ['submit','sendButton','swxWaitsForRoute','openHoldsComposer','noteWaitingChat','drainQueued','drainOwed','queueKey','stashQueue','mergeQueue','restoreQueue','queuesSnapshot','chatQueuedCount','settlePendingChats','queueChatRunning','unqueueMessage','swxMessageOutcome']) vm.runInContext(functions.get(name),c);
   return {c,sent,notices,kept};
 }
@@ -88,4 +90,19 @@ test('a failed switch retains its specific error alongside the dispatch barrier'
   c.SWX.err='Starting model — insufficient memory';c.swxMessageOutcome('route',false);
   assert.equal(c.SWX.err,'Starting model — insufficient memory');
   assert.match(c.SWX.sendError,/messages are waiting/);c.drainOwed();assert.equal(sent.length,0);
+});
+test('a message with files queues as one string carrying the attachments block',()=>{
+  const {c}=fixture();
+  vm.runInContext("ATT.items.push({id:'a1',status:'ready',saved:{path:'/s/inbox/desktop/2026-10-14/090507-a.png',mimeType:'image/png',bytes:2048}})",c);
+  assert.doesNotMatch(c.sendButton(),/ mute/);
+  c.submit();
+  assert.equal(c.S.queued[0],'hello\n\n[attachments]\n- /s/inbox/desktop/2026-10-14/090507-a.png (image/png, 2 KB)\n'+vm.runInContext('ATT_HINT_LINE',c));
+  assert.equal(vm.runInContext('ATT.items.length',c),0);
+});
+test('Continue sends its own word and leaves the chips for the next message',()=>{
+  const {c}=fixture();
+  vm.runInContext("ATT.items.push({id:'a1',status:'ready',saved:{path:'/x/a.png',mimeType:'image/png',bytes:10}})",c);
+  c.S.draft='continue'; c.submit(undefined,{plain:true});
+  assert.equal(c.S.queued[0],'continue');
+  assert.equal(vm.runInContext('ATT.items.length',c),1);
 });

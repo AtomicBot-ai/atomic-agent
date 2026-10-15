@@ -382,6 +382,23 @@ export function buildStreamEventHook(
       }),
     );
   };
+  const writeReplyText = (text: string): void => {
+    const streamed = stepStreamed;
+    stepStreamed = "";
+    if (text.length === 0) return;
+    // Already on the wire in this step, whole: nothing to add.
+    if (streamed.length > 0 && (streamed.endsWith(text) || streamed.trimEnd() === text.trimEnd())) return;
+    // The step streamed the start of it (a retry finished what the
+    // stream began): send the rest, joined without a break.
+    if (streamed.length > 0 && text.startsWith(streamed)) {
+      writeContent(text.slice(streamed.length));
+      return;
+    }
+    // Never streamed: send it whole, set apart from any text this turn
+    // already showed so it does not run on from a preamble.
+    writeContent((turnStreamed ? "\n\n" : "") + text);
+    turnStreamed = true;
+  };
   return (event) => {
     if (sse.closed) return;
     if (event.type === "step_started") {
@@ -464,22 +481,28 @@ export function buildStreamEventHook(
           stepStreamed = "";
           return;
         }
-        const streamed = stepStreamed;
-        stepStreamed = "";
-        const text = inner.text;
-        if (text.length === 0) return;
-        // Already on the wire in this step, whole: nothing to add.
-        if (streamed.length > 0 && (streamed.endsWith(text) || streamed.trimEnd() === text.trimEnd())) return;
-        // The step streamed the start of it (a retry finished what the
-        // stream began): send the rest, joined without a break.
-        if (streamed.length > 0 && text.startsWith(streamed)) {
-          writeContent(text.slice(streamed.length));
-          return;
+        writeReplyText(inner.text);
+        /* ATO-408: the files the reply delivers (`reply.attachments`,
+           absolute paths the tool already checked). Channels post them
+           after the text; this is the same promise for an HTTP host,
+           which had the text and no word of the files until it reloaded
+           the session. After the text so the host has the bubble to put
+           them under. Extensions-only: not part of OpenAI's protocol. */
+        if (
+          env.request.extensionsEnabled &&
+          inner.attachments !== undefined &&
+          inner.attachments.length > 0
+        ) {
+          sse.writeEvent("reply_attachments", {
+            id: env.completionId,
+            object: "chat.completion.reply_attachments",
+            created: env.created,
+            model: env.request.model,
+            session_id: env.session.id,
+            step_index: stepIndex,
+            attachments: [...inner.attachments],
+          });
         }
-        // Never streamed: send it whole, set apart from any text this turn
-        // already showed so it does not run on from a preamble.
-        writeContent((turnStreamed ? "\n\n" : "") + text);
-        turnStreamed = true;
       } else if (inner.type === "step_error") {
         /* A host that holds the first error frame of a turn (the desktop)
            has only this one: so it says a billing refusal (item 40) and

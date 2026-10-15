@@ -69,6 +69,13 @@ describe("transportDeadlinesFor", () => {
     expect(bodyTimeout).toBe(4 * 60 * 60_000 + TRANSPORT_DEADLINE_MARGIN_MS);
   });
 
+  it("lets a longer context-compaction part limit reach its unary reply", () => {
+    const config = configWith({});
+    (config as unknown as { agent: unknown }).agent = { compaction: { timeoutMs: 2 * 60 * 60_000 } };
+    const { headersTimeout } = transportDeadlinesFor(config);
+    expect(headersTimeout).toBe(2 * 60 * 60_000 + TRANSPORT_DEADLINE_MARGIN_MS);
+  });
+
   it("is never dragged back down by a budget it cannot use", () => {
     // A hand-written config, a `NaN` from a bad env var, a provider
     // entry with a zero — none of them may restore the 300 s ceiling.

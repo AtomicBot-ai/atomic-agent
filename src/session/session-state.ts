@@ -1,4 +1,4 @@
-import type { SessionCompaction } from "./session-compaction.js";
+import type { RollingCompactionSummary, SessionCompaction } from "./session-compaction.js";
 import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
@@ -139,6 +139,11 @@ export interface SessionState {
   compaction?: SessionCompaction;
   /** Last load discarded an invalid checkpoint; surfaced by runtime, never sent to the model. */
   compactionWarning?: string;
+  /**
+   * Background summary for the next compaction; never part of the prompt.
+   * Absent on older sessions and whenever none has been made.
+   */
+  rollingSummary?: RollingCompactionSummary;
   /** Full conversation transcript in chronological order. */
   turns: ConversationTurn[];
   createdAt: number;

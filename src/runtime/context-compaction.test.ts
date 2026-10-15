@@ -3,18 +3,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { createCompactionDefaults, parseCompactionConfig } from "../config/agent/compaction-config.js";
+import { createCompactionDefaults, parseCompactionConfig, type CompactionConfig } from "../config/agent/compaction-config.js";
 import { createEmptySessionState, recordTurn, type SessionState } from "../session/session-state.js";
 import { assistantReplyTurn, assistantToolCallTurn, toolResultTurn, userTurn, steeredUserTurn } from "../session/conversation-turn.js";
 import { normalizeSessionState } from "../session/normalize-session-state.js";
 import { compactionBoundaryHash, projectSessionConversation, safeCompactionCuts, validSessionCompaction } from "../session/session-compaction.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { planCompaction } from "../prompt/plan-compaction.js";
+import { NO_PREFIX_REUSE_TARGET_RATIO, planCompaction } from "../prompt/plan-compaction.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { buildNativeMessages } from "../llm/provider/openai/openai-native-messages.js";
-import { createContextCompaction } from "./context-compaction.js";
+import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
 import { TurnController } from "./turn-controller.js";
 import type { CompactionEvent } from "../agent/compaction-control.js";
 import { estimateTokens } from "../prompt/token-budget.js";
@@ -51,7 +51,8 @@ function input(session: SessionState): BuildPromptInput {
 }
 function fixture(state = history(), promptInput = input) {
   let stored = state;
-  const config = { ...createCompactionDefaults(), summaryMaxTokens: 250 };
+  // These contracts are about model summaries; extractive and auto have their own file.
+  const config: CompactionConfig = { ...createCompactionDefaults(), mode: "model", summaryMaxTokens: 250 };
   const events: CompactionEvent[] = [];
   const complete = vi.fn(async (_params: LlmStreamParams) => completion());
   const persist = vi.fn((next: SessionState) => { stored = next; });
@@ -68,9 +69,10 @@ describe("compaction configuration and projection", () => {
   it("defaults old config and rejects invalid ratios", () => {
     expect(getConfig().agent.compaction).toEqual(createCompactionDefaults());
     expect(parseCompactionConfig(undefined, createCompactionDefaults())).toEqual(createCompactionDefaults());
-    expect(createCompactionDefaults()).toMatchObject({ timeoutMs: 600000, maxTotalTimeoutMs: 600000 });
-    expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
-    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }]) {
+    expect(createCompactionDefaults()).toMatchObject({ mode: "auto", timeoutMs: 600000, maxTotalTimeoutMs: 600000 });
+    expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ mode: "auto", timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
+    for (const mode of ["auto", "model", "extractive"]) expect(parseCompactionConfig({ mode }, createCompactionDefaults()).mode).toBe(mode);
+    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { mode: "fast" }, { mode: 1 }]) {
       expect(() => parseCompactionConfig(raw, createCompactionDefaults())).toThrow();
     }
   });
@@ -108,6 +110,26 @@ describe("compaction configuration and projection", () => {
     expect(planCompaction(state, unknown, config, "manual")).not.toBeNull();
     const hugeLast = recordTurn(state, userTurn("x".repeat(100000)));
     expect(planCompaction(hugeLast, buildPrompt(input(hugeLast)), config, "manual")).toBeNull();
+  });
+  it("keeps a smaller tail for a model without prefix reuse, unless the operator chose smaller", async () => {
+    const state = history();
+    const wide = (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: 32000, conversationMaxTokens: 8000 });
+    const noReuse = (session: SessionState): BuildPromptInput => ({ ...wide(session), profile: { ...PLAIN_INSTRUCT_PROFILE, prefixReuse: "none" } });
+    const prompt = buildPrompt(noReuse(state));
+    const cap = prompt.compactionBudget!.cap;
+    const config = { ...createCompactionDefaults(), summaryMaxTokens: 250 };
+    const partial = planCompaction(state, prompt, config, "manual")!;
+    const none = planCompaction(state, prompt, config, "manual", { prefixReuse: "none" })!;
+    expect(partial.targetTokens).toBe(Math.floor(config.targetRatio * cap));
+    expect(none.targetTokens).toBe(Math.floor(NO_PREFIX_REUSE_TARGET_RATIO * cap));
+    expect(none.through).toBeGreaterThanOrEqual(partial.through);
+    expect(planCompaction(state, prompt, config, "manual", { prefixReuse: "partial" })).toEqual(partial);
+    const lower = planCompaction(state, prompt, { ...config, targetRatio: 0.2 }, "manual", { prefixReuse: "none" });
+    expect(lower?.targetTokens).toBe(Math.floor(0.2 * cap));
+    const f = fixture(state, noReuse);
+    expect(await f.compactSession(state.id)).toMatchObject({ status: "compacted" });
+    expect(f.stored().compaction!.tokensAfter).toBeLessThanOrEqual(none.targetTokens);
+    expect(f.stored().compaction!.coveredThrough).toBe(none.through);
   });
 });
 
@@ -211,6 +233,47 @@ describe("atomic compaction", () => {
     f.complete.mockImplementation(() => new Promise(() => {}));
     expect(await f.compactSession("chat")).toMatchObject({ status: "failed", message: expect.stringContaining("part 1/") });
     expect(f.persist).not.toHaveBeenCalled();
+  });
+  it("does not retry a timed-out auto compaction every turn, only after growth or a model change", async () => {
+    const state = history();
+    const f = fixture(state); f.config.timeoutMs = 10;
+    f.complete.mockImplementation(() => new Promise(() => {}));
+    const signal = new AbortController().signal;
+    const turn = async (session: SessionState, promptInput = input(session)) => {
+      f.control.open(session.id, signal);
+      try { return await f.control.beforeStep(promptInput, { signal }); } finally { f.control.close(session.id); }
+    };
+    expect(await turn(state)).toBe(state);
+    expect(f.events.at(-1)).toMatchObject({ type: "compaction_failed", result: { message: expect.stringContaining("timed out") } });
+    let calls = f.complete.mock.calls.length;
+    expect(await turn(state)).toBeUndefined();
+    let grown = state;
+    for (const t of history(2).turns.slice(1)) grown = recordTurn(grown, t);
+    expect(await turn(grown)).toBeUndefined();
+    expect(f.complete).toHaveBeenCalledTimes(calls);
+    // Manual /compact is always allowed.
+    expect(await f.compactSession(state.id)).toMatchObject({ status: "failed" });
+    expect(f.complete.mock.calls.length).toBeGreaterThan(calls);
+    calls = f.complete.mock.calls.length;
+    // A different window is a different attempt.
+    expect(await turn(grown, { ...input(grown), contextWindow: 16000 })).toBe(grown);
+    expect(f.complete.mock.calls.length).toBeGreaterThan(calls);
+    calls = f.complete.mock.calls.length;
+    expect(await turn(grown, { ...input(grown), contextWindow: 16000 })).toBeUndefined();
+    expect(f.complete).toHaveBeenCalledTimes(calls);
+    // So is a history that grew meaningfully since the timed-out attempt.
+    for (const t of history(10).turns.slice(1)) grown = recordTurn(grown, t);
+    expect(await turn(grown, { ...input(grown), contextWindow: 16000 })).toBe(grown);
+    expect(f.complete.mock.calls.length).toBeGreaterThan(calls);
+    // A success clears the hold.
+    f.complete.mockImplementation(async () => completion());
+    expect((await f.compactSession(state.id)).status).toBe("compacted");
+  });
+  it("hands its part limit to the provider so a shorter request timeout cannot cut it", async () => {
+    const f = fixture(); f.config.timeoutMs = 900_000;
+    expect((await f.compactSession("chat")).status).toBe("compacted");
+    expect(f.complete.mock.calls.length).toBeGreaterThan(0);
+    expect(f.complete.mock.calls.every(([p]) => p.requestTimeoutMs! >= 900_000)).toBe(true);
   });
   it("bounds chunked input to the model window and covers original records without omissions", async () => {
     const state = history();
@@ -389,5 +452,28 @@ describe("compaction control inbox", () => {
     const third = f.compactSession("chat"); f.shutdown();
     expect(await third).toMatchObject({ status: "cancelled" });
     expect(f.persist).not.toHaveBeenCalled();
+  });
+});
+
+describe("compaction outcome logging", () => {
+  const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  it("warns on a failure and leaves an info line for a cancellation", () => {
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    logCompactionOutcome(logger, { type: "compaction_failed", sessionId: "s1", usage, calls: 0,
+      result: { status: "failed", reason: "manual", message: "summary was empty" } });
+    expect(logger.warn).toHaveBeenCalledWith("context compaction failed", { sessionId: "s1", reason: "summary was empty" });
+    logCompactionOutcome(logger, { type: "compaction_failed", sessionId: "s1", usage, calls: 2,
+      result: { status: "cancelled", reason: "manual", tokensBefore: 30000 } });
+    expect(logger.info).toHaveBeenCalledWith("context compaction cancelled",
+      { sessionId: "s1", reason: "manual", calls: 2, tokensBefore: 30000 });
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+  it("says nothing for progress or a finished compaction", () => {
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    logCompactionOutcome(logger, { type: "compaction_started", sessionId: "s1", reason: "manual", tokensBefore: 10 });
+    logCompactionOutcome(logger, { type: "compaction_completed", sessionId: "s1", usage, calls: 1,
+      result: { status: "compacted", reason: "manual", tokensBefore: 10, tokensAfter: 5 } });
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

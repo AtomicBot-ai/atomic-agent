@@ -7,6 +7,8 @@ import {
   type SchedulerClock,
   type SchedulerTaskRunner,
 } from "./scheduler.js";
+import type { SchedulerLeadership } from "./scheduler-leadership.js";
+import { StructuredLogger, type LogRecord } from "../tracing/structured-logger.js";
 
 interface FakeTimer {
   handler: () => void;
@@ -289,5 +291,118 @@ describe("Scheduler", () => {
       7,
       expect.any(AbortSignal),
     );
+  });
+});
+
+// ATO-416: with a shared state dir only the leader's interval ticks drain.
+describe("Scheduler leadership gate", () => {
+  function gate(initial: boolean): SchedulerLeadership & {
+    leader: boolean;
+    released: number;
+  } {
+    const state = {
+      leader: initial,
+      released: 0,
+      isLeader: () => state.leader,
+      release: () => {
+        state.released += 1;
+      },
+    };
+    return state;
+  }
+
+  it("interval ticks drain only while this process leads", async () => {
+    const { clock, timers } = createFakeClock();
+    const runDue = vi.fn<SchedulerTaskRunner["runDue"]>().mockResolvedValue(emptyOutcome());
+    const leadership = gate(false);
+    const scheduler = new Scheduler({ taskRunner: { runDue }, tickMs: 5_000, batch: 3, clock, leadership });
+    scheduler.start();
+    timers[0]!.handler();
+    await Promise.resolve();
+    expect(runDue).not.toHaveBeenCalled();
+    leadership.leader = true;
+    timers[0]!.handler();
+    await Promise.resolve();
+    expect(runDue).toHaveBeenCalledTimes(1);
+    leadership.leader = false;
+    timers[0]!.handler();
+    await Promise.resolve();
+    expect(runDue).toHaveBeenCalledTimes(1);
+    await scheduler.stop();
+  });
+
+  it("an explicit tickOnce is never gated", async () => {
+    const { clock } = createFakeClock();
+    const runDue = vi.fn<SchedulerTaskRunner["runDue"]>().mockResolvedValue(emptyOutcome());
+    const scheduler = new Scheduler({ taskRunner: { runDue }, tickMs: 5_000, batch: 3, clock, leadership: gate(false) });
+    await scheduler.tickOnce();
+    expect(runDue).toHaveBeenCalledTimes(1);
+    await scheduler.stop();
+  });
+
+  it("stop releases leadership after the in-flight tick settles", async () => {
+    const { clock, timers } = createFakeClock();
+    let finish!: (value: DrainOutcome) => void;
+    const runDue = vi.fn<SchedulerTaskRunner["runDue"]>().mockImplementation(
+      () => new Promise<DrainOutcome>((resolve) => { finish = resolve; }),
+    );
+    const leadership = gate(true);
+    const scheduler = new Scheduler({ taskRunner: { runDue }, tickMs: 5_000, batch: 3, clock, leadership });
+    scheduler.start();
+    timers[0]!.handler();
+    await Promise.resolve();
+    expect(runDue).toHaveBeenCalledTimes(1);
+    const stopped = scheduler.stop();
+    await Promise.resolve();
+    expect(leadership.released).toBe(0);
+    finish(emptyOutcome());
+    await stopped;
+    expect(leadership.released).toBe(1);
+  });
+
+  it("stop releases leadership even with nothing in flight", async () => {
+    const { clock } = createFakeClock();
+    const leadership = gate(true);
+    const scheduler = new Scheduler({
+      taskRunner: { runDue: vi.fn<SchedulerTaskRunner["runDue"]>().mockResolvedValue(emptyOutcome()) },
+      tickMs: 5_000, batch: 3, clock, leadership,
+    });
+    scheduler.start();
+    await scheduler.stop();
+    expect(leadership.released).toBe(1);
+  });
+
+  it("logs hand-overs once and fails open when the gate throws", async () => {
+    const { clock, timers } = createFakeClock();
+    const records: LogRecord[] = [];
+    const logger = new StructuredLogger({ level: "debug", sinks: [(record) => records.push(record)] });
+    const runDue = vi.fn<SchedulerTaskRunner["runDue"]>().mockResolvedValue(emptyOutcome());
+    let answer: boolean | Error = false;
+    const scheduler = new Scheduler({
+      taskRunner: { runDue }, tickMs: 5_000, batch: 3, clock, logger,
+      leadership: {
+        isLeader: () => {
+          if (answer instanceof Error) throw answer;
+          return answer;
+        },
+        release: () => {},
+      },
+    });
+    scheduler.start();
+    for (let i = 0; i < 3; i++) timers[0]!.handler();
+    await Promise.resolve();
+    expect(records.map((r) => r.message)).toEqual([
+      "scheduler: another process runs due tasks; standing by",
+    ]);
+    answer = new Error("lock dir gone");
+    timers[0]!.handler();
+    await Promise.resolve();
+    expect(runDue).toHaveBeenCalledTimes(1);
+    expect(records.map((r) => r.message)).toEqual([
+      "scheduler: another process runs due tasks; standing by",
+      "scheduler leadership check failed; running",
+      "scheduler: running due tasks in this process",
+    ]);
+    await scheduler.stop();
   });
 });

@@ -266,6 +266,7 @@ export class MemoryStore {
   private readonly deleteStmt: Database.Statement;
   private readonly getStmt: Database.Statement;
   private readonly countStmt: Database.Statement;
+  private readonly hasContentStmt: Database.Statement;
   private readonly evictFifoStmt: Database.Statement;
   private readonly evictUtilityStmt: Database.Statement;
   private readonly touchOnDedupStmt: Database.Statement;
@@ -331,6 +332,9 @@ export class MemoryStore {
          FROM memories WHERE id = ?`,
     );
     this.countStmt = this.db.prepare(`SELECT COUNT(*) AS count FROM memories`);
+    this.hasContentStmt = this.db.prepare(
+      `SELECT 1 AS present FROM memories WHERE content = ? LIMIT 1`,
+    );
     // Legacy FIFO eviction (back-compat: omit eviction options ⇒ same as v1).
     this.evictFifoStmt = this.db.prepare(
       `DELETE FROM memories WHERE id IN (
@@ -774,6 +778,16 @@ export class MemoryStore {
       workingDir: e.workingDir,
       sessionId: e.sessionId,
     }));
+  }
+
+  /**
+   * Whether a note with exactly this content (trimmed, as `store`
+   * writes it) is stored, archived rows included. An importer's re-run
+   * check: `list` stops at `MEMORY_LIST_MAX_LIMIT` rows, so it cannot
+   * answer this for a large store.
+   */
+  hasContent(content: string): boolean {
+    return this.hasContentStmt.get(content.trim()) !== undefined;
   }
 
   /** Total number of stored entries. Useful for tests and diagnostics. */

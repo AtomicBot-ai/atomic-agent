@@ -60,7 +60,7 @@ test("desktop initial policy matches the core for every preset and provider kind
 async function withConfig(providers, body) {
   let config = { version: 75, llm: { providers } };
   return cli.withCliStandIn(async (args, input) => {
-    if (args.join(" ") === "config get") {
+    if (args[0] === "config" && args[1] === "get") {
       return { ok: true, stdout: JSON.stringify(config), stderr: "" };
     }
     assert.deepEqual(args, ["config", "set", "-"]);

@@ -13,7 +13,7 @@ Evidence checks prevent unverified check claims, unsourced links and fabricated 
 
 ## Ownership and asynchronous boundaries
 
-[Turn recovery](../turn/turn-recovery.ts) returns synchronous decisions; the loop performs the existing provider-outage wait explicitly. [Preparation](../turn/turn-preparation.ts) surrounds the original memory/profile awaits. [Finalization](../turn/turn-finalization.ts) keeps completion events and steering drain order. Adding an unconditional async wrapper would allow queued event callbacks to run before dispatch or turn closure, even when no recovery wait is needed.
+[Turn recovery](../turn/turn-recovery.ts) returns synchronous decisions; the loop performs the existing provider-outage wait explicitly. [Preparation](../turn/turn-preparation.ts) surrounds the original memory/profile awaits. [Finalization](../turn/turn-finalization.ts) keeps completion events and steering drain order. A turn that closes `max_steps` never got the model's summary (the reserved final step overran its deadline or was refused), so its stop reply carries a [digest](../turn/pause-digest.ts) built from the turn's own records, with no model call. Adding an unconditional async wrapper would allow queued event callbacks to run before dispatch or turn closure, even when no recovery wait is needed.
 
 Step parsing and repair preparation/finish are synchronous; the actual repair completion await remains in [step-executor.ts](../step-executor.ts). Stream consumption still owns iterator cleanup. [Progress helpers](../progress/README.md) are independent of the tracker state; [policies](../policies/README.md) do not own resources.
 

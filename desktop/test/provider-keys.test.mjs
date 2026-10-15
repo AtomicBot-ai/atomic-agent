@@ -45,14 +45,26 @@ const dir = process.env.ATOMIC_AGENT_STATE_DIR;
 const args = process.argv.slice(2);
 fs.appendFileSync(path.join(dir, "argv.log"), JSON.stringify(args) + "\\n");
 const cfg = path.join(dir, "config.json");
+const old = process.env.FAKE_ATAG_OLD === "1";
+// ATO-416: the raw bytes' sha256, as the agent's config get --with-sha256 and set - --expect-sha256 compute it.
+const sha = () => require("crypto").createHash("sha256").update(fs.existsSync(cfg) ? fs.readFileSync(cfg) : "").digest("hex");
 if (args[0] === "config" && args[1] === "get" && args.length === 2) {
   process.stdout.write(fs.existsSync(cfg) ? fs.readFileSync(cfg, "utf8") : "{}");
   process.exit(0);
 }
-if (args[0] === "config" && args[1] === "set" && args.length === 3 && args[2] === "-") {
-  if (process.env.FAKE_ATAG_OLD === "1") {
+if (args[0] === "config" && args[1] === "get" && args.length === 3 && args[2] === "--with-sha256" && !old) {
+  const text = fs.existsSync(cfg) ? fs.readFileSync(cfg, "utf8") : "{}";
+  process.stdout.write(JSON.stringify({ sha256: sha(), config: JSON.parse(text) }));
+  process.exit(0);
+}
+if (args[0] === "config" && args[1] === "set" && args[2] === "-" && (args.length === 3 || (args.length === 5 && args[3] === "--expect-sha256"))) {
+  if (old) {
     process.stderr.write("config set failed: no value given for -\\nusage: atomic-agent config set - <value>\\n");
     process.exit(1);
+  }
+  if (args.length === 5 && args[4] !== sha()) {
+    process.stderr.write("config changed since it was read\\n");
+    process.exit(3);
   }
   const text = fs.readFileSync(0, "utf8");
   JSON.parse(text);
@@ -124,7 +136,10 @@ test("a key typed in the window is saved inline, and neither the read nor the wr
   assert.equal(res.ok, true, res.error);
   assert.equal(entryOf("aimlapi").apiKey, "t44-k-typed-0123456789");
   assert.equal(argvLog().includes("t44-k-typed"), false);
-  assert.deepEqual(argvLog().trim().split("\n").map((l) => JSON.parse(l)), [["config", "get"], ["config", "set", "-"]]);
+  // ATO-416: the read carries the file's hash and the write is checked against it.
+  const calls = argvLog().trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(calls.map((a) => a.map((x) => (/^[0-9a-f]{64}$/.test(x) ? "<sha256>" : x))),
+    [["config", "get", "--with-sha256"], ["config", "set", "-", "--expect-sha256", "<sha256>"]]);
 });
 
 test("a blank key field keeps the saved key and the variable the entry reads, whatever variable its row names", { skip: !posix }, async () => {

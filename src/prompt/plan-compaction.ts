@@ -6,6 +6,15 @@ import { renderPackedConversation } from "./build-prompt-world-conversation.js";
 import type { BuiltPrompt } from "./build-prompt-types.js";
 import { estimateTokens } from "./token-budget.js";
 import { cloudContextEntries, renderCloudTurn } from "../session/cloud-context.js";
+import type { PrefixReuse } from "../llm/model-profile.js";
+
+/**
+ * Target share of the history allowance after compaction on a model without
+ * prefix reuse. Every step after a cut re-reads the whole prompt there, so a
+ * smaller kept tail makes each of those re-reads cheaper and the next
+ * compaction further away. A lower configured `targetRatio` still wins.
+ */
+export const NO_PREFIX_REUSE_TARGET_RATIO = 0.35;
 
 export interface CompactionPlan {
   reason: CompactionReason;
@@ -16,13 +25,14 @@ export interface CompactionPlan {
   tokensBefore: number;
 }
 
-export function planCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow"): CompactionPlan | null {
+export function planCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: { prefixReuse?: PrefixReuse } = {}): CompactionPlan | null {
   const budget = prompt.compactionBudget;
   if (!budget || state.turns.length < 2) return null;
   const reason = requested ?? (budget.activePairs > prompt.conversationPairsCap ? "pairs" : "threshold");
   if (!requested && (!config.auto || (reason !== "pairs" && budget.activeTokens < budget.cap * config.triggerRatio))) return null;
   const projection = projectSessionConversation(state);
-  const targetTokens = Math.floor(config.targetRatio * (requested === "manual" ? Math.min(budget.cap, budget.activeTokens) : budget.cap));
+  const targetRatio = model.prefixReuse === "none" ? Math.min(config.targetRatio, NO_PREFIX_REUSE_TARGET_RATIO) : config.targetRatio;
+  const targetTokens = Math.floor(targetRatio * (requested === "manual" ? Math.min(budget.cap, budget.activeTokens) : budget.cap));
   const summaryMaxTokens = Math.min(config.summaryMaxTokens, Math.floor(budget.cap * 0.2), Math.floor(targetTokens * 0.5));
   if (summaryMaxTokens < 64) return null;
   if (prompt.cloudContext) {
@@ -37,7 +47,7 @@ export function planCompaction(state: SessionState, prompt: BuiltPrompt, config:
     return null;
   }
   const boundaries = macroTurnBoundaries(state.turns, state.macroTurnStarts);
-  const pairsTarget = Math.max(1, Math.floor(prompt.conversationPairsCap * config.targetRatio));
+  const pairsTarget = Math.max(1, Math.floor(prompt.conversationPairsCap * targetRatio));
   // Conservative suffix costs avoid rendering the entire remaining transcript
   // for every candidate (quadratic on a long, tool-heavy task). Repeated reads
   // may render smaller; the exact shared renderer validates the chosen tail.

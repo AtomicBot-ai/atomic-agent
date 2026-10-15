@@ -122,4 +122,4 @@ export {
   type SessionTitleDeps,
 } from "./session-title.js";
 
-export type { SessionCompaction, CompactionResult, CompactionReason } from "./session-compaction.js";
+export type { SessionCompaction, RollingCompactionSummary, CompactionResult, CompactionReason } from "./session-compaction.js";
