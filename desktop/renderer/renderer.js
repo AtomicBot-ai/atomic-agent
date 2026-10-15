@@ -490,10 +490,14 @@ const OB_PHASES = [{n:'01', label:'Setup'}, {n:'02', label:'Data'}];
 const OB_PHASE_OF = {
   intro:null, choose:'01', cloud:'01', custom_chat_url:'01', custom_embedding_url:'01',
   local_pick:'01', local_hf_ref:'01', local_hf_pick:'01', local_download:'01',
-  propose_second:'01',
+  propose_second:'01', wait_or_jump:'01',
   import_pick:'02', import_preview:'02', import_done:'02',
-  wait_or_jump:'02', finished:'02',
+  // ATO-431 (U-06): `finished` is the spinner between screens of EITHER phase
+  // (before the second-backend offer as well as after import), so it keeps
+  // the phase last shown instead of naming one and jumping back.
+  finished:null,
 };
+let obRailPhase = '01';
 /* The screen's own title, in the app's voice rather than the TUI's status
    line. Plainest possible form: what this screen asks you to decide.
    The first one asks the person, not about the app in the third person
@@ -1736,7 +1740,8 @@ const SLASH = [
   ['quit','exit Atomic Agent'],
   ['debug','toggle debug pane (feed / logs / world …)'],
   ['chat','return to single-view chat mode'],
-  ['runmode','where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`','local|cloud|fusion|swap|workers N|status'],
+  // ATO-431 (U-33): short enough for one row; the hint column carries the arguments.
+  ['runmode','choose where the chat runs: local, cloud or Fusion','local|cloud|fusion|swap|workers N|status'],
   ['observe','switch to the Observe section'],
   ['manage','switch to the Manage section'],
   ['feed','jump to the Observe → Feed tab'],
@@ -5325,7 +5330,7 @@ function generalPane() {
   return '<div class="set-pane set-general">'
     + '<div class="tk-list set-setlist">'
       + '<div class="tk-setrow">'
-        + '<div class="body"><div class="t">Appearance</div><div class="d">System follows your Mac.</div></div>'
+        + '<div class="body"><div class="t">Appearance</div><div class="d">' + esc(S.theme === 'light' ? 'Always light.' : S.theme === 'dark' ? 'Always dark.' : (IS_MAC ? 'Follows your Mac.' : 'Follows your system.')) + '</div></div>'
         + '<div class="tk-seg set-seg" role="group" aria-label="Appearance">'
           + THEMES.map(([v, label]) => '<button class="' + (S.theme === v ? 'on' : '') + '" aria-pressed="' + (S.theme === v) + '" data-act="theme:' + v + '">' + esc(label) + '</button>').join('')
         + '</div>'
@@ -10908,7 +10913,8 @@ function obHeadHTML() {
  * number and `aria-current`.
  */
 function obRailHTML() {
-  const here = OB_PHASE_OF[OB.step] || null;
+  let here = OB_PHASE_OF[OB.step] || null;
+  if (OB.step === 'finished') here = obRailPhase; else if (here) obRailPhase = here;
   const importing = OB.step === 'import_pick' || OB.step === 'import_preview' || OB.step === 'import_done';
   const statement = importing ? 'Bring what you already taught other agents.' : 'Choose how it runs. Change it any time.';
   const phases = here === null ? '' : '<ol class="ob-stepmarks" aria-label="Setup progress">' + OB_PHASES.map((p) => {
