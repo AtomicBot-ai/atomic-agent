@@ -301,7 +301,7 @@ const CATEGORY_PLAIN = {
   script:'run a skill\u2019s script', proc_kill:'stop a running program', browser_nonweb:'open a non-web link',
   trust_config:'change the agent\u2019s trust settings', fusion_fanout:'split the work across helper models',
   other:'take this step', publish:'publish to GitHub', git_remote:'sync with a git remote', email:'send an email',
-  fs_read_outside:'read files outside this folder',
+  fs_read_outside:'read files outside this folder', paid_generation:'make a paid cloud image',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
@@ -1775,6 +1775,7 @@ const CATS = [
   ['trust_config','agent trust config',5],
   ['email','e-mail send',5],
   ['fs_read_outside','read outside the working directory',5],
+  ['paid_generation','paid generation · cloud',3],
   ['other','uncategorised',5],
 ];
 
@@ -2914,7 +2915,7 @@ function toolVerb(name) {
     'os.fs.diff': 'Compared files', 'os.fs.restore': 'Restored files', 'os.shell.run': 'Ran commands',
     'os.web.search': 'Searched the web', 'browser.search': 'Searched the web', 'web.search': 'Searched the web',
     'os.web.fetch': 'Opened web pages', 'browser.navigate': 'Opened web pages', 'os.http.request': 'Called a web service',
-    'vision.describe': 'Looked at images', 'fusion.delegate': 'Delegated tasks',
+    'vision.describe': 'Looked at images', 'image.generate': 'Generated images', 'fusion.delegate': 'Delegated tasks',
     'os.clipboard.read': 'Read the clipboard', 'os.clipboard.write': 'Copied to the clipboard',
     'os.notify': 'Sent a notification', 'os.email.send': 'Sent an email', 'os.email.inbox': 'Checked email',
     'tasks.schedule': 'Scheduled a task', 'tasks.cron': 'Scheduled a task', 'tasks.list': 'Listed tasks',
@@ -2971,6 +2972,11 @@ function toolLine(m) {
   if (n === 'os.http.request' && a.url) return 'Called ' + code(toolHost(a.url));
   if (n === 'browser.tabs' && a.url) return 'Opened ' + code(toolHost(a.url));
   if (n === 'vision.describe' && path) return 'Looked at ' + code(wsName(toolPath(path))) + more(a.paths);
+  if (n === 'image.generate') {
+    // ATO-409: the count asked for (1..4); the prompt quoted like a search query.
+    const k = Number.isInteger(a.count) && a.count > 1 ? a.count : 1;
+    return 'Generated ' + plural(k, 'image') + (a.prompt ? ' · ' + quote(a.prompt) : '');
+  }
   if (n === 'fusion.delegate') {
     /* ATO-235: only whole args are counted. A live card's are clipped to 120
        characters, so its tasks come from the approval request (fzTasks, set
@@ -3006,7 +3012,7 @@ function toolTense(line, state) {
     'Forgot':['Forgetting','forget'], 'Scheduled':['Scheduling','schedule'], 'Cancelled':['Cancelling','cancel'],
     'Checked':['Checking','check'], 'Compared':['Comparing','compare'], 'Restored':['Restoring','restore'],
     'Clicked':['Clicking','click'], 'Typed':['Typing','type'], 'Scrolled':['Scrolling','scroll'],
-    'Sent':['Sending','send'], 'Copied':['Copying','copy']};
+    'Sent':['Sending','send'], 'Copied':['Copying','copy'], 'Generated':['Generating','generate']};
   const mt = /^(Added to|Looked for|Looked at|Looked up|[A-Z][a-z]+)\b/.exec(line);
   if (state === 'err' && mt && mt[1] === 'Ran' && /\u00b7 exit /.test(line)) return line;
   if (!mt || !forms[mt[1]]) {
@@ -3063,7 +3069,7 @@ function toolIcon(name) {
   if (/^os\.fs\./.test(n)) return 'file';
   if (/search$/.test(n)) return 'search';
   if (/^(browser|os\.web|os\.http)\./.test(n)) return 'globe';
-  if (n === 'vision.describe') return 'image';
+  if (n === 'vision.describe' || n === 'image.generate') return 'image';
   if (n === 'fusion.delegate') return 'fusion';
   if (/^memory\./.test(n)) return 'memory';
   if (/^tasks\./.test(n)) return 'clock';
@@ -3312,6 +3318,7 @@ const APPR_FALLBACK = {
   script:'run a skill script', proc_kill:'stop a process', browser_nonweb:'open a non-web address',
   trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
+  paid_generation:'make a paid image in the cloud',
 };
 /** The question: "Allow Atomic Agent to run `touch approved.txt`?" (html). */
 function apprAsk(m) {
@@ -3353,6 +3360,7 @@ function apprWhy(m) {
   }
   if (m.cat === 'trust_config') return 'This changes what Atomic Agent may do without asking you.';
   if (m.cat === 'fs_trash') return 'You can put them back from the Trash.';
+  if (m.cat === 'paid_generation') return 'OpenRouter charges your account for each image.';
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
     // The guard's verdict, when it flagged something ("recursive remove").
     const g = String(m.reason || '').replace(/ in \/.*$/, '').trim();
@@ -10060,6 +10068,8 @@ const CATEGORY_LABEL = {
   // agent 0.6.0 / 0.6.3 (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
   publish:'publish · GitHub', git_remote:'git · remote', email:'e-mail send',
   fs_read_outside:'read outside the working directory',
+  // image.generate on a cloud model (agent, ATO-409)
+  paid_generation:'paid generation · cloud',
 };
 
 /* Calm (S7): why an answer to an approval did not land, in words. The

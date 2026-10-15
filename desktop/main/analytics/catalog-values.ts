@@ -51,7 +51,7 @@ export const SLASH_COMMANDS = [
 /** The renderer's approval CATS ids. */
 export const APPROVAL_CATEGORIES = [
   "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "script", "proc_kill", "publish",
-  "git_remote", "fusion_fanout", "browser_nonweb", "trust_config", "email", "fs_read_outside", "other",
+  "git_remote", "fusion_fanout", "browser_nonweb", "trust_config", "email", "fs_read_outside", "paid_generation", "other",
 ] as const;
 export const SETTINGS_PANES = [
   "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "skills", "privacy", "import", "diagnostics",
