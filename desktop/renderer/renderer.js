@@ -10260,7 +10260,8 @@ if (BR) {
     if (!r || !r.daemon) return;
     if (r.daemon === 'start-failed') {
       appSay('Local model daemon did not start', 'caution');
-      toast('The local model did not start', daemonFail(r.error).line, 'bad');
+      const f = daemonFail(r.error);   // no chat row here: the reason itself
+      toast('The local model did not start', f.detail ? f.detail.split('\n')[0].slice(0, 160) : f.line, 'bad');
     } else if (r.daemon === 'started') appSay(r.daemonLine || 'local-llm: daemon started');
   });
   /* ATO-123: main brings the local model server back when it stops under a
@@ -15715,20 +15716,16 @@ function restartStopsLine(held) {
 function restartRefusedToast(held) {
   toast('Not while a turn is running', restartStopsLine(held) || undefined);
 }
-function swxFailLine(lane, waiting) {
-  return 'The ' + (lane === 'mode' ? 'mode' : 'model') + ' switch did not finish. '
-    + (waiting ? 'Your messages are waiting; choose again or cancel them.' : 'Choose again.');
-}
 /** ATO-429: the strip says messages are waiting only when a chat has some queued. */
 function swxErrLine() {
   const t = SWX.err || SWX.sendError || '';
-  if (t !== SWX.sendError || Object.keys(queuesSnapshot()).length) return t;
-  return swxFailLine(SWX.sendErrors.route ? 'route' : 'mode', false);
+  return t !== SWX.sendError || Object.keys(queuesSnapshot()).length ? t : t.replace(/ Your messages are waiting.*$/, ' Choose again.');
 }
 /** A failed route or mode never releases messages into the previous choice. */
 function swxMessageOutcome(lane, ok) {
   if (!SWX.sendErrors) SWX.sendErrors = {};
-  SWX.sendErrors[lane] = ok ? null : swxFailLine(lane, true);
+  SWX.sendErrors[lane] = ok ? null : 'The ' + (lane === 'mode' ? 'mode' : 'model')
+    + ' switch did not finish. Your messages are waiting; choose again or cancel them.';
   SWX.sendError = SWX.sendErrors.route || SWX.sendErrors.mode || null;
   if (SWX.sendError && !SWX.err) SWX.err = SWX.sendError;
 }
@@ -20149,11 +20146,11 @@ function bswReport(res, extra) {
     are cut out of the words, not the lines they share with the reason. */
 function daemonFail(err) {
   const why = String(err || '').replace(/\s*\(?\[[= ]{20}\] \d+%\s+[\d.]+ GB(?: \/ [\d.]+ GB)?  [^)\n]*\)?/g, '')
-    .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+    .replace(/\s*\(?\[[= ]{0,20}(?:\][^\n)]*)?\)?$/gm, '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
   const port = /port (\d+) is already served/.exec(why);
   if (port) return {line: 'The local model did not start: port ' + port[1] + ' is used by another app.', detail: why};
   if (why && !why.includes('\n') && why.length <= 160) return {line: 'The local model did not start: ' + why, detail: ''};
-  return {line: 'The local model did not start.', detail: why || String(err || '')};
+  return {line: 'The local model did not start.', detail: why};
 }
 
 /** The TUI's answer to a provider without a key: its configure step. Backlog 32: a saved key the agent will not send opens the same step, saying so. */
