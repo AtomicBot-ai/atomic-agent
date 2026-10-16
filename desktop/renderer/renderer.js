@@ -3302,8 +3302,12 @@ function apprCard(m) {
       + '<dl class="aplate">'
         + '<dt>Tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
         + '<dt>Category</dt><dd><span class="badge">' + esc(m.kind) + '</span> <span class="cap">'
-          + (isTrust ? 'never allowed for longer than one call' : 'allowed without asking from level ' + m.lvl) + '</span></dd>'
-        + (m.reason ? '<dt>Reason</dt><dd>' + esc(m.reason) + '</dd>' : '')
+          /* ATO-477: the mode that would run it unasked, not a level number the
+             UI never shows (Auto stops asking for workspace writes, level 2;
+             only Bypass skips the rest). The agent's level stays in the tooltip. */
+          + (isTrust ? 'never allowed for longer than one call'
+            : '<span title="approval level ' + esc(m.lvl) + '">' + (m.lvl <= 2 ? 'in Auto mode this runs without asking' : 'runs without asking only in Bypass mode') + '</span>') + '</span></dd>'
+        + (m.reason ? '<dt>Reason</dt><dd>' + esc(apprHomePaths(m.reason)) + '</dd>' : '')
         + (pv && pv !== '(no preview)' ? '<dt>Preview</dt><dd><div class="previewblk">' + esc(pv) + '</div></dd>' : '')
       + '</dl>'
       /* The one approval surface for "ask me less" is the mode control in the
@@ -3328,6 +3332,11 @@ function apprPath(p) {
   const home = homeDir();
   if (home && (s === home || s.startsWith(home + sep))) return '~' + s.slice(home.length);
   return s;
+}
+/** Home folder shown as ~ inside free text (the Reason row), so the user name stays off the card. */
+function apprHomePaths(t) {
+  const home = homeDir();
+  return home ? String(t).split(home + (IS_WIN ? '\\' : '/')).join('~' + (IS_WIN ? '\\' : '/')) : String(t);
 }
 function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
 const APPR_FALLBACK = {
@@ -3382,7 +3391,8 @@ function apprWhy(m) {
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
     // The guard's verdict, when it flagged something ("recursive remove").
     const g = String(m.reason || '').replace(/ in \/.*$/, '').trim();
-    if (g && !/no shell guard rule matched|fail-closed|threw|normalisation/.test(g)) return 'Flagged: ' + esc(g) + '.';
+    // ATO-477: what the flag means for the person deciding, not just "Flagged".
+    if (g && !/no shell guard rule matched|fail-closed|threw|normalisation/.test(g)) return 'The safety check flagged this: ' + esc(g) + '. It runs with your access to this computer, so read the command before you allow it.';
   }
   return '';
 }
