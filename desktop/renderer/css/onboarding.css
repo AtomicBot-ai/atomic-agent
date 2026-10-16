@@ -276,6 +276,7 @@
   border:0;border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font:600 12.5px/1 var(--font-ui);cursor:pointer;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 #onboarding .ob-offer.ob-offer-inline:hover{background:var(--press);color:var(--ink)}
+#onboarding .ob-offer.ob-routehint{align-self:flex-start}
 #onboarding .ob-help{padding-left:4px}
 /* ATO-161: the request for a key, in ink — nothing has failed. */
 #onboarding .ob-help.wiz-ask{color:var(--ink)}

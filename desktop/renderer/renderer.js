@@ -12345,7 +12345,12 @@ function obChooseHTML() {
       OB.cursor === i ? obTickHTML() : '');
   }).join('');
   return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
-    + '<div class="ob-list ob-routes">' + rows + '</div>';
+    + '<div class="ob-list ob-routes">' + rows + '</div>'
+    /* ATO-442: an Ollama or LM Studio owner reads "Local models" as theirs and
+       lands on a 20 GB download. Their apps live in the Cloud models list
+       ("Local on this Mac"), so say so here and open that list. */
+    + '<button class="ob-offer ob-offer-inline ob-routehint" data-obact="route:apps">'
+    + esc('Already run Ollama or LM Studio? Use it instead') + '</button>';
 }
 
 function obLocalPickHTML() {
@@ -14978,6 +14983,7 @@ function obRowClick(index, clicks) {
 function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
+  if (spec === 'route:apps') { obPickBackend('cloud'); return; }
   /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
      obKeydown's own — a step that owns its keyboard answers Escape through
      obOwnEscape, everything else through the key table — so the button and
