@@ -1349,6 +1349,10 @@ const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
    server's log shown there — open or not, its last read, the poll's timer. */
 const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
+/* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
+const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
+  anthropic:'https://console.anthropic.com/settings/keys', groq:'https://console.groq.com/keys', deepseek:'https://platform.deepseek.com/api_keys',
+  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.xyz/settings/api-keys', xai:'https://console.x.ai'};
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 
@@ -12996,6 +13000,8 @@ function obWizardHTML() {
      unchecked. Unreachable reads amber, rejected reads red. */
   const service = k.label.split(' (')[0];
   const unchecked = WIZ.uncheckedFor;
+  /* ATO-444: a newcomer without a key gets the page where the provider hands them out. */
+  const keyPage = !k.local && !k.custom && OB_KEY_PAGES[k.id];
   /* ATO-161: a request for a key is a hint in ink, the field unlit; a failure is red. */
   const soft = wizErrSoft();
   const tone = WIZ.error && !soft && !wizErrUnreachable() ? (unchecked ? ' is-warn' : ' is-error') : '';
@@ -13018,6 +13024,7 @@ function obWizardHTML() {
           + (wizErrDetail()
               ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '')
         : '')
+    + (keyPage && !verifying ? '<div class="ob-help">No key yet? <a class="msglink" href="#" data-url="' + esc(keyPage) + '">Get one from ' + esc(service) + '</a>. It is checked when you press Next.</div>' : '')
     /* Calm (S6, U14): where the key goes, in the user's words; the file and
        who can read it are the tooltip (ATO-132: what main does with it). */
     + (k.env ? '<div class="ob-help" title="' + esc(keySavedHint()) + '">Your key stays on ' + THIS_MACHINE + '.</div>' : '')
