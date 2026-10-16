@@ -292,12 +292,19 @@
 .cfoot .ctxbtn{width:30px;padding:0;justify-content:center;color:var(--ink-2)}
 .ctxring{width:20px;height:20px;flex:none}
 .ctxring circle{fill:none}
-/* ATO-166: a donut — a full grey track and a thick arc on it, no fill. */
-.ctxring .bg{fill:none;stroke:color-mix(in srgb, var(--ink) 16%, transparent);stroke-width:3}
+/* ATO-166: a donut — a full grey track and a thick arc on it, no fill.
+   ATO-481: the track is --ink-3 (3:1 and up on both themes); at 16% ink it
+   all but vanished and the arc alone read as a spinner. */
+.ctxring .bg{fill:none;stroke:var(--ink-3);stroke-width:3}
 /* Thick and still on its track: the thin arc it once was read as a spinner. */
 .ctxring .fg{stroke:var(--brand);stroke-width:3;stroke-linecap:butt}
 .ctxring.warn .fg{stroke:var(--amber)}
 .ctxring.crit .fg{stroke:var(--critical)}
+/* ATO-481: from 50% the figure sits beside the ring. */
+.cfoot .ctxbtn.haspct{width:auto;padding:0 8px 0 5px;gap:5px}
+.ctxpct{font:500 11.5px/1 var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.ctxbtn.warn .ctxpct{color:var(--amber-text)}
+.ctxbtn.crit .ctxpct{color:var(--critical)}
 
 /* Mode chip tones: default neutral · plan blue · auto amber · bypass red. */
 .cfoot .cmodechip.tone-plan{background:var(--brand-wash);color:var(--blue)}

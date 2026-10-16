@@ -16792,8 +16792,11 @@ function contextChip() {
   const ring = '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
     + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.12 * pct / 100).toFixed(2) + ' 47.12" transform="rotate(-90 10 10)"/>' : '')
     + '</svg>';
-  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context"'
-    + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + '</button>';
+  /* ATO-481: from half full the ring carries its figure, so a filling
+     window reads as a gauge at a glance; below that it stays the ring alone. */
+  const fig = CTX.window && pct >= 50 ? '<span class="ctxpct">' + Math.round(pct) + '%</span>' : '';
+  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + (fig ? ' haspct' : '') + tone + cchipOpen('context') + '" data-act="context"'
+    + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + fig + '</button>';
 }
 
 /* ============================================================
