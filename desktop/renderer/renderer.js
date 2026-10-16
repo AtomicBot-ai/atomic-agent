@@ -3247,13 +3247,16 @@ function apprCard(m) {
       : 'Denied';
     /* Soft Tactile: the receipt pill. The label still opens the row's text
        ("Approved · 14:32:09"), which scenario 05 reads back. */
-    const glyph = ok ? toolGlyph('ok')
+    /* ATO-475: a quiet note under the step it answered, not a lifted pill:
+       a shield, "Approved by you · 07:07:35", and what was allowed in plain
+       text. The <b> still holds only the verdict (scenarios 05/08 read it). */
+    const glyph = ok ? '<span class="tk-gly tk-gly--ok">' + ic('shield') + '</span>'
       : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
       : m.state === 'expired' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
     const plain = CATEGORY_PLAIN[m.cat] || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
-      + glyph + '<span class="apprlbl"><b>' + label + '</b> · <span class="mono">' + m.at + '</span></span>'
+      + glyph + '<span class="apprlbl"><b>' + label + '</b>' + (ok || m.state === 'denied' ? ' by you' : '') + ' · <span class="mono">' + m.at + '</span></span>'
       + '<span class="badge tk-chip tk-chip--sm" title="' + esc(m.kind) + '">' + esc(plain) + '</span></div>';
   }
   const isTrust = m.cat === 'trust_config';
