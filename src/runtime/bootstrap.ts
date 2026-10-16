@@ -615,7 +615,7 @@ export async function createAgentRuntime(
   const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
-  const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
+  const { executeTurn, steer, runTurn, resolveOperatorTurnId } = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
@@ -630,6 +630,7 @@ export async function createAgentRuntime(
 
   registerRuntimeFusionAndReadScope({
     config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest: (id) => turnRequests.get(id),
+    resolveOperatorTurnId,
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
   });

@@ -96,6 +96,8 @@ export type UserLlmFusionConfig = {
    * Default 6. See `src/agent/review-stall.ts`.
    */
   reviewStallSteps?: number;
+  /** Require named executable behavior checks before fan-out. Opt-in; unset is false. */
+  requireBehaviorChecklist?: boolean;
 };
 
 export type UserLlmRunModeConfig = {
@@ -294,6 +296,12 @@ function parseFusion(
       1_000,
       86_400_000,
     );
+  }
+  if (obj.requireBehaviorChecklist !== undefined) {
+    if (typeof obj.requireBehaviorChecklist !== "boolean") {
+      throw new ConfigValidationError(`${field}.requireBehaviorChecklist`, "expected boolean");
+    }
+    out.requireBehaviorChecklist = obj.requireBehaviorChecklist;
   }
   if (obj.reviewStallSteps !== undefined) {
     out.reviewStallSteps = parseBoundedInt(
