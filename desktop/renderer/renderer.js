@@ -24208,9 +24208,9 @@ function llmModalHTML() {
   if (LLMP.externalDraft !== null) {
     return '<div class="tk-modal llm-modal" role="dialog">'
       + '<label class="tk-field"><span class="tk-lbl">External llama.cpp base URL</span>'
-      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="http://host:8080">'
+      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="e.g. http://127.0.0.1:8080">'
       + (LLMP.externalInvalid ? '<span class="tk-help tk-help--err">invalid URL</span>' : '')
-      + '<span class="tk-help">Saved after a /health probe succeeds.</span></label>'
+      + '<span class="tk-help">' + esc('The address of your own llama.cpp server. It is checked first, and chats move to it only when it answers.') + '</span></label>'
       + '<div class="acts"><button class="btn btn-g sm" data-act="llm:external:cancel">Cancel</button>'
       + '<button class="btn btn-p sm" data-act="llm:external:save">Save</button></div></div>';
   }
@@ -24934,7 +24934,9 @@ async function llmPrimary(row) {
     await llmSelectEmbeddingModel(row.providerId, row.modelId);
     return;
   }
-  if (row.kind === 'externalUrl') { LLMP.externalDraft = row.url; LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.select(); } }
+  /* ATO-505: not in use yet, the row's address is the built-in engine's or the
+     default, never the person's server, so the field opens empty with an example. */
+  if (row.kind === 'externalUrl') { LLMP.externalDraft = row.active ? row.url : ''; LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.select(); } }
 }
 /* The existing add-provider wizard (selectorHTML → wizardHTML) is the
    composer's popup: it needs SEL.open and floats above the settings window
