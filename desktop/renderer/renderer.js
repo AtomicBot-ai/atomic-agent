@@ -5715,9 +5715,11 @@ async function privacySet(enabled, via) {
    the same edge, faster (150 ms). Reduced motion: opacity only. */
 const TOAST_IN_MS = 220, TOAST_OUT_MS = 150;
 function toastHTML(t) {
-  const bad = t.kind === 'bad';
+  const bad = t.kind === 'bad', info = t.kind === 'info';
   // No whitespace between the text spans: drivers read the toast's textContent.
-  return '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
+  // ATO-485: 'info' is for something still under way (a download), not a green check.
+  return '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : info ? 'tk-ico--blue' : 'tk-ico--green') + '">'
+    + ic(bad ? 'alert' : info ? 'download' : 'check') + '</span>'
     + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
     + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
     // r2: every toast can be dismissed before its 6 s are up. Icon only, so
@@ -7683,7 +7685,7 @@ function engfLaunchInstall(st) {
     LLMP.pulling = {kind: 'runtime', id: 'the local engine', launch: true};
     LLMP.pullLog = ['starting…'];
     appSay('local-llm: downloading the local engine before the model starts');
-    toast('Downloading the local engine', 'Your local model starts once it is in. Progress is in Settings \u203a Models.');
+    toast('Downloading the local engine', 'Your local model starts once it is in. Progress is in the download card.', 'info');
   } else if (LLMP.pulling && LLMP.pulling.launch) {
     // Its done frame normally ends it first (the LLMP pull subscriber); this is the backstop.
     LLMP.pulling = null;
@@ -24712,7 +24714,7 @@ function llmEngineInstall(opts) {
   LLMP.msg = null; LLMP.statusErr = null;
   LLMP.pulling = {kind:'runtime', id: composerEngineId() === 'atomic-core' ? 'the local engine' : 'llama.cpp'};
   LLMP.pullLog = ['starting…'];
-  if (!llmVisible()) toast('Downloading the local engine', 'Its progress is in Settings \u203a Models.');
+  if (!llmVisible()) toast('Downloading the local engine', 'Its progress is in the download card.', 'info');
   render(); llmRepaint();
   Promise.resolve(fresh ? BR.modelsUpdateStream('settings', {fresh: true}) : BR.modelsUpdateStream('settings')).then((res) => {
     if (res && res.ok === false) {
