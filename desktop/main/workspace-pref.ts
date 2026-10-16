@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { posix, win32, join } from "node:path";
 
 /**
@@ -14,8 +14,8 @@ import { posix, win32, join } from "node:path";
  *
  * At launch `ATOMIC_AGENT_WORKSPACE` still wins (the smoke and drive
  * harnesses set it), then the saved folder, then the home folder. A saved
- * folder that is gone, or is no longer a folder, is ignored rather than
- * handed to the agent as a cwd it cannot enter.
+ * folder that is gone, is no longer a folder, or cannot be entered is
+ * ignored rather than handed to the agent as a cwd it cannot enter.
  */
 
 export function workspacePrefPath(userData: string): string {
@@ -24,7 +24,11 @@ export function workspacePrefPath(userData: string): string {
 
 function isDirectory(dir: string): boolean {
   try {
-    return statSync(dir).isDirectory();
+    if (!statSync(dir).isDirectory()) return false;
+    // A folder that is there but cannot be entered (permissions, a revoked
+    // macOS privacy grant) would fail the agent's spawn on every launch.
+    accessSync(dir, constants.R_OK | constants.X_OK);
+    return true;
   } catch {
     return false;
   }
