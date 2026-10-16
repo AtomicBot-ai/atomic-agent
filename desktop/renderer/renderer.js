@@ -6981,7 +6981,12 @@ document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
   // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
   if (e.target.id === 'skp-hubq') { SKP.hubQuery = e.target.value; return; }
-  if (e.target.id === 'mcp-json') { if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; } return; }
+  if (e.target.id === 'mcp-json') {
+    if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; }
+    // ATO-514: Add stays off until something is pasted (a toggle, not a render: the caret stays).
+    const add = $('[data-act="mcp:addSubmit"]'); if (add) add.disabled = !e.target.value.trim() || !!(MCP.addModal && MCP.addModal.submitting);
+    return;
+  }
   // Item 7 part C: the LLM filter / URL prompt, the Telegram token prompt and the Import form edit state in place.
   if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor.cloud = llmCloudSectionStart(); llmRepaintList(); return; }
   // Item 7A: editing the reference clears its error (local-models-reducer.ts:101-110).
@@ -22617,12 +22622,12 @@ function mcpAddModalHTML() {
        config "envelopes", and two more lines explained key chords and the
        stdio auto-promotion. Every shape it listed is still accepted. */
     + '<p>Paste the server\u2019s config (JSON). It\u2019s usually in the server\u2019s README.</p>'
-    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc(mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Example:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
     + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
     + '<div class="acts"><span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
-    + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting ? ' disabled' : '') + '>Add</button></div></div>';
+    + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting || !String(m.json || '').trim() ? ' disabled' : '') + '>Add</button></div></div>';
 }
 /** The add box's example, laid out on lines the way a README shows it. */
 function mcpJsonExample() {
@@ -22664,17 +22669,17 @@ function mcpNormalizeShortcut(obj) {
 }
 function mcpParseAddJson(raw) {
   const trimmed = String(raw || '').trim();
-  if (!trimmed.length) return {ok:false, error:'JSON is empty'};
+  if (!trimmed.length) return {ok:false, error:'Paste a server config first.'};
   let parsed;
-  try { parsed = JSON.parse(trimmed); } catch (err) { return {ok:false, error:'invalid JSON: ' + (err && err.message ? err.message : String(err))}; }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {ok:false, error:'expected a JSON object'};
+  try { parsed = JSON.parse(trimmed); } catch (err) { return {ok:false, error:'This isn\u2019t valid JSON. Check for a missing comma, quote or bracket (' + (err && err.message ? err.message : String(err)) + ').'}; }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {ok:false, error:'Paste one server config: a JSON object in { } braces.'};
   let candidate;
   const envelope = parsed.mcpServers;
   if (envelope !== undefined) {
-    if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return {ok:false, error:'`mcpServers` must be an object keyed by server name'};
+    if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return {ok:false, error:'"mcpServers" should hold the server by name, like the example.'};
     const entries = Object.entries(envelope);
-    if (!entries.length) return {ok:false, error:'`mcpServers` is empty — paste exactly one server'};
-    if (entries.length > 1) return {ok:false, error:'paste exactly one server — got ' + entries.length + ' entries in `mcpServers`'};
+    if (!entries.length) return {ok:false, error:'"mcpServers" is empty. Paste exactly one server.'};
+    if (entries.length > 1) return {ok:false, error:'Paste exactly one server. This has ' + entries.length + ' in "mcpServers".'};
     const [keyName, value] = entries[0];
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return {ok:false, error:'`mcpServers[' + JSON.stringify(keyName) + ']` must be an object'};
     if (typeof value.name === 'string' && value.name !== keyName) return {ok:false, error:'name mismatch: envelope key ' + JSON.stringify(keyName) + ' vs inner ' + JSON.stringify(value.name)};
