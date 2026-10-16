@@ -1357,7 +1357,7 @@ const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs di
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
   anthropic:'https://console.anthropic.com/settings/keys', groq:'https://console.groq.com/keys', deepseek:'https://platform.deepseek.com/api_keys',
-  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.xyz/settings/api-keys', xai:'https://console.x.ai'};
+  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.ai/settings/projects/~current/api-keys', xai:'https://console.x.ai'};
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 // ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
