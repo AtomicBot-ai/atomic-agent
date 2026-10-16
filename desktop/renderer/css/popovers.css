@@ -137,7 +137,15 @@
 .ctxpop .ctxttl::first-letter,.ctxpop .kvgrid dt::first-letter,.ctxpop .ctxin > p.cap:not(.ctxbound)::first-letter{text-transform:uppercase}
 .ctxmeter{display:flex;flex:none;height:8px}
 .ctxmeter > i,.ctxmeter > b{display:block;height:100%;flex:none;border-radius:0}
-.ctxmeter > b{background:var(--bd-2)}
+.ctxmeter > b{background:repeating-linear-gradient(135deg,var(--ink-2) 0 1.5px,transparent 1.5px 4px);opacity:.55}
+/* ATO-484: each row's swatch matches its part of the bar, so the hatched reply
+   reserve and the empty free space never read as used context. */
+.ctxpop .kvgrid dt.sw{padding-left:16px;background-repeat:no-repeat;background-position:0 50%;background-size:9px 9px}
+.ctxpop .kvgrid dt.sw-u{background-image:radial-gradient(circle,var(--brand) 0 4px,transparent 4.5px)}
+.ctxmeter.tk-prog--amber ~ .kvgrid dt.sw-u{background-image:radial-gradient(circle,var(--amber) 0 4px,transparent 4.5px)}
+.ctxmeter.tk-prog--red ~ .kvgrid dt.sw-u{background-image:radial-gradient(circle,var(--critical) 0 4px,transparent 4.5px)}
+.ctxpop .kvgrid dt.sw-h{background-image:repeating-linear-gradient(135deg,color-mix(in srgb,var(--ink-2) 55%,transparent) 0 1.5px,transparent 1.5px 4px)}
+.ctxpop .kvgrid dt.sw-f{background-image:radial-gradient(circle,transparent 0 3px,var(--bd-2) 3.5px 4.5px,transparent 5px)}
 .ctxmeter.proj > i{background:repeating-linear-gradient(90deg,var(--brand) 0 3px,transparent 3px 5px)}
 .ctxpop .kvgrid{grid-template-columns:minmax(0,1fr) max-content;gap:5px 12px;font-size:13px}
 .ctxpop .kvgrid dt{color:var(--ink)}

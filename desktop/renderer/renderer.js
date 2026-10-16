@@ -4839,9 +4839,12 @@ function contextHTML() {
       + (win ? ' of ' + fmtTokens(win) + ' window \u00b7 ' + pct + '%' : ' \u00b7 window unknown')
       + (proj ? ' \u00b7 projected' : '')
     : 'context \u00b7 not measured yet';
-  const row = (label, value, dim, tip) => {
+  // ATO-484: `sw` keys the row to the bar (u = prompt fill, h = reply
+  // reserve, f = free), drawn as a swatch in front of the label.
+  const row = (label, value, dim, tip, sw) => {
     const t = tip ? ' title="' + esc(tip) + '"' : '';
-    return '<dt' + (dim ? ' class="ter"' : '') + t + '>' + esc(label) + '</dt>'
+    const cls = (dim ? 'ter ' : '') + 'sw sw-' + (sw || 'u');
+    return '<dt class="' + cls + '"' + t + '>' + esc(label) + '</dt>'
       + '<dd class="mono tnum' + (dim ? ' ter' : '') + '"' + t + '>' + value + '</dd>';
   };
   let body = '';
@@ -4855,8 +4858,8 @@ function contextHTML() {
       body += row('conversation', '0');
     } else body = row('prompt scaffold', fmtTokens(CTX.stablePrefix)) + row('conversation', fmtTokens(CTX.tail));
     if (win) {
-      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true, reserveTip);
-      body += row('free', fmtTokens(Math.max(0, win - CTX.tokens - reserved)), true);
+      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true, reserveTip, 'h');
+      body += row('free', fmtTokens(Math.max(0, win - CTX.tokens - reserved)), true, '', 'f');
     }
   }
   const rows = CTX.tokens
@@ -4864,7 +4867,7 @@ function contextHTML() {
     : '<p class="cap">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
   /* Soft Tactile (CM-15…17): the breakdown bar under the title — the prompt in
      brand (amber above 70%, red above 85%, striped while projected) and the
-     reply reserve beside it — then the rows, trimming and basis lines, the
+     reply reserve beside it, hatched so it never reads as filled — then the rows, trimming and basis lines, the
      tasks-per-turn dial and the footer. */
   const used = win ? Math.min(100, CTX.tokens / win * 100) : 0;
   const held = win ? Math.min(100 - used, reserved / win * 100) : 0;
