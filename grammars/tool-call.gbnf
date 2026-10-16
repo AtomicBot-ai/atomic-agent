@@ -17,10 +17,11 @@ tool-call ::= reply-call | other-call
 reply-call ::= "{" ws "\"tool\"" ws ":" ws "\"reply\"" ws "," ws "\"args\"" ws ":" ws reply-args ws "}"
 other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
 reply-args ::= "{" ws "\"text\"" ws ":" ws reply-text ( ws "," ws "\"attachments\"" ws ":" ws value )? ws "}"
-reply-text ::= "\"" reply-chars "\""
+reply-text ::= "\"" reply-pending "\""
 # Right recursion over the last character: `reply-chars` may end (the
-# string may close) only after a hard character or at the start;
-# `reply-pending` is the state after a soft one and must continue.
+# string may close) only after a hard character; `reply-pending` must
+# continue. The text starts in `reply-pending`, so it cannot be empty
+# either: a reply that opens on a quote cannot close on it.
 reply-chars ::= ( reply-hard reply-chars | reply-soft reply-pending )?
 reply-pending ::= reply-hard reply-chars | reply-soft reply-pending
 reply-hard ::= [^"\\\x00-\x1f :(\[{=,] | "\\" escape

@@ -123,6 +123,7 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
     "a [",
     "a {",
     "a: ",
+    "",
   ];
   const CLEAN = [
     "Hello world.",
@@ -131,7 +132,6 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
     "list:\\n",
     "a: b",
     "a (b) [c] {d} e=f, g",
-    "",
   ];
 
   const grammars = async (): Promise<Array<[string, string]>> => {
