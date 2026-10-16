@@ -23431,9 +23431,12 @@ function llmMsgNow() {
     && !!st && !!st.daemonRunning && st.daemonPid === m.workers.pid;
   return sameServer ? m : {text: m.workers.short};
 }
+/* The `local-llm:` tag is the log's (and the smoke's, which reads LLMP.msg);
+   the pane shows the sentence without it (ATO-488). */
 function llmMsgHTML(text) {
   const bad = /^! /.test(text);
-  return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(text) + '</span></div>';
+  const shown = String(text).replace(/(^|\s)local-llm:\s+/g, '$1').replace(/^[a-z]/, (c) => c.toUpperCase());
+  return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(shown) + '</span></div>';
 }
 /* A provider entry's mark: its id's logo, else its kind's, else the server icon. */
 function llmProviderMark(p, size) {
@@ -24678,7 +24681,7 @@ async function llmAutoUpdateToggle() {
   const next = !(llmManaged().autoUpdate !== false);
   const res = await BR.configSet('localModels.managed.autoUpdate', String(next));
   if (!res || res.ok === false) { LLMP.statusErr = llmFail('autoUpdate write failed', res); llmRepaint(); return; }
-  LLMP.msg = {text: next ? 'local-llm: backend auto-update on — a newer llama.cpp is fetched after start' : "local-llm: backend auto-update off — update manually with 'B'"};
+  LLMP.msg = {text: next ? 'Update automatically is on: a newer llama.cpp is fetched after each start.' : 'Update automatically is off. Choose Update now to update the engine.'};
   await refreshLiveConfig();
   llmRepaint();
 }
@@ -24695,7 +24698,7 @@ async function llmDeviceCycle() {
   const res = await BR.modelsUseDevice(next);
   LLMP.busy = false;
   if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-device failed', res); llmRepaint(); return; }
-  LLMP.msg = {text:"local-llm: device → " + next + " (press 's' to restart and apply)"};
+  LLMP.msg = {text:'Device: ' + (next === 'auto' ? 'Auto' : next === 'cpu' ? 'CPU' : next) + '. It applies the next time the model server starts.'};
   await refreshLiveConfig();
   llmRepaint();
 }
