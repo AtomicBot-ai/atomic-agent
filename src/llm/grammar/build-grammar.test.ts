@@ -103,6 +103,154 @@ describe("string arguments under a reasoning profile (F37)", () => {
   });
 });
 
+describe("reply text cannot close on an unescaped prose quote (#681)", () => {
+  /**
+   * Tokenizers merge ` "` and `:"` into one token. Under the generic
+   * string rule that token is a legal close, so a reply quoting a word
+   * (`stored in memory: "x"`) ended at `memory:`, `}}]` followed, and the
+   * truncated reply parsed as a valid call with stop:true. The reply text
+   * may not close right after a soft character (space, `:`, `(`, `[`,
+   * `{`, `=`, `,`), so the merged token is no longer a way out.
+   */
+  const REPLY = (text: string, extra = ""): string =>
+    `[{"tool":"reply","args":{"text":"${text}"${extra}}}]`;
+  const TRAPS = [
+    "These notes are stored in memory:",
+    "These ensure my ",
+    "see (",
+    "set x=",
+    "first,",
+    "a [",
+    "a {",
+    "a: ",
+    "",
+  ];
+  const CLEAN = [
+    "Hello world.",
+    'He said \\"hi\\".',
+    'say \\"hi\\"',
+    "list:\\n",
+    "a: b",
+    "a (b) [c] {d} e=f, g",
+  ];
+
+  const grammars = async (): Promise<Array<[string, string]>> => {
+    const plain = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const qwen = await buildGrammar(QWEN_THINK_PROFILE);
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    const names = ["os.fs.read", "os.fs.write", "os.shell.run", "finish"];
+    return [
+      ["plain", plain],
+      ["qwen", withoutReasoningPrelude(qwen)],
+      ["gemma", withoutReasoningPrelude(gemma)],
+      ["plain per-request", buildGrammarForTools(plain, names)],
+      ["qwen per-request", buildGrammarForTools(withoutReasoningPrelude(qwen), names)],
+      ["gemma per-request", buildGrammarForTools(withoutReasoningPrelude(gemma), names)],
+    ];
+  };
+
+  it("rejects a reply whose text closes right after a soft character", async () => {
+    for (const [id, grammar] of await grammars()) {
+      for (const text of TRAPS) {
+        expect(gbnfAccepts(grammar, "root", REPLY(text)), `${id} ${text}`).toBe(
+          false,
+        );
+      }
+    }
+  });
+
+  it("accepts clean text, escaped quotes inside and at the end, a trailing \\n, attachments and batches", async () => {
+    for (const [id, grammar] of await grammars()) {
+      for (const text of CLEAN) {
+        expect(gbnfAccepts(grammar, "root", REPLY(text)), `${id} ${text}`).toBe(
+          true,
+        );
+      }
+      for (const accepted of [
+        REPLY("here", ',"attachments":["/tmp/a b "]'),
+        REPLY("x", ' , "attachments" : [] '),
+        '[ {"tool" : "reply" , "args" : { "text" : "ok" } } ]',
+        '[{"tool":"os.fs.read","args":{"path":"a"}},{"tool":"reply","args":{"text":"ok"}}]',
+      ]) {
+        expect(gbnfAccepts(grammar, "root", accepted), `${id} ${accepted}`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it("leaves other tools on the generic string: content may end in `:` or a space", async () => {
+    for (const [id, grammar] of await grammars()) {
+      for (const call of [
+        '[{"tool":"os.fs.write","args":{"path":"a.py","content":"def f():"}}]',
+        '[{"tool":"os.shell.run","args":{"command":"ls "}}]',
+        '[{"tool":"finish","args":{"summary":"done:"}}]',
+      ]) {
+        expect(gbnfAccepts(grammar, "root", call), `${id} ${call}`).toBe(true);
+      }
+    }
+  });
+
+  it("makes reply args strict: text first, optional attachments, nothing else", async () => {
+    for (const [id, grammar] of await grammars()) {
+      for (const bad of [
+        '[{"tool":"reply","args":{"text":"x","format":"md"}}]',
+        '[{"tool":"reply","args":{"attachments":["a"],"text":"x"}}]',
+        '[{"tool":"reply","args":{"text":5}}]',
+        '[{"tool":"reply","args":{}}]',
+      ]) {
+        expect(gbnfAccepts(grammar, "root", bad), `${id} ${bad}`).toBe(false);
+      }
+      // The generic branch cannot carry `reply` around the guarded rule.
+      expect(
+        gbnfAccepts(grammar, "other-call", '{"tool":"reply","args":{"text":"my "}}'),
+        id,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps F37 in the reply body under gemma and qwen: no <| or |>, and still no close after a soft char", async () => {
+    for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
+      const base = await buildGrammar(profile);
+      for (const grammar of [base, buildGrammarForTools(base, [])]) {
+        for (const bad of [
+          "x <|channel> y",
+          "<channel|>",
+          "a<|",
+          "|>a",
+          "<<|c",
+          "||>",
+          "a |>",
+          "a <|",
+          "a: ",
+        ]) {
+          expect(
+            gbnfAccepts(grammar, "reply-text", `"${bad}"`),
+            `${profile.id} ${bad}`,
+          ).toBe(false);
+        }
+        for (const good of ["a<b, a|b, <b>", "a <", "a |", "<>", "|<", "a<<b>>c||d", "x: <b>"]) {
+          expect(
+            gbnfAccepts(grammar, "reply-text", `"${good}"`),
+            `${profile.id} ${good}`,
+          ).toBe(true);
+        }
+      }
+    }
+    // The plain profile's reply body is not F37-hardened, like its strings.
+    const plain = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(gbnfAccepts(plain, "reply-text", '"x <|channel> y"')).toBe(true);
+  });
+
+  it("holds in a whole gemma completion: the trap is refused after the prelude", async () => {
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    const completion = (text: string): string =>
+      `<|channel>thought\nanswer<channel|>\n${REPLY(text)}`;
+    expect(gbnfAccepts(gemma, "root", completion("Saved."))).toBe(true);
+    expect(gbnfAccepts(gemma, "root", completion("stored in memory:"))).toBe(false);
+  });
+});
+
 describe("buildGrammar", () => {
   it("keeps the plain instruct grammar pinned to the array-only root", async () => {
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
@@ -492,8 +640,9 @@ describe("buildGrammarForTools — the per-request grammar", () => {
       expect(narrowedLines.length, profile.id).toBe(baseLines.length);
       for (let i = 0; i < baseLines.length; i += 1) {
         if (baseLines[i]!.startsWith("tool-name ::=")) {
+          // `reply` has its own branch (#681): `tool-name` lists the rest.
           expect(narrowedLines[i], profile.id).toBe(
-            'tool-name ::= "\\"os.fs.read\\"" | "\\"reply\\""',
+            'tool-name ::= "\\"os.fs.read\\""',
           );
         } else {
           expect(narrowedLines[i], profile.id).toBe(baseLines[i]);
@@ -529,11 +678,30 @@ describe("buildGrammarForTools — the per-request grammar", () => {
 
   it("always keeps reply — a grammar with no exit would trap the step", async () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
-    expect(grammarToolNames(buildGrammarForTools(base, []))).toEqual(["reply"]);
-    expect(grammarToolNames(buildGrammarForTools(base, ["finish"]))).toEqual([
-      "finish",
-      "reply",
-    ]);
+    const finish = buildGrammarForTools(base, ["finish"]);
+    expect(grammarToolNames(finish)).toEqual(["finish", "reply"]);
+    expect(finish).toContain("tool-call ::= reply-call | other-call");
+    expect(gbnfAccepts(finish, "root", '[{"tool":"reply","args":{"text":"ok"}}]')).toBe(true);
+    expect(gbnfAccepts(finish, "root", '[{"tool":"finish","args":{"summary":"ok"}}]')).toBe(true);
+    expect(gbnfAccepts(finish, "root", '[{"tool":"os.fs.read","args":{"path":"a"}}]')).toBe(false);
+    // Reply alone: the generic branch is dropped (an empty `tool-name`
+    // alternation is not valid GBNF), and `[]` / `["reply"]` are one set.
+    for (const names of [[], ["reply"]]) {
+      const only = buildGrammarForTools(base, names);
+      expect(grammarToolNames(only), JSON.stringify(names)).toEqual(["reply"]);
+      expect(only, JSON.stringify(names)).toMatch(/^tool-call ::= reply-call$/m);
+      expect(gbnfAccepts(only, "root", '[{"tool":"reply","args":{"text":"ok"}}]')).toBe(true);
+      expect(gbnfAccepts(only, "root", '[{"tool":"finish","args":{"summary":"ok"}}]')).toBe(false);
+    }
+    expect(buildGrammarForTools(base, ["reply"])).toBe(
+      buildGrammarForTools(base, []),
+    );
+  });
+
+  it("keeps reply in tool-name for a base without the reply branch (an older grammar)", () => {
+    const legacy = buildGrammarForTools("tool-name ::= old\n", ["b", "a"]);
+    expect(legacy).toContain('tool-name ::= "\\"a\\"" | "\\"b\\"" | "\\"reply\\""');
+    expect(grammarToolNames(legacy)).toEqual(["a", "b", "reply"]);
   });
 
   it("keeps the profile/grammar invariants: the prelude root survives the rewrite", async () => {
