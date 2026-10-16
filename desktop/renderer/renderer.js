@@ -23435,7 +23435,9 @@ function llmMsgNow() {
    the pane shows the sentence without it (ATO-488). */
 function llmMsgHTML(text) {
   const bad = /^! /.test(text);
-  const shown = String(text).replace(/(^|\s)local-llm:\s+/g, '$1').replace(/^[a-z]/, (c) => c.toUpperCase());
+  // A tag after a sentence's end (a daemonLine appended to one) starts a sentence too.
+  const shown = String(text).replace(/(^|[.!?…]\s+|\s)local-llm:\s+([a-z]?)/g,
+    (m, pre, c) => pre + (/^$|[.!?…]\s+$/.test(pre) ? c.toUpperCase() : c)).replace(/^[a-z]/, (c) => c.toUpperCase());
   return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(shown) + '</span></div>';
 }
 /* A provider entry's mark: its id's logo, else its kind's, else the server icon. */
