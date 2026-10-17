@@ -70,6 +70,8 @@
 .llm-pane .llm-list{padding:4px}
 .llm-pane .llm-empty{padding:14px 16px;border-radius:var(--r-card);background:var(--well);color:var(--ink-2);font-size:13px;font-weight:400;white-space:normal}
 .llm-pane .llm-empty.is-strong{color:var(--ink);font-weight:500}
+.llm-pane .llm-empty-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.llm-pane .llm-empty-acts .btn .logo{margin-left:-4px}
 .llm-pane .llm-counter{margin:0;padding:0 6px;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2)}
 /* ATO-318: the caption over a model list that is the app's built-in one, not the provider's live list. */
 .llm-pane .llm-stale{font:400 12px/1.5 var(--font-ui)}
@@ -147,6 +149,10 @@
 /* A choice that needs something first (Д31): it reads as waiting, and its line says what for. */
 .llm-pane .llm-rm.blocked .llm-rm-t{color:var(--ink-2)}
 .llm-pane .llm-rm.blocked .llm-rm-d{color:var(--amber-text)}
+/* ATO-504: the need line is the card's action: an arrow, underlined on hover. */
+.llm-pane .llm-rm-need{display:inline-flex;align-items:center;gap:4px}
+.llm-pane .llm-rm-need > svg{flex:none;width:12px;height:12px}
+.llm-pane .llm-rm.blocked:hover .llm-rm-need{text-decoration:underline;text-underline-offset:2px}
 .llm-pane .llm-now{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:30px;margin:0;font-size:13px;line-height:1.45;color:var(--ink-2)}
 .llm-pane .llm-now b{font-weight:600;color:var(--ink)}
 .llm-pane .llm-nowst{display:inline-flex;align-items:center;gap:6px;margin-left:4px;color:var(--ink-2)}

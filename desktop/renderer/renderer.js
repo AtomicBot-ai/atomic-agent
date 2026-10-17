@@ -23508,7 +23508,10 @@ function llmRunModeHTML(status, tone) {
         return '<button class="llm-rm' + (on ? ' on' : '') + (need ? ' blocked' : '') + '" data-act="' + (need ? 'llm:needs:' + id : 'runmode:' + id) + '"'
           + ' aria-pressed="' + on + '" title="' + esc(need ? need.title : what) + '">'
           + '<span class="llm-rm-ico">' + ic(icon) + '</span>'
-          + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(need ? need.line : what) + '</span></span></button>';
+          + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span>'
+          // ATO-504: the need line is the card's action, so it reads as one (an arrow, underlined on hover), not as a dead warning.
+          + (need ? '<span class="llm-rm-d llm-rm-need">' + esc(need.line) + ic('arrowR') + '</span>' : '<span class="llm-rm-d">' + esc(what) + '</span>')
+          + '</span></button>';
       }).join('')
     + '</div>'
     + llmNowHTML() + engfCardHTML() + tpLlmFaultHTML()
@@ -23937,7 +23940,7 @@ function llmSectionHTML(title, rows, offset, cursor, empty, emphasise, extra) {
     + '<div class="tk-sh llm-sh"><span class="llm-sh-t">' + esc(title) + '</span><span class="grow"></span>' + (x.actions || '') + '</div>'
     + (x.note || '')
     + (rows.length ? '<div class="tk-list llm-list">' + rows.map((r, i) => llmRowHTML(r, offset + i, cursor)).join('') + '</div>'
-      : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'Nothing here yet.') + '</div>')
+      : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'Nothing here yet.') + (x.emptyActions || '') + '</div>')
     + '</section>';
 }
 function llmLocalHTML() {
@@ -23966,8 +23969,13 @@ function llmCloudHTML() {
   const section = llmCloudSection();
   const embOffset = providers.length + section.filtered.length;
   const sp = section.provider;
+  /* ATO-504: an empty list offers the popular presets the wizard knows, each
+     opening Add provider on that provider's key screen. */
+  const presets = ['openrouter', 'gemini', 'aimlapi'].filter((id) => KIND_ROWS.some((k) => k.id === id));
+  const emptyActions = '<span class="llm-empty-acts">' + presets.map((id) => '<button class="btn btn-s sm" data-act="llm:preset:' + id + '">'
+    + logoHTML(id, 'xs') + esc(providerWord(id)) + '</button>').join('') + '</span>';
   return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers yet.', true,
-      {actions: '<button class="btn btn-p sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>'})
+      {actions: '<button class="btn btn-p sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>', emptyActions})
     + (sp ? '<section class="llm-section">'
       + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Models on ' + esc(providerWord(sp.id)) + '</span>'
         + '<span class="grow"></span>'
@@ -25040,6 +25048,8 @@ function llmAct(what) {
   if (verb === 'filter') { llmSetMode('cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
   if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
+  // ATO-504: an empty list's preset button, Add provider opened on that provider.
+  if (verb === 'preset') { llmSetMode('cloud'); llmOpenWizard(KIND_ROWS.find((k) => k.id === arg && !k.custom) || null); return; }
   if (verb === 'configure') { llmSetMode('cloud'); const cloud = llmCloudProviders(); const p = cloud.find((x) => x.id === llmActiveTextId()) || cloud[0]; llmOpenWizard(p || null); return; }
   if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
   if (verb === 'embToggle') { llmEmbToggle(); return; }
