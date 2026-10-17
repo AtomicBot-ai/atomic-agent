@@ -5783,7 +5783,7 @@ function toast(t, s, kind) {
   renderToasts();
   setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
 }
-/* ATO-186: a toast about the chat on screen (Clear transcript's) is that
+/* ATO-186: a toast about the chat on screen ("Window cleared") is that
    chat's: it goes when another chat is opened (openSession) or a new chat is
    started, or a newer one of its kind replaces it, where it stayed for its
    six seconds over a chat it was not about. */
@@ -5953,7 +5953,9 @@ function act(a) {
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
-                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
+                        /* ATO-470: only the window is cleared. S.agentSession stays, so the
+                           agent keeps this chat and opening it again brings it back. */
+                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Window cleared', 'The agent still remembers this chat'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
