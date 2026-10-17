@@ -159,7 +159,8 @@
 #scroller > .col720 > .tk-step + .tk-step{margin-top:-10px}
 
 /* reasoning disclosure — closed by default, the one word "Reasoning" (chat
-   review Д16: the step count beside it was noise) */
+   review Д16: the step count beside it was noise), or "Thought for 12 s" once
+   the window timed it (ATO-467, reasonLabel) */
 .disc{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;border-radius:var(--r-row);
   font-size:13.5px;color:var(--ink-3);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .disc svg{width:14px;height:14px}

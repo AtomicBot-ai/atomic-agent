@@ -2593,11 +2593,21 @@ function item(m) {
      What it holds is the model's working, not the reply, so it sits in the
      muted ink and never in bold. */
   if (m.k === 'reason') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>'
-    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>Reasoning</span></button>'
+    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>' + reasonLabel(m) + '</span></button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
   if (m.k === 'tool') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
   return '';
+}
+
+/** ATO-467: "Thought for 12 s" once this window timed the row, from its first
+    reasoning frame to the turn's next frame of another kind (REASON_ENDS).
+    A row still thinking, one under a second, and a reopened chat's rows (the
+    store keeps no times for reasoning) say "Reasoning", as before. */
+const REASON_ENDS = new Set(['delta', 'tool_progress', 'progress_note', 'reply_attachments', 'finish', 'done', 'aborted', 'error']);
+function reasonLabel(m) {
+  const ms = m.startedAt && m.endedAt ? m.endedAt - m.startedAt : 0;
+  return ms >= 1000 ? 'Thought for ' + dur(ms) : 'Reasoning';
 }
 
 /* ============================================================
@@ -9225,6 +9235,13 @@ function onChatEvent(ev) {
     if (c.k === 'tool' && c.ok === null && c.startedAt && !c.observedMs) { c.observedMs = Math.max(1, Date.now() - c.startedAt); break; }
     if (c.k === 'tool') break;
   }
+  /* ATO-467: the live reasoning row's thinking ends with the turn's next
+     frame of another kind (a reply word, a call, a note, the end), dated by
+     the frame's own time when it was kept and drawn later. */
+  if (S.reasonId && REASON_ENDS.has(ev.kind)) {
+    const r = S.log.find((m) => m.id === S.reasonId);
+    if (r && r.startedAt && !r.endedAt) r.endedAt = ev.at || Date.now();
+  }
 
   if (ev.kind === 'session_id') {
     // item 6: the streaming item being in the visible log is the proof that
@@ -9317,7 +9334,8 @@ function onChatEvent(ev) {
     let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
     if (!block) {
       // ATO-207: one row per step — a tool call ends the step (tool_progress clears S.reasonId).
-      block = {id:nid(), k:'reason', steps:reasonStepAt(S.log, S.log.indexOf(item)), open:false, text:''};
+      // ATO-467: when it started, so the closed row can say how long it thought.
+      block = {id:nid(), k:'reason', steps:reasonStepAt(S.log, S.log.indexOf(item)), open:false, text:'', startedAt:ev.at || Date.now()};
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
       streamPaint('chat');   // a new row in the transcript
