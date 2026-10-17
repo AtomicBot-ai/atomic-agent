@@ -814,6 +814,7 @@ const OB_STAMPED = {};
 const OB_STAMP_LOG = [];
 /* The step obAfterStep last ran its arrival effects for. */
 let OB_LAST_STEP = null;
+let OB_SETTLE_SLOW_TIMER = null;   // ATO-440: see obSettleSlowArm
 /* The import row for the operator's own terminal setup (see the note by
    obImportRegistry): no `atag import` source can reach it. */
 const OB_TUI_AGENT_ID = 'atomic-tui';
@@ -10842,6 +10843,7 @@ function obAfterStep() {
   if (OB.step === OB_LAST_STEP) return;
   const was = OB_LAST_STEP;
   OB_LAST_STEP = OB.step;
+  obSettleSlowClear();
   ANX.obStep(OB.step, was, OB.outcome);
   if (was === 'intro' && OB.step !== 'intro') obSkyStop();
   // isLocalSetupStep (propose-second-backend.ts:57-59): the list itself
@@ -10850,7 +10852,7 @@ function obAfterStep() {
     obStampOnce('localSetupSeenAt');
   }
   if (OB.step === 'local_pick' && !OB.models.length && !OB.busy) obLoadModels();
-  if (OB.step === 'finished') obSettle();
+  if (OB.step === 'finished') { obSettleSlowArm(); obSettle(); }
 }
 
 /** Write a tui.onboarding.* stamp once, without blocking the repaint. */
@@ -13227,6 +13229,10 @@ function obFootHTML() {
       // The go moment of the whole flow: brand blue, not ink.
       right = obBtn('nav:go', 'Start using the agent', 'btn-p btn-blue', false, '', 'arrowR');
       break;
+    case 'finished':
+      if (!OB.settleSlow) return '';
+      right = obBtn('nav:back', 'Open the app now', 'btn-p', false, '', 'arrowR');
+      break;
     default:
       return '';
   }
@@ -13256,7 +13262,11 @@ function obHTML() {
   /* r2 (DMG feedback): the closing screen keeps its title and draws a small
      comet crossing the middle of the column instead of a second, smaller
      "setting up…" line. */
-  else if (OB.step === 'finished') body = '<div class="ob-comet" role="status" aria-label="Setting up"><i></i></div>';
+  else if (OB.step === 'finished') {   // ATO-440: say what it does; a way out after 20 s
+    body = '<div class="ob-explain">Saving your choices and getting the agent ready. This usually takes a few seconds.</div>'
+      + '<div class="ob-comet" role="status" aria-label="Setting up"><i></i></div>'
+      + (OB.settleSlow ? '<div class="ob-explain ob-help">This is taking longer than usual. You can open the app now and finish setup later.</div>' : '');
+  }
   else body = '<div class="ob-explain">' + esc(OB_SUBTITLES[OB.step] || '') + '</div>';
   /* r6 UX: an error belongs beside the control that produced it. The two
      URL steps and the Hugging Face reference draw their own, directly
@@ -13328,6 +13338,7 @@ function obKey(input, key) {
     case 'import_preview': return obImportPreviewKey(input, key);
     case 'import_done': return obImportDoneKey(input, key);
     case 'cloud': return obCloudKey(input, key);
+    case 'finished': return obFinishedKey(input, key);
     default: return false;
   }
 }
@@ -14507,6 +14518,23 @@ async function obReadiness() {
  * operator already declined.  Nothing routes around the import screen:
  * its own skip row is the only way past it.
  */
+/* ATO-440: after 20 s the closing screen offers "Open the app now" (and Escape),
+   closing the overlay as obSettle does. Cost: a settle still out may stamp nothing
+   (setup opens again next launch) and this does not restart the agent; one that lands later still does both. */
+function obSettleSlowClear() { clearTimeout(OB_SETTLE_SLOW_TIMER); OB_SETTLE_SLOW_TIMER = null; OB.settleSlow = false; }
+function obSettleSlowArm() {
+  obSettleSlowClear();
+  const gen = OB.openGen || 0;
+  OB_SETTLE_SLOW_TIMER = setTimeout(() => {
+    if (OB.open && OB.step === 'finished' && (OB.openGen || 0) === gen) { OB.settleSlow = true; render(); }
+  }, 20000);
+}
+function obFinishedKey(input, key) {
+  if (!key.escape || !OB.settleSlow) return false;
+  obSettleSlowClear(); OB.open = false; OB.settling = false; obSkyStop(); render();
+  return true;
+}
+
 async function obSettle() {
   if (OB.settling || !BR) return;
   OB.settling = true;
@@ -14610,6 +14638,7 @@ async function obSettle() {
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
     return;
   }
+  obSettleSlowClear();
   OB.open = false;
   OB.settling = false;
   obSkyStop();
@@ -14694,6 +14723,7 @@ async function openOnboarding(at) {
   // treats a new canvas node as a remount (review fix).
   obSkyReset();
   OB_LAST_STEP = first;
+  obSettleSlowClear();
   ANX.obStep(first, null, null);   // analytics: the flow's first screen
   render();
   // Backlog 03: the title card is the loader for the reads below.
