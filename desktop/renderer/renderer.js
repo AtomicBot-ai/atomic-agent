@@ -10665,8 +10665,9 @@ const SMALL_MODEL_CAUTION = 'A small model: quick, but weaker at long multi-step
  */
 /* What is already on this Mac comes first, then the rest, each group in the
    order it was given (the fit order). Nadya, 01.10: "put the downloaded ones
-   on top, so you can see at once what is there". The first-run picker keeps
-   the plain fit order: there it recommends what to download. */
+   on top, so you can see at once what is there". The first-run picker lifts
+   only what it could use as is (see obPickRows); on a fresh install it keeps
+   the plain fit order, because there it recommends what to download. */
 function onDiskFirst(models) {
   return models.filter((m) => m && m.downloaded).concat(models.filter((m) => !(m && m.downloaded)));
 }
@@ -12342,7 +12343,14 @@ function obConfiguredLabel() {
  */
 function obPickRows() {
   const ram = OB.ram;
-  const models = orderModelsByFit(OB.models, ram).filter((m) => fitFor(m, ram).v !== 'over');
+  const fits = orderModelsByFit(OB.models, ram).filter((m) => fitFor(m, ram).v !== 'over');
+  /* ATO-437: a model already on this Mac that runs here goes first, so the
+     cursor's first row (the default pick) is one that needs no download.
+     Reduced-refusal weights are never lifted: the default must not point at
+     them (bestModelFor). With nothing on disk this is the plain fit order,
+     and "Recommended" stays on the best fit either way. */
+  const ready = (m) => m.downloaded && !m.uncensored;
+  const models = fits.filter(ready).concat(fits.filter((m) => !ready(m)));
   const rows = models.map((model) => ({kind: 'model', model}));
   rows.push({kind: 'hugging_face'});
   return rows;
