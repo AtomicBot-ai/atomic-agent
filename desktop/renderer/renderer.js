@@ -25173,7 +25173,8 @@ function llmAct(what) {
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
   if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
   // ATO-504: an empty list's preset button, Add provider opened on that provider.
-  if (verb === 'preset') { llmSetMode('cloud'); llmOpenWizard(KIND_ROWS.find((k) => k.id === arg && !k.custom) || null); return; }
+  // It skips the wizard's kind list, so it reports the setup start that list's pick would have (provider_setup_started).
+  if (verb === 'preset') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
   if (verb === 'configure') { llmSetMode('cloud'); const cloud = llmCloudProviders(); const p = cloud.find((x) => x.id === llmActiveTextId()) || cloud[0]; llmOpenWizard(p || null); return; }
   if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
   if (verb === 'embToggle') { llmEmbToggle(); return; }
