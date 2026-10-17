@@ -25844,8 +25844,8 @@ function impFormHTML(f) {
   // The agent's own option descriptions (src/import/<source>/import-options.ts), via the wizard's registry.
   const desc = {};
   for (const o of obImportRegistry(f.source)) desc[o.id] = o.description.replace(/ -> /g, ' → ');
-  const sw = (field, title, d) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
-    + '<div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>'
+  const sw = (field, title, d, badge) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
+    + '<div class="body"><div class="t">' + title + (badge || '') + '</div><div class="d">' + d + '</div></div>'
     + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
   // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
   return '<div class="sd-form">'
@@ -25856,7 +25856,17 @@ function impFormHTML(f) {
     + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(meta.dir) + '" autocomplete="off" spellcheck="false"></div>'
     + '<div class="tk-card sd-rows">'
     + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
-    + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
+    + '</div>'
+    /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.
+       What it replaces, per src/import (reconcile-session.ts, import-skill-dirs.ts, each importer's secrets
+       and cron steps): a chat under the same id whose messages differ, including ones added here; a skill of
+       the same name with a different SKILL.md; a key with a different value. A cron job that already exists
+       is created again, not replaced. MCP servers are never replaced. */
+    + '<div class="tk-card sd-rows">'
+    + sw('overwrite', 'Overwrite', 'Replaces what you already have here when the source differs: a chat with the same id, '
+      + 'including messages you added to it here, a skill with the same name, and an API key with a different value. '
+      + 'Cron jobs that already exist are added again as a second copy. Preview import shows what would change.',
+      ' <span class="tk-chip tk-chip--sm tk-chip--amber">Can replace your data</span>') + '</div>'
     // Д52: `--limit N` caps the sessions imported, newest first (src/cli/import-command.ts); "Limit / no limit" said none of that.
     + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Sessions to import</label>'
     + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="All" inputmode="numeric" autocomplete="off" spellcheck="false">'
