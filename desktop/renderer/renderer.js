@@ -23199,7 +23199,9 @@ function llmLocalRows() {
         + (best && m.id === best.id ? '  ★ best fit for this machine' : ''),
       // The blurb line, drawn under the row. The fit verdict is a badge on the first line (Д32), its reasons the badge's tooltip.
       sub: [m.description || null, m.vision ? 'reads images' : null, m.context + ' context'].filter(Boolean).join(' · '),
-      fit: llmFitBadge(m, ram)});
+      fit: llmFitBadge(m, ram),
+      // ATO-491: why the best-fit chip sits on this row, in plain words, from what the row already knows.
+      bestWhy: best && m.id === best.id ? llmBestFitWhy(m, ram) : ''});
   });
   const embActive = llmLocalEmbActive();
   const embWorks = llmEmbDaemonHealthy();
@@ -23814,6 +23816,15 @@ function llmFitBadge(m, ram) {
   const word = fit.v === 'comfortable' ? 'Fits well' : fit.v === 'tight' ? 'Tight fit' : 'Too big';
   return {v: fit.v, word, tone: fit.v === 'comfortable' ? 'green' : fit.v === 'tight' ? 'amber' : '', title: word + '. ' + why};
 }
+/* ATO-491: the best-fit chip's reason, a line under its row: this machine's
+   memory and the model's size ("Picked for your 32 GB of memory · 19.7 GB
+   download"). Which model is picked stays bestModelFor's. */
+function llmBestFitWhy(m, ram) {
+  const have = Number(ram) || 0;
+  const size = modelSizeWord(m);
+  if (!have) return '';
+  return 'Picked for your ' + have + ' GB of memory' + (size ? ' · ' + size + (m.downloaded ? ' on disk' : ' download') : '');
+}
 /* A local row's badges: Installed for a model on disk, and the fit badge
    unless the model is installed and fits well (then Installed says it all,
    and its tooltip carries the fit). The shared non-clickable chip (tk-chip):
@@ -23868,14 +23879,16 @@ function llmRowHTML(row, index, cursor) {
     const t = '<span class="llm-name">' + esc(name) + '</span>'
       + (name !== m.id ? ' <span class="llm-id mono">' + esc(m.id) + '</span>' : '')
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
-      + (best ? ' ' + chip('indigo', '★ best fit for this machine') : '')
+      + (best ? ' <span class="tk-chip tk-chip--sm llm-ib tk-chip--indigo"' + (row.bestWhy ? ' title="' + esc(row.bestWhy) + '"' : '') + '>★ best fit for this machine</span>' : '')
       + (chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
       + llmRowBadgesHTML(row)
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
       + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
-      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
+      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
+      // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
+      + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
       + '</span>'
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops

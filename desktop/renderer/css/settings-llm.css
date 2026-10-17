@@ -98,6 +98,8 @@
    big / Installed, the shared chip, its reasons in the tooltip), so every
    model row keeps one height. */
 .llm-pane .llm-row .llm-sub{font-family:var(--font-ui);padding-left:0}
+/* ATO-491: why the best-fit chip is on this row, one plain line under the blurb. */
+.llm-pane .llm-row .llm-best-why{display:block;font:400 12.5px/1.45 var(--font-ui);color:var(--ink-2);white-space:normal}
 /* Calm (S5): a row's action is a quiet pill in the UI face ("Download 5.3 GB",
    "Use"). The row is the button. */
 .llm-pane .llm-effect{flex:none;display:inline-flex;align-items:center;gap:6px;height:26px;margin-left:auto;padding:0 11px;border-radius:var(--r-pill);
