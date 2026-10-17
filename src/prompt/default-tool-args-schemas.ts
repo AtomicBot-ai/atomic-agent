@@ -538,6 +538,23 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
 
+  // ── image ────────────────────────────────────────────────────────────────
+  // Plain types only, so the schema stays strict-convertible: the tool's
+  // parser owns the 1..4 count bound and the size vocabulary.
+  [
+    "image.generate",
+    obj(
+      {
+        prompt: stringSchema,
+        size: stringSchema,
+        count: integerSchema,
+        seed: integerSchema,
+        model: stringSchema,
+      },
+      ["prompt"],
+    ),
+  ],
+
   // ── mcp aggregates ───────────────────────────────────────────────────────
   [
     "mcp.resource.list",

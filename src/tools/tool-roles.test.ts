@@ -50,6 +50,7 @@ describe("tool roles", () => {
       "os.git.commit",
       "os.web.search",
       "vision.describe",
+      "image.generate",
     ]) {
       expect(roleAdmits("builder", name), name).toBe(false);
     }
