@@ -5817,10 +5817,10 @@ function toast(t, s, kind) {
   renderToasts();
   setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
 }
-/* ATO-186: a toast about the chat on screen ("New session · The next turn
-   starts fresh", "Transcript cleared") is that chat's: it goes when another
-   chat is opened (openSession) or a newer one of its kind replaces it, where
-   it stayed for its six seconds over a chat it was not about. */
+/* ATO-186: a toast about the chat on screen (Clear transcript's) is that
+   chat's: it goes when another chat is opened (openSession) or a new chat is
+   started, or a newer one of its kind replaces it, where it stayed for its
+   six seconds over a chat it was not about. */
 function chatToast(t, s) {
   dropChatToasts();
   toast(t, s);
@@ -5978,7 +5978,10 @@ function act(a) {
                                 same reason; a new chat is a chat. */
                              S.settings = null;
                              FOCUS.entry = true;   // r5 item 6: afterChat focuses #entry after this render
-                             render(); chatToast('New session', 'The next turn starts fresh');
+                             /* ATO-540: no toast. The empty chat already says it is new, and a
+                                toast here covered the first message sent into it. A toast still
+                                up about the chat being left goes with it (ATO-186). */
+                             dropChatToasts(); render();
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); refreshSkillList(); return; }
   if (a === 'session:switch') { close(); S.sesQ = ''; S.overlay = 'sessions'; render(); return; }
