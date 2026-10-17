@@ -5954,8 +5954,10 @@ function act(a) {
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
                         /* ATO-470: only the window is cleared. S.agentSession stays, so the
-                           agent keeps this chat and opening it again brings it back. */
-                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Window cleared', 'The agent still remembers this chat'); return; }
+                           agent keeps this chat and opening it again brings it back. An empty
+                           new chat has nothing for the agent to remember, so it says only that. */
+                        const kept = !!(S.agentSession || S.busy);
+                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Window cleared', kept ? 'The agent still remembers this chat' : ''); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
