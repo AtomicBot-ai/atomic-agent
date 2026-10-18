@@ -23947,6 +23947,16 @@ function llmExternalHTML() {
    each change carries the restart line. Copy condensed from the schema's own
    comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
 const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
+/* ATO-498: llama.cpp enforces at most 499 budget tokens (agent
+   MAX_REASONING_BUDGET_TOKENS, #600), so a bigger choice acts like 500. */
+const LLM_TUNE_BUDGET_CAP = 499;
+/* A budget choice in plain words, for its tooltip: about 4 characters a token. */
+function llmTuneBudgetHint(n) {
+  if (n === 0) return 'No limit: the model thinks as long as it wants';
+  const words = Math.round(n * 0.75 / 25) * 25;
+  return 'About ' + words.toLocaleString('en-US') + ' words of thinking'
+    + (n > LLM_TUNE_BUDGET_CAP ? '. llama.cpp stops at about 375 words, so this acts like 500' : '');
+}
 /* One knob: a title and one help line each, the choice on the right. */
 function llmTuneRowHTML(title, help, control) {
   return '<div class="llm-tune-row"><span class="llm-tune-body"><span class="llm-tune-t">' + esc(title) + '</span>'
@@ -23954,7 +23964,8 @@ function llmTuneRowHTML(title, help, control) {
 }
 function llmTuneSegHTML(key, cur, opts, label) {
   return '<span class="tk-seg llm-tuneseg" role="group" aria-label="' + esc(label) + '">'
-    + opts.map(([v, txt]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
+    + opts.map(([v, txt, tip]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
+      + (tip ? ' title="' + esc(tip) + '"' : '')
       + (LLMP.tune.busy ? ' disabled' : '') + '>' + esc(txt) + '</button>').join('') + '</span>';
 }
 /* What the last knob write said, under the card it was made in. */
@@ -23983,8 +23994,9 @@ function llmTuneHTML() {
     + llmTuneRowHTML('Thinking', 'Auto keeps the model’s own default. Off asks a reasoning model to answer without thinking first.',
         llmTuneSegHTML('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
     // Д33: the default is the choice lit when nothing is set; the help line no longer spells it out.
-    + llmTuneRowHTML('Thinking budget', 'Tokens a reasoning model may think before it calls a tool. Its final answer is never cut.',
-        llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n)]), 'Thinking budget in tokens'))
+    // ATO-498: plain words first, tokens second; one setting for Local models and Custom server.
+    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (500 is about 375 words). llama.cpp stops it at about 500. One setting for Local models and Custom server. The final answer is never cut.',
+        llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n), llmTuneBudgetHint(n)]), 'Thinking budget in tokens'))
     + '</div>'
     + (T.where !== 'adv' ? llmTuneNoteHTML() : '')
     + '</section>';
@@ -24002,7 +24014,8 @@ async function llmTuneSet(key, raw) {
   await refreshLiveConfig();
   const said = key === 'thinking' ? 'Thinking: ' + value
     : key === 'template' ? 'Chat template: ' + value
-    : 'Thinking budget: ' + (value === '0' ? 'no limit' : value + ' tokens');
+    : 'Thinking budget: ' + (value === '0' ? 'no limit' : value + ' tokens'
+      + (Number(value) > LLM_TUNE_BUDGET_CAP ? ' (llama.cpp stops at about 500)' : ''));
   LLMP.tune = {busy:null, msg:said + '.', err:null, where};
   llmRepaint();
 }
