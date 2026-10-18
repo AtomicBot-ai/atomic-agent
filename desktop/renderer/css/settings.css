@@ -301,6 +301,8 @@ button.set-search:hover{border-color:var(--bd)}
 .set-diagrow .set-copybtn{flex:none;width:26px;margin:0 -8px 0 -16px;color:var(--ink-3)}
 .set-diagrow .iconbtn.set-copybtn:hover{color:var(--ink)}
 .set-diagrow .set-copybtn svg{width:14px;height:14px}
+/* ATO-723: Show in Finder sits just before Copy, so Copy keeps its column. */
+.set-diagrow .set-openbtn + .set-copybtn{margin-left:-20px}
 .set-diagacts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 /* Д55/Д57: what the screen is for, and what the report holds. */
 .set-diagintro{max-width:62ch}

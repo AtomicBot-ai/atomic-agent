@@ -1347,7 +1347,7 @@ const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', 
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 /* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
    server's log shown there — open or not, its last read, the poll's timer. */
-const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
+const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
@@ -5393,25 +5393,30 @@ function diagnosticsPane() {
       ? [['Agent process', 'pid ' + SET.health.pid + ' · ' + (SET.health.busyTurns === 0 ? 'idle' : SET.health.busyTurns + (SET.health.busyTurns === 1 ? ' turn running' : ' turns running')),
           'Turns running in the agent right now, from any chat, task or bot']]
       : []),
-    ['State folder', short(sd), sd],
+    ['State folder', short(sd), sd, sd],
     // Chat review (Д29): written as the chat and Settings › General write it.
-    ['Working folder', workingDirLabel(wd), wd],
+    ['Working folder', workingDirLabel(wd), wd, wd],
     ['Local model server', llama],
   ];
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
-  DIAG.copy = rows.map(([k, v]) => ({label:k, value:v || ''}));
+  // ATO-723: `open` is the folder its Show in Finder button hands to BR.openPath.
+  DIAG.copy = rows.map(([k, v, , open]) => ({label:k, value:v || '', open:open || ''}));
+  DIAG.agentLog = diagAgentLogPath(sd);
+  const reveal = fileManagerName();
   diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
     + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
     + '<div class="tk-list set-setlist set-diaglist">'
       + rows.map(([k, v, full], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
         + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+        + (rows[i][3] && BR && BR.openPath ? '<button class="iconbtn sm set-copybtn set-openbtn" data-act="diag:open:' + i + '" title="' + esc(reveal) + '" aria-label="' + esc(reveal + ': ' + k) + '">' + ic('folder') + '</button>' : '')
         + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
     + '</div>'
     + '<div class="set-diagacts">'
       + '<button class="btn btn-p sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
       + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
+      + '<button class="btn btn-s sm" data-act="diag:agentlog"' + (DIAG.agentLog && BR && BR.openPath ? '' : ' disabled') + ' title="' + esc(DIAG.agentLog || 'The state folder is not known yet') + '">' + ic('log') + 'Open agent log</button>'
     + '</div>'
     + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us.</p>'
     + diagLogHTML()
@@ -5439,7 +5444,8 @@ function diagLogHTML() {
     const meta = l && typeof l.size === 'number' ? diagBytes(l.size) + (l.lastReadAt ? ' · read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') : '';
     html += (meta ? '<span class="set-cap">' + esc(meta) + '</span>' : '')
       + '<button class="iconbtn sm" data-act="diag:logRefresh" title="Refresh" aria-label="Refresh the log">' + ic('refresh') + '</button>'
-      + '<button class="btn btn-g xs" data-act="diag:copylog"' + (l && l.text ? '' : ' disabled') + '>' + ic('copy') + 'Copy</button>';
+      + '<button class="btn btn-g xs" data-act="diag:copylog"' + (l && l.text ? '' : ' disabled') + '>' + ic('copy') + 'Copy</button>'
+      + '<button class="btn btn-g xs" data-act="diag:openlog"' + (l && l.path && !l.external && BR && BR.openPath ? '' : ' disabled') + '>' + ic('open') + 'Open log file</button>';
   }
   html += '</div>';
   if (open) {
@@ -5505,7 +5511,30 @@ function diagEnsureLogPoll() {
     diagLogRefresh();
   }, 2000);
 }
+/* ATO-723: the agent's own log, where main writes it (agentLogPath() in
+   main.ts: agent.log in the state folder), joined with this platform's
+   separator. '' while the state folder is not known. */
+function diagAgentLogPath(sd) {
+  if (!sd) return '';
+  const sep = PLATFORM === 'win32' ? '\\' : '/';
+  return sd.replace(/[\\/]+$/, '') + sep + 'agent.log';
+}
+/* ATO-723: a folder or log opened from Diagnostics, with main's own words
+   when it cannot (a log not written yet, a folder that is gone). */
+async function diagOpen(path, what) {
+  if (!path || !BR || !BR.openPath) return;
+  let res = null;
+  try { res = await BR.openPath(path); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  if (!res || !res.ok) toast('Could not open ' + what, (res && res.error) || path, 'bad');
+}
 function diagAct(what) {
+  if (what.startsWith('open:')) {
+    const row = (DIAG.copy || [])[Number(what.slice(5))];
+    if (row && row.open) diagOpen(row.open, row.label.toLowerCase());
+    return;
+  }
+  if (what === 'agentlog') { diagOpen(DIAG.agentLog, 'the agent log'); return; }
+  if (what === 'openlog') { if (DIAG.log && DIAG.log.path && !DIAG.log.external) diagOpen(DIAG.log.path, 'the model server log'); return; }
   // A repaint of the pane, not of the window: the focus stays on the toggle.
   if (what === 'log') { DIAG.logOpen = !DIAG.logOpen; DIAG.statusAsked = false; if (!DIAG.logOpen) diagLogStop(); diagRepaint(); return; }
   if (what === 'logRefresh') { DIAG.statusAsked = false; diagLogRefresh(true); return; }
