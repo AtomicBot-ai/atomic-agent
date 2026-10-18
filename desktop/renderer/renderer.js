@@ -23947,15 +23947,13 @@ function llmExternalHTML() {
    each change carries the restart line. Copy condensed from the schema's own
    comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
 const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
-/* ATO-498: llama.cpp enforces at most 499 budget tokens (agent
-   MAX_REASONING_BUDGET_TOKENS, #600), so a bigger choice acts like 500. */
-const LLM_TUNE_BUDGET_CAP = 499;
-/* A budget choice in plain words, for its tooltip: about 4 characters a token. */
+/* A budget choice in plain words, for its tooltip (about 0.75 words a token).
+   ATO-498: no fixed number for the llama.cpp grammar cap here; today it is
+   499 tokens (MAX_REASONING_BUDGET_TOKENS, #600), and ATO-607 may lift it. */
 function llmTuneBudgetHint(n) {
   if (n === 0) return 'No limit: the model thinks as long as it wants';
   const words = Math.round(n * 0.75 / 25) * 25;
-  return 'About ' + words.toLocaleString('en-US') + ' words of thinking'
-    + (n > LLM_TUNE_BUDGET_CAP ? '. llama.cpp stops at about 375 words, so this acts like 500' : '');
+  return 'About ' + words.toLocaleString('en-US') + ' words of thinking';
 }
 /* One knob: a title and one help line each, the choice on the right. */
 function llmTuneRowHTML(title, help, control) {
@@ -23995,7 +23993,7 @@ function llmTuneHTML() {
         llmTuneSegHTML('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
     // Д33: the default is the choice lit when nothing is set; the help line no longer spells it out.
     // ATO-498: plain words first, tokens second; one setting for Local models and Custom server.
-    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (500 is about 375 words). llama.cpp stops it at about 500. One setting for Local models and Custom server. The final answer is never cut.',
+    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (500 tokens is about 375 words). llama.cpp can stop it sooner than the number you pick. One setting for Local models and Custom server. This limit never cuts the final answer.',
         llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n), llmTuneBudgetHint(n)]), 'Thinking budget in tokens'))
     + '</div>'
     + (T.where !== 'adv' ? llmTuneNoteHTML() : '')
@@ -24014,8 +24012,7 @@ async function llmTuneSet(key, raw) {
   await refreshLiveConfig();
   const said = key === 'thinking' ? 'Thinking: ' + value
     : key === 'template' ? 'Chat template: ' + value
-    : 'Thinking budget: ' + (value === '0' ? 'no limit' : value + ' tokens'
-      + (Number(value) > LLM_TUNE_BUDGET_CAP ? ' (llama.cpp stops at about 500)' : ''));
+    : 'Thinking budget: ' + (value === '0' ? 'no limit' : value + ' tokens');
   LLMP.tune = {busy:null, msg:said + '.', err:null, where};
   llmRepaint();
 }
