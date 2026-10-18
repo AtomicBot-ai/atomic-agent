@@ -4308,8 +4308,11 @@ function palRows() {
     return 9;
   };
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
-  // cross-entity
-  SESSIONS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
+  // cross-entity. ATO-453: chats used to stop at three title matches, so with many
+  // similar chats the one you wanted never showed. Now up to 20 (the list scrolls),
+  // ranked like the commands above; ties keep the agent's order, most recent first.
+  SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
+    .sort((a, b) => a.k - b.k || a.i - b.i).slice(0, 20).map((x) => x.s)
     .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
