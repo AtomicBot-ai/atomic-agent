@@ -25373,6 +25373,11 @@ function llmKey(e, k, inText) {
     if (k === 'l' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!LLMHF.busy) llmAct('hf:clear'); return true; }
     return false;
   }
+  /* The mirror's "Advanced" fold (ATO-500): Enter or Space on its focused
+     summary opens or closes it natively. Taken here without preventDefault,
+     so the branch below does not swallow it or run a lookup instead. */
+  if (LLMHF.open && (k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'SUMMARY'
+      && e.target.closest && e.target.closest('.hfm-fold')) return true;
   if (inText || mod) return false;
   if (LLMP.confirm) {
     if (k === 'y') { e.preventDefault(); llmAct('confirm'); return true; }
