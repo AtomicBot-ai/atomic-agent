@@ -1450,7 +1450,7 @@ const LLMHF = {open:false, step:'ref', reference:'', busy:false, error:null, rep
 /* The Hugging Face mirror field (hf-mirror.js), one state for its two
    places: Settings › Models' Hugging Face card and the wizard's step.
    `state` is main's answer (main/hf-mirror.ts); `draft` what is typed. */
-const HFM = {state:null, draft:'', error:null, saving:false, saved:false, loading:false, failed:false, edited:false};
+const HFM = {state:null, draft:'', error:null, saving:false, saved:false, loading:false, failed:false, edited:false, open:null};
 const HF_PICK_WINDOW = 6;   // hf-pick-list.tsx HF_PICK_WINDOW
 const HF_REF_TITLE_TAIL = '(it has to be a GGUF build)';               // hf-reference-editor.tsx HF_REF_TITLE_LINE
 const HF_REF_EXAMPLES_LINE = 'unsloth/Qwen3.5-4B-GGUF · https://huggingface.co/owner/repo · a link to one .gguf'; // :11-12
@@ -12534,7 +12534,7 @@ function obHfRefHTML() {
     + obInlineErrHTML()
     + (OB.busy ? '<div class="ob-explain ob-help">' + esc('asking ' + hfMirrorHost(HFM) + '…') + '</div>' : '')
     + '<div class="ob-explain ob-examples">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
-    + hfMirrorHTML(HFM, {esc, ic}, {input:'ob-hf-mirror', save:'data-obact="hf:mirror"'});
+    + hfMirrorFold(hfMirrorHTML(HFM, {esc, ic}, {input:'ob-hf-mirror', save:'data-obact="hf:mirror"'}));
 }
 
 /** hf-pick-list.tsx, ported column for column. */
@@ -14111,7 +14111,9 @@ async function obHfLook() {
     /* huggingface.ts points a blocked huggingface.co at Settings › Models;
        on this step the mirror field is right under the error instead. */
     const said = (res && res.error) || 'the lookup failed';
-    obDispatch({type:'onboarding_error_set', error: said.replace('set a mirror in Settings › Models', 'set a mirror below')});
+    // The mirror field is folded under "Advanced" (hf-mirror.js); unfold it for this.
+    if (said.includes('set a mirror in Settings › Models')) HFM.open = true;
+    obDispatch({type:'onboarding_error_set', error: said.replace('set a mirror in Settings › Models', 'set a mirror under Advanced below')});
     return;
   }
   obDispatch({type:'onboarding_hf_repo_resolved', repo: res.repo});
@@ -14754,7 +14756,8 @@ function obKeydown(e) {
      ring. The browser's own activation fires a click, which lands in the
      same handler a mouse click lands in, so there is still exactly one
      path from a control to its verb. */
-  if ((e.key === 'Enter' || e.key === ' ') && target.tagName === 'BUTTON'
+  // SUMMARY: the mirror's "Advanced" fold (ATO-500) opens on Enter too.
+  if ((e.key === 'Enter' || e.key === ' ') && (target.tagName === 'BUTTON' || target.tagName === 'SUMMARY')
       && target.closest && target.closest('#onboarding')) {
     e.stopPropagation();
     return;
@@ -24192,6 +24195,25 @@ function hfMirrorTyped(value, repaint, field) {
   const n = document.getElementById(field);
   if (n && document.activeElement !== n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
 }
+/* ATO-500: few people need a mirror, so the field (hf-mirror.js) sits
+   folded under "Advanced" unless it holds something: a saved mirror, an
+   HF_ENDPOINT override, typed text, "Saved.", a refusal or a save in
+   flight. `HFM.open` is a click on the summary and wins over the rest,
+   except a refusal or a save in flight. It is remembered so a repaint does
+   not fold or unfold it; `toggle` does not bubble, hence the capture. */
+function hfMirrorOpen(st) {
+  if (st.error || st.saving) return true;
+  if (typeof st.open === 'boolean') return st.open;
+  const s = st.state;
+  return !!(st.saved || (s && (s.configured || s.override)) || (typeof st.draft === 'string' && st.draft.trim()));
+}
+function hfMirrorFold(html) {
+  return '<details class="hfm-fold"' + (hfMirrorOpen(HFM) ? ' open' : '') + '><summary class="hfm-sum">Advanced</summary>' + html + '</details>';
+}
+document.addEventListener('toggle', (e) => {
+  const t = e.target;
+  if (t && t.classList && t.classList.contains('hfm-fold')) HFM.open = t.open;
+}, true);
 function llmHfMirrorRepaint() { llmRepaint(); }
 function obHfMirrorRepaint() { if (OB.open) render(); }
 
@@ -24234,6 +24256,8 @@ async function llmHfResolve(raw) {
     // Verbatim. huggingface-ref.ts:77-78 and huggingface-api.ts:45-58 are
     // written for this screen.
     LLMHF.error = (res && res.error) || 'the lookup failed';
+    // A blocked huggingface.co points at the mirror: unfold it (hf-mirror.js).
+    if (/set a mirror/.test(LLMHF.error)) HFM.open = true;
     llmRepaint(); llmHfFocus(); return;
   }
   LLMHF.repo = res.repo; LLMHF.cursor = 0; LLMHF.step = 'pick'; LLMHF.error = null;
@@ -24276,7 +24300,7 @@ function llmHfHTML() {
           : '<button class="btn btn-g sm" data-act="llm:hf:close">Back to the list</button>'
             + '<button class="btn btn-p sm" data-act="llm:hf:look">Look it up</button>')
       + '</div>'
-      + hfMirrorHTML(HFM, {esc, ic}, {input:'llm-hf-mirror', save:'data-act="llm:hf:mirror"'})
+      + hfMirrorFold(hfMirrorHTML(HFM, {esc, ic}, {input:'llm-hf-mirror', save:'data-act="llm:hf:mirror"'}))
     + '</div>'
     + (busy ? tuiHints([['esc cancel', 'llm:hf:cancel']])
             : tuiHints([['enter look it up', 'llm:hf:look'], ['ctrl+l clear', 'llm:hf:clear'], ['esc back to the list', 'llm:hf:close']]))

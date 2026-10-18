@@ -248,8 +248,15 @@
 
 /* ---- Hugging Face mirror (hf-mirror.js): under the Hugging Face card here, and on the wizard's Hugging Face step ---- */
 .hfm{display:flex;flex-direction:column;gap:8px;min-width:0}
+.hfm-fold{min-width:0}
+.llm-pane .hfm-fold{padding-top:14px;border-top:1px solid var(--bd)}
+#onboarding .hfm-fold{width:100%;max-width:var(--ob-col);margin-top:18px}
+.hfm-sum{cursor:pointer;width:max-content;font-size:12.5px;font-weight:600;color:var(--ink-2);user-select:none}
+.hfm-sum:hover,.hfm-fold[open] .hfm-sum{color:var(--ink)}
 .llm-pane .hfm{padding-top:14px;border-top:1px solid var(--bd)}
 #onboarding .hfm{width:100%;max-width:var(--ob-col);margin-top:18px}
+/* Inside the Advanced fold the fold carries the rule and the column width. */
+.llm-pane .hfm-fold .hfm,#onboarding .hfm-fold .hfm{margin-top:10px;padding-top:0;border-top:0}
 .hfm-lbl{font-size:12.5px;font-weight:600;color:var(--ink)}
 .hfm-row{display:flex;align-items:center;gap:8px}
 .hfm-inp{flex:1;min-width:0;background:var(--lift)}
