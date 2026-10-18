@@ -6827,6 +6827,9 @@ document.addEventListener('click', (e) => {
     voiceToggle();
     return;
   }
+  // ATO-666: Copy in a code block's header copies that block's code, as written.
+  const mdc = t.closest('[data-mdcopy]');
+  if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\n$/, '') : '', 'Code copied'); return; }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -19538,9 +19541,19 @@ function renderProse(text) {
     const h = md.held[+i];
     const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
-    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h;
+    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
   });
   return html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]);
+}
+/** ATO-666: a fenced block gets a header with its language (the fence's
+    `data-lang`, when the fence named one) and a Copy button. The header sits
+    outside the <pre>, so the block's text is still only the code. One line of
+    markup: the reply is pre-wrap. */
+function codeBlockFrame(pre) {
+  const lang = (/^<pre class="mdpre"[^>]*\sdata-lang="([^"]*)"/.exec(pre) || [])[1] || '';
+  return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>'
+    + '<button class="mdcopy" data-mdcopy title="Copy code" aria-label="Copy code">' + ic('copy') + '<span>Copy</span></button></div>'
+    + pre + '</div>';
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {
