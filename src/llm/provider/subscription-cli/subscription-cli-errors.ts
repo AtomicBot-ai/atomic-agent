@@ -91,6 +91,12 @@ const AUTH_PATTERNS = [
   /\binvalid api key\b/i,
   /\bunauthorized\b/i,
   /\bcredentials (?:are )?(?:missing|expired|invalid)\b/i,
+  // Claude Code's envelope for an expired login (ATO-755): `"error":
+  // "authentication_failed"` with `"result": "Failed to authenticate:
+  // OAuth session expired and could not be refreshed"`.
+  /\bauthentication_failed\b/i,
+  /\bfailed to authenticate\b/i,
+  /\boauth (?:session|token) (?:has )?expired\b/i,
 ];
 
 export function looksLikeAuthFailure(text: string): boolean {
@@ -183,13 +189,15 @@ export function mapCliFailure(input: CliFailureInput): Error {
       input.exitCode,
     );
   }
-  const combined = `${input.stderr}\n${input.stdout}`;
+  // When the CLI wrote its failure into its own JSON output, that text
+  // is the explanation; the raw NDJSON around it is noise, and the
+  // model's own words in it must not be read as an auth problem.
+  const reported = cliReportedError(input.stdout);
+  const stdout = reported ?? input.stdout;
+  const detail = tail(reported ?? (input.stderr || input.stdout));
+  const combined = `${input.stderr}\n${stdout}`;
   if (looksLikeAuthFailure(combined)) {
-    return new SubscriptionCliAuthError(
-      input.binary,
-      input.authHint,
-      tail(input.stderr || input.stdout),
-    );
+    return new SubscriptionCliAuthError(input.binary, input.authHint, detail);
   }
   // Checked after the auth patterns: a signed-out CLI is what usually
   // drops the pipe, and "run /login" is the more actionable message.
@@ -197,16 +205,62 @@ export function mapCliFailure(input: CliFailureInput): Error {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" stopped reading the prompt before it was fully written (exit ${
         input.exitCode ?? "null"
-      }): ${tail(input.stderr || input.stdout) || "no output"}`,
+      }): ${detail || "no output"}`,
       input.exitCode,
     );
   }
   return new SubscriptionCliInvocationError(
     `"${input.binary}" exited with code ${input.exitCode ?? "null"}: ${
-      tail(input.stderr || input.stdout) || "no output"
+      detail || "no output"
     }`,
     input.exitCode,
   );
+}
+
+/**
+ * The failure a CLI reported inside its own JSON output, if it did:
+ * Claude Code's final `result` envelope with `is_error`, Codex's
+ * `turn.failed` and `error` events. `null` when there is none, so the
+ * caller falls back to the raw text.
+ */
+export function cliReportedError(stdout: string): string | null {
+  const messages = new Set<string>();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const message = reportedErrorOf(event);
+    if (message) messages.add(message);
+  }
+  return messages.size > 0 ? [...messages].join("\n") : null;
+}
+
+function reportedErrorOf(event: unknown): string | null {
+  if (typeof event !== "object" || event === null) return null;
+  const e = event as Record<string, unknown>;
+  const text = (value: unknown): string =>
+    typeof value === "string" ? value.trim() : "";
+  if (e.type === "result") {
+    const subtype = text(e.subtype);
+    if (e.is_error !== true && (subtype === "" || subtype === "success")) {
+      return null;
+    }
+    const result = text(e.result);
+    const code = text(e.error);
+    if (result && code) return `${result} (${code})`;
+    return result || code || subtype || null;
+  }
+  if (e.type === "turn.failed") {
+    const error = e.error as { message?: unknown } | undefined;
+    return text(error?.message) || null;
+  }
+  if (e.type === "error") return text(e.message) || null;
+  return null;
 }
 
 function tail(text: string): string {

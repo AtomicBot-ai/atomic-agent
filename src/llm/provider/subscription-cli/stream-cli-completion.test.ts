@@ -108,6 +108,52 @@ describe("streamCliCommand", () => {
     );
   });
 
+  it("reports an expired login from the CLI's own result envelope", async () => {
+    // ATO-755: `claude -p --output-format stream-json` with an expired
+    // login writes this envelope to stdout, nothing to stderr, and
+    // exits 1. The user used to read "exited with code 1: no output".
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      error: "authentication_failed",
+      result:
+        "Failed to authenticate: OAuth session expired and could not be refreshed",
+    });
+    const script = `
+      process.stdout.write('{"type":"system","subtype":"init"}\\n');
+      process.stdout.write(${JSON.stringify(envelope + "\n")}, () => process.exit(1));
+    `;
+    const lines: string[] = [];
+    const err = await (async () => {
+      try {
+        for await (const line of streamCliCommand(options(script))) {
+          lines.push(line);
+        }
+      } catch (caught) {
+        return caught;
+      }
+      return null;
+    })();
+    // The consumer still saw every line before the failure.
+    expect(lines).toEqual(['{"type":"system","subtype":"init"}', envelope]);
+    expect(err).toBeInstanceOf(SubscriptionCliAuthError);
+    const message = (err as Error).message;
+    expect(message).toMatch(/is not signed in\. log in/);
+    expect(message).toContain("OAuth session expired");
+    expect(message).toContain("authentication_failed");
+    expect(message).not.toContain("no output");
+  });
+
+  it("shows the CLI's stdout explanation for a non-auth failure", async () => {
+    const script = `
+      process.stdout.write('{"type":"result","is_error":true,"result":"5-hour limit reached"}\\n', () => process.exit(1));
+    `;
+    await expect(collect(options(script))).rejects.toThrow(
+      /exited with code 1: 5-hour limit reached$/,
+    );
+  });
+
   it("stops the child when the caller aborts", async () => {
     const controller = new AbortController();
     // Emits one line, then would hang for a minute.
