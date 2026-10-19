@@ -22741,6 +22741,7 @@ function mcpMark(cfg) {
 function mcpListHTML(rows) {
   if (!rows.length) {
     return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No MCP servers</h4>'
+      + '<p>MCP servers are plug-ins that give the agent new tools, like GitHub, your files or a browser.</p>'
       + '<p>Add a server to give the agent more tools.</p></div>';
   }
   const cur = Math.max(0, Math.min(MCP.cursor, rows.length - 1));
