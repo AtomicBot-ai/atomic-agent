@@ -20732,7 +20732,8 @@ function tkFormHTML() {
         + '</div></div>'
         + expr
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
-        + field('Message', 'message', f.message, 'what should the agent do when this fires?', '', false)
+        // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
+        + field('Message', 'message', f.message, 'what should the agent do when this fires?', 'Each run\'s reply lands in this task\'s own chat: open the task and press Open session.', false)
       + '</div>'
       + '<div class="set-prevcard" id="tk-preview">' + tkPreviewHTML(f) + '</div>'
     + '</div>'
