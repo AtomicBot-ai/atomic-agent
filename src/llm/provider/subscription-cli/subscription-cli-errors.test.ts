@@ -188,6 +188,56 @@ describe("mapCliFailure", () => {
     expect(err.message).toMatch(/exited with code 1: error_max_turns$/);
   });
 
+  it("keeps the model's stream text out of a failure with no envelope", () => {
+    // Killed or crashed before the result envelope: what is left on
+    // stdout is the stream, and a delta saying "401 Unauthorized" is the
+    // model talking, not a signed-out CLI.
+    const err = mapCliFailure({
+      ...base,
+      stdout: [
+        '{"type":"system","subtype":"init"}',
+        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"401 Unauthorized"}}}',
+        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_d',
+      ].join("\n"),
+    });
+    expect(err).not.toBeInstanceOf(SubscriptionCliAuthError);
+    expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
+    expect(err.message).toBe('"claude" exited with code 1: no output');
+    expect(err.message).not.toContain("{");
+  });
+
+  it("keeps a plain-text line from stdout when there is no envelope", () => {
+    const err = mapCliFailure({
+      ...base,
+      stdout: [
+        '{"type":"system","subtype":"init"}',
+        "Error: unknown option '--bogus'",
+      ].join("\n"),
+    });
+    expect(err.message).toBe(
+      "\"claude\" exited with code 1: Error: unknown option '--bogus'",
+    );
+  });
+
+  it("adds stderr to the envelope's explanation when it says something else", () => {
+    const err = mapCliFailure({
+      ...base,
+      stdout: '{"type":"result","is_error":true,"result":"5-hour limit reached"}',
+      stderr: "warning: proxy settings ignored",
+    });
+    expect(err.message).toBe(
+      '"claude" exited with code 1: 5-hour limit reached; warning: proxy settings ignored',
+    );
+    const duplicate = mapCliFailure({
+      ...base,
+      stdout: '{"type":"result","is_error":true,"result":"5-hour limit reached"}',
+      stderr: "5-hour limit reached",
+    });
+    expect(duplicate.message).toBe(
+      '"claude" exited with code 1: 5-hour limit reached',
+    );
+  });
+
   it("truncates a huge stderr instead of pasting megabytes into the message", () => {
     const err = mapCliFailure({ ...base, stderr: "e".repeat(10_000) });
     expect(err.message.length).toBeLessThan(3000);

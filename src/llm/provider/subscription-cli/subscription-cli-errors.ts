@@ -190,11 +190,19 @@ export function mapCliFailure(input: CliFailureInput): Error {
     );
   }
   // When the CLI wrote its failure into its own JSON output, that text
-  // is the explanation; the raw NDJSON around it is noise, and the
-  // model's own words in it must not be read as an auth problem.
+  // is the explanation. Every other JSON line on stdout is the stream
+  // itself, mostly the model's own text deltas: never read as an auth
+  // problem (a reply that says "401 Unauthorized" is not a signed-out
+  // CLI) and never pasted into the message. Only plain-text lines,
+  // which is where a CLI writes a crash or a usage error, are kept.
   const reported = cliReportedError(input.stdout);
-  const stdout = reported ?? input.stdout;
-  const detail = tail(reported ?? (input.stderr || input.stdout));
+  const stdout = reported ?? plainTextLines(input.stdout);
+  const stderr = input.stderr.trim();
+  const detail = reported
+    ? stderr && !reported.includes(stderr)
+      ? `${tail(reported)}; ${tail(stderr)}`
+      : tail(reported)
+    : tail(stderr || stdout);
   const combined = `${input.stderr}\n${stdout}`;
   if (looksLikeAuthFailure(combined)) {
     return new SubscriptionCliAuthError(input.binary, input.authHint, detail);
@@ -261,6 +269,30 @@ function reportedErrorOf(event: unknown): string | null {
   }
   if (e.type === "error") return text(e.message) || null;
   return null;
+}
+
+/**
+ * The lines of `stdout` that are not part of a JSON stream: drops each
+ * line that parses as a JSON object, and every line that opens like an
+ * NDJSON event (`{"`), which also covers one cut off mid-object when
+ * the child was killed mid-write.
+ */
+function plainTextLines(stdout: string): string {
+  return stdout
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) return false;
+      if (trimmed.startsWith('{"')) return false;
+      if (!trimmed.startsWith("{")) return true;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        return typeof parsed !== "object" || parsed === null;
+      } catch {
+        return true;
+      }
+    })
+    .join("\n");
 }
 
 function tail(text: string): string {

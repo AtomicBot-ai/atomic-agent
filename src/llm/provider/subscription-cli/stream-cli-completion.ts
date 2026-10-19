@@ -225,7 +225,10 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
         installHint: options.installHint,
         authHint: options.authHint,
         exitCode: code,
-        stdout: stdoutTail.join("\n"),
+        // A caller's abort kills the child before it can write a result
+        // envelope, so the tail is only the stream it was cut off in.
+        stdout:
+          options.signal?.aborted && !timedOut ? "" : stdoutTail.join("\n"),
         stderr,
         timedOut,
         truncated: false,

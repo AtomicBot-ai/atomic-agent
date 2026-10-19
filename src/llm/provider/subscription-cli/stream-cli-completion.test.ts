@@ -145,6 +145,39 @@ describe("streamCliCommand", () => {
     expect(message).not.toContain("no output");
   });
 
+  it("still finds the envelope after a long stream of deltas", async () => {
+    // More lines than the kept tail: the oldest deltas fall out, the
+    // envelope (always the newest line) does not.
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      error: "authentication_failed",
+      result:
+        "Failed to authenticate: OAuth session expired and could not be refreshed",
+    });
+    const delta = JSON.stringify({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: "partial reply " },
+      },
+    });
+    const script = `
+      for (let i = 0; i < 24; i += 1) process.stdout.write(${JSON.stringify(delta + "\n")});
+      process.stdout.write(${JSON.stringify(envelope + "\n")}, () => process.exit(1));
+    `;
+    const err = await collect(options(script)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(err).toBeInstanceOf(SubscriptionCliAuthError);
+    const message = (err as Error).message;
+    expect(message).toMatch(/is not signed in\. log in/);
+    expect(message).toContain("OAuth session expired");
+    expect(message).not.toContain("partial reply");
+  });
+
   it("shows the CLI's stdout explanation for a non-auth failure", async () => {
     const script = `
       process.stdout.write('{"type":"result","is_error":true,"result":"5-hour limit reached"}\\n', () => process.exit(1));
