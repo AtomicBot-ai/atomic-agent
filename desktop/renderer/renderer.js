@@ -20730,6 +20730,8 @@ function tkFormHTML() {
         + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
           + ['cron','interval','at'].map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '">' + k + '</button>').join('')
         + '</div></div>'
+        // ATO-519: in chat the agent turns a plain sentence into a schedule through its tasks.cron tool.
+        + '<p class="set-cap">Or just tell the agent in chat, for example: every weekday at 9, send me a summary.</p>'
         + expr
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
         // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
