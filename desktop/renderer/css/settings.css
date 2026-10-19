@@ -207,8 +207,6 @@ button.set-search:hover{border-color:var(--bd)}
 .set-lasterr{align-items:flex-start}
 .set-lasterr > svg{margin-top:2px}
 .set-lasterr .mono{font-size:12px;line-height:1.55;overflow-wrap:anywhere}
-.set-section{display:flex;flex-direction:column;gap:2px}
-.set-section .tk-sh{padding:0;min-height:22px;color:var(--ink)}
 
 /* New task form */
 .set-formgrid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:22px;align-items:start}

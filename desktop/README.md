@@ -466,8 +466,8 @@ Honestly degraded, and labelled as such in the UI:
 - **Tasks** create through `atag task create` (POST /api/tasks on 0.5.4 takes
   no schedule), cancel through `DELETE /api/tasks/{id}` and run-now through
   `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
-  cron-parser. The firings feed is not exposed by the HTTP API and the tab
-  says so.
+  cron-parser. The firings feed is not exposed by the HTTP API, so the task
+  page has no Recent firings section.
 - **Skills** in cloud mode read the selected session's live workspace catalog
   through HTTP, including `.agents`, `.claude`, `.cursor` and `.pi` skills,
   disabled reasons and the chosen source directory. Before the first message
