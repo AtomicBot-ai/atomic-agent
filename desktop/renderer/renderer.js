@@ -20700,10 +20700,8 @@ function tkDetailHTML() {
         + '<span class="mono set-meta">attempts ' + row.attempts + '/' + row.maxAttempts + '</span></div>'
       + '<dl class="tk-plate set-plate">' + plate.filter(Boolean).map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
     + '</div>'
-    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>last error:</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
-    + '<div class="set-section"><div class="tk-sh">Recent firings</div>'
-    // The TUI builds this feed in-process by diffing records between ticks; the HTTP API has no such surface.
-    + '<p class="set-cap">(firings are not exposed by the agent\'s HTTP API)</p></div>'
+    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>Last run failed:</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
+    // No Recent firings section: the TUI builds that feed in-process by diffing records between ticks, and the HTTP API has no such surface yet.
     + tkCancelModal()
     + '</div>';
 }
