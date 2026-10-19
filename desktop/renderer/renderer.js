@@ -24140,7 +24140,7 @@ function llmLocalHTML() {
         + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')})
     + llmTuneHTML()
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false,
-      {note: '<p class="llm-ram">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
+      {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
 }
 function llmCloudHTML() {
   const rows = llmCloudRows();
