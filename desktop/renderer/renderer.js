@@ -16040,7 +16040,9 @@ function selRows() {
        active: here === 'local'},
       {type:'backend', id:'custom', label:'custom',
        detail: customHost ? 'your llama.cpp server at ' + customHost : 'your own llama.cpp server · set it up in Settings › Models',
-       active: here === 'custom'},
+       // ATO-478: no server to switch to yet, so a Set up chip, not a radio
+       // that reads as choosable (choosing the row opens Settings anyway).
+       setup: !customHost && here !== 'custom', active: here === 'custom'},
       // Last on purpose (backendRows): the three above are routes, this one is a
       // mode built on two of them. The detail is the pre-flight's one line, or
       // what it would run.
@@ -16368,7 +16370,8 @@ function selectorHTML() {
            data-act before the row's (a keyboard Enter on the row lands in the
            same place, selActivate). */
         const right = (r.addProvider ? '<span class="btn btn-s xs seladd" data-act="sel:addProvider">' + ic('plus') + 'Add provider</span>' : '')
-          + (r.type === 'backend' && !r.addProvider ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
+          + (r.setup ? '<span class="tk-chip tk-chip--sm selsetup">Set up</span>' : '')
+          + (r.type === 'backend' && !r.addProvider && !r.setup ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
