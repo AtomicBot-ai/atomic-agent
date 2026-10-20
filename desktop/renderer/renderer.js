@@ -5461,7 +5461,10 @@ function diagnosticsPane() {
       + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
       + '<button class="btn btn-s sm" data-act="diag:agentlog"' + (DIAG.agentLog && BR && BR.openPath ? '' : ' disabled') + ' title="' + esc(DIAG.agentLog || 'The state folder is not known yet') + '">' + ic('log') + 'Open agent log</button>'
     + '</div>'
-    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us.</p>'
+    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us on '
+      // ATO-535: where to write, opened in the browser by the [data-url] click handler (BR.openExternal).
+      + '<a class="msglink" href="#" data-url="https://discord.gg/kXWDFSJpMW">Discord</a> or in a '
+      + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
     + diagLogHTML()
     + '</div>';
 }
