@@ -271,7 +271,8 @@
 .cfoot.is-fusion .cchip{padding:0 7px 0 9px;gap:5px}
 .cfoot.is-fusion .providerchip > svg.chev,.cfoot.is-fusion .modelchip > svg.chev,.cfoot.is-fusion .workerschip > svg.chev{display:none}
 .cfoot.is-fusion .fzswap{padding:0 4px}
-.cfoot.is-fusion .modelchip .cval,.cfoot.is-fusion .workerschip .cval{max-width:18ch}
+/* ATO-734: room for a real model name; a longer one still ends in an ellipsis. */
+.cfoot.is-fusion .modelchip .cval,.cfoot.is-fusion .workerschip .cval{max-width:32ch}
 
 /* The fan-out while the turn runs (fusion-live-workers.ts): one line per
    worker, the status dot in the app's grammar — pulsing brand while it
@@ -335,9 +336,12 @@
 /* ---- Narrow windows ------------------------------------------------------ */
 @media (max-width:820px){.composerwrap{padding:0 16px 12px}.composerwrap > .slash{left:16px;right:16px}}
 
-/* Each Fusion role keeps its engine and model together when the row wraps. */
+/* Each Fusion role keeps its engine and model together when the row wraps.
+   ATO-734: a seat is as wide as its names, so a seat that does not fit moves
+   to the next line instead of squeezing both names; it shrinks only when it
+   is alone on a line that is still too narrow. */
 .cfoot.is-fusion{flex-wrap:wrap}
-.cfoot .composer-seat{display:inline-flex;align-items:center;min-width:0;flex:1 1 190px}
-.cfoot .composer-seat .cchip{flex:1 1 0;min-width:0}
+.cfoot .composer-seat{display:inline-flex;align-items:center;min-width:0;flex:0 1 auto}
+.cfoot .composer-seat .cchip{flex:0 1 auto;min-width:0}
 .cfoot .composer-seat .cval{overflow:hidden;text-overflow:ellipsis}
 .cfoot .composer-seat .enginechip{flex:0 1 auto}
