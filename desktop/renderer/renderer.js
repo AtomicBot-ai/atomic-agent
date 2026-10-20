@@ -12135,6 +12135,21 @@ function dlRetry(n) {
   render();
 }
 
+/**
+ * What a failed XPULL download's Retry starts again. The local engine
+ * (Settings' install, main's launch install) is `models update`, never
+ * `models pull`: main refuses "the local engine" as a model id ("cannot start
+ * the download", ATO-753), so its Retry is the engine install again, fresh
+ * when the recovery card's Retry asked for it (engfAct).
+ */
+function xpullRetry(owner) {
+  if (owner.src === 'sel') return () => selPull(owner.id);
+  if (owner.kind === 'runtime') {
+    return () => { const fresh = ENGF.fresh; ENGF.fresh = false; llmEngineInstall(fresh ? {fresh: true} : undefined); };
+  }
+  return () => llmPull(owner.llmKind, owner.id);
+}
+
 function xpullReset(owner) {
   Object.assign(XPULL, {key: owner.key, percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false,
     rate: null, last: null, samples: 0});
@@ -12156,8 +12171,7 @@ if (BR) {
       // The projector sends no `done` of its own: obFetchProjector's promise ends it.
       if (owner.src === 'proj') return;
       if (ev.ok === false) {
-        dlFail(owner, ev.error || 'the download failed',
-          owner.src === 'sel' ? () => selPull(owner.id) : () => llmPull(owner.llmKind, owner.id));
+        dlFail(owner, ev.error || 'the download failed', xpullRetry(owner));
       }
       XPULL.key = null;
       // Once the owner's own subscriber has let go of the pull.
