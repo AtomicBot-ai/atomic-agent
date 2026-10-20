@@ -10417,6 +10417,11 @@ if (BR) {
     }
     if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); LLMP.tune.msg = null; BR.restart().then(applyStatus); return; }
     if (a === 'workspace' || a === 'workspace:choose') {
+      /* ATO-729: a new folder restarts the agent, which would end a running
+         turn. The chip, Settings › Change… and the menu all land here, so the
+         picker stays shut mid-turn, as with a model switch. */
+      const held = restartStopsTurn();
+      if (held) { restartRefusedToast(held); return; }
       BR.chooseWorkspace().then(applyWorkspaceChoice);
       return;
     }
