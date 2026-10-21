@@ -12,6 +12,7 @@ export const ANALYTICS_EVENTS = {
   analyticsDisabled: "analytics_disabled",
   localEngineFailed: "local_engine_failed",
   imageGenerated: "image_generated",
+  videoGenerated: "video_generated",
 } as const;
 
 /**
@@ -296,6 +297,36 @@ export function captureImageGenerated(
     duration_ms: Math.max(0, Math.round(context.durationMs)),
     success: context.success,
     count: Math.max(0, Math.trunc(context.count)),
+    ...(context.errorCode !== undefined ? { error_code: fixedWord(context.errorCode.toLowerCase()) } : {}),
+  });
+}
+
+/**
+ * Context of `video_generated`, one per `video.generate` call that got
+ * past approval. Shape only: which model, how long a clip was asked
+ * for, and how it ended. Never the prompt, a path or a message;
+ * `errorCode` is Core's closed code, lowercased, or `unknown`.
+ */
+export interface VideoGeneratedContext {
+  /** The catalog id (`google/veo-3.1-fast`), `custom` or `default`. */
+  model: string;
+  /** Clip length asked for, in seconds. */
+  durationSecs: number;
+  outcome: "success" | "failed" | "cancelled";
+  errorCode?: string;
+}
+
+/** Emit `video_generated`. No-ops when analytics is disabled. */
+export function captureVideoGenerated(
+  client: AnalyticsClient | null,
+  context: VideoGeneratedContext,
+): void {
+  if (!client) return;
+  const outcome = context.outcome === "success" || context.outcome === "cancelled" ? context.outcome : "failed";
+  client.capture(ANALYTICS_EVENTS.videoGenerated, {
+    model: MODEL_ID.test(context.model) ? context.model : "unknown",
+    duration_secs: Math.max(0, Math.trunc(context.durationSecs)),
+    outcome,
     ...(context.errorCode !== undefined ? { error_code: fixedWord(context.errorCode.toLowerCase()) } : {}),
   });
 }

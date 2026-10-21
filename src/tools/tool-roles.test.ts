@@ -51,6 +51,7 @@ describe("tool roles", () => {
       "os.web.search",
       "vision.describe",
       "image.generate",
+      "video.generate",
     ]) {
       expect(roleAdmits("builder", name), name).toBe(false);
     }
