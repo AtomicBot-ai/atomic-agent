@@ -130,7 +130,9 @@ try {
   await app.waitFor(`/Agent process/.test(document.querySelector('#settings .setbody').innerText)`, 'agent process row', { timeout: 15000 });
   await shot('diagnostics');
   const diag = await app.eval(`document.querySelector('#settings .setbody').innerText`);
-  check('diagnostics: pid and idle from /health', /Agent process\s+pid \d+ · idle/.test(diag), (diag.match(/Agent process[^\n]*\n?[^\n]*/) || [''])[0]);
+  check('diagnostics: running and idle from /health', /Agent process\s+Running · idle/.test(diag), (diag.match(/Agent process[^\n]*\n?[^\n]*/) || [''])[0]);
+  const agentTip = await app.eval(`(() => { const r = [...document.querySelectorAll('#settings .set-diagrow')].find((x) => /Agent process/.test(x.innerText)); const v = r && r.querySelector('.set-diagv'); return v ? v.title : ''; })()`);
+  check('diagnostics: the pid stays in the tooltip', /Process id \d+/.test(agentTip), agentTip);
 } catch (err) {
   check('run finished', false, err instanceof Error ? err.message : String(err));
 } finally {

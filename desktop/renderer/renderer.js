@@ -5454,10 +5454,7 @@ function diagnosticsPane() {
   const rows = [
     ['App', BUILD ? BUILD.version + (BUILD.build ? ' (' + BUILD.build + ')' : '') + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
     ['Agent', S.live.binary ? short(S.live.binary) : 'not started', S.live.binary || ''],
-    ...(SET.health && SET.health.pid !== null && SET.health.busyTurns !== null
-      ? [['Agent process', 'pid ' + SET.health.pid + ' · ' + (SET.health.busyTurns === 0 ? 'idle' : SET.health.busyTurns + (SET.health.busyTurns === 1 ? ' turn running' : ' turns running')),
-          'Turns running in the agent right now, from any chat, task or bot']]
-      : []),
+    ...diagAgentRows(),
     ['State folder', short(sd), sd, sd],
     // Chat review (Д29): written as the chat and Settings › General write it.
     ['Working folder', workingDirLabel(wd), wd, wd],
@@ -5465,15 +5462,16 @@ function diagnosticsPane() {
   ];
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
   // ATO-723: `open` is the folder its Show in Finder button hands to BR.openPath.
-  DIAG.copy = rows.map(([k, v, , open]) => ({label:k, value:v || '', open:open || ''}));
+  DIAG.copy = rows.map(([k, v, , open, x]) => ({label:k, value:(x && x.copy) || v || '', open:open || ''}));
   DIAG.agentLog = diagAgentLogPath(sd);
   const reveal = fileManagerName();
   diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
     + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
     + '<div class="tk-list set-setlist set-diaglist">'
-      + rows.map(([k, v, full], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
-        + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+      + rows.map(([k, v, full, , x], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
+        + '<div class="set-diagv' + (x && x.tone ? ' set-diagv--' + x.tone : ' mono') + '" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+        + (x && x.restart ? '<button class="btn btn-s xs set-diagrestart" data-act="agent:restart">' + ic('refresh') + 'Restart</button>' : '')
         + (rows[i][3] && BR && BR.openPath ? '<button class="iconbtn sm set-copybtn set-openbtn" data-act="diag:open:' + i + '" title="' + esc(reveal) + '" aria-label="' + esc(reveal + ': ' + k) + '">' + ic('folder') + '</button>' : '')
         + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
@@ -5489,6 +5487,23 @@ function diagnosticsPane() {
       + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
     + diagLogHTML()
     + '</div>';
+}
+/* ATO-724: the agent row in plain words. Green "Running · idle" or
+   "Running · N tasks" from /health, the pid kept for the tooltip and Copy;
+   red with the agent's own error and a Restart button when it stopped or
+   is not installed. */
+function diagAgentRows() {
+  const st = S.live.state;
+  if (st === 'error' || st === 'missing-binary') {
+    const why = S.live.error || (st === 'missing-binary' ? 'The agent is not installed' : 'The agent stopped');
+    return [['Agent process', why, why, '', {tone:'bad', restart:true}]];
+  }
+  const h = SET.health;
+  if (!h || h.pid === null || h.busyTurns === null) return [];
+  const n = h.busyTurns;
+  const v = 'Running · ' + (n === 0 ? 'idle' : n + (n === 1 ? ' task' : ' tasks'));
+  return [['Agent process', v, 'Process id ' + h.pid + '. Tasks running in the agent right now, from any chat, task or bot', '',
+    {tone:'ok', copy:v + ' · pid ' + h.pid}]];
 }
 /* Д58: the model server's log, read the way Models › LLM logs read it (the
    tail of llama-server.log in the data dir `models status` names), on a 2 s
@@ -12192,7 +12207,7 @@ function dlCardAct(verb) {
          would fail with no binary. The switch waits for it, and happens once. */
       DL.switchAfter = id;
       const name = dlCardName({kind: 'weights', id});
-      toast(name + ' starts after the local engine', 'The local engine is still downloading. The switch happens as soon as it is in place.');
+      toast(name + ' starts after the local engine', 'The local engine is still downloading. The switch happens as soon as it is in place.', 'info');
       render();
       return;
     }
@@ -12295,8 +12310,10 @@ function dlRetry(n) {
   // Main runs one pull at a time: say so rather than queue behind another tab's back.
   if (xpullOwner() || (!f.queueable && dlBusy())) {
     toast('One download at a time', 'Retry it once the download that is running has finished.', 'bad');
+    ENGF.fresh = false;   // ATO-775: the fresh install engfAct asked for did not start
     return;
   }
+  const at = DL.failed.indexOf(f), activateBefore = DL.activateAfter;
   DL.failed = DL.failed.filter((x) => x !== f);
   /* The runtime is what a landed model was missing: once it is in place, start
      that model (obActivateHeld) — the start that failed without it. Not one the
@@ -12306,7 +12323,8 @@ function dlRetry(n) {
      (obFetchProjector): before that, this start was a text-only one (D2). */
   if (f.kind === 'runtime' && DL.landed && !DL.activateAfter && !DL.switchAfter
       && !(DL.ready && DL.ready.id === DL.landed)) DL.activateAfter = DL.landed;
-  f.retry();
+  // ATO-775: a retry that refused (the engine busy) keeps its red row; it said why in a toast.
+  if (f.retry() === false) { DL.failed.splice(at, 0, f); DL.activateAfter = activateBefore; }
   render();
 }
 
@@ -12320,7 +12338,7 @@ function dlRetry(n) {
 function xpullRetry(owner) {
   if (owner.src === 'sel') return () => selPull(owner.id);
   if (owner.kind === 'runtime') {
-    return () => { const fresh = ENGF.fresh; ENGF.fresh = false; llmEngineInstall(fresh ? {fresh: true} : undefined); };
+    return () => { const fresh = ENGF.fresh; ENGF.fresh = false; return llmEngineInstall(fresh ? {fresh: true} : undefined); };
   }
   return () => llmPull(owner.llmKind, owner.id);
 }
@@ -12536,7 +12554,14 @@ function obLocalPickHTML() {
      after one download; saying it again here was the same line twice in a
      row (Danya, 01.10). What is left is what this list is ordered by. */
   const yours = IS_MAC ? 'your Mac' : 'your computer';
-  return (OB.ram ? '<div class="ob-explain">' + esc('Ordered for ' + yours + '’s ' + OB.ram + ' GB of memory.') + '</div>' : '')
+  /* ATO-725: when a downloaded model was lifted to the top (ATO-437) the list
+     is not in memory order any more, so the caption says what comes first. */
+  const fitOrder = orderModelsByFit(OB.models, OB.ram).filter((m) => fitFor(m, OB.ram).v !== 'over');
+  const lifted = models.some((row, i) => !fitOrder[i] || row.model.id !== fitOrder[i].id);
+  const order = lifted
+    ? 'Models already on ' + yours + ' come first, then the rest ordered for its ' + OB.ram + ' GB of memory.'
+    : 'Ordered for ' + yours + '’s ' + OB.ram + ' GB of memory.';
+  return (OB.ram ? '<div class="ob-explain">' + esc(order) + '</div>' : '')
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
        Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
        item next to a sibling that cannot shrink absorbs every pixel of
@@ -16505,10 +16530,10 @@ async function selActivate(row) {
 }
 
 function selPull(id) {
-  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
   closeSelector(); render();
-  toast('Downloading in the background', 'You can keep chatting and choose another model');
+  toast('Downloading in the background', 'You can keep chatting and choose another model', 'info');
   BR.modelsPull(id, {trigger: 'selector'}).then((res) => {
     if (res && res.ok === false && SEL.pulling === id) {
       SEL.pulling = null; toast('Download could not start', res.error || 'Please try again', 'bad'); render();
@@ -22873,7 +22898,8 @@ async function mcpRefreshRun(quiet) {
   if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
 }
 function mcpHint() {
-  if (MCP.addModal) return 'Enter submit · Esc cancel · paste JSON of one MCP server';
+  // ATO-711: plain Enter is a new line in the JSON box; ⌘Enter / Ctrl+Enter adds the server (keydown above).
+  if (MCP.addModal) return (IS_MAC ? '⌘Enter' : 'Ctrl+Enter') + ' add · Esc cancel · paste JSON of one MCP server';
   if (MCP.removeConfirm) return 'y / Enter confirm · n / Esc cancel';
   if (MCP.mode === 'list') return tuiHints(['j/k move', ['Enter open', 'mcp:detail'], ['n add', 'mcp:add'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh'], ['a auto', 'mcp:auto']]);
   return tuiHints([['Esc back', 'mcp:back'], ['1/2/3 tools/res/prompts', 'mcp:dtab:cycle'], ['[ ] cycle', 'mcp:dtab:cycle'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh']]);
@@ -23760,7 +23786,7 @@ function llmStatusNoteHTML(status, tone) {
 function llmStatusTone(line) {
   if (line === 'status: ready') return 'ready';
   if (/^probing |: (loading|updating)$/.test(line)) return 'busy';
-  if (/^local-llm URL saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
+  if (/^Server address saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
   return 'err';
 }
 /* The setup tabs (Д30): which list the pane shows — local models to
@@ -23907,7 +23933,10 @@ function llmRouteNeedsOpen(id) {
     if (id === 'fusion') LLMP.msg = {text:'Fusion needs a cloud provider to plan. Add one, then choose Fusion again.'};
     llmSetMode('cloud');
     // A provider without a key it can use opens on that key; none at all opens the list to add one from.
-    llmOpenWizard(cloud.length ? (cloud.find((p) => !BSW.readyIds.includes(p.id)) || cloud[0]) : null);
+    const open = cloud.length ? (cloud.find((p) => !BSW.readyIds.includes(p.id)) || cloud[0]) : null;
+    llmOpenWizard(open);
+    // ATO-725: opened straight on a provider, the kind list's pick (which reports the start) never runs.
+    if (open) ANX.providerStarted(open);
     return;
   }
   if (id === 'fusion') {
@@ -23964,7 +23993,7 @@ function llmNowHTML() {
   const control = stale ? button('llm:usePicked', 'refresh', 'Restart on ' + modelWord(picked), 'Restart the local model server on the model picked')
     : (managed && !!serverModel && !missing) || stray
       ? button('llm:daemon', up ? 'stop' : 'play', phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : up ? 'Stop' : 'Start',
-          up ? 'Stop the local model server (s)' : 'Start the local model server (s)')
+          up ? 'Stop the local model server' : 'Start the local model server')
       : '';
   return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
     + (workers ? esc(customWorkers ? ', local workers on a custom server' : ', local workers on ' + (serverModel ? modelWord(serverModel) : THIS_MACHINE)) : '')
@@ -24090,7 +24119,7 @@ function llmAdvancedHTML(mode) {
       ? '<div class="llm-adv-h">Engine</div>'
         + '<div class="llm-tune-card llm-engine">'
           + llmTuneRowHTML(onCore ? 'Atomic Core' : 'llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
-              btn('llm:backend', 'Update now', 'Install the supported engine (B)'))
+              btn('llm:backend', 'Update now', 'Install the supported engine'))
           /* Core is the engine, and choosing one is not part of the normal flow: llama.cpp is never offered
              in the app (support-only: `models engine llama-server`). Once on llama.cpp, this one row is the quiet way back. */
           + (onCore ? ''
@@ -24099,16 +24128,16 @@ function llmAdvancedHTML(mode) {
           + (onCore
               ? llmTuneRowHTML('Core updates', 'Checks never install or interrupt your models. Updates apply after you stop local models.', btn('llm:engineCheck', 'Check for updates', 'Check Atomic Core releases'))
               : llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
-                  sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start (U)')))
+                  sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start')))
           + llmTuneRowHTML('Device', 'Auto runs the model on the GPU when there is one. A change applies the next time the model server starts.',
-              btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU (G)'))
+              btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU'))
           // The log itself is Diagnostics' (Д58: one place for it); this is the way there.
           + llmTuneRowHTML('Server log', 'What the local model server printed. It opens in Settings › Diagnostics.',
-              btn('diag:llmlogs', 'Open', 'The local model server’s log, in Diagnostics (L)'))
+              btn('diag:llmlogs', 'Open', 'The local model server’s log, in Diagnostics'))
         + '</div>'
         + '<div class="llm-adv-h">Memory</div>'
         + card(llmTuneRowHTML('Local embeddings', 'A small model on ' + THIS_MACHINE + ' that indexes memory for search.',
-            sw('llm:embToggle', embOn, 'Local embeddings', 'Turn the local embedding model on or off (E)')))
+            sw('llm:embToggle', embOn, 'Local embeddings', 'Turn the local embedding model on or off')))
         + '<div class="llm-adv-h">Prompt format</div>' + card(llmTemplateRowHTML())
       : mode === 'external' ? '<div class="llm-adv-h">Prompt format</div>' + card(llmTemplateRowHTML())
       : mode === 'cloud' ? card(llmTuneRowHTML('Fallback chain', 'Which providers answer when one fails.',
@@ -25050,9 +25079,18 @@ async function llmBackendUpdate() {
  * engine:failure.
  */
 function llmEngineInstall(opts) {
-  if (!BR || LLMP.busy || LLMP.pulling) return;
+  if (!BR) return false;
+  /* ATO-775: a refusal says so. It used to return without a word, after a
+     Retry had already taken the red row away. A fresh install asked for and
+     not started is forgotten, so it does not fire on the next one. */
+  if (LLMP.busy || LLMP.pulling) {
+    ENGF.fresh = false;
+    if (LLMP.busy) toast('Engine is busy', 'Another engine action is running. Try again in a moment.', 'bad');
+    else toast('A download is already running', 'Try again once it has finished.', 'bad');
+    return false;
+  }
   const fresh = !!(opts && opts.fresh);
-  if (!BR.modelsUpdateStream) { llmBackendUpdate(); return; }
+  if (!BR.modelsUpdateStream) { llmBackendUpdate(); return true; }
   if (ENGF.f) ENGF.dismissed = ENGF.f.at;   // the card's question is being answered; its result says the rest
   LLMP.msg = null; LLMP.statusErr = null;
   LLMP.pulling = {kind:'runtime', id: composerEngineId() === 'atomic-core' ? 'the local engine' : 'llama.cpp'};
@@ -25067,6 +25105,7 @@ function llmEngineInstall(opts) {
       render(); llmRepaint();
     }
   }, (err) => { LLMP.pulling = null; LLMP.msg = {text: '! ' + String((err && err.message) || err)}; render(); llmRepaint(); });
+  return true;
 }
 /** The download main's refusal names (downloadRunning), in words. */
 function llmRunningWord(running) {
@@ -25225,7 +25264,7 @@ async function llmRemoveLocalConfirm() {
 }
 function llmPull(kind, id) {
   if (!BR) return;
-  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
@@ -25332,14 +25371,15 @@ async function llmExternalSave() {
   // Integration seam: the route move goes through lane B's activateProvider (restarts `atag serve`, which also picks up the two leaf writes above).
   if (llmActiveTextId() !== 'local-llama') {
     if (!(await llmSwitchProvider('local-llama'))) return;
-    llmReport('local-llm URL saved (' + p.latencyMs + 'ms)', 'external');
-    LLMP.msg = {text:'local-llm URL saved: ' + res.url + ' — active text provider is local-llama; the agent was restarted.'};
+    // ATO-711: plain words in the pane, no `local-llm` / `local-llama` ids.
+    llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
+    LLMP.msg = {text:'Server address saved: ' + res.url + '. Chats now run on your server; the agent was restarted.'};
     llmRefreshStatus();
     return;
   }
-  llmReport('local-llm URL saved (' + p.latencyMs + 'ms)', 'external');
+  llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
   // The TUI rebuilds the registered provider in-process (runtime.reloadLlmProvider); the serve process needs the restart.
-  llmRestartMsg('local-llm URL saved: ' + res.url);
+  llmRestartMsg('Server address saved: ' + res.url);
   llmRefreshStatus();
 }
 async function llmFallbackPersist(chain, appendLocal) {
@@ -25501,7 +25541,8 @@ function llmAct(what) {
   // Д31: Cloud or Fusion, chosen before what it needs is there — that, opened here.
   if (verb === 'needs') { llmRouteNeedsOpen(arg); return; }
   // Д34: Ollama as a provider, its preset and address filled in.
-  if (verb === 'ollama') { llmSetMode('cloud'); llmOpenWizard(KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}); return; }
+  // ATO-725: like `preset`, it skips the kind list, so it reports the setup start itself.
+  if (verb === 'ollama') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
   // A confirm that is working is not let go of mid-way (Cancel, n and Esc wait for it).
   if (verb === 'cancel') { if (LLMP.confirm && LLMP.confirm.submitting) return; LLMP.confirm = null; llmRepaint(); return; }
   if (verb === 'external') {
@@ -25590,6 +25631,13 @@ function llmKey(e, k, inText) {
      so the branch below does not swallow it or run a lookup instead. */
   if (LLMHF.open && (k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'SUMMARY'
       && e.target.closest && e.target.closest('.hfm-fold')) return true;
+  /* ATO-725: Enter or Space on a FOCUSED button (Add provider, Add Ollama,
+     the run-mode cards) presses that button, as onboarding does (r6 UX):
+     the browser's own click lands in the click handler. Without this the
+     pane's Enter ran the highlighted row instead, and with an empty cloud
+     list that was llmPrimary(undefined). */
+  if ((k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'BUTTON'
+      && e.target.closest && e.target.closest('#settings')) return true;
   if (inText || mod) return false;
   if (LLMP.confirm) {
     if (k === 'y') { e.preventDefault(); llmAct('confirm'); return true; }

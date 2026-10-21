@@ -291,7 +291,9 @@
 /* Context gauge: the 20px ring alone; the figure is its tooltip and the
    numbers live in its popover. */
 .cfoot .ctxbtn{width:30px;padding:0;justify-content:center;color:var(--ink-2)}
-.ctxring{width:20px;height:20px;flex:none}
+/* ATO-711: .cfoot .cchip > svg sets every chip icon to 14px and outranks a
+   bare .ctxring, so the ring needs the same reach to be drawn at 20px. */
+.ctxring,.cfoot .cchip > svg.ctxring{width:20px;height:20px;flex:none}
 .ctxring circle{fill:none}
 /* ATO-166: a donut — a full grey track and a thick arc on it, no fill.
    ATO-481: the track is --ink-3 (3:1 and up on both themes); at 16% ink it
