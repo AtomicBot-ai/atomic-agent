@@ -1354,6 +1354,10 @@ const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
    server's log shown there — open or not, its last read, the poll's timer. */
 const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
+/* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
+const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
+  anthropic:'https://console.anthropic.com/settings/keys', groq:'https://console.groq.com/keys', deepseek:'https://platform.deepseek.com/api_keys',
+  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.ai/settings/projects/~current/api-keys', xai:'https://console.x.ai'};
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 // ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
@@ -3243,13 +3247,16 @@ function apprCard(m) {
       : 'Denied';
     /* Soft Tactile: the receipt pill. The label still opens the row's text
        ("Approved · 14:32:09"), which scenario 05 reads back. */
-    const glyph = ok ? toolGlyph('ok')
+    /* ATO-475: a quiet note under the step it answered, not a lifted pill:
+       a shield, "Approved by you · 07:07:35", and what was allowed in plain
+       text. The <b> still holds only the verdict (scenarios 05/08 read it). */
+    const glyph = ok ? '<span class="tk-gly tk-gly--ok">' + ic('shield') + '</span>'
       : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
       : m.state === 'expired' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
     const plain = CATEGORY_PLAIN[m.cat] || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
-      + glyph + '<span class="apprlbl"><b>' + label + '</b> · <span class="mono">' + m.at + '</span></span>'
+      + glyph + '<span class="apprlbl"><b>' + label + '</b>' + (ok || m.state === 'denied' ? ' by you' : '') + ' · <span class="mono">' + m.at + '</span></span>'
       + '<span class="badge tk-chip tk-chip--sm" title="' + esc(m.kind) + '">' + esc(plain) + '</span></div>';
   }
   const isTrust = m.cat === 'trust_config';
@@ -3295,8 +3302,12 @@ function apprCard(m) {
       + '<dl class="aplate">'
         + '<dt>Tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
         + '<dt>Category</dt><dd><span class="badge">' + esc(m.kind) + '</span> <span class="cap">'
-          + (isTrust ? 'never allowed for longer than one call' : 'allowed without asking from level ' + m.lvl) + '</span></dd>'
-        + (m.reason ? '<dt>Reason</dt><dd>' + esc(m.reason) + '</dd>' : '')
+          /* ATO-477: the mode that would run it unasked, not a level number the
+             UI never shows (Auto stops asking for workspace writes, level 2;
+             only Bypass skips the rest). The agent's level stays in the tooltip. */
+          + (isTrust ? 'never allowed for longer than one call'
+            : '<span title="approval level ' + esc(m.lvl) + '">' + (m.lvl <= 2 ? 'in Auto mode this runs without asking' : 'runs without asking only in Bypass mode') + '</span>') + '</span></dd>'
+        + (m.reason ? '<dt>Reason</dt><dd>' + esc(apprHomePaths(m.reason)) + '</dd>' : '')
         + (pv && pv !== '(no preview)' ? '<dt>Preview</dt><dd><div class="previewblk">' + esc(pv) + '</div></dd>' : '')
       + '</dl>'
       /* The one approval surface for "ask me less" is the mode control in the
@@ -3321,6 +3332,11 @@ function apprPath(p) {
   const home = homeDir();
   if (home && (s === home || s.startsWith(home + sep))) return '~' + s.slice(home.length);
   return s;
+}
+/** Home folder shown as ~ inside free text (the Reason row), so the user name stays off the card. */
+function apprHomePaths(t) {
+  const home = homeDir();
+  return home ? String(t).split(home + (IS_WIN ? '\\' : '/')).join('~' + (IS_WIN ? '\\' : '/')) : String(t);
 }
 function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
 const APPR_FALLBACK = {
@@ -3375,7 +3391,8 @@ function apprWhy(m) {
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
     // The guard's verdict, when it flagged something ("recursive remove").
     const g = String(m.reason || '').replace(/ in \/.*$/, '').trim();
-    if (g && !/no shell guard rule matched|fail-closed|threw|normalisation/.test(g)) return 'Flagged: ' + esc(g) + '.';
+    // ATO-477: what the flag means for the person deciding, not just "Flagged".
+    if (g && !/no shell guard rule matched|fail-closed|threw|normalisation/.test(g)) return 'The safety check flagged this: ' + esc(g) + '. It runs with your access to this computer, so read the command before you allow it.';
   }
   return '';
 }
@@ -4822,9 +4839,12 @@ function contextHTML() {
       + (win ? ' of ' + fmtTokens(win) + ' window \u00b7 ' + pct + '%' : ' \u00b7 window unknown')
       + (proj ? ' \u00b7 projected' : '')
     : 'context \u00b7 not measured yet';
-  const row = (label, value, dim, tip) => {
+  // ATO-484: `sw` keys the row to the bar (u = prompt fill, h = reply
+  // reserve, f = free), drawn as a swatch in front of the label.
+  const row = (label, value, dim, tip, sw) => {
     const t = tip ? ' title="' + esc(tip) + '"' : '';
-    return '<dt' + (dim ? ' class="ter"' : '') + t + '>' + esc(label) + '</dt>'
+    const cls = (dim ? 'ter ' : '') + 'sw sw-' + (sw || 'u');
+    return '<dt class="' + cls + '"' + t + '>' + esc(label) + '</dt>'
       + '<dd class="mono tnum' + (dim ? ' ter' : '') + '"' + t + '>' + value + '</dd>';
   };
   let body = '';
@@ -4838,8 +4858,8 @@ function contextHTML() {
       body += row('conversation', '0');
     } else body = row('prompt scaffold', fmtTokens(CTX.stablePrefix)) + row('conversation', fmtTokens(CTX.tail));
     if (win) {
-      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true, reserveTip);
-      body += row('free', fmtTokens(Math.max(0, win - CTX.tokens - reserved)), true);
+      if (reserved > 0) body += row('reserved for reply', fmtTokens(reserved), true, reserveTip, 'h');
+      body += row('free', fmtTokens(Math.max(0, win - CTX.tokens - reserved)), true, '', 'f');
     }
   }
   const rows = CTX.tokens
@@ -4847,7 +4867,7 @@ function contextHTML() {
     : '<p class="cap">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
   /* Soft Tactile (CM-15…17): the breakdown bar under the title — the prompt in
      brand (amber above 70%, red above 85%, striped while projected) and the
-     reply reserve beside it — then the rows, trimming and basis lines, the
+     reply reserve beside it, hatched so it never reads as filled — then the rows, trimming and basis lines, the
      tasks-per-turn dial and the footer. */
   const used = win ? Math.min(100, CTX.tokens / win * 100) : 0;
   const held = win ? Math.min(100 - used, reserved / win * 100) : 0;
@@ -5695,9 +5715,11 @@ async function privacySet(enabled, via) {
    the same edge, faster (150 ms). Reduced motion: opacity only. */
 const TOAST_IN_MS = 220, TOAST_OUT_MS = 150;
 function toastHTML(t) {
-  const bad = t.kind === 'bad';
+  const bad = t.kind === 'bad', info = t.kind === 'info';
   // No whitespace between the text spans: drivers read the toast's textContent.
-  return '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
+  // ATO-485: 'info' is for something still under way (a download), not a green check.
+  return '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : info ? 'tk-ico--blue' : 'tk-ico--green') + '">'
+    + ic(bad ? 'alert' : info ? 'download' : 'check') + '</span>'
     + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
     + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
     // r2: every toast can be dismissed before its 6 s are up. Icon only, so
@@ -6975,7 +6997,12 @@ document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
   // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
   if (e.target.id === 'skp-hubq') { SKP.hubQuery = e.target.value; return; }
-  if (e.target.id === 'mcp-json') { if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; } return; }
+  if (e.target.id === 'mcp-json') {
+    if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; }
+    // ATO-514: Add stays off until something is pasted (a toggle, not a render: the caret stays).
+    const add = $('[data-act="mcp:addSubmit"]'); if (add) add.disabled = !e.target.value.trim() || !!(MCP.addModal && MCP.addModal.submitting);
+    return;
+  }
   // Item 7 part C: the LLM filter / URL prompt, the Telegram token prompt and the Import form edit state in place.
   if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor.cloud = llmCloudSectionStart(); llmRepaintList(); return; }
   // Item 7A: editing the reference clears its error (local-models-reducer.ts:101-110).
@@ -7663,7 +7690,7 @@ function engfLaunchInstall(st) {
     LLMP.pulling = {kind: 'runtime', id: 'the local engine', launch: true};
     LLMP.pullLog = ['starting…'];
     appSay('local-llm: downloading the local engine before the model starts');
-    toast('Downloading the local engine', 'Your local model starts once it is in. Progress is in Settings \u203a Models.');
+    toast('Downloading the local engine', 'Your local model starts once it is in. Progress is in the download card.', 'info');
   } else if (LLMP.pulling && LLMP.pulling.launch) {
     // Its done frame normally ends it first (the LLMP pull subscriber); this is the backstop.
     LLMP.pulling = null;
@@ -12345,7 +12372,12 @@ function obChooseHTML() {
       OB.cursor === i ? obTickHTML() : '');
   }).join('');
   return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
-    + '<div class="ob-list ob-routes">' + rows + '</div>';
+    + '<div class="ob-list ob-routes">' + rows + '</div>'
+    /* ATO-442: an Ollama or LM Studio owner reads "Local models" as theirs and
+       lands on a 20 GB download. Their apps live in the Cloud models list
+       ("Local on this Mac"), so say so here and open that list. */
+    + '<button class="ob-offer ob-offer-inline ob-routehint" data-obact="route:apps">'
+    + esc('Already run Ollama or LM Studio? Use it instead') + '</button>';
 }
 
 function obLocalPickHTML() {
@@ -13048,6 +13080,8 @@ function obWizardHTML() {
      unchecked. Unreachable reads amber, rejected reads red. */
   const service = k.label.split(' (')[0];
   const unchecked = WIZ.uncheckedFor;
+  /* ATO-444: a newcomer without a key gets the page where the provider hands them out. */
+  const keyPage = !k.local && !k.custom && OB_KEY_PAGES[k.id];
   /* ATO-161: a request for a key is a hint in ink, the field unlit; a failure is red. */
   const soft = wizErrSoft();
   const tone = WIZ.error && !soft && !wizErrUnreachable() ? (unchecked ? ' is-warn' : ' is-error') : '';
@@ -13070,6 +13104,7 @@ function obWizardHTML() {
           + (wizErrDetail()
               ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '')
         : '')
+    + (keyPage && !verifying ? '<div class="ob-help">No key yet? <a class="msglink" href="#" data-url="' + esc(keyPage) + '">Get one from ' + esc(service) + '</a>. It is checked when you press Next.</div>' : '')
     /* Calm (S6, U14): where the key goes, in the user's words; the file and
        who can read it are the tooltip (ATO-132: what main does with it). */
     + (k.env ? '<div class="ob-help" title="' + esc(keySavedHint()) + '">Your key stays on ' + THIS_MACHINE + '.</div>' : '')
@@ -14978,6 +15013,7 @@ function obRowClick(index, clicks) {
 function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
+  if (spec === 'route:apps') { obPickBackend('cloud'); return; }
   /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
      obKeydown's own — a step that owns its keyboard answers Escape through
      obOwnEscape, everything else through the key table — so the button and
@@ -16829,8 +16865,11 @@ function contextChip() {
   const ring = '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
     + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.12 * pct / 100).toFixed(2) + ' 47.12" transform="rotate(-90 10 10)"/>' : '')
     + '</svg>';
-  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context"'
-    + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + '</button>';
+  /* ATO-481: from half full the ring carries its figure, so a filling
+     window reads as a gauge at a glance; below that it stays the ring alone. */
+  const fig = CTX.window && pct >= 50 ? '<span class="ctxpct">' + Math.round(pct) + '%</span>' : '';
+  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + (fig ? ' haspct' : '') + tone + cchipOpen('context') + '" data-act="context"'
+    + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + fig + '</button>';
 }
 
 /* ============================================================
@@ -22661,12 +22700,12 @@ function mcpAddModalHTML() {
        config "envelopes", and two more lines explained key chords and the
        stdio auto-promotion. Every shape it listed is still accepted. */
     + '<p>Paste the server\u2019s config (JSON). It\u2019s usually in the server\u2019s README.</p>'
-    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc(mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Example:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
     + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
     + '<div class="acts"><span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
-    + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting ? ' disabled' : '') + '>Add</button></div></div>';
+    + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting || !String(m.json || '').trim() ? ' disabled' : '') + '>Add</button></div></div>';
 }
 /** The add box's example, laid out on lines the way a README shows it. */
 function mcpJsonExample() {
@@ -22708,17 +22747,17 @@ function mcpNormalizeShortcut(obj) {
 }
 function mcpParseAddJson(raw) {
   const trimmed = String(raw || '').trim();
-  if (!trimmed.length) return {ok:false, error:'JSON is empty'};
+  if (!trimmed.length) return {ok:false, error:'Paste a server config first.'};
   let parsed;
-  try { parsed = JSON.parse(trimmed); } catch (err) { return {ok:false, error:'invalid JSON: ' + (err && err.message ? err.message : String(err))}; }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {ok:false, error:'expected a JSON object'};
+  try { parsed = JSON.parse(trimmed); } catch (err) { return {ok:false, error:'This isn\u2019t valid JSON. Check for a missing comma, quote or bracket (' + (err && err.message ? err.message : String(err)) + ').'}; }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {ok:false, error:'Paste one server config: a JSON object in { } braces.'};
   let candidate;
   const envelope = parsed.mcpServers;
   if (envelope !== undefined) {
-    if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return {ok:false, error:'`mcpServers` must be an object keyed by server name'};
+    if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return {ok:false, error:'"mcpServers" should hold the server by name, like the example.'};
     const entries = Object.entries(envelope);
-    if (!entries.length) return {ok:false, error:'`mcpServers` is empty — paste exactly one server'};
-    if (entries.length > 1) return {ok:false, error:'paste exactly one server — got ' + entries.length + ' entries in `mcpServers`'};
+    if (!entries.length) return {ok:false, error:'"mcpServers" is empty. Paste exactly one server.'};
+    if (entries.length > 1) return {ok:false, error:'Paste exactly one server. This has ' + entries.length + ' in "mcpServers".'};
     const [keyName, value] = entries[0];
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return {ok:false, error:'`mcpServers[' + JSON.stringify(keyName) + ']` must be an object'};
     if (typeof value.name === 'string' && value.name !== keyName) return {ok:false, error:'name mismatch: envelope key ' + JSON.stringify(keyName) + ' vs inner ' + JSON.stringify(value.name)};
@@ -23475,9 +23514,14 @@ function llmMsgNow() {
     && !!st && !!st.daemonRunning && st.daemonPid === m.workers.pid;
   return sameServer ? m : {text: m.workers.short};
 }
+/* The `local-llm:` tag is the log's (and the smoke's, which reads LLMP.msg);
+   the pane shows the sentence without it (ATO-488). */
 function llmMsgHTML(text) {
   const bad = /^! /.test(text);
-  return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(text) + '</span></div>';
+  // A tag after a sentence's end (a daemonLine appended to one) starts a sentence too.
+  const shown = String(text).replace(/(^|[.!?…]\s+|\s)local-llm:\s+([a-z]?)/g,
+    (m, pre, c) => pre + (/^$|[.!?…]\s+$/.test(pre) ? c.toUpperCase() : c)).replace(/^[a-z]/, (c) => c.toUpperCase());
+  return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(shown) + '</span></div>';
 }
 /* A provider entry's mark: its id's logo, else its kind's, else the server icon. */
 function llmProviderMark(p, size) {
@@ -24169,9 +24213,9 @@ function llmModalHTML() {
   if (LLMP.externalDraft !== null) {
     return '<div class="tk-modal llm-modal" role="dialog">'
       + '<label class="tk-field"><span class="tk-lbl">External llama.cpp base URL</span>'
-      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="http://host:8080">'
+      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="e.g. http://127.0.0.1:8080">'
       + (LLMP.externalInvalid ? '<span class="tk-help tk-help--err">invalid URL</span>' : '')
-      + '<span class="tk-help">Saved after a /health probe succeeds.</span></label>'
+      + '<span class="tk-help">' + esc('The address of your own llama.cpp server. It is checked first, and chats move to it only when it answers.') + '</span></label>'
       + '<div class="acts"><button class="btn btn-g sm" data-act="llm:external:cancel">Cancel</button>'
       + '<button class="btn btn-p sm" data-act="llm:external:save">Save</button></div></div>';
   }
@@ -24680,7 +24724,7 @@ function llmEngineInstall(opts) {
   LLMP.msg = null; LLMP.statusErr = null;
   LLMP.pulling = {kind:'runtime', id: composerEngineId() === 'atomic-core' ? 'the local engine' : 'llama.cpp'};
   LLMP.pullLog = ['starting…'];
-  if (!llmVisible()) toast('Downloading the local engine', 'Its progress is in Settings \u203a Models.');
+  if (!llmVisible()) toast('Downloading the local engine', 'Its progress is in the download card.', 'info');
   render(); llmRepaint();
   Promise.resolve(fresh ? BR.modelsUpdateStream('settings', {fresh: true}) : BR.modelsUpdateStream('settings')).then((res) => {
     if (res && res.ok === false) {
@@ -24722,7 +24766,7 @@ async function llmAutoUpdateToggle() {
   const next = !(llmManaged().autoUpdate !== false);
   const res = await BR.configSet('localModels.managed.autoUpdate', String(next));
   if (!res || res.ok === false) { LLMP.statusErr = llmFail('autoUpdate write failed', res); llmRepaint(); return; }
-  LLMP.msg = {text: next ? 'local-llm: backend auto-update on — a newer llama.cpp is fetched after start' : "local-llm: backend auto-update off — update manually with 'B'"};
+  LLMP.msg = {text: next ? 'Update automatically is on: a newer llama.cpp is fetched after each start.' : 'Update automatically is off. Choose Update now to update the engine.'};
   await refreshLiveConfig();
   llmRepaint();
 }
@@ -24739,7 +24783,7 @@ async function llmDeviceCycle() {
   const res = await BR.modelsUseDevice(next);
   LLMP.busy = false;
   if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-device failed', res); llmRepaint(); return; }
-  LLMP.msg = {text:"local-llm: device → " + next + " (press 's' to restart and apply)"};
+  LLMP.msg = {text:'Device: ' + (next === 'auto' ? 'Auto' : next === 'cpu' ? 'CPU' : next) + '. It applies the next time the model server starts.'};
   await refreshLiveConfig();
   llmRepaint();
 }
@@ -24895,7 +24939,9 @@ async function llmPrimary(row) {
     await llmSelectEmbeddingModel(row.providerId, row.modelId);
     return;
   }
-  if (row.kind === 'externalUrl') { LLMP.externalDraft = row.url; LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.select(); } }
+  /* ATO-505: not in use yet, the row's address is the built-in engine's or the
+     default, never the person's server, so the field opens empty with an example. */
+  if (row.kind === 'externalUrl') { LLMP.externalDraft = row.active ? row.url : ''; LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.select(); } }
 }
 /* The existing add-provider wizard (selectorHTML → wizardHTML) is the
    composer's popup: it needs SEL.open and floats above the settings window

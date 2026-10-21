@@ -95,6 +95,7 @@
 /* Short enough that the error line and Add stay in view on a 620px window; it grows by drag. */
 /* Wraps instead of scrolling sideways: a pasted one-line config is read whole. */
 textarea.tk-inp.sd-json{width:100%;height:168px;min-height:96px;font:400 12.5px/1.55 var(--font-mono);letter-spacing:0;white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:hidden;overflow-y:auto;resize:vertical}
+textarea.tk-inp.sd-json::placeholder{color:var(--ink-3);opacity:.7}
 
 /* ---- Telegram · ST-28…30 ---- */
 .sd-tgcard.tk-card.pad{width:min(480px,100%);align-self:center;gap:12px;padding:28px;margin:10px 0 4px}

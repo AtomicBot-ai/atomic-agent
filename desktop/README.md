@@ -403,9 +403,12 @@ Honestly degraded, and labelled as such in the UI:
   the standing stance with the mode control in the composer instead.
 - **Where the approval surface still diverges from the TUI's, field by field.**
   Three differences remain after the parity work above, none of them accidental:
-  (a) the desktop's `kind` row adds `— auto-approves from level N`, which the
-  TUI's modal has no counterpart for. It is kept because the desktop has no
-  always-visible ladder next to the card, and the number is the agent's own.
+  (a) the desktop's Category row adds which mode would run the request
+  unasked (`in Auto mode this runs without asking` for level 2,
+  `runs without asking only in Bypass mode` above it), which the TUI's modal
+  has no counterpart for. It names the mode, not the level, because the
+  composer's mode control is the only stance the desktop shows; the agent's
+  level number stays in the row's tooltip.
   (b) the TUI closes its modal with a muted `esc abort run · ctrl+c stop
   everything` line; the desktop draws an **Abort run** button with an `⎋` keycap
   instead, and has no ctrl+c equivalent — there is no run to interrupt from a
