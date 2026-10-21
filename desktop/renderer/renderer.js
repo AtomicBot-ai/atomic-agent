@@ -16,12 +16,11 @@ const THIS_MACHINE_CAP = IS_MAC ? 'This Mac' : 'This computer';
 /** A chord as this platform spells it. The app writes chords the Mac way
     ('⌥ ⌘ E'); off macOS ⌘ reads Ctrl, and the Option-chords read Ctrl
     Shift, which is what the menu binds there (menu.ts: Ctrl+Alt is AltGr
-    on Windows). '⌘ ⌫' has no binding off macOS, so it is not shown. */
+    on Windows). */
 function kbd(s) {
   if (IS_MAC || !s) return s;
   const str = String(s);
   if (!/[⌘⌥⌃⇧]/.test(str)) return str === '⌫' ? 'Backspace' : str;
-  if (/^⌘\s*⌫$/.test(str)) return '';
   const mods = [];
   if (/[⌘⌃]/.test(str)) mods.push('Ctrl');
   if (/[⇧⌥]/.test(str)) mods.push('Shift');
@@ -1835,7 +1834,7 @@ const PAL = [
     ['plus','New chat','','⌘ N','session:new'],
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
-    ['x','Clear transcript','','⌘ ⌫','clear'],
+    ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
   ]],

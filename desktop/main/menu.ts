@@ -120,9 +120,9 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
            physical key on any layout (ATO-226: ⌘. is ⌘ю on a Russian one). */
         { ...item("Send", "send", "CommandOrControl+Return"), registerAccelerator: false },
         { ...item("Stop", "stop", "CommandOrControl+."), registerAccelerator: false },
-        // Not off macOS: Ctrl+Backspace is delete-previous-word in every
-        // Windows and Linux text field, and here it would wipe the transcript.
-        item("Clear Transcript", "clear", mac ? "CommandOrControl+Backspace" : undefined),
+        // No accelerator (ATO-470): ⌘⌫ is delete-to-line-start in a Mac text
+        // field and Ctrl+Backspace delete-previous-word elsewhere.
+        item("Clear Transcript", "clear"),
         sep,
         item("Choose Model…", "selector:model", "Shift+CommandOrControl+M"),
         // The TUI's "Where it runs…" submenu (menu-registry.ts run.type): the
