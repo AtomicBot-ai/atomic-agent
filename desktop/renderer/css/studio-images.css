@@ -3,12 +3,11 @@
    The shared frame is studio.css. */
 
 .st-modes{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;border-radius:var(--r-panel);background:var(--well)}
-.st-mode{height:30px;border:0;border-radius:var(--r-pill);background:transparent;font-size:12.5px;color:var(--ink-2);position:relative;cursor:pointer}
+.st-mode{height:30px;border:0;border-radius:var(--r-pill);background:transparent;font-size:12.5px;color:var(--ink-2);position:relative;cursor:pointer;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .st-mode:hover{background:var(--hover)}
 .st-mode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-card);font-weight:600}
 .st-mode.off{color:color-mix(in srgb,var(--ink-3) 60%,transparent);cursor:not-allowed}
 .st-mode.off:hover{background:transparent}
-.st-mode.off::after{content:"";position:absolute;right:7px;top:7px;width:5px;height:5px;border-radius:50%;background:var(--ink-3);opacity:.5}
 
 .st-aspects{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
 .st-asp{height:58px;border-radius:var(--r-well);background:var(--well);border:1px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;color:var(--ink-2);cursor:pointer}
