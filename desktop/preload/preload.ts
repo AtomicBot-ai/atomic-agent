@@ -154,6 +154,10 @@ contextBridge.exposeInMainWorld("atomic", {
   // Chat review Д23: which paths a reply names are files in the home folder, and opening one
   replyPaths: (paths: string[]) => ipcRenderer.invoke("app:replyPaths", paths),
   openReplyPath: (path: string) => ipcRenderer.invoke("app:openReplyPath", path),
+  // Studio's "From chat" clip: Show in Finder / Save As… for a reply's file in the home folder.
+  // {ok:true[, path]} | {ok:false, reason:'missing'|'outside'|'not-a-file'|'canceled'|'failed'}
+  replyReveal: (path: string) => ipcRenderer.invoke("app:replyReveal", path),
+  replySaveAs: (path: string) => ipcRenderer.invoke("app:replySaveAs", path),
   // ATO-408: a picture file as a data: URL (CSP allows only data: images), and the
   // image viewer's Save As… / Reveal. Shared with ATO-404–406 (the person's attachments):
   // {ok:true, dataUrl} | {ok:false, reason:'missing'|'too-large'|'outside'}

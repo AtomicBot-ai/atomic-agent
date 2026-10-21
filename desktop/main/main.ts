@@ -1930,6 +1930,38 @@ function wireIpc(client: AgentClient): void {
     return err ? { ok: false, error: err } : { ok: true };
   };
   ipcMain.handle("app:openReplyPath", (_event, p: unknown) => openReplyPathNow(p));
+  /* Studio's "From chat" clip (video.generate saves into the working folder,
+     not Studio's): Show in Finder and Save As… for a file a reply named, by
+     the same check as its chip — a file inside the home folder, links
+     resolved — and Save As… copies the very file the check passed. */
+  const replyFileNow = async (p: unknown): Promise<{ ok: true; abs: string } | { ok: false; reason: string }> => {
+    const v = await replyPathVerdict(p, homedir(), process.platform);
+    if (!v.ok || !v.abs) return { ok: false, reason: v.why === "missing" ? "missing" : "outside" };
+    if (v.kind !== "file") return { ok: false, reason: "not-a-file" };
+    return { ok: true, abs: v.abs };
+  };
+  ipcMain.handle("app:replyReveal", async (_event, p: unknown) => {
+    const f = await replyFileNow(p);
+    if (!f.ok) return f;
+    shell.showItemInFolder(f.abs);
+    return { ok: true };
+  });
+  ipcMain.handle("app:replySaveAs", async (event, p: unknown) => {
+    const f = await replyFileNow(p);
+    if (!f.ok) return f;
+    try {
+      const { basename } = await import("node:path");
+      const owner = BrowserWindow.fromWebContents(event.sender) ?? win;
+      const opts = { defaultPath: basename(f.abs) };
+      const picked = owner ? await dialog.showSaveDialog(owner, opts) : await dialog.showSaveDialog(opts);
+      if (picked.canceled || !picked.filePath) return { ok: false, reason: "canceled" };
+      const { copyFile } = await import("node:fs/promises");
+      await copyFile(f.abs, picked.filePath);
+      return { ok: true, path: picked.filePath };
+    } catch (e) {
+      return { ok: false, reason: "failed", error: e instanceof Error ? e.message : String(e) };
+    }
+  });
 
   // Chat review Д23: a reply chip's menu (`fromReply`) is offered only while
   // its path is a file inside the home folder, and its Open asks again.

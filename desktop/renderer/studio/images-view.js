@@ -283,7 +283,22 @@ function simgvRecipe(item) {
     + '<div class="st-kv">' + kv.map(([k, v]) => '<span>' + esc(k) + '</span><b>' + esc(v) + '</b>').join('') + '</div></div>';
 }
 
+/** A picture opened from a chat that Studio did not make: no recipe, pin or delete. */
+function simgvFromChat(item) {
+  const name = String(item.path).split(/[\\/]/).pop() || item.path;
+  return '<div class="st-vbar"><span class="st-glass">From chat</span><span class="st-glass st-name" title="' + esc(item.path) + '">' + esc(name) + '</span><span class="st-sp"></span></div>'
+    + '<div class="st-shot" data-pic="' + esc(item.path) + '" data-full="1"></div>'
+    + '<div class="st-actions">'
+      + '<button ' + SIMGV_A('saveas') + '>' + ic('download') + 'Save as…</button>'
+      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + 'Show in Finder</button>'
+      + '<button ' + SIMGV_A('copy') + '>' + ic('copy') + 'Copy</button>'
+      + '<span class="sep"></span>'
+      + '<button class="pri" ' + SIMGV_A('tochat') + '>' + ic('chat') + 'Send to chat</button>'
+    + '</div>';
+}
+
 function simgvResult(IM, item) {
+  if (item.fromChat) return simgvFromChat(item);
   const group = IM.items.filter((x) => simgJobOf(x.id) === simgJobOf(item.id));
   const n = group.findIndex((x) => x.id === item.id) + 1;
   const pos = group.length > 1 ? n + ' of ' + group.length + ' · ' : '';
@@ -310,7 +325,7 @@ function simgJobOf(id) { return String(id || '').replace(/-\d+$/, ''); }
 
 function simgvStage(IM) {
   const live = IM.job && (IM.job.state === 'queued' || IM.job.state === 'generating');
-  const item = IM.sel ? IM.items.find((x) => x.id === IM.sel) : null;
+  const item = IM.sel ? IM.items.find((x) => x.id === IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null) : null;
   if (live) return '<div class="st-viewer grid">' + (IM.form.source ? '<div class="st-blurbg" data-pic="' + esc(IM.form.source.key) + '"></div>' : '') + simgvProgress(IM) + '</div>';
   if (IM.jobErr) return '<div class="st-viewer grid">' + simgvError(IM) + '</div>';
   if (item) return '<div class="st-viewer well">' + simgvResult(IM, item) + '</div>';

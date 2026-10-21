@@ -2032,7 +2032,7 @@ for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) 
 const LIVE_TURNS = new Map();
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
   'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
@@ -2977,7 +2977,8 @@ function toolVerb(name) {
     'os.fs.diff': 'Compared files', 'os.fs.restore': 'Restored files', 'os.shell.run': 'Ran commands',
     'os.web.search': 'Searched the web', 'browser.search': 'Searched the web', 'web.search': 'Searched the web',
     'os.web.fetch': 'Opened web pages', 'browser.navigate': 'Opened web pages', 'os.http.request': 'Called a web service',
-    'vision.describe': 'Looked at images', 'image.generate': 'Generated images', 'fusion.delegate': 'Delegated tasks',
+    'vision.describe': 'Looked at images', 'image.generate': 'Generated images', 'video.generate': 'Generated a video',
+    'fusion.delegate': 'Delegated tasks',
     'os.clipboard.read': 'Read the clipboard', 'os.clipboard.write': 'Copied to the clipboard',
     'os.notify': 'Sent a notification', 'os.email.send': 'Sent an email', 'os.email.inbox': 'Checked email',
     'tasks.schedule': 'Scheduled a task', 'tasks.cron': 'Scheduled a task', 'tasks.list': 'Listed tasks',
@@ -3039,6 +3040,8 @@ function toolLine(m) {
     const k = Number.isInteger(a.count) && a.count > 1 ? a.count : 1;
     return 'Generated ' + plural(k, 'image') + (a.prompt ? ' · ' + quote(a.prompt) : '');
   }
+  // "Generated a video · 4 s · Veo 3.1 Fast": the length and the model, the money's two levers (chat-media.js).
+  if (n === 'video.generate') return esc(videoToolLine(a));
   if (n === 'fusion.delegate') {
     /* ATO-235: only whole args are counted. A live card's are clipped to 120
        characters, so its tasks come from the approval request (fzTasks, set
@@ -3132,6 +3135,7 @@ function toolIcon(name) {
   if (/search$/.test(n)) return 'search';
   if (/^(browser|os\.web|os\.http)\./.test(n)) return 'globe';
   if (n === 'vision.describe' || n === 'image.generate') return 'image';
+  if (n === 'video.generate') return 'play';
   if (n === 'fusion.delegate') return 'fusion';
   if (/^memory\./.test(n)) return 'memory';
   if (/^tasks\./.test(n)) return 'clock';
@@ -3277,6 +3281,8 @@ function toolCard(m) {
     + '</button>'
     // The failure stays readable without opening the card.
     + (failed && !m.open ? '<div class="cardsum bad">' + esc(toolErrLine(m)) + '</div>' : '')
+    // A long call's progress (tool_update, chat-media.js), while it runs.
+    + (running ? toolProgressHTML(m, esc) : '')
     + (m.open ? '<div class="cardbody">'
         + '<div class="tl-meta"><span class="mono">' + esc(m.name) + '</span>'
           + (failed ? '<span class="tl-bad">failed</span>' : '')
@@ -3304,7 +3310,7 @@ function apprCard(m) {
       : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
       : m.state === 'expired' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
-    const plain = CATEGORY_PLAIN[m.cat] || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
+    const plain = (m.cat === 'paid_generation' && m.tool === 'video.generate' ? 'make a paid cloud video' : CATEGORY_PLAIN[m.cat]) || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
       + glyph + '<span class="apprlbl"><b>' + label + '</b>' + (ok || m.state === 'denied' ? ' by you' : '') + ' · <span class="mono">' + m.at + '</span></span>'
       + '<span class="badge tk-chip tk-chip--sm" title="' + esc(m.kind) + '">' + esc(plain) + '</span></div>';
@@ -3420,6 +3426,12 @@ function apprAsk(m) {
     return q('send a ' + esc(mt[1]) + ' request to ' + apprCode(host));
   }
   if (m.cat === 'email' && (mt = /^e-mail to ([^:]+)/.exec(r))) return q('send an e-mail to ' + esc(mt[1].trim()));
+  // video.generate: "generate a paid 4-second video … with google/veo-3.1-fast (the default), billed …" (src/tools/video/generate.ts).
+  if (m.cat === 'paid_generation' && m.tool === 'video.generate') {
+    const secs = /paid (\d+)-second video/.exec(r);
+    const model = / with ([A-Za-z0-9][A-Za-z0-9._:/-]*)/.exec(r);
+    return q('make a paid ' + (secs ? secs[1] + '-second ' : '') + 'video in the cloud' + (model ? ' with ' + esc(videoModelName(model[1])) : ''));
+  }
   // Anything else: the agent's own clause, when it reads as one ("push main to origin").
   const clause = firstLine(r).split(/ — |; /)[0].trim();
   if (/^[a-z]/.test(clause) && clause.length <= 140 && !/approval required|guard|fail-closed/.test(clause)) {
@@ -3437,7 +3449,7 @@ function apprWhy(m) {
   }
   if (m.cat === 'trust_config') return 'This changes what Atomic Agent may do without asking you.';
   if (m.cat === 'fs_trash') return 'You can put them back from the Trash.';
-  if (m.cat === 'paid_generation') return 'OpenRouter charges your account for each image.';
+  if (m.cat === 'paid_generation') return m.tool === 'video.generate' ? esc(VIDEO_PAID_WHY) : 'OpenRouter charges your account for each image.';
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
     // The guard's verdict, when it flagged something ("recursive remove").
     const g = String(m.reason || '').replace(/ in \/.*$/, '').trim();
@@ -8904,7 +8916,7 @@ function liveWaitOf(rec) {
   for (const f of rec.missed) {
     if (f.kind === 'provider_waiting') w = {maxWaitMs: Number((f.payload || {}).max_wait_ms) || 0};
     else if (f.kind === 'provider_recovered') w = null;
-    else if ((f.kind === 'delta' && f.text) || (f.kind === 'reasoning_progress' && f.payload && f.payload.text) || f.kind === 'tool_progress') w = null;
+    else if ((f.kind === 'delta' && f.text) || (f.kind === 'reasoning_progress' && f.payload && f.payload.text) || f.kind === 'tool_progress' || f.kind === 'tool_update') w = null;
   }
   return w;
 }
@@ -9272,7 +9284,7 @@ function onChatEvent(ev) {
   if (ev && ev.turnId && STREAM_ERR.has(ev.turnId)) {
     const held = STREAM_ERR.get(ev.turnId);
     // Item 38: a kept frame drawn later came before or after the error as it came, and was marked then.
-    if (!LIVE_REPLAY && (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress')) held.after = true;
+    if (!LIVE_REPLAY && (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'tool_update' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress')) held.after = true;
     if (ev.kind === 'done') {
       STREAM_ERR.delete(ev.turnId);
       if (!held.after) ev = Object.assign({}, held.ev, {kind:'error', turnId:ev.turnId, deferred:true});
@@ -9514,6 +9526,16 @@ function onChatEvent(ev) {
     const card = toolResultCard(p, ev.turnId);
     if (!card) return;   // reply / finish draw no card
     toolSettle(card, p, ev.at || Date.now());
+    render();
+    return;
+  }
+  /* A long call (video.generate) saying how far it got (`event: tool_update`,
+     at most one every 20 s): the running card shows a bar and "About 42% · 2 min"
+     (chat-media.js). */
+  if (ev.kind === 'tool_update') {
+    const card = toolUpdateTarget(S.log, ev.payload, ev.turnId);
+    if (!card) return;
+    toolUpdateApply(card, ev.payload, ev.at || Date.now());
     render();
     return;
   }
@@ -20329,13 +20351,16 @@ function chatImageWhy(st, path) {
   return 'Not a picture this window can show, or no longer there.\n' + path;
 }
 
-/** A reply's own files: pictures inline, anything else a chip. */
+/** A reply's own files: pictures and videos inline, anything else a chip. */
 function replyFilesStrip(m) {
   const files = m.replyFiles || [];
   if (!files.length) return '';
-  const pics = [], chips = [];
+  const pics = [], chips = [], shown = [];
   for (const p of files) {
     const name = pathBase(p) || p;
+    // A video plays in the reply (chat-media.js); one that cannot is a chip like any file.
+    const vid = chatMediaKind(p) === 'video' ? chatVideoSlotHTML(p, esc) : null;
+    if (vid) { pics.push(vid); shown.push(p); continue; }
     const st = CHAT_IMG_EXT.test(p) ? chatImage(p) : null;
     if (st && st.state !== 'fail') {
       // A known size draws the slot at its size before the picture is put in.
@@ -20343,6 +20368,7 @@ function replyFilesStrip(m) {
       pics.push('<button class="chat-img' + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
         + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
         + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>');
+      shown.push(p);
     } else {
       chips.push('<button class="filechip' + (st ? ' unshown' : '') + '" data-file="' + esc(p) + '" data-reply="1" title="' + esc(st ? chatImageWhy(st, p) : p) + '">'
         + ic(st ? 'image' : 'file') + '<span>' + esc(name) + '</span></button>');
@@ -20351,8 +20377,8 @@ function replyFilesStrip(m) {
   return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
     + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
     + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
-    // Studio: pictures image.generate saved in Studio's folder open in its library (studio/shell.js).
-    + (pics.length && window.STUDIO ? STUDIO.openInStudioHTML(files.filter((p) => CHAT_IMG_EXT.test(p))) : '')
+    // Studio: the reply's pictures and clips open there, from its gallery or as "From chat" (studio/shell.js).
+    + (shown.length && window.STUDIO ? STUDIO.openInStudioHTML(shown) : '')
     + '</div>';
 }
 

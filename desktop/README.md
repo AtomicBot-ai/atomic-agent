@@ -45,8 +45,8 @@ generated per launch, so nothing outside this app can reach the agent.
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,
-`reasoning_progress`, `tool_progress`, `steer_undelivered`, and the error
-frame — so the transcript can draw real tool cards and a reasoning disclosure
+`reasoning_progress`, `tool_progress`, `tool_update` (a long call's progress,
+`video.generate`), `steer_undelivered`, and the error frame — so the transcript can draw real tool cards and a reasoning disclosure
 instead of a wall of text. Every one of those exists *only* because of that
 header; a second streaming caller that forgot it would get silence with no
 error to debug. One extension frame arrives **unnamed** and has to be matched

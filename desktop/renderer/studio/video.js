@@ -336,6 +336,11 @@
 
   function createPage() {
     const BR = () => (g.atomic && g.atomic.studio) || (g.BR && g.BR.studio) || null;
+    /* Studio's preview answers {ok, data:{ok, dataUrl}} (CONTRACT.md); a bare {ok, dataUrl} is taken too. */
+    const previewUrl = (r) => {
+      const d = r && r.ok ? (r.data && typeof r.data === 'object' ? r.data : r) : null;
+      return d && d.ok !== false && typeof d.dataUrl === 'string' ? d.dataUrl : '';
+    };
 
     const S = {
       root: null, shown: false,
@@ -348,6 +353,7 @@
       delArmed: null,
       pickerOpen: false, pickerQuery: '', libraryOpen: false, library: [], libThumbs: {},
       outDir: null, busy: false, notice: null,
+      focusPath: null,   // "Open in Studio" waiting for the gallery's first page
     };
     let priceTimer = null, estTimer = null;
 
@@ -395,6 +401,7 @@
       const res = await br.gallery(KIND, { offset: 0, limit: 60 });
       if (!res || !res.ok) { S.galleryError = errorText(res && res.error); paint('gallery'); return; }
       S.gallery = res.data.items || []; S.galleryTotal = res.data.total || S.gallery.length; S.galleryError = null;
+      if (S.focusPath) { const p = S.focusPath; S.focusPath = null; showResult(S.gallery.find((x) => x.path === p) || fromChatItem(p)); }
       paint('gallery');
       for (const it of S.gallery) loadThumb(it);
     }
@@ -403,8 +410,8 @@
       const br = BR();
       if (!br || !it.thumbnailPath || S.thumbs[it.id] !== undefined) return;
       S.thumbs[it.id] = null;
-      const r = await br.preview(it.thumbnailPath);
-      if (r && r.ok) { S.thumbs[it.id] = r.dataUrl; paint('gallery'); if (S.result && S.result.id === it.id) paint('stage'); }
+      const url = previewUrl(await br.preview(it.thumbnailPath));
+      if (url) { S.thumbs[it.id] = url; paint('gallery'); if (S.result && S.result.id === it.id) paint('stage'); }
     }
 
     async function loadOutDir() {
@@ -537,9 +544,48 @@
       if (br && typeof br.mediaUrl === 'function') {
         try { const u = await br.mediaUrl(item.path); S.videoSrc = typeof u === 'string' ? u : (u && u.ok && u.data && u.data.url) || (u && u.url) || ''; } catch (_) { S.videoSrc = ''; }
       }
-      if (!S.videoSrc) S.videoSrc = 'file://' + encodeURI(item.path);
+      /* The window's CSP allows media-src file:; the shell encodes the path (spaces, #, ?). */
+      if (!S.videoSrc && g.STUDIO && typeof g.STUDIO.mediaUrl === 'function') S.videoSrc = g.STUDIO.mediaUrl(item.path) || '';
+      if (!S.videoSrc) S.playError = true;
       loadThumb(item);
       paint('stage'); paint('gallery');
+    }
+
+    /** A clip Studio did not make (video.generate saves into the working folder), shown on its own. */
+    function fromChatItem(path) {
+      return { id: 'chat:' + path, path, fromChat: true, prompt: '', model: null, durationSecs: null, height: null, thumbnailPath: null, pinned: false };
+    }
+
+    /** "Open in Studio" from a chat: the gallery's clip when Studio made it, else the file itself. */
+    function focusFile(path) {
+      if (!path) return;
+      S.jobError = null; S.notice = null;
+      const hit = S.gallery.find((x) => x.path === path);
+      if (hit) { showResult(hit); return; }
+      const st = g.STUDIO;
+      if (st && typeof st.isStudioFile === 'function' && st.isStudioFile(path, KIND)) { S.focusPath = path; loadGallery(); return; }
+      showResult(fromChatItem(path));
+    }
+
+    /** Save as… / Show in Finder: Studio's routes for its clips, the reply-file routes (home folder) for one from a chat. */
+    function fileAction(what) {
+      const it = S.result;
+      if (!it) return;
+      const say = (r, verb) => {
+        if (r && r.ok && (verb !== 'save' || (r.data ? r.data.saved !== false : true))) return;
+        if (r && (r.reason === 'canceled' || (r.data && r.data.saved === false))) return;
+        S.notice = (r && r.error && r.error.message) || (verb === 'save' ? 'Could not save it. The clip may have been moved.' : 'Could not show it. The clip may have been moved.');
+        paint('stage');
+      };
+      if (it.fromChat) {
+        const a = g.atomic || {};
+        const fn = what === 'save' ? a.replySaveAs : a.replyReveal;
+        if (typeof fn === 'function') Promise.resolve(fn(it.path)).then((r) => say(r, what), () => say(null, what));
+        return;
+      }
+      const br = BR();
+      if (!br) return;
+      Promise.resolve(what === 'save' ? br.saveAs(it.path) : br.revealInFinder(it.path)).then((r) => say(r, what), () => say(null, what));
     }
 
     function restore(item) {
@@ -569,8 +615,8 @@
       S.form.firstFrame = { path, name: name || path.split('/').pop(), from: from || '', dataUrl: '' };
       paint('form');
       if (br) {
-        const r = await br.preview(path);
-        if (r && r.ok && S.form.firstFrame && S.form.firstFrame.path === path) { S.form.firstFrame.dataUrl = r.dataUrl; paint('form'); }
+        const url = previewUrl(await br.preview(path));
+        if (url && S.form.firstFrame && S.form.firstFrame.path === path) { S.form.firstFrame.dataUrl = url; paint('form'); }
       }
       saveForm(); refreshQuote(); paint('foot');
     }
@@ -597,7 +643,7 @@
         const p = it.thumbnailPath || it.path;
         if (S.libThumbs[it.id] !== undefined) continue;
         S.libThumbs[it.id] = null;
-        br.preview(p).then((x) => { if (x && x.ok) { S.libThumbs[it.id] = x.dataUrl; if (S.libraryOpen) paint('form'); } });
+        br.preview(p).then((x) => { const url = previewUrl(x); if (url) { S.libThumbs[it.id] = url; if (S.libraryOpen) paint('form'); } });
       }
     }
 
@@ -668,8 +714,8 @@
         case 'generate': generate(); break;
         case 'stop': stop(); break;
         case 'dismiss': S.jobError = null; S.notice = null; paint('stage'); paint('foot'); break;
-        case 'save-as': S.result && BR() && BR().saveAs(S.result.path); break;
-        case 'reveal': S.result && BR() && BR().revealInFinder(S.result.path); break;
+        case 'save-as': fileAction('save'); break;
+        case 'reveal': fileAction('reveal'); break;
         case 'copy-path': S.result && copyPath(S.result.path); break;
         case 'restore': S.result && restore(S.result); break;
         case 'send': S.result && sendToChat(S.result); break;
@@ -679,7 +725,7 @@
         case 'del': del(v); break;
         case 'out-dir': chooseDir(); break;
         case 'retry-catalog': loadCatalog(); break;
-        case 'settings': if (g.STUDIO && typeof g.STUDIO.openSettings === 'function') g.STUDIO.openSettings('providers'); else try { g.dispatchEvent(new g.CustomEvent('studio:open-settings', { detail: { pane: 'providers' } })); } catch (_) { /* no window */ } break;
+        case 'settings': if (g.STUDIO && typeof g.STUDIO.openSettings === 'function') g.STUDIO.openSettings('openrouter'); else try { g.dispatchEvent(new g.CustomEvent('studio:open-settings', { detail: { pane: 'openrouter' } })); } catch (_) { /* no window */ } break;
         default: return;
       }
       if (ev) ev.preventDefault();
@@ -935,17 +981,36 @@
 
     function viewResult() {
       const it = S.result;
+      if (it.fromChat) return viewFromChat(it);
       const poster = S.thumbs[it.id] ? ' poster="' + escHtml(S.thumbs[it.id]) + '"' : '';
       const meta = [it.model && it.model.name, it.durationSecs ? Math.round(it.durationSecs) + ' s' : '', it.height ? it.height + 'p' : '', 'MP4'].filter(Boolean).join(' · ');
       let h = '<div class="studio-viewer studio-video-result">';
       h += S.playError
-        ? '<div class="studio-video-noplay">' + (S.thumbs[it.id] ? '<img alt="" src="' + escHtml(S.thumbs[it.id]) + '">' : '') + '<span>This clip can\'t play inside the app yet. Open it from Finder.</span></div>'
+        ? '<div class="studio-video-noplay">' + (S.thumbs[it.id] ? '<img alt="" src="' + escHtml(S.thumbs[it.id]) + '">' : '') + '<span>' + NO_PLAY + '</span></div>'
         : '<video class="studio-video-player" controls preload="metadata"' + poster + ' src="' + escHtml(S.videoSrc) + '"></video>';
       h += '<div class="studio-below"><span class="studio-meta">' + escHtml(meta) + '</span>'
         + '<button class="studio-btn" data-vact="save-as">' + icon('download') + 'Save as…</button>'
         + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + 'Show in Finder</button>'
         + '<button class="studio-btn" data-vact="copy-path">' + icon('copy') + 'Copy path</button>'
         + '<button class="studio-btn" data-vact="restore">' + icon('undo') + 'Restore these settings</button>'
+        + '<button class="studio-btn pri" data-vact="send">' + icon('send') + 'Send to chat</button></div></div>';
+      return h;
+    }
+
+    /* A clip that will not play: gone since, or a codec Chromium does not have. */
+    const NO_PLAY = 'This clip can\'t play here. It may have been moved, or its format isn\'t supported. Show in Finder opens it in another player.';
+
+    function viewFromChat(it) {
+      const name = String(it.path).split(/[\\/]/).pop() || it.path;
+      let h = '<div class="studio-viewer studio-video-result">';
+      h += S.playError
+        ? '<div class="studio-video-noplay"><span>' + NO_PLAY + '</span></div>'
+        : '<video class="studio-video-player" controls preload="metadata" src="' + escHtml(S.videoSrc) + '"></video>';
+      if (S.notice) h += '<div class="studio-notebox">' + icon('info') + '<span>' + escHtml(S.notice) + '</span></div>';
+      h += '<div class="studio-below"><span class="studio-meta" title="' + escHtml(it.path) + '">From chat · ' + escHtml(name) + '</span>'
+        + '<button class="studio-btn" data-vact="save-as">' + icon('download') + 'Save as…</button>'
+        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + 'Show in Finder</button>'
+        + '<button class="studio-btn" data-vact="copy-path">' + icon('copy') + 'Copy path</button>'
         + '<button class="studio-btn pri" data-vact="send">' + icon('send') + 'Send to chat</button></div></div>';
       return h;
     }
@@ -1048,6 +1113,7 @@
         loadGallery();
       },
       onHide() { S.shown = false; S.pickerOpen = false; S.libraryOpen = false; },
+      focusFile,
       _state: S,
     };
     return page;

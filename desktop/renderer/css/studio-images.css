@@ -40,3 +40,5 @@
 /* the picture in the viewer: as large as fits, its own shape */
 .st-shot{position:relative;height:calc(100% - 120px);max-width:calc(100% - 28px);aspect-ratio:1;border-radius:14px;overflow:hidden;box-shadow:0 30px 60px -30px rgba(0,0,0,.8);background:var(--panel-2)}
 .st-shot .st-img{object-fit:contain;background:var(--well)}
+/* a picture opened from a chat that Studio did not make */
+.st-glass.st-name{display:inline-block;line-height:30px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

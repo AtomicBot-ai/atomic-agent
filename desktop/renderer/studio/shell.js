@@ -15,7 +15,17 @@
    Loaded before renderer.js and declares one global, window.STUDIO; it reads
    renderer.js globals (S, act, render, renderSidebar, ic, esc, P) only when a
    function runs. renderer.js calls sidebarHTML / mount / leave / act / key /
-   openInStudioHTML at its Studio hooks. Shapes: studio/CONTRACT.md. */
+   openInStudioHTML at its Studio hooks. Shapes: studio/CONTRACT.md.
+
+   Shared with the pages:
+     STUDIO.mediaUrl(path)        a file: URL for <video src> (CSP media-src file:)
+     STUDIO.sendToChat(target)    target: a path or {path, name?}; the chat on screen
+                                  (an empty new one when none) gets it: a picture as an
+                                  attachment, anything else as its path in the message box
+     STUDIO.openSettings(section) Settings › Models on the cloud providers, so an
+                                  OpenRouter key can be added ('openrouter' starts that setup)
+   The pure helpers (fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath) are
+   exported under Node for test/studio-shell.test.mjs. */
 (function () {
   const ORDER = ['images', 'video'];
   const PAGE_OF = {image: 'images', video: 'video'};
@@ -30,7 +40,62 @@
   let cur = 'images';
   let shown = null;
 
-  const br = () => (typeof window !== 'undefined' && window.atomic && window.atomic.studio) || null;
+  const W = typeof window !== 'undefined' ? window : globalThis;
+  const br = () => (W.atomic && W.atomic.studio) || null;
+  const VIDEO_EXT = /\.(mp4|webm|mov|m4v)$/i;
+  const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
+
+  /** 'video' | 'images' | null: the page a file opens in. */
+  function mediaKindOf(path) {
+    const p = String(path || '');
+    return VIDEO_EXT.test(p) ? 'video' : IMAGE_EXT.test(p) ? 'images' : null;
+  }
+
+  /** An absolute path as a file: URL, each segment percent-encoded ('' for anything else). */
+  function fileUrl(path) {
+    const p = String(path == null ? '' : path);
+    if (!p || /[\0\r\n]/.test(p)) return '';
+    let drive = '', rest;
+    if (/^[A-Za-z]:[\\/]/.test(p)) { drive = '/' + p.slice(0, 2); rest = p.slice(2).replace(/\\/g, '/'); }
+    else if (p[0] === '/' && p[1] !== '/') rest = p;
+    else return '';   // relative, ~, a network share (//host, \\host), a URL
+    return 'file://' + drive + rest.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+  }
+
+  /** A data: URL's bytes and type (fetch() of a data: URL is blocked by the window's connect-src 'none'). */
+  function dataUrlToBytes(url) {
+    const m = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(String(url || ''));
+    if (!m) return null;
+    const type = m[1] || 'application/octet-stream';
+    if (!m[2]) return {type, bytes: new TextEncoder().encode(decodeURIComponent(m[3]))};
+    const bin = atob(m[3]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return {type, bytes};
+  }
+
+  /** The message box with a path added at the end, once. */
+  function draftWithPath(draft, path) {
+    const d = String(draft || '');
+    if (!path || d.includes(path)) return d;
+    return (d.trim() ? d.replace(/\s+$/, '') + ' ' : '') + path + ' ';
+  }
+
+  /** The picture as a data: URL: Studio's own preview for its files, the chat's reader for any other (home, agent, temp folders). */
+  async function pictureDataUrl(path) {
+    const s = br();
+    if (s && s.preview && STUDIO.isStudioFile(path, 'image')) {
+      const r = await Promise.resolve(s.preview(path)).catch(() => null);
+      const d = r && r.ok ? r.data : null;
+      if (d && d.ok && typeof d.dataUrl === 'string') return d.dataUrl;
+    }
+    const a = W.atomic;
+    if (a && a.imageDataUrl) {
+      const r = await Promise.resolve(a.imageDataUrl(path)).catch(() => null);
+      if (r && r.ok && typeof r.dataUrl === 'string') return r.dataUrl;
+    }
+    return null;
+  }
   const safe = (fn, ...args) => { try { return typeof fn === 'function' ? fn(...args) : undefined; } catch (e) { console.error('[studio]', e); return undefined; } };
 
   function icon(name) {
@@ -164,18 +229,65 @@
       return false;
     },
 
-    /** Opens the library on a file Studio made (a reply's picture, "Open in Studio"). */
+    /** Opens a picture or a clip in its page ("Open in Studio" under a reply): from the
+        gallery when Studio made it, otherwise on its own, as "From chat". */
     openFile(path) {
-      const kind = /\.(mp4|webm|mov|m4v)$/i.test(String(path)) ? 'video' : 'images';
+      const kind = mediaKindOf(path) || 'images';
       if (!pages[kind]) return;
       STUDIO.open(kind);
       safe(pages[kind].focusFile, path);
     },
 
-    /** True for a file inside Studio's output folder for that kind. */
+    /** True for a file inside Studio's output folder for that kind ('image' | 'video'). */
     isStudioFile(path, kind) {
-      return isUnder(path, dirs[kind || (/\.(mp4|webm|mov|m4v)$/i.test(String(path)) ? 'video' : 'image')]);
+      return isUnder(path, dirs[kind || (VIDEO_EXT.test(String(path)) ? 'video' : 'image')]);
     },
+
+    /** A URL <video> can play the file from: main's, when the bridge has one, else file:. */
+    mediaUrl(path) {
+      const s = br();
+      if (s && typeof s.mediaUrl === 'function') {
+        const u = safe(s.mediaUrl, path);
+        if (typeof u === 'string' && u) return u;
+      }
+      return fileUrl(path);
+    },
+
+    /** Hands a file to the chat on screen: a picture goes in as an attachment, a clip
+        (the agent cannot watch one) as its path in the message box. Resolves true when it landed. */
+    async sendToChat(target) {
+      const path = typeof target === 'string' ? target : target && typeof target.path === 'string' ? target.path : '';
+      if (!path) return false;
+      const name = (target && typeof target === 'object' && target.name) || path.split(/[\\/]/).pop() || 'file';
+      if (typeof act === 'function') act('room:chat');
+      if (mediaKindOf(path) === 'images' && typeof attAdd === 'function') {
+        const url = await pictureDataUrl(path);
+        const got = url ? dataUrlToBytes(url) : null;
+        if (got) {
+          let file = null;
+          try { file = new File([got.bytes], name, {type: got.type}); } catch (e) { file = null; }
+          if (file) { attAdd([{file}], 'studio'); return true; }
+        }
+      }
+      if (typeof S === 'undefined') return false;
+      S.draft = draftWithPath(S.draft, path);
+      if (typeof FOCUS !== 'undefined') FOCUS.entry = true;
+      if (typeof render === 'function') render();
+      return true;
+    },
+
+    /** Settings › Models on the cloud providers. 'openrouter' opens OpenRouter's setup
+        when there is no OpenRouter provider yet (Studio's "Add a key"). */
+    openSettings(section) {
+      if (typeof act !== 'function') return;
+      act('settings:llm');
+      let known = false;
+      try { known = typeof llmCloudProviders === 'function' && llmCloudProviders().some((p) => p && (p.kind === 'openrouter' || p.id === 'openrouter')); } catch (e) { known = false; }
+      act(section === 'openrouter' && !known ? 'llm:preset:openrouter' : 'llm:mode:cloud');
+    },
+
+    /** A data: URL as {type, bytes}; null when it is not one. */
+    dataUrlToBytes,
 
     /** Re-read the output folders (after Settings changes one). */
     refreshDirs() {
@@ -186,15 +298,20 @@
       }
     },
 
-    /** The chat's "Open in Studio" button under a reply's pictures that Studio made. */
+    /** The chat's "Open in Studio" button under a reply's pictures and clips: the first one
+        Studio made, else the first one (an agent tool saves into the working folder). */
     openInStudioHTML(paths) {
-      const hit = (paths || []).find((p) => STUDIO.isStudioFile(p));
-      if (!hit || !pages[/\.(mp4|webm|mov|m4v)$/i.test(hit) ? 'video' : 'images']) return '';
+      const media = (paths || []).filter((p) => { const k = mediaKindOf(p); return k && pages[k]; });
+      const hit = media.find((p) => STUDIO.isStudioFile(p)) || media[0];
+      if (!hit) return '';
       return '<div class="replyfiles-studio"><button class="btn btn-s sm" data-act="studio:file:' + esc(hit) + '">'
         + icon('open') + 'Open in Studio</button></div>';
     },
+
+    _pure: {fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath},
   };
 
+  if (typeof module !== 'undefined' && module.exports) module.exports = STUDIO;
   if (typeof window !== 'undefined') {
     window.STUDIO = STUDIO;
     const s = br();
