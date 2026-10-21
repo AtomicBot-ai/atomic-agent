@@ -16,12 +16,11 @@ const THIS_MACHINE_CAP = IS_MAC ? 'This Mac' : 'This computer';
 /** A chord as this platform spells it. The app writes chords the Mac way
     ('⌥ ⌘ E'); off macOS ⌘ reads Ctrl, and the Option-chords read Ctrl
     Shift, which is what the menu binds there (menu.ts: Ctrl+Alt is AltGr
-    on Windows). '⌘ ⌫' has no binding off macOS, so it is not shown. */
+    on Windows). */
 function kbd(s) {
   if (IS_MAC || !s) return s;
   const str = String(s);
   if (!/[⌘⌥⌃⇧]/.test(str)) return str === '⌫' ? 'Backspace' : str;
-  if (/^⌘\s*⌫$/.test(str)) return '';
   const mods = [];
   if (/[⌘⌃]/.test(str)) mods.push('Ctrl');
   if (/[⇧⌥]/.test(str)) mods.push('Shift');
@@ -1843,7 +1842,7 @@ const PAL = [
     ['plus','New chat','','⌘ N','session:new'],
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
-    ['x','Clear transcript','','⌘ ⌫','clear'],
+    ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
   ]],
@@ -2754,6 +2753,16 @@ function replyDot(m) {
   }
   return '';
 }
+/** Whether m is the chat's last real reply. The desktop's own "(no reply)"
+    / "(stopped)" backfill is not a reply, as for replyDot. */
+function isLastReply(m) {
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const x = S.log[i];
+    if (x.k !== 'assistant' || x.placeholder) continue;
+    return x.id === m.id;
+  }
+  return false;
+}
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2769,12 +2778,12 @@ function msgActs(m) {
      permanently missing from the last reply of every finished turn. */
   if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '<div class="msgacts"></div>';
   if (!text.trim()) return '';
-  /* Calm (S3): the actions appear on hover or keyboard focus on EVERY
-     message, the last one included. An earlier pass had pinned the last message's row
-     open with labels ("Copy", "Send again"); the spec's reading of the
-     reference apps is that a reply is plain prose until it is pointed at.
-     The names live on in each button's tooltip and aria-label. */
-  const cls = 'msgacts';
+  /* Calm (S3): the actions appear on hover or keyboard focus on every
+     message. ATO-463: except under the LAST reply, where the row stays
+     shown, so a newcomer sees there is something to do with an answer
+     without having to find the hover. Icons only; the names live in each
+     button's tooltip and aria-label. */
+  const cls = m.k === 'assistant' && isLastReply(m) ? 'msgacts msgacts-last' : 'msgacts';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
     + ic('copy') + '</button>';
   if (m.k !== 'user') return '<div class="' + cls + '">' + copy + '</div>';
@@ -6918,8 +6927,9 @@ document.addEventListener('click', (e) => {
     return;
   }
   // ATO-666: Copy in a code block's header copies that block's code, as written.
+  // ATO-728: a CRLF reply's lines go out as plain \n, with no stray \r at their ends.
   const mdc = t.closest('[data-mdcopy]');
-  if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\n$/, '') : '', 'Code copied'); return; }
+  if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '', 'Code copied'); return; }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -24714,7 +24724,7 @@ function hfMirrorOpen(st) {
   return !!(st.saved || (s && (s.configured || s.override)) || (typeof st.draft === 'string' && st.draft.trim()));
 }
 function hfMirrorFold(html) {
-  return '<details class="hfm-fold"' + (hfMirrorOpen(HFM) ? ' open' : '') + '><summary class="hfm-sum">Advanced</summary>' + html + '</details>';
+  return '<details class="hfm-fold"' + (hfMirrorOpen(HFM) ? ' open' : '') + '><summary class="hfm-sum">' + ic('chevR') + 'Advanced</summary>' + html + '</details>';
 }
 document.addEventListener('toggle', (e) => {
   const t = e.target;
@@ -25697,6 +25707,12 @@ function llmKey(e, k, inText) {
      list that was llmPrimary(undefined). */
   if ((k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'BUTTON'
       && e.target.closest && e.target.closest('#settings')) return true;
+  /* ATO-728: Enter or Space on a focused button of the reference step
+     (Clear, Back to the list, Look it up, the mirror's Save) presses that
+     button, natively, as anywhere else; the branch below would otherwise
+     turn Enter into a lookup and swallow Space. */
+  if (LLMHF.open && LLMHF.step !== 'pick' && (k === 'Enter' || k === ' ') && !mod
+      && e.target.tagName === 'BUTTON' && e.target.closest && e.target.closest('.llm-hf')) return true;
   if (inText || mod) return false;
   if (LLMP.confirm) {
     if (k === 'y') { e.preventDefault(); llmAct('confirm'); return true; }

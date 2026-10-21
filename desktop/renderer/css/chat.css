@@ -344,10 +344,13 @@
    click; the moment the turn is hovered both come back. No transition, so what
    the row is at any instant is unambiguous. The hover-less media query pins
    them open on a touch surface, where there is no hover to reveal them with.
-   The smoke reads the reveal rule's own text — keep it exactly as written. */
+   The smoke reads the reveal rule's own text — keep it exactly as written.
+   ATO-463: the last reply's row is the one exception, shown at rest (below). */
 .msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:8px;opacity:0;pointer-events:none}
 .turn:hover .msgacts,.msgacts:focus-within{opacity:1;pointer-events:auto}
 @media (hover:none){.msgacts{opacity:1;pointer-events:auto}}
+/* ATO-463: the last reply's row is always shown (msgActs adds the class). */
+.msgacts.msgacts-last{opacity:1;pointer-events:auto}
 .msgact{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill);color:var(--ink-2);
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
 .msgact svg{width:14px;height:14px}

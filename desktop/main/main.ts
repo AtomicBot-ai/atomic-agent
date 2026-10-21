@@ -12431,10 +12431,10 @@ async function chromeTest(
       "opacity: 1; pointer-events: auto;",
     );
     check(
-      "item 4: hidden at rest, revealed by hover or keyboard, and revealing shifts nothing",
-      // Calm (S3): the LAST message too — its row is no longer pinned open.
+      "item 4: hidden at rest, revealed by hover or keyboard, and revealing shifts nothing; the last reply's row stays shown",
+      // ATO-463: the LAST reply's row is pinned open; the user message's stays on hover.
       !!userActs && userActs.opacity === "0" && userActs.events === "none" && userActs.height === 22 && msgHover
-        && !!asstActs && asstActs.opacity === "0" && asstActs.events === "none" && asstActs.height === 22,
+        && !!asstActs && asstActs.opacity === "1" && asstActs.events === "auto" && asstActs.height === 22,
       `user opacity=${userActs?.opacity} pointer-events=${userActs?.events} visibility=${userActs?.vis}`
       + ` height=${userActs?.height}; last reply opacity=${asstActs?.opacity} pointer-events=${asstActs?.events}`
       + ` height=${asstActs?.height}; ${msgHoverDetail};`

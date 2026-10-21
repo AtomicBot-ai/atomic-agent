@@ -260,6 +260,11 @@
 .llm-pane .hfm-fold{padding-top:14px;border-top:1px solid var(--bd)}
 #onboarding .hfm-fold{width:100%;max-width:var(--ob-col);margin-top:18px}
 .hfm-sum{cursor:pointer;width:max-content;font-size:12.5px;font-weight:600;color:var(--ink-2);user-select:none}
+/* ATO-728: the same turning chevron as the Models pane's Advanced fold, not the system triangle. */
+.hfm-sum{display:inline-flex;align-items:center;gap:6px;list-style:none}
+.hfm-sum::-webkit-details-marker{display:none}
+.hfm-sum > svg{width:14px;height:14px;transition:transform var(--t-state) var(--ease)}
+.hfm-fold[open] > .hfm-sum > svg{transform:rotate(90deg)}
 .hfm-sum:hover,.hfm-fold[open] .hfm-sum{color:var(--ink)}
 .llm-pane .hfm{padding-top:14px;border-top:1px solid var(--bd)}
 #onboarding .hfm{width:100%;max-width:var(--ob-col);margin-top:18px}
