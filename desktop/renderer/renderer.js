@@ -12310,8 +12310,10 @@ function dlRetry(n) {
   // Main runs one pull at a time: say so rather than queue behind another tab's back.
   if (xpullOwner() || (!f.queueable && dlBusy())) {
     toast('One download at a time', 'Retry it once the download that is running has finished.', 'bad');
+    ENGF.fresh = false;   // ATO-775: the fresh install engfAct asked for did not start
     return;
   }
+  const at = DL.failed.indexOf(f), activateBefore = DL.activateAfter;
   DL.failed = DL.failed.filter((x) => x !== f);
   /* The runtime is what a landed model was missing: once it is in place, start
      that model (obActivateHeld) — the start that failed without it. Not one the
@@ -12321,7 +12323,8 @@ function dlRetry(n) {
      (obFetchProjector): before that, this start was a text-only one (D2). */
   if (f.kind === 'runtime' && DL.landed && !DL.activateAfter && !DL.switchAfter
       && !(DL.ready && DL.ready.id === DL.landed)) DL.activateAfter = DL.landed;
-  f.retry();
+  // ATO-775: a retry that refused (the engine busy) keeps its red row; it said why in a toast.
+  if (f.retry() === false) { DL.failed.splice(at, 0, f); DL.activateAfter = activateBefore; }
   render();
 }
 
@@ -12335,7 +12338,7 @@ function dlRetry(n) {
 function xpullRetry(owner) {
   if (owner.src === 'sel') return () => selPull(owner.id);
   if (owner.kind === 'runtime') {
-    return () => { const fresh = ENGF.fresh; ENGF.fresh = false; llmEngineInstall(fresh ? {fresh: true} : undefined); };
+    return () => { const fresh = ENGF.fresh; ENGF.fresh = false; return llmEngineInstall(fresh ? {fresh: true} : undefined); };
   }
   return () => llmPull(owner.llmKind, owner.id);
 }
@@ -25076,9 +25079,18 @@ async function llmBackendUpdate() {
  * engine:failure.
  */
 function llmEngineInstall(opts) {
-  if (!BR || LLMP.busy || LLMP.pulling) return;
+  if (!BR) return false;
+  /* ATO-775: a refusal says so. It used to return without a word, after a
+     Retry had already taken the red row away. A fresh install asked for and
+     not started is forgotten, so it does not fire on the next one. */
+  if (LLMP.busy || LLMP.pulling) {
+    ENGF.fresh = false;
+    if (LLMP.busy) toast('Engine is busy', 'Another engine action is running. Try again in a moment.', 'bad');
+    else toast('A download is already running', 'Try again once it has finished.', 'bad');
+    return false;
+  }
   const fresh = !!(opts && opts.fresh);
-  if (!BR.modelsUpdateStream) { llmBackendUpdate(); return; }
+  if (!BR.modelsUpdateStream) { llmBackendUpdate(); return true; }
   if (ENGF.f) ENGF.dismissed = ENGF.f.at;   // the card's question is being answered; its result says the rest
   LLMP.msg = null; LLMP.statusErr = null;
   LLMP.pulling = {kind:'runtime', id: composerEngineId() === 'atomic-core' ? 'the local engine' : 'llama.cpp'};
@@ -25093,6 +25105,7 @@ function llmEngineInstall(opts) {
       render(); llmRepaint();
     }
   }, (err) => { LLMP.pulling = null; LLMP.msg = {text: '! ' + String((err && err.message) || err)}; render(); llmRepaint(); });
+  return true;
 }
 /** The download main's refusal names (downloadRunning), in words. */
 function llmRunningWord(running) {
