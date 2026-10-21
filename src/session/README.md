@@ -28,3 +28,5 @@ Read README.md for state/retention changes; ../runtime/docs/lifecycle.md for con
 `npx vitest run src/session`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
 
 [Session compaction](session-compaction.ts) owns checkpoint validation and the shared history projection. The full transcript stays intact; semantic coverage and mechanical pack cuts have separate boundaries. Runtime owns [summarization and checkpoint persistence](../runtime/docs/compaction.md).
+
+[Session titles](session-title.ts): the namer writes `metadata.title` once, after the first answered turn, and never renames. The operator can ([session-title-user.ts](session-title-user.ts), `SessionStore.renameSession`): that title carries `metadata.titleSetByUserAt`, and `save`/`finishTurn` keep it over any copy without the stamp or with an older one, so a stale snapshot cannot undo a rename.

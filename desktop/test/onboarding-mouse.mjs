@@ -534,7 +534,7 @@ try {
   await app.js("window.__obSeed({offer:'local', outcome:'cloud'})");
   await sleep(300);
   {
-    await pick('Skip — take me to the agent');
+    await pick('Start working');
     const after = await step();
     check('a click on the skip row and Continue end the flow', after === 'finished' || after === 'import_pick', after);
   }

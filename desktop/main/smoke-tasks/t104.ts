@@ -82,7 +82,8 @@ async function run(js: Js, check: Check): Promise<void> {
       await until(() => OB.step === 'propose_second', 20000);
       out.propose = {step: OB.step, offer: OB.offer, outcome: OB.outcome,
         rows: [...document.querySelectorAll('#onboarding .ob-row .t')].map(txt)};
-      // "Set up local models too", the first row.
+      // ATO-447: "Start working" is the first row; "Set up local models too" is the second.
+      window.__obKey('down');
       window.__obKey('enter');
       await tick(150);
       out.pickStep = OB.step;
@@ -120,7 +121,7 @@ async function run(js: Js, check: Check): Promise<void> {
   check(
     "T104: after the cloud step, setup offers local models too",
     r["cloudStep"] === "cloud" && !!propose && propose.step === "propose_second" && propose.offer === "local"
-      && propose.outcome === "cloud" && propose.rows[0] === "Set up local models too",
+      && propose.outcome === "cloud" && propose.rows[0] === "Start working" && propose.rows[1] === "Set up local models too",
     show({ cloudStep: r["cloudStep"], propose }),
   );
   const data = r["data"] as { open: boolean; step: string; handOver: boolean; outcome: string | null; sources: string[];

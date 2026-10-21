@@ -217,6 +217,7 @@ import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
+import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
@@ -284,6 +285,18 @@ const FAKE_RAM_GB = (() => {
   const hit = process.argv.find((a) => a.startsWith("--fake-ram="));
   const n = hit ? Number(hit.slice("--fake-ram=".length)) : NaN;
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+})();
+
+/**
+ * TEST ONLY — `--fake-free-disk=<gb>` (ATO-507): `app:diskSpace` answers that
+ * many free gigabytes on the models disk instead of measuring it, so the
+ * "Needs 19.7 GB, 12.1 GB free on this disk." line can be driven on a machine
+ * with room to spare. Like `--fake-ram`, a flag a shipped launch never passes.
+ */
+const FAKE_FREE_DISK_GB = (() => {
+  const hit = process.argv.find((a) => a.startsWith("--fake-free-disk="));
+  const n = hit ? Number(hit.slice("--fake-free-disk=".length)) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 })();
 
 /**
@@ -1219,6 +1232,12 @@ function wireIpc(client: AgentClient): void {
       ? client.deleteSession(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
       : { ok: false, error: "id required" },
   );
+  // ATO-455: rename a chat. The agent validates the title again (1-120 chars, one line); this only refuses what is not a string at all.
+  ipcMain.handle("agent:renameSession", (_event, id: unknown, title: unknown) =>
+    typeof id === "string" && id && id.length <= 256 && typeof title === "string" && title.length <= 1024
+      ? client.renameSession(id, title).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
+      : { ok: false, error: "id and title required" },
+  );
   /* Backlog 18 (its second review): the last coding mode the window set. A
      switch's restart puts it back on the new agent before the turns waiting
      for that restart go (restartsAgent below). */
@@ -1686,6 +1705,16 @@ function wireIpc(client: AgentClient): void {
   // stand between this window and os.totalmem().
   ipcMain.handle("app:hostRam", () => FAKE_RAM_GB ?? hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
+  // ATO-507: free space on the disk models download to ({freeBytes, totalBytes, path} | null).
+  // Null when it cannot be read; the window then blocks nothing.
+  ipcMain.handle("app:diskSpace", async () => {
+    const dir = modelsDirOf(managedDataDirNow());
+    if (FAKE_FREE_DISK_GB !== null) {
+      const freeBytes = Math.round(FAKE_FREE_DISK_GB * 1024 ** 3);
+      return { freeBytes, totalBytes: Math.max(freeBytes, 512 * 1024 ** 3), path: dir };
+    }
+    return diskSpaceAt(dir).catch(() => null);
+  });
 
   // Item 6 (sidebar): pin + read state, in userData — never in the agent config.
   // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
@@ -10961,9 +10990,9 @@ async function onboardingTest(
         " Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent))",
     );
     check(
-      "wizard: the offer screen quotes the TUI's two rows",
-      proposeRows.length === 2 && proposeRows[0] === "Set up a cloud model too" &&
-        proposeRows[1] === "Skip — take me to the agent",
+      "wizard: the offer screen puts Start working first and the cloud second (ATO-447)",
+      proposeRows.length === 2 && proposeRows[0] === "Start working" &&
+        proposeRows[1] === "Add a cloud model for Fusion",
       JSON.stringify(proposeRows),
     );
 
@@ -12425,10 +12454,10 @@ async function chromeTest(
       "opacity: 1; pointer-events: auto;",
     );
     check(
-      "item 4: hidden at rest, revealed by hover or keyboard, and revealing shifts nothing",
-      // Calm (S3): the LAST message too — its row is no longer pinned open.
+      "item 4: hidden at rest, revealed by hover or keyboard, and revealing shifts nothing; the last reply's row stays shown",
+      // ATO-463: the LAST reply's row is pinned open; the user message's stays on hover.
       !!userActs && userActs.opacity === "0" && userActs.events === "none" && userActs.height === 22 && msgHover
-        && !!asstActs && asstActs.opacity === "0" && asstActs.events === "none" && asstActs.height === 22,
+        && !!asstActs && asstActs.opacity === "1" && asstActs.events === "auto" && asstActs.height === 22,
       `user opacity=${userActs?.opacity} pointer-events=${userActs?.events} visibility=${userActs?.vis}`
       + ` height=${userActs?.height}; last reply opacity=${asstActs?.opacity} pointer-events=${asstActs?.events}`
       + ` height=${asstActs?.height}; ${msgHoverDetail};`

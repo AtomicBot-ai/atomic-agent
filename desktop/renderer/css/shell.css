@@ -394,6 +394,10 @@ body.electron #window{width:100%;max-height:none;border-radius:0;box-shadow:none
 body.electron #toolbar{padding-left:96px;-webkit-app-region:drag}
 body.electron #toolbar button,
 body.electron #toolbar input{-webkit-app-region:no-drag}
+/* ATO-455: a double-click on the open chat's name renames it, so the name is
+   not a drag handle (a drag region swallows the dblclick for the window's
+   zoom). The rest of the band still drags. */
+body.electron #toolbar .tb-title b{-webkit-app-region:no-drag;cursor:default}
 /* 13.10: expanded, the lights are the sidebar's (.sb-top) and the toolbar
    starts past the sidebar. The sidebar's top row is the drag handle over its
    part of the band; its buttons are not. */

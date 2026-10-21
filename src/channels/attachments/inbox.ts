@@ -226,7 +226,7 @@ export function formatBytes(bytes: number): string {
 }
 
 const HINT_LINE =
-  "The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images.";
+  "The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images; open archives with os.fs.archive.list or os.fs.archive.extract.";
 
 /**
  * The block appended to the user message so the agent sees every file

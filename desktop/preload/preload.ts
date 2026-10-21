@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld("atomic", {
   session: (id: string) => ipcRenderer.invoke("agent:session", id),
   // item 6: DELETE /api/sessions/{id} — the sidebar's delete is a real one
   deleteSession: (id: string) => ipcRenderer.invoke("agent:deleteSession", id),
+  // ATO-455: PATCH /api/sessions/{id} — rename a chat
+  renameSession: (id: string, title: string) => ipcRenderer.invoke("agent:renameSession", id, title),
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
@@ -139,6 +141,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:traceTools", { stateDir, sessionId }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
+  // ATO-507: free space on the models disk, {freeBytes, totalBytes, path} | null
+  diskSpace: () => ipcRenderer.invoke("app:diskSpace"),
 
   /** Shell affordances. */
   chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
