@@ -5454,10 +5454,7 @@ function diagnosticsPane() {
   const rows = [
     ['App', BUILD ? BUILD.version + (BUILD.build ? ' (' + BUILD.build + ')' : '') + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
     ['Agent', S.live.binary ? short(S.live.binary) : 'not started', S.live.binary || ''],
-    ...(SET.health && SET.health.pid !== null && SET.health.busyTurns !== null
-      ? [['Agent process', 'pid ' + SET.health.pid + ' · ' + (SET.health.busyTurns === 0 ? 'idle' : SET.health.busyTurns + (SET.health.busyTurns === 1 ? ' turn running' : ' turns running')),
-          'Turns running in the agent right now, from any chat, task or bot']]
-      : []),
+    ...diagAgentRows(),
     ['State folder', short(sd), sd, sd],
     // Chat review (Д29): written as the chat and Settings › General write it.
     ['Working folder', workingDirLabel(wd), wd, wd],
@@ -5465,15 +5462,16 @@ function diagnosticsPane() {
   ];
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
   // ATO-723: `open` is the folder its Show in Finder button hands to BR.openPath.
-  DIAG.copy = rows.map(([k, v, , open]) => ({label:k, value:v || '', open:open || ''}));
+  DIAG.copy = rows.map(([k, v, , open, x]) => ({label:k, value:(x && x.copy) || v || '', open:open || ''}));
   DIAG.agentLog = diagAgentLogPath(sd);
   const reveal = fileManagerName();
   diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
     + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
     + '<div class="tk-list set-setlist set-diaglist">'
-      + rows.map(([k, v, full], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
-        + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+      + rows.map(([k, v, full, , x], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
+        + '<div class="set-diagv' + (x && x.tone ? ' set-diagv--' + x.tone : ' mono') + '" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+        + (x && x.restart ? '<button class="btn btn-s xs set-diagrestart" data-act="agent:restart">' + ic('refresh') + 'Restart</button>' : '')
         + (rows[i][3] && BR && BR.openPath ? '<button class="iconbtn sm set-copybtn set-openbtn" data-act="diag:open:' + i + '" title="' + esc(reveal) + '" aria-label="' + esc(reveal + ': ' + k) + '">' + ic('folder') + '</button>' : '')
         + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
@@ -5489,6 +5487,23 @@ function diagnosticsPane() {
       + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
     + diagLogHTML()
     + '</div>';
+}
+/* ATO-724: the agent row in plain words. Green "Running · idle" or
+   "Running · N tasks" from /health, the pid kept for the tooltip and Copy;
+   red with the agent's own error and a Restart button when it stopped or
+   is not installed. */
+function diagAgentRows() {
+  const st = S.live.state;
+  if (st === 'error' || st === 'missing-binary') {
+    const why = S.live.error || (st === 'missing-binary' ? 'The agent is not installed' : 'The agent stopped');
+    return [['Agent process', why, why, '', {tone:'bad', restart:true}]];
+  }
+  const h = SET.health;
+  if (!h || h.pid === null || h.busyTurns === null) return [];
+  const n = h.busyTurns;
+  const v = 'Running · ' + (n === 0 ? 'idle' : n + (n === 1 ? ' task' : ' tasks'));
+  return [['Agent process', v, 'Process id ' + h.pid + '. Tasks running in the agent right now, from any chat, task or bot', '',
+    {tone:'ok', copy:v + ' · pid ' + h.pid}]];
 }
 /* Д58: the model server's log, read the way Models › LLM logs read it (the
    tail of llama-server.log in the data dir `models status` names), on a 2 s

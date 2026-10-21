@@ -304,6 +304,10 @@ button.set-search:hover{border-color:var(--bd)}
 .set-diagrow .set-copybtn svg{width:14px;height:14px}
 /* ATO-723: Show in Finder sits just before Copy, so Copy keeps its column. */
 .set-diagrow .set-openbtn + .set-copybtn{margin-left:-20px}
+/* ATO-724: the agent row, green while it runs, red with Restart when it stopped. */
+.set-diagv--ok{color:var(--success);font-weight:500}
+.set-diagv--bad{color:var(--critical);font-weight:500;white-space:normal}
+.set-diagrow .set-diagrestart{flex:none}
 .set-diagacts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 /* Д55/Д57: what the screen is for, and what the report holds. */
 .set-diagintro{max-width:62ch}
