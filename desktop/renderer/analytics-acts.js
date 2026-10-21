@@ -45,7 +45,7 @@ const ANX_ACTS = (() => {
       close:L, palette:{slash:L, theme:L}, shortcuts:L, context:L, modes:L, send:L, stop:L, retry:L,
       clear:L, dump:L, report:L, 'help.report':L, tools:L, restart:L, quit:L, about:L, update:L,
       workspace:{choose:L}, analytics:L, steer:L, onboarding:{choose:L}, voice:{add:L, dismiss:L, lang:L, pick:L, reset:L, settings:L},
-      session:{new:L, switch:L, id:L}, ses:L, pin:L, unpin:L, unread:L, read:L, del:L, delask:L, sesmenu:L,
+      session:{new:L, switch:L, id:L}, ses:L, pin:L, unpin:L, unread:L, read:L, del:L, delask:L, sesmenu:L, rename:L,
       more:{chats:L, tasks:L}, task:L, toastx:L, 'turn':{continue:L}, sessmodel:{apply:L},
       copy:{reply:L, session:L}, agent:{restart:L, update:L}, jump:{appr:L}, diag:{llmlogs:L},
       dl:{cancel:L}, dlc:{cloud:L, dismiss:L, fold:L, keep:L, retry:L, switch:L, unfold:L},

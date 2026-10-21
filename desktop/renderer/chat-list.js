@@ -45,13 +45,15 @@ function chatFailedSinceRead(row, seenAt) {
 }
 
 /* The row menu's items, top to bottom. Each is the act verb it runs, its
-   label, its icon name and whether it is the destructive one. Rename is not
-   here: nothing in the desktop or the agent's session routes renames a chat. */
+   label, its icon name and whether it is the destructive one. ATO-455:
+   Rename sits above the rule, for a chat the agent has stored; a new chat's
+   stand-in (item 27) has no session to rename yet (`renamable: false`). */
 function chatMenuItems(opts) {
   const o = opts || {};
   return [
     o.pinned ? {verb: 'unpin', label: 'Unpin', icon: 'pin'} : {verb: 'pin', label: 'Pin', icon: 'pin'},
     o.unread ? {verb: 'read', label: 'Mark as read', icon: 'check'} : {verb: 'unread', label: 'Mark as unread', icon: 'unread'},
+    ...(o.renamable === false ? [] : [{verb: 'rename', label: 'Rename', icon: 'edit'}]),
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }

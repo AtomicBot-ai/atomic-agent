@@ -978,6 +978,9 @@ export class AgentClient extends EventEmitter {
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
   /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */
   deleteSession = (id: string) => this.request<unknown>("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
+  /** ATO-455: `PATCH /api/sessions/{id}` `{title}` — the operator's name for a chat; the agent's namer never replaces it. 404 "no route" on an agent from before it. */
+  renameSession = (id: string, title: string) =>
+    this.request<{ id: string; title: string | null }>("PATCH", `/api/sessions/${encodeURIComponent(id)}`, { title });
 
   // Item 7 (settings surface): the task routes the Tasks tab acts on and
   // /health for the diagnostics line. `request` is the writing sibling

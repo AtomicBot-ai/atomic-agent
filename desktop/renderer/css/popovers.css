@@ -255,3 +255,11 @@
    specificity, later sheet), so the pointer lit no row: restated here. */
 .sesmenu .sesmenu-item:hover{background:var(--hover)}
 .sesmenu-sep{height:1px;margin:4px 6px;background:var(--divider)}
+
+/* ---------------- renaming a chat (ATO-455) ----------------
+   One line over the row's name (or the toolbar's title), placed by
+   renameHTML (position:fixed). The scrim behind it is transparent and turns
+   any click outside into Save. */
+.chat-rename{box-sizing:border-box;margin:0;padding:0 6px;border:1px solid var(--brand);border-radius:6px;
+  background:var(--lift);color:var(--ink);font:inherit;font-size:13.5px;outline:none;box-shadow:var(--focus-ring)}
+.chat-rename--title{font-size:14px;font-weight:600;letter-spacing:-.01em}
