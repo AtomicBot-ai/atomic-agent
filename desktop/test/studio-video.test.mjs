@@ -202,3 +202,16 @@ test('onEvent with a finished job before render does not throw', () => {
   page.onHide();
   assert.equal(page._state.job.id, 'j');
 });
+
+test('posters: only a Studio clip without one, tried once per session', () => {
+  const clip = { id: 'job-1', path: '/data/studio/videos/job-1.webm', thumbnailPath: null };
+  assert.equal(V.needsPoster(clip, {}), true);
+  assert.equal(V.needsPoster({ ...clip, thumbnailPath: '/data/studio/videos/job-1.thumb.png' }, {}), false);
+  assert.equal(V.needsPoster(clip, { 'job-1': true }), false);
+  assert.equal(V.needsPoster({ ...clip, id: 'chat:/x.mp4', fromChat: true }, {}), false);
+  assert.equal(V.needsPoster({ ...clip, path: '' }, {}), false);
+  assert.equal(V.needsPoster(null, {}), false);
+  assert.equal(V.posterTime(8), 0.5);
+  assert.equal(V.posterTime(0.6), 0.3);
+  assert.equal(V.posterTime(NaN), 0.5);
+});

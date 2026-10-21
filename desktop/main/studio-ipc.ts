@@ -93,6 +93,13 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal
     const k = kindOf(kind), i = idOf(id);
     return k && i ? answer(() => studio.pin(k, i, on === true)) : bad("kind and item id are required");
   });
+  ipcMain.handle("studio:setPoster", (_e, id: unknown, bytes: unknown) => {
+    const i = idOf(id);
+    // A structured-clone Uint8Array (or ArrayBuffer) from the window's canvas; Core caps it at 16 MB.
+    const data = bytes instanceof Uint8Array ? bytes : bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : null;
+    if (!i || !data || data.byteLength === 0 || data.byteLength > 16 * 1024 * 1024) return bad("a video id and the poster's PNG bytes are required");
+    return answer(() => studio.setPoster(i, data));
+  });
   ipcMain.handle("studio:outputDir", (_e, kind: unknown) => {
     const k = kindOf(kind);
     return k ? answer(() => studio.outputDir(k)) : bad("kind must be 'image' or 'video'");

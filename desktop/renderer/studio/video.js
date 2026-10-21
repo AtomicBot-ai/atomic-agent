@@ -323,7 +323,25 @@
     return String(err.message || err.code || 'Something went wrong.');
   }
 
+  /**
+   * Whether the window should render a poster for this gallery clip: a Studio
+   * clip (not one opened from a chat) that Core has no poster for, and not
+   * tried already this session (a clip that will not decode stays a play icon).
+   */
+  function needsPoster(item, tried) {
+    if (!item || typeof item.id !== 'string' || !item.id || item.fromChat) return false;
+    if (item.thumbnailPath) return false;
+    if (typeof item.path !== 'string' || !item.path) return false;
+    return !(tried && tried[item.id]);
+  }
+
+  /** The time a poster frame is taken at: 0.5 s in, or the middle of a shorter clip. */
+  function posterTime(duration) {
+    return Number.isFinite(duration) && duration > 0 ? Math.min(0.5, duration / 2) : 0.5;
+  }
+
   const helpers = {
+    needsPoster, posterTime,
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
     supportsImageStart, localDims, buildRequest, blockReason, priceParams, priceLabel, generateLabel,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
@@ -406,8 +424,68 @@
       for (const it of S.gallery) loadThumb(it);
     }
 
+    /* Posters the window rendered or gave up on this session (CONTRACT.md "Video posters"). */
+    const posterTried = {};
+    let posterChain = Promise.resolve();
+
+    /** A clip without a poster: one frame drawn here, sent to Core, then shown. One clip at a time. */
+    function ensurePoster(it) {
+      const br = BR();
+      if (!br || typeof br.setPoster !== 'function' || !needsPoster(it, posterTried)) return;
+      posterTried[it.id] = true;
+      posterChain = posterChain.then(() => makePoster(it)).then(async (bytes) => {
+        if (!bytes) return;
+        const r = await br.setPoster(it.id, bytes);
+        const item = r && r.ok && r.data ? r.data : null;
+        if (!item || !item.thumbnailPath) return;
+        const g0 = S.gallery.find((x) => x.id === it.id);
+        if (g0) g0.thumbnailPath = item.thumbnailPath;
+        if (S.result && S.result.id === it.id) S.result.thumbnailPath = item.thumbnailPath;
+        delete S.thumbs[it.id];
+        loadThumb(Object.assign({}, it, { thumbnailPath: item.thumbnailPath }));
+      }).catch(() => undefined);   // no poster: the tile keeps its play icon
+    }
+
+    /** PNG bytes of a frame ~0.5 s into the clip (Core takes only a PNG), or null. */
+    function makePoster(it) {
+      const doc = g.document;
+      const src = g.STUDIO && typeof g.STUDIO.mediaUrl === 'function' ? g.STUDIO.mediaUrl(it.path) : '';
+      if (!doc || !src) return Promise.resolve(null);
+      return new Promise((resolve) => {
+        const v = doc.createElement('video');
+        let done = false;
+        const finish = (val) => {
+          if (done) return;
+          done = true;
+          g.clearTimeout(timer);
+          try { v.removeAttribute('src'); v.load(); } catch (_) { /* gone already */ }
+          resolve(val);
+        };
+        const timer = g.setTimeout(() => finish(null), 15000);
+        v.muted = true; v.preload = 'auto'; v.playsInline = true;
+        v.addEventListener('error', () => finish(null));
+        v.addEventListener('loadedmetadata', () => { try { v.currentTime = posterTime(v.duration); } catch (_) { finish(null); } });
+        v.addEventListener('seeked', () => {
+          try {
+            const w = v.videoWidth, h = v.videoHeight;
+            if (!w || !h) return finish(null);
+            const scale = Math.min(1, 640 / w);
+            const c = doc.createElement('canvas');
+            c.width = Math.max(1, Math.round(w * scale)); c.height = Math.max(1, Math.round(h * scale));
+            c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+            c.toBlob((blob) => {
+              if (!blob) return finish(null);
+              blob.arrayBuffer().then((buf) => finish(new Uint8Array(buf)), () => finish(null));
+            }, 'image/png');
+          } catch (_) { finish(null); }   // a tainted canvas or a decoder error
+        });
+        v.src = src;
+      });
+    }
+
     async function loadThumb(it) {
       const br = BR();
+      if (br && !it.thumbnailPath) { ensurePoster(it); return; }
       if (!br || !it.thumbnailPath || S.thumbs[it.id] !== undefined) return;
       S.thumbs[it.id] = null;
       const url = previewUrl(await br.preview(it.thumbnailPath));

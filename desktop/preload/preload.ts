@@ -179,6 +179,7 @@ contextBridge.exposeInMainWorld("atomic", {
       ipcRenderer.invoke("studio:gallery", kind, opts ?? {}),
     galleryDelete: (kind: "image" | "video", ids: string[]) => ipcRenderer.invoke("studio:galleryDelete", kind, ids),
     pin: (kind: "image" | "video", id: string, on: boolean) => ipcRenderer.invoke("studio:pin", kind, id, on === true),
+    setPoster: (id: string, bytes: Uint8Array) => ipcRenderer.invoke("studio:setPoster", id, bytes),
     outputDir: (kind: "image" | "video") => ipcRenderer.invoke("studio:outputDir", kind),
     chooseOutputDir: (kind: "image" | "video") => ipcRenderer.invoke("studio:chooseOutputDir", kind),
     setOutputDir: (kind: "image" | "video", path: string | null) => ipcRenderer.invoke("studio:setOutputDir", kind, path),

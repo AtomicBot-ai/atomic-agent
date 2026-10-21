@@ -63,6 +63,7 @@ Every call resolves (never rejects) to
 | `gallery(kind, { offset?=0, limit?=50 (max 200), includeArchived?=false })` | `{ items: StudioItem[], hasMore: boolean, total: number }` |
 | `galleryDelete(kind, ids: string[])` | `{ deleted: number }` (files are removed by Core, not to the Trash) |
 | `pin(kind, id, on)` | `StudioItem \| null` |
+| `setPoster(id, bytes: Uint8Array)` | `StudioItem \| null` (video, with `thumbnailPath` now set). PNG bytes only, ≤16 MB (Core refuses anything else); Core `PUT /diffusion/video/gallery/:id/poster` `{png: base64}`, kept as `<id>.thumb.png` beside the clip |
 | `outputDir(kind)` | `{ path: string, isDefault: boolean }` |
 | `chooseOutputDir(kind)` | folder dialog, then as `outputDir`; `null` when cancelled |
 | `setOutputDir(kind, path \| null)` | `null` = back to default. A string is accepted only if `chooseOutputDir` returned it this session |
@@ -441,6 +442,17 @@ written to studio.json. Core lists the gallery by reading the folder (recipe in
 the PNG or a `.json` sidecar, `.flags.json` for pins), so moved files are
 listed as they are. A file that will not move stays where it was.
 
+### Video posters
+
+Core does not decode video, so a clip has no poster until the app sends one.
+The Video page (studio/video.js) does it for every gallery clip whose
+`thumbnailPath` is null, once per clip per session, one at a time: an offscreen
+`<video>` on `STUDIO.mediaUrl(path)`, muted, seeks to 0.5 s (the middle of a
+shorter clip), draws the frame to a canvas (≤640 px wide), `toBlob('image/png')`,
+then `setPoster`. The tile then shows the poster through `preview`. Any failure
+(no decoder, a tainted canvas, Core refuses) is silent: the tile keeps its play
+icon. A clip that just finished gets one the same way.
+
 ## Price
 
 ```ts
@@ -469,7 +481,6 @@ Not bridge calls; the pages use them instead of reaching into renderer.js.
 
 ## Not in this foundation
 
-- Video posters for clips from a chat (no thumbnail until Core makes one),
-  and `PUT /diffusion/video/gallery/:id/poster`.
+- Video posters for clips from a chat (they are not gallery items).
 - Stopping an engine install, or a load, half-way.
 - Local image-to-video (Core refuses it).

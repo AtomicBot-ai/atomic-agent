@@ -537,6 +537,18 @@ export class StudioMedia {
     return normalizeItem(item, kind);
   }
 
+  /**
+   * A clip's poster, rendered by the window from a frame of the clip
+   * (`PUT /diffusion/video/gallery/:id/poster`, `{png: base64}`). Core takes
+   * only a PNG up to 16 MB and writes it as `<id>.thumb.png` beside the clip.
+   */
+  async setPoster(id: string, bytes: Uint8Array): Promise<StudioItem | null> {
+    const png = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (!isPngBytes(png) || png.length > MAX_POSTER_BYTES) throw new StudioCoreError("The poster must be a PNG up to 16 MB.", "INVALID_REQUEST");
+    const item = await (await this.ready()).call(`/diffusion/video/gallery/${encodeURIComponent(id)}/poster`, { png: png.toString("base64") }, { method: "PUT", timeoutMs: 30_000 });
+    return normalizeItem(item, "video");
+  }
+
   /* ------------------------------------------------------ output folders */
 
   async outputDir(kind: StudioKind): Promise<{ path: string; isDefault: boolean }> {
@@ -581,6 +593,14 @@ export interface LocalSectionExtra {
   modelsDir: string;
   /** The image engine as last seen (null until `localEngine` or a local job asked). */
   engine: LocalEngineStatus | null;
+}
+
+/** Core's own cap on a poster (src/diffusion/video-gallery.ts `MAX_POSTER_BYTES`). */
+const MAX_POSTER_BYTES = 16 * 1024 * 1024;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function isPngBytes(b: Buffer): boolean {
+  return b.length > PNG_MAGIC.length && b.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC);
 }
 
 function errorOf(err: unknown): { code: string; message: string } {
