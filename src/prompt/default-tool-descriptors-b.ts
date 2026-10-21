@@ -216,7 +216,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // OpenRouter key is configured (`GATED_TOOLS.video`).
     name: "video.generate",
     summary:
-      "Generate a short video clip from a text prompt, optionally starting from an image file (cloud video model on OpenRouter via Atomic Chat Core; paid per second, so it asks the user first and takes one to a few minutes). Saves an .mp4 in the working folder and returns its path; to show it, pass the path in reply.attachments. Write the prompt in English: subject, action, camera movement, style, sound.",
+      "Generate a short video clip from a text prompt, optionally starting from an image file (cloud video model on OpenRouter via Atomic Chat Core; paid per second, so it asks the user first and takes one to a few minutes). Saves an .mp4 in the working folder and returns its path; to show it, pass the path in reply.attachments. If it answers that the model is busy, tell the user and ask which listed model to use; pass `model` only when the user names one. Write the prompt in English: subject, action, camera movement, style, sound.",
     argsSchema:
       '{ prompt: string, image?: string /* path of a png|jpg|webp first frame */, duration?: number /* seconds; default 4; the default model takes 4|6|8 */, aspect?: string /* 16:9|9:16 or landscape|portrait; default 16:9 */, resolution?: string /* 720p|1080p|4K; omit for the model default */, audio?: boolean, seed?: number, model?: string /* OpenRouter video model id; omit for the default */ }',
     examples: [

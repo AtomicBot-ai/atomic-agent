@@ -11,6 +11,7 @@ import {
   DEFAULT_OPENROUTER_VIDEO_MODEL,
   listCoreVideoModels,
   runCoreVideoJob,
+  type CoreVideoModel,
   type CoreVideoOutput,
   type CoreVideoProgress,
 } from "../../local-llm/core/core-video.js";
@@ -69,9 +70,36 @@ function minutes(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/**
+ * A refusal for capacity at the provider (429, 502/503, "busy",
+ * "overloaded"): nothing was billed, and another model or a minute later
+ * may work.
+ */
+export function isProviderBusy(err: unknown): boolean {
+  if (!(err instanceof CoreVideoError)) return false;
+  if (err.code === "REMOTE_RATE_LIMITED" || err.code === "REMOTE_UNAVAILABLE") return true;
+  return err.code.startsWith("REMOTE_") && /\b(busy|overloaded|capacity|try again later)\b/i.test(err.message);
+}
+
+/**
+ * "Veo 3.1 Fast is busy ..." with up to three catalog models that can
+ * take the same clip. Core's catalog carries no prices, so none are
+ * quoted; the agent must ask the user before passing another `model`.
+ */
+export function busyMessage(modelId: string, models: readonly CoreVideoModel[], args: VideoArgs): string {
+  const busy = models.find(m => m.id === modelId)?.name ?? modelId;
+  const alternatives = models
+    .filter(m => m.id !== modelId && fitVideoToModel(args, m).ok)
+    .slice(0, 3)
+    .map(m => (m.name ? `${m.name} (${m.id})` : m.id));
+  return `${busy} is busy at OpenRouter right now (nothing was billed). Try again in a minute` +
+    (alternatives.length > 0 ? `, or use another model: ${alternatives.join(", ")}.` : ".") +
+    " Ask the user which they want before calling video.generate again; pass another model only if the user names it (prices differ by model).";
+}
+
 /** The approval sentence: what is made, where, who pays, and that stopping does not refund. */
 export function videoApprovalReason(args: VideoArgs, installFirst: boolean): string {
-  const model = args.model ?? `${DEFAULT_OPENROUTER_VIDEO_MODEL} (the default; the next catalog model if it is busy)`;
+  const model = args.model ?? `${DEFAULT_OPENROUTER_VIDEO_MODEL} (the default)`;
   const source = args.image !== undefined ? ` from ${args.image}` : "";
   return `generate a paid ${args.duration}-second video${source} on OpenRouter with ${model}, billed to the OpenRouter account, and save it in the working folder. ` +
     "Stopping the agent does not cancel the charge: once OpenRouter accepts the clip, it bills it" +
@@ -97,7 +125,7 @@ export function buildVideoGenerateTool(options: VideoGenerateToolOptions): ToolD
   const every = options.progressEveryMs ?? PROGRESS_EVERY_MS;
   return {
     name: VIDEO_GENERATE_TOOL,
-    description: "Generate a short video clip from a text prompt (optionally starting from an image) and save it as a video file in the working folder. Show it to the user by passing the returned path to reply.attachments.",
+    description: "Generate a short video clip from a text prompt (optionally starting from an image) and save it as a video file in the working folder. Show it to the user by passing the returned path to reply.attachments. A busy model is never swapped silently: ask the user before passing another model.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       let args: VideoArgs;
@@ -147,7 +175,6 @@ export function buildVideoGenerateTool(options: VideoGenerateToolOptions): ToolD
         const result = await withCore(dataDir, async (client) => {
           await registerOpenRouterMedia(client, apiKey, ctx.signal);
           const models = await listCoreVideoModels(client, "openrouter", ctx.signal);
-          const notes: string[] = [];
           const runOn = async (model: string) => {
             const fitted = fitVideoToModel(args, models.find(m => m.id === model));
             if (!fitted.ok) throw new CoreVideoError(fitted.reason, "UNSUPPORTED_BY_MODEL");
@@ -169,20 +196,16 @@ export function buildVideoGenerateTool(options: VideoGenerateToolOptions): ToolD
           };
 
           modelId = args.model ?? defaultVideoModel(models);
-          let attempt: Awaited<ReturnType<typeof runOn>>;
-          try { attempt = await runOn(modelId); }
-          catch (err) {
-            // The default model is Core's pick, not the user's: when its
-            // upstream refuses for capacity (a 429 or 502 bills nothing),
-            // the next catalog model that can take this clip gets one try.
-            const busy = err instanceof CoreVideoError && (err.code === "REMOTE_RATE_LIMITED" || err.code === "REMOTE_UNAVAILABLE");
-            const fallback = models.find(m => m.id !== modelId && fitVideoToModel(args, m).ok)?.id;
-            if (args.model || !busy || !fallback || ctx.signal.aborted) throw err;
-            notes.push(`${modelId} was busy at OpenRouter (${(err as Error).message}), so ${fallback} made it instead.`);
-            modelId = fallback;
-            attempt = await runOn(modelId);
+          try {
+            const attempt = await runOn(modelId);
+            return { output: attempt.job.outputs[0]!, notes: attempt.notes };
+          } catch (err) {
+            // Owner decision: never switch models on our own. Another model
+            // costs differently, so a busy one ends the call with the
+            // alternatives and the agent asks the user which to use.
+            if (ctx.signal.aborted || !isProviderBusy(err)) throw err;
+            throw new CoreVideoError(busyMessage(modelId, models, args), (err as CoreVideoError).code);
           }
-          return { output: attempt.job.outputs[0]!, notes: [...notes, ...attempt.notes] };
         }, { signal: ctx.signal });
 
         made = result.output;

@@ -111,19 +111,36 @@ describe("video.generate", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("moves to the next catalog model that can take the clip when the default is busy, never when the user picked it", async () => {
+  it("ends a busy model's call with alternatives to ask the user about, starting no second job", async () => {
     const core = fakeCore([VEO, TEXT_ONLY, KLING], { "google/veo-3.1-fast": "REMOTE_RATE_LIMITED" });
     const { built, report } = tool({ withCore: core.withCore });
     const result = await built.run({ prompt: "a fox", image: "frame.png" }, ctx());
-    expect(result.status).toBe("ok");
-    // The text-only model cannot start from an image, so Kling is next.
-    expect(core.submitted.map(j => j.target.model)).toEqual(["google/veo-3.1-fast", "kwaivgi/kling-v3.0-std"]);
-    expect(result.summary).toContain("made it instead");
-    expect(report).toHaveBeenCalledWith(expect.objectContaining({ model: "kwaivgi/kling-v3.0-std", outcome: "success" }));
+    expect(result.status).toBe("error");
+    expect(core.submitted.map(j => j.target.model)).toEqual(["google/veo-3.1-fast"]);
+    expect(result.summary).toMatch(/Veo 3\.1 Fast is busy at OpenRouter right now/);
+    expect(result.summary).toMatch(/Try again in a minute, or use another model: Kling 3\.0 Standard \(kwaivgi\/kling-v3\.0-std\)\./);
+    // The text-only model cannot start from an image, so it is not offered.
+    expect(result.summary).not.toContain("acme/text-only");
+    expect(result.summary).toMatch(/Ask the user/);
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({ model: "google/veo-3.1-fast", outcome: "failed", errorCode: "REMOTE_RATE_LIMITED" }));
 
     core.submitted.length = 0;
-    const picked = await built.run({ prompt: "a fox", model: "google/veo-3.1-fast" }, ctx());
-    expect(picked.status).toBe("error");
+    const picked = await built.run({ prompt: "a fox", model: "kwaivgi/kling-v3.0-std" }, ctx());
+    expect(picked.status).toBe("ok");
+    expect(core.submitted.map(j => j.target.model)).toEqual(["kwaivgi/kling-v3.0-std"]);
+  });
+
+  it("treats 'overloaded' and 'busy' answers from the provider as busy too", async () => {
+    const core = fakeCore([VEO, KLING], { "google/veo-3.1-fast": "REMOTE_REJECTED" });
+    const call = core.call.getMockImplementation()!;
+    core.call.mockImplementation(async (path: string, body?: unknown) => {
+      const answer = await call(path, body) as { job?: { error?: { message: string } } };
+      if (answer.job?.error) answer.job.error.message = "Model is overloaded, try again later";
+      return answer;
+    });
+    const result = await tool({ withCore: core.withCore }).built.run({ prompt: "a fox" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/is busy at OpenRouter right now.*Kling 3\.0 Standard/s);
     expect(core.submitted).toHaveLength(1);
   });
 
@@ -172,7 +189,8 @@ describe("approval text", () => {
   it("says it is a paid video on OpenRouter and that stopping does not cancel the charge", () => {
     const reason = videoApprovalReason(parseVideoArgs({ prompt: "a fox", duration: 8 }), false);
     expect(reason).toMatch(/paid 8-second video on OpenRouter/);
-    expect(reason).toMatch(/google\/veo-3\.1-fast/);
+    expect(reason).toMatch(/google\/veo-3\.1-fast \(the default\)/);
+    expect(reason).not.toMatch(/next catalog model|another model/);
     expect(reason).toMatch(/Stopping the agent does not cancel the charge/);
     expect(reason).not.toMatch(/Atomic Chat engine/);
     expect(videoApprovalReason(parseVideoArgs({ prompt: "a fox", image: "frame.png" }), true)).toMatch(/from frame\.png .*downloads the Atomic Chat engine/);
