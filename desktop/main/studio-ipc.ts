@@ -4,7 +4,9 @@
  *
  * Every route answers `{ok: true, data}` or `{ok: false, error: {code,
  * message, details?}}` (studio-errors.ts) and never throws at the window.
- * Job changes are pushed on `studio:job` with one `StudioJob`.
+ * Job changes are pushed on `studio:job` with one `StudioJob`; local
+ * model downloads, the image engine install and model loads on
+ * `studio:local` with one `LocalEvent` (studio-local-models.ts).
  *
  * Files: the window names a path only for files Studio made (inside its
  * output folders) or ones this process's own dialog returned
@@ -41,13 +43,15 @@ async function answer(fn: () => Promise<unknown>, cloud = false): Promise<Answer
 const bad = (message: string): Answer => ({ ok: false, error: { code: "INVALID_REQUEST", message } });
 const isCloud = (req: unknown): boolean => (req as { provider?: unknown } | null)?.provider !== "local";
 
-export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob"> & { window: () => BrowserWindow | null }): StudioMedia {
+export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal"> & { window: () => BrowserWindow | null }): StudioMedia {
+  const push = (channel: string, payload: unknown) => {
+    const w = opts.window();
+    if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
+  };
   const studio = new StudioMedia({
     ...opts,
-    emitJob: (job) => {
-      const w = opts.window();
-      if (w && !w.isDestroyed()) w.webContents.send("studio:job", job);
-    },
+    emitJob: (job) => push("studio:job", job),
+    emitLocal: (event) => push("studio:local", event),
   });
   const pricing = new StudioPricing(opts.request ?? fetch);
   /** Folders the folder dialog returned this session: the only ones setOutputDir takes. */
@@ -113,6 +117,28 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob"> & { window:
     if (typeof modelId !== "string" || (p.kind !== "image" && p.kind !== "video")) return bad("modelId and params.kind are required");
     return answer(() => pricing.price(modelId, p));
   });
+  /* Local models (studio-local-models.ts). Ids are `<family>:<quant>` from catalog().local. */
+  const artifactOf = (v: unknown): string | null => (typeof v === "string" && /^[a-z0-9][a-z0-9._-]{0,63}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v) ? v : null);
+  const workflowOf = (v: unknown): string => (typeof v === "string" && /^[a-z-]{1,32}$/.test(v) ? v : "create");
+  ipcMain.handle("studio:localDownload", (_e, id: unknown, o: unknown) => {
+    const a = artifactOf(id);
+    return a ? answer(() => studio.local.download(a, workflowOf((o as { workflow?: unknown } | null)?.workflow))) : bad("a local model id `<family>:<quant>` is required");
+  });
+  ipcMain.handle("studio:localCancel", (_e, id: unknown) => {
+    const a = artifactOf(id);
+    return a ? answer(() => studio.local.cancel(a)) : bad("a local model id `<family>:<quant>` is required");
+  });
+  ipcMain.handle("studio:localDelete", (_e, id: unknown) => {
+    const a = artifactOf(id);
+    return a ? answer(() => studio.local.remove(a)) : bad("a local model id `<family>:<quant>` is required");
+  });
+  ipcMain.handle("studio:localLoad", (_e, id: unknown, o: unknown) => {
+    const a = artifactOf(id);
+    return a ? answer(async () => ({ loaded: await studio.local.ensureLoaded(a, workflowOf((o as { workflow?: unknown } | null)?.workflow)) })) : bad("a local model id `<family>:<quant>` is required");
+  });
+  ipcMain.handle("studio:localEngine", () => answer(() => studio.local.engineStatus()));
+  ipcMain.handle("studio:localPrepare", () => answer(() => studio.local.ensureEngine()));
+  ipcMain.handle("studio:localState", () => answer(async () => studio.local.state()));
   ipcMain.handle("studio:pickImages", (event, multiple: unknown) => answer(async () => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? opts.window();
     const dialogOpts = {

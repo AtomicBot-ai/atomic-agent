@@ -11,7 +11,10 @@
  *     folder and the output folders from Settings (Core keeps them in
  *     memory only), and `PUT /cloud/providers/openrouter` with the user's
  *     OpenRouter key (again whenever the key changes);
- *   - catalog, jobs, estimate, cancel, gallery, output folders.
+ *   - catalog, jobs, estimate, cancel, gallery, output folders;
+ *   - local models (studio-local-models.ts): the download, the sd.cpp
+ *     engine and the load happen before a local job, so a local generate
+ *     or estimate needs nothing but a downloaded `<family>:<quant>`.
  */
 
 import { createHash } from "node:crypto";
@@ -19,15 +22,14 @@ import { isAbsolute, join } from "node:path";
 
 import { normalizeLocalFamilies, normalizeProviderModels, type StudioCatalogSection, type StudioKind } from "./studio-catalog.js";
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
-import { acquireStudioLease, ensureStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
+import { acquireStudioLease, connectStudioCore, ensureStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
+import type { MachineProfile } from "./studio-local.js";
+import { StudioLocalModels, type LocalEngineStatus, type LocalEvent } from "./studio-local-models.js";
 import { jobPath, StudioJobWatcher } from "./studio-jobs.js";
 import { PickedPaths, readStudioSettings, requestSources, sourceAllowed, writeStudioSettings } from "./studio-paths.js";
 import { normalizeItem, normalizeJob, toCoreImageRequest, toCoreVideoRequest, type LocalDefaults, type StudioItem, type StudioJob } from "./studio-requests.js";
 
 export const OPENROUTER_MEDIA_BASE_URL = "https://openrouter.ai/api/v1";
-/** The conf file Atomic Chat reads its local families from (diffusion-catalog-registry.ts). */
-export const DIFFUSION_CATALOG_URL = "https://raw.githubusercontent.com/AtomicBot-ai/atomic-chat-conf/main/models/diffusion.json";
-const LOCAL_CATALOG_TTL_MS = 60 * 60 * 1000;
 /** A lease is let go this long after the last followed job ends. */
 const LEASE_GRACE_MS = 60_000;
 
@@ -39,7 +41,13 @@ export interface StudioMediaDeps {
   /** The OpenRouter key image generation may send to Core, or null. Never logged. */
   openRouterKey: () => Promise<string | null>;
   emitJob: (job: StudioJob) => void;
+  /** Local model downloads, the engine install and loads (`studio:local`). */
+  emitLocal: (event: LocalEvent) => void;
   request?: typeof fetch;
+  /** Physical RAM in bytes for the fit verdict; os.totalmem() when absent. */
+  hostRamBytes?: () => number;
+  /** Re-read the Hugging Face mirror before a model download. */
+  beforeDownload?: () => void;
 }
 
 export class StudioMedia {
@@ -50,12 +58,24 @@ export class StudioMedia {
   private lease: StudioLease | null = null;
   private leaseTimer: NodeJS.Timeout | null = null;
   private connecting: Promise<StudioCoreClient> | null = null;
-  private localCatalog: { at: number; doc: unknown } | null = null;
   private lastDirs: { image?: string; video?: string } = {};
+  /** Engine installs and model loads in flight: the lease stays while any runs. */
+  private localBusy = 0;
   readonly jobs: StudioJobWatcher;
+  readonly local: StudioLocalModels;
 
   constructor(private readonly deps: StudioMediaDeps) {
     this.jobs = new StudioJobWatcher(deps.emitJob, () => this.scheduleLeaseRelease());
+    this.local = new StudioLocalModels({
+      dataDir: deps.dataDir,
+      ready: () => this.ready(),
+      hold: (fn) => this.withLease(fn),
+      running: () => connectStudioCore(deps.dataDir(), deps.coreVersion).catch(() => null),
+      emit: deps.emitLocal,
+      ...(deps.request ? { request: deps.request } : {}),
+      ...(deps.hostRamBytes ? { hostRamBytes: deps.hostRamBytes } : {}),
+      ...(deps.beforeDownload ? { beforeDownload: deps.beforeDownload } : {}),
+    });
   }
 
   private get dataFolder(): string {
@@ -112,11 +132,23 @@ export class StudioMedia {
     this.lease ??= await acquireStudioLease(client).catch(() => null);
   }
 
+  /** Hold the lease while `fn` runs (an engine install or a model load can take minutes with no job yet). */
+  private async withLease<T>(fn: () => Promise<T>): Promise<T> {
+    this.localBusy++;
+    try {
+      await this.holdLease(await this.ready());
+      return await fn();
+    } finally {
+      this.localBusy--;
+      this.scheduleLeaseRelease();
+    }
+  }
+
   private scheduleLeaseRelease(): void {
     if (this.leaseTimer) clearTimeout(this.leaseTimer);
     this.leaseTimer = setTimeout(() => {
       this.leaseTimer = null;
-      if (this.jobs.size > 0) return;
+      if (this.jobs.size > 0 || this.localBusy > 0) return;
       void this.lease?.release();
       this.lease = null;
     }, LEASE_GRACE_MS);
@@ -133,7 +165,7 @@ export class StudioMedia {
 
   /* ------------------------------------------------------------ catalog */
 
-  async catalog(kind: StudioKind): Promise<{ cloud: StudioCatalogSection & { keyMissing: boolean }; local: StudioCatalogSection }> {
+  async catalog(kind: StudioKind): Promise<{ cloud: StudioCatalogSection & { keyMissing: boolean }; local: StudioCatalogSection & LocalSectionExtra }> {
     const keyMissing = !(await this.deps.openRouterKey());
     let cloud: StudioCatalogSection;
     try {
@@ -145,23 +177,24 @@ export class StudioMedia {
     return { cloud: { ...cloud, keyMissing }, local: await this.localSection(kind) };
   }
 
-  private async localSection(kind: StudioKind): Promise<StudioCatalogSection> {
+  private async localSection(kind: StudioKind): Promise<StudioCatalogSection & LocalSectionExtra> {
     let loaded: string | null = null;
     try {
       const status = await (await this.ready()).call<{ model?: { loaded?: { modelId?: string; modality?: string } | null } }>("/diffusion/status");
       const m = status.model?.loaded;
       if (m && m.modality === kind && typeof m.modelId === "string") loaded = m.modelId;
     } catch { /* Core down: families are still listed */ }
+    const extra: LocalSectionExtra = { machine: this.local.profile(), modelsDir: this.local.modelsDir(), engine: this.local.state().engine };
     try {
-      if (!this.localCatalog || Date.now() - this.localCatalog.at > LOCAL_CATALOG_TTL_MS) {
-        const response = await (this.deps.request ?? fetch)(DIFFUSION_CATALOG_URL, { signal: AbortSignal.timeout(8_000), redirect: "follow" });
-        if (!response.ok) throw new Error(`catalog answered ${response.status}`);
-        this.localCatalog = { at: Date.now(), doc: await response.json() };
-      }
-      return { provider: "local", kind, models: normalizeLocalFamilies(this.localCatalog.doc, kind, loaded), live: false, error: null };
+      const { doc, catalog, error } = await this.local.catalog();
+      const views = await this.local.views(catalog, loaded);
+      // A family the parser refused (an unsafe path, a field it does not know) is not offered.
+      const models = normalizeLocalFamilies(doc, kind, loaded)
+        .filter((m) => views.has(m.id))
+        .map((m) => ({ ...m, local: { ...m.local!, ...views.get(m.id)! } }));
+      return { provider: "local", kind, models, live: false, error, ...extra };
     } catch (err) {
-      const models = this.localCatalog ? normalizeLocalFamilies(this.localCatalog.doc, kind, loaded) : [];
-      return { provider: "local", kind, models, live: false, error: { code: "CATALOG_UNAVAILABLE", message: err instanceof Error ? err.message : String(err) } };
+      return { provider: "local", kind, models: [], live: false, error: errorOf(err), ...extra };
     }
   }
 
@@ -179,6 +212,7 @@ export class StudioMedia {
   async generate(kind: StudioKind, raw: unknown): Promise<{ jobId: string; job: StudioJob }> {
     const cloud = (raw as { provider?: unknown } | null)?.provider !== "local";
     if (cloud && !(await this.deps.openRouterKey())) throw new StudioCoreError("No OpenRouter key.", "NO_KEY");
+    if (!cloud) await this.prepareLocal(raw);
     const client = await this.ready();
     const local = cloud ? undefined : await this.localDefaults(client, kind);
     const body = kind === "video" ? toCoreVideoRequest(raw, local) : toCoreImageRequest(raw, local);
@@ -210,9 +244,24 @@ export class StudioMedia {
   /** Local video only: Core answers what a clip costs on this machine; a provider never says (REMOTE_UNSUPPORTED). */
   async estimateVideo(raw: unknown): Promise<unknown | null> {
     if ((raw as { provider?: unknown } | null)?.provider !== "local") return null;
+    // Core estimates against the loaded model only.
+    await this.prepareLocal(raw);
     const client = await this.ready();
     const body = toCoreVideoRequest(raw, await this.localDefaults(client, "video"));
     return (await client.call<{ estimate?: unknown }>("/diffusion/video/estimate", body, { timeoutMs: 30_000 })).estimate ?? null;
+  }
+
+  /**
+   * A local request's model, downloaded, with the engine installed and the
+   * model loaded; `model` may be a bare family id (its quant on disk).
+   * The request's `model` is set to the artifact id Core loaded.
+   */
+  private async prepareLocal(raw: unknown): Promise<void> {
+    const r = raw as { model?: unknown; mode?: unknown } | null;
+    // Nothing to load for a request the mapping refuses anyway ("Pick a model first.", local image-to-video).
+    if (!r || typeof r !== "object" || typeof r.model !== "string" || !r.model || r.mode === "image-to-video") return;
+    const loaded = await this.local.ensureLoaded(r.model, typeof r.mode === "string" ? r.mode : "create");
+    (r as { model?: unknown }).model = loaded;
   }
 
   async job(kind: StudioKind, id: string): Promise<StudioJob | null> {
@@ -282,10 +331,21 @@ export class StudioMedia {
 
   dispose(): void {
     this.jobs.stop();
+    this.local.dispose();
     if (this.leaseTimer) clearTimeout(this.leaseTimer);
     void this.lease?.release();
     this.lease = null;
   }
+}
+
+/** What the local section says beside the families. */
+export interface LocalSectionExtra {
+  /** This machine as the fit sees it (RAM, the share a model may use); null when unknown. */
+  machine: MachineProfile | null;
+  /** Where local model files are kept. */
+  modelsDir: string;
+  /** The image engine as last seen (null until `localEngine` or a local job asked). */
+  engine: LocalEngineStatus | null;
 }
 
 function errorOf(err: unknown): { code: string; message: string } {

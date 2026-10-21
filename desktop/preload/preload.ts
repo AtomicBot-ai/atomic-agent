@@ -185,6 +185,16 @@ contextBridge.exposeInMainWorld("atomic", {
     saveAs: (path: string) => ipcRenderer.invoke("studio:saveAs", path),
     /** Every change of a generation this window started (progress, done, failed, stopped). */
     onJob: (cb: (job: unknown) => void) => on("studio:job", cb),
+    /* Local models: ids are `<family>:<quant>` from catalog(kind).local.models[].local.quants[].id. */
+    localDownload: (id: string, opts?: { workflow?: string }) => ipcRenderer.invoke("studio:localDownload", id, opts ?? {}),
+    localCancel: (id: string) => ipcRenderer.invoke("studio:localCancel", id),
+    localDelete: (id: string) => ipcRenderer.invoke("studio:localDelete", id),
+    localLoad: (id: string, opts?: { workflow?: string }) => ipcRenderer.invoke("studio:localLoad", id, opts ?? {}),
+    localEngine: () => ipcRenderer.invoke("studio:localEngine"),
+    localPrepare: () => ipcRenderer.invoke("studio:localPrepare"),
+    localState: () => ipcRenderer.invoke("studio:localState"),
+    /** Download progress, the image engine install, model loads: one LocalEvent per change. */
+    onLocal: (cb: (event: unknown) => void) => on("studio:local", cb),
   },
   /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */
   attachPick: (kind: "images" | "files") => ipcRenderer.invoke("attachments:pick", kind),
