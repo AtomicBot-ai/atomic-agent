@@ -38,7 +38,8 @@ interface Turn {
   category: string | null;
 }
 
-const WORK = new Set(["delta", "tool_progress", "progress_note", "reasoning_progress"]);
+// `tool_update`: a long call (video.generate) still working, so a held error was not the end.
+const WORK = new Set(["delta", "tool_progress", "tool_update", "progress_note", "reasoning_progress"]);
 const MAX_OPEN_TURNS = 64;
 
 export class ChatTurnTracker {

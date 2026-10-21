@@ -154,12 +154,57 @@ contextBridge.exposeInMainWorld("atomic", {
   // Chat review Д23: which paths a reply names are files in the home folder, and opening one
   replyPaths: (paths: string[]) => ipcRenderer.invoke("app:replyPaths", paths),
   openReplyPath: (path: string) => ipcRenderer.invoke("app:openReplyPath", path),
+  // Studio's "From chat" clip: Show in Finder / Save As… for a reply's file in the home folder.
+  // {ok:true[, path]} | {ok:false, reason:'missing'|'outside'|'not-a-file'|'canceled'|'failed'}
+  replyReveal: (path: string) => ipcRenderer.invoke("app:replyReveal", path),
+  replySaveAs: (path: string) => ipcRenderer.invoke("app:replySaveAs", path),
   // ATO-408: a picture file as a data: URL (CSP allows only data: images), and the
   // image viewer's Save As… / Reveal. Shared with ATO-404–406 (the person's attachments):
   // {ok:true, dataUrl} | {ok:false, reason:'missing'|'too-large'|'outside'}
   imageDataUrl: (path: string) => ipcRenderer.invoke("app:imageDataUrl", path),
   imageSaveAs: (path: string) => ipcRenderer.invoke("app:imageSaveAs", path),
   imageReveal: (path: string) => ipcRenderer.invoke("app:imageReveal", path),
+  /** Studio (Images + Video), main/studio-ipc.ts. Every call answers
+   *  {ok:true, data} | {ok:false, error:{code, message, details?}};
+   *  shapes in renderer/studio/CONTRACT.md. */
+  studio: {
+    catalog: (kind: "image" | "video") => ipcRenderer.invoke("studio:catalog", kind),
+    generateImage: (req: unknown) => ipcRenderer.invoke("studio:generateImage", req),
+    generateVideo: (req: unknown) => ipcRenderer.invoke("studio:generateVideo", req),
+    estimateVideo: (req: unknown) => ipcRenderer.invoke("studio:estimateVideo", req),
+    job: (kind: "image" | "video", id: string) => ipcRenderer.invoke("studio:job", kind, id),
+    activeJobs: () => ipcRenderer.invoke("studio:activeJobs"),
+    cancel: (kind: "image" | "video", id: string) => ipcRenderer.invoke("studio:cancel", kind, id),
+    gallery: (kind: "image" | "video", opts?: { offset?: number; limit?: number; includeArchived?: boolean }) =>
+      ipcRenderer.invoke("studio:gallery", kind, opts ?? {}),
+    galleryDelete: (kind: "image" | "video", ids: string[]) => ipcRenderer.invoke("studio:galleryDelete", kind, ids),
+    pin: (kind: "image" | "video", id: string, on: boolean) => ipcRenderer.invoke("studio:pin", kind, id, on === true),
+    setPoster: (id: string, bytes: Uint8Array) => ipcRenderer.invoke("studio:setPoster", id, bytes),
+    outputDir: (kind: "image" | "video") => ipcRenderer.invoke("studio:outputDir", kind),
+    chooseOutputDir: (kind: "image" | "video") => ipcRenderer.invoke("studio:chooseOutputDir", kind),
+    setOutputDir: (kind: "image" | "video", path: string | null) => ipcRenderer.invoke("studio:setOutputDir", kind, path),
+    price: (modelId: string, params: unknown) => ipcRenderer.invoke("studio:price", modelId, params),
+    pickImages: (multiple?: boolean) => ipcRenderer.invoke("studio:pickImages", multiple === true),
+    preview: (path: string) => ipcRenderer.invoke("studio:preview", path),
+    revealInFinder: (path: string) => ipcRenderer.invoke("studio:reveal", path),
+    saveAs: (path: string) => ipcRenderer.invoke("studio:saveAs", path),
+    /** Every change of a generation this window started (progress, done, failed, stopped). */
+    onJob: (cb: (job: unknown) => void) => on("studio:job", cb),
+    /* Local models: ids are `<family>:<quant>` from catalog(kind).local.models[].local.quants[].id. */
+    localDownload: (id: string, opts?: { workflow?: string }) => ipcRenderer.invoke("studio:localDownload", id, opts ?? {}),
+    localCancel: (id: string) => ipcRenderer.invoke("studio:localCancel", id),
+    localDelete: (id: string) => ipcRenderer.invoke("studio:localDelete", id),
+    localLoad: (id: string, opts?: { workflow?: string }) => ipcRenderer.invoke("studio:localLoad", id, opts ?? {}),
+    localEngine: () => ipcRenderer.invoke("studio:localEngine"),
+    localPrepare: () => ipcRenderer.invoke("studio:localPrepare"),
+    localState: () => ipcRenderer.invoke("studio:localState"),
+    /** Download progress, the image engine install, model loads: one LocalEvent per change. */
+    onLocal: (cb: (event: unknown) => void) => on("studio:local", cb),
+    /* The local chat model and local generations on one memory (main/studio-gpu-share.ts):
+       whether chat is paused for Studio, the generation running, how many are queued, chat turns held. */
+    gpuShare: () => ipcRenderer.invoke("studio:gpuShare"),
+    onGpuShare: (cb: (state: unknown) => void) => on("studio:gpuShare", cb),
+  },
   /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */
   attachPick: (kind: "images" | "files") => ipcRenderer.invoke("attachments:pick", kind),
   attachReadPicked: (path: string) => ipcRenderer.invoke("attachments:readPicked", path),

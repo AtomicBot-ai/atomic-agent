@@ -895,6 +895,11 @@ let WAIT_TICK = 0;
    (daemon-supervisor.ts): its last notice while an incident is open —
    `restarting`, `restart_failed` or `gave_up` — else null. */
 let DWATCH = null;
+/* [studio-gpu-share] What main says about local generations and the local
+   chat model sharing memory (main/studio-gpu-share.ts GpuShareState, pushed
+   on BR.studio.onGpuShare): `chat: 'yielded'` while a local generation runs
+   with the chat model paused. Null until main has said. */
+let GPUSHARE = null;
 /* ATO-244: main's word that the managed model server found no usable GPU and
    runs on the processor (main/cpu-only.ts), for the start `seq` names. Said
    once per start: on the app line as it arrives, and as the composer's strip
@@ -2032,7 +2037,7 @@ for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) 
 const LIVE_TURNS = new Map();
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
   'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
@@ -2212,6 +2217,8 @@ function renderSidebar() {
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
     + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
+    // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
+    + (window.STUDIO ? STUDIO.sidebarHTML(S.room) : '')
     + '<div class="sb-lists">'
       /* ATO-165: a "Pinned" section above Chats, only while something is
          pinned; its rows are not repeated under Chats. */
@@ -2383,7 +2390,8 @@ function chatRow(s) {
   const pinned = PREFS.pinned.includes(s.id);
   // ATO-135: a chat with messages waiting for its turn to end says so on its row, as a task row says its schedule.
   const queued = chatQueuedCount(s.id);
-  return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
+  // Studio: no chat is "open" while a Studio page is on screen.
+  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
     + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
@@ -2491,6 +2499,9 @@ function chatStatusWord(s) {
 /* ---------------- content ---------------- */
 function renderContent() {
   const c = $('#content');
+  // Studio: the shell keeps its page's DOM between renders and only mounts it when the room changes.
+  if (S.room === 'studio') { if (window.STUDIO) STUDIO.mount(c); return; }
+  if (window.STUDIO) STUDIO.leave();
   if (S.room === 'chat') {
     // Scroll-stable cards: a whole-DOM render replaces #scroller, so remember
     // where the old one was and hand it to afterChat (same capture-then-restore
@@ -2972,7 +2983,8 @@ function toolVerb(name) {
     'os.fs.diff': 'Compared files', 'os.fs.restore': 'Restored files', 'os.shell.run': 'Ran commands',
     'os.web.search': 'Searched the web', 'browser.search': 'Searched the web', 'web.search': 'Searched the web',
     'os.web.fetch': 'Opened web pages', 'browser.navigate': 'Opened web pages', 'os.http.request': 'Called a web service',
-    'vision.describe': 'Looked at images', 'image.generate': 'Generated images', 'fusion.delegate': 'Delegated tasks',
+    'vision.describe': 'Looked at images', 'image.generate': 'Generated images', 'video.generate': 'Generated a video',
+    'fusion.delegate': 'Delegated tasks',
     'os.clipboard.read': 'Read the clipboard', 'os.clipboard.write': 'Copied to the clipboard',
     'os.notify': 'Sent a notification', 'os.email.send': 'Sent an email', 'os.email.inbox': 'Checked email',
     'tasks.schedule': 'Scheduled a task', 'tasks.cron': 'Scheduled a task', 'tasks.list': 'Listed tasks',
@@ -3034,6 +3046,8 @@ function toolLine(m) {
     const k = Number.isInteger(a.count) && a.count > 1 ? a.count : 1;
     return 'Generated ' + plural(k, 'image') + (a.prompt ? ' · ' + quote(a.prompt) : '');
   }
+  // "Generated a video · 4 s · Veo 3.1 Fast": the length and the model, the money's two levers (chat-media.js).
+  if (n === 'video.generate') return esc(videoToolLine(a));
   if (n === 'fusion.delegate') {
     /* ATO-235: only whole args are counted. A live card's are clipped to 120
        characters, so its tasks come from the approval request (fzTasks, set
@@ -3127,6 +3141,7 @@ function toolIcon(name) {
   if (/search$/.test(n)) return 'search';
   if (/^(browser|os\.web|os\.http)\./.test(n)) return 'globe';
   if (n === 'vision.describe' || n === 'image.generate') return 'image';
+  if (n === 'video.generate') return 'play';
   if (n === 'fusion.delegate') return 'fusion';
   if (/^memory\./.test(n)) return 'memory';
   if (/^tasks\./.test(n)) return 'clock';
@@ -3272,6 +3287,8 @@ function toolCard(m) {
     + '</button>'
     // The failure stays readable without opening the card.
     + (failed && !m.open ? '<div class="cardsum bad">' + esc(toolErrLine(m)) + '</div>' : '')
+    // A long call's progress (tool_update, chat-media.js), while it runs.
+    + (running ? toolProgressHTML(m, esc) : '')
     + (m.open ? '<div class="cardbody">'
         + '<div class="tl-meta"><span class="mono">' + esc(m.name) + '</span>'
           + (failed ? '<span class="tl-bad">failed</span>' : '')
@@ -3299,7 +3316,7 @@ function apprCard(m) {
       : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
       : m.state === 'expired' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
-    const plain = CATEGORY_PLAIN[m.cat] || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
+    const plain = (m.cat === 'paid_generation' && m.tool === 'video.generate' ? 'make a paid cloud video' : CATEGORY_PLAIN[m.cat]) || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
       + glyph + '<span class="apprlbl"><b>' + label + '</b>' + (ok || m.state === 'denied' ? ' by you' : '') + ' · <span class="mono">' + m.at + '</span></span>'
       + '<span class="badge tk-chip tk-chip--sm" title="' + esc(m.kind) + '">' + esc(plain) + '</span></div>';
@@ -3415,6 +3432,12 @@ function apprAsk(m) {
     return q('send a ' + esc(mt[1]) + ' request to ' + apprCode(host));
   }
   if (m.cat === 'email' && (mt = /^e-mail to ([^:]+)/.exec(r))) return q('send an e-mail to ' + esc(mt[1].trim()));
+  // video.generate: "generate a paid 4-second video … with google/veo-3.1-fast (the default), billed …" (src/tools/video/generate.ts).
+  if (m.cat === 'paid_generation' && m.tool === 'video.generate') {
+    const secs = /paid (\d+)-second video/.exec(r);
+    const model = / with ([A-Za-z0-9][A-Za-z0-9._:/-]*)/.exec(r);
+    return q('make a paid ' + (secs ? secs[1] + '-second ' : '') + 'video in the cloud' + (model ? ' with ' + esc(videoModelName(model[1])) : ''));
+  }
   // Anything else: the agent's own clause, when it reads as one ("push main to origin").
   const clause = firstLine(r).split(/ — |; /)[0].trim();
   if (/^[a-z]/.test(clause) && clause.length <= 140 && !/approval required|guard|fail-closed/.test(clause)) {
@@ -3432,7 +3455,7 @@ function apprWhy(m) {
   }
   if (m.cat === 'trust_config') return 'This changes what Atomic Agent may do without asking you.';
   if (m.cat === 'fs_trash') return 'You can put them back from the Trash.';
-  if (m.cat === 'paid_generation') return 'OpenRouter charges your account for each image.';
+  if (m.cat === 'paid_generation') return m.tool === 'video.generate' ? esc(VIDEO_PAID_WHY) : 'OpenRouter charges your account for each image.';
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
     // The guard's verdict, when it flagged something ("recursive remove").
     const g = String(m.reason || '').replace(/ in \/.*$/, '').trim();
@@ -3482,6 +3505,8 @@ function composer() {
       + ((badKeyForWait(WAIT) || waitWhy(WAIT)) ? '<span class="ob-help ss-why"' + (!badKeyForWait(WAIT) && waitWhyCode(WAIT) ? ' title="' + esc(waitWhyCode(WAIT)) + '"' : '') + '>' + esc(badKeyForWait(WAIT) ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
       + '<span class="ss-grow"></span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
+      // [studio-gpu-share] the way out of a wait for Studio: stop the local generation, and chat goes next.
+      + (studioHoldsWait(WAIT) && GPUSHARE && GPUSHARE.generating ? '<button class="btn btn-g xs" data-act="studio:stopgen">Stop generation</button>' : '')
       + '</div>'
     /* Calm (S3): no busy strip. It said "Thinking 1.3s" / the running
        tool's raw id / "Writing reply" above the composer — and each of
@@ -6183,6 +6208,7 @@ function act(a) {
   if (a === 'cpu:dismiss') { CPUW.dismissed = CPUW.seq; render(); return; }
   if (a === 'cpu:cloud') { CPUW.dismissed = CPUW.seq; render(); selChooseBackend('cloud'); return; }
   if (k === 'engf') { engfAct(v || ''); return; }
+  if (a === 'studio:stopgen') { studioStopGeneration(); return; }   // [studio-gpu-share]
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -6197,6 +6223,8 @@ function act(a) {
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
+  // Studio: `studio:open:<page>`, `studio:file:<path>`, `studio:<page>:<verb>` (studio/shell.js).
+  if (k === 'studio') { close(); if (window.STUDIO) STUDIO.act(v); return; }
   if (k === 'room') {
     close();
     // Integration seam (sidebar rows, ⌘2/⌘3, palette hits, View › Tasks/Skills): lane C made the
@@ -6205,7 +6233,7 @@ function act(a) {
     // other way in still lands here: ⌘2/⌘3, the palette rows, the slash verbs and View ›
     // Tasks/Skills. The chat room closes the settings window, so ⌘1 always lands on the transcript.
     if (v === 'tasks' || v === 'skills') { act('settings:' + v); return; }
-    if (v === 'chat') S.settings = null;
+    if (v === 'chat' || v === 'studio') S.settings = null;   // Studio: a page opened from Settings or the palette is not drawn under it
     S.room = v; render(); return;
   }
   if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
@@ -7627,6 +7655,7 @@ function refreshSend() {
 /** The waiting line: who, which attempt, and how long until the next try. */
 function waitReadout() {
   if (!WAIT) return '';
+  if (studioHoldsWait(WAIT)) return '';   // [studio-gpu-share] no retries to count: it goes when Studio is done
   const left = Math.max(0, Math.round((WAIT.until - Date.now()) / 1000));
   /* Calm (S4): the provider is named in the strip's sentence, not here, and
      the time already waited is dropped: the failure line says how long the
@@ -7839,9 +7868,42 @@ async function engfAct(verb) {
   // `fresh`: main forgets the active Core's install record first, so a broken copy is downloaded again rather than kept.
   if (verb === 'retry') { if (setup) { ENGF.fresh = true; dlRetry(setup.n); } else llmEngineInstall({fresh: true}); }
 }
+/* [studio-gpu-share] A wait on the local chat model while Studio holds its
+   memory: a turn main holds for the generation (cause `studio_busy`), or an
+   agent's own wait on the local server while the chat model is paused. */
+function studioHoldsWait(wait) {
+  if (!wait) return false;
+  if (wait.cause && wait.cause.kind === 'studio_busy') return true;
+  if (!GPUSHARE || GPUSHARE.chat !== 'yielded') return false;
+  return wait.providerId ? waitIsLocalServer(wait.providerId) : tpActiveIsLocal();
+}
+function studioWaitLine(wait) {
+  if (wait && wait.cause && typeof wait.cause.line === 'string' && wait.cause.line) return wait.cause.line;
+  const kind = GPUSHARE && GPUSHARE.generating ? GPUSHARE.generating.kind : 'image';
+  return 'Waiting for Studio to finish the ' + kind + ', then the chat model loads again';
+}
+function gpuShareApply(st) {
+  GPUSHARE = st && typeof st === 'object' ? st : null;
+  render();
+}
+/** The strip's "Stop generation": the running local generation and the ones queued behind it, so chat goes next. */
+async function studioStopGeneration() {
+  if (!BR || !BR.studio || !BR.studio.cancel) return;
+  const g = GPUSHARE && GPUSHARE.generating;
+  try {
+    const listed = BR.studio.activeJobs ? await BR.studio.activeJobs() : null;
+    const queued = listed && listed.ok && Array.isArray(listed.data) ? listed.data.filter((j) => j && typeof j.id === 'string' && j.id.indexOf('q-') === 0) : [];
+    for (const q of queued) await BR.studio.cancel(q.kind, q.id);
+    if (g && g.jobId) {
+      const r = await BR.studio.cancel(g.kind, g.jobId);
+      if (r && r.ok === false) toast('Could not stop the generation', (r.error && r.error.message) || '', 'bad');
+    }
+  } catch { /* the strip stays; Studio's own Stop still works */ }
+}
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
   if (!wait) return '';
+  if (studioHoldsWait(wait)) return '';   // [studio-gpu-share] the lead says it all
   const watching = dwatchWords(wait);
   if (watching) return watching;
   const said = wait.cause ? waitCauseWords(wait.cause, wait.providerId) : null;
@@ -7883,6 +7945,7 @@ function waitPickedFailure(wait) {
 }
 /** The strip's lead: "Waiting for …", after the picked provider's failure when there was one. */
 function waitAnn(wait) {
+  if (studioHoldsWait(wait)) return studioWaitLine(wait);   // [studio-gpu-share]
   if (badKeyForWait(wait)) return 'Waiting for ' + (providerWord(selActiveProviderId()) || 'the provider');
   const first = waitPickedFailure(wait);
   return (first ? first.name + ': ' + first.why + ' · waiting for ' : 'Waiting for ') + waitProviderLabel(wait);
@@ -8075,6 +8138,8 @@ document.addEventListener('keydown', (e) => {
   }
 
   const mod = e.metaKey || e.ctrlKey;
+  // Studio: the page's own keys (⌘↩ is Generate there, never the hidden chat's Send).
+  if (S.room === 'studio' && !S.settings && !S.overlay && S.menuOpen === null && window.STUDIO && STUDIO.key(e)) return;
   // Item 7: Ctrl+Enter inside the Tasks create form submits the task, not the composer.
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
@@ -8090,7 +8155,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
-                 '.':'stop', '/':'shortcuts'};
+                 '.':'stop', '/':'shortcuts', '5':'studio:open:images', '6':'studio:open:video'};   // Studio: ⌘5 Images, ⌘6 Video
     if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
     /* ATO-224: ⌘↩ (Ctrl+↩) is Send only with nothing over the chat. With a
        dialog, a popover or a sheet open (Delete chat?, the model picker, the
@@ -8161,7 +8226,7 @@ document.addEventListener('keydown', (e) => {
     if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
     // ATO-430: an open toast goes first, so closing it never stops a running answer.
     if (S.toasts.length) { S.toasts.pop(); renderToasts(); return; }
-    if (S.busy) { abort(); return; }
+    if (S.busy && S.room !== 'studio') { abort(); return; }   // Studio: Escape on a Studio page never stops a chat's turn out of sight
     // r4-ui item 5: renderOverlays draws four surfaces that are NOT S.overlay,
     // so the gate above (S.overlay || S.settings || S.menuOpen) does not catch
     // them and Escape reaches this block with a modal on screen. The selector,
@@ -8895,7 +8960,7 @@ function liveWaitOf(rec) {
   for (const f of rec.missed) {
     if (f.kind === 'provider_waiting') w = {maxWaitMs: Number((f.payload || {}).max_wait_ms) || 0};
     else if (f.kind === 'provider_recovered') w = null;
-    else if ((f.kind === 'delta' && f.text) || (f.kind === 'reasoning_progress' && f.payload && f.payload.text) || f.kind === 'tool_progress') w = null;
+    else if ((f.kind === 'delta' && f.text) || (f.kind === 'reasoning_progress' && f.payload && f.payload.text) || f.kind === 'tool_progress' || f.kind === 'tool_update') w = null;
   }
   return w;
 }
@@ -9263,7 +9328,7 @@ function onChatEvent(ev) {
   if (ev && ev.turnId && STREAM_ERR.has(ev.turnId)) {
     const held = STREAM_ERR.get(ev.turnId);
     // Item 38: a kept frame drawn later came before or after the error as it came, and was marked then.
-    if (!LIVE_REPLAY && (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress')) held.after = true;
+    if (!LIVE_REPLAY && (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'tool_update' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress')) held.after = true;
     if (ev.kind === 'done') {
       STREAM_ERR.delete(ev.turnId);
       if (!held.after) ev = Object.assign({}, held.ev, {kind:'error', turnId:ev.turnId, deferred:true});
@@ -9412,6 +9477,14 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  if (ev.kind === 'provider_recovered' && ev.payload && ev.payload.studio) {
+    // [studio-gpu-share] main let a turn held for Studio go: the model loads now, and the agent's own wait says so.
+    WAIT = null;
+    if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
+    if (item) tpDropWaitNotes(S.streamId);
+    render();
+    return;
+  }
   if (ev.kind === 'provider_recovered') {
     WAIT = null;
     if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
@@ -9505,6 +9578,16 @@ function onChatEvent(ev) {
     const card = toolResultCard(p, ev.turnId);
     if (!card) return;   // reply / finish draw no card
     toolSettle(card, p, ev.at || Date.now());
+    render();
+    return;
+  }
+  /* A long call (video.generate) saying how far it got (`event: tool_update`,
+     at most one every 20 s): the running card shows a bar and "About 42% · 2 min"
+     (chat-media.js). */
+  if (ev.kind === 'tool_update') {
+    const card = toolUpdateTarget(S.log, ev.payload, ev.turnId);
+    if (!card) return;
+    toolUpdateApply(card, ev.payload, ev.at || Date.now());
     render();
     return;
   }
@@ -10455,6 +10538,9 @@ if (BR) {
   /* ATO-123: main brings the local model server back when it stops under a
      route that needs it. A window opened during an incident asks for it. */
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
+  // [studio-gpu-share] the chat model paused for a local generation, and what it waits for.
+  if (BR.studio && BR.studio.onGpuShare) BR.studio.onGpuShare(gpuShareApply);
+  if (BR.studio && BR.studio.gpuShare) BR.studio.gpuShare().then((r) => { if (r && r.ok) gpuShareApply(r.data); }).catch(() => {});
   // ATO-130: Settings' llama.cpp update, waiting for its turn or running.
   if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
   if (BR.onEngineFailure) BR.onEngineFailure(engfApply);
@@ -20320,13 +20406,16 @@ function chatImageWhy(st, path) {
   return 'Not a picture this window can show, or no longer there.\n' + path;
 }
 
-/** A reply's own files: pictures inline, anything else a chip. */
+/** A reply's own files: pictures and videos inline, anything else a chip. */
 function replyFilesStrip(m) {
   const files = m.replyFiles || [];
   if (!files.length) return '';
-  const pics = [], chips = [];
+  const pics = [], chips = [], shown = [];
   for (const p of files) {
     const name = pathBase(p) || p;
+    // A video plays in the reply (chat-media.js); one that cannot is a chip like any file.
+    const vid = chatMediaKind(p) === 'video' ? chatVideoSlotHTML(p, esc) : null;
+    if (vid) { pics.push(vid); shown.push(p); continue; }
     const st = CHAT_IMG_EXT.test(p) ? chatImage(p) : null;
     if (st && st.state !== 'fail') {
       // A known size draws the slot at its size before the picture is put in.
@@ -20334,6 +20423,7 @@ function replyFilesStrip(m) {
       pics.push('<button class="chat-img' + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
         + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
         + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>');
+      shown.push(p);
     } else {
       chips.push('<button class="filechip' + (st ? ' unshown' : '') + '" data-file="' + esc(p) + '" data-reply="1" title="' + esc(st ? chatImageWhy(st, p) : p) + '">'
         + ic(st ? 'image' : 'file') + '<span>' + esc(name) + '</span></button>');
@@ -20342,6 +20432,8 @@ function replyFilesStrip(m) {
   return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
     + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
     + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
+    // Studio: the reply's pictures and clips open there, from its gallery or as "From chat" (studio/shell.js).
+    + (shown.length && window.STUDIO ? STUDIO.openInStudioHTML(shown) : '')
     + '</div>';
 }
 

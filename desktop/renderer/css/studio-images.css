@@ -1,0 +1,46 @@
+/* Studio › Images: the mode tabs, shape tiles, source and mask drop zones,
+   reference strip and the big picture (studio mockup 21.10, states 1-3).
+   The shared frame is studio.css. */
+
+/* Seven modes in a 348 px form: four equal columns cut "Reference" and "Transform" short.
+   Each tab takes its label's width and the row wraps (Create Edit Reference Transform / Inpaint Extend Upscale),
+   the tabs of a row stretching to fill it, so every label shows whole. */
+.st-modes{display:flex;flex-wrap:wrap;gap:4px;padding:4px;border-radius:var(--r-panel);background:var(--well)}
+.st-mode{flex:1 1 auto;min-width:56px;height:30px;border:0;border-radius:var(--r-pill);background:transparent;font-size:12.5px;color:var(--ink-2);position:relative;cursor:pointer;padding:0 10px;white-space:nowrap}
+.st-mode:hover{background:var(--hover)}
+.st-mode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-card);font-weight:600}
+.st-mode.off{color:color-mix(in srgb,var(--ink-3) 60%,transparent);cursor:not-allowed}
+.st-mode.off:hover{background:transparent}
+
+.st-aspects{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.st-asp{height:58px;border-radius:var(--r-well);background:var(--well);border:1px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;color:var(--ink-2);cursor:pointer}
+.st-asp i{display:block;border:1.6px solid currentColor;border-radius:3px;opacity:.8}
+.st-asp svg{width:16px;height:16px;opacity:.8}
+.st-asp:hover{background:var(--hover)}
+.st-asp.on{border-color:color-mix(in srgb,var(--brand) 60%,transparent);background:var(--brand-wash);color:var(--accent)}
+
+/* source / mask drop zones */
+.st-drop{border-radius:var(--r-panel);border:1.5px dashed var(--bd);background:var(--well);padding:14px;display:flex;align-items:center;gap:12px;transition:border-color var(--t-state)}
+.st-drop.over,.st-drop.picking{border-color:var(--brand);background:var(--brand-wash)}
+.st-di{width:40px;height:40px;border-radius:12px;background:var(--lift);display:grid;place-items:center;box-shadow:var(--sh-card);color:var(--accent);flex:none}
+.st-dropt{min-width:0;flex:1}
+.st-dropt .dt{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-dropt .ds{font-size:11.5px;color:var(--ink-3)}
+.st-droplinks{display:flex;gap:12px;margin-top:4px}
+.st-drop.filled{border-style:solid;border-color:transparent;padding:8px}
+.st-src{width:56px;height:56px;border-radius:10px;flex:none;position:relative;overflow:hidden;background:var(--panel-2)}
+.st-x{flex:none}
+
+/* reference strip */
+.st-refs{display:flex;flex-wrap:wrap;gap:6px}
+.st-ref{width:48px;height:48px;border-radius:10px;position:relative;overflow:hidden;background:var(--well);border:0;padding:0}
+.st-ref.add{border:1.5px dashed var(--bd);display:grid;place-items:center;color:var(--ink-3);cursor:pointer}
+.st-ref.add:hover{color:var(--accent);border-color:var(--brand)}
+.st-refx{position:absolute;top:3px;right:3px;width:16px;height:16px;border-radius:50%;border:0;padding:0;background:rgba(0,0,0,.55);color:#fff !important;display:grid;place-items:center;z-index:1;cursor:pointer}
+.st-refx svg{width:9px;height:9px}
+
+/* the picture in the viewer: as large as fits, its own shape */
+.st-shot{position:relative;height:calc(100% - 120px);max-width:calc(100% - 28px);aspect-ratio:1;border-radius:14px;overflow:hidden;box-shadow:0 30px 60px -30px rgba(0,0,0,.8);background:var(--panel-2)}
+.st-shot .st-img{object-fit:contain;background:var(--well)}
+/* a picture opened from a chat that Studio did not make */
+.st-glass.st-name{display:inline-block;line-height:30px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

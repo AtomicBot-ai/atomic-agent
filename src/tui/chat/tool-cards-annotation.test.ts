@@ -79,6 +79,26 @@ describe("toolCardsAnnotation", () => {
     );
   });
 
+  it("names image generations on their own", () => {
+    expect(
+      toolCardsAnnotation([
+        card("image.generate", { prompt: "a fox" }),
+        card("image.generate", { prompt: "a fox", count: 2 }),
+        card("tasks.list"),
+      ]),
+    ).toBe("2 image generations, 1 other tool call");
+  });
+
+  it("names video generations on their own, after the pictures", () => {
+    expect(
+      toolCardsAnnotation([
+        card("video.generate", { prompt: "a fox" }),
+        card("image.generate", { prompt: "a fox" }),
+        card("tasks.list"),
+      ]),
+    ).toBe("1 image generation, 1 video generation, 1 other tool call");
+  });
+
   it("counts only successful calls as work; failures are a separate count", () => {
     expect(
       toolCardsAnnotation([

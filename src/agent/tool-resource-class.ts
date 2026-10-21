@@ -188,6 +188,13 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // vision
   "vision.describe": "vision",
 
+  // image — a cloud generation asks before it bills the account, and a
+  // local one holds the GPU for minutes: solo either way.
+  "image.generate": "approval_gated",
+
+  // video — always a paid cloud clip that runs for minutes: solo.
+  "video.generate": "approval_gated",
+
   // fusion — `approval_gated` is the "must be solo" class, and that is
   // what this needs: one call runs several worker turns concurrently
   // inside itself, for minutes. Batching it beside other tools would
@@ -360,6 +367,10 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.http.request": ["http"],
     "os.email.send": ["email"],
     "skill.run_script": ["script"],
+    // A local generation asks nothing; the cloud one is `paid_generation`.
+    "image.generate": ["paid_generation"],
+    // Always cloud, always billed per second.
+    "video.generate": ["paid_generation"],
   };
 
 /**

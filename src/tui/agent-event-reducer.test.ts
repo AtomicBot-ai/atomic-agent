@@ -32,6 +32,16 @@ function apply(state: TuiState, actions: TuiAction[]): TuiState {
   return actions.reduce(reduceTuiState, state);
 }
 
+describe("reduceTuiState tool progress", () => {
+  it("puts a long tool's progress line in the feed", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [{
+      type: "agent_event",
+      event: { type: "tool_progress", tool: "video.generate", fraction: 0.4, elapsedMs: 50_000, label: "making the video with google/veo-3.1-fast · about 40% · 0:50 elapsed" },
+    }]);
+    expect(state.feed.map((f) => f.line)).toEqual(["» video.generate: making the video with google/veo-3.1-fast · about 40% · 0:50 elapsed"]);
+  });
+});
+
 describe("reduceTuiState fusion worker progress", () => {
   const feedLines = (
     events: Parameters<typeof reduceTuiState>[1][],

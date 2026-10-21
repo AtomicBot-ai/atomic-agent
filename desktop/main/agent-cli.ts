@@ -1351,9 +1351,10 @@ function chatPathPrefix(root: string): string {
  * precedence: an explicit `apiKey` on the entry, else the environment,
  * else <stateDir>/.env (which load-dotenv.ts applies only where the
  * environment is silent). Never logged, never returned to the renderer —
- * it leaves this function only inside an Authorization header.
+ * it leaves this function only inside an Authorization header, or (Studio,
+ * studio-key.ts) in the body of Core's loopback `PUT /cloud/providers`.
  */
-function resolveKeyValue(entry: ProviderEntry): string | null {
+export function resolveKeyValue(entry: ProviderEntry): string | null {
   if (entry.apiKey && entry.apiKey.length > 0) return entry.apiKey;
   const names: string[] = [];
   if (entry.apiKeyEnvVar) names.push(entry.apiKeyEnvVar);

@@ -221,3 +221,67 @@ test("a wait on the managed server: local-llama, or a llama-server entry on the 
   assert.equal(isManagedServer("elsewhere", cfg), false);
   assert.equal(isManagedServer("openrouter", cfg), false);
 });
+
+/* Studio (studio-gpu-share.ts): the chat model stopped for a local image or
+   video generation is not a crash. Nothing is restarted, counted or told
+   while it is yielded; after the yield the server is still the app's. */
+test("yielded to Studio: a server seen down is not restarted, and no incident opens", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  later(120_000);
+  sv.yieldTo("studio");
+  f.look = "down";
+  for (let i = 0; i < 5; i++) await sv.tick();
+  assert.equal(await sv.checkNow("the agent could not reach the local model server"), false);
+  assert.equal(f.restarts, 0);
+  assert.deepEqual(f.notices, []);
+  const st = sv.state();
+  assert.equal(st.yielded, "studio");
+  assert.equal(st.owned, true, "still the app's to bring back");
+  assert.equal(st.quickDeaths, 0);
+  assert.equal(st.gaveUp, false);
+  disarm();
+});
+
+test("yielded to Studio: a restart already under way is closed quietly, and the yield ends with the supervisor listening again", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  later(120_000);
+  f.look = "down";
+  await sv.tick();
+  sv.yieldTo("studio");
+  await sv.tick();
+  assert.equal(f.restarts, 0, "the second dead look came during the yield");
+  sv.endYield();
+  assert.equal(sv.state().yielded, null);
+  // The app's own start after Studio: up again, nothing to do.
+  f.look = "up";
+  await sv.tick();
+  assert.equal(f.restarts, 0);
+  // Should that start have failed, the looks bring it back as after any death.
+  later(120_000);
+  f.look = "down";
+  await sv.tick();
+  await sv.tick();
+  assert.equal(f.restarts, 1);
+  disarm();
+});
+
+test("yielded to Studio: many generations in a row never add up to quick deaths", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  for (let i = 0; i < 4; i++) {
+    later(5_000);
+    sv.yieldTo("studio");
+    f.look = "down";
+    await sv.tick();
+    await sv.tick();
+    sv.endYield();
+    sv.noteStarted();   // the app's resume start
+    f.look = "up";
+  }
+  assert.equal(f.restarts, 0);
+  assert.equal(sv.state().quickDeaths, 0);
+  assert.equal(sv.state().gaveUp, false);
+  disarm();
+});

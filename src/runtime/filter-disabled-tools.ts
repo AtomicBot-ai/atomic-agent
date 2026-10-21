@@ -69,6 +69,20 @@ export interface ToolGateConfig {
    * needing a descriptor rebuild.
    */
   fusion: { enabled: boolean };
+  /**
+   * Image generation gate. `available=false` (no OpenRouter key) drops
+   * `image.generate`: until local image models can be installed
+   * (ATO-411) a call without a key could only answer "add a key". Read
+   * at rebuild time, so a key saved mid-session adds it.
+   */
+  image: { available: boolean };
+  /**
+   * Video generation gate. `available=false` (no OpenRouter key) drops
+   * `video.generate`: every clip is made on OpenRouter, so without a key
+   * a call could only answer "add a key". Read at rebuild time, like
+   * the image gate.
+   */
+  video: { available: boolean };
 }
 
 /**
@@ -126,6 +140,8 @@ const GATED_TOOLS = {
     "github.issue.comment",
   ],
   email: ["os.email.inbox", "os.email.send"],
+  image: ["image.generate"],
+  video: ["video.generate"],
 } as const;
 
 /**
@@ -173,6 +189,12 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.fusion.enabled) {
     for (const name of GATED_TOOLS.fusion) disabled.add(name);
+  }
+  if (!gates.image.available) {
+    for (const name of GATED_TOOLS.image) disabled.add(name);
+  }
+  if (!gates.video.available) {
+    for (const name of GATED_TOOLS.video) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;

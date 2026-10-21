@@ -1,0 +1,1 @@
+{"id":"bytedance-seed/seedream-5-0-flash","endpoints":[{"provider_slug":"seed","pricing":[{"billable":"output_image","unit":"image","cost_usd":0.018},{"billable":"input_image","unit":"image","cost_usd":0}]},{"provider_slug":"other","pricing":[{"billable":"output_image","unit":"image","cost_usd":0.025}]}]}

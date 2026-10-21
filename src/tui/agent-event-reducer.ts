@@ -866,6 +866,16 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "gray",
       });
     }
+    case "tool_progress":
+      // A clip takes minutes with no step of its own to show; the tool
+      // throttles these to one every 20 seconds, so a feed line each is
+      // the "still working" the operator would otherwise not get.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» ${event.tool}: ${event.label}`,
+        color: "gray",
+      });
     case "fusion_worker": {
       // A token count moves the live row and nothing else: one feed
       // line per completion per worker would bury the lines that say

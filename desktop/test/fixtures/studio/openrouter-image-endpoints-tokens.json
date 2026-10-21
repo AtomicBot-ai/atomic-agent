@@ -1,0 +1,1 @@
+{"id":"google/gemini-nano-banana-2.1","endpoints":[{"provider_slug":"google-ai-studio","pricing":[{"billable":"output_image","unit":"token","cost_usd":3e-05}]}]}

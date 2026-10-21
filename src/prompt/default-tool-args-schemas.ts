@@ -538,6 +538,43 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
 
+  // ── image ────────────────────────────────────────────────────────────────
+  // Plain types only, so the schema stays strict-convertible: the tool's
+  // parser owns the 1..4 count bound and the size vocabulary.
+  [
+    "image.generate",
+    obj(
+      {
+        prompt: stringSchema,
+        size: stringSchema,
+        count: integerSchema,
+        seed: integerSchema,
+        model: stringSchema,
+      },
+      ["prompt"],
+    ),
+  ],
+
+  // ── video ────────────────────────────────────────────────────────────────
+  // Plain types only, like image: the tool's parser owns the duration
+  // bound and the aspect/resolution vocabularies.
+  [
+    "video.generate",
+    obj(
+      {
+        prompt: stringSchema,
+        image: stringSchema,
+        duration: integerSchema,
+        aspect: stringSchema,
+        resolution: stringSchema,
+        audio: booleanSchema,
+        seed: integerSchema,
+        model: stringSchema,
+      },
+      ["prompt"],
+    ),
+  ],
+
   // ── mcp aggregates ───────────────────────────────────────────────────────
   [
     "mcp.resource.list",

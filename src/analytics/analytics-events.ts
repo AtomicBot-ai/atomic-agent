@@ -11,6 +11,8 @@ export const ANALYTICS_EVENTS = {
   firstMessageSent: "first_message_sent",
   analyticsDisabled: "analytics_disabled",
   localEngineFailed: "local_engine_failed",
+  imageGenerated: "image_generated",
+  videoGenerated: "video_generated",
 } as const;
 
 /**
@@ -260,5 +262,71 @@ export function captureLocalEngineFailed(
     engine: context.engine === "llama-server" ? "llama-server" : "atomic-core",
     stage: fixedWord(context.stage),
     reason_code: fixedWord(context.reasonCode),
+  });
+}
+
+/**
+ * Context of `image_generated`, one per `image.generate` call. Shape
+ * only: where it ran, which model, how long, how many pictures and
+ * whether it worked. Never the prompt, a path or Core's error message;
+ * `errorCode` is Core's closed code (`REMOTE_QUOTA`, `GPU_BUSY`, ...),
+ * lowercased, or `unknown`.
+ */
+export interface ImageGeneratedContext {
+  kind: "cloud" | "local";
+  /** The catalog id (`google/gemini-nano-banana-2.1`) or `local`. */
+  model: string;
+  durationMs: number;
+  success: boolean;
+  count: number;
+  errorCode?: string;
+}
+
+/** A model id as catalogs spell it: `vendor/name-1.2`. Anything else is `unknown`. */
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,95}$/;
+
+/** Emit `image_generated`. No-ops when analytics is disabled. */
+export function captureImageGenerated(
+  client: AnalyticsClient | null,
+  context: ImageGeneratedContext,
+): void {
+  if (!client) return;
+  client.capture(ANALYTICS_EVENTS.imageGenerated, {
+    kind: context.kind === "local" ? "local" : "cloud",
+    model: MODEL_ID.test(context.model) ? context.model : "unknown",
+    duration_ms: Math.max(0, Math.round(context.durationMs)),
+    success: context.success,
+    count: Math.max(0, Math.trunc(context.count)),
+    ...(context.errorCode !== undefined ? { error_code: fixedWord(context.errorCode.toLowerCase()) } : {}),
+  });
+}
+
+/**
+ * Context of `video_generated`, one per `video.generate` call that got
+ * past approval. Shape only: which model, how long a clip was asked
+ * for, and how it ended. Never the prompt, a path or a message;
+ * `errorCode` is Core's closed code, lowercased, or `unknown`.
+ */
+export interface VideoGeneratedContext {
+  /** The catalog id (`google/veo-3.1-fast`), `custom` or `default`. */
+  model: string;
+  /** Clip length asked for, in seconds. */
+  durationSecs: number;
+  outcome: "success" | "failed" | "cancelled";
+  errorCode?: string;
+}
+
+/** Emit `video_generated`. No-ops when analytics is disabled. */
+export function captureVideoGenerated(
+  client: AnalyticsClient | null,
+  context: VideoGeneratedContext,
+): void {
+  if (!client) return;
+  const outcome = context.outcome === "success" || context.outcome === "cancelled" ? context.outcome : "failed";
+  client.capture(ANALYTICS_EVENTS.videoGenerated, {
+    model: MODEL_ID.test(context.model) ? context.model : "unknown",
+    duration_secs: Math.max(0, Math.trunc(context.durationSecs)),
+    outcome,
+    ...(context.errorCode !== undefined ? { error_code: fixedWord(context.errorCode.toLowerCase()) } : {}),
   });
 }
