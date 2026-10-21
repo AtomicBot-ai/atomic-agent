@@ -35,6 +35,7 @@ generated per launch, so nothing outside this app can reach the agent.
 | Durable tasks | `GET /api/tasks` |
 | Persisted sessions | `GET /api/sessions` |
 | Deleting one session | `DELETE /api/sessions/{id}` |
+| Renaming one session | `PATCH /api/sessions/{id}` |
 | One turn of the agent loop | `POST /v1/chat/completions` (SSE) |
 | Approval requests | `GET /api/events` (SSE) |
 | Approval verdicts | `POST /api/approval/resolve` |

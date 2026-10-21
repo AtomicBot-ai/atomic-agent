@@ -64,13 +64,17 @@ test('red from the stored status only for a failed turn stored after a real read
   assert.equal(chatFailedSinceRead(null, 5), false);
 });
 
-test('the row menu: Pin or Unpin, Mark as read or unread, then Delete…', () => {
-  assert.deepEqual(chatMenuItems({pinned: false, unread: false}).map((i) => i.verb), ['pin', 'unread', 'delask']);
-  assert.deepEqual(chatMenuItems({pinned: true, unread: true}).map((i) => i.verb), ['unpin', 'read', 'delask']);
+test('the row menu: Pin or Unpin, Mark as read or unread, Rename, then Delete…', () => {
+  assert.deepEqual(chatMenuItems({pinned: false, unread: false}).map((i) => i.verb), ['pin', 'unread', 'rename', 'delask']);
+  assert.deepEqual(chatMenuItems({pinned: true, unread: true}).map((i) => i.verb), ['unpin', 'read', 'rename', 'delask']);
   const items = chatMenuItems({pinned: true, unread: false});
-  assert.deepEqual(items.map((i) => i.label), ['Unpin', 'Mark as unread', 'Delete…']);
+  assert.deepEqual(items.map((i) => i.label), ['Unpin', 'Mark as unread', 'Rename', 'Delete…']);
   assert.deepEqual(items.filter((i) => i.danger).map((i) => i.verb), ['delask']);
-  assert.ok(!items.some((i) => /rename/i.test(i.label)));
+});
+
+test('ATO-455: a chat still starting (no stored session) has no Rename', () => {
+  assert.deepEqual(chatMenuItems({pinned: false, unread: false, renamable: false}).map((i) => i.verb), ['pin', 'unread', 'delask']);
+  assert.deepEqual(chatMenuItems({renamable: true}).map((i) => i.verb), ['pin', 'unread', 'rename', 'delask']);
 });
 
 test('the menu stays inside the window', () => {

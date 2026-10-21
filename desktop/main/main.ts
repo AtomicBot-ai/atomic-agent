@@ -1219,6 +1219,12 @@ function wireIpc(client: AgentClient): void {
       ? client.deleteSession(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
       : { ok: false, error: "id required" },
   );
+  // ATO-455: rename a chat. The agent validates the title again (1-120 chars, one line); this only refuses what is not a string at all.
+  ipcMain.handle("agent:renameSession", (_event, id: unknown, title: unknown) =>
+    typeof id === "string" && id && id.length <= 256 && typeof title === "string" && title.length <= 1024
+      ? client.renameSession(id, title).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
+      : { ok: false, error: "id and title required" },
+  );
   /* Backlog 18 (its second review): the last coding mode the window set. A
      switch's restart puts it back on the new agent before the turns waiting
      for that restart go (restartsAgent below). */

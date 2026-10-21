@@ -34,3 +34,5 @@ without either query retain the legacy registry. Cloud skill lists include
 disabled reasons, source paths and a content fingerprint for refreshing open
 details. These are operator views; disabled entries are excluded from model
 capabilities and dispatch still enforces the current policy.
+
+[Rename route](route-session-title.ts): `PATCH /api/sessions/{id}` with `{ title }` (trimmed, 1-120 characters, one line; `400` otherwise, `404` for an unknown id) stores the operator's title through `SessionStore.renameSession`. The title is stamped as user-set, so the session namer never replaces it and a turn already running cannot write an older copy back over it.

@@ -14,6 +14,13 @@ import { isStoppedTurnMarker } from "./conversation-turn.js";
 export const SESSION_TITLE_METADATA_KEY = "title";
 
 /**
+ * Reserved metadata stamped beside the title when the operator named
+ * the session (`PATCH /api/sessions/{id}`), holding the epoch ms of the
+ * rename. See `session-title-user.ts` for what it protects.
+ */
+export const SESSION_TITLE_USER_SET_AT_KEY = "titleSetByUserAt";
+
+/**
  * Cells a title may take. The header draws it beside the brand and the
  * rail draws it in a narrow column, so this is a hard bound rather than
  * a suggestion — and a name that needs more than this is a description,
@@ -39,6 +46,8 @@ export function readSessionTitle(
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
+  // A name the operator typed is shown exactly as typed.
+  if (metadata?.[SESSION_TITLE_USER_SET_AT_KEY] !== undefined) return trimmed;
   return carriesReasoning(trimmed) ? sanitizeSessionTitle(trimmed) : trimmed;
 }
 

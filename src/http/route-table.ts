@@ -24,6 +24,7 @@ import {
   createListSessionsHandler,
   createSteerSessionHandler,
 } from "./route-sessions.js";
+import { createRenameSessionHandler } from "./route-session-title.js";
 import {
   createApprovalEventsHandler,
   createResolveApprovalHandler,
@@ -137,6 +138,11 @@ export function buildRouteTable(): RouteDefinition[] {
       method: "DELETE",
       path: "/api/sessions/{id}",
       handler: createDeleteSessionHandler(),
+    },
+    {
+      method: "PATCH",
+      path: "/api/sessions/{id}",
+      handler: createRenameSessionHandler(),
     },
     {
       method: "POST",

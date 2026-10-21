@@ -5,7 +5,8 @@
  * ATO-165: the sidebar's chat list.
  * (a) Every chat row carries one "…" control (it replaced the separate pin and
  *     mark-as-unread controls). It opens a menu drawn in the window — Pin or
- *     Unpin, Mark as read or Mark as unread, then Delete… under a rule — and
+ *     Unpin, Mark as read or Mark as unread, Rename (ATO-455; a stored chat
+ *     only), then Delete… under a rule — and
  *     a right-click on the row opens the same menu at the pointer. Neither
  *     opens the chat. The menu is keyboard-driven: Enter on the "…" opens it
  *     with the first row focused, the arrows move, Escape closes it and gives
@@ -106,11 +107,11 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       })()`);
       const m = opened.menu;
       check(
-        "T165a: the \"…\" opens the row menu — Pin/Unpin, Mark as read/unread, then Delete… under a rule — without opening the chat",
-        !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id && m.verbs.length === 3
-          && ["pin", "unpin"].includes(m.verbs[0]) && ["read", "unread"].includes(m.verbs[1]) && m.verbs[2] === "delask"
-          && m.labels[2] === "Delete…" && m.sepBeforeDelete && show(m.danger) === show(["delask"])
-          && !m.labels.some((l) => /rename/i.test(l))
+        "T165a: the \"…\" opens the row menu — Pin/Unpin, Mark as read/unread, Rename (ATO-455), then Delete… under a rule — without opening the chat",
+        !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id && m.verbs.length === 4
+          && ["pin", "unpin"].includes(m.verbs[0]) && ["read", "unread"].includes(m.verbs[1])
+          && m.verbs[2] === "rename" && m.labels[2] === "Rename" && m.verbs[3] === "delask"
+          && m.labels[3] === "Delete…" && m.sepBeforeDelete && show(m.danger) === show(["delask"])
           && opened.sessionId === "same" && opened.expanded === "true",
         show(opened),
       );

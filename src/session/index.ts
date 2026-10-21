@@ -121,5 +121,15 @@ export {
   shouldNameSession,
   type SessionTitleDeps,
 } from "./session-title.js";
+export {
+  SESSION_TITLE_USER_SET_AT_KEY,
+} from "./session-title.js";
+export {
+  SESSION_USER_TITLE_MAX_CHARS,
+  readUserTitleSetAt,
+  validateUserSessionTitle,
+  withUserSessionTitle,
+  type UserSessionTitleResult,
+} from "./session-title-user.js";
 
 export type { SessionCompaction, RollingCompactionSummary, CompactionResult, CompactionReason } from "./session-compaction.js";

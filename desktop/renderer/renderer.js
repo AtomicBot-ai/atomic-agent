@@ -2435,7 +2435,8 @@ function chatMenuHTML() {
   const s = chatById(SESMENU.id);
   if (!s) return '';
   const id = s.id;
-  const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id])});
+  const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
+    renamable: SESSIONS.some((x) => x.id === id)});   // ATO-455: a stand-in has nothing stored to rename
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
   if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
@@ -4496,6 +4497,7 @@ function overlaysHTML() {
   if (S.overlay === 'context') html += contextHTML();
   if (S.overlay === 'modes') html += modesHTML();
   if (S.overlay === 'sesmenu') html += chatMenuHTML();
+  if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -6266,6 +6268,8 @@ function act(a) {
                              if (wasOpen) { refreshContext(); refreshSkillList(); }
                            });
                            return; }
+  // ATO-455: the row menu's Rename opens the inline box over the row's name (chat-rename.js).
+  if (k === 'rename')    { close(); renameStart(v, 'row'); return; }
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -6872,6 +6876,13 @@ document.addEventListener('mousedown', (e) => {
 
 document.addEventListener('click', (e) => {
   const t = e.target;
+  /* ATO-455: while a chat's name is being edited, a click in the box edits it
+     and a click anywhere else saves it (its scrim covers the window), as in
+     Finder and Goose. Nothing behind the scrim runs. */
+  if (S.overlay === 'rename') {
+    if (t.closest && t.closest('#chat-rename')) return;
+    e.preventDefault(); renameCommit(); return;
+  }
   /* r5 review fix (item 5) — SETDOWN.outside used to be cleared ONLY when the
      dismiss branch fired, so it could go stale: a press that starts on the
      backdrop and never yields a click (the pointer leaves the window before
@@ -7081,6 +7092,8 @@ document.addEventListener('paste', (e) => {
 });
 
 document.addEventListener('input', (e) => {
+  // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
+  if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
     // Lane B — item 3: the draft's estimate moves the projected chip only
@@ -7970,6 +7983,15 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault(); voiceCancel(); return;
   }
 
+  /* ATO-455: the rename box — Enter saves, Escape puts the old name back.
+     Ahead of every other Escape/Enter branch below, which would close the
+     overlay without saving or send the composer's draft. */
+  if (S.overlay === 'rename' && e.target && e.target.id === 'chat-rename') {
+    if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); renameCommit(); return; }
+    if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); renameCancel(); return; }
+    return;   // typing in the box is the box's own
+  }
+  if (S.overlay === 'rename' && k === 'Escape') { e.preventDefault(); renameCancel(); return; }
   // ATO-165: the chat row's "…" is a span (the row is the button) — Enter and Space open its menu.
   const smk = e.target.closest && e.target.closest('[data-sesmenu]');
   if (smk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -19884,6 +19906,21 @@ document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   // Chat review (Д23): a chip from a reply's text says so, and main checks its path again.
   BR.fileMenu(f.dataset.file.replace(/^~/, homeDir() || '~'), !!f.dataset.reply);
+});
+
+/* ATO-455: a double-click on a chat's row, or on the open chat's name in the
+   toolbar, renames it in place (Goose, Finder). Not on the row's "…": that
+   is a button of its own. The two clicks before it have already opened the
+   chat, which is the chat being renamed. */
+document.addEventListener('dblclick', (e) => {
+  const t = e.target;
+  if (!t || !t.closest || S.overlay === 'rename') return;
+  if (t.closest('[data-sesmenu]')) return;
+  const row = t.closest('#sidebar .sesrow[data-ses]');
+  if (row) { e.preventDefault(); renameStart(row.dataset.ses, 'row'); return; }
+  if (S.room === 'chat' && S.sessionId && t.closest('#toolbar .tb-title b')) {
+    e.preventDefault(); renameStart(S.sessionId, 'title');
+  }
 });
 
 /* ============================================================
