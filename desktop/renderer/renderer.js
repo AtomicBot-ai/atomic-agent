@@ -2390,7 +2390,8 @@ function chatRow(s) {
   const pinned = PREFS.pinned.includes(s.id);
   // ATO-135: a chat with messages waiting for its turn to end says so on its row, as a task row says its schedule.
   const queued = chatQueuedCount(s.id);
-  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '')   // Studio: no chat is "open" while a Studio page is + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
+  // Studio: no chat is "open" while a Studio page is on screen.
+  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
     + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
