@@ -7460,14 +7460,15 @@ async function settingsTestPartC(
     + " dir: src ? src.value : null, limit: lim ? lim.value : null, switches: sw}; })()",
   );
   // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
+  // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite", "Sessions to import"])
+    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite Can replace your data", "Sessions to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
     "import tab: the TUI form with its defaults, and no CLI run until Preview import",
     imp.runs === 0 && impDrawn && impBody.includes("Preview import") && !impBody.includes("↑↓ move")
-      && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("replace differing destinations") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
+      && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("Replaces what you already have here") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
     `runs=${imp.runs} dir=${imp.form.sourceDir}${impDrawn ? "" : " drawn " + JSON.stringify(impView)}`,
   );
   const dir = "/nonexistent-desktop-smoke-dir";
