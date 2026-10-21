@@ -20,7 +20,7 @@ function fixture() {
   });
   // ATO-405: submit() and sendButton() read the composer's chips (renderer/attachments.js).
   vm.runInContext(readFileSync(new URL('../renderer/attachments.js',import.meta.url),'utf8'),c);
-  for (const name of ['submit','sendButton','swxWaitsForRoute','openHoldsComposer','noteWaitingChat','drainQueued','drainOwed','queueKey','stashQueue','mergeQueue','restoreQueue','queuesSnapshot','chatQueuedCount','settlePendingChats','queueChatRunning','unqueueMessage','swxMessageOutcome']) vm.runInContext(functions.get(name),c);
+  for (const name of ['chatTitle','submit','sendButton','swxWaitsForRoute','openHoldsComposer','noteWaitingChat','drainQueued','drainOwed','queueKey','stashQueue','mergeQueue','restoreQueue','queuesSnapshot','chatQueuedCount','settlePendingChats','queueChatRunning','unqueueMessage','swxMessageOutcome']) vm.runInContext(functions.get(name),c);
   return {c,sent,notices,kept};
 }
 test('Send accepts during a switch, preserves order, and dispatches only after readiness',()=>{
