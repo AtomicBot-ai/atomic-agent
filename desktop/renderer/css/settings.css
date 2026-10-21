@@ -307,7 +307,7 @@ button.set-search:hover{border-color:var(--bd)}
 .set-diagacts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 /* Д55/Д57: what the screen is for, and what the report holds. */
 .set-diagintro{max-width:62ch}
-.set-diagwhat{max-width:62ch;margin-top:-6px}
+.set-diagwhat{margin-top:-6px}
 /* Д58: the model server's log, opened in place. */
 .set-diaglog{display:flex;flex-direction:column;gap:8px;min-width:0;padding-top:10px;border-top:1px solid var(--divider)}
 .set-diaglog-head{display:flex;align-items:center;gap:8px;min-width:0}

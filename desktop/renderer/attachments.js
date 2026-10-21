@@ -681,11 +681,17 @@ async function attPick(kind) {
   const e = typeof $ === 'function' ? $('#entry') : null;
   if (e) e.focus();
 }
+/** The drop decision, pure: only a composer with nothing over it takes files.
+    ATO-602: Settings is drawn over the chat, which keeps its composer underneath. */
+function attDropAllowed(s) {
+  return !!(s && s.hasComposer && !s.wizardOpen && !s.settingsOpen);
+}
 /** True when a drop can attach: the chat's composer is on screen with nothing over it. */
 function attCanDrop() {
-  if (!document.getElementById('composer')) return false;
-  try { if (typeof OB !== 'undefined' && OB.open) return false; } catch (e) { /* no wizard state */ }
-  return true;
+  let wizardOpen = false;
+  try { wizardOpen = typeof OB !== 'undefined' && !!OB.open; } catch (e) { /* no wizard state */ }
+  return attDropAllowed({hasComposer: !!document.getElementById('composer'), wizardOpen,
+    settingsOpen: !!document.getElementById('settings')});
 }
 function attDragHasFiles(e) {
   const t = e.dataTransfer && e.dataTransfer.types;
@@ -741,7 +747,11 @@ if (typeof document !== 'undefined') {
     e.preventDefault();
     ATT.drag = 0;
     attSetDragging(false);
-    if (!attCanDrop()) return;
+    if (!attCanDrop()) {
+      // Ignored, but said: a file dropped over Settings went to the hidden chat unseen.
+      if (document.getElementById('settings') && typeof toast === 'function') toast('Open a chat to attach files', '');
+      return;
+    }
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
     if (files.length) attAdd(files.map((file) => ({file})), 'drop');
   });
@@ -783,5 +793,5 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {attClassifyName, attClassifyDroppedPaths, attBuildMessage, attSplitMessage, attFormatBytes,
-    attSizeBucket, attDisplayName, attQueueLabel, attPlainText, attParseSize, ATT_HINT_LINE};
+    attSizeBucket, attDisplayName, attQueueLabel, attPlainText, attParseSize, attDropAllowed, ATT_HINT_LINE};
 }

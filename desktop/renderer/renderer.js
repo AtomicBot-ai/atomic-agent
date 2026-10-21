@@ -5461,7 +5461,10 @@ function diagnosticsPane() {
       + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
       + '<button class="btn btn-s sm" data-act="diag:agentlog"' + (DIAG.agentLog && BR && BR.openPath ? '' : ' disabled') + ' title="' + esc(DIAG.agentLog || 'The state folder is not known yet') + '">' + ic('log') + 'Open agent log</button>'
     + '</div>'
-    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us.</p>'
+    + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us on '
+      // ATO-535: where to write, opened in the browser by the [data-url] click handler (BR.openExternal).
+      + '<a class="msglink" href="#" data-url="https://discord.gg/kXWDFSJpMW">Discord</a> or in a '
+      + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
     + diagLogHTML()
     + '</div>';
 }
@@ -10417,6 +10420,11 @@ if (BR) {
     }
     if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); LLMP.tune.msg = null; BR.restart().then(applyStatus); return; }
     if (a === 'workspace' || a === 'workspace:choose') {
+      /* ATO-729: a new folder restarts the agent, which would end a running
+         turn. The chip, Settings › Change… and the menu all land here, so the
+         picker stays shut mid-turn, as with a model switch. */
+      const held = restartStopsTurn();
+      if (held) { restartRefusedToast(held); return; }
       BR.chooseWorkspace().then(applyWorkspaceChoice);
       return;
     }
@@ -12274,6 +12282,21 @@ function dlRetry(n) {
   render();
 }
 
+/**
+ * What a failed XPULL download's Retry starts again. The local engine
+ * (Settings' install, main's launch install) is `models update`, never
+ * `models pull`: main refuses "the local engine" as a model id ("cannot start
+ * the download", ATO-753), so its Retry is the engine install again, fresh
+ * when the recovery card's Retry asked for it (engfAct).
+ */
+function xpullRetry(owner) {
+  if (owner.src === 'sel') return () => selPull(owner.id);
+  if (owner.kind === 'runtime') {
+    return () => { const fresh = ENGF.fresh; ENGF.fresh = false; llmEngineInstall(fresh ? {fresh: true} : undefined); };
+  }
+  return () => llmPull(owner.llmKind, owner.id);
+}
+
 function xpullReset(owner) {
   Object.assign(XPULL, {key: owner.key, percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false,
     rate: null, last: null, samples: 0});
@@ -12295,8 +12318,7 @@ if (BR) {
       // The projector sends no `done` of its own: obFetchProjector's promise ends it.
       if (owner.src === 'proj') return;
       if (ev.ok === false) {
-        dlFail(owner, ev.error || 'the download failed',
-          owner.src === 'sel' ? () => selPull(owner.id) : () => llmPull(owner.llmKind, owner.id));
+        dlFail(owner, ev.error || 'the download failed', xpullRetry(owner));
       }
       XPULL.key = null;
       // Once the owner's own subscriber has let go of the pull.

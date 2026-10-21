@@ -151,3 +151,10 @@ test("attachment_added carries a kind, a size bucket and a method, nothing else"
   const ok = V.validateEvent("attachment_added", { kind: "image", size: "lt_1mb", method: "paste", name: "secret.png" }, "ui").props;
   assert.deepEqual(ok, { kind: "image", size: "lt_1mb", method: "paste" });
 });
+
+test("a file dropped while Settings is open does not attach to the chat underneath (ATO-602)", () => {
+  assert.equal(R.attDropAllowed({ hasComposer: true, wizardOpen: false, settingsOpen: false }), true);
+  assert.equal(R.attDropAllowed({ hasComposer: true, wizardOpen: false, settingsOpen: true }), false);
+  assert.equal(R.attDropAllowed({ hasComposer: true, wizardOpen: true, settingsOpen: false }), false);
+  assert.equal(R.attDropAllowed({ hasComposer: false, wizardOpen: false, settingsOpen: false }), false);
+});
