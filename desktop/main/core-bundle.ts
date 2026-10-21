@@ -11,7 +11,7 @@
  * src/local-llm/core/core-state.ts). Seeding a version the agent does not
  * list puts a binary nobody reads; bump both together.
  */
-export const BUNDLED_CORE_VERSION = "0.16.0";
+export const BUNDLED_CORE_VERSION = "0.18.6";
 
 /** The bundled binary's file name, inside `<resources>/core/`. */
 export function bundledCoreFileName(platform: NodeJS.Platform = process.platform): string {
