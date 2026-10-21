@@ -25,6 +25,7 @@ import { diskShortfall, diskSpaceAt } from "./disk-space.js";
 import { huggingFaceToken, isHuggingFaceUrl, rewriteHuggingFaceUrl } from "./huggingface.js";
 import { DIFFUSION_CATALOG_BASELINE } from "./studio-diffusion-baseline.js";
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
+import type { StudioCoreStatus } from "./studio-core-start.js";
 import { downloadModelFile, StudioDownloadError } from "./studio-download.js";
 import {
   buildLoadRequest, diffusionModelsDir, findArtifact, fitFor, listModelFiles, localFamilyView, machineProfile,
@@ -57,7 +58,9 @@ export type LocalEvent =
   | { type: "download"; download: LocalDownloadState }
   | { type: "removed"; id: string }
   | { type: "engine"; engine: LocalEngineStatus }
-  | { type: "load"; id: string; state: "loading" | "loaded" | "failed"; message: string; error: { code: string; message: string } | null };
+  | { type: "load"; id: string; state: "loading" | "loaded" | "failed"; message: string; error: { code: string; message: string } | null }
+  /* Atomic Core itself being put in place before the first Studio call (studio-core-start.ts placeStudioCore). */
+  | { type: "core"; core: StudioCoreStatus };
 
 export interface StudioLocalDeps {
   /** The managed data dir, read per call. */

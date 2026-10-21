@@ -22,6 +22,7 @@ import { isAbsolute, join } from "node:path";
 
 import { normalizeLocalFamilies, normalizeProviderModels, type StudioCatalogSection, type StudioKind } from "./studio-catalog.js";
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
+import type { CoreSeedResult } from "./core-seed.js";
 import { acquireStudioLease, connectStudioCore, ensureStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
 import type { MachineProfile } from "./studio-local.js";
 import { queuedLine, type GpuShare } from "./studio-gpu-share.js";
@@ -51,6 +52,10 @@ export interface StudioMediaDeps {
   beforeDownload?: () => void;
   /** The chat model and local generations on one memory (studio-gpu-share.ts); absent, nothing is coordinated. */
   gpu?: GpuShare;
+  /** Place the installer's bundled Core when it is missing (packaged app only); without it, Core is downloaded. */
+  seedCore?: (dataDir: string) => Promise<CoreSeedResult>;
+  /** The fetch the Core download uses (a smoke run refuses it while offline); global fetch when absent. */
+  coreRequest?: typeof fetch;
 }
 
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
@@ -117,7 +122,13 @@ export class StudioMedia {
   }
 
   private async connect(): Promise<StudioCoreClient> {
-    const client = await ensureStudioCore(this.deps.dataDir(), this.deps.coreVersion);
+    // A cloud-route install never started a local model, so Core may not be here yet: it is put in place first,
+    // with "Preparing the engine…" pushed as `core` events (CONTRACT.md).
+    const client = await ensureStudioCore(this.deps.dataDir(), this.deps.coreVersion, {
+      ...(this.deps.seedCore ? { seed: this.deps.seedCore } : {}),
+      ...(this.deps.coreRequest ? { install: { request: this.deps.coreRequest } } : {}),
+      onStatus: (core) => this.deps.emitLocal({ type: "core", core }),
+    });
     if (this.client?.instanceId !== client.instanceId) {
       await this.lease?.release();
       this.lease = null;

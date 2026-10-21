@@ -2256,6 +2256,10 @@ function wireIpc(client: AgentClient): void {
     stateDir: DESKTOP_STATE_DIR,
     dataDir: managedDataDirNow,
     coreVersion: BUNDLED_CORE_VERSION,
+    // Core missing at a Studio call (seed failed, or a dev run): the installer's copy first, else Studio downloads it.
+    ...(app.isPackaged && !SMOKE ? { seedCore: (dir: string) => seedBundledCore(dir) } : {}),
+    // "A check never downloads": an offline smoke step gets the old CORE_NOT_INSTALLED instead of a GitHub fetch.
+    ...(SMOKE ? { coreRequest: ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => smokeOffline ? Promise.reject(new Error(SMOKE_OFFLINE)) : fetch(input, init)) as typeof fetch } : {}),
     // `--fake-ram` (test only) reaches the local models' fit verdict as it reaches the LLM picker.
     ...(FAKE_RAM_GB ? { hostRamBytes: () => FAKE_RAM_GB! * 1024 ** 3 } : {}),
     beforeDownload: () => { syncHfEndpoint(hfMirrorSources()); },

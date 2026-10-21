@@ -24,7 +24,11 @@
                                   attachment, anything else as its path in the message box
      STUDIO.openSettings(section) Settings › Models on the cloud providers, so an
                                   OpenRouter key can be added ('openrouter' starts that setup)
-   The pure helpers (fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath) are
+   Atomic Core being put in place before the first call (a cloud-route install never
+   started it): main pushes `core` events on onLocal; the shell shows "Preparing the
+   engine… 42%" with a bar at the top of the page on screen while it installs, and hands
+   each status to the page's optional onCore(status).
+   The pure helpers (fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath, coreLine) are
    exported under Node for test/studio-shell.test.mjs. */
 (function () {
   const ORDER = ['images', 'video'];
@@ -96,6 +100,43 @@
     }
     return null;
   }
+  /** The status line for a `core` event: "Preparing the engine… 42%", or null when there is nothing to show. */
+  function coreLine(core) {
+    if (!core || core.state !== 'installing') return null;
+    const pct = core.progress && typeof core.progress.percent === 'number' ? Math.max(0, Math.min(100, Math.round(core.progress.percent))) : null;
+    return {text: String(core.message || 'Preparing the engine…') + (pct === null ? '' : ' ' + pct + '%'), percent: pct};
+  }
+
+  let coreStatus = null;
+  let coreEl = null;
+  /** The "Preparing the engine…" strip at the top of the page on screen; gone once Core is in place (or failed: the call's error says why). */
+  function paintCore() {
+    const line = coreLine(coreStatus);
+    if (!line) { if (coreEl) coreEl.remove(); coreEl = null; return; }
+    if (typeof document === 'undefined') return;
+    if (!coreEl) {
+      coreEl = document.createElement('div');
+      coreEl.className = 'studio-core-status';
+      coreEl.setAttribute('role', 'status');
+      coreEl.setAttribute('aria-live', 'polite');
+      coreEl.innerHTML = '<span class="studio-core-text"></span><span class="studio-core-bar"><i></i></span>';
+    }
+    coreEl.querySelector('.studio-core-text').textContent = line.text;
+    const bar = coreEl.querySelector('.studio-core-bar');
+    bar.classList.toggle('indet', line.percent === null);
+    bar.firstChild.style.width = line.percent === null ? '' : line.percent + '%';
+    const root = shown ? roots[shown] : null;
+    if (root && coreEl.parentNode !== root) root.insertBefore(coreEl, root.firstChild);
+  }
+
+  function onLocal(ev) {
+    if (!ev || ev.type !== 'core' || !ev.core) return;
+    coreStatus = ev.core;
+    paintCore();
+    const page = shown ? pages[shown] : null;
+    if (page) safe(page.onCore, ev.core);
+  }
+
   const safe = (fn, ...args) => { try { return typeof fn === 'function' ? fn(...args) : undefined; } catch (e) { console.error('[studio]', e); return undefined; } };
 
   function icon(name) {
@@ -198,6 +239,7 @@
         c.appendChild(root);
       }
       shown = kind;
+      paintCore();
       safe(pages[kind].onShow);
     },
 
@@ -308,7 +350,7 @@
         + icon('open') + 'Open in Studio</button></div>';
     },
 
-    _pure: {fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath},
+    _pure: {fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath, coreLine},
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = STUDIO;
@@ -317,6 +359,7 @@
     const s = br();
     if (s) {
       if (s.onJob) s.onJob(forward);
+      if (s.onLocal) s.onLocal(onLocal);
       if (s.activeJobs) Promise.resolve(s.activeJobs()).then((r) => { if (r && r.ok && Array.isArray(r.data)) r.data.forEach(forward); }, () => undefined);
       STUDIO.refreshDirs();
     }

@@ -16,8 +16,12 @@
  *   - src/local-llm/core/core-env.ts  no secret-shaped variable reaches the
  *     daemon: provider keys go to Core only through `PUT /cloud/providers`.
  *
- * The binary itself is put in place by core-seed.ts (bundled) or by the
- * agent's own install; Studio never downloads Core.
+ * The binary is normally put in place by core-seed.ts (bundled) or by the
+ * agent's own install. When neither has (a cloud-route install that never
+ * started a local model, a dev run, a failed seed), `ensureStudioCore` seeds
+ * the bundled copy if there is one, else downloads and verifies Core the way
+ * the agent's image tool does (studio-core-install.ts), under the same
+ * operation lock.
  */
 
 import { spawn } from "node:child_process";
@@ -25,7 +29,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync,
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import type { CoreSeedResult } from "./core-seed.js";
 import { StudioCoreClient, StudioCoreError } from "./studio-core-client.js";
+import { installStudioCore, isStudioCoreInstalled, type CoreInstallProgress, type StudioCoreInstallOptions } from "./studio-core-install.js";
 
 export const CORE_PROTOCOL = 2;
 
@@ -170,16 +176,69 @@ export async function withStudioOperation<T>(dataDir: string, fn: () => Promise<
   try { return await fn(); } finally { release(); }
 }
 
-/** A Core of `version` that answers: the running one, else one started now. */
-export async function ensureStudioCore(dataDir: string, version: string, signal?: AbortSignal): Promise<StudioCoreClient> {
+/** Studio's "Preparing the engine…" line while Core is being put in place (CONTRACT.md `core` event). */
+export interface StudioCoreStatus {
+  state: "installing" | "ready" | "failed";
+  message: string;
+  progress: CoreInstallProgress | null;
+  error: { code: string; message: string } | null;
+}
+
+export interface EnsureStudioCoreOptions {
+  signal?: AbortSignal;
+  /** Place the installer's bundled Core (core-seed.ts seedBundledCore); absent outside a packaged app. */
+  seed?: (dataDir: string) => Promise<CoreSeedResult>;
+  /** Every step of an install, for the page's status line. Not called when Core was already there. */
+  onStatus?: (status: StudioCoreStatus) => void;
+  /** Test seams for the download (fetch, `--version` probe, platform). */
+  install?: Omit<StudioCoreInstallOptions, "signal" | "onProgress">;
+}
+
+export const CORE_PREPARING = "Preparing the engine…";
+
+/**
+ * Core's binary for `version`, in place and verified: the bundled copy when
+ * there is one, else the GitHub release. Call holding the operation lock.
+ */
+async function placeStudioCore(dataDir: string, version: string, opts: EnsureStudioCoreOptions): Promise<void> {
+  const platform = opts.install?.platform ?? process.platform;
+  if (await isStudioCoreInstalled(dataDir, version, platform)) return;
+  const status = (s: Omit<StudioCoreStatus, "error"> & { error?: StudioCoreStatus["error"] }) => opts.onStatus?.({ error: null, ...s });
+  status({ state: "installing", message: CORE_PREPARING, progress: null });
+  try {
+    const seeded = opts.seed ? await opts.seed(dataDir).catch(() => ({ seeded: false })) : { seeded: false };
+    if (!seeded.seeded || !(await isStudioCoreInstalled(dataDir, version, platform))) {
+      await installStudioCore(dataDir, version, {
+        ...opts.install,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        onProgress: (progress) => status({ state: "installing", message: CORE_PREPARING, progress }),
+      });
+    }
+  } catch (err) {
+    if (opts.signal?.aborted) {
+      status({ state: "failed", message: "Stopped.", progress: null, error: { code: "CANCELLED", message: "Stopped." } });
+      throw err;
+    }
+    const reason = (err instanceof Error ? err.message : String(err)).replace(/\.$/, "");
+    const message = `Could not install the engine: ${reason}. Check your connection and try again.`;
+    status({ state: "failed", message, progress: null, error: { code: "CORE_NOT_INSTALLED", message } });
+    throw new StudioCoreError(message, "CORE_NOT_INSTALLED", undefined, reason);
+  }
+  status({ state: "ready", message: "The engine is ready.", progress: null });
+}
+
+/** A Core of `version` that answers: the running one, else one started now (installed first when missing). */
+export async function ensureStudioCore(dataDir: string, version: string, opts: EnsureStudioCoreOptions = {}): Promise<StudioCoreClient> {
+  const signal = opts.signal;
   const running = await connectStudioCore(dataDir, version);
   if (running) return running;
   return withStudioOperation(dataDir, async () => {
     const again = await connectStudioCore(dataDir, version);
     if (again) return again;
     const paths = studioCorePaths(dataDir, version);
+    await placeStudioCore(dataDir, version, opts);
     if (!existsSync(paths.binary)) {
-      throw new StudioCoreError(`Atomic Core ${version} is not installed yet. Open Settings → Models once, or restart the app.`, "CORE_NOT_INSTALLED");
+      throw new StudioCoreError("Could not install the engine: the engine file is missing after the install. Check your connection and try again.", "CORE_NOT_INSTALLED");
     }
     mkdirSync(paths.dataFolder, { recursive: true, mode: 0o700 });
     const log = openSync(paths.log, "a", 0o600);

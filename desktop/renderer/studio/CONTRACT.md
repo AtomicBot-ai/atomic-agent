@@ -32,7 +32,8 @@ Every call resolves (never rejects) to
 | `NO_KEY` | cloud generation without an OpenRouter key: link to Settings → Providers |
 | `INVALID_REQUEST` | the form sent something Core cannot take (message says what) |
 | `OUTSIDE` | a path that is not a Studio file or a picked one |
-| `CORE_NOT_INSTALLED`, `CORE_START_FAILED`, `CORE_UNREACHABLE`, `CORE_TIMEOUT`, `CORE_BUSY`, `CORE_MISMATCH`, `CORE_INVALID`, `CORE_LOCK_STALE` | Atomic Core could not be used; offer Retry |
+| `CORE_NOT_INSTALLED` | Atomic Core was missing and putting it in place failed: "Could not install the engine: <reason>. Check your connection and try again."; offer Retry (see "Atomic Core itself") |
+| `CORE_START_FAILED`, `CORE_UNREACHABLE`, `CORE_TIMEOUT`, `CORE_BUSY`, `CORE_MISMATCH`, `CORE_INVALID`, `CORE_LOCK_STALE` | Atomic Core could not be used; offer Retry |
 | `JOB_BUSY` | 4 cloud jobs already running (Core `MAX_REMOTE_JOBS`), or a local one |
 | `GPU_BUSY`, `MODEL_NOT_LOADED`, `OUT_OF_MEMORY`, `DISK_FULL`, `QUEUE_FULL` | Core's diffusion codes (`src/contracts/errors.ts`) |
 | `REMOTE_AUTH_FAILED`, `REMOTE_QUOTA`, `REMOTE_RATE_LIMITED`, `REMOTE_CONTENT_BLOCKED`, `REMOTE_REJECTED`, `REMOTE_UNSUPPORTED`, `REMOTE_UNAVAILABLE`, `REMOTE_TIMEOUT`, `REMOTE_NOT_CONFIGURED`, `UNSUPPORTED_WORKFLOW` | provider refusals, already worded |
@@ -278,7 +279,39 @@ type LocalEvent =
   | { type: 'removed', id: string }
   | { type: 'engine', engine: LocalEngine }
   | { type: 'load', id: string, state: 'loading' | 'loaded' | 'failed', message: string, error: { code, message } | null }
+  | { type: 'core', core: CoreStatus }   // Atomic Core itself, see below
+
+interface CoreStatus {
+  state: 'installing' | 'ready' | 'failed'
+  message: string                  // "Preparing the engine…", "The engine is ready.", or the failure sentence
+  progress: { transferred: number, total: number | null, percent: number | null } | null   // download, installing only
+  error: { code: 'CORE_NOT_INSTALLED' | 'CANCELLED', message } | null
+}
 ```
+
+### Atomic Core itself
+
+Every call needs Core, cloud ones included (the catalog, cloud jobs and the
+gallery all go through it). A fresh install that chose the cloud route never
+started a local chat model, so Core may not be on disk yet. The first call
+that needs it then puts it in place before it answers, under the engine
+operation lock (main/studio-core-start.ts `placeStudioCore`):
+
+1. a packaged app copies the installer's signed Core (main/core-seed.ts
+   `seedBundledCore`);
+2. otherwise, or when that copy is missing or would not run, it downloads
+   Core like the agent's image tool (main/studio-core-install.ts, mirroring
+   src/local-llm/core/core-install.ts): the release asset for this computer
+   from GitHub `AtomicBot-ai/atomic-chat-core` `v<version>`, checked against
+   the release's `SHA256SUMS` and `--version`, placed with `verified.json`.
+
+Each step is pushed on `onLocal` as a `core` event. The shell
+(studio/shell.js) shows the `installing` ones as a strip at the top of the
+page on screen ("Preparing the engine… 42%" with a bar; no percent when the
+size is unknown) and removes it on `ready` or `failed`; a page may also take
+them through its optional `onCore(status)`. The call that waited answers as
+usual once Core is up, or with `CORE_NOT_INSTALLED` when the install failed.
+Nothing is pushed when Core was already there.
 
 A local generate (or estimate) runs, before the job: the model must be on disk
 (else `MODEL_NOT_DOWNLOADED`); Core's sd.cpp engine is installed if missing

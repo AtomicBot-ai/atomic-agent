@@ -27,6 +27,14 @@
 /* ---------- page frame ---------- */
 .studio{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 10px 10px;color:var(--ink)}
 .studio-missing{margin:auto;color:var(--ink-3)}
+/* "Preparing the engine… 42%" while Atomic Core is put in place (shell.js paintCore) */
+.studio-core-status{flex:none;display:flex;align-items:center;gap:10px;margin:8px 6px 0 10px;padding:8px 12px;border-radius:var(--r-md,10px);background:var(--brand-wash);color:var(--ink-2);font-size:12.5px}
+.studio-core-text{flex:none;font-variant-numeric:tabular-nums}
+.studio-core-bar{flex:1;min-width:60px;height:4px;border-radius:2px;background:var(--bd);overflow:hidden;position:relative}
+.studio-core-bar i{display:block;height:100%;width:0;background:var(--brand);transition:width .2s}
+.studio-core-bar.indet i{width:30%;animation:st-core-indet 1.2s ease-in-out infinite}
+@keyframes st-core-indet{0%{transform:translateX(-100%)}100%{transform:translateX(340%)}}
+@media (prefers-reduced-motion:reduce){.studio-core-bar.indet i{animation:none;width:100%;opacity:.4}}
 .studio .st-sp{flex:1;min-width:0}
 .studio .st-dim{color:var(--ink-3);font-size:12px}
 .studio .mono{font-family:var(--font-mono);font-size:12px;font-variant-numeric:tabular-nums}
