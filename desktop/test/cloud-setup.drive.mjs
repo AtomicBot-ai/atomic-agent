@@ -119,7 +119,7 @@ async function pickRow(text, opts = {}) {
  */
 async function finishOnboarding({ timeoutMs = 90000 } = {}) {
   const deadline = Date.now() + timeoutMs;
-  const exits = ['Start using the agent now', 'Skip — take me to the agent'];
+  const exits = ['Start using the agent now', 'Start working'];
   while (Date.now() < deadline) {
     if (!(await app.js(`!!document.querySelector('#onboarding')`))) return;
     let moved = false;

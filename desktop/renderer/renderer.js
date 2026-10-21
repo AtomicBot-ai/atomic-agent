@@ -581,7 +581,9 @@ const OB_COPY = {
   proposeExplainer: [
     'Atomic Agent runs both side by side — local for private or offline work,',
     'cloud for the heavy turns, switchable mid-session. You have one of the two.'],
-  proposeSkip: {label:'Skip — take me to the agent', detail:'you can add it later from the menu (esc)'},
+  // ATO-447: going to the agent is the first row and the default; the second
+  // backend is offered on the row under it, never pre-selected.
+  proposeSkip: {label:'Start working', detail:'go to the agent now — you can add the other one later from the menu'},
   // onboarding-import-step.tsx:25-34, :200-212; import-step.ts:80-85
   importExplainer: [
     'Other agents keep skills, memory, sessions and keys on this machine.',
@@ -1309,6 +1311,7 @@ const TG = {
   mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
+  confirmAt:0, // ATO-435: when it was armed; a second click sooner than TG_CONFIRM_MIN_MS is the same double-click
   // The message's kind ('owed' carries a change the agent loads at start, 'restarting' is the restart's own line,
   // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
@@ -1373,6 +1376,11 @@ const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 // ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
+// ATO-435: the pairing steps only make sense with a token and no owner yet; these say what to do instead.
+const TG_PAIR_NEEDS_TOKEN = 'Pairing needs a bot token first. Press t to paste the one from @BotFather.';
+const TG_PAIR_HAS_OWNER = 'The bot is already paired. To pair a different Telegram account, clear the owner first.';
+// ATO-435: a double-click on Remove token / Clear owner must not arm and confirm in one go.
+const TG_CONFIRM_MIN_MS = 400;
 const TG_PAIR_HOWTO = 'The desktop app can\'t pair yet. Quit it, run `atag tui`, open Telegram under Integrations and press p to start pairing, then DM your bot. Reopen the app and press Check again.';
 
 /* ---- Item 5: file attachments — what a turn actually wrote ----
@@ -12899,17 +12907,19 @@ function obReadyHTML(text) {
     + esc(text) + '</div>';
 }
 
-/** onboarding-propose-step.tsx:11-33. */
+/** onboarding-propose-step.tsx:11-33. ATO-447 (owner decision B): row 0 is
+ *  "Start working", so a person who presses the main button without reading
+ *  lands in the agent; setting up the second backend is row 1. */
 function obProposeHTML() {
   const local = OB.offer === 'local';
   const accept = local
     ? {label:'Set up local models too', detail:'one download, then it runs offline and costs nothing per token'}
-    : {label:'Set up a cloud model too', detail:'an API key and a model — about a minute, for the heavy turns'};
-  const rows = [accept, OB_COPY.proposeSkip];
+    : {label:'Add a cloud model for Fusion', detail:'an API key and a model — about a minute, for the heavy turns'};
+  const rows = [OB_COPY.proposeSkip, accept];
   const icons = [
+    '<span class="tk-ico">' + ic('arrowR') + '</span>',
     // The same tone as the route cards on the choose step.
     '<span class="tk-ico tk-ico--blue">' + ic(local ? 'laptop' : 'cloud') + '</span>',
-    '<span class="tk-ico">' + ic('arrowR') + '</span>',
   ];
   return obReadyHTML(obConfiguredLabel())
     + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join(' ')) + '</div>'
@@ -13320,6 +13330,9 @@ function obFootHTML() {
       break;
     }
     case 'propose_second':
+      // ATO-447: the main button says where it goes when it goes to the agent.
+      right = obBtn('nav:go', OB.cursor % 2 === 0 ? 'Start working' : 'Continue', 'btn-p', false, '', 'arrowR');
+      break;
     case 'wait_or_jump':
       right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       break;
@@ -13667,7 +13680,8 @@ function obProposeKey(input, key) {
     return true;
   }
   if (key.return) {
-    if (OB.cursor % 2 !== 0) { skip(); return true; }
+    // ATO-447: row 0 is "Start working", row 1 sets up the second backend.
+    if (OB.cursor % 2 === 0) { skip(); return true; }
     if (OB.offer === 'local') {
       if (BR) OB.managedWrite = BR.useManagedMode();
       obDispatch({type:'onboarding_step_set', step:'local_pick'});
@@ -15944,10 +15958,18 @@ function restartStopsLine(held) {
 function restartRefusedToast(held) {
   toast('Not while a turn is running', restartStopsLine(held) || undefined);
 }
+/** ATO-435: whether any chat holds queued messages, including a new chat that
+ *  has no session id yet (its queue is keyed `turn:` or not keyed at all, and
+ *  queuesSnapshot leaves both out because main cannot keep them). */
+function anyChatQueued() {
+  if (S.queued.length) return true;
+  for (const q of QUEUES.values()) if (q.queued.length) return true;
+  return false;
+}
 /** ATO-429: the strip says messages are waiting only when a chat has some queued. */
 function swxErrLine() {
   const t = SWX.err || SWX.sendError || '';
-  return t !== SWX.sendError || Object.keys(queuesSnapshot()).length ? t : t.replace(/ Your messages are waiting.*$/, ' Choose again.');
+  return t !== SWX.sendError || anyChatQueued() ? t : t.replace(/ Your messages are waiting.*$/, ' Choose again.');
 }
 /** A failed route or mode never releases messages into the previous choice. */
 function swxMessageOutcome(lane, ok) {
@@ -26004,8 +26026,12 @@ function telegramAct(what) {
   const [verb] = what.split(':');
   const arg = what.slice(verb.length + 1);
   // ATO-426: removing the token or the owner takes a second click on the same button; any other action disarms it.
-  const armed = TG.confirm; TG.confirm = null;
-  if ((verb === 'clearToken' || verb === 'clearOwner') && armed !== verb) { TG.confirm = verb; tgRepaint(); return; }
+  const armed = TG.confirm;
+  const confirmVerb = verb === 'clearToken' || verb === 'clearOwner';
+  // ATO-435: the second click of a double-click lands within ~400 ms; it is not a confirmation.
+  if (confirmVerb && armed === verb && Date.now() - TG.confirmAt < TG_CONFIRM_MIN_MS) return;
+  TG.confirm = null;
+  if (confirmVerb && armed !== verb) { TG.confirm = verb; TG.confirmAt = Date.now(); tgRepaint(); return; }
   if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
   if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
   if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
@@ -26016,7 +26042,13 @@ function telegramAct(what) {
   // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
   if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
-  if (verb === 'pair') { tgSetMessage(TG_PAIR_HOWTO, 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
+  if (verb === 'pair') { tgSetMessage(tgPairLine(), 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
+}
+/** ATO-435: what `o` and `/telegram pair` say — the pairing steps only when there is a token and no owner. */
+function tgPairLine() {
+  if (tgHasToken() === false) return TG_PAIR_NEEDS_TOKEN;
+  if (tgOwner() !== null) return TG_PAIR_HAS_OWNER;
+  return TG_PAIR_HOWTO;
 }
 /* telegram-key-bindings.ts: list-mode letters; the token prompt owns its input. */
 function telegramKey(e, k, inText) {

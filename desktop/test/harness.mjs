@@ -252,7 +252,7 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
     check(await app.eval(`/Cloud model ready/.test(${wizText})`), 'the wizard says “Cloud model ready”');
   }
 
-  await pick(app, 'Skip — take me to the agent',
+  await pick(app, 'Start working',
     `${obStep('import_pick')} || !document.querySelector('#onboarding')`, 'the import offer');
   if (await app.eval(obStep('import_pick'))) {
     // Nothing is ticked, so this only closes the step — no other agent's

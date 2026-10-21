@@ -10961,9 +10961,9 @@ async function onboardingTest(
         " Array.from(document.querySelectorAll('#onboarding .ob-row .t')).map((e) => e.textContent))",
     );
     check(
-      "wizard: the offer screen quotes the TUI's two rows",
-      proposeRows.length === 2 && proposeRows[0] === "Set up a cloud model too" &&
-        proposeRows[1] === "Skip — take me to the agent",
+      "wizard: the offer screen puts Start working first and the cloud second (ATO-447)",
+      proposeRows.length === 2 && proposeRows[0] === "Start working" &&
+        proposeRows[1] === "Add a cloud model for Fusion",
       JSON.stringify(proposeRows),
     );
 
