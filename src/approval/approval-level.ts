@@ -60,7 +60,7 @@ export type ApprovalCategory =
   | "fs_read_outside"
   /**
    * A generation billed to the operator's cloud account (`image.generate`
-   * on OpenRouter). Level 3 beside `http`: the lowest two levels ask
+   * and `video.generate` on OpenRouter). Level 3 beside `http`: the lowest two levels ask
    * before money is spent; a local generation never asks.
    */
   | "paid_generation"

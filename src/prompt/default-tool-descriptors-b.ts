@@ -210,6 +210,21 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // Frequent tier beside image.generate, for the same reason: "make a
+    // video of ..." must reach a valid call first time and the summary
+    // carries the reply.attachments step. Offered only while an
+    // OpenRouter key is configured (`GATED_TOOLS.video`).
+    name: "video.generate",
+    summary:
+      "Generate a short video clip from a text prompt, optionally starting from an image file (cloud video model on OpenRouter via Atomic Chat Core; paid per second, so it asks the user first and takes one to a few minutes). Saves an .mp4 in the working folder and returns its path; to show it, pass the path in reply.attachments. Write the prompt in English: subject, action, camera movement, style, sound.",
+    argsSchema:
+      '{ prompt: string, image?: string /* path of a png|jpg|webp first frame */, duration?: number /* seconds; default 4; the default model takes 4|6|8 */, aspect?: string /* 16:9|9:16 or landscape|portrait; default 16:9 */, resolution?: string /* 720p|1080p|4K; omit for the model default */, audio?: boolean, seed?: number, model?: string /* OpenRouter video model id; omit for the default */ }',
+    examples: [
+      '{"prompt":"A red fox trotting through a snowy birch forest at dawn, slow tracking shot, soft golden light"}',
+      '{"prompt":"The rocket lifts off and flies out of frame","image":"rocket.png","duration":6,"aspect":"9:16"}',
+    ],
+  },
+  {
     // MCP discovery / resource / prompt tools. The actual MCP tool
     // calls themselves come from the dynamic descriptor builder
     // (see `mcp-descriptor-builder.ts`) and ship at tier `rare`.
