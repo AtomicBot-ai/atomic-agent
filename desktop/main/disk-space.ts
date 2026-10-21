@@ -53,3 +53,28 @@ export async function diskSpaceAt(dir: string, fs: { statfs: typeof statfs } = {
   }
   return null;
 }
+
+/* ---- the window's check (renderer/disk-space.js diskFit), for downloads main starts ---- */
+
+const GIB = 1024 * 1024 * 1024;
+/** Room beyond the file itself: the partial file, logs. The renderer's DISK_MARGIN. */
+export const DISK_MARGIN = 0.1;
+
+/** "19.7 GB", binary, rounded; `down` floors, so free space is never said to be more than it is. */
+function gbWord(bytes: number, down = false): string {
+  const tenths = (bytes / GIB) * 10;
+  return ((down ? Math.floor(tenths) : Math.round(tenths)) / 10).toFixed(1).replace(/\.0$/, "") + " GB";
+}
+
+/**
+ * ATO-507's sentence when `needBytes` (plus the margin) does not fit in
+ * `space`, else null. Null too when either number is unknown: a missing
+ * reading never blocks a download. Same words as the window says before
+ * an LLM download ("Needs 19.7 GB, 12.1 GB free on this disk.").
+ */
+export function diskShortfall(needBytes: number, space: DiskSpace, margin = DISK_MARGIN): string | null {
+  const free = space ? space.freeBytes : NaN;
+  if (!(needBytes > 0) || !Number.isFinite(free) || free < 0) return null;
+  if (free >= needBytes * (1 + margin)) return null;
+  return `Needs ${gbWord(needBytes)}${free >= needBytes ? " and some room to spare" : ""}, ${gbWord(free, true)} free on this disk.`;
+}
