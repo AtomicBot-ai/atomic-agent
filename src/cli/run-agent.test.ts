@@ -143,6 +143,12 @@ const model = vi.hoisted(() => ({ emits: "" }));
 /** The options `runAgentCommand` handed `runtime.runTurn`, per turn. */
 const turnOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
+/** The user message of each turn, in the order the turns ran. */
+const turnMessages = vi.hoisted(() => [] as string[]);
+
+/** When set, every turn waits on it before it starts running. */
+const turnGate = vi.hoisted(() => ({ wait: null as Promise<void> | null }));
+
 // `runAgentCommand` boots the real runtime and takes no injection seam of
 // its own, so the bootstrap module is wrapped to supply the same
 // `overrides` the HTTP harness uses. Everything else — tool registry,
@@ -197,8 +203,10 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
       // runs on the production path.
       const runTurn = runtime.runTurn;
       return Object.assign(runtime, {
-        runTurn: (...args: Parameters<typeof runTurn>) => {
+        runTurn: async (...args: Parameters<typeof runTurn>) => {
           turnOptions.push({ ...(args[2] ?? {}) });
+          turnMessages.push(args[1]);
+          if (turnGate.wait) await turnGate.wait;
           return runTurn(...args);
         },
       });
@@ -333,6 +341,35 @@ describe("runAgentCommand exit codes", () => {
     expect(code).toBe(0);
     expect(turnOptions).toHaveLength(1);
     expect(turnOptions[0]!.maxSteps).toBe(7);
+  }, 60_000);
+
+  it("runs every stdin line in order, even lines that arrive mid-turn (ATO-781)", async () => {
+    // A driver writes the task and its follow-ups up front. The first
+    // turn is held until stdin has hit EOF, so the follow-ups arrive
+    // while it runs and EOF lands before it ends.
+    turnOptions.length = 0;
+    turnMessages.length = 0;
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "ok" } });
+    const stdin = Readable.from(["the task\n", "continue\n", "and wrap up\n"]);
+    Object.defineProperty(process, "stdin", {
+      value: stdin,
+      configurable: true,
+    });
+    turnGate.wait = new Promise<void>((resolveGate) => {
+      stdin.once("end", () => resolveGate());
+    });
+    try {
+      const code = await runAgentCommand([
+        "--cwd",
+        workingDir,
+        "--no-approval",
+      ]);
+      expect(code).toBe(0);
+    } finally {
+      turnGate.wait = null;
+    }
+    expect(turnMessages).toEqual(["the task", "continue", "and wrap up"]);
+    expect(stderr).toContain('"turnCount": 3');
   }, 60_000);
 });
 

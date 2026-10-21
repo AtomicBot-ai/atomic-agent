@@ -1,7 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import type { Interface as ReadlineInterface } from "node:readline";
 
 import {
   formatApprovalCategory,
@@ -286,6 +285,8 @@ interface ChatLoopOptions {
    */
   maxSteps?: number;
   controller: AbortController;
+  /** True while an approval prompt is reading its own answer from stdin. */
+  isApprovalPending?: () => boolean;
 }
 
 /**
@@ -357,37 +358,45 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     terminal: process.stdin.isTTY === true,
   });
 
-  const ask = (rli: ReadlineInterface): Promise<string | null> =>
-    new Promise((resolvePrompt, rejectPrompt) => {
-      if ((rli as { closed?: boolean }).closed === true) {
-        resolvePrompt(null);
-        return;
-      }
-      const onClose = () => resolvePrompt(null);
-      rli.once("close", onClose);
-      try {
-        rli.question("you> ", (answer) => {
-          rli.off("close", onClose);
-          resolvePrompt(answer);
-        });
-      } catch (err) {
-        rli.off("close", onClose);
-        if (
-          err instanceof Error &&
-          err.message.toLowerCase().includes("readline was closed")
-        ) {
-          resolvePrompt(null);
-          return;
-        }
-        rejectPrompt(err);
-      }
-    });
+  rl.setPrompt("you> ");
+
+  // Every stdin line is queued the moment readline emits it. Reading
+  // with `rl.question()` dropped any line that arrived while a turn was
+  // running (readline only hands a line to a pending question), so a
+  // driver that wrote "task" and then "continue" up front got one turn
+  // and an EOF (ATO-781). EOF ends the loop only once the queue is
+  // drained. A line read while an approval prompt is open belongs to
+  // that prompt's own reader, so it is not queued as a user message.
+  const queued: string[] = [];
+  let inputClosed = false;
+  let wake: (() => void) | null = null;
+  rl.on("line", (line) => {
+    if (opts.isApprovalPending?.() === true) return;
+    queued.push(line);
+    wake?.();
+  });
+  rl.once("close", () => {
+    inputClosed = true;
+    wake?.();
+  });
+
+  const nextLine = async (): Promise<string | null> => {
+    if (queued.length === 0 && !inputClosed) rl.prompt();
+    while (queued.length === 0) {
+      if (inputClosed) return null;
+      await new Promise<void>((resolveWake) => {
+        wake = resolveWake;
+      });
+      wake = null;
+    }
+    return queued.shift() ?? null;
+  };
 
   try {
     while (true) {
       if (opts.controller.signal.aborted) break;
       if (session.status === "completed") break;
-      const line = await ask(rl);
+      const line = await nextLine();
       if (line === null) break;
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
@@ -426,6 +435,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   );
 
   let approvalChain: Promise<unknown> = Promise.resolve();
+  let pendingApprovals = 0;
 
   // The hint only applies when a transport failure means "local llama is
   // down" — i.e. the active text route IS the local server. On a cloud
@@ -450,8 +460,14 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         if (line) process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {
+        pendingApprovals += 1;
         approvalChain = approvalChain.then(async () => {
-          const answer = await promptApproval(request);
+          let answer: CliApprovalAnswer;
+          try {
+            answer = await promptApproval(request);
+          } finally {
+            pendingApprovals -= 1;
+          }
           runtime.approvals.resolve({
             approvalId: request.approvalId,
             approved: answer.approved,
@@ -501,6 +517,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       // (the leg length) made every task stop at the first leg.
       ...(parsed.maxSteps === null ? {} : { maxSteps: parsed.maxSteps }),
       controller,
+      isApprovalPending: () => pendingApprovals > 0,
     });
     runtime.sessionStore.save(finalSession);
     process.stderr.write(
