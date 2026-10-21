@@ -334,6 +334,8 @@ async function handleStream(
  *  - `tool_call_executed` → `event: tool_result` (extensions opt-in only),
  *    the call's outcome the moment it lands, matched to its
  *    `tool_progress` by `call_id`
+ *  - the agent-level `tool_progress` (a long call's how-far-it-got) →
+ *    `event: tool_update` (extensions opt-in only)
  *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
  *    A terminal `assistant_reply` whose text the same step already streamed
  *    as deltas is skipped (no duplicate body); one that was never streamed
@@ -609,6 +611,23 @@ export function buildStreamEventHook(
           ...(typeof contextTokens === "number" && Number.isFinite(contextTokens) && contextTokens > 0
             ? { context_tokens: contextTokens }
             : {}),
+        });
+      }
+      return;
+    }
+    /* A long tool call (`video.generate`) saying how far it got. Named
+       `tool_update`, not `tool_progress`: hosts already read that name as
+       "a call was parsed" and would draw a new card for every update.
+       Extensions-only, like the rest. */
+    if (event.type === "tool_progress") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("tool_update", {
+          object: "atomic.tool_update",
+          session_id: env.session.id,
+          tool: event.tool,
+          fraction: Number.isFinite(event.fraction) ? Math.min(Math.max(event.fraction, 0), 1) : 0,
+          elapsed_ms: Number.isFinite(event.elapsedMs) ? Math.max(0, Math.round(event.elapsedMs)) : 0,
+          label: event.label,
         });
       }
       return;
