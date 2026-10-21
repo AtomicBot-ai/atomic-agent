@@ -16240,7 +16240,9 @@ function selRows() {
        active: here === 'local'},
       {type:'backend', id:'custom', label:'custom',
        detail: customHost ? 'your llama.cpp server at ' + customHost : 'your own llama.cpp server · set it up in Settings › Models',
-       active: here === 'custom'},
+       // ATO-478: no server to switch to yet, so a Set up chip, not a radio
+       // that reads as choosable (choosing the row opens Settings anyway).
+       setup: !customHost && here !== 'custom', active: here === 'custom'},
       // Last on purpose (backendRows): the three above are routes, this one is a
       // mode built on two of them. The detail is the pre-flight's one line, or
       // what it would run.
@@ -16568,7 +16570,8 @@ function selectorHTML() {
            data-act before the row's (a keyboard Enter on the row lands in the
            same place, selActivate). */
         const right = (r.addProvider ? '<span class="btn btn-s xs seladd" data-act="sel:addProvider">' + ic('plus') + 'Add provider</span>' : '')
-          + (r.type === 'backend' && !r.addProvider ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
+          + (r.setup ? '<span class="tk-chip tk-chip--sm selsetup">Set up</span>' : '')
+          + (r.type === 'backend' && !r.addProvider && !r.setup ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
@@ -20925,10 +20928,8 @@ function tkDetailHTML() {
         + '<span class="mono set-meta">attempts ' + row.attempts + '/' + row.maxAttempts + '</span></div>'
       + '<dl class="tk-plate set-plate">' + plate.filter(Boolean).map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
     + '</div>'
-    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>last error:</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
-    + '<div class="set-section"><div class="tk-sh">Recent firings</div>'
-    // The TUI builds this feed in-process by diffing records between ticks; the HTTP API has no such surface.
-    + '<p class="set-cap">(firings are not exposed by the agent\'s HTTP API)</p></div>'
+    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>' + (/^interrupted:/.test(row.lastError) ? 'Last run stopped:' : 'Last run failed:') + '</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
+    // No Recent firings section: the TUI builds that feed in-process by diffing records between ticks, and the HTTP API has no such surface yet.
     + tkCancelModal()
     + '</div>';
 }
@@ -20955,9 +20956,12 @@ function tkFormHTML() {
         + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
           + ['cron','interval','at'].map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '">' + k + '</button>').join('')
         + '</div></div>'
+        // ATO-519: in chat the agent turns a plain sentence into a schedule through its tasks.cron tool.
+        + '<p class="set-cap">Or just tell the agent in chat, for example: every weekday at 9, send me a summary.</p>'
         + expr
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
-        + field('Message', 'message', f.message, 'what should the agent do when this fires?', '', false)
+        // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
+        + field('Message', 'message', f.message, 'what should the agent do when this fires?', 'Each run\'s reply lands in this task\'s own chat: open the task and press Open session.', false)
       + '</div>'
       + '<div class="set-prevcard" id="tk-preview">' + tkPreviewHTML(f) + '</div>'
     + '</div>'
@@ -22738,6 +22742,7 @@ function mcpMark(cfg) {
 function mcpListHTML(rows) {
   if (!rows.length) {
     return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No MCP servers</h4>'
+      + '<p>MCP servers are plug-ins that give the agent new tools, like GitHub, your files or a browser.</p>'
       + '<p>Add a server to give the agent more tools.</p></div>';
   }
   const cur = Math.max(0, Math.min(MCP.cursor, rows.length - 1));
@@ -24136,7 +24141,8 @@ function llmLocalHTML() {
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'
         + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')})
     + llmTuneHTML()
-    + llmSectionHTML('Embedding models', emb, text.length, cursor);
+    + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false,
+      {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
 }
 function llmCloudHTML() {
   const rows = llmCloudRows();

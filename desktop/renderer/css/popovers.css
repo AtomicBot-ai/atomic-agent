@@ -74,6 +74,8 @@
 /* Chat review (Д21): Where it runs › Add provider, on a row with nothing to run on. */
 .selpop .seladd{padding:0 10px 0 8px;gap:4px}
 .selpop .seladd svg{width:12px;height:12px}
+/* ATO-478: Where it runs › Custom server with no server configured yet. */
+.selpop .selsetup{color:var(--ink-2)}
 .selpop .seldl svg{width:13px;height:13px}
 .selpop .selsep{margin:4px 8px}
 .selspin{width:22px;height:22px;flex:none;display:grid;place-items:center}
