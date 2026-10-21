@@ -5,7 +5,13 @@
 
 /* ---------- sidebar group (shell.js sidebarHTML) ---------- */
 .sb-studio{display:flex;flex-direction:column;gap:2px;margin-top:4px}
-.sb-studio .sb-list-head{margin-top:8px}
+/* Studio's own header: it looks like the list headers (shell.css .sb-list-head)
+   but is not one of them, so the chat lists keep their own header set. */
+.sb-studio-head{
+  height:30px;flex:none;display:flex;align-items:center;gap:6px;margin-top:8px;padding:0 4px 0 10px;
+  font:600 12px/16px var(--font-ui);letter-spacing:0;color:var(--ink-3);text-transform:none;
+}
+.sb-studio-head > span:first-child{flex:1;min-width:0}
 .sb-studio-row{position:relative}
 .sb-studio-row.on{background:var(--brand-wash)}
 .sb-studio-row.on .sb-new-ic{color:var(--accent)}

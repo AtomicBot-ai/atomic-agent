@@ -163,7 +163,7 @@
       const kinds = ORDER.filter((k) => pages[k]).concat(Object.keys(pages).filter((k) => !ORDER.includes(k)));
       if (!kinds.length) return '';
       return '<div class="sb-studio" role="group" aria-label="Studio">'
-        + '<div class="sb-list-head micro"><span>Studio</span></div>'
+        + '<div class="sb-studio-head micro"><span>Studio</span></div>'
         + kinds.map((k) => {
           const p = pages[k];
           const on = room === 'studio' && cur === k;
