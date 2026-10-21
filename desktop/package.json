@@ -32,6 +32,7 @@
     "drive:wizard": "npm run build && node test/wizard-resume.drive.mjs",
     "drive:fusion": "npm run build && node test/fusion.drive.mjs",
     "drive:live": "npm run build && node test/live-routes.drive.mjs",
+    "drive:studio-live": "npm run build && node test/studio-live.drive.mjs",
     "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && node scripts/fetch-core.mjs --platform darwin --arch arm64 && electron-builder --mac --arm64 --publish never",
     "dist:win": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && node scripts/fetch-core.mjs --platform win32 --arch x64 && electron-builder --win --x64 --publish never",
     "dist:linux": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && node scripts/fetch-core.mjs --platform linux && electron-builder --linux --publish never",
