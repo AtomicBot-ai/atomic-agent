@@ -5,11 +5,15 @@ import {
 } from "../transport/search-cache.js";
 import {
   formatCooldown,
+  type CooldownTag,
   type ProviderCooldown,
 } from "../transport/provider-cooldown.js";
 import {
+  EXA_GET_KEY_URL,
   WebSearchBlockedError,
   WebSearchRateLimitedError,
+  WebSearchUnavailableError,
+  type WebSearchKeyRequired,
 } from "../web-search-errors.js";
 import type {
   WebSearchHttpDeps,
@@ -18,6 +22,11 @@ import type {
   WebSearchResult,
 } from "../web-search-provider.js";
 import { resolveProviderByName } from "./provider-registry.js";
+import {
+  buildUnavailableMessage,
+  describeFailure,
+  isConnectFailure,
+} from "./search-failure-report.js";
 
 export interface WebSearchOrchestratorInput {
   config: Pick<AtomicAgentConfig, "web">;
@@ -52,6 +61,11 @@ export interface WebSearchOrchestratorResult {
    * can see is not a degradation anybody fixes.
    */
   degraded: readonly string[];
+  /**
+   * Set when Exa is running keyless and hit its free limit on the way to
+   * this answer (ATO-327). See {@link WebSearchKeyRequired}.
+   */
+  keyRequired?: WebSearchKeyRequired;
 }
 
 /**
@@ -70,9 +84,33 @@ export async function runWebSearchWithFallback(
 
   const now = input.now ?? Date.now;
   const cooldown = input.cooldown;
-  let firstError: unknown;
   let lastEmpty: WebSearchOrchestratorResult | undefined;
   const degraded: string[] = [];
+  // Plain-words line per provider that did not answer, for the error the
+  // tool returns when none did (ATO-325).
+  const failures: string[] = [];
+  let connectFailures = 0;
+  // Exa without a key goes through its free tier, which runs out fast.
+  // What happened to it decides whether a key is worth asking for.
+  const keylessExa =
+    chain.includes("exa") && !hasEnvKey(env, search.exa.apiKeyEnv);
+  let exaOutcome: WebSearchKeyRequired["reason"] | undefined;
+  const keyRequired = (
+    reason: WebSearchKeyRequired["reason"],
+  ): WebSearchKeyRequired => ({
+    provider: "exa",
+    reason,
+    getKeyUrl: EXA_GET_KEY_URL,
+    envVar: search.exa.apiKeyEnv,
+  });
+  // A result can be built before Exa's outcome is known (an empty answer
+  // kept while the chain goes on), so the signal is attached on return.
+  const finish = (
+    result: WebSearchOrchestratorResult,
+  ): WebSearchOrchestratorResult =>
+    keylessExa && exaOutcome === "rate_limited"
+      ? { ...result, keyRequired: keyRequired("rate_limited") }
+      : result;
 
   for (const name of chain) {
     if (!isProviderUsable(name, input.config, env)) continue;
@@ -85,6 +123,15 @@ export async function runWebSearchWithFallback(
     //
     // The cache is still consulted first — a parked provider's earlier
     // answers are not stale just because its quota ran out.
+    //
+    // Exa's keyless and keyed tiers have separate quotas. A park from the
+    // free tier must not hold back a key the user has just added (and was
+    // told to restart for, which the persisted cooldown survives), so a
+    // park tagged with the other tier is dropped here (ATO-327).
+    const tier: CooldownTag | undefined =
+      name === "exa" ? (keylessExa ? "keyless" : "keyed") : undefined;
+    const parkedTier = tier !== undefined ? cooldown?.tagOf(name) : undefined;
+    if (parkedTier !== undefined && parkedTier !== tier) cooldown?.clear(name);
     const parkedFor = cooldown?.remainingMs(name, now()) ?? 0;
 
     const cacheKey = buildSearchCacheKey(
@@ -95,7 +142,12 @@ export async function runWebSearchWithFallback(
     const cached = input.cache?.get(cacheKey);
     if (cached) {
       if (cached.length > 0) {
-        return { results: cached, provider: name, fromCache: true, degraded };
+        return finish({
+          results: cached,
+          provider: name,
+          fromCache: true,
+          degraded,
+        });
       }
       lastEmpty = {
         results: cached,
@@ -107,9 +159,18 @@ export async function runWebSearchWithFallback(
     }
 
     if (parkedFor > 0) {
+      const freeTier = keylessExa && name === "exa";
       degraded.push(
-        `${name} skipped: rate limited, retrying in ${formatCooldown(parkedFor)}`,
+        freeTier
+          ? `${name} skipped: free limit reached, retrying in ${formatCooldown(parkedFor)}`
+          : `${name} skipped: rate limited, retrying in ${formatCooldown(parkedFor)}`,
       );
+      failures.push(
+        freeTier
+          ? `${name}: free limit reached, next try in ${formatCooldown(parkedFor)}`
+          : `${name}: rate limited, next try in ${formatCooldown(parkedFor)}`,
+      );
+      if (freeTier) exaOutcome = "rate_limited";
       continue;
     }
 
@@ -122,15 +183,30 @@ export async function runWebSearchWithFallback(
       // ladder measures *consecutive* failures, not lifetime ones.
       cooldown?.clear(name);
       if (results.length > 0) {
-        return { results, provider: name, fromCache: false, degraded };
+        return finish({ results, provider: name, fromCache: false, degraded });
       }
       lastEmpty = { results, provider: name, fromCache: false, degraded };
     } catch (err) {
-      if (firstError === undefined) firstError = err;
+      // A Stop fails whatever provider was running. That is not a search
+      // failure: no report, no key card, the abort goes up as it did.
+      if (input.options.signal.aborted) throw err;
+      const freeTier = keylessExa && name === "exa";
+      failures.push(describeFailure(name, err, freeTier));
+      if (isConnectFailure(err)) connectFailures++;
+      if (freeTier) {
+        exaOutcome =
+          err instanceof WebSearchRateLimitedError
+            ? "rate_limited"
+            : isConnectFailure(err)
+              ? "unreachable"
+              : "missing";
+      }
       if (err instanceof WebSearchRateLimitedError && cooldown) {
-        const parked = cooldown.park(name, now(), err.retryAfterMs);
+        const parked = cooldown.park(name, now(), err.retryAfterMs, tier);
         degraded.push(
-          `${name} rate limited (HTTP 429), parked for ${formatCooldown(parked)}`,
+          freeTier
+            ? `${name} free limit reached (HTTP 429, no ${search.exa.apiKeyEnv}), parked for ${formatCooldown(parked)}`
+            : `${name} rate limited (HTTP 429), parked for ${formatCooldown(parked)}`,
         );
       } else {
         // Recorded, not raised: if a later provider answers, this search
@@ -142,8 +218,23 @@ export async function runWebSearchWithFallback(
     }
   }
 
-  if (lastEmpty) return lastEmpty;
-  if (firstError !== undefined) throw firstError;
+  if (lastEmpty) return finish(lastEmpty);
+  if (failures.length > 0) {
+    // Nothing answered while Exa ran keyless: a key is the one change that
+    // gives the chain a provider with its own quota, whatever Exa's
+    // failure was (`missing` when it was not a 429 or a connect failure).
+    const signal = keylessExa ? keyRequired(exaOutcome ?? "missing") : undefined;
+    throw new WebSearchUnavailableError(
+      search.provider,
+      buildUnavailableMessage({
+        failures,
+        keyRequired: signal,
+        allUnreachable: connectFailures > 0 && connectFailures === failures.length,
+      }),
+      failures,
+      signal,
+    );
+  }
   // No usable provider in this env and nothing cached: surface a blocked-style
   // error against the primary so the tool emits a structured failure.
   throw new WebSearchBlockedError(
@@ -155,11 +246,11 @@ export async function runWebSearchWithFallback(
 /**
  * Ordered, deduped chain: primary first, then each configured fallback.
  *
- * Exa without a key is not in it (`isProviderUsable` skips it), and a
- * chain that loses Exa that way gains DuckDuckGo at the end when it does
- * not already have it. Without that, `provider: "exa"` with
- * `fallback: []` would go from "searches through keyless Exa" to "cannot
- * search at all" the moment the keyless tier is skipped.
+ * Exa without a key stays where it is configured and runs on its keyless
+ * tier (ATO-327). That tier runs out of free quota quickly, so a chain
+ * with keyless Exa gains DuckDuckGo at the end when it does not already
+ * have it: `provider: "exa"` with `fallback: []` still has somewhere to
+ * go once the free limit is reached.
  */
 function buildProviderChain(
   search: AtomicAgentConfig["web"]["search"],
@@ -183,15 +274,16 @@ function buildProviderChain(
 }
 
 /**
- * `searxng` needs an `instanceUrl`; `brave` and `exa` need their API key
- * in the env. `duckduckgo` is always attempted.
+ * `searxng` needs an `instanceUrl`; `brave` needs its API key in the env.
+ * `duckduckgo` and `exa` are always attempted.
  *
- * Exa used to be attempted keyless too, through its public MCP endpoint.
- * That tier answered 429 under any real load and has since been seen
- * answering 403 outright, so every search paid a doomed request before
- * reaching the provider that would serve it, and a run where DuckDuckGo
- * was also blocked surfaced Exa's error instead of the real one
- * (ATO-120). Without a key Exa is now skipped like Brave is.
+ * Exa without a key goes through its public MCP endpoint. ATO-120 (#609)
+ * skipped it, because that tier answers 429 under load; but that left
+ * DuckDuckGo as the only keyless provider, and where DuckDuckGo is blocked
+ * search did not work at all (ATO-315). It is attempted again (ATO-327):
+ * a 429 parks it through the cooldown, the notes say the free limit is
+ * reached, and the result carries `keyRequired` so the user is asked for
+ * a key instead of paying the 429 on every query.
  */
 function isProviderUsable(
   name: WebSearchProviderName,
@@ -207,7 +299,6 @@ function isProviderUsable(
       return typeof key === "string" && key.length > 0;
     }
     case "exa":
-      return hasEnvKey(env, search.exa.apiKeyEnv);
     case "duckduckgo":
       return true;
   }

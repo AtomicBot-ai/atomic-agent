@@ -446,6 +446,7 @@ export function buildStreamEventHook(
             ? { duration_ms: Math.max(0, Math.round(inner.durationMs)) }
             : {}),
           summary: clipToolSummary(inner.result.summary),
+          ...keyRequiredFrame(inner.result),
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
@@ -693,6 +694,30 @@ function toolResultStatus(
     return "denied";
   }
   return "error";
+}
+
+/**
+ * `key_required` on a `tool_result` frame: the tool's `details.keyRequired`
+ * as it is, when the call says an API key would fix it (ATO-327, today
+ * only `os.web.search` on keyless Exa: `{provider: "exa", reason,
+ * getKeyUrl, envVar}`, see `WebSearchKeyRequired`). The frame is the only
+ * live path a host has to it: `summary` is clipped and the session store
+ * does not keep `details`. Left out unless every field is a string, so a
+ * host can trust the shape it renders a key card from.
+ */
+function keyRequiredFrame(
+  result: CompressedToolResult,
+): { key_required?: Record<string, string> } {
+  const raw = (result.details ?? {}).keyRequired;
+  if (typeof raw !== "object" || raw === null) return {};
+  const value = raw as Record<string, unknown>;
+  const fields = ["provider", "reason", "getKeyUrl", "envVar"] as const;
+  if (!fields.every((field) => typeof value[field] === "string")) return {};
+  return {
+    key_required: Object.fromEntries(
+      fields.map((field) => [field, value[field] as string]),
+    ),
+  };
 }
 
 /** Longest `summary` a `tool_result` carries; the store keeps the whole one. */
