@@ -63,13 +63,20 @@ describe("effectiveToolDescriptors", () => {
     // an Atomic Mail key in the environment.
     process.env.ATOMIC_MAIL_API_KEY = "k";
     try {
-      const names = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map(
+      // ...and an OpenRouter key, which opens the image gate.
+      const names = effectiveToolDescriptors(ALL_ENABLED, { ...WITH_GITHUB, OPENROUTER_API_KEY: "sk-or-test" }).map(
         (d) => d.name,
       );
       expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     } finally {
       delete process.env.ATOMIC_MAIL_API_KEY;
     }
+  });
+
+  it("drops image.generate without an OpenRouter key", () => {
+    const names = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map((d) => d.name);
+    expect(names).not.toContain("image.generate");
+    expect(names).toContain("vision.describe");
   });
 
   it("drops github.* when the hub holds no token", () => {
