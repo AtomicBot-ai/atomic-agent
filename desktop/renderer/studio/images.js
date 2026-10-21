@@ -20,10 +20,13 @@
     sel: null, recipe: false, delArmed: null, picking: null,
     price: null, priceKey: '', pop: null, modelQ: '', adv: false,
     dir: '', focusPath: null,
+    chatItem: null,   // a picture opened from a chat that Studio did not make ("From chat")
   };
   /* key → {state:'loading'|'ok'|'fail', url}. Thumbnails stay; full pictures only the last few. */
   const PICS = new Map();
   const FULL = [];
+  /* Pictures opened from a chat: read through the chat's reader (BR.imageDataUrl), not Studio's. */
+  const CHAT = new Set();
   /* Sources the person dropped or pasted: key → data URL (they have no path main would take). */
   const LOCAL = new Map();
   let localSeq = 0;
@@ -111,9 +114,12 @@
     const done = () => { if (IM.root) hydrate(IM.root); };
     if (LOCAL.has(key)) { st.state = 'ok'; st.url = LOCAL.get(key); return st; }
     const s = br();
-    if (!s || !s.preview) { st.state = 'fail'; return st; }
-    Promise.resolve(s.preview(key)).then((r) => {
-      const d = r && r.ok ? r.data : null;
+    const a = window.atomic;
+    const fromChat = CHAT.has(key);
+    if (fromChat ? !(a && a.imageDataUrl) : !(s && s.preview)) { st.state = 'fail'; return st; }
+    // Studio answers {ok, data:{ok, dataUrl}}; the chat's reader {ok, dataUrl}.
+    Promise.resolve(fromChat ? a.imageDataUrl(key) : s.preview(key)).then((r) => {
+      const d = fromChat ? r : r && r.ok ? r.data : null;
       if (d && d.ok && typeof d.dataUrl === 'string') { st.state = 'ok'; st.url = d.dataUrl; } else st.state = 'fail';
       if (full) {
         FULL.push(key);
@@ -377,16 +383,24 @@
 
   /* ---------- result actions ---------- */
 
-  const selItem = () => IM.items.find((x) => x.id === IM.sel) || null;
+  const selItem = () => IM.items.find((x) => x.id === IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null);
 
   async function fullDataUrl(item) {
+    if (item.fromChat) {
+      const a = window.atomic;
+      const r = a && a.imageDataUrl ? await Promise.resolve(a.imageDataUrl(item.path)).catch(() => null) : null;
+      return r && r.ok ? r : null;
+    }
     const s = br();
     const r = s && s.preview ? await Promise.resolve(s.preview(item.path)).catch(() => null) : null;
     const d = r && r.ok ? r.data : null;
     return d && d.ok ? d : null;
   }
   async function asBlob(dataUrl, png) {
-    const blob = await (await fetch(dataUrl)).blob();
+    // Not fetch(): the window's CSP (connect-src 'none') refuses even a data: URL.
+    const got = STUDIO.dataUrlToBytes(dataUrl);
+    if (!got) throw new Error('Not a picture');
+    const blob = new Blob([got.bytes], {type: got.type});
     if (!png || blob.type === 'image/png') return blob;
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
     const c = document.createElement('canvas');
@@ -405,14 +419,11 @@
     } catch (e) { toast('Could not copy', String((e && e.message) || e), 'bad'); }
   }
 
-  async function sendToChat(item) {
-    const d = await fullDataUrl(item);
-    if (!d) { toast('Could not send it', 'The picture is no longer there.', 'bad'); return; }
-    let file;
-    try { file = new File([await asBlob(d.dataUrl, false)], baseName(item.path), {type: d.mime || 'image/png'}); } catch (e) { file = null; }
-    if (!file || typeof attAdd !== 'function') { toast('Could not send it', '', 'bad'); return; }
-    act('room:chat');
-    attAdd([{file}], 'studio');
+  /* The shell's one way into the chat (shell.js sendToChat), shared with Video. */
+  function sendToChat(item) {
+    Promise.resolve(STUDIO.sendToChat({path: item.path, name: baseName(item.path)})).then((ok) => {
+      if (!ok) toast('Could not send it', 'The picture is no longer there.', 'bad');
+    });
   }
 
   function restore(item) {
@@ -455,12 +466,21 @@
       if (IM.galLoading) return;
       if (IM.hasMore) { loadGallery(true); return; }
       IM.focusPath = null;
-      toast('Not in the gallery', 'The picture may have been moved or deleted');
+      showFromChat(path);
       return;
     }
     IM.focusPath = null;
     IM.sel = hit.id; IM.filter = 'all'; IM.recipe = false; IM.jobErr = null;
     if (IM.shown) { paintStage(); paintGallery(); scrollThumb(); }
+  }
+  /** A picture Studio did not make (an agent tool saved it in the working folder), shown on its own. */
+  function showFromChat(path) {
+    CHAT.add(path);
+    PICS.delete(path);   // read again: the agent may have written it anew
+    IM.chatItem = {id: 'chat:' + path, path, fromChat: true, prompt: '', createdAtMs: Date.now(), pinned: false};
+    IM.sel = IM.chatItem.id; IM.recipe = false; IM.delArmed = null;
+    if (!isLive(IM.job)) IM.jobErr = null;
+    if (IM.shown) { paintStage(); paintGallery(); }
   }
   function scrollThumb() {
     const t = IM.root && IM.root.querySelector('.st-th.on');
@@ -479,7 +499,7 @@
       case 'stop': stop(); return;
       case 'retry': IM.jobErr = null; generate(); return;
       case 'dismiss': IM.jobErr = null; paintStage(); return;
-      case 'settings': act('settings:llm'); return;
+      case 'settings': STUDIO.openSettings('openrouter'); return;
       case 'mode': switchMode(a); save(); paintForm(); refreshPrice(); return;
       case 'aspect': IM.form.aspect = a; save(); paintForm(); return;
       case 'count': IM.form.count = Math.min(Math.max(1, IM.form.count + Number(a)), Math.max(1, (IM.model && IM.model.maxCount) || 1)); save(); paintForm(); refreshPrice(); return;
@@ -516,6 +536,24 @@
         return;
     }
     if (!item) return;
+    if (item.fromChat) {
+      // Not Studio's file: the chat's own Save As… and Reveal (main checks it is a picture again).
+      const a = window.atomic || {};
+      switch (k) {
+        case 'saveas':
+          if (a.imageSaveAs) Promise.resolve(a.imageSaveAs(item.path)).then((r) => {
+            if (r && r.ok) toast('Saved', r.path || '');
+            else if (!r || r.reason !== 'canceled') toast('Could not save it', 'The picture is no longer there.', 'bad');
+          });
+          return;
+        case 'reveal':
+          if (a.imageReveal) Promise.resolve(a.imageReveal(item.path)).then((r) => { if (!r || !r.ok) toast('Could not show it', 'The picture is no longer there.', 'bad'); });
+          return;
+        case 'copy': copyImage(item); return;
+        case 'tochat': sendToChat(item); return;
+      }
+      return;
+    }
     switch (k) {
       case 'recipe': IM.recipe = !IM.recipe; paintStage(); return;
       case 'pin':
@@ -654,6 +692,8 @@
     focusFile(path) {
       IM.filter = 'all';
       if (IM.items.some((x) => x.path === path || x.thumbnailPath === path)) { focusFile(path); return; }
+      // Outside Studio's folder (an agent tool's picture): no gallery page will have it.
+      if (!STUDIO.isStudioFile(path, 'image')) { IM.focusPath = null; showFromChat(path); return; }
       // Not read yet, or newer than the first page: read the first page again; its answer focuses it.
       IM.focusPath = path;
       loadGallery(false);

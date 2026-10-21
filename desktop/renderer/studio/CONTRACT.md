@@ -239,9 +239,20 @@ Show `~$0.20` (or `~$0.32–0.40` with `maxUsd`) on the Generate button; `null`
 `pricing_skus` (per-second SKUs; `cents_per_*` are cents; token SKUs → null).
 `/api/v1/models` has no per-image price and is not used.
 
+## Renderer helpers (studio/shell.js)
+
+Not bridge calls; the pages use them instead of reaching into renderer.js.
+
+| call | does |
+|---|---|
+| `STUDIO.mediaUrl(path)` | a `file:` URL for `<video src>` (each path segment percent-encoded; `''` for a relative path, `~`, a network share or a URL). The window's CSP allows `media-src 'self' file: data: blob:`. If the bridge ever gets `BR.studio.mediaUrl`, its answer wins |
+| `STUDIO.sendToChat(path \| {path, name?})` | switches to the chat on screen (the empty new chat when none) and hands it the file: a picture becomes a composer attachment (read through `preview` for Studio files, `BR.imageDataUrl` for any other), a clip its path in the message box. Resolves `true` when it landed |
+| `STUDIO.openSettings(section)` | Settings › Models on Cloud providers; `'openrouter'` opens OpenRouter's setup when no OpenRouter provider exists yet |
+| `STUDIO.openFile(path)` | "Open in Studio" under a reply's pictures and clips: the gallery's item when Studio made it, otherwise the file on its own as "From chat" (Save as… / Show in Finder through `BR.imageSaveAs` / `imageReveal` for pictures, `BR.replySaveAs` / `replyReveal` for clips, home folder only) |
+| `STUDIO.dataUrlToBytes(url)` | `{type, bytes}`; `fetch()` of a `data:` URL is refused by the window's `connect-src 'none'` |
+
 ## Not in this foundation
 
-- Video playback: the window's CSP has no `media-src`; playing a clip needs a
-  main-side protocol or CSP change (open item).
+- Video posters for clips from a chat (no thumbnail until Core makes one).
 - Local model download/load, sd-cpp engine install, video posters
   (`PUT /diffusion/video/gallery/:id/poster`).
