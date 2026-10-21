@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self' file: data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <title>Atomic Agent</title>
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="styles.css">
@@ -19,6 +19,9 @@
 <link rel="stylesheet" href="css/settings-data.css">
 <link rel="stylesheet" href="css/settings-llm.css">
 <link rel="stylesheet" href="css/motion.css">
+<link rel="stylesheet" href="css/studio.css">
+<link rel="stylesheet" href="css/studio-images.css">
+<link rel="stylesheet" href="css/studio-video.css">
 </head>
 <body>
 <div id="desktop">
@@ -61,6 +64,12 @@
 <script src="attachments.js"></script>
 <script src="exa-key.js"></script>
 <script src="disk-space.js"></script>
+<!-- Studio (Images, Video): the shell first, then each page registers itself with it. -->
+<script src="studio/shell.js"></script>
+<script src="studio/images-logic.js"></script>
+<script src="studio/images-view.js"></script>
+<script src="studio/images.js"></script>
+<script src="studio/video.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

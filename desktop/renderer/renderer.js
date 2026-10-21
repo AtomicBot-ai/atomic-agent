@@ -2212,6 +2212,8 @@ function renderSidebar() {
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
     + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
+    // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
+    + (window.STUDIO ? STUDIO.sidebarHTML(S.room) : '')
     + '<div class="sb-lists">'
       /* ATO-165: a "Pinned" section above Chats, only while something is
          pinned; its rows are not repeated under Chats. */
@@ -2383,7 +2385,7 @@ function chatRow(s) {
   const pinned = PREFS.pinned.includes(s.id);
   // ATO-135: a chat with messages waiting for its turn to end says so on its row, as a task row says its schedule.
   const queued = chatQueuedCount(s.id);
-  return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
+  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '')   // Studio: no chat is "open" while a Studio page is + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
     + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
@@ -2491,6 +2493,9 @@ function chatStatusWord(s) {
 /* ---------------- content ---------------- */
 function renderContent() {
   const c = $('#content');
+  // Studio: the shell keeps its page's DOM between renders and only mounts it when the room changes.
+  if (S.room === 'studio') { if (window.STUDIO) STUDIO.mount(c); return; }
+  if (window.STUDIO) STUDIO.leave();
   if (S.room === 'chat') {
     // Scroll-stable cards: a whole-DOM render replaces #scroller, so remember
     // where the old one was and hand it to afterChat (same capture-then-restore
@@ -6197,6 +6202,8 @@ function act(a) {
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
+  // Studio: `studio:open:<page>`, `studio:file:<path>`, `studio:<page>:<verb>` (studio/shell.js).
+  if (k === 'studio') { close(); if (window.STUDIO) STUDIO.act(v); return; }
   if (k === 'room') {
     close();
     // Integration seam (sidebar rows, ⌘2/⌘3, palette hits, View › Tasks/Skills): lane C made the
@@ -6205,7 +6212,7 @@ function act(a) {
     // other way in still lands here: ⌘2/⌘3, the palette rows, the slash verbs and View ›
     // Tasks/Skills. The chat room closes the settings window, so ⌘1 always lands on the transcript.
     if (v === 'tasks' || v === 'skills') { act('settings:' + v); return; }
-    if (v === 'chat') S.settings = null;
+    if (v === 'chat' || v === 'studio') S.settings = null;   // Studio: a page opened from Settings or the palette is not drawn under it
     S.room = v; render(); return;
   }
   if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
@@ -8075,6 +8082,8 @@ document.addEventListener('keydown', (e) => {
   }
 
   const mod = e.metaKey || e.ctrlKey;
+  // Studio: the page's own keys (⌘↩ is Generate there, never the hidden chat's Send).
+  if (S.room === 'studio' && !S.settings && !S.overlay && S.menuOpen === null && window.STUDIO && STUDIO.key(e)) return;
   // Item 7: Ctrl+Enter inside the Tasks create form submits the task, not the composer.
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
@@ -8090,7 +8099,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
-                 '.':'stop', '/':'shortcuts'};
+                 '.':'stop', '/':'shortcuts', '5':'studio:open:images', '6':'studio:open:video'};   // Studio: ⌘5 Images, ⌘6 Video
     if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
     /* ATO-224: ⌘↩ (Ctrl+↩) is Send only with nothing over the chat. With a
        dialog, a popover or a sheet open (Delete chat?, the model picker, the
@@ -8161,7 +8170,7 @@ document.addEventListener('keydown', (e) => {
     if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
     // ATO-430: an open toast goes first, so closing it never stops a running answer.
     if (S.toasts.length) { S.toasts.pop(); renderToasts(); return; }
-    if (S.busy) { abort(); return; }
+    if (S.busy && S.room !== 'studio') { abort(); return; }   // Studio: Escape on a Studio page never stops a chat's turn out of sight
     // r4-ui item 5: renderOverlays draws four surfaces that are NOT S.overlay,
     // so the gate above (S.overlay || S.settings || S.menuOpen) does not catch
     // them and Escape reaches this block with a modal on screen. The selector,
@@ -20342,6 +20351,8 @@ function replyFilesStrip(m) {
   return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
     + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
     + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
+    // Studio: pictures image.generate saved in Studio's folder open in its library (studio/shell.js).
+    + (pics.length && window.STUDIO ? STUDIO.openInStudioHTML(files.filter((p) => CHAT_IMG_EXT.test(p))) : '')
     + '</div>';
 }
 
