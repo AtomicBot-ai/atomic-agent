@@ -686,16 +686,20 @@ async function attPick(kind) {
   if (e) e.focus();
 }
 /** The drop decision, pure: only a composer with nothing over it takes files.
-    ATO-602: Settings is drawn over the chat, which keeps its composer underneath. */
+    ATO-602: Settings is drawn over the chat, which keeps its composer underneath.
+    ATO-774: so are the palette, the chats sheet, the shortcuts sheet and the
+    delete alert (`modalOpen`); a popover pinned to the composer (model, modes,
+    context, chat menu) is not over it and still takes the drop. */
 function attDropAllowed(s) {
-  return !!(s && s.hasComposer && !s.wizardOpen && !s.settingsOpen);
+  return !!(s && s.hasComposer && !s.wizardOpen && !s.settingsOpen && !s.modalOpen);
 }
 /** True when a drop can attach: the chat's composer is on screen with nothing over it. */
 function attCanDrop() {
   let wizardOpen = false;
   try { wizardOpen = typeof OB !== 'undefined' && !!OB.open; } catch (e) { /* no wizard state */ }
   return attDropAllowed({hasComposer: !!document.getElementById('composer'), wizardOpen,
-    settingsOpen: !!document.getElementById('settings')});
+    settingsOpen: !!document.getElementById('settings'),
+    modalOpen: !!document.querySelector('#overlays .palscrim, #overlays .sheetwrap')});
 }
 function attDragHasFiles(e) {
   const t = e.dataTransfer && e.dataTransfer.types;

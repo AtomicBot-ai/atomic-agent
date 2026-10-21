@@ -171,3 +171,11 @@ test("a file dropped while Settings is open does not attach to the chat undernea
   assert.equal(R.attDropAllowed({ hasComposer: true, wizardOpen: true, settingsOpen: false }), false);
   assert.equal(R.attDropAllowed({ hasComposer: false, wizardOpen: false, settingsOpen: false }), false);
 });
+
+test("a file dropped over the palette, a sheet or the delete alert does not attach to the chat underneath (ATO-774)", () => {
+  const base = { hasComposer: true, wizardOpen: false, settingsOpen: false };
+  assert.equal(R.attDropAllowed({ ...base, modalOpen: true }), false);
+  // A popover pinned to the composer (model, modes, context) leaves modalOpen false.
+  assert.equal(R.attDropAllowed({ ...base, modalOpen: false }), true);
+  assert.equal(R.attDropAllowed(base), true);
+});
