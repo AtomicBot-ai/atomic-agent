@@ -12,14 +12,20 @@
  *     anything else must come as bytes (`{base64}`). Core reads any path
  *     it is given, so this check is the only one.
  *
- * Settings: `<stateDir>/studio.json`, `{imageOutputDir?, videoOutputDir?}`.
- * Core keeps the output folders only in memory per run
+ * Settings: `<stateDir>/studio.json`, `{imageOutputDir?, videoOutputDir?,
+ * outputDirsMigrated?}`. Core keeps the output folders only in memory per run
  * (src/diffusion/state.ts `config`), so the desktop holds the choice and
  * sends it again to every new Core instance.
+ *
+ * Default output folders: `<managed data dir>/studio/images` and `/videos`,
+ * beside `<managed data dir>/diffusion/models`. Core's own default is inside
+ * its per-version data folder (`core/versions/<v>/data/images`), which a Core
+ * upgrade replaces, so the desktop always sends its own default instead. The
+ * files made before that are moved over once (`planOutputMigration`).
  */
 
 import { readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 
 /** The real path of `p`, or null when it does not exist or is not absolute. */
 export function realPathOf(p: unknown): string | null {
@@ -89,7 +95,12 @@ export function requestSources(body: Record<string, unknown>): unknown[] {
 
 /* --------------------------------------------------------------- settings */
 
-export interface StudioSettings { imageOutputDir?: string; videoOutputDir?: string }
+export interface StudioSettings {
+  imageOutputDir?: string;
+  videoOutputDir?: string;
+  /** Set once the files in Core's old per-version folders were moved to the stable defaults. */
+  outputDirsMigrated?: boolean;
+}
 
 export function studioSettingsPath(stateDir: string): string {
   return join(stateDir, "studio.json");
@@ -101,6 +112,7 @@ export function readStudioSettings(stateDir: string): StudioSettings {
     const out: StudioSettings = {};
     if (typeof raw.imageOutputDir === "string" && isAbsolute(raw.imageOutputDir)) out.imageOutputDir = raw.imageOutputDir;
     if (typeof raw.videoOutputDir === "string" && isAbsolute(raw.videoOutputDir)) out.videoOutputDir = raw.videoOutputDir;
+    if (raw.outputDirsMigrated === true) out.outputDirsMigrated = true;
     return out;
   } catch {
     return {};
@@ -112,4 +124,64 @@ export function writeStudioSettings(stateDir: string, settings: StudioSettings):
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
   renameSync(tmp, path);
+}
+
+/* ------------------------------------------------------- output folders */
+
+/** Studio's default output folders: stable across Core upgrades, beside the diffusion models. */
+export function studioDefaultOutputDirs(dataDir: string): { image: string; video: string } {
+  return { image: join(dataDir, "studio", "images"), video: join(dataDir, "studio", "videos") };
+}
+
+/**
+ * Core's own default folder for `kind` in each of its version folders
+ * (`<dataDir>/core/versions/<v>/data/images|videos`), the current version first.
+ */
+export function legacyOutputDirs(dataDir: string, kind: "image" | "video", currentVersion: string, versions: readonly string[]): string[] {
+  const sub = kind === "video" ? "videos" : "images";
+  const ordered = [currentVersion, ...versions.filter((v) => v !== currentVersion).sort()];
+  return [...new Set(ordered)]
+    .filter((v) => v.length > 0 && !v.includes("/") && !v.includes("\\") && v !== "." && v !== "..")
+    .map((v) => join(dataDir, "core", "versions", v, "data", sub));
+}
+
+/**
+ * Whether a folder entry is a gallery file worth moving: not a write in
+ * progress (Core writes `.<name>.tmp` then renames) and not Finder's or
+ * Explorer's litter. `.flags.json` (pins, archive) goes with the files.
+ */
+export function isMovableOutputEntry(name: string): boolean {
+  if (name === ".flags.json") return true;
+  if (name.startsWith(".") || name.endsWith(".tmp") || name.endsWith(".part")) return false;
+  return name !== "Thumbs.db" && name !== "desktop.ini";
+}
+
+export interface OutputMigrationSource { dir: string; entries: readonly string[] }
+
+/**
+ * The one-time move of Studio files from Core's per-version folders into the
+ * stable default. Nothing moves when it already ran, or when the new folder
+ * already holds files (the user made some there: two galleries are never
+ * merged). Otherwise every movable entry of every old folder moves, the
+ * current version first; a name already taken stays where it is.
+ */
+export function planOutputMigration(input: {
+  migrated: boolean;
+  target: string;
+  targetEntries: readonly string[];
+  sources: readonly OutputMigrationSource[];
+}): Array<{ from: string; to: string }> {
+  if (input.migrated) return [];
+  if (input.targetEntries.some(isMovableOutputEntry)) return [];
+  const taken = new Set<string>();
+  const moves: Array<{ from: string; to: string }> = [];
+  for (const source of input.sources) {
+    if (source.dir === input.target) continue;
+    for (const name of source.entries) {
+      if (!isMovableOutputEntry(name) || basename(name) !== name || taken.has(name)) continue;
+      taken.add(name);
+      moves.push({ from: join(source.dir, name), to: join(input.target, name) });
+    }
+  }
+  return moves;
 }

@@ -426,10 +426,20 @@ interface StudioItem {
 }
 ```
 
-Files live in Core's data folder `images/` and `videos/`
-(`<managed data dir>/core/versions/0.18.6/data/…`) unless Settings chose
-another folder. Core keeps the choice only per run, so main stores it in
-`<stateDir>/studio.json` and sends it to every new Core (`PUT /diffusion/config`).
+Files live in `<managed data dir>/studio/images` and `…/studio/videos`
+(beside `<managed data dir>/diffusion/models`; created 0700) unless Settings
+chose another folder. Core's own default is inside its per-version data folder
+(`core/versions/<v>/data/…`), which a Core upgrade replaces, so main always
+sends a folder: the chosen one from `<stateDir>/studio.json`, else the default,
+to every new Core (`PUT /diffusion/config`, fields `outputDir` and
+`videoOutputDir`; Core keeps them only per run).
+
+Once, files Core wrote into its per-version `images/` and `videos/` before this
+are moved (rename) into the defaults, current version first, but only while a
+default folder holds none of its own; then `outputDirsMigrated: true` is
+written to studio.json. Core lists the gallery by reading the folder (recipe in
+the PNG or a `.json` sidecar, `.flags.json` for pins), so moved files are
+listed as they are. A file that will not move stays where it was.
 
 ## Price
 

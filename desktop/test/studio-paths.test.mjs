@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { insideRoots, PickedPaths, sourceAllowed, requestSources, readStudioSettings, writeStudioSettings } = require("../out/main/studio-paths.js");
+const { insideRoots, PickedPaths, sourceAllowed, requestSources, readStudioSettings, writeStudioSettings, studioDefaultOutputDirs, legacyOutputDirs, planOutputMigration } = require("../out/main/studio-paths.js");
 const { parseSseFrames } = require("../out/main/studio-core-client.js");
 const { jobFromFrame, jobPath } = require("../out/main/studio-jobs.js");
 const { studioCorePaths, studioCoreEnv } = require("../out/main/studio-core-start.js");
@@ -81,4 +81,32 @@ test("Core's paths follow the agent's layout and its daemon gets no secrets", ()
   assert.throws(() => studioCorePaths("/data", "../x"));
   const env = studioCoreEnv({ PATH: "/bin", OPENROUTER_API_KEY: "k", MY_TOKEN: "t", HOME: "/h" });
   assert.deepEqual(env, { PATH: "/bin", HOME: "/h", ATOMIC_CORE_TELEMETRY: "off" });
+});
+
+test("default output folders sit beside the diffusion models, outside Core's version folder", () => {
+  const d = studioDefaultOutputDirs("/s/models");
+  assert.equal(d.image, join("/s/models", "studio", "images"));
+  assert.equal(d.video, join("/s/models", "studio", "videos"));
+  assert.deepEqual(legacyOutputDirs("/s/models", "video", "0.18.6", ["0.18.5", "0.18.6", "..", ""]), [
+    join("/s/models", "core", "versions", "0.18.6", "data", "videos"),
+    join("/s/models", "core", "versions", "0.18.5", "data", "videos"),
+  ]);
+});
+
+test("migration: once, only into an empty folder, current version first, temp files and taken names left", () => {
+  const target = "/s/models/studio/images";
+  const cur = { dir: "/v6/images", entries: ["a-00.png", "a-00.thumb.png", ".flags.json", ".b-00.png.tmp", ".DS_Store"] };
+  const old = { dir: "/v5/images", entries: ["c-00.png", ".flags.json"] };
+  const moves = planOutputMigration({ migrated: false, target, targetEntries: [".DS_Store"], sources: [cur, old] });
+  assert.deepEqual(moves.map((m) => m.from), [join("/v6/images", "a-00.png"), join("/v6/images", "a-00.thumb.png"), join("/v6/images", ".flags.json"), join("/v5/images", "c-00.png")]);
+  assert.equal(moves[0].to, join(target, "a-00.png"));
+  assert.deepEqual(planOutputMigration({ migrated: true, target, targetEntries: [], sources: [cur] }), []);
+  assert.deepEqual(planOutputMigration({ migrated: false, target, targetEntries: ["z-00.png"], sources: [cur] }), []);
+  assert.deepEqual(planOutputMigration({ migrated: false, target, targetEntries: [], sources: [] }), []);
+});
+
+test("settings keep the migration flag", () => {
+  const dir = mkdtempSync(join(base, "settings-"));
+  writeStudioSettings(dir, { videoOutputDir: "/v", outputDirsMigrated: true });
+  assert.deepEqual(readStudioSettings(dir), { videoOutputDir: "/v", outputDirsMigrated: true });
 });

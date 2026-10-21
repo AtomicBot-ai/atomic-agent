@@ -8,8 +8,9 @@
  *   - starts or joins Core (studio-core-start.ts) and holds a client lease
  *     while a generation runs;
  *   - once per Core instance: `PUT /diffusion/config` with Core's own data
- *     folder and the output folders from Settings (Core keeps them in
- *     memory only), and `PUT /cloud/providers/openrouter` with the user's
+ *     folder and the output folders (Settings, else the stable defaults
+ *     `<data dir>/studio/images|videos`; Core keeps them in memory only),
+ *     and `PUT /cloud/providers/openrouter` with the user's
  *     OpenRouter key (again whenever the key changes);
  *   - catalog, jobs, estimate, cancel, gallery, output folders;
  *   - local models (studio-local-models.ts): the download, the sd.cpp
@@ -18,6 +19,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, rename } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import { normalizeLocalFamilies, normalizeProviderModels, type StudioCatalogSection, type StudioKind } from "./studio-catalog.js";
@@ -28,7 +30,7 @@ import type { MachineProfile } from "./studio-local.js";
 import { queuedLine, type GpuShare } from "./studio-gpu-share.js";
 import { StudioLocalModels, type LocalEngineStatus, type LocalEvent } from "./studio-local-models.js";
 import { jobPath, StudioJobWatcher } from "./studio-jobs.js";
-import { PickedPaths, readStudioSettings, requestSources, sourceAllowed, writeStudioSettings } from "./studio-paths.js";
+import { legacyOutputDirs, PickedPaths, planOutputMigration, readStudioSettings, requestSources, sourceAllowed, studioDefaultOutputDirs, writeStudioSettings } from "./studio-paths.js";
 import { normalizeItem, normalizeJob, toCoreImageRequest, toCoreVideoRequest, type LocalDefaults, type StudioItem, type StudioJob } from "./studio-requests.js";
 
 export const OPENROUTER_MEDIA_BASE_URL = "https://openrouter.ai/api/v1";
@@ -156,14 +158,54 @@ export class StudioMedia {
     return client;
   }
 
+  /** The stable default output folders (not Core's per-version ones, which an upgrade empties). */
+  private get defaultDirs(): { image: string; video: string } {
+    return studioDefaultOutputDirs(this.deps.dataDir());
+  }
+
   private async configure(client: StudioCoreClient): Promise<void> {
+    await this.prepareDefaultDirs();
     const s = readStudioSettings(this.deps.stateDir);
+    const defaults = this.defaultDirs;
     const status = await client.call<{ outputDir?: string; videoOutputDir?: string }>("/diffusion/config", {
       dataFolder: this.dataFolder,
-      ...(s.imageOutputDir ? { outputDir: s.imageOutputDir } : {}),
-      ...(s.videoOutputDir ? { videoOutputDir: s.videoOutputDir } : {}),
+      outputDir: s.imageOutputDir ?? defaults.image,
+      videoOutputDir: s.videoOutputDir ?? defaults.video,
     }, { method: "PUT", timeoutMs: 30_000 });
     this.lastDirs = { image: status.outputDir, video: status.videoOutputDir };
+  }
+
+  /**
+   * The default folders exist (0700), and once, the files Core wrote into its
+   * per-version folders before this are moved into them (rename: the same
+   * disk, under the same data dir). Core lists the gallery by reading the
+   * folder (src/diffusion/gallery.ts, video-gallery.ts: recipe in the PNG or
+   * a sidecar, `.flags.json` for pins), so moved files are listed as they are.
+   * A failure here never blocks Studio: the flag is left unset and it tries
+   * again with the next Core.
+   */
+  private async prepareDefaultDirs(): Promise<void> {
+    const dataDir = this.deps.dataDir();
+    const defaults = studioDefaultOutputDirs(dataDir);
+    try {
+      await mkdir(defaults.image, { recursive: true, mode: 0o700 });
+      await mkdir(defaults.video, { recursive: true, mode: 0o700 });
+    } catch { return; }
+    const s = readStudioSettings(this.deps.stateDir);
+    if (s.outputDirsMigrated) return;
+    try {
+      const versions = await readdir(join(dataDir, "core", "versions")).catch(() => [] as string[]);
+      for (const kind of ["image", "video"] as const) {
+        const target = defaults[kind];
+        const sources = await Promise.all(legacyOutputDirs(dataDir, kind, this.deps.coreVersion, versions).map(async (dir) => ({
+          dir, entries: await readdir(dir).catch(() => [] as string[]),
+        })));
+        const moves = planOutputMigration({ migrated: false, target, targetEntries: await readdir(target), sources });
+        // One file that will not move (in use, a permission) stays where it was; the rest still go.
+        for (const m of moves) await rename(m.from, m.to).catch(() => undefined);
+      }
+      writeStudioSettings(this.deps.stateDir, { ...readStudioSettings(this.deps.stateDir), outputDirsMigrated: true });
+    } catch { /* tried again with the next Core */ }
   }
 
   private async holdLease(client: StudioCoreClient): Promise<void> {
@@ -194,11 +236,12 @@ export class StudioMedia {
     this.leaseTimer.unref();
   }
 
-  /** The folders Studio files may be read from: what Core reported, the defaults, and Settings. */
+  /** The folders Studio files may be read from: what Core reported, the defaults (and Core's own), and Settings. */
   roots(): string[] {
     const s = readStudioSettings(this.deps.stateDir);
     const data = this.dataFolder;
-    return [this.lastDirs.image, this.lastDirs.video, s.imageOutputDir, s.videoOutputDir, join(data, "images"), join(data, "videos")]
+    const defaults = this.defaultDirs;
+    return [this.lastDirs.image, this.lastDirs.video, s.imageOutputDir, s.videoOutputDir, defaults.image, defaults.video, join(data, "images"), join(data, "videos")]
       .filter((r): r is string => typeof r === "string" && r.length > 0);
   }
 
@@ -504,10 +547,10 @@ export class StudioMedia {
       this.lastDirs = { image: status.outputDir, video: status.videoOutputDir };
     } catch { /* Core down: what Settings or the default says */ }
     const reported = kind === "video" ? this.lastDirs.video : this.lastDirs.image;
-    return { path: reported ?? chosen ?? join(this.dataFolder, kind === "video" ? "videos" : "images"), isDefault: !chosen };
+    return { path: reported ?? chosen ?? this.defaultDirs[kind], isDefault: !chosen };
   }
 
-  /** `path` null or empty: back to `<Core data>/images` (or videos). Takes effect for the next generation. */
+  /** `path` null or empty: back to `<data dir>/studio/images` (or videos). Takes effect for the next generation. */
   async setOutputDir(kind: StudioKind, path: string | null): Promise<{ path: string; isDefault: boolean }> {
     if (path && (!isAbsolute(path) || path.includes("\0"))) throw new StudioCoreError("Pick a folder by its full path.", "INVALID_REQUEST");
     const s = readStudioSettings(this.deps.stateDir);
