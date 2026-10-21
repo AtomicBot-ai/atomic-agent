@@ -2744,6 +2744,16 @@ function replyDot(m) {
   }
   return '';
 }
+/** Whether m is the chat's last real reply. The desktop's own "(no reply)"
+    / "(stopped)" backfill is not a reply, as for replyDot. */
+function isLastReply(m) {
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const x = S.log[i];
+    if (x.k !== 'assistant' || x.placeholder) continue;
+    return x.id === m.id;
+  }
+  return false;
+}
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2759,12 +2769,12 @@ function msgActs(m) {
      permanently missing from the last reply of every finished turn. */
   if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '<div class="msgacts"></div>';
   if (!text.trim()) return '';
-  /* Calm (S3): the actions appear on hover or keyboard focus on EVERY
-     message, the last one included. An earlier pass had pinned the last message's row
-     open with labels ("Copy", "Send again"); the spec's reading of the
-     reference apps is that a reply is plain prose until it is pointed at.
-     The names live on in each button's tooltip and aria-label. */
-  const cls = 'msgacts';
+  /* Calm (S3): the actions appear on hover or keyboard focus on every
+     message. ATO-463: except under the LAST reply, where the row stays
+     shown, so a newcomer sees there is something to do with an answer
+     without having to find the hover. Icons only; the names live in each
+     button's tooltip and aria-label. */
+  const cls = m.k === 'assistant' && isLastReply(m) ? 'msgacts msgacts-last' : 'msgacts';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
     + ic('copy') + '</button>';
   if (m.k !== 'user') return '<div class="' + cls + '">' + copy + '</div>';
