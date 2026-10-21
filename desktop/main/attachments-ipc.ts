@@ -34,7 +34,7 @@ const FILE_EXTS = [
   "rs", "go", "swift", "zig", "java", "kt", "kts", "scala", "groovy", "rb", "php", "lua", "pl", "r", "jl",
   "cs", "fs", "vb", "sh", "bash", "zsh", "fish", "ps1", "css", "scss", "sass", "less", "vue", "svelte", "astro",
   "json", "jsonc", "yaml", "yml", "toml", "xml", "ini", "cfg", "conf", "env", "sql", "graphql", "gql", "tex", "rst",
-  "log", "diff", "patch",
+  "log", "diff", "patch", "zip", "tar", "gz", "tgz",
 ];
 
 /**

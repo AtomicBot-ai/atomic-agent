@@ -95,6 +95,10 @@ const MIME_BY_EXT: ReadonlyMap<string, string> = new Map([
   [".xml", "application/xml"],
   [".yaml", "application/yaml"],
   [".yml", "application/yaml"],
+  // Archives the agent opens with os.fs.archive.* (a .zip is named by its bytes).
+  [".tar", "application/x-tar"],
+  [".gz", "application/gzip"],
+  [".tgz", "application/gzip"],
 ]);
 
 /**
@@ -147,7 +151,7 @@ export function formatBytes(bytes: number): string {
 }
 
 export const HINT_LINE =
-  "The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images.";
+  "The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images; open archives with os.fs.archive.list or os.fs.archive.extract.";
 
 export interface SavedAttachment {
   path: string;

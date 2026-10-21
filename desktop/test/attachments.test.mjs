@@ -41,6 +41,7 @@ test("the block and the message are byte-identical to the channel inbox's", () =
     M.HINT_LINE,
   ].join("\n"));
   assert.equal(R.ATT_HINT_LINE, M.HINT_LINE);
+  assert.match(M.HINT_LINE, /os\.fs\.archive\.list/);
   // No caption: the channels' stand-in.
   assert.equal(R.attBuildMessage("  ", items.slice(0, 1)), M.buildAttachmentUserMessage(undefined, outcomes.slice(0, 1)));
   assert.match(R.attBuildMessage("", items.slice(0, 1)), /^The user sent a file without a message\.\n/);
@@ -61,6 +62,10 @@ test("a stored message splits back into its caption and files", () => {
   assert.equal(s.items[1].kind, "document");
   assert.equal(s.items[1].size, "10 B");
   assert.equal(R.attSplitMessage(R.attBuildMessage("", items)).caption, "");
+  // A message stored before archives were named in the hint line still splits.
+  const v1 = R.attBuildMessage("old", items).replace(R.ATT_HINT_LINE,
+    "The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images.");
+  assert.equal(R.attSplitMessage(v1).items.length, 2);
   // Plain text, a typed block that this format did not write: drawn as typed.
   assert.equal(R.attSplitMessage("hello"), null);
   assert.equal(R.attSplitMessage("see\n\n[attachments]\nmy own list"), null);
@@ -85,6 +90,10 @@ test("names classify as Atomic Chat's classifyDroppedPaths does", () => {
   assert.deepEqual(c.docs, ["/a/z.pdf", "/a/main.rs"]);
   assert.deepEqual(c.audio, ["/a/song.mp3"]);
   assert.deepEqual(c.unsupported, ["/a/Makefile", "/a/v.mov"]);
+  // Archives go by path for os.fs.archive.*; 7z and rar it cannot open.
+  const a = R.attClassifyDroppedPaths(["/a/src.zip", "/a/logs.tar.gz", "/a/b.tgz", "/a/c.tar", "/a/d.7z", "/a/e.rar"]);
+  assert.deepEqual(a.docs, ["/a/src.zip", "/a/logs.tar.gz", "/a/b.tgz", "/a/c.tar"]);
+  assert.deepEqual(a.unsupported, ["/a/d.7z", "/a/e.rar"]);
   assert.equal(R.attSizeBucket(99 * 1024), "lt_100kb");
   assert.equal(R.attSizeBucket(10 * 1024 * 1024), "gte_10mb");
 });
@@ -97,6 +106,10 @@ test("type comes from the bytes, not the name", () => {
   assert.equal(M.mimeFor(Uint8Array.from([0x50, 0x4b, 3, 4, 0]), "d.docx"),
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   assert.equal(M.mimeFor(Uint8Array.from([0, 1, 2, 3]), "fake.png"), null);
+  assert.equal(M.mimeFor(Uint8Array.from([0x50, 0x4b, 3, 4, 0]), "src.zip"), "application/zip");
+  assert.equal(M.mimeFor(Uint8Array.from([0x1f, 0x8b, 8, 0, 0]), "logs.tar.gz"), "application/gzip");
+  assert.equal(M.mimeFor(Uint8Array.from([0x1f, 0x8b, 8, 0, 0]), "b.tgz"), "application/gzip");
+  assert.equal(M.mimeFor(Uint8Array.from([0x61, 0, 0, 0]), "c.tar"), "application/x-tar");
   assert.equal(M.inboxBasename("photo.jpg", "image/png"), "photo.png");
   assert.equal(M.inboxBasename("../../etc/passwd", "text/plain"), "passwd.txt");
   assert.equal(M.inboxBasename("noext", "application/pdf"), "noext.pdf");

@@ -51,6 +51,8 @@ const ATT_DOCUMENT_EXTENSIONS = new Set([
   'sql', 'graphql', 'gql', 'tex', 'rst',
   // Misc text
   'log', 'diff', 'patch',
+  // Archives: saved by path, opened with os.fs.archive.* (7z and rar it cannot read)
+  'zip', 'tar', 'gz', 'tgz',
 ]);
 
 const ATT_MAX_DIMENSION_PX = 2048;
@@ -59,7 +61,9 @@ const ATT_DOCUMENT_MAX_BYTES = 20 * 1024 * 1024;  // main/attachments.ts DOCUMEN
 const ATT_MAX_ITEMS = 10;
 const ATT_IMAGE_READ_MAX = 64 * 1024 * 1024;      // main/attachments.ts PICKED_IMAGE_READ_MAX: never decoded past this
 const ATT_THUMB_PX = 112;                         // a 56 px tile at 2x
-const ATT_HINT_LINE = 'The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images.';
+const ATT_HINT_LINE = 'The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images; open archives with os.fs.archive.list or os.fs.archive.extract.';
+// The line before archives were named in it: messages stored with it still split.
+const ATT_HINT_LINE_V1 = 'The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images.';
 
 /** The composer's chips. `status`: preparing → ready | error. */
 const ATT = {items: [], seq: 0, menu: false, drag: 0};
@@ -131,7 +135,7 @@ function attSplitMessage(text) {
   const at = s.lastIndexOf('\n\n[attachments]\n');
   if (at < 0) return null;
   const lines = s.slice(at + '\n\n[attachments]\n'.length).split('\n');
-  if (lines[lines.length - 1] === ATT_HINT_LINE) lines.pop();
+  if (lines[lines.length - 1] === ATT_HINT_LINE || lines[lines.length - 1] === ATT_HINT_LINE_V1) lines.pop();
   if (!lines.length) return null;
   const items = [];
   for (const line of lines) {
