@@ -403,7 +403,8 @@ async function slowLoads(js: Js, check: Check): Promise<void> {
     kept = await js<boolean>(KEEP);
     if (!kept) { check("T110: the chat probes ran (the window was idle)", false, "a turn, a request, a queue or a load was in the way"); return; }
 
-    // ATO-186 (b): New session on a chat, then another chat opened while its toast is up.
+    // ATO-540: New session raises no toast of its own (ATO-186 (b) checked that one went
+    // when another chat opened); a toast that is not the chat's survives both.
     const a = `${PREFIX}a`, b = `${PREFIX}b`;
     const fresh = await js<View>(`(() => { ${H}
       S.sessionId = ${q(a)}; S.agentSession = ${q(a)}; S.room = 'chat';
@@ -419,8 +420,8 @@ async function slowLoads(js: Js, check: Check): Promise<void> {
     agent.release(b, loaded(b, turns("B", 1)));
     await settle(js);
     check(
-      "T110 ATO-186: \"New session · The next turn starts fresh\" goes when another chat is opened; a toast of its own stays",
-      fresh.toasts.includes("New session") && fresh.toasts.includes("smoke t110: a toast of its own") && heldB
+      "T110 ATO-540: a new chat raises no \"New session\" toast; a toast of its own stays through it and another chat opening",
+      !fresh.toasts.includes("New session") && fresh.toasts.includes("smoke t110: a toast of its own") && heldB
         && !switched.toasts.includes("New session") && switched.toasts.includes("smoke t110: a toast of its own"),
       `fresh=${show(fresh.toasts)} switched=${show(switched.toasts)} held=${heldB}`,
     );
