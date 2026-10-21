@@ -1,0 +1,6 @@
+{"data":[
+ {"id":"google/veo-3.1-fast","pricing_skus":{"duration_seconds_with_audio":"0.12","duration_seconds_with_audio_4k":"0.30","duration_seconds_without_audio":"0.10","duration_seconds_with_audio_720p":"0.10","duration_seconds_without_audio_4k":"0.25","duration_seconds_without_audio_720p":"0.08"},"generate_audio":true},
+ {"id":"kwaivgi/kling-v3.0-std","pricing_skus":{"duration_seconds":"0.084","duration_seconds_with_audio":"0.126","text_to_video_duration_seconds_480p":"0.084","text_to_video_duration_seconds_720p":"0.084","image_to_video_duration_seconds_720p":"0.084","text_to_video_duration_seconds_1080p":"0.084","image_to_video_duration_seconds_1080p":"0.084"},"generate_audio":true},
+ {"id":"x-ai/grok-imagine-video-1.5-lite","pricing_skus":{"cents_per_image_input":"1","cents_per_video_output_second_480p":"2","cents_per_video_output_second_720p":"3","cents_per_video_output_second_1080p":"14"}},
+ {"id":"example/tokens-only","pricing_skus":{"video_tokens":"0.0000024"}}
+]}
