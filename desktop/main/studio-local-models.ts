@@ -236,7 +236,7 @@ export class StudioLocalModels {
             signal: run.controller.signal,
             request: this.deps.request,
             rewrite: rewriteHuggingFaceUrl,
-            headers: (url) => {
+            headers: (url): Record<string, string> => {
               const token = isHuggingFaceUrl(url) ? huggingFaceToken() : null;
               return token ? { Authorization: `Bearer ${token}` } : {};
             },
