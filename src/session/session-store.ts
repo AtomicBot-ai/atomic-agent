@@ -21,8 +21,13 @@ import {
 } from "./session-summary-page.js";
 import {
   SESSION_TITLE_METADATA_KEY,
+  SESSION_TITLE_USER_SET_AT_KEY,
   readSessionTitle,
 } from "./session-title.js";
+import {
+  readUserTitleSetAt,
+  withUserSessionTitle,
+} from "./session-title-user.js";
 import {
   currentTurnOwnerProbe,
   databaseIdentity,
@@ -131,6 +136,8 @@ function endingParams(ending: TurnEnding): {
 interface StoredRow {
   /** The generated title, `null` when there is none. */
   title: string | null;
+  /** When the operator set that title, `null` for a generated one. */
+  titleSetByUserAt: number | null;
   status: string;
   turnOwner: string | null;
 }
@@ -298,7 +305,8 @@ export class SessionStore {
     const turnOwnerColumn = withMarks ? "turn_owner" : "NULL";
     this.selectStoredStmt = this.db.prepare(
       `SELECT status, ${turnOwnerColumn} AS turnOwner,
-              json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title
+              json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title,
+              json_extract(payload, '$.metadata.${SESSION_TITLE_USER_SET_AT_KEY}') AS titleSetByUserAt
        FROM sessions WHERE id = ?`,
     );
     this.selectStoredBareStmt = this.db.prepare(
@@ -404,9 +412,11 @@ export class SessionStore {
    * the process exited.
    *
    * So the rule is the store's, not each caller's: a write that carries
-   * no title does not remove one. Nothing renames a session today —
+   * no title does not remove one. The namer never renames a session —
    * `shouldNameSession` refuses to name a session twice — so "keep what
-   * is there" is also the product behaviour.
+   * is there" is also the product behaviour. The operator can rename one
+   * (`renameSession`); that title is stamped, and a copy without the
+   * stamp, or with an older one, cannot write over it.
    *
    * And the status a turn set is the turn's own (`statusForSave`): a
    * save never writes a live status, and never changes the status of a
@@ -595,7 +605,28 @@ export class SessionStore {
       this.insertStmt.run(this.serialize(next));
       return;
     }
-    if (stored.title !== null && readSessionTitle(next.metadata) === null) {
+    const storedUserAt = stored.titleSetByUserAt;
+    const nextUserAt = readUserTitleSetAt(next.metadata);
+    if (
+      stored.title !== null &&
+      storedUserAt !== null &&
+      (nextUserAt === null || nextUserAt < storedUserAt)
+    ) {
+      // The operator's name outranks any copy read before the rename —
+      // a turn that was running, the namer's late answer, a TUI stamp —
+      // whatever title that copy carries.
+      next = {
+        ...next,
+        metadata: {
+          ...next.metadata,
+          [SESSION_TITLE_METADATA_KEY]: stored.title,
+          [SESSION_TITLE_USER_SET_AT_KEY]: storedUserAt,
+        },
+      };
+    } else if (
+      stored.title !== null &&
+      readSessionTitle(next.metadata) === null
+    ) {
       next = {
         ...next,
         metadata: {
@@ -619,7 +650,12 @@ export class SessionStore {
    */
   private storedRow(id: string): StoredRow | undefined {
     let row:
-      | { status: string; turnOwner: string | null; title?: unknown }
+      | {
+          status: string;
+          turnOwner: string | null;
+          title?: unknown;
+          titleSetByUserAt?: unknown;
+        }
       | undefined;
     try {
       row = this.selectStoredStmt.get(id) as typeof row;
@@ -631,6 +667,11 @@ export class SessionStore {
       title:
         typeof row.title === "string" && row.title.trim().length > 0
           ? row.title
+          : null,
+      titleSetByUserAt:
+        typeof row.titleSetByUserAt === "number" &&
+        Number.isFinite(row.titleSetByUserAt)
+          ? row.titleSetByUserAt
           : null,
       status: row.status,
       turnOwner: row.turnOwner,
@@ -668,6 +709,25 @@ export class SessionStore {
       },
     );
     return insert.immediate(states);
+  }
+
+  /**
+   * Set the operator's title on a stored session, stamped so neither the
+   * namer nor a stale copy can write over it (see `save`). Returns the
+   * saved state, or `null` when there is no such session. `updatedAt` is
+   * left as it was: naming a chat is not activity in it, and a rename
+   * should not move the row to the top of the list.
+   */
+  renameSession(
+    id: string,
+    title: string,
+    now: number = Date.now(),
+  ): SessionState | null {
+    const current = this.load(id);
+    if (current === null) return null;
+    const next = withUserSessionTitle(current, title, now);
+    this.save(next);
+    return next;
   }
 
   load(id: string): SessionState | null {
