@@ -6893,8 +6893,9 @@ document.addEventListener('click', (e) => {
     return;
   }
   // ATO-666: Copy in a code block's header copies that block's code, as written.
+  // ATO-728: a CRLF reply's lines go out as plain \n, with no stray \r at their ends.
   const mdc = t.closest('[data-mdcopy]');
-  if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\n$/, '') : '', 'Code copied'); return; }
+  if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '', 'Code copied'); return; }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -24635,7 +24636,7 @@ function hfMirrorOpen(st) {
   return !!(st.saved || (s && (s.configured || s.override)) || (typeof st.draft === 'string' && st.draft.trim()));
 }
 function hfMirrorFold(html) {
-  return '<details class="hfm-fold"' + (hfMirrorOpen(HFM) ? ' open' : '') + '><summary class="hfm-sum">Advanced</summary>' + html + '</details>';
+  return '<details class="hfm-fold"' + (hfMirrorOpen(HFM) ? ' open' : '') + '><summary class="hfm-sum">' + ic('chevR') + 'Advanced</summary>' + html + '</details>';
 }
 document.addEventListener('toggle', (e) => {
   const t = e.target;
@@ -25599,6 +25600,12 @@ function llmKey(e, k, inText) {
      so the branch below does not swallow it or run a lookup instead. */
   if (LLMHF.open && (k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'SUMMARY'
       && e.target.closest && e.target.closest('.hfm-fold')) return true;
+  /* ATO-728: Enter or Space on a focused button of the reference step
+     (Clear, Back to the list, Look it up, the mirror's Save) presses that
+     button, natively, as anywhere else; the branch below would otherwise
+     turn Enter into a lookup and swallow Space. */
+  if (LLMHF.open && LLMHF.step !== 'pick' && (k === 'Enter' || k === ' ') && !mod
+      && e.target.tagName === 'BUTTON' && e.target.closest && e.target.closest('.llm-hf')) return true;
   if (inText || mod) return false;
   if (LLMP.confirm) {
     if (k === 'y') { e.preventDefault(); llmAct('confirm'); return true; }
