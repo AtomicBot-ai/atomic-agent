@@ -30,9 +30,10 @@ function makeConfig(
 
 describe("checkMissingSearchKey", () => {
   it("stays silent on the shipped default: exa primary with no EXA_API_KEY", () => {
-    // Keyless Exa is skipped and DuckDuckGo serves the search (ATO-120).
+    // Keyless Exa runs on its free tier, DuckDuckGo behind it (ATO-327).
     // The old "expect HTTP 429" line went to stderr on every start and the
-    // desktop logged it as an error for a setup that is working as shipped.
+    // desktop logged it as an error for a setup that is working as shipped
+    // (ATO-120); a reached free limit is reported by the search result.
     expect(checkMissingSearchKey({ config: makeConfig(), env: {} })).toBeNull();
   });
 

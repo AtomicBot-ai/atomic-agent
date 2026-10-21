@@ -332,31 +332,43 @@ describe("buildOsWebSearchTool missing-key warning", () => {
 });
 
 /**
- * ATO-120, end to end through the tool. The Exa provider reads its key
- * from `process.env`, so these stub it there rather than through `env`.
+ * ATO-120 and ATO-327, end to end through the tool. The Exa provider reads
+ * its key from `process.env`, so these stub it there rather than through
+ * `env`.
  */
 describe("os.web.search with an Exa primary", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  /** Per-host body and status, recording every URL curl was pointed at. */
-  function makeRecordingRunCommand(
-    byHost: Record<string, { body: string; status: number }>,
-  ) {
+  interface HostReply {
+    body: string;
+    status: number;
+    /** `Retry-After` header; `"0"` keeps the 429 retries off the clock. */
+    retryAfter?: string;
+    /** A curl failure instead of an HTTP answer. */
+    exitCode?: number;
+    stderr?: string;
+  }
+
+  /** Per-host reply, recording every URL curl was pointed at. */
+  function makeRecordingRunCommand(byHost: Record<string, HostReply>) {
     const urls: string[] = [];
     const run = (async (_cmd: string, args: string[]) => {
       const url = args.at(-1) ?? "";
       urls.push(url);
       const host = matchHost(url, Object.keys(byHost));
-      const reply = host ? byHost[host]! : { body: "", status: 200 };
+      const reply: HostReply = host ? byHost[host]! : { body: "", status: 200 };
       return {
         command: "curl",
         args,
-        exitCode: 0,
+        exitCode: reply.exitCode ?? 0,
         signal: null,
-        stdout: curlStdout(reply.body, reply.status),
-        stderr: "",
+        stdout:
+          reply.exitCode === undefined
+            ? `${curlStdout(reply.body, reply.status)}|__ATOMIC_WEB_SEARCH_HEADERS__${reply.retryAfter ?? ""}`
+            : "",
+        stderr: reply.stderr ?? "",
         durationMs: 1,
         timedOut: false,
         truncated: false,
@@ -365,7 +377,20 @@ describe("os.web.search with an Exa primary", () => {
     return { run, urls };
   }
 
-  it("never calls Exa without a key and answers ok from DuckDuckGo", async () => {
+  const KEY_REQUIRED_RATE_LIMITED = {
+    provider: "exa",
+    reason: "rate_limited",
+    getKeyUrl: "https://dashboard.exa.ai/api-keys",
+    envVar: "EXA_API_KEY",
+  };
+
+  const FREE_LIMIT: HostReply = {
+    body: "Rate limit exceeded. Create API key at https://dashboard.exa.ai/api-keys",
+    status: 429,
+    retryAfter: "0",
+  };
+
+  it("asks keyless Exa first, then answers ok from DuckDuckGo", async () => {
     vi.stubEnv("EXA_API_KEY", "");
     const { run, urls } = makeRecordingRunCommand({
       "exa.ai": { body: "Forbidden", status: 403 },
@@ -383,9 +408,72 @@ describe("os.web.search with an Exa primary", () => {
 
     expect(result.status).toBe("ok");
     expect(result.details.provider).toBe("duckduckgo");
-    expect(result.details.degraded).toBeUndefined();
+    expect(result.details.degraded).toEqual([
+      "exa failed: Exa returned HTTP 403",
+    ]);
+    expect(result.details.keyRequired).toBeUndefined();
     expect(result.summary).toContain("Example Doc");
-    expect(urls.some((url) => url.includes("exa.ai"))).toBe(false);
+    expect(urls[0]).toContain("mcp.exa.ai");
+    expect(urls.at(-1)).toContain("duckduckgo.com");
+  });
+
+  it("puts keyRequired in details when keyless Exa reaches its free limit", async () => {
+    vi.stubEnv("EXA_API_KEY", "");
+    const { run } = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": { body: RESULT_HTML, status: 200 },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: () => undefined,
+      runCommand: run,
+      lookup: publicLookup,
+    });
+
+    const result = await tool.run({ query: "free limit" }, makeCtx());
+
+    expect(result.status).toBe("ok");
+    expect(result.details.provider).toBe("duckduckgo");
+    expect(result.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+    expect(result.summary).toContain(
+      "[search] exa free limit reached (HTTP 429, no EXA_API_KEY)",
+    );
+  });
+
+  it("returns one error naming every provider and the key link when all fail (ATO-325)", async () => {
+    vi.stubEnv("EXA_API_KEY", "");
+    const { run } = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": {
+        body: "",
+        status: 0,
+        exitCode: 28,
+        stderr: "curl: (28) Connection timed out after 15005 milliseconds",
+      },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: () => undefined,
+      runCommand: run,
+      lookup: publicLookup,
+    });
+
+    const result = await tool.run({ query: "nothing answers" }, makeCtx());
+
+    expect(result.status).toBe("error");
+    expect(result.details.provider).toBe("exa");
+    expect(result.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+    expect(result.details.failures).toHaveLength(2);
+    expect(result.summary).toContain("exa: free limit reached (HTTP 429)");
+    expect(result.summary).toContain(
+      "duckduckgo: could not connect (site unreachable from this network)",
+    );
+    expect(result.summary).toContain("https://dashboard.exa.ai/api-keys");
+    // The whole report reaches the model, action line included.
+    expect(result.summary).toContain("Do not repeat this search");
+    expect(result.truncated).toBe(false);
   });
 
   it("answers ok when a keyed Exa fails and DuckDuckGo covers for it", async () => {
@@ -410,6 +498,8 @@ describe("os.web.search with an Exa primary", () => {
     expect(result.details.degraded).toEqual([
       "exa failed: Exa API returned HTTP 403",
     ]);
+    // A key is set: a key card would not fix anything.
+    expect(result.details.keyRequired).toBeUndefined();
     expect(result.summary).toContain("Example Doc");
   });
 });
