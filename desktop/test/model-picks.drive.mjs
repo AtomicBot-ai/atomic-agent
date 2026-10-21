@@ -155,7 +155,8 @@ try {
      ================================================================ */
   const real = await pickListAt(null, 'this-mac');
   transcribe('the wizard on this Mac (no flag — the real RAM figure)', real);
-  const RAM_RE = /Ordered for your (?:Mac|computer).s (\d+) GB of memory/;
+  // ATO-725: with a downloaded model lifted to the top the caption says so and names the memory as "its N GB".
+  const RAM_RE = /(?:Ordered for your (?:Mac|computer).s|ordered for its) (\d+) GB of memory/;
   const ram = Number((real.intro.match(RAM_RE) || [])[1] || 0);
   check('the picker names the machine it is ranking for', ram > 0, `${ram} GB`);
   check('on this Mac exactly one row is recommended, and it is the first',

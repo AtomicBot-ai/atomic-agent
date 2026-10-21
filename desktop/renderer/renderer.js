@@ -12551,7 +12551,14 @@ function obLocalPickHTML() {
      after one download; saying it again here was the same line twice in a
      row (Danya, 01.10). What is left is what this list is ordered by. */
   const yours = IS_MAC ? 'your Mac' : 'your computer';
-  return (OB.ram ? '<div class="ob-explain">' + esc('Ordered for ' + yours + '’s ' + OB.ram + ' GB of memory.') + '</div>' : '')
+  /* ATO-725: when a downloaded model was lifted to the top (ATO-437) the list
+     is not in memory order any more, so the caption says what comes first. */
+  const fitOrder = orderModelsByFit(OB.models, OB.ram).filter((m) => fitFor(m, OB.ram).v !== 'over');
+  const lifted = models.some((row, i) => !fitOrder[i] || row.model.id !== fitOrder[i].id);
+  const order = lifted
+    ? 'Models already on ' + yours + ' come first, then the rest ordered for its ' + OB.ram + ' GB of memory.'
+    : 'Ordered for ' + yours + '’s ' + OB.ram + ' GB of memory.';
+  return (OB.ram ? '<div class="ob-explain">' + esc(order) + '</div>' : '')
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
        Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
        item next to a sibling that cannot shrink absorbs every pixel of
@@ -23923,7 +23930,10 @@ function llmRouteNeedsOpen(id) {
     if (id === 'fusion') LLMP.msg = {text:'Fusion needs a cloud provider to plan. Add one, then choose Fusion again.'};
     llmSetMode('cloud');
     // A provider without a key it can use opens on that key; none at all opens the list to add one from.
-    llmOpenWizard(cloud.length ? (cloud.find((p) => !BSW.readyIds.includes(p.id)) || cloud[0]) : null);
+    const open = cloud.length ? (cloud.find((p) => !BSW.readyIds.includes(p.id)) || cloud[0]) : null;
+    llmOpenWizard(open);
+    // ATO-725: opened straight on a provider, the kind list's pick (which reports the start) never runs.
+    if (open) ANX.providerStarted(open);
     return;
   }
   if (id === 'fusion') {
@@ -25518,7 +25528,8 @@ function llmAct(what) {
   // Д31: Cloud or Fusion, chosen before what it needs is there — that, opened here.
   if (verb === 'needs') { llmRouteNeedsOpen(arg); return; }
   // Д34: Ollama as a provider, its preset and address filled in.
-  if (verb === 'ollama') { llmSetMode('cloud'); llmOpenWizard(KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}); return; }
+  // ATO-725: like `preset`, it skips the kind list, so it reports the setup start itself.
+  if (verb === 'ollama') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
   // A confirm that is working is not let go of mid-way (Cancel, n and Esc wait for it).
   if (verb === 'cancel') { if (LLMP.confirm && LLMP.confirm.submitting) return; LLMP.confirm = null; llmRepaint(); return; }
   if (verb === 'external') {
@@ -25607,6 +25618,13 @@ function llmKey(e, k, inText) {
      so the branch below does not swallow it or run a lookup instead. */
   if (LLMHF.open && (k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'SUMMARY'
       && e.target.closest && e.target.closest('.hfm-fold')) return true;
+  /* ATO-725: Enter or Space on a FOCUSED button (Add provider, Add Ollama,
+     the run-mode cards) presses that button, as onboarding does (r6 UX):
+     the browser's own click lands in the click handler. Without this the
+     pane's Enter ran the highlighted row instead, and with an empty cloud
+     list that was llmPrimary(undefined). */
+  if ((k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'BUTTON'
+      && e.target.closest && e.target.closest('#settings')) return true;
   if (inText || mod) return false;
   if (LLMP.confirm) {
     if (k === 'y') { e.preventDefault(); llmAct('confirm'); return true; }
