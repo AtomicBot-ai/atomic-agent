@@ -5,7 +5,10 @@
  * `DIFFUSION_ERROR_CODES`, plus `INVALID_ARGUMENT` from the generic routes)
  * or one of the desktop's: NO_KEY, CORE_NOT_INSTALLED, CORE_START_FAILED,
  * CORE_UNREACHABLE, CORE_TIMEOUT, CORE_BUSY, CORE_MISMATCH, CORE_INVALID,
- * CORE_LOCK_STALE, OUTSIDE, BAD_ANSWER, JOB_NOT_FOUND, FAILED. `message`
+ * CORE_LOCK_STALE, OUTSIDE, BAD_ANSWER, JOB_NOT_FOUND, FAILED, and for
+ * local models (studio-local-models.ts) DISK_SPACE, UNKNOWN_MODEL,
+ * MODEL_NOT_DOWNLOADED, ENGINE_UNSUPPORTED, ENGINE_INSTALL_FAILED,
+ * DOWNLOAD_FAILED. `message`
  * is a sentence a person can act on; the wording for Core's codes follows the agent's image tool
  * (src/local-llm/core/core-image.ts `describeCoreImageError`). Pure.
  */
@@ -27,9 +30,13 @@ export function describeStudioError(code: string, message: string, cloud: boolea
     case "GPU_BUSY":
       return "The graphics card is busy with another model. Wait for it to finish, or stop the local model.";
     case "MODEL_NOT_LOADED":
-    case "MODEL_MISSING":
-    case "ENGINE_MISSING":
       return "No local model is loaded in Atomic Core. Pick a cloud model, or load a local one first.";
+    case "ENGINE_MISSING":
+      return "The image engine is not installed yet. Try again: it installs before the first local generation.";
+    case "MODEL_MISSING":
+    case "SIDE_FILE_MISSING":
+      // Core names the file: "<name> is missing. Download the model again."
+      return message;
     case "OUT_OF_MEMORY":
       return "The model ran out of memory. Try a smaller size or fewer images.";
     case "QUEUE_FULL":
@@ -68,6 +75,12 @@ export function describeStudioError(code: string, message: string, cloud: boolea
     case "INVALID_REQUEST":
     case "INVALID_ARGUMENT":
     case "INVALID_DIMENSIONS":
+    case "DISK_SPACE":
+    case "UNKNOWN_MODEL":
+    case "MODEL_NOT_DOWNLOADED":
+    case "ENGINE_UNSUPPORTED":
+    case "ENGINE_INSTALL_FAILED":
+    case "DOWNLOAD_FAILED":
       return message;
     default:
       return `Generation failed: ${why}.`;

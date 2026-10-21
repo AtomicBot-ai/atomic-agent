@@ -16,6 +16,8 @@
  * `null` (unknown) for cloud models rather than guessed.
  */
 
+import type { LocalFamilyView } from "./studio-local.js";
+
 export type StudioKind = "image" | "video";
 export type StudioProvider = "openrouter" | "local";
 
@@ -59,8 +61,8 @@ export interface StudioModel {
   nonCommercial: boolean | null;
   /** True: an uncensored / NSFW model (label it 18+). Null: nobody says. */
   adult: boolean | null;
-  /** Local families only. */
-  local: { family: string; developer: string | null; loaded: boolean } | null;
+  /** Local families only. `quants` and the rest come from studio-local.ts (what is on disk, the fit here). */
+  local: ({ family: string; developer: string | null; loaded: boolean } & Partial<LocalFamilyView>) | null;
 }
 
 type Obj = Record<string, unknown>;

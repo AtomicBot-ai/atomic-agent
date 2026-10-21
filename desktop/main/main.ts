@@ -2138,6 +2138,9 @@ function wireIpc(client: AgentClient): void {
     stateDir: DESKTOP_STATE_DIR,
     dataDir: managedDataDirNow,
     coreVersion: BUNDLED_CORE_VERSION,
+    // `--fake-ram` (test only) reaches the local models' fit verdict as it reaches the LLM picker.
+    ...(FAKE_RAM_GB ? { hostRamBytes: () => FAKE_RAM_GB! * 1024 ** 3 } : {}),
+    beforeDownload: () => { syncHfEndpoint(hfMirrorSources()); },
     openRouterKey: async () => {
       const read = await readWholeConfig();
       return pickOpenRouterKey(read.ok ? read.config?.llm?.providers ?? [] : [], (entry) => resolveKeyValue(entry as ProviderEntry));

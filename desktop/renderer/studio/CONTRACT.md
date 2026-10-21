@@ -3,7 +3,9 @@
 What the Studio pages call (`BR.studio.*`, `BR = window.atomic`) and what
 they get back. Main side: `desktop/main/studio-ipc.ts` (routes),
 `studio-media.ts` (Core client), `studio-catalog.ts`, `studio-requests.ts`,
-`studio-pricing.ts`, `studio-paths.ts`, `studio-jobs.ts`. Preload:
+`studio-pricing.ts`, `studio-paths.ts`, `studio-jobs.ts`, and for local models
+`studio-local-models.ts` (download, engine, load), `studio-local.ts` (catalog,
+plan, fit), `studio-download.ts` (the file transfer). Preload:
 `desktop/preload/preload.ts` (`studio` namespace). Keep this file and those in
 step.
 
@@ -34,6 +36,13 @@ Every call resolves (never rejects) to
 | `GPU_BUSY`, `MODEL_NOT_LOADED`, `OUT_OF_MEMORY`, `DISK_FULL`, `QUEUE_FULL` | Core's diffusion codes (`src/contracts/errors.ts`) |
 | `REMOTE_AUTH_FAILED`, `REMOTE_QUOTA`, `REMOTE_RATE_LIMITED`, `REMOTE_CONTENT_BLOCKED`, `REMOTE_REJECTED`, `REMOTE_UNSUPPORTED`, `REMOTE_UNAVAILABLE`, `REMOTE_TIMEOUT`, `REMOTE_NOT_CONFIGURED`, `UNSUPPORTED_WORKFLOW` | provider refusals, already worded |
 | `JOB_NOT_FOUND` | Core lost the job (restart); only on `onJob` |
+| `DISK_SPACE` | `localDownload` refused before any byte moved; message is ATO-507's "Needs 19.7 GB, 12.1 GB free on this disk." |
+| `UNKNOWN_MODEL` | a local id that is not in the catalog |
+| `MODEL_NOT_DOWNLOADED` | local generate/estimate/load of a model not (fully) on disk: offer Download. Also when only edit/reference's extra file is missing ("This mode needs one more file…"): `localDownload(id, {workflow})` |
+| `ENGINE_UNSUPPORTED` | this computer cannot run local diffusion (Core names no build for it, e.g. an Intel Mac); hide local, suggest cloud |
+| `ENGINE_INSTALL_FAILED` | the image engine install failed; Retry |
+| `MODEL_MISSING`, `SIDE_FILE_MISSING` | Core found a file gone at load ("x is missing. Download the model again.") |
+| `ENGINE_MISSING` | Core has no image engine (should not reach the UI: main installs it first) |
 | `FAILED` | anything else |
 
 `kind` is always `"image" | "video"`.
@@ -61,6 +70,14 @@ Every call resolves (never rejects) to
 | `revealInFinder(path)` | `{ revealed: true }` |
 | `saveAs(path)` | `{ saved: false } \| { saved: true, path }` |
 | `onJob(cb)` | subscribe; returns unsubscribe. `cb(job: StudioJob)` on every change |
+| `localDownload(id, { workflow? })` | `LocalDownload` as it starts (or `state:'done'` when nothing is missing). Progress follows on `onLocal` |
+| `localCancel(id)` | `{ cancelled: boolean }`; the part files stay and the next `localDownload` resumes |
+| `localDelete(id)` | `{ removed: number, freedBytes: number, kept: number }` (`kept`: shared files another installed model needs). Unloads it from Core first if loaded |
+| `localLoad(id, { workflow? })` | `{ loaded: string }` (the artifact id). Optional: generate and estimate load on their own |
+| `localEngine()` | `LocalEngine` (reads Core; installs nothing) |
+| `localPrepare()` | `LocalEngine` once the image engine is installed (installs it if missing) |
+| `localState()` | `{ downloads: LocalDownload[], engine: LocalEngine \| null }` running now (after a window reload) |
+| `onLocal(cb)` | subscribe; returns unsubscribe. `cb(event: LocalEvent)` on every change |
 
 `gallery`, `pin`, `galleryDelete` ids: image `<jobId>-<NN>`, video the job id.
 
@@ -167,9 +184,112 @@ of models are listed; label, don't hide.
 `keyMissing: true` → cloud models are still listed; Generate answers
 `NO_KEY`.
 
-**Local models in this foundation**: listed only. Downloading weights and
-`POST /diffusion/model/load` are not wired yet, so local generation works only
-when a model is already loaded in Core (otherwise `MODEL_NOT_LOADED`).
+## Local models
+
+One `StudioModel` per conf family (`id` = family id, e.g. `z-image`); its
+`local` carries the quants, each a downloadable **artifact** with id
+`<family>:<quant>` (`z-image:q4_k_m`). That artifact id is what
+`localDownload` / `localCancel` / `localDelete` / `localLoad` take and what a
+local `generateImage` / `generateVideo` / `estimateVideo` sends as `model` (a
+bare family id also works there: its default quant on disk).
+
+```ts
+// catalog(kind).local
+interface LocalSection extends CatalogSection {
+  machine: { memoryKind: 'unified' | 'system', ramBytes, budgetBytes, teOnCpu } | null  // null: RAM unknown
+  modelsDir: string               // <managed data dir>/diffusion/models
+  engine: LocalEngine | null      // last seen; null until something asked
+  error: { code: 'CATALOG_UNAVAILABLE', message } | null  // live conf unreadable: the copy in the build is listed
+}
+
+// StudioModel.local, for a local family
+{
+  family, developer, loaded        // loaded: some quant of this family is in Core
+  gated: boolean                   // Hugging Face needs an accepted licence + HF_TOKEN (Krea 2): say so before Download
+  installed: boolean               // some quant is fully on disk
+  defaultQuant: string             // artifact id a picker opens on: largest installed that fits, else recommended, else smallest
+  quants: LocalQuant[]
+}
+
+interface LocalQuant {
+  id: string                       // `<family>:<quant>`
+  quant: string; label: string     // 'q4_k_m', 'Q4_K_M'
+  bytes: number                    // everything create needs, shared files included
+  downloadBytes: number            // what Download would still fetch (0 when installed); quote this on the button
+  installed: boolean
+  partial: boolean                 // some files here (a stopped download, or side files shared with another model)
+  recommended: boolean             // the pick for THIS machine (curated quant unless it does not fit)
+  fit: {
+    verdict: 'ok' | 'maybe' | 'no' // runs / tight (offloaded, slower) / will not run well (CPU offload, very slow)
+    policy: 'none' | 'group' | 'model'
+    residentBytes: number          // estimated memory while generating at the default size
+    budgetBytes: number | null     // what a model may use here (Macs: 85 % of RAM); null = unknown
+    reason: string                 // English, for a tooltip
+  }
+  loaded: boolean                  // this exact quant is the one in Core
+  download: LocalDownload | null   // in flight
+}
+```
+
+The fit is Atomic Chat's (`web-app/src/lib/diffusion/fit.ts`): weights + VAE +
+text encoders (not on Macs, where they run on the CPU) + 1.5 GiB per megapixel,
+against RAM (× 0.85 on Macs); ≤ 70 % ok, ≤ 90 % maybe, else no. A discrete
+GPU's own memory is not read, so on a PC with a graphics card the verdict is
+on system RAM only.
+
+Downloads (`localDownload`):
+
+- Refused with `DISK_SPACE` when `downloadBytes` + 10 % does not fit on the
+  models disk (same check and sentence as LLM downloads, ATO-507).
+- Files come from Hugging Face (`huggingface.co/<repo>/resolve/main/<file>`,
+  or the HF mirror from Settings), into `.part` files; each is checked against
+  the catalog's size and SHA-256 before it is moved into place. Stop keeps the
+  part files; the next Download resumes them (HTTP Range).
+- Side files shared by several models are fetched once and kept while any
+  installed model needs them.
+- Gated repos (`gated: true`) need `HF_TOKEN` in the app's own environment
+  (not the agent's `.env`); without it the download fails with code `GATED` in
+  `LocalDownload.error`.
+
+```ts
+interface LocalDownload {
+  id: string                       // artifact id
+  state: 'downloading' | 'verifying' | 'done' | 'failed' | 'cancelled'
+  transferred: number; total: number   // bytes of this download (what was missing), resumed bytes counted
+  percent: number                  // 0..100
+  file: { index: number, count: number, name: string } | null   // "file 2 of 3: ae.safetensors"
+  error: { code, message } | null  // failed: GATED, NOT_FOUND, RATE_LIMITED, CHECKSUM_MISMATCH, DISK_FULL, NETWORK, OUTSIDE, DOWNLOAD_FAILED
+}
+
+interface LocalEngine {
+  state: 'missing' | 'installing' | 'ready' | 'unsupported' | 'failed'
+  message: string                  // show as is: "Preparing the image engine…", "The image engine is ready.", …
+  backend: string | null; tag: string | null
+  progress: { transferred, total, percent } | null   // installing only
+  error: { code, message } | null
+}
+
+type LocalEvent =
+  | { type: 'download', download: LocalDownload }
+  | { type: 'removed', id: string }
+  | { type: 'engine', engine: LocalEngine }
+  | { type: 'load', id: string, state: 'loading' | 'loaded' | 'failed', message: string, error: { code, message } | null }
+```
+
+A local generate (or estimate) runs, before the job: the model must be on disk
+(else `MODEL_NOT_DOWNLOADED`); Core's sd.cpp engine is installed if missing
+(`POST /engine-builds/sd-cpp/install`, one download of the build for this
+computer, size not known in advance, pushed as `engine` events: show
+"Preparing the image engine…" with the bar);
+then the model is loaded (`POST /diffusion/model/load`, pushed as `load`
+events: "Loading Z-Image Turbo Q4_K_M…", up to 10 min on a slow disk) unless it
+is already the loaded one. Only then does `generateImage` resolve with the job.
+So the Generate button stays busy through those steps; drive its label from
+`onLocal`.
+
+Core holds one diffusion model at a time: loading another unloads the first.
+A local chat model on the same GPU competes for memory (Core may answer
+`GPU_BUSY`).
 
 ## Jobs and events
 
@@ -203,7 +323,8 @@ terminal `state`. Cloud jobs report a time-based `fraction` (Core
 video (OpenRouter documents no cancel, `src/media/adapters/openrouter-videos.ts`);
 there are no refunds.
 
-`VideoEstimate` (local only, Core `POST /diffusion/video/estimate`):
+`VideoEstimate` (local only, Core `POST /diffusion/video/estimate`; main loads
+the model first, Core estimates against the loaded one):
 `{ memory: { requiredBytes, budgetBytes, pool, verdict: 'fits'|'tight'|'exceeds' }, seconds: { low, high } | null, basis }`.
 
 ## Gallery items
@@ -243,5 +364,6 @@ Show `~$0.20` (or `~$0.32–0.40` with `maxUsd`) on the Generate button; `null`
 
 - Video playback: the window's CSP has no `media-src`; playing a clip needs a
   main-side protocol or CSP change (open item).
-- Local model download/load, sd-cpp engine install, video posters
-  (`PUT /diffusion/video/gallery/:id/poster`).
+- Video posters (`PUT /diffusion/video/gallery/:id/poster`).
+- Stopping an engine install, or a load, half-way.
+- Local image-to-video (Core refuses it).
