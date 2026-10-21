@@ -42,6 +42,13 @@
  *   (Settings › Models). The next start the person makes listens again, and
  *   counts afresh.
  *
+ * - Studio yields (studio-gpu-share.ts): a local image or video model needs
+ *   the memory the chat model holds, so the app stops the chat model as
+ *   Studio's (`yieldTo`) — not a crash, and not a stop on purpose: the server
+ *   stays the app's, nothing is counted, no incident opens, and the
+ *   supervisor holds still until Studio hands it back (`endYield`), when the
+ *   app starts it again itself.
+ *
  * Every dependency is handed in, so the T43 smoke drives the same object the
  * app runs.
  */
@@ -91,6 +98,8 @@ export interface SupervisorState {
   quickDeaths: number;
   /** The open incident's last notice, or null. */
   incident: SupervisorNotice | null;
+  /** Who the server is yielded to (`"studio"`), or null. */
+  yielded: string | null;
 }
 
 export class DaemonSupervisor {
@@ -107,6 +116,8 @@ export class DaemonSupervisor {
   private incidentSince: number | null = null;
   private incidentFailureTold = false;
   private last: SupervisorNotice | null = null;
+  /** Studio holds the memory: the server is down on purpose for a while, and stays the app's. */
+  private yieldedTo: string | null = null;
 
   constructor(private readonly deps: DaemonSupervisorDeps) {
     this.lastStartAt = this.now();
@@ -135,7 +146,32 @@ export class DaemonSupervisor {
       gaveUp: this.gaveUp,
       quickDeaths: this.quickDeaths,
       incident: this.incidentSince !== null || this.gaveUp ? this.last : null,
+      yielded: this.yieldedTo,
     };
+  }
+
+  /**
+   * The app is about to stop the server so `holder` (Studio) can use its
+   * memory. Until `endYield` no look counts and nothing is restarted; the
+   * server stays the app's (`owned` is untouched), and an incident that was
+   * open is closed, since the server going down now is not one.
+   */
+  yieldTo(holder: string): void {
+    this.yieldedTo = holder;
+    this.deadLooks = 0;
+    this.closeIncident(true);
+  }
+
+  /**
+   * The holder is done. The app starts the server again itself; should that
+   * start fail, the looks from here on bring it back as after any death, with
+   * the crash-loop clock starting now.
+   */
+  endYield(): void {
+    if (this.yieldedTo === null) return;
+    this.yieldedTo = null;
+    this.deadLooks = 0;
+    this.lastStartAt = this.now();
   }
 
   /**
@@ -217,7 +253,7 @@ export class DaemonSupervisor {
    * on purpose and assert what happens next (T30, T31).
    */
   private listening(): boolean {
-    return this.timer !== null && this.owned && !this.gaveUp && this.deps.wanted();
+    return this.timer !== null && this.owned && !this.gaveUp && this.yieldedTo === null && this.deps.wanted();
   }
 
   /**
