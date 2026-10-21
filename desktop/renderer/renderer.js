@@ -12207,7 +12207,7 @@ function dlCardAct(verb) {
          would fail with no binary. The switch waits for it, and happens once. */
       DL.switchAfter = id;
       const name = dlCardName({kind: 'weights', id});
-      toast(name + ' starts after the local engine', 'The local engine is still downloading. The switch happens as soon as it is in place.');
+      toast(name + ' starts after the local engine', 'The local engine is still downloading. The switch happens as soon as it is in place.', 'info');
       render();
       return;
     }
@@ -16520,10 +16520,10 @@ async function selActivate(row) {
 }
 
 function selPull(id) {
-  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
   closeSelector(); render();
-  toast('Downloading in the background', 'You can keep chatting and choose another model');
+  toast('Downloading in the background', 'You can keep chatting and choose another model', 'info');
   BR.modelsPull(id, {trigger: 'selector'}).then((res) => {
     if (res && res.ok === false && SEL.pulling === id) {
       SEL.pulling = null; toast('Download could not start', res.error || 'Please try again', 'bad'); render();
@@ -22888,7 +22888,8 @@ async function mcpRefreshRun(quiet) {
   if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
 }
 function mcpHint() {
-  if (MCP.addModal) return 'Enter submit · Esc cancel · paste JSON of one MCP server';
+  // ATO-711: plain Enter is a new line in the JSON box; ⌘Enter / Ctrl+Enter adds the server (keydown above).
+  if (MCP.addModal) return (IS_MAC ? '⌘Enter' : 'Ctrl+Enter') + ' add · Esc cancel · paste JSON of one MCP server';
   if (MCP.removeConfirm) return 'y / Enter confirm · n / Esc cancel';
   if (MCP.mode === 'list') return tuiHints(['j/k move', ['Enter open', 'mcp:detail'], ['n add', 'mcp:add'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh'], ['a auto', 'mcp:auto']]);
   return tuiHints([['Esc back', 'mcp:back'], ['1/2/3 tools/res/prompts', 'mcp:dtab:cycle'], ['[ ] cycle', 'mcp:dtab:cycle'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh']]);
@@ -23775,7 +23776,7 @@ function llmStatusNoteHTML(status, tone) {
 function llmStatusTone(line) {
   if (line === 'status: ready') return 'ready';
   if (/^probing |: (loading|updating)$/.test(line)) return 'busy';
-  if (/^local-llm URL saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
+  if (/^Server address saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
   return 'err';
 }
 /* The setup tabs (Д30): which list the pane shows — local models to
@@ -23979,7 +23980,7 @@ function llmNowHTML() {
   const control = stale ? button('llm:usePicked', 'refresh', 'Restart on ' + modelWord(picked), 'Restart the local model server on the model picked')
     : (managed && !!serverModel && !missing) || stray
       ? button('llm:daemon', up ? 'stop' : 'play', phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : up ? 'Stop' : 'Start',
-          up ? 'Stop the local model server (s)' : 'Start the local model server (s)')
+          up ? 'Stop the local model server' : 'Start the local model server')
       : '';
   return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
     + (workers ? esc(customWorkers ? ', local workers on a custom server' : ', local workers on ' + (serverModel ? modelWord(serverModel) : THIS_MACHINE)) : '')
@@ -24105,7 +24106,7 @@ function llmAdvancedHTML(mode) {
       ? '<div class="llm-adv-h">Engine</div>'
         + '<div class="llm-tune-card llm-engine">'
           + llmTuneRowHTML(onCore ? 'Atomic Core' : 'llama.cpp', 'Runs the local models.' + (version ? ' Installed: ' + version + '.' : ''),
-              btn('llm:backend', 'Update now', 'Install the supported engine (B)'))
+              btn('llm:backend', 'Update now', 'Install the supported engine'))
           /* Core is the engine, and choosing one is not part of the normal flow: llama.cpp is never offered
              in the app (support-only: `models engine llama-server`). Once on llama.cpp, this one row is the quiet way back. */
           + (onCore ? ''
@@ -24114,16 +24115,16 @@ function llmAdvancedHTML(mode) {
           + (onCore
               ? llmTuneRowHTML('Core updates', 'Checks never install or interrupt your models. Updates apply after you stop local models.', btn('llm:engineCheck', 'Check for updates', 'Check Atomic Core releases'))
               : llmTuneRowHTML('Update automatically', 'Fetch a newer llama.cpp after each start.',
-                  sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start (U)')))
+                  sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start')))
           + llmTuneRowHTML('Device', 'Auto runs the model on the GPU when there is one. A change applies the next time the model server starts.',
-              btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU (G)'))
+              btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU'))
           // The log itself is Diagnostics' (Д58: one place for it); this is the way there.
           + llmTuneRowHTML('Server log', 'What the local model server printed. It opens in Settings › Diagnostics.',
-              btn('diag:llmlogs', 'Open', 'The local model server’s log, in Diagnostics (L)'))
+              btn('diag:llmlogs', 'Open', 'The local model server’s log, in Diagnostics'))
         + '</div>'
         + '<div class="llm-adv-h">Memory</div>'
         + card(llmTuneRowHTML('Local embeddings', 'A small model on ' + THIS_MACHINE + ' that indexes memory for search.',
-            sw('llm:embToggle', embOn, 'Local embeddings', 'Turn the local embedding model on or off (E)')))
+            sw('llm:embToggle', embOn, 'Local embeddings', 'Turn the local embedding model on or off')))
         + '<div class="llm-adv-h">Prompt format</div>' + card(llmTemplateRowHTML())
       : mode === 'external' ? '<div class="llm-adv-h">Prompt format</div>' + card(llmTemplateRowHTML())
       : mode === 'cloud' ? card(llmTuneRowHTML('Fallback chain', 'Which providers answer when one fails.',
@@ -25240,7 +25241,7 @@ async function llmRemoveLocalConfirm() {
 }
 function llmPull(kind, id) {
   if (!BR) return;
-  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes'); return; }
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
@@ -25347,14 +25348,15 @@ async function llmExternalSave() {
   // Integration seam: the route move goes through lane B's activateProvider (restarts `atag serve`, which also picks up the two leaf writes above).
   if (llmActiveTextId() !== 'local-llama') {
     if (!(await llmSwitchProvider('local-llama'))) return;
-    llmReport('local-llm URL saved (' + p.latencyMs + 'ms)', 'external');
-    LLMP.msg = {text:'local-llm URL saved: ' + res.url + ' — active text provider is local-llama; the agent was restarted.'};
+    // ATO-711: plain words in the pane, no `local-llm` / `local-llama` ids.
+    llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
+    LLMP.msg = {text:'Server address saved: ' + res.url + '. Chats now run on your server; the agent was restarted.'};
     llmRefreshStatus();
     return;
   }
-  llmReport('local-llm URL saved (' + p.latencyMs + 'ms)', 'external');
+  llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
   // The TUI rebuilds the registered provider in-process (runtime.reloadLlmProvider); the serve process needs the restart.
-  llmRestartMsg('local-llm URL saved: ' + res.url);
+  llmRestartMsg('Server address saved: ' + res.url);
   llmRefreshStatus();
 }
 async function llmFallbackPersist(chain, appendLocal) {
