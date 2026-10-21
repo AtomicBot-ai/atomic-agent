@@ -141,7 +141,7 @@ function toImageError(err: unknown, cloud: boolean): unknown {
 }
 
 /**
- * Register OpenRouter with Core's cloud media. The key is passed only
+ * Register OpenRouter with Core's cloud media (images and video). The key is passed only
  * here, never through Core's environment (`core-env.ts`). Core replaces
  * `base_url`, `models` and `custom_headers` whole on every PUT; the agent
  * uses its own Core only for media, so nothing else is lost.
@@ -153,7 +153,9 @@ export async function registerOpenRouterMedia(client: CoreControlClient, apiKey:
       base_url: OPENROUTER_MEDIA_BASE_URL,
       custom_headers: [],
       models: [],
-      media: { image_api: "openrouter-images", models: [] },
+      // Both adapters by name (`CloudProviderMedia`): `video.generate`
+      // registers through here too.
+      media: { image_api: "openrouter-images", video_api: "openrouter-videos", models: [] },
     }, { method: "PUT", ...(signal ? { signal } : {}) });
   } catch (err) { throw toImageError(err, true); }
 }

@@ -76,6 +76,13 @@ export interface ToolGateConfig {
    * at rebuild time, so a key saved mid-session adds it.
    */
   image: { available: boolean };
+  /**
+   * Video generation gate. `available=false` (no OpenRouter key) drops
+   * `video.generate`: every clip is made on OpenRouter, so without a key
+   * a call could only answer "add a key". Read at rebuild time, like
+   * the image gate.
+   */
+  video: { available: boolean };
 }
 
 /**
@@ -134,6 +141,7 @@ const GATED_TOOLS = {
   ],
   email: ["os.email.inbox", "os.email.send"],
   image: ["image.generate"],
+  video: ["video.generate"],
 } as const;
 
 /**
@@ -184,6 +192,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.image.available) {
     for (const name of GATED_TOOLS.image) disabled.add(name);
+  }
+  if (!gates.video.available) {
+    for (const name of GATED_TOOLS.video) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;

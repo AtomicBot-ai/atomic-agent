@@ -119,6 +119,7 @@ export function effectiveToolDescriptors(
     github: { connected: resolveGithubToken(undefined, env) !== null },
     fusion: { enabled: config.llm?.runMode?.mode === "fusion" },
     image: { available: openRouterImageKey(config, env) !== undefined },
+    video: { available: openRouterImageKey(config, env) !== undefined },
   });
 }
 

@@ -27,7 +27,8 @@ import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tool
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
 import { openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
-import { captureImageGenerated } from "../../analytics/analytics-events.js";
+import { registerVideoTools, VIDEO_GENERATE_TOOL } from "../../tools/video/index.js";
+import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
 import { confineReads } from "../../tools/read-scope/index.js";
@@ -184,6 +185,29 @@ export function registerRuntimeImageTools(input: {
     dataDir: () => getConfig().paths.localModelsDataDir,
     openRouterKey: () => openRouterImageKey(getConfig()),
     report: (event) => captureImageGenerated(getAnalytics(), event),
+  });
+}
+
+/**
+ * `video.generate`: registered always, offered while an OpenRouter key is
+ * configured (the `video` gate below), like `image.generate`. Its
+ * progress reaches the session's UIs as `tool_progress` events.
+ */
+export function registerRuntimeVideoTools(input: {
+  toolRegistry: ToolRegistry;
+  dangerous: DangerousToolOptions;
+  getAnalytics: () => AnalyticsClient | null;
+  emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
+}): void {
+  const { toolRegistry, dangerous, getAnalytics, emitAgentLoopEventFor } = input;
+  registerVideoTools(toolRegistry, {
+    ...dangerous,
+    dataDir: () => getConfig().paths.localModelsDataDir,
+    openRouterKey: () => openRouterImageKey(getConfig()),
+    report: (event) => captureVideoGenerated(getAnalytics(), event),
+    onProgress: (sessionId, update) => emitAgentLoopEventFor(sessionId, {
+      type: "tool_progress", tool: VIDEO_GENERATE_TOOL, fraction: update.fraction, elapsedMs: update.elapsedMs, label: update.label,
+    }),
   });
 }
 
@@ -345,6 +369,8 @@ export async function connectRuntimeMcpCatalog(input: {
       // orchestrator that cannot delegate must not be told it can.
       fusion: { enabled: resolveCurrentRunMode().effective === "fusion" },
       image: { available: openRouterImageKey(getConfig()) !== undefined },
+      // Same key, same reason: every clip is made on OpenRouter.
+      video: { available: openRouterImageKey(getConfig()) !== undefined },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -379,7 +405,8 @@ export async function connectRuntimeMcpCatalog(input: {
   // switching to a provider that cannot see drops `vision.describe`
   // from the prompt, switching back restores it — one prefix change per
   // flip, none while the route holds. The image gate too: saving or
-  // removing an OpenRouter key adds or drops `image.generate`.
+  // removing an OpenRouter key adds or drops `image.generate` and
+  // `video.generate` (one gate value: they share the key).
   const liveDescriptorGates = (): string =>
     `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}`;
   let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();

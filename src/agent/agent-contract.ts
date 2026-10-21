@@ -654,6 +654,21 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * A long tool call reporting how far it got (`video.generate`: a
+       * clip takes minutes). Emitted by the tool through the runtime in
+       * the session's frame, throttled by the tool; not produced by
+       * `AgentLoop` itself. `label` is one plain line for the running
+       * card; `fraction` is 0..1 and, for a cloud clip, only Core's
+       * time-based guess.
+       */
+      type: "tool_progress";
+      tool: string;
+      fraction: number;
+      elapsedMs: number;
+      label: string;
+    }
+  | {
+      /**
        * One leg of a fusion turn started, ran a tool, ended, or was cut
        * short. Emitted by `fusion.delegate` in the PARENT session's
        * frame, never a worker's: a worker session has no recorder, no

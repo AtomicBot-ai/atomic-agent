@@ -18,6 +18,7 @@ beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "atomic-tg-outbound-"));
   writeFileSync(join(dir, "shot.png"), "png");
   writeFileSync(join(dir, "report.pdf"), "pdf");
+  writeFileSync(join(dir, "clip.mp4"), "mp4");
   mkdirSync(join(dir, "folder"));
 });
 
@@ -47,6 +48,8 @@ describe("classifyOutboundFile", () => {
     expect(classifyOutboundFile("/x/shot.jpeg", 100)).toBe("photo");
     expect(classifyOutboundFile("/x/anim.gif", 100)).toBe("document");
     expect(classifyOutboundFile("/x/report.pdf", 100)).toBe("document");
+    expect(classifyOutboundFile("/x/clip.MP4", TELEGRAM_PHOTO_UPLOAD_LIMIT_BYTES + 1)).toBe("video");
+    expect(classifyOutboundFile("/x/clip.webm", 100)).toBe("document");
     expect(
       classifyOutboundFile(
         "/x/huge.png",
@@ -98,6 +101,17 @@ describe("sendAttachments", () => {
       "telegram: photo send rejected, retrying as document",
       expect.objectContaining({ path: join(dir, "shot.png") }),
     );
+  });
+
+  it("sends an MP4 as a video and retries a rejected one as a document", async () => {
+    const api = makeApi(async (_chat, file) => {
+      if (file.kind === "video") throw new Error("Bad Request: wrong video file");
+    });
+    const warn = vi.fn();
+    const result = await sendAttachments({ api, chatId: 7, paths: [join(dir, "clip.mp4")], logger: { warn } });
+    expect(result).toEqual({ sent: 1, failed: [] });
+    expect(api.sendFile.mock.calls.map((call) => (call[1] as OutboundFile).kind)).toEqual(["video", "document"]);
+    expect(warn).toHaveBeenCalledWith("telegram: video send rejected, retrying as document", expect.objectContaining({ path: join(dir, "clip.mp4") }));
   });
 
   it("reports a missing file, a directory and an API failure without throwing", async () => {

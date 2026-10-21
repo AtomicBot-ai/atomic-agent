@@ -555,6 +555,26 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
 
+  // ── video ────────────────────────────────────────────────────────────────
+  // Plain types only, like image: the tool's parser owns the duration
+  // bound and the aspect/resolution vocabularies.
+  [
+    "video.generate",
+    obj(
+      {
+        prompt: stringSchema,
+        image: stringSchema,
+        duration: integerSchema,
+        aspect: stringSchema,
+        resolution: stringSchema,
+        audio: booleanSchema,
+        seed: integerSchema,
+        model: stringSchema,
+      },
+      ["prompt"],
+    ),
+  ],
+
   // ── mcp aggregates ───────────────────────────────────────────────────────
   [
     "mcp.resource.list",

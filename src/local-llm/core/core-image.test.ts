@@ -92,12 +92,12 @@ describe("runCoreImageJob", () => {
 });
 
 describe("cloud media", () => {
-  it("registers OpenRouter with the key in the body and the images dialect", async () => {
+  it("registers OpenRouter with the key in the body and both media dialects", async () => {
     const call = vi.fn(async () => ({}));
     await registerOpenRouterMedia({ call } as unknown as CoreControlClient, "sk-or-test");
     expect(call).toHaveBeenCalledWith("/cloud/providers/openrouter", {
       api_key: "sk-or-test", base_url: OPENROUTER_MEDIA_BASE_URL, custom_headers: [], models: [],
-      media: { image_api: "openrouter-images", models: [] },
+      media: { image_api: "openrouter-images", video_api: "openrouter-videos", models: [] },
     }, { method: "PUT" });
   });
 
