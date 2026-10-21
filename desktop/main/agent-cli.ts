@@ -3811,6 +3811,38 @@ export function dotenvSet(stateDir: string, key: string, value: string | null): 
   }
 }
 
+/* The .env keys the window may write through `app:dotenvSet`, and nothing
+   else: the Telegram bot token (the TUI's telegram-settings.ts setToken) and,
+   since ATO-328, the Exa key web search reads (`web.search.exa.apiKeyEnv`,
+   default EXA_API_KEY; the agent has no config.json field for it, so its
+   environment, loaded from this file at start, is the only way in). */
+export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY"];
+
+/* Why an Exa key cannot be written as given, or null. One line of printable
+   ASCII with no spaces, 8 to 256 characters: the renderer's exaKeyClean rule
+   (renderer/exa-key.js), checked again here because the value crosses IPC. A
+   line break would end the .env line and start another variable. The value
+   is never quoted back. */
+export function exaKeyValueError(value: string): string | null {
+  return /^[\x21-\x7e]{8,256}$/.test(value) ? null : "That does not look like an Exa API key.";
+}
+
+/* The window's write guard for `app:dotenvSet`: the key must be one of
+   DESKTOP_DOTENV_KEYS and the value a string or null (null removes it). Null
+   when the write may go ahead, else the error to answer with. A line break or
+   NUL is refused for every key: formatDotenvValue quotes whitespace but keeps
+   a newline as is, so "123:abc\nOPENAI_API_KEY=x" would add a second line,
+   that is, a second variable the agent loads. */
+export function desktopDotenvError(key: unknown, value: unknown): string | null {
+  if (typeof key !== "string" || !DESKTOP_DOTENV_KEYS.includes(key)) {
+    return `only ${DESKTOP_DOTENV_KEYS.join(" and ")} may be written from the desktop`;
+  }
+  if (value !== null && typeof value !== "string") return "value must be a string or null";
+  if (value !== null && /[\r\n\0]/.test(value)) return "value must be one line";
+  if (key === "EXA_API_KEY" && value !== null) return exaKeyValueError(value);
+  return null;
+}
+
 function applyDotenvMutation(original: string, key: string, value: string | null): string | null {
   const lines = original.length === 0 ? [] : original.split(/\r?\n/);
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();

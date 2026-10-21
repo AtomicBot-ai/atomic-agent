@@ -644,7 +644,26 @@ Honestly degraded, and labelled as such in the UI:
   error. Apps are connected in the chat: the agent answers "connect my
   Gmail" with a sign-in link. The key never comes back to the window, and
   no message, log or analytics event (`composio_setup`: step and outcome)
-  carries it. `app:dotenvSet` still writes only the Telegram token.
+  carries it. `app:dotenvSet` writes only the Telegram token and `EXA_API_KEY`.
+- **Web search key (Exa)** (ATO-328). When a search ran without a key and
+  Exa could not serve it, the agent's `event: tool_result` frame carries
+  `key_required` (`provider`, `reason`: `rate_limited` / `unreachable` /
+  `missing`, `getKeyUrl`, `envVar`). The chat then shows one card per
+  conversation, under the newest such call (the field repeats on every
+  search while Exa is parked, and comes with status `ok` too when another
+  provider answered): a plain line for the reason, "Get a free Exa key"
+  (the system browser), a password field and Save. Settings › General has
+  the same field; an empty Save keeps the saved key. Save writes
+  `EXA_API_KEY` to `<stateDir>/.env` through the same writer and IPC as the
+  Telegram token (`app:dotenvSet`, which accepts only those two names and
+  a one-line key). `atag serve` loads `.env` when it starts, so a save owes
+  a restart: the card offers Restart Agent Runtime once no reply is
+  running. The session store does not keep the field, so a reopened chat
+  has no card; an agent without the field changes nothing. The desktop
+  always writes `EXA_API_KEY`: a custom `web.search.exa.apiKeyEnv` (the
+  frame's `envVar`) is not supported from the card or Settings, and such an
+  agent keeps asking until that variable is set by hand. `app:dotenvSet`
+  refuses a line break or NUL in any value.
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).
