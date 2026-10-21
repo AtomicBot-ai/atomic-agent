@@ -28,7 +28,7 @@
 .studio-video .studio-ta:focus, .studio-video .studio-input:focus, .studio-video .studio-select:focus { outline:none; border-color:var(--brand); box-shadow:var(--focus-ring); }
 
 .studio-video .studio-seg { display:inline-flex; gap:2px; padding:3px; border-radius:var(--r-pill); background:var(--well); border:1px solid var(--bd); }
-.studio-video .studio-seg button { height:28px; padding:0 12px; border:0; border-radius:var(--r-pill); background:none; color:var(--ink-2); font:inherit; font-size:var(--fs-cap); cursor:pointer; }
+.studio-video .studio-seg button { height:28px; padding:0 12px; border:0; border-radius:var(--r-pill); background:none; color:var(--ink-2); font:inherit; font-size:var(--fs-cap); cursor:pointer; white-space:nowrap; }
 .studio-video .studio-seg button.on { background:var(--lift); color:var(--ink); box-shadow:var(--sh-soft); font-weight:600; }
 .studio-video .studio-chips { display:flex; flex-wrap:wrap; gap:6px; }
 .studio-video .studio-chip { height:30px; min-width:52px; padding:0 12px; border:1px solid var(--bd-2); border-radius:var(--r-pill); background:var(--lift); color:var(--ink-2); font:inherit; font-size:var(--fs-cap); cursor:pointer; }

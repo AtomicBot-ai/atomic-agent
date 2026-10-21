@@ -2,8 +2,11 @@
    reference strip and the big picture (studio mockup 21.10, states 1-3).
    The shared frame is studio.css. */
 
-.st-modes{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;border-radius:var(--r-panel);background:var(--well)}
-.st-mode{height:30px;border:0;border-radius:var(--r-pill);background:transparent;font-size:12.5px;color:var(--ink-2);position:relative;cursor:pointer;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Seven modes in a 348 px form: four equal columns cut "Reference" and "Transform" short.
+   Each tab takes its label's width and the row wraps (Create Edit Reference Transform / Inpaint Extend Upscale),
+   the tabs of a row stretching to fill it, so every label shows whole. */
+.st-modes{display:flex;flex-wrap:wrap;gap:4px;padding:4px;border-radius:var(--r-panel);background:var(--well)}
+.st-mode{flex:1 1 auto;min-width:56px;height:30px;border:0;border-radius:var(--r-pill);background:transparent;font-size:12.5px;color:var(--ink-2);position:relative;cursor:pointer;padding:0 10px;white-space:nowrap}
 .st-mode:hover{background:var(--hover)}
 .st-mode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-card);font-weight:600}
 .st-mode.off{color:color-mix(in srgb,var(--ink-3) 60%,transparent);cursor:not-allowed}
