@@ -133,6 +133,8 @@
    sit on the composer's send button or its mode control. */
 #toasts{position:absolute;right:16px;top:60px;display:flex;flex-direction:column;gap:8px;z-index:29;align-items:flex-end;pointer-events:none}
 #toasts > .toast{pointer-events:auto}
+/* ATO-430: the palette and the sheets (their dim included) sit above the toasts. */
+#window:has(.palscrim) #toasts,#window:has(.sheetwrap) #toasts{z-index:19}
 /* Backlog 18: an older toast steps aside while the column would reach the
    download card (toastsClearCard); it comes back, or expires, on its own. */
 #toasts > .toast[hidden]{display:none}

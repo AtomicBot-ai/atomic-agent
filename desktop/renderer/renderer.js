@@ -490,10 +490,14 @@ const OB_PHASES = [{n:'01', label:'Setup'}, {n:'02', label:'Data'}];
 const OB_PHASE_OF = {
   intro:null, choose:'01', cloud:'01', custom_chat_url:'01', custom_embedding_url:'01',
   local_pick:'01', local_hf_ref:'01', local_hf_pick:'01', local_download:'01',
-  propose_second:'01',
+  propose_second:'01', wait_or_jump:'01',
   import_pick:'02', import_preview:'02', import_done:'02',
-  wait_or_jump:'02', finished:'02',
+  // ATO-431 (U-06): `finished` is the spinner between screens of EITHER phase
+  // (before the second-backend offer as well as after import), so it keeps
+  // the phase last shown instead of naming one and jumping back.
+  finished:null,
 };
+let obRailPhase = '01';
 /* The screen's own title, in the app's voice rather than the TUI's status
    line. Plainest possible form: what this screen asks you to decide.
    The first one asks the person, not about the app in the third person
@@ -1303,6 +1307,7 @@ const TG = {
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
   mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
+  confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   // The message's kind ('owed' carries a change the agent loads at start, 'restarting' is the restart's own line,
   // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
@@ -1351,6 +1356,8 @@ const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null, s
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
+// ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
+const TG_PAIR_HOWTO = 'The desktop app can\'t pair yet. Quit it, run `atag tui`, open Telegram under Integrations and press p to start pairing, then DM your bot. Reopen the app and press Check again.';
 
 /* ---- Item 5: file attachments — what a turn actually wrote ----
    The strip under an assistant reply is sourced ONLY from write-tool cards.
@@ -1731,15 +1738,17 @@ const SLASH = [
   ['compact','summarize older messages to free up context'],
   ['abort','abort the running turn'],
   ['quit','exit Atomic Agent'],
-  ['debug','toggle debug pane (feed / logs / world …)'],
-  ['chat','return to single-view chat mode'],
-  ['runmode','where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`','local|cloud|fusion|swap|workers N|status'],
-  ['observe','switch to the Observe section'],
-  ['manage','switch to the Manage section'],
-  ['feed','jump to the Observe → Feed tab'],
-  ['logs','jump to the Observe → Logs tab'],
-  ['reasoning','jump to the Observe → Reasoning tab'],
-  ['world','jump to the Observe → World tab'],
+  ['debug','show or hide the console'],
+  ['chat','back to the chat'],
+  // ATO-431 (U-33): the row is ~560px, so a short hint leaves the description room;
+  // the full usage (swap, workers N, status) is RUN_MODE_USAGE.
+  ['runmode','where the chat runs: local, cloud or Fusion','local|cloud|fusion'],
+  ['observe','open the side panel on Steps'],
+  ['manage','open Settings'],
+  ['feed','open the side panel on Steps'],
+  ['logs','open the console (agent logs)'],
+  ['reasoning',"show the model's reasoning in the side panel"],
+  ['world','open the side panel on the World tab'],
   ['expand','expand every tool card in the chat log'],
   ['collapse','collapse every tool card in the chat log'],
   ['session','show current session id'],
@@ -1974,10 +1983,12 @@ let QUEUES_KEPT = null;
    one. */
 const FIRST_TURNS = new Map();
 const PENDING_CHATS = new Map();
+// ATO-430: a chat's title from its first message, cut at 72 characters with an ellipsis.
+function chatTitle(text) { return attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').replace(/^(.{71}).{2,}$/, '$1…'); }
 /** A local outbox chat remains reachable before its first HTTP turn exists. */
 function noteWaitingChat(id, text) {
   if (PENDING_CHATS.has(id)) return;
-  PENDING_CHATS.set(id, {id, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0,72) || '(empty)',
+  PENDING_CHATS.set(id, {id, t:chatTitle(text) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, waiting:true, endedAt:null});
 }
 for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) noteWaitingChat(id, q.queued[0]);
@@ -3448,7 +3459,7 @@ function composer() {
       + (/has not finished/.test(SWX.err)
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
-      + '<span class="ss-text">' + esc(SWX.err || SWX.sendError) + '</span></div>'
+      + '<span class="ss-text">' + esc(swxErrLine()) + '</span></div>'
     // The local engine did not download or start: its two ways out, before the CPU notice (no model runs at all).
     : engfShown()
     ? engfNoticeHTML()
@@ -4887,7 +4898,8 @@ function sessionSheet() {
   let rows = '';
   // item 6: the "N turns" subtitle is gone everywhere, so this sheet carries
   // the same dot and the same one-word state the sidebar row carries.
-  SESSIONS.forEach((s) => {
+  const q = (S.sesQ || '').trim().toLowerCase();  // ATO-430: the filter box narrows the rows by title
+  SESSIONS.filter((s) => !q || String(s.t).toLowerCase().includes(q)).forEach((s) => {
     const [state, tip] = chatDot(s);
     rows += '<button class="row' + (s.id === S.sessionId ? ' on' : '') + '" data-ses="' + esc(s.id) + '" title="' + esc(s.t + ' · ' + tip) + '">'
       + '<span class="' + ovDotCls(state, tip) + '"></span>'
@@ -4895,9 +4907,9 @@ function sessionSheet() {
       + '<span class="meta">' + esc(chatStatusWord(s)) + '</span></button>';
   });
   return sheet('Switch session',
-    '<label class="tk-inpwrap sesfilter">' + ic('search') + '<input placeholder="Filter sessions…" spellcheck="false"></label>'
-    + '<div class="rows sesrows">' + (rows || '<div class="sesempty">No chats in this workspace yet.</div>') + '</div>',
-    '<button class="btn btn-g sm" data-act="close">Cancel</button><button class="btn btn-p sm" data-act="close">Open</button>');
+    '<label class="tk-inpwrap sesfilter">' + ic('search') + '<input id="sesq" value="' + esc(S.sesQ || '') + '" placeholder="Filter sessions…" spellcheck="false"></label>'
+    + '<div class="rows sesrows">' + (rows || '<div class="sesempty">' + (q ? 'No chats match.' : 'No chats in this workspace yet.') + '</div>') + '</div>',
+    '<button class="btn btn-g sm" data-act="close">Cancel</button><button class="btn btn-p sm" data-act="sesopen">Open</button>');
 }
 
 function shortcutsSheet() {
@@ -5319,7 +5331,7 @@ function generalPane() {
   return '<div class="set-pane set-general">'
     + '<div class="tk-list set-setlist">'
       + '<div class="tk-setrow">'
-        + '<div class="body"><div class="t">Appearance</div><div class="d">System follows your Mac.</div></div>'
+        + '<div class="body"><div class="t">Appearance</div><div class="d">' + esc(S.theme === 'light' ? 'Always light.' : S.theme === 'dark' ? 'Always dark.' : (IS_MAC ? 'Follows your Mac.' : 'Follows your system.')) + '</div></div>'
         + '<div class="tk-seg set-seg" role="group" aria-label="Appearance">'
           + THEMES.map(([v, label]) => '<button class="' + (S.theme === v ? 'on' : '') + '" aria-pressed="' + (S.theme === v) + '" data-act="theme:' + v + '">' + esc(label) + '</button>').join('')
         + '</div>'
@@ -5936,7 +5948,9 @@ function act(a) {
                              render(); chatToast('New session', 'The next turn starts fresh');
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); refreshSkillList(); return; }
-  if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
+  if (a === 'session:switch') { close(); S.sesQ = ''; S.overlay = 'sessions'; render(); return; }
+  // ATO-430: Open opens the first row the filter left (Cancel only closes).
+  if (a === 'sesopen') { const r = S.sesQ ? document.querySelector('.sesrows > .row[data-ses]') : null; if (r) act('ses:' + r.dataset.ses); else { close(); render(); } return; }
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
                         S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
@@ -6711,6 +6725,7 @@ function runSlash(parts) {
     S.log.push({id:nid(), k:'system', text:'usage: /privacy | /privacy analytics on|off|status'}); render(); return;
   }
   if (name === 'analytics') { analyticsSlash(rest); return; }
+  if (name === 'telegram' && rest[0] === 'pair') { act('settings:telegram'); telegramAct('pair'); return; } // ATO-426
   if (name === 'compact') {
     if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
     compactNow(); return;
@@ -6955,6 +6970,7 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
+  if (e.target.id === 'sesq') { S.sesQ = e.target.value; renderOverlays(); return; }
   // Item 7: Tasks tab inputs edit state in place; only the preview block repaints.
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
   // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
@@ -7946,6 +7962,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (S.overlay || S.settings || S.menuOpen !== null) {
     if (k === 'Escape') { e.preventDefault(); if (S.settings) { S.settings = null; render(); } else act('close'); return; }
+    if (k === 'Enter' && e.target.id === 'sesq') { e.preventDefault(); act('sesopen'); return; }  // ATO-430
     return;
   }
 
@@ -7976,8 +7993,9 @@ document.addEventListener('keydown', (e) => {
     if (!OB.open && (SEL.open || WIZ.phase || S.alert)) { act('close'); return; }
     const sc = $('#scroller');
     if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
-    if (S.busy) { abort(); return; }
+    // ATO-430: an open toast goes first, so closing it never stops a running answer.
     if (S.toasts.length) { S.toasts.pop(); renderToasts(); return; }
+    if (S.busy) { abort(); return; }
     // r4-ui item 5: renderOverlays draws four surfaces that are NOT S.overlay,
     // so the gate above (S.overlay || S.settings || S.menuOpen) does not catch
     // them and Escape reaches this block with a modal on screen. The selector,
@@ -8240,7 +8258,7 @@ function nameVisibleSessions() {
       const title = sessionTitleFromState(res.data); // an agent whose list rows carry no `title`
       const first = turns.find((t) => t.kind === 'user' && t.text);
       if (title) { cur.t = title; cur.titled = true; }
-      else if (!cur.titled) cur.t = first ? attQueueLabel(first.text).trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      else if (!cur.titled) cur.t = first ? chatTitle(first.text) : '(empty)';
       cur.named = true;
       render();
     });
@@ -8355,7 +8373,7 @@ function noteFirstPrompt(turnId, sid) {
   if (text === undefined) return;
   FIRST_TURNS.delete(turnId);
   if (!sid || PENDING_CHATS.has(sid) || SESSIONS.some((s) => s.id === sid)) return;
-  PENDING_CHATS.set(sid, {id:sid, t:attQueueLabel(String(text)).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+  PENDING_CHATS.set(sid, {id:sid, t:chatTitle(text) || '(empty)',
     named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, endedAt:null});
 }
 
@@ -8569,6 +8587,18 @@ function liveSetWait(w) {
   if (WAIT && !WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
   if (!WAIT && WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
 }
+/* ATO-428: the turn's first output (reply text, reasoning, a tool call) is
+   the proof the model answers. On a cold local start `provider_recovered`
+   came only with the turn's end, so the strip ("attempt 5 · next try 0s")
+   and the "No answer from …" lines stood over a reply already streaming.
+   They go here as that frame takes them; a later wait raises them again,
+   and a failure still gets its own row at the turn's end. */
+function waitOverByOutput(item) {
+  if (!WAIT) return;
+  liveSetWait(null);
+  if (item) tpDropWaitNotes(item.id);
+  render();
+}
 
 /** Chat `id`'s turn this window started: running (`live`), or the last one, ended. */
 function liveTurnOf(id, live) {
@@ -8699,6 +8729,7 @@ function liveWaitOf(rec) {
   for (const f of rec.missed) {
     if (f.kind === 'provider_waiting') w = {maxWaitMs: Number((f.payload || {}).max_wait_ms) || 0};
     else if (f.kind === 'provider_recovered') w = null;
+    else if ((f.kind === 'delta' && f.text) || (f.kind === 'reasoning_progress' && f.payload && f.payload.text) || f.kind === 'tool_progress') w = null;
   }
   return w;
 }
@@ -8849,6 +8880,18 @@ function providerFailure(ev) {
     || /fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|socket hang up|network|timed out/i.test(msg);
 }
 
+/** ATO-391: a `transport` failure the provider answered. The agent files
+    every cloud HTTP error (401, 402, 404, 429, 400) and a missing or
+    signed-out CLI as `transport`; its sentence names the status, e.g.
+    '"openrouter" answered 404 (not found).' or '... (429).' (openai-http.ts
+    humanizeOpenAiHttpError). No status ("fetch failed", a refused
+    connection, a timeout) is the endpoint not answering. */
+function providerReplied(ev) {
+  const msg = String((ev && ev.error) || '');
+  return String((ev && ev.category) || '') === 'transport'
+    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|isn't installed \(the|is not signed in\.|was not found on PATH\.|ended its reply with an error|reported an error in the middle of its reply/.test(msg);
+}
+
 /** How long this turn had been going, in words. */
 function turnWaited() {
   if (!S.turnStartedAt) return '';
@@ -8862,6 +8905,15 @@ function turnWaited() {
 function turnFailure(ev) {
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
+  /* ATO-391: the provider replied, with an error (a 404 for a model it does
+     not have, a 429, a 400) or a CLI provider is missing or signed out. The
+     same neutral phrase as the terminal; the agent's sentence goes under
+     Details. */
+  if (providerReplied(ev)) {
+    const id = selActiveProviderId();
+    return {text: esc("Couldn't get a reply from " + (id ? providerWord(id) : 'the provider') + '.'
+      + (turnWaited() ? ' The turn gave up' + turnWaited() + '.' : '')), detail: String(ev.error)};
+  }
   const cat = String((ev && ev.category) || '');
   return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
     detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
@@ -8897,7 +8949,7 @@ function turnFailureLine(ev) {
   if (/can't use its API key|rejected the API key|needs an API key and none is set/i.test(said)) {
     return esc(said.replace(/the Providers panel/g, 'Settings › Models') + (waited ? ' The turn gave up' + waited + '.' : ''));
   }
-  if (providerFailure(ev)) {
+  if (providerFailure(ev) && !providerReplied(ev)) {
     const host = providerHost(entry);
     return esc((id ? providerWord(id) : 'The provider') + ' is not answering'
       + (host ? ' — ' + host : '') + '.' + (waited ? ' The turn gave up' + waited + '.' : ''));
@@ -9233,6 +9285,7 @@ function onChatEvent(ev) {
   if (ev.kind === 'reasoning_progress') {
     const text = pick(ev.payload, 'delta', 'text', 'content') || '';
     if (!text || !item) return;   // review fix: no streaming item on screen, nothing to splice against
+    waitOverByOutput(item);   // ATO-428
     let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
     if (!block) {
       // ATO-207: one row per step — a tool call ends the step (tool_progress clears S.reasonId).
@@ -9249,6 +9302,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'tool_progress') {
     const name = pick(ev.payload, 'tool', 'name') || 'tool';
+    waitOverByOutput(item);   // ATO-428
     if (name === 'reply' || name === 'finish' || !item) return;   // review fix: see above
     // The stream carries the args as `label` (stringified, clipped to 120).
     const arg = pick(ev.payload, 'label') || '';
@@ -9282,6 +9336,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'delta') {
     if (item) { item.text += ev.text; streamPaint('chat'); }   // 13/14: the transcript, once per frame
+    if (ev.text) waitOverByOutput(item);   // ATO-428
     return;
   }
   /* ATO-408: the files the reply that ends the turn delivers (agent with
@@ -10219,7 +10274,8 @@ if (BR) {
     if (!r || !r.daemon) return;
     if (r.daemon === 'start-failed') {
       appSay('Local model daemon did not start', 'caution');
-      toast('The local model did not start', r.error || '', 'bad');
+      const f = daemonFail(r.error);   // no chat row here: the reason itself
+      toast('The local model did not start', f.detail ? f.detail.split('\n')[0].slice(0, 160) : f.line, 'bad');
     } else if (r.daemon === 'started') appSay(r.daemonLine || 'local-llm: daemon started');
   });
   /* ATO-123: main brings the local model server back when it stops under a
@@ -10858,7 +10914,8 @@ function obHeadHTML() {
  * number and `aria-current`.
  */
 function obRailHTML() {
-  const here = OB_PHASE_OF[OB.step] || null;
+  let here = OB_PHASE_OF[OB.step] || null;
+  if (OB.step === 'finished') here = obRailPhase; else if (here) obRailPhase = here;
   const importing = OB.step === 'import_pick' || OB.step === 'import_preview' || OB.step === 'import_done';
   const statement = importing ? 'Bring what you already taught other agents.' : 'Choose how it runs. Change it any time.';
   const phases = here === null ? '' : '<ol class="ob-stepmarks" aria-label="Setup progress">' + OB_PHASES.map((p) => {
@@ -14584,6 +14641,7 @@ async function openOnboarding(at) {
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
+  obRailPhase = '01';
   // A new flow: any settle still out for the previous one must not touch it (obSettle).
   OB.openGen = (OB.openGen || 0) + 1;
   const gen = OB.openGen;
@@ -15674,6 +15732,11 @@ function restartStopsLine(held) {
 function restartRefusedToast(held) {
   toast('Not while a turn is running', restartStopsLine(held) || undefined);
 }
+/** ATO-429: the strip says messages are waiting only when a chat has some queued. */
+function swxErrLine() {
+  const t = SWX.err || SWX.sendError || '';
+  return t !== SWX.sendError || Object.keys(queuesSnapshot()).length ? t : t.replace(/ Your messages are waiting.*$/, ' Choose again.');
+}
 /** A failed route or mode never releases messages into the previous choice. */
 function swxMessageOutcome(lane, ok) {
   if (!SWX.sendErrors) SWX.sendErrors = {};
@@ -16247,7 +16310,7 @@ async function selActivate(row) {
     // A composer download lands here (selPull's listener), maybe under a provider setup opened meanwhile.
     closeSelectorUnlessSetup(res.selectorView);
     bswReport(res);
-    if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+    if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line);
     // r5 item 10: the live config is already re-read inside swxRun.
   }
 }
@@ -17397,7 +17460,7 @@ async function selChooseBackend(id) {
     return res;
   }
   bswReport(res);
-  if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
+  if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line);
   // r5 item 10: swxRun re-read the live config before it resolved, so the
   // rows below are drawn from the file the switch just wrote.
   if (res.needsModel) {
@@ -19055,7 +19118,7 @@ function sysRetryHTML(m) {
 }
 function sysRowHTML(m, times) {
   const acts = (m.act === 'switch-provider'
-    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' ? sysRetryHTML(m) : '');
+    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' && !m.noRetry ? sysRetryHTML(m) : '');
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
     + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts + '</span></div></div>';
@@ -19287,8 +19350,9 @@ function mdTableAt(lines, at) {
 function renderMarkdown(escaped) {
   const held = [];
   let t = escaped
-    .replace(/```([\s\S]*?)```/g, (m, code) =>
-      '\u0000' + (held.push('<pre class="mdpre"><code>' + code.replace(/^\n/, '') + '</code></pre>') - 1) + '\u0000')
+    // ATO-430: the fence's info string (```js) is the language, not code: it moves to a small label.
+    .replace(/```(?:([\w+#.-]+)[ \t]*(?=\r?\n))?([\s\S]*?)```/g, (m, lang, code) =>
+      '\u0000' + (held.push('<pre class="mdpre"' + (lang ? ' data-lang="' + lang + '"' : '') + '><code>' + code.replace(/^\r?\n/, '') + '</code></pre>') - 1) + '\u0000')
     .replace(/`([^`\n]+)`/g, (m, code) =>
       '\u0000' + (held.push('<code class="mdcode">' + code + '</code>') - 1) + '\u0000');
 
@@ -20085,11 +20149,25 @@ function bswReport(res, extra) {
      so it keeps its place in the transcript as well as the strip. */
   if (res.daemon === 'start-failed' && res.error) {
     appSay('Local model daemon did not start', 'caution');
-    S.log.push({id:nid(), k:'system', text: esc('The local model daemon did not start: ' + res.error)});
+    // ATO-429: one red line people can read; a long rest folds under Details.
+    const f = daemonFail(res.error);
+    S.log.push({id:nid(), k:'system', sev:'err', noRetry:true, detail: f.detail, text: esc(f.line)});
   }
   // No "restarting" line: main has already restarted `atag serve` by the
   // time this runs, and applyStatus reports the reconnect itself.
   render();
+}
+
+/** ATO-429: a failed start as one short line, and the rest for Details. The
+    download bars (renderPullProgress: "[==  ] 30%  0.21 GB / 0.70 GB  label")
+    are cut out of the words, not the lines they share with the reason. */
+function daemonFail(err) {
+  const why = String(err || '').replace(/\s*\(?\[[= ]{20}\] \d+%\s+[\d.]+ GB(?: \/ [\d.]+ GB)?  [^)\n]*\)?/g, '')
+    .replace(/\s*\(?\[[= ]{0,20}(?:\][^\n)]*)?\)?$/gm, '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+  const port = /port (\d+) is already served/.exec(why);
+  if (port) return {line: 'The local model did not start: port ' + port[1] + ' is used by another app.', detail: why};
+  if (why && !why.includes('\n') && why.length <= 160) return {line: 'The local model did not start: ' + why, detail: ''};
+  return {line: 'The local model did not start.', detail: why};
 }
 
 /** The TUI's answer to a provider without a key: its configure step. Backlog 32: a saved key the agent will not send opens the same step, saying so. */
@@ -25291,7 +25369,7 @@ function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t 
 function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
 function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
-function telegramTabEntered() { tgRefresh(); }
+function telegramTabEntered() { TG.confirm = null; tgRefresh(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
 /* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
    Review fix: a refresh asked for while one was in flight used to be DROPPED
@@ -25348,7 +25426,8 @@ function telegramTab() {
     // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
     if (owner === null) {
       body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-        + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
+        // ATO-426: no agent route pairs from here, so the card says where pairing happens instead of promising a DM works.
+        + '<p>' + esc(TG_PAIR_HOWTO) + '</p>'
         + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
     }
     body += tgRowsHTML(enabled, owner);
@@ -25390,13 +25469,13 @@ function tgRowsHTML(enabled, owner) {
       '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Answer in Telegram" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button>')
     + row('Bot token', 'Saved on this computer.',
       '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
-      + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>Remove token</button>')
+      + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearToken' ? 'Click again to remove' : 'Remove token') + '</button>')
     + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
       '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>'
-      + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>Clear owner</button>') : '')
+      + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearOwner' ? 'Click again to clear' : 'Clear owner') + '</button>') : '')
     + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
     + '</div>'
-    + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token', 'T clear token', 'O clear owner']);
+    + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token']);
 }
 /* What the last action left: an error, its message, and the restart a
    change is still owed. Once a new agent is up, the restart's own line and
@@ -25489,6 +25568,9 @@ async function tgClearOwner() {
 function telegramAct(what) {
   const [verb] = what.split(':');
   const arg = what.slice(verb.length + 1);
+  // ATO-426: removing the token or the owner takes a second click on the same button; any other action disarms it.
+  const armed = TG.confirm; TG.confirm = null;
+  if ((verb === 'clearToken' || verb === 'clearOwner') && armed !== verb) { TG.confirm = verb; tgRepaint(); return; }
   if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
   if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
   if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
@@ -25499,7 +25581,7 @@ function telegramAct(what) {
   // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
   if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
-  if (verb === 'pair') return; // disabled: pairing needs the live channel
+  if (verb === 'pair') { tgSetMessage(TG_PAIR_HOWTO, 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
 }
 /* telegram-key-bindings.ts: list-mode letters; the token prompt owns its input. */
 function telegramKey(e, k, inText) {
@@ -25511,8 +25593,9 @@ function telegramKey(e, k, inText) {
   if (inText || e.metaKey || e.ctrlKey || e.altKey) return false;
   if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
   // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
-  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIRING_NOTE, 'info'), tgRepaint(); return true; }
-  const map = {e:'enable', t:'token', T:'clearToken', o:'pair', O:'clearOwner', r:'restart', R:'refresh'};
+  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIR_HOWTO, 'info'), tgRepaint(); return true; }
+  // ATO-426: no T / O here; removing the token or the owner is a button that asks for a second click.
+  const map = {e:'enable', t:'token', o:'pair', r:'restart', R:'refresh'};
   if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
   return false;
 }
@@ -27503,6 +27586,7 @@ if (typeof window !== 'undefined') {
    */
   window.__obOpen = (step, opts) => {
     OB.open = true;
+    obRailPhase = '01';
     OB.openGen = (OB.openGen || 0) + 1;
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
