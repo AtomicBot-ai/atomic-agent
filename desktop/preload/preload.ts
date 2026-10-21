@@ -141,6 +141,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:traceTools", { stateDir, sessionId }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
+  // ATO-507: free space on the models disk, {freeBytes, totalBytes, path} | null
+  diskSpace: () => ipcRenderer.invoke("app:diskSpace"),
 
   /** Shell affordances. */
   chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),

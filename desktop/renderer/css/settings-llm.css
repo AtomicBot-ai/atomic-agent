@@ -118,6 +118,9 @@
 .llm-pane .llm-row[data-llm-row="external-url"]:hover .llm-effect--current{background:var(--lift)}
 .llm-pane .llm-effect--downloading{box-shadow:none;background:none;color:var(--ink-2)}
 .llm-pane .llm-effect--download{color:var(--blue)}
+/* ATO-507: a download with no room for it on this disk: greyed, the reason under the blurb. */
+.llm-pane .llm-effect--download.llm-effect--nodisk{color:var(--ink-3)}
+.llm-pane .llm-row:hover .llm-effect.llm-effect--nodisk:not(.llm-effect--current):not(.llm-effect--downloading){background:none}
 .llm-pane .llm-effect .tk-spin{width:12px;height:12px}
 /* A second verb on a row (Remove, Edit): quiet text, a fill on hover. */
 .llm-pane .llm-rowact{flex:none;display:inline-flex;align-items:center;height:26px;padding:0 9px;border-radius:var(--r-pill);

@@ -217,6 +217,7 @@ import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
+import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
@@ -284,6 +285,18 @@ const FAKE_RAM_GB = (() => {
   const hit = process.argv.find((a) => a.startsWith("--fake-ram="));
   const n = hit ? Number(hit.slice("--fake-ram=".length)) : NaN;
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+})();
+
+/**
+ * TEST ONLY — `--fake-free-disk=<gb>` (ATO-507): `app:diskSpace` answers that
+ * many free gigabytes on the models disk instead of measuring it, so the
+ * "Needs 19.7 GB, 12.1 GB free on this disk." line can be driven on a machine
+ * with room to spare. Like `--fake-ram`, a flag a shipped launch never passes.
+ */
+const FAKE_FREE_DISK_GB = (() => {
+  const hit = process.argv.find((a) => a.startsWith("--fake-free-disk="));
+  const n = hit ? Number(hit.slice("--fake-free-disk=".length)) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 })();
 
 /**
@@ -1692,6 +1705,16 @@ function wireIpc(client: AgentClient): void {
   // stand between this window and os.totalmem().
   ipcMain.handle("app:hostRam", () => FAKE_RAM_GB ?? hostRamGb());
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
+  // ATO-507: free space on the disk models download to ({freeBytes, totalBytes, path} | null).
+  // Null when it cannot be read; the window then blocks nothing.
+  ipcMain.handle("app:diskSpace", async () => {
+    const dir = modelsDirOf(managedDataDirNow());
+    if (FAKE_FREE_DISK_GB !== null) {
+      const freeBytes = Math.round(FAKE_FREE_DISK_GB * 1024 ** 3);
+      return { freeBytes, totalBytes: Math.max(freeBytes, 512 * 1024 ** 3), path: dir };
+    }
+    return diskSpaceAt(dir).catch(() => null);
+  });
 
   // Item 6 (sidebar): pin + read state, in userData — never in the agent config.
   // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),

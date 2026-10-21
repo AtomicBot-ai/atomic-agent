@@ -11003,6 +11003,8 @@ function obAfterStep() {
     obStampOnce('localSetupSeenAt');
   }
   if (OB.step === 'local_pick' && !OB.models.length && !OB.busy) obLoadModels();
+  // ATO-507: a fresh free-space reading for the screens that start a download.
+  if (OB.step === 'local_pick' || OB.step === 'local_hf_pick') diskSpaceRefresh(BR, true);
   if (OB.step === 'finished') { obSettleSlowArm(); obSettle(); }
 }
 
@@ -12702,6 +12704,21 @@ function modelSizeWord(model) {
   if (gb && gb < 1 && !Number(model && model.sizeGb) && model && model.size) return String(model.size);
   return gb ? obGbWord(gb) : String((model && model.size) || '');
 }
+/* ATO-507: whether a download of `model` fits on the models disk
+   (disk-space.js diskFit): the size the button quotes (weights plus a vision
+   model's projector, obDownloadGb) and a margin, against the cached free
+   space. {ok:true} for a model on disk, an unknown size or an unknown disk. */
+function modelDiskFit(model) {
+  if (!model || model.downloaded) return {ok: true};
+  return diskFit(obDownloadGb(model) * DISK_GIB, diskSpaceNow(BR));
+}
+/* A Hugging Face file's fit: its size in GB as the lookup gave it. */
+function hfDiskFit(choice) {
+  const gb = Number(choice && choice.fileSizeGb) || 0;
+  return diskFit(gb * DISK_GIB, diskSpaceNow(BR));
+}
+// A new reading that could change a verdict repaints whatever shows one.
+DISK.onChange = () => render();
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
@@ -13338,6 +13355,7 @@ function obFootHTML() {
   const busy = OB.busy;
   let left = '';
   let right = '';
+  let note = '';   // ATO-507: a plain line beside the primary, e.g. why a download cannot start
   switch (OB.step) {
     case 'choose':
       left = obBtn('nav:back', 'Skip setup for now', 'btn-g');
@@ -13353,9 +13371,13 @@ function obFootHTML() {
       const row = picks[OB.cursor % Math.max(1, picks.length)];
       if (row && row.kind === 'model') {
         const size = modelSizeWord(row.model);
+        /* ATO-507: no room for it on this disk: the button stays, greyed, with
+           the reason beside it, and the list above still takes a smaller pick. */
+        const disk = modelDiskFit(row.model);
+        if (!disk.ok) note = disk.text;
         right = row.model.downloaded
           ? obBtn('nav:go', 'Use ' + obModelName(row.model), 'btn-p', false, '', 'arrowR')
-          : obBtn('nav:go', size ? 'Download ' + size : 'Download', 'btn-p', false, 'download');
+          : obBtn('nav:go', size ? 'Download ' + size : 'Download', 'btn-p', !disk.ok, 'download');
       } else if (row && !OB.busy) {
         right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       }
@@ -13373,10 +13395,15 @@ function obFootHTML() {
       right = obBtn('nav:go', busy ? 'Looking it up…' : 'Look it up', 'btn-p',
         busy || OB.hfReference.length === 0);
       break;
-    case 'local_hf_pick':
+    case 'local_hf_pick': {
       left = obBtn('nav:back', 'Back', 'btn-g', false, 'chevL');
-      right = obBtn('nav:go', 'Download this file', 'btn-p', false, 'download');
+      // ATO-507: the selected file against the free space, as a curated pick.
+      const choices = (OB.hfRepo && OB.hfRepo.choices) || [];
+      const disk = hfDiskFit(choices[Math.min(OB.cursor, Math.max(0, choices.length - 1))]);
+      if (!disk.ok) note = disk.text;
+      right = obBtn('nav:go', 'Download this file', 'btn-p', !disk.ok, 'download');
       break;
+    }
     case 'custom_chat_url':
       left = obBtn('nav:back', 'Back', 'btn-g', busy, 'chevL');
       right = obBtn('nav:go', busy ? 'Testing…' : 'Test and continue', 'btn-p', busy);
@@ -13416,7 +13443,8 @@ function obFootHTML() {
     default:
       return '';
   }
-  return '<div class="ob-foot ob-actions">' + left + '<span class="grow"></span>' + right + '</div>';
+  return '<div class="ob-foot ob-actions">' + left
+    + (note ? '<span class="grow ob-foot-note" role="status">' + esc(note) + '</span>' : '<span class="grow"></span>') + right + '</div>';
 }
 
 /** The whole surface. The intro draws no header and no column. */
@@ -13566,6 +13594,8 @@ function obLocalPickKey(input, key) {
     const row = rows[OB.cursor % Math.max(1, rows.length)];
     if (!row) return true;
     if (row.kind === 'hugging_face') { obDispatch({type:'onboarding_step_set', step:'local_hf_ref'}); return true; }
+    // ATO-507: Enter presses the greyed Download too; no room, no download (the line says why).
+    if (!row.model.downloaded && !modelDiskFit(row.model).ok) { render(); return true; }
     if (!row.model.downloaded) { obDownloadAndHandOver(row.model.id); return true; }
     // On disk already: no download to wait for, only the start, on the download screen.
     obDispatch({type:'onboarding_local_model_picked', modelId: row.model.id});
@@ -14414,6 +14444,9 @@ async function obHfAdd() {
     obDispatch({type:'onboarding_error_set', error:'a download is already running'});
     return;
   }
+  // ATO-507: no room for the selected file (the action bar's line says so).
+  const choices = OB.hfRepo.choices || [];
+  if (!hfDiskFit(choices[Math.min(OB.cursor, Math.max(0, choices.length - 1))]).ok) { render(); return; }
   const res = await BR.hfAdd(OB.hfRepo, OB.cursor);
   if (!res || res.ok !== true) {
     obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'could not add the model'});
@@ -16213,6 +16246,8 @@ function openSelector(kind) {
   render();
   if (SEL.kind === 'model' || SEL.kind === 'workers') selEnterModelPane();
   if (SEL.kind === 'backend' && selBackend() !== 'cloud' && !SEL.local.length) selLoadLocal();
+  // ATO-507: a fresh free-space reading for the model list's Download chips.
+  if (SEL.kind === 'model' && selBackend() !== 'cloud') diskSpaceRefresh(BR, true);
   /* Run mode — Fusion: the fusion row's pre-flight, the local orchestrator row
      and the workers rows read the key list and the on-disk snapshot. */
   if (!BSW.localLoaded && (SEL.kind === 'backend' || SEL.kind === 'workers' || SEL.kind === 'workerProvider' || (SEL.kind === 'provider' && selBackend() === 'fusion'))) bswSnapshot();
@@ -16421,10 +16456,12 @@ function selRows() {
       .filter((m) => m.downloaded || m.active || fitFor(m, ram).v !== 'over')
       .map((m) => {
         const note = modelPickNote(m, ram);
+        // ATO-507: a download with no room for it on this disk has no Download chip, and says why.
+        const disk = modelDiskFit(m);
         return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
           detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
             .filter(Boolean).join(' · '),
-          note};
+          note, noRoom: disk.ok ? null : disk.text};
       });
     // The TUI's deep-link row (model:local:download-more), outside the filter —
     // the `local` branch only, exactly as modelRows has it. ATO-167: FIRST, not
@@ -16585,6 +16622,9 @@ async function selActivate(row) {
 
 function selPull(id) {
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
+  // ATO-507: no room on the models disk for it: say so instead of a pull that fails an hour in.
+  const disk = modelDiskFit((SEL.local || []).find((m) => m && m.id === id));
+  if (!disk.ok) { toast('Not enough disk space', disk.text, 'info'); return; }
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
   closeSelector(); render();
   toast('Downloading in the background', 'You can keep chatting and choose another model', 'info');
@@ -16701,7 +16741,7 @@ function selectorHTML() {
         const right = (r.addProvider ? '<span class="btn btn-s xs seladd" data-act="sel:addProvider">' + ic('plus') + 'Add provider</span>' : '')
           + (r.setup ? '<span class="tk-chip tk-chip--sm selsetup">Set up</span>' : '')
           + (r.type === 'backend' && !r.addProvider && !r.setup ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
-          + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
+          + (r.type === 'localModel' && !r.downloaded && !r.noRoom ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
@@ -16712,6 +16752,7 @@ function selectorHTML() {
           + '<span class="col"><span class="nm">'
           + (model ? selHilite(name, SEL.filter) : esc(name)) + '</span><span class="cap">' + esc(r.detail || '') + '</span>'
           + (r.note ? '<span class="selnote2' + (r.note.v === 'tight' ? ' tight' : '') + '">' + esc(r.note.text) + '</span>' : '')
+          + (r.noRoom ? '<span class="selnote2 tight">' + esc(r.noRoom) + '</span>' : '')
           + '</span>'
           + (right ? '<span class="selr">' + right + '</span>' : '')
           + '</button>'
@@ -23445,6 +23486,7 @@ function llmRefreshKeyNames() {
 }
 async function llmRefresh() {
   if (!BR) return;
+  diskSpaceRefresh(BR, true);   // ATO-507: the Download pills read it
   if (LLMP.inflight) return LLMP.inflight;
   LLMP.inflight = llmRefreshRun();
   try { await LLMP.inflight; } finally { LLMP.inflight = null; }
@@ -24312,8 +24354,13 @@ function llmRowHTML(row, index, cursor) {
     + '" data-llm-row="' + esc(row.id) + '"' + extra + (why ? ' aria-describedby="llm-why-' + index + '"' : '') + ' data-act="llm:row:' + index + '">'
     + (why ? '<span hidden id="llm-why-' + index + '">' + esc(why) + '</span>' : '');
   const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
+  /* ATO-507: a download with no room for it on this disk: the pill is greyed
+     (llmPrimary refuses it) and the row says why, under its blurb. */
+  const disk = (row.kind === 'localTextModel' || row.kind === 'localEmbeddingModel') && row.primaryAction === 'download'
+    ? modelDiskFit(row.model) : {ok: true};
   // The action a click (or Enter) takes on this row, as a pill; the TUI's sentence is its tooltip.
-  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + '" title="' + esc(row.enterEffect) + '">'
+  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + (disk.ok ? '' : ' llm-effect--nodisk" aria-disabled="true')
+    + '" title="' + esc(disk.ok ? row.enterEffect : disk.text) + '">'
     + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(llmEffectLabel(row)) + '</span>';
   // A second verb on the row: a span with its own act (the delegate resolves the innermost [data-act]).
   const rowAct = (act, label) => '<span role="button" tabindex="-1" class="llm-rowact" data-act="' + esc(act) + '">' + esc(label) + '</span>';
@@ -24336,6 +24383,7 @@ function llmRowHTML(row, index, cursor) {
       + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
       // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
       + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
+      + (disk.ok ? '' : '<span class="llm-best-why llm-disk-why">' + esc(disk.text) + '</span>')
       + '</span>'
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops
@@ -24777,11 +24825,15 @@ async function llmHfResolve(raw) {
     llmRepaint(); llmHfFocus(); return;
   }
   LLMHF.repo = res.repo; LLMHF.cursor = 0; LLMHF.step = 'pick'; LLMHF.error = null;
+  diskSpaceRefresh(BR, true);   // ATO-507: the pick's Download reads it
   llmRepaint();
 }
 async function llmHfAdd() {
   if (!BR || !BR.hfAdd || !LLMHF.repo) return;
   if (LLMP.pulling) { LLMHF.error = 'a download is already running'; llmRepaint(); return; }
+  // ATO-507: Enter presses the greyed Download too; the line above it says why not.
+  const choices = LLMHF.repo.choices || [];
+  if (!hfDiskFit(choices[Math.min(LLMHF.cursor, Math.max(0, choices.length - 1))]).ok) { llmRepaint(); return; }
   const res = await BR.hfAdd(LLMHF.repo, LLMHF.cursor);
   if (!res || res.ok !== true) { LLMHF.error = (res && res.error) || 'could not add the model'; llmRepaint(); return; }
   const def = res.def || {};
@@ -24834,6 +24886,8 @@ function llmHfPickHTML() {
   // The fit check warns in one direction and nothing acts on it: weights
   // bigger than RAM still start, because llama.cpp maps the file.
   const warning = selected ? llmHfRamWarning(selected.fileSizeGb, LLMHF.ram) : null;
+  // ATO-507: no room for the selected file: Download greyed, the reason above it.
+  const disk = hfDiskFit(selected);
   return '<section class="llm-hf">'
     + '<div class="tk-sh llm-sh llm-hf-repo">' + logoHTML('huggingface', 'sm') + '<b class="llm-sh-t mono">' + esc(repo.repoId) + '</b></div>'
     + '<div class="tk-list llm-list">' + visible.map((c, i) => {
@@ -24849,9 +24903,10 @@ function llmHfPickHTML() {
     + (repo.hidden ? '<p class="llm-note">' + esc(repo.hidden) + '</p>' : '')
     + (repo.mmproj ? '<p class="llm-note llm-mmproj">' + ic('image') + '<span>' + esc(HF_MMPROJ_LINE.trim()) + '</span></p>' : '')
     + (warning ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(warning) + '</span></div>' : '')
+    + (disk.ok ? '' : '<p class="llm-note llm-disk-why" role="status">' + esc(disk.text) + '</p>')
     + (LLMHF.error ? '<div class="tk-notice tk-notice--red llm-hf-err">' + ic('alert') + '<span class="grow">' + esc(LLMHF.error) + '</span></div>' : '')
     + '<div class="llm-hf-acts"><button class="btn btn-g sm" data-act="llm:hf:back">Back</button>'
-      + '<button class="btn btn-p sm" data-act="llm:hf:add">' + ic('download') + 'Download</button></div>'
+      + '<button class="btn btn-p sm" data-act="llm:hf:add"' + (disk.ok ? '' : ' disabled') + '>' + ic('download') + 'Download</button></div>'
     + tuiHints(['j/k move', ['Enter download', 'llm:hf:add'], ['esc back', 'llm:hf:back']])
     + '</section>';
 }
@@ -25331,6 +25386,14 @@ async function llmRemoveLocalConfirm() {
   await refreshLiveConfig();
   llmRefresh();
 }
+/* ATO-507: true (and the reason in a toast) when `m` has no room on the models
+   disk. The row already says it; this is for the click and Enter on it. */
+function llmNoRoom(m) {
+  const disk = modelDiskFit(m);
+  if (disk.ok) return false;
+  toast('Not enough disk space', disk.text, 'info');
+  return true;
+}
 function llmPull(kind, id) {
   if (!BR) return;
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
@@ -25343,6 +25406,7 @@ async function llmPrimary(row) {
   if (!row || !BR) return;
   if (row.kind === 'localTextModel') {
     const m = row.model;
+    if (!m.downloaded && llmNoRoom(m)) return;
     if (!m.downloaded) { llmPull('chat', m.id); return; }
     if (row.primaryAction === 'start') { await llmDaemon('start'); return; }
     if (row.primaryAction === 'current') { llmRefresh(); return; }
@@ -25352,6 +25416,7 @@ async function llmPrimary(row) {
   if (row.kind === 'localEmbeddingModel') {
     const m = row.model;
     if (LLMP.pulling) return;
+    if (!m.downloaded && llmNoRoom(m)) return;
     if (!m.downloaded) { llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
     if (!m.active) {
       const res = await BR.modelsUseEmbedding(m.id);

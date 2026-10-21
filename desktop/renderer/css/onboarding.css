@@ -329,6 +329,8 @@
 /* ---------------- the action bar and the hint strip ---------------- */
 #onboarding .ob-foot{flex:none;display:flex;align-items:center;gap:10px;padding-top:16px;border:0}
 #onboarding .ob-foot .grow{flex:1}
+/* ATO-507: a plain reason beside the primary ("Needs 19.7 GB, 12.1 GB free on this disk."). */
+#onboarding .ob-foot .ob-foot-note{font-size:13px;color:var(--ink-2);text-align:right;line-height:1.35}
 #onboarding .ob-foot .btn{height:44px;padding:0 22px;font-size:14.5px}
 #onboarding .ob-foot .btn svg{width:16px;height:16px}
 #onboarding .ob-foot .btn-p{min-width:112px}
