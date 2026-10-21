@@ -581,7 +581,9 @@ const OB_COPY = {
   proposeExplainer: [
     'Atomic Agent runs both side by side — local for private or offline work,',
     'cloud for the heavy turns, switchable mid-session. You have one of the two.'],
-  proposeSkip: {label:'Skip — take me to the agent', detail:'you can add it later from the menu (esc)'},
+  // ATO-447: going to the agent is the first row and the default; the second
+  // backend is offered on the row under it, never pre-selected.
+  proposeSkip: {label:'Start working', detail:'go to the agent now — you can add the other one later from the menu'},
   // onboarding-import-step.tsx:25-34, :200-212; import-step.ts:80-85
   importExplainer: [
     'Other agents keep skills, memory, sessions and keys on this machine.',
@@ -12874,17 +12876,19 @@ function obReadyHTML(text) {
     + esc(text) + '</div>';
 }
 
-/** onboarding-propose-step.tsx:11-33. */
+/** onboarding-propose-step.tsx:11-33. ATO-447 (owner decision B): row 0 is
+ *  "Start working", so a person who presses the main button without reading
+ *  lands in the agent; setting up the second backend is row 1. */
 function obProposeHTML() {
   const local = OB.offer === 'local';
   const accept = local
     ? {label:'Set up local models too', detail:'one download, then it runs offline and costs nothing per token'}
-    : {label:'Set up a cloud model too', detail:'an API key and a model — about a minute, for the heavy turns'};
-  const rows = [accept, OB_COPY.proposeSkip];
+    : {label:'Add a cloud model for Fusion', detail:'an API key and a model — about a minute, for the heavy turns'};
+  const rows = [OB_COPY.proposeSkip, accept];
   const icons = [
+    '<span class="tk-ico">' + ic('arrowR') + '</span>',
     // The same tone as the route cards on the choose step.
     '<span class="tk-ico tk-ico--blue">' + ic(local ? 'laptop' : 'cloud') + '</span>',
-    '<span class="tk-ico">' + ic('arrowR') + '</span>',
   ];
   return obReadyHTML(obConfiguredLabel())
     + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join(' ')) + '</div>'
@@ -13295,6 +13299,9 @@ function obFootHTML() {
       break;
     }
     case 'propose_second':
+      // ATO-447: the main button says where it goes when it goes to the agent.
+      right = obBtn('nav:go', OB.cursor % 2 === 0 ? 'Start working' : 'Continue', 'btn-p', false, '', 'arrowR');
+      break;
     case 'wait_or_jump':
       right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       break;
@@ -13642,7 +13649,8 @@ function obProposeKey(input, key) {
     return true;
   }
   if (key.return) {
-    if (OB.cursor % 2 !== 0) { skip(); return true; }
+    // ATO-447: row 0 is "Start working", row 1 sets up the second backend.
+    if (OB.cursor % 2 === 0) { skip(); return true; }
     if (OB.offer === 'local') {
       if (BR) OB.managedWrite = BR.useManagedMode();
       obDispatch({type:'onboarding_step_set', step:'local_pick'});
