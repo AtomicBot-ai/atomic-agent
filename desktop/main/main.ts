@@ -27,6 +27,9 @@ import { promisify } from "node:util";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
+import { wireStudioIpc } from "./studio-ipc.js";
+import { pickOpenRouterKey } from "./studio-key.js";
+import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
@@ -59,6 +62,7 @@ import {
   explainConfigWriteFailure,
   managedDataDir,
   readWholeConfig,
+  resolveKeyValue,
   rewriteWholeConfig,
   withConfigLock,
   localDaemonRunning,
@@ -2126,6 +2130,20 @@ function wireIpc(client: AgentClient): void {
   wireAgentLiveIpc(client);
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
+  /* Studio (Images + Video): Core's media API for the Studio pages
+     (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
+     OpenRouter key goes to Core over loopback only, never to the window. */
+  const studio = wireStudioIpc({
+    window: () => win,
+    stateDir: DESKTOP_STATE_DIR,
+    dataDir: managedDataDirNow,
+    coreVersion: BUNDLED_CORE_VERSION,
+    openRouterKey: async () => {
+      const read = await readWholeConfig();
+      return pickOpenRouterKey(read.ok ? read.config?.llm?.providers ?? [] : [], (entry) => resolveKeyValue(entry as ProviderEntry));
+    },
+  });
+  app.once("will-quit", () => studio.dispose());
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {

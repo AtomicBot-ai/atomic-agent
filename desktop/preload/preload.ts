@@ -160,6 +160,32 @@ contextBridge.exposeInMainWorld("atomic", {
   imageDataUrl: (path: string) => ipcRenderer.invoke("app:imageDataUrl", path),
   imageSaveAs: (path: string) => ipcRenderer.invoke("app:imageSaveAs", path),
   imageReveal: (path: string) => ipcRenderer.invoke("app:imageReveal", path),
+  /** Studio (Images + Video), main/studio-ipc.ts. Every call answers
+   *  {ok:true, data} | {ok:false, error:{code, message, details?}};
+   *  shapes in renderer/studio/CONTRACT.md. */
+  studio: {
+    catalog: (kind: "image" | "video") => ipcRenderer.invoke("studio:catalog", kind),
+    generateImage: (req: unknown) => ipcRenderer.invoke("studio:generateImage", req),
+    generateVideo: (req: unknown) => ipcRenderer.invoke("studio:generateVideo", req),
+    estimateVideo: (req: unknown) => ipcRenderer.invoke("studio:estimateVideo", req),
+    job: (kind: "image" | "video", id: string) => ipcRenderer.invoke("studio:job", kind, id),
+    activeJobs: () => ipcRenderer.invoke("studio:activeJobs"),
+    cancel: (kind: "image" | "video", id: string) => ipcRenderer.invoke("studio:cancel", kind, id),
+    gallery: (kind: "image" | "video", opts?: { offset?: number; limit?: number; includeArchived?: boolean }) =>
+      ipcRenderer.invoke("studio:gallery", kind, opts ?? {}),
+    galleryDelete: (kind: "image" | "video", ids: string[]) => ipcRenderer.invoke("studio:galleryDelete", kind, ids),
+    pin: (kind: "image" | "video", id: string, on: boolean) => ipcRenderer.invoke("studio:pin", kind, id, on === true),
+    outputDir: (kind: "image" | "video") => ipcRenderer.invoke("studio:outputDir", kind),
+    chooseOutputDir: (kind: "image" | "video") => ipcRenderer.invoke("studio:chooseOutputDir", kind),
+    setOutputDir: (kind: "image" | "video", path: string | null) => ipcRenderer.invoke("studio:setOutputDir", kind, path),
+    price: (modelId: string, params: unknown) => ipcRenderer.invoke("studio:price", modelId, params),
+    pickImages: (multiple?: boolean) => ipcRenderer.invoke("studio:pickImages", multiple === true),
+    preview: (path: string) => ipcRenderer.invoke("studio:preview", path),
+    revealInFinder: (path: string) => ipcRenderer.invoke("studio:reveal", path),
+    saveAs: (path: string) => ipcRenderer.invoke("studio:saveAs", path),
+    /** Every change of a generation this window started (progress, done, failed, stopped). */
+    onJob: (cb: (job: unknown) => void) => on("studio:job", cb),
+  },
   /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */
   attachPick: (kind: "images" | "files") => ipcRenderer.invoke("attachments:pick", kind),
   attachReadPicked: (path: string) => ipcRenderer.invoke("attachments:readPicked", path),
