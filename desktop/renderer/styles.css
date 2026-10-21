@@ -26,7 +26,7 @@
 :root {
   /* Paper */
   --p-paper:#FFFFFF; --p-panel:#F4F5F6; --p-panel-2:#EBEDEF; --p-ground:#E3E5E7;
-  --p-ink:#101112; --p-ink-2:#4A4E52; --p-ink-3:#797E83;
+  --p-ink:#101112; --p-ink-2:#4A4E52; --p-ink-3:#62666B;
   --p-line:#D8DBDE; --p-line-hair:#EBEDEF;
   /* Atomic blue — the site's own `--blue`, so the app and atomicagent.io
      are the same product. It is ~10:1 on white, so `-deep` is a genuine step
@@ -47,7 +47,7 @@
 
   /* Ink */
   --i-paper:#0E0F10; --i-panel:#17191B; --i-panel-2:#1E2124; --i-ground:#000000;
-  --i-ink:#EDEFF1; --i-ink-2:#A6ACB2; --i-ink-3:#767C82;
+  --i-ink:#EDEFF1; --i-ink-2:#A6ACB2; --i-ink-3:#868C92;
   --i-line:#2A2E32; --i-line-hair:#212528;
   /* Lifted for a dark ground: #0B3D91 on #0E0F10 is 1.6:1 and unreadable.
      Same hue, taken up until it carries. */

@@ -814,6 +814,7 @@ const OB_STAMPED = {};
 const OB_STAMP_LOG = [];
 /* The step obAfterStep last ran its arrival effects for. */
 let OB_LAST_STEP = null;
+let OB_SETTLE_SLOW_TIMER = null;   // ATO-440: see obSettleSlowArm
 /* The import row for the operator's own terminal setup (see the note by
    obImportRegistry): no `atag import` source can reach it. */
 const OB_TUI_AGENT_ID = 'atomic-tui';
@@ -2592,11 +2593,21 @@ function item(m) {
      What it holds is the model's working, not the reply, so it sits in the
      muted ink and never in bold. */
   if (m.k === 'reason') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>'
-    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>Reasoning</span></button>'
+    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>' + reasonLabel(m) + '</span></button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
   if (m.k === 'tool') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
   return '';
+}
+
+/** ATO-467: "Thought for 12 s" once this window timed the row, from its first
+    reasoning frame to the turn's next frame of another kind (REASON_ENDS).
+    A row still thinking, one under a second, and a reopened chat's rows (the
+    store keeps no times for reasoning) say "Reasoning", as before. */
+const REASON_ENDS = new Set(['delta', 'tool_progress', 'progress_note', 'reply_attachments', 'finish', 'done', 'aborted', 'error']);
+function reasonLabel(m) {
+  const ms = m.startedAt && m.endedAt ? m.endedAt - m.startedAt : 0;
+  return ms >= 1000 ? 'Thought for ' + dur(ms) : 'Reasoning';
 }
 
 /* ============================================================
@@ -5806,10 +5817,10 @@ function toast(t, s, kind) {
   renderToasts();
   setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
 }
-/* ATO-186: a toast about the chat on screen ("New session · The next turn
-   starts fresh", "Transcript cleared") is that chat's: it goes when another
-   chat is opened (openSession) or a newer one of its kind replaces it, where
-   it stayed for its six seconds over a chat it was not about. */
+/* ATO-186: a toast about the chat on screen ("Window cleared") is that
+   chat's: it goes when another chat is opened (openSession) or a new chat is
+   started, or a newer one of its kind replaces it, where it stayed for its
+   six seconds over a chat it was not about. */
 function chatToast(t, s) {
   dropChatToasts();
   toast(t, s);
@@ -5967,7 +5978,10 @@ function act(a) {
                                 same reason; a new chat is a chat. */
                              S.settings = null;
                              FOCUS.entry = true;   // r5 item 6: afterChat focuses #entry after this render
-                             render(); chatToast('New session', 'The next turn starts fresh');
+                             /* ATO-540: no toast. The empty chat already says it is new, and a
+                                toast here covered the first message sent into it. A toast still
+                                up about the chat being left goes with it (ATO-186). */
+                             dropChatToasts(); render();
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); refreshSkillList(); return; }
   if (a === 'session:switch') { close(); S.sesQ = ''; S.overlay = 'sessions'; render(); return; }
@@ -5975,7 +5989,11 @@ function act(a) {
   if (a === 'sesopen') { const r = S.sesQ ? document.querySelector('.sesrows > .row[data-ses]') : null; if (r) act('ses:' + r.dataset.ses); else { close(); render(); } return; }
   if (a === 'clear') { close();
                         if (OPENING && OPENING.id === S.sessionId && !OPENING.failed) OPEN_CLEARED = OPEN_SEQ;   // ATO-131: the load still out lands cleared
-                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Transcript cleared', 'The next turn starts fresh'); return; }
+                        /* ATO-470: only the window is cleared. S.agentSession stays, so the
+                           agent keeps this chat and opening it again brings it back. An empty
+                           new chat has nothing for the agent to remember, so it says only that. */
+                        const kept = !!(S.agentSession || S.busy);
+                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Window cleared', kept ? 'The agent still remembers this chat' : ''); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -9224,6 +9242,13 @@ function onChatEvent(ev) {
     if (c.k === 'tool' && c.ok === null && c.startedAt && !c.observedMs) { c.observedMs = Math.max(1, Date.now() - c.startedAt); break; }
     if (c.k === 'tool') break;
   }
+  /* ATO-467: the live reasoning row's thinking ends with the turn's next
+     frame of another kind (a reply word, a call, a note, the end), dated by
+     the frame's own time when it was kept and drawn later. */
+  if (S.reasonId && REASON_ENDS.has(ev.kind)) {
+    const r = S.log.find((m) => m.id === S.reasonId);
+    if (r && r.startedAt && !r.endedAt) r.endedAt = ev.at || Date.now();
+  }
 
   if (ev.kind === 'session_id') {
     // item 6: the streaming item being in the visible log is the proof that
@@ -9316,7 +9341,8 @@ function onChatEvent(ev) {
     let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
     if (!block) {
       // ATO-207: one row per step — a tool call ends the step (tool_progress clears S.reasonId).
-      block = {id:nid(), k:'reason', steps:reasonStepAt(S.log, S.log.indexOf(item)), open:false, text:''};
+      // ATO-467: when it started, so the closed row can say how long it thought.
+      block = {id:nid(), k:'reason', steps:reasonStepAt(S.log, S.log.indexOf(item)), open:false, text:'', startedAt:ev.at || Date.now()};
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
       streamPaint('chat');   // a new row in the transcript
@@ -10665,8 +10691,9 @@ const SMALL_MODEL_CAUTION = 'A small model: quick, but weaker at long multi-step
  */
 /* What is already on this Mac comes first, then the rest, each group in the
    order it was given (the fit order). Nadya, 01.10: "put the downloaded ones
-   on top, so you can see at once what is there". The first-run picker keeps
-   the plain fit order: there it recommends what to download. */
+   on top, so you can see at once what is there". The first-run picker lifts
+   only what it could use as is (see obPickRows); on a fresh install it keeps
+   the plain fit order, because there it recommends what to download. */
 function onDiskFirst(models) {
   return models.filter((m) => m && m.downloaded).concat(models.filter((m) => !(m && m.downloaded)));
 }
@@ -10841,6 +10868,7 @@ function obAfterStep() {
   if (OB.step === OB_LAST_STEP) return;
   const was = OB_LAST_STEP;
   OB_LAST_STEP = OB.step;
+  obSettleSlowClear();
   ANX.obStep(OB.step, was, OB.outcome);
   if (was === 'intro' && OB.step !== 'intro') obSkyStop();
   // isLocalSetupStep (propose-second-backend.ts:57-59): the list itself
@@ -10849,7 +10877,7 @@ function obAfterStep() {
     obStampOnce('localSetupSeenAt');
   }
   if (OB.step === 'local_pick' && !OB.models.length && !OB.busy) obLoadModels();
-  if (OB.step === 'finished') obSettle();
+  if (OB.step === 'finished') { obSettleSlowArm(); obSettle(); }
 }
 
 /** Write a tui.onboarding.* stamp once, without blocking the repaint. */
@@ -12342,7 +12370,14 @@ function obConfiguredLabel() {
  */
 function obPickRows() {
   const ram = OB.ram;
-  const models = orderModelsByFit(OB.models, ram).filter((m) => fitFor(m, ram).v !== 'over');
+  const fits = orderModelsByFit(OB.models, ram).filter((m) => fitFor(m, ram).v !== 'over');
+  /* ATO-437: a model already on this Mac that runs here goes first, so the
+     cursor's first row (the default pick) is one that needs no download.
+     Reduced-refusal weights are never lifted: the default must not point at
+     them (bestModelFor). With nothing on disk this is the plain fit order,
+     and "Recommended" stays on the best fit either way. */
+  const ready = (m) => m.downloaded && !m.uncensored;
+  const models = fits.filter(ready).concat(fits.filter((m) => !ready(m)));
   const rows = models.map((model) => ({kind: 'model', model}));
   rows.push({kind: 'hugging_face'});
   return rows;
@@ -13219,6 +13254,10 @@ function obFootHTML() {
       // The go moment of the whole flow: brand blue, not ink.
       right = obBtn('nav:go', 'Start using the agent', 'btn-p btn-blue', false, '', 'arrowR');
       break;
+    case 'finished':
+      if (!OB.settleSlow) return '';
+      right = obBtn('nav:back', 'Open the app now', 'btn-p', false, '', 'arrowR');
+      break;
     default:
       return '';
   }
@@ -13248,7 +13287,11 @@ function obHTML() {
   /* r2 (DMG feedback): the closing screen keeps its title and draws a small
      comet crossing the middle of the column instead of a second, smaller
      "setting up…" line. */
-  else if (OB.step === 'finished') body = '<div class="ob-comet" role="status" aria-label="Setting up"><i></i></div>';
+  else if (OB.step === 'finished') {   // ATO-440: say what it does; a way out after 20 s
+    body = '<div class="ob-explain">Saving your choices and getting the agent ready. This usually takes a few seconds.</div>'
+      + '<div class="ob-comet" role="status" aria-label="Setting up"><i></i></div>'
+      + (OB.settleSlow ? '<div class="ob-explain ob-help">This is taking longer than usual. You can open the app now and finish setup later.</div>' : '');
+  }
   else body = '<div class="ob-explain">' + esc(OB_SUBTITLES[OB.step] || '') + '</div>';
   /* r6 UX: an error belongs beside the control that produced it. The two
      URL steps and the Hugging Face reference draw their own, directly
@@ -13320,6 +13363,7 @@ function obKey(input, key) {
     case 'import_preview': return obImportPreviewKey(input, key);
     case 'import_done': return obImportDoneKey(input, key);
     case 'cloud': return obCloudKey(input, key);
+    case 'finished': return obFinishedKey(input, key);
     default: return false;
   }
 }
@@ -14499,6 +14543,23 @@ async function obReadiness() {
  * operator already declined.  Nothing routes around the import screen:
  * its own skip row is the only way past it.
  */
+/* ATO-440: after 20 s the closing screen offers "Open the app now" (and Escape),
+   closing the overlay as obSettle does. Cost: a settle still out may stamp nothing
+   (setup opens again next launch) and this does not restart the agent; one that lands later still does both. */
+function obSettleSlowClear() { clearTimeout(OB_SETTLE_SLOW_TIMER); OB_SETTLE_SLOW_TIMER = null; OB.settleSlow = false; }
+function obSettleSlowArm() {
+  obSettleSlowClear();
+  const gen = OB.openGen || 0;
+  OB_SETTLE_SLOW_TIMER = setTimeout(() => {
+    if (OB.open && OB.step === 'finished' && (OB.openGen || 0) === gen) { OB.settleSlow = true; render(); }
+  }, 20000);
+}
+function obFinishedKey(input, key) {
+  if (!key.escape || !OB.settleSlow) return false;
+  obSettleSlowClear(); OB.open = false; OB.settling = false; obSkyStop(); render();
+  return true;
+}
+
 async function obSettle() {
   if (OB.settling || !BR) return;
   OB.settling = true;
@@ -14602,6 +14663,7 @@ async function obSettle() {
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
     return;
   }
+  obSettleSlowClear();
   OB.open = false;
   OB.settling = false;
   obSkyStop();
@@ -14686,6 +14748,7 @@ async function openOnboarding(at) {
   // treats a new canvas node as a remount (review fix).
   obSkyReset();
   OB_LAST_STEP = first;
+  obSettleSlowClear();
   ANX.obStep(first, null, null);   // analytics: the flow's first screen
   render();
   // Backlog 03: the title card is the loader for the reads below.
@@ -23260,7 +23323,9 @@ function llmLocalRows() {
         + (best && m.id === best.id ? '  ★ best fit for this machine' : ''),
       // The blurb line, drawn under the row. The fit verdict is a badge on the first line (Д32), its reasons the badge's tooltip.
       sub: [m.description || null, m.vision ? 'reads images' : null, m.context + ' context'].filter(Boolean).join(' · '),
-      fit: llmFitBadge(m, ram)});
+      fit: llmFitBadge(m, ram),
+      // ATO-491: why the best-fit chip sits on this row, in plain words, from what the row already knows.
+      bestWhy: best && m.id === best.id ? llmBestFitWhy(m, ram) : ''});
   });
   const embActive = llmLocalEmbActive();
   const embWorks = llmEmbDaemonHealthy();
@@ -23572,7 +23637,10 @@ function llmRunModeHTML(status, tone) {
         return '<button class="llm-rm' + (on ? ' on' : '') + (need ? ' blocked' : '') + '" data-act="' + (need ? 'llm:needs:' + id : 'runmode:' + id) + '"'
           + ' aria-pressed="' + on + '" title="' + esc(need ? need.title : what) + '">'
           + '<span class="llm-rm-ico">' + ic(icon) + '</span>'
-          + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(need ? need.line : what) + '</span></span></button>';
+          + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span>'
+          // ATO-504: the need line is the card's action, so it reads as one (an arrow, underlined on hover), not as a dead warning.
+          + (need ? '<span class="llm-rm-d llm-rm-need">' + esc(need.line) + ic('arrowR') + '</span>' : '<span class="llm-rm-d">' + esc(what) + '</span>')
+          + '</span></button>';
       }).join('')
     + '</div>'
     + llmNowHTML() + engfCardHTML() + tpLlmFaultHTML()
@@ -23880,6 +23948,15 @@ function llmFitBadge(m, ram) {
   const word = fit.v === 'comfortable' ? 'Fits well' : fit.v === 'tight' ? 'Tight fit' : 'Too big';
   return {v: fit.v, word, tone: fit.v === 'comfortable' ? 'green' : fit.v === 'tight' ? 'amber' : '', title: word + '. ' + why};
 }
+/* ATO-491: the best-fit chip's reason, a line under its row: this machine's
+   memory and the model's size ("Picked for your 32 GB of memory · 19.7 GB
+   download"). Which model is picked stays bestModelFor's. */
+function llmBestFitWhy(m, ram) {
+  const have = Number(ram) || 0;
+  const size = modelSizeWord(m);
+  if (!have) return '';
+  return 'Picked for your ' + have + ' GB of memory' + (size ? ' · ' + size + (m.downloaded ? ' on disk' : ' download') : '');
+}
 /* A local row's badges: Installed for a model on disk, and the fit badge
    unless the model is installed and fits well (then Installed says it all,
    and its tooltip carries the fit). The shared non-clickable chip (tk-chip):
@@ -23934,14 +24011,16 @@ function llmRowHTML(row, index, cursor) {
     const t = '<span class="llm-name">' + esc(name) + '</span>'
       + (name !== m.id ? ' <span class="llm-id mono">' + esc(m.id) + '</span>' : '')
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
-      + (best ? ' ' + chip('indigo', '★ best fit for this machine') : '')
+      + (best ? ' <span class="tk-chip tk-chip--sm llm-ib tk-chip--indigo"' + (row.bestWhy ? ' title="' + esc(row.bestWhy) + '"' : '') + '>★ best fit for this machine</span>' : '')
       + (chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
       + llmRowBadgesHTML(row)
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
       + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
-      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
+      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
+      // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
+      + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
       + '</span>'
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops
@@ -23990,7 +24069,7 @@ function llmSectionHTML(title, rows, offset, cursor, empty, emphasise, extra) {
     + '<div class="tk-sh llm-sh"><span class="llm-sh-t">' + esc(title) + '</span><span class="grow"></span>' + (x.actions || '') + '</div>'
     + (x.note || '')
     + (rows.length ? '<div class="tk-list llm-list">' + rows.map((r, i) => llmRowHTML(r, offset + i, cursor)).join('') + '</div>'
-      : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'Nothing here yet.') + '</div>')
+      : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'Nothing here yet.') + (x.emptyActions || '') + '</div>')
     + '</section>';
 }
 function llmLocalHTML() {
@@ -24019,8 +24098,13 @@ function llmCloudHTML() {
   const section = llmCloudSection();
   const embOffset = providers.length + section.filtered.length;
   const sp = section.provider;
+  /* ATO-504: an empty list offers the popular presets the wizard knows, each
+     opening Add provider on that provider's key screen. */
+  const presets = ['openrouter', 'gemini', 'aimlapi'].filter((id) => KIND_ROWS.some((k) => k.id === id));
+  const emptyActions = '<span class="llm-empty-acts">' + presets.map((id) => '<button class="btn btn-s sm" data-act="llm:preset:' + id + '">'
+    + logoHTML(id, 'xs') + esc(providerWord(id)) + '</button>').join('') + '</span>';
   return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers yet.', true,
-      {actions: '<button class="btn btn-p sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>'})
+      {actions: '<button class="btn btn-p sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>', emptyActions})
     + (sp ? '<section class="llm-section">'
       + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Models on ' + esc(providerWord(sp.id)) + '</span>'
         + '<span class="grow"></span>'
@@ -25095,6 +25179,9 @@ function llmAct(what) {
   if (verb === 'filter') { llmSetMode('cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
   if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
+  // ATO-504: an empty list's preset button, Add provider opened on that provider.
+  // It skips the wizard's kind list, so it reports the setup start that list's pick would have (provider_setup_started).
+  if (verb === 'preset') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
   if (verb === 'configure') { llmSetMode('cloud'); const cloud = llmCloudProviders(); const p = cloud.find((x) => x.id === llmActiveTextId()) || cloud[0]; llmOpenWizard(p || null); return; }
   if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
   if (verb === 'embToggle') { llmEmbToggle(); return; }
@@ -25893,8 +25980,8 @@ function impFormHTML(f) {
   // The agent's own option descriptions (src/import/<source>/import-options.ts), via the wizard's registry.
   const desc = {};
   for (const o of obImportRegistry(f.source)) desc[o.id] = o.description.replace(/ -> /g, ' → ');
-  const sw = (field, title, d) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
-    + '<div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>'
+  const sw = (field, title, d, badge) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
+    + '<div class="body"><div class="t">' + title + (badge || '') + '</div><div class="d">' + d + '</div></div>'
     + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
   // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
   return '<div class="sd-form">'
@@ -25905,7 +25992,17 @@ function impFormHTML(f) {
     + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(meta.dir) + '" autocomplete="off" spellcheck="false"></div>'
     + '<div class="tk-card sd-rows">'
     + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
-    + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
+    + '</div>'
+    /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.
+       What it replaces, per src/import (reconcile-session.ts, import-skill-dirs.ts, each importer's secrets
+       and cron steps): a chat under the same id whose messages differ, including ones added here; a skill of
+       the same name with a different SKILL.md; a key with a different value. A cron job that already exists
+       is created again, not replaced. MCP servers are never replaced. */
+    + '<div class="tk-card sd-rows">'
+    + sw('overwrite', 'Overwrite', 'Replaces what you already have here when the source differs: a chat with the same id, '
+      + 'including messages you added to it here, a skill with the same name, and an API key with a different value. '
+      + 'Cron jobs that already exist are added again as a second copy. Preview import shows what would change.',
+      ' <span class="tk-chip tk-chip--sm tk-chip--amber">Can replace your data</span>') + '</div>'
     // Д52: `--limit N` caps the sessions imported, newest first (src/cli/import-command.ts); "Limit / no limit" said none of that.
     + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Sessions to import</label>'
     + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="All" inputmode="numeric" autocomplete="off" spellcheck="false">'
