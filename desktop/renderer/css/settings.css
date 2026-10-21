@@ -47,6 +47,9 @@ body.electron #settings{-webkit-app-region:no-drag}
    !important: paint() pins the layer with an INLINE z-index of 20, which beat this rule, so the wizard
    opened from Settings › LLM (Add provider, the "… detected" prompt) was drawn behind the settings sheet. */
 #window:has(#settings) #overlays{z-index:29 !important}
+/* ATO-605: the slash popover (z-index 40 on .composerwrap) was drawn over the settings sheet when a
+   command was left in the composer. Hidden, not removed: it comes back with the draft once Settings closes. */
+#window:has(#settings) .composerwrap > .slash{display:none}
 /* Д27: the toasts stood at the top right of the app window, so over Settings
    they straddled the settings window's right edge and sat on its close
    control. They stand inside it now, in the body card's bottom right corner:
@@ -207,8 +210,6 @@ button.set-search:hover{border-color:var(--bd)}
 .set-lasterr{align-items:flex-start}
 .set-lasterr > svg{margin-top:2px}
 .set-lasterr .mono{font-size:12px;line-height:1.55;overflow-wrap:anywhere}
-.set-section{display:flex;flex-direction:column;gap:2px}
-.set-section .tk-sh{padding:0;min-height:22px;color:var(--ink)}
 
 /* New task form */
 .set-formgrid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:22px;align-items:start}
