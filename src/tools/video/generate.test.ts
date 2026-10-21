@@ -133,9 +133,10 @@ describe("video.generate", () => {
   it("treats 'overloaded' and 'busy' answers from the provider as busy too", async () => {
     const core = fakeCore([VEO, KLING], { "google/veo-3.1-fast": "REMOTE_REJECTED" });
     const call = core.call.getMockImplementation()!;
-    core.call.mockImplementation(async (path: string, body?: unknown) => {
-      const answer = await call(path, body) as { job?: { error?: { message: string } } };
-      if (answer.job?.error) answer.job.error.message = "Model is overloaded, try again later";
+    core.call.mockImplementation(async (...args: Parameters<typeof call>) => {
+      const answer = await call(...args);
+      const job = (answer as { job?: { error?: { message: string } } }).job;
+      if (job?.error) job.error.message = "Model is overloaded, try again later";
       return answer;
     });
     const result = await tool({ withCore: core.withCore }).built.run({ prompt: "a fox" }, ctx());
