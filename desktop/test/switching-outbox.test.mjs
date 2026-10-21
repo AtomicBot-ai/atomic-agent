@@ -53,7 +53,7 @@ test('selector downloads dismiss the overlay, allow reopening the picker and off
     BR:{modelsPull:async()=>{started++;return {ok:true};},onPull:fn=>{listener=fn;}},
     xpullOwner:()=>c.SEL.pulling,dlChipBusy:()=>false,closeSelector:()=>{closed++;},render(){},bswSnapshot(){},
     toast:(...a)=>notices.push(a),selRows:()=>[],selShell:(title,body)=>title+body,selBackend:()=>'local',
-    document:{querySelector:()=>null},
+    modelDiskFit:()=>({ok:true}),document:{querySelector:()=>null},
   });
   for(const name of ['selPull','selectorHTML'])vm.runInContext(functions.get(name),c);
   const a=source.indexOf('if (BR) {\n  // The composer');
