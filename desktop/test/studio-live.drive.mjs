@@ -106,6 +106,16 @@ mkdirSync(workspace, { recursive: true });
 assertThrowawayStateDir(stateDir);
 for (const real of realProfiles()) if (inside(stateDir, real)) { console.error(`refusing to run: ${stateDir} is inside ${real}`); process.exit(2); }
 copyFileSync(ENV_FILE, join(stateDir, '.env'));
+/* STUDIO_LIVE_SEED_MODELS: a previous run's state dir whose models/diffusion is
+   cloned in (APFS clonefile via cp -c), so a re-run skips a multi-GB download. */
+if (process.env.STUDIO_LIVE_SEED_MODELS) {
+  const from = join(process.env.STUDIO_LIVE_SEED_MODELS, 'models', 'diffusion');
+  if (existsSync(from)) {
+    mkdirSync(join(stateDir, 'models'), { recursive: true });
+    execFileSync('cp', ['-cR', from, join(stateDir, 'models', 'diffusion')]);
+    console.log(`studio-live: seeded diffusion models from ${from}`);
+  }
+}
 chmodSync(join(stateDir, '.env'), 0o600);
 const shotsDir = join(OUT_REAL, 'screenshots');
 mkdirSync(shotsDir, { recursive: true });
