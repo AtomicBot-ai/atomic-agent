@@ -138,7 +138,7 @@ export class TurnNotifier {
       }
       return;
     }
-    if (t.heldError !== null && (kind === "delta" || kind === "tool_progress" || kind === "progress_note" || kind === "reasoning_progress")) {
+    if (t.heldError !== null && (kind === "delta" || kind === "tool_progress" || kind === "tool_update" || kind === "progress_note" || kind === "reasoning_progress")) {
       t.workAfterError = true;
     }
     let outcome: TurnOutcome | null = null;
