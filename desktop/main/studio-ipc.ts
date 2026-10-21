@@ -6,7 +6,9 @@
  * message, details?}}` (studio-errors.ts) and never throws at the window.
  * Job changes are pushed on `studio:job` with one `StudioJob`; local
  * model downloads, the image engine install and model loads on
- * `studio:local` with one `LocalEvent` (studio-local-models.ts).
+ * `studio:local` with one `LocalEvent` (studio-local-models.ts); how local
+ * generations and the local chat model share memory on `studio:gpuShare`
+ * with one `GpuShareState` (studio-gpu-share.ts).
  *
  * Files: the window names a path only for files Studio made (inside its
  * output folders) or ones this process's own dialog returned
@@ -53,6 +55,9 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal
     emitJob: (job) => push("studio:job", job),
     emitLocal: (event) => push("studio:local", event),
   });
+  // The chat model paused for a local generation, generations queued, chat turns held (studio-gpu-share.ts).
+  opts.gpu?.onState((state) => push("studio:gpuShare", state));
+  ipcMain.handle("studio:gpuShare", () => answer(async () => opts.gpu?.state() ?? null));
   const pricing = new StudioPricing(opts.request ?? fetch);
   /** Folders the folder dialog returned this session: the only ones setOutputDir takes. */
   const chosenDirs = new Set<string>();
@@ -68,7 +73,7 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal
     const k = kindOf(kind), i = idOf(id);
     return k && i ? answer(() => studio.job(k, i)) : bad("kind and job id are required");
   });
-  ipcMain.handle("studio:activeJobs", () => answer(async () => studio.jobs.list()));
+  ipcMain.handle("studio:activeJobs", () => answer(async () => studio.activeJobs()));
   ipcMain.handle("studio:cancel", (_e, kind: unknown, id: unknown) => {
     const k = kindOf(kind), i = idOf(id);
     return k && i ? answer(() => studio.cancel(k, i)) : bad("kind and job id are required");
@@ -134,7 +139,7 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal
   });
   ipcMain.handle("studio:localLoad", (_e, id: unknown, o: unknown) => {
     const a = artifactOf(id);
-    return a ? answer(async () => ({ loaded: await studio.local.ensureLoaded(a, workflowOf((o as { workflow?: unknown } | null)?.workflow)) })) : bad("a local model id `<family>:<quant>` is required");
+    return a ? answer(async () => ({ loaded: await studio.loadLocal(a, workflowOf((o as { workflow?: unknown } | null)?.workflow)) })) : bad("a local model id `<family>:<quant>` is required");
   });
   ipcMain.handle("studio:localEngine", () => answer(() => studio.local.engineStatus()));
   ipcMain.handle("studio:localPrepare", () => answer(() => studio.local.ensureEngine()));

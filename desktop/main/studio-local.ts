@@ -535,6 +535,8 @@ export interface LocalQuantView {
   fit: FitEstimate;
   loaded: boolean;
   download: LocalDownloadState | null;
+  /** Running it pauses the local chat model (they do not fit together); set by studio-media.ts. */
+  pausesChat?: boolean;
 }
 
 export interface LocalFamilyView {

@@ -249,6 +249,10 @@ export interface StudioJob {
   error: { code: string; message: string; details?: string } | null;
   createdAtMs: number;
   finishedAtMs: number | null;
+  /** A local generation waiting behind the one running (studio-media.ts): id `q-…`, state `queued`. */
+  queue?: { position: number; message: string } | null;
+  /** The queued id (`q-…`) this Core job took over once it started. */
+  replaces?: string;
 }
 
 const n0 = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
