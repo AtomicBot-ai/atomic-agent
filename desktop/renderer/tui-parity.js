@@ -94,6 +94,10 @@ function tpActiveIsLocal() {
 }
 
 function tpWaitNotice(wait) {
+  // [studio-gpu-share] the chat model is paused for a local generation (renderer.js studioHoldsWait).
+  if (typeof studioHoldsWait === 'function' && studioHoldsWait(wait)) {
+    return 'Studio is generating with a local model, so the chat model is paused to free memory. This message goes out when it is done; Stop ends it.';
+  }
   /* Backlog 32: the active provider's saved key is one the agent will not
      send, so the wait is on some fallback link's "fetch failed", and "no
      connection" would send the person looking at their network. */
@@ -128,6 +132,8 @@ function tpLocalServerLine(st, said) {
 function tpOnProviderWaiting(wait) {
   // ATO-185: `waitFor` names the reply row the wait held up, so its lines go once that turn moves on (tpDropWaitNotes).
   placeInLiveTurn({id:nid(), k:'system', sev:'pause', note:true, waitFor:S.streamId, text: esc(tpWaitNotice(wait))});
+  // [studio-gpu-share] not a server to look at: it is paused on purpose.
+  if (typeof studioHoldsWait === 'function' && studioHoldsWait(wait)) return;
   // Item 29: the local server is asked about when the wait is on it, whichever provider was picked.
   const onLocal = wait && wait.providerId ? waitIsLocalServer(wait.providerId) : tpActiveIsLocal();
   if (!BR || !BR.modelsStatus || !onLocal) return;

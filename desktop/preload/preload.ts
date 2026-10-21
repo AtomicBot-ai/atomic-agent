@@ -199,6 +199,10 @@ contextBridge.exposeInMainWorld("atomic", {
     localState: () => ipcRenderer.invoke("studio:localState"),
     /** Download progress, the image engine install, model loads: one LocalEvent per change. */
     onLocal: (cb: (event: unknown) => void) => on("studio:local", cb),
+    /* The local chat model and local generations on one memory (main/studio-gpu-share.ts):
+       whether chat is paused for Studio, the generation running, how many are queued, chat turns held. */
+    gpuShare: () => ipcRenderer.invoke("studio:gpuShare"),
+    onGpuShare: (cb: (state: unknown) => void) => on("studio:gpuShare", cb),
   },
   /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */
   attachPick: (kind: "images" | "files") => ipcRenderer.invoke("attachments:pick", kind),

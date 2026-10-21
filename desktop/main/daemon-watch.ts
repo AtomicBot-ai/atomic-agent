@@ -1,7 +1,7 @@
-import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync, type Dirent } from "node:fs";
 import { join } from "node:path";
 
-import { backendInstalled, managedEngineNow, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
+import { backendInstalled, localDaemonRunning, managedEngineNow, modelsStop, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
 import type { AgentLogLevel } from "./agent-output.js";
 import {
   bringUpAtLaunch,
@@ -11,6 +11,7 @@ import {
   pairEmbeddingServer,
   runModeWantsDaemon,
   stopsMark,
+  supersedeBringUp,
 } from "./backend-switch.js";
 import { cpuOnlyLogLine, cpuOnlyWorthSaying, type CpuOnlyNotice } from "./cpu-only.js";
 import {
@@ -405,4 +406,102 @@ function forgetCpuOnly(): void {
 /** For the window (a reopened one asks) and the smoke: the supervisor's state, and ATO-244's word on the CPU. */
 export function daemonWatchState(): SupervisorState & { cpu: CpuOnlyNotice } {
   return { ...daemonWatch.state(), cpu };
+}
+
+/* ---------------------------------------------------------------
+   Studio and the chat model on one machine's memory (studio-gpu-share.ts).
+   A local image or video generation that does not fit beside the chat model
+   stops it as Studio's: the supervisor holds still (yieldTo), the stop is
+   not a stop on purpose (owned stays, `models stop` with `repair`), and when
+   Studio is done the app brings it back as the launch does, unless a stop,
+   a switch or a model change came meanwhile.
+   --------------------------------------------------------------- */
+
+/** What yieldChatToStudio did, for resumeChatAfterStudio. */
+export interface StudioYield {
+  /** The server was up and was stopped for Studio. */
+  stopped: boolean;
+  /** It was the app's to bring back when the yield began. */
+  owned: boolean;
+  /** backend-switch's stops mark after the yield's own supersede: a later move is someone else's last word. */
+  mark: number;
+}
+
+/** The chat side as studio-gpu-share reads it: no probe, only the file and the model's size on disk. */
+export function chatForStudio(): { wanted: boolean; fileBytes: number | null; oneModelPerGpu: boolean } {
+  const cfg = readConfig();
+  return {
+    wanted: routeNeedsDaemon(cfg),
+    fileBytes: chatModelFileBytes(cfg),
+    oneModelPerGpu: managedEngineNow() === "atomic-core",
+  };
+}
+
+/** Whether a chat turn on the file's route needs the managed chat model. */
+export function chatRouteIsLocal(): boolean {
+  return routeNeedsDaemon(readConfig());
+}
+
+/** The size of the chat model's GGUF files under `<managed data dir>/models/<id>/` (the agent's layout, agent-cli modelIdFromPath), or null. */
+function chatModelFileBytes(cfg: WatchConfig | null): number | null {
+  const id = cfg?.localModels?.managed?.modelId;
+  if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) return null;
+  let total = 0;
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 2) return;
+    let entries: Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isSymbolicLink()) continue;
+      const path = join(dir, e.name);
+      if (e.isDirectory()) walk(path, depth + 1);
+      else if (e.isFile() && /\.gguf$/i.test(e.name)) {
+        try { total += statSync(path).size; } catch { /* gone meanwhile */ }
+      }
+    }
+  };
+  walk(join(managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null), "models", id), 0);
+  return total > 0 ? total : null;
+}
+
+/**
+ * Stop the chat model so Studio can use its memory. A background start on its
+ * way is ended first (it would bring the model back mid-generation); the stop
+ * runs in the daemon's turn like every other, so it queues behind a start or
+ * an update. Never a stop on purpose: the server stays the app's.
+ */
+export async function yieldChatToStudio(): Promise<StudioYield> {
+  const owned = daemonWatch.state().owned;
+  daemonWatch.yieldTo("studio");
+  supersedeBringUp();
+  const mark = stopsMark();
+  const stopped = await inDaemonTurn(async () => {
+    if (stopsMark() !== mark) return false;
+    if (!(await localDaemonRunning({ reapWedged: false }))) return false;
+    const res = await modelsStop({ repair: true });
+    host.say(
+      res.ok
+        ? "[desktop] local-llm: the chat model is paused while Studio generates locally (memory) — it starts again when Studio is done"
+        : `[desktop] local-llm: could not pause the chat model for Studio: ${res.error ?? "unknown error"}`,
+    );
+    return res.ok;
+  }, () => false);
+  return { stopped, owned, mark };
+}
+
+/**
+ * Studio is done: the supervisor listens again, and the chat model comes back
+ * in the background as at launch — when it was up or the app's when Studio
+ * took it, the route still needs it, and nothing (a stop, a switch, a model
+ * change) has moved since.
+ */
+export function resumeChatAfterStudio(token: unknown): void {
+  daemonWatch.endYield();
+  const y = token as StudioYield | null;
+  if (!y || (!y.stopped && !y.owned)) return;
+  if (stopsMark() !== y.mark) return;
+  const cfg = readConfig();
+  if (!routeNeedsDaemon(cfg)) return;
+  host.say("[desktop] local-llm: Studio is done — starting the chat model again");
+  void bringUpAtLaunch(cfg?.localModels?.managed?.modelId ?? "").catch(() => undefined);
 }

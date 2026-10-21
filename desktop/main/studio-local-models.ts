@@ -401,14 +401,51 @@ export class StudioLocalModels {
    * `POST /diffusion/model/load` unless it is the loaded one already.
    * A bare family id picks its default quant on disk.
    */
-  async ensureLoaded(id: unknown, workflow = "create"): Promise<string> {
+  async ensureLoaded(id: unknown, workflow = "create", opts: { budgetBytes?: number | null } = {}): Promise<string> {
     const resolved = await this.resolveId(id);
     const pending = this.loads.get(resolved);
     if (pending) { await pending; return resolved; }
-    const run = this.hold(() => this.load(resolved, workflow)).finally(() => this.loads.delete(resolved));
+    const run = this.hold(() => this.load(resolved, workflow, opts.budgetBytes)).finally(() => this.loads.delete(resolved));
     this.loads.set(resolved, run);
     await run;
     return resolved;
+  }
+
+  /** The artifact id a request's `model` (an artifact id, or a bare family id) runs as. */
+  resolve(id: unknown): Promise<string> {
+    return this.resolveId(id);
+  }
+
+  /**
+   * What `id` holds while it generates at its default size (the fit's
+   * resident estimate), for studio-gpu-share; null for an id the catalog
+   * does not know.
+   */
+  async needBytes(id: unknown): Promise<number | null> {
+    const { catalog } = await this.catalog();
+    const hit = findArtifact(catalog, id);
+    return hit ? fitFor(hit.family, hit.quant, this.profile()).residentBytes : null;
+  }
+
+  /**
+   * A video estimate without loading the model, from the fit (Core's own
+   * estimate needs the model loaded, and loading it would stop the chat
+   * model or the generation running). Shaped as Core's VideoEstimate, with
+   * its thresholds (src/diffusion/video-estimate.ts: fits ≤ 80 %, tight
+   * ≤ 100 %) and no time.
+   */
+  async estimateWithoutLoad(id: unknown): Promise<{ memory: { requiredBytes: number; budgetBytes: number | null; pool: "unified" | "system"; verdict: "fits" | "tight" | "exceeds" }; seconds: null; basis: "heuristic" } | null> {
+    const { catalog } = await this.catalog();
+    const hit = findArtifact(catalog, id);
+    if (!hit) return null;
+    const profile = this.profile();
+    const fit = fitFor(hit.family, hit.quant, profile);
+    const share = fit.budgetBytes ? fit.residentBytes / fit.budgetBytes : 1;
+    return {
+      memory: { requiredBytes: Math.round(fit.residentBytes), budgetBytes: fit.budgetBytes, pool: profile?.memoryKind ?? "system", verdict: share <= 0.8 ? "fits" : share <= 1 ? "tight" : "exceeds" },
+      seconds: null,
+      basis: "heuristic",
+    };
   }
 
   private async resolveId(id: unknown): Promise<string> {
@@ -422,7 +459,12 @@ export class StudioLocalModels {
     return installed.id;
   }
 
-  private async load(id: string, workflow: string): Promise<void> {
+  /**
+   * `budgetBytes`: the memory left for this model (studio-gpu-share: less
+   * when the chat model stays loaded beside it). The offload policy is worked
+   * out against it — Core's "Auto": weights offloaded when it is tight.
+   */
+  private async load(id: string, workflow: string, budgetBytes?: number | null): Promise<void> {
     const { family, quant } = await this.artifact(id);
     const client = await this.deps.ready();
     const status = await client.call<{ model?: { state?: string; loaded?: { modelId?: string } | null } }>("/diffusion/status");
@@ -444,7 +486,8 @@ export class StudioLocalModels {
     const name = `${family.name} ${quant.label}`;
     this.deps.emit({ type: "load", id, state: "loading", message: `Loading ${name}…`, error: null });
     try {
-      const fit = fitFor(family, quant, this.profile());
+      const profile = this.profile();
+      const fit = fitFor(family, quant, profile && typeof budgetBytes === "number" && budgetBytes < profile.budgetBytes ? { ...profile, budgetBytes: Math.max(1, budgetBytes) } : profile);
       await client.call("/diffusion/model/load", buildLoadRequest(family, quant.id, files, root, { offload: offloadFor(family, fit, this.deps.platform), workflow }), { timeoutMs: LOAD_TIMEOUT_MS });
       this.loadedHere = { id, vision };
       this.deps.emit({ type: "load", id, state: "loaded", message: `${name} is loaded.`, error: null });

@@ -5,7 +5,8 @@ they get back. Main side: `desktop/main/studio-ipc.ts` (routes),
 `studio-media.ts` (Core client), `studio-catalog.ts`, `studio-requests.ts`,
 `studio-pricing.ts`, `studio-paths.ts`, `studio-jobs.ts`, and for local models
 `studio-local-models.ts` (download, engine, load), `studio-local.ts` (catalog,
-plan, fit), `studio-download.ts` (the file transfer). Preload:
+plan, fit), `studio-download.ts` (the file transfer), and for memory shared
+with the local chat model `studio-gpu-share.ts`. Preload:
 `desktop/preload/preload.ts` (`studio` namespace). Keep this file and those in
 step.
 
@@ -56,8 +57,8 @@ Every call resolves (never rejects) to
 | `generateVideo(req: VideoRequest)` | `{ jobId: string, job: StudioJob }` |
 | `estimateVideo(req: VideoRequest)` | `VideoEstimate \| null` (null for every cloud model) |
 | `job(kind, id)` | `StudioJob \| null` |
-| `activeJobs()` | `StudioJob[]` still running that this app started (after a window reload) |
-| `cancel(kind, id)` | `{ cancelled: boolean, serverStopped: boolean }` |
+| `activeJobs()` | `StudioJob[]` still running that this app started (after a window reload), queued local ones (`q-…`) included |
+| `cancel(kind, id)` | `{ cancelled: boolean, serverStopped: boolean }`. A queued local job (`q-…`) is taken off the queue (pushed as `cancelled`) |
 | `gallery(kind, { offset?=0, limit?=50 (max 200), includeArchived?=false })` | `{ items: StudioItem[], hasMore: boolean, total: number }` |
 | `galleryDelete(kind, ids: string[])` | `{ deleted: number }` (files are removed by Core, not to the Trash) |
 | `pin(kind, id, on)` | `StudioItem \| null` |
@@ -73,11 +74,13 @@ Every call resolves (never rejects) to
 | `localDownload(id, { workflow? })` | `LocalDownload` as it starts (or `state:'done'` when nothing is missing). Progress follows on `onLocal` |
 | `localCancel(id)` | `{ cancelled: boolean }`; the part files stay and the next `localDownload` resumes |
 | `localDelete(id)` | `{ removed: number, freedBytes: number, kept: number }` (`kept`: shared files another installed model needs). Unloads it from Core first if loaded |
-| `localLoad(id, { workflow? })` | `{ loaded: string }` (the artifact id). Optional: generate and estimate load on their own |
+| `localLoad(id, { workflow? })` | `{ loaded: string }` (the artifact id). Optional: generate and estimate load on their own. Makes room as a generation does (pauses the chat model when they do not fit); `JOB_BUSY` while a local generation runs |
 | `localEngine()` | `LocalEngine` (reads Core; installs nothing) |
 | `localPrepare()` | `LocalEngine` once the image engine is installed (installs it if missing) |
 | `localState()` | `{ downloads: LocalDownload[], engine: LocalEngine \| null }` running now (after a window reload) |
 | `onLocal(cb)` | subscribe; returns unsubscribe. `cb(event: LocalEvent)` on every change |
+| `gpuShare()` | `GpuShareState \| null` now (see "Memory shared with the chat model") |
+| `onGpuShare(cb)` | subscribe; returns unsubscribe. `cb(state: GpuShareState)` on every change |
 
 `gallery`, `pin`, `galleryDelete` ids: image `<jobId>-<NN>`, video the job id.
 
@@ -228,6 +231,7 @@ interface LocalQuant {
   }
   loaded: boolean                  // this exact quant is the one in Core
   download: LocalDownload | null   // in flight
+  pausesChat: boolean              // running it pauses the local chat model (they do not fit together): show the hint below
 }
 ```
 
@@ -288,8 +292,51 @@ So the Generate button stays busy through those steps; drive its label from
 `onLocal`.
 
 Core holds one diffusion model at a time: loading another unloads the first.
-A local chat model on the same GPU competes for memory (Core may answer
-`GPU_BUSY`).
+
+### Memory shared with the chat model
+
+Main side: `desktop/main/studio-gpu-share.ts` (the policy, `decideGpuShare`),
+run from `studio-media.ts`, `daemon-watch.ts` and main's `agent:chat`.
+
+- Before a local generation, when the local chat model (Local models, or
+  Fusion with a local seat) and the image/video model do not both fit, the
+  chat model is **paused** for it: stopped as Studio's, never shown as a
+  crash, and the auto-restart holds still. Under Atomic Core (the default
+  engine) this is always the case: Core 0.18.6 keeps one local model per GPU.
+  On the plain llama-server engine both stay loaded when they fit (chat model
+  + diffusion need ≤ 90 % of `machine.budgetBytes`), and the diffusion model
+  then loads with the offload that the memory left calls for.
+- While it is paused, a chat message that needs the local model waits (the
+  composer's waiting strip says "Waiting for Studio to finish the image, then
+  the chat model loads again", with **Stop generation**, which stops the
+  running local generation and the queued ones). Cloud chat is unaffected.
+- When the last local generation ends (done, failed or stopped) the chat model
+  starts again in the background: 20 s later, so a run of images does not
+  reload it in between, or at once when a chat message is waiting. The image
+  model is unloaded first unless both fit.
+- A local chat message that finds an idle image model in the way unloads it.
+- **One local generation at a time.** A second `generateImage` /
+  `generateVideo` with a local model answers at once with a job whose id
+  starts with `q-`, `state: 'queued'` and
+  `queue: { position, message: 'Queued after the current image' }` (or
+  "video"). When it starts, `onJob` pushes Core's job with
+  `replaces: 'q-…'`: swap the card. A queued job that cannot start is pushed
+  as `failed` under its `q-` id.
+
+**The hint.** In the local-model section, under a quant with
+`pausesChat: true`, show one quiet line: "Uses the same memory as your local
+chat model; chat pauses while this runs". `pausesChat` is false when the chat
+route is not local.
+
+```ts
+interface GpuShareState {
+  chat: 'off' | 'on' | 'yielded'   // off: chat is not on a local model; yielded: paused for Studio
+  generating: { kind: 'image' | 'video', model: string, jobId: string | null } | null  // jobId null while its model loads
+  queued: number                   // local generations waiting behind it
+  heldTurns: number                // chat messages waiting for it
+  chatLine: string | null          // the composer's line while a message waits, else null
+}
+```
 
 ## Jobs and events
 
@@ -309,6 +356,8 @@ interface StudioJob {
   outputs: StudioItem[]         // filled when completed
   error: { code, message, details? } | null   // failed / cancelled (code CANCELLED)
   createdAtMs: number; finishedAtMs: number | null
+  queue?: { position: number, message: string } | null   // queued local job (`q-…`): "Queued after the current image"
+  replaces?: string             // the `q-…` id this Core job took over when it started
 }
 ```
 
@@ -326,6 +375,9 @@ there are no refunds.
 `VideoEstimate` (local only, Core `POST /diffusion/video/estimate`; main loads
 the model first, Core estimates against the loaded one):
 `{ memory: { requiredBytes, budgetBytes, pool, verdict: 'fits'|'tight'|'exceeds' }, seconds: { low, high } | null, basis }`.
+When loading the model for an estimate would pause the chat model or replace
+the model a running generation uses, nothing is loaded and the answer comes
+from the fit instead: `basis: 'heuristic'`, `seconds: null`.
 
 ## Gallery items
 

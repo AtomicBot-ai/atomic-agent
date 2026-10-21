@@ -17,13 +17,14 @@
  *     or estimate needs nothing but a downloaded `<family>:<quant>`.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 
 import { normalizeLocalFamilies, normalizeProviderModels, type StudioCatalogSection, type StudioKind } from "./studio-catalog.js";
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
 import { acquireStudioLease, connectStudioCore, ensureStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
 import type { MachineProfile } from "./studio-local.js";
+import { queuedLine, type GpuShare } from "./studio-gpu-share.js";
 import { StudioLocalModels, type LocalEngineStatus, type LocalEvent } from "./studio-local-models.js";
 import { jobPath, StudioJobWatcher } from "./studio-jobs.js";
 import { PickedPaths, readStudioSettings, requestSources, sourceAllowed, writeStudioSettings } from "./studio-paths.js";
@@ -48,7 +49,14 @@ export interface StudioMediaDeps {
   hostRamBytes?: () => number;
   /** Re-read the Hugging Face mirror before a model download. */
   beforeDownload?: () => void;
+  /** The chat model and local generations on one memory (studio-gpu-share.ts); absent, nothing is coordinated. */
+  gpu?: GpuShare;
 }
+
+const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
+
+/** A local generation waiting for the one running. */
+interface QueuedLocal { kind: StudioKind; raw: unknown; job: StudioJob }
 
 export class StudioMedia {
   readonly picked = new PickedPaths();
@@ -63,9 +71,14 @@ export class StudioMedia {
   private localBusy = 0;
   readonly jobs: StudioJobWatcher;
   readonly local: StudioLocalModels;
+  /** The local generation loading or running (one at a time); `coreJobId` once Core took it. */
+  private localActive: { kind: StudioKind; coreJobId: string | null } | null = null;
+  private readonly localQueue: QueuedLocal[] = [];
+  /** Core job id → the queued id (`q-…`) it took over, sent with each of its changes. */
+  private readonly replaced = new Map<string, string>();
 
   constructor(private readonly deps: StudioMediaDeps) {
-    this.jobs = new StudioJobWatcher(deps.emitJob, () => this.scheduleLeaseRelease());
+    this.jobs = new StudioJobWatcher((job) => this.onJob(job), () => this.scheduleLeaseRelease());
     this.local = new StudioLocalModels({
       dataDir: deps.dataDir,
       ready: () => this.ready(),
@@ -76,6 +89,21 @@ export class StudioMedia {
       ...(deps.hostRamBytes ? { hostRamBytes: deps.hostRamBytes } : {}),
       ...(deps.beforeDownload ? { beforeDownload: deps.beforeDownload } : {}),
     });
+    deps.gpu?.attachDiffusion({
+      unload: async () => {
+        const client = await connectStudioCore(deps.dataDir(), deps.coreVersion).catch(() => null);
+        if (client) await client.call("/diffusion/model/unload", {}, { timeoutMs: 60_000 });
+      },
+    });
+  }
+
+  /** Every job change on its way to the window; the end of the running local generation lets the next one (or the chat model) go. */
+  private onJob(job: StudioJob): void {
+    const replaces = this.replaced.get(job.id);
+    this.deps.emitJob(replaces ? { ...job, replaces } : job);
+    if (!TERMINAL_STATES.has(job.state)) return;
+    this.replaced.delete(job.id);
+    if (this.localActive && this.localActive.coreJobId === job.id) void this.localDone();
   }
 
   private get dataFolder(): string {
@@ -191,7 +219,14 @@ export class StudioMedia {
       // A family the parser refused (an unsafe path, a field it does not know) is not offered.
       const models = normalizeLocalFamilies(doc, kind, loaded)
         .filter((m) => views.has(m.id))
-        .map((m) => ({ ...m, local: { ...m.local!, ...views.get(m.id)! } }));
+        .map((m) => {
+          const view = views.get(m.id)!;
+          /* The Studio hint (CONTRACT.md "Memory shared with the chat model"):
+             a quant that cannot stay loaded beside the local chat model pauses it while it runs. */
+          const gpu = this.deps.gpu;
+          const quants = view.quants.map((q) => ({ ...q, pausesChat: gpu ? gpu.pausesChat(q.fit.residentBytes) : false }));
+          return { ...m, local: { ...m.local!, ...view, quants } };
+        });
       return { provider: "local", kind, models, live: false, error, ...extra };
     } catch (err) {
       return { provider: "local", kind, models: [], live: false, error: errorOf(err), ...extra };
@@ -208,11 +243,131 @@ export class StudioMedia {
       : undefined;
   }
 
-  /** Start one generation. The submit is never retried: a cloud provider would bill twice. */
+  /**
+   * Start one generation. The submit is never retried: a cloud provider would
+   * bill twice. Local ones run one at a time: a second answers at once as a
+   * `queued` job (`q-…`) that starts when the first ends.
+   */
   async generate(kind: StudioKind, raw: unknown): Promise<{ jobId: string; job: StudioJob }> {
     const cloud = (raw as { provider?: unknown } | null)?.provider !== "local";
     if (cloud && !(await this.deps.openRouterKey())) throw new StudioCoreError("No OpenRouter key.", "NO_KEY");
-    if (!cloud) await this.prepareLocal(raw);
+    if (cloud) return this.submit(kind, raw, true);
+    if (this.localActive) return this.enqueueLocal(kind, raw);
+    return this.runLocal(kind, raw);
+  }
+
+  /**
+   * One local generation: the chat model makes room when the two do not fit
+   * (studio-gpu-share), the model loads with the offload that memory calls
+   * for, and the job goes to Core. Whatever ends it — the job, or a failure
+   * before Core took it — lets the next queued one or the chat model go.
+   */
+  private async runLocal(kind: StudioKind, raw: unknown, replaces?: string): Promise<{ jobId: string; job: StudioJob }> {
+    const active: { kind: StudioKind; coreJobId: string | null } = { kind, coreJobId: null };
+    this.localActive = active;
+    try {
+      let budgetBytes: number | null | undefined;
+      const gpu = this.deps.gpu;
+      const r = raw as { model?: unknown } | null;
+      const asked = r && typeof r.model === "string" ? r.model : "";
+      if (gpu && asked) {
+        const resolved = await this.local.resolve(asked).catch(() => null);
+        const bytes = resolved ? await this.local.needBytes(resolved).catch(() => null) : null;
+        // Under the lease: the chat model's stop must not find Core idle and retire it under Studio.
+        ({ budgetBytes } = await this.withLease(() => gpu.diffusionStart({ kind, model: resolved ?? asked, bytes })));
+      }
+      await this.prepareLocal(raw, budgetBytes);
+      const out = await this.submit(kind, raw, false, replaces);
+      active.coreJobId = out.jobId;
+      this.deps.gpu?.jobStarted(out.jobId);
+      // Over already (the watcher follows only a job still running): the next one goes now.
+      if (!this.jobs.get(out.jobId)) void this.localDone();
+      return out;
+    } catch (err) {
+      void this.localDone();
+      throw err;
+    }
+  }
+
+  /** The running local generation is over: the next queued one starts, else the chat model may come back. */
+  private async localDone(): Promise<void> {
+    if (!this.localActive) return;
+    const next = this.localQueue.shift();
+    // Held for the next one at once, so a generate that comes meanwhile queues behind it.
+    this.localActive = next ? { kind: next.kind, coreJobId: null } : null;
+    this.deps.gpu?.setQueued(this.localQueue.length);
+    this.renumberQueue();
+    if (this.deps.gpu) {
+      const loaded = await this.loadedModelId().catch(() => null);
+      await this.deps.gpu.diffusionEnd({ more: !!next, loaded: loaded !== null }).catch(() => undefined);
+    }
+    if (!next) return;
+    this.runLocal(next.kind, next.raw, next.job.id).catch((err) => {
+      const e = errorOf(err);
+      this.deps.emitJob({ ...next.job, state: "failed", queue: null, error: e, finishedAtMs: Date.now() });
+    });
+  }
+
+  private enqueueLocal(kind: StudioKind, raw: unknown): { jobId: string; job: StudioJob } {
+    const id = `q-${randomUUID()}`;
+    const job: StudioJob = {
+      id, kind, state: "queued", cloud: false, model: String((raw as { model?: unknown } | null)?.model ?? ""),
+      progress: null, outputs: [], error: null, createdAtMs: Date.now(), finishedAtMs: null,
+      queue: { position: this.localQueue.length + 1, message: queuedLine(this.localActive?.kind ?? kind) },
+    };
+    this.localQueue.push({ kind, raw, job });
+    this.deps.gpu?.setQueued(this.localQueue.length);
+    this.deps.emitJob(job);
+    return { jobId: id, job: { ...job } };
+  }
+
+  /** Positions moved up: each queued job says its new place. */
+  private renumberQueue(): void {
+    const head = this.localActive?.kind;
+    this.localQueue.forEach((q, i) => {
+      const queue = { position: i + 1, message: queuedLine(head ?? q.kind) };
+      if (q.job.queue?.position === queue.position && q.job.queue.message === queue.message) return;
+      q.job = { ...q.job, queue };
+      this.deps.emitJob(q.job);
+    });
+  }
+
+  /** The diffusion model in Core now, never starting Core; null when none. */
+  private async loadedModelId(): Promise<string | null> {
+    const client = await connectStudioCore(this.deps.dataDir(), this.deps.coreVersion).catch(() => null);
+    if (!client) return null;
+    const status = await client.call<{ model?: { state?: string; loaded?: { modelId?: string } | null } }>("/diffusion/status");
+    return status.model?.state === "loaded" && typeof status.model.loaded?.modelId === "string" ? status.model.loaded.modelId : null;
+  }
+
+  /** Every generation still running or queued that this app started (a window that reloaded). */
+  activeJobs(): StudioJob[] {
+    return [...this.jobs.list(), ...this.localQueue.map((q) => ({ ...q.job }))];
+  }
+
+  /**
+   * `studio:localLoad`: a model loaded ahead of a generation, with the same
+   * room made for it. Refused while a local generation runs (another model
+   * would replace the one it uses).
+   */
+  async loadLocal(id: string, workflow: string): Promise<string> {
+    if (this.localActive) throw new StudioCoreError("Wait for the current generation to finish, then load another model.", "JOB_BUSY");
+    const gpu = this.deps.gpu;
+    if (!gpu) return this.local.ensureLoaded(id, workflow);
+    // Held like a generation, so a generate that comes meanwhile queues behind the load.
+    this.localActive = { kind: "image", coreJobId: null };
+    try {
+      const resolved = await this.local.resolve(id);
+      const bytes = await this.local.needBytes(resolved).catch(() => null);
+      const { budgetBytes } = await this.withLease(() => gpu.diffusionStart({ kind: "image", model: resolved, bytes }));
+      await this.local.ensureLoaded(resolved, workflow, { budgetBytes });
+      return resolved;
+    } finally {
+      await this.localDone();
+    }
+  }
+
+  private async submit(kind: StudioKind, raw: unknown, cloud: boolean, replaces?: string): Promise<{ jobId: string; job: StudioJob }> {
     const client = await this.ready();
     const local = cloud ? undefined : await this.localDefaults(client, kind);
     const body = kind === "video" ? toCoreVideoRequest(raw, local) : toCoreImageRequest(raw, local);
@@ -227,6 +382,7 @@ export class StudioMedia {
       const answer = await client.call<{ jobId?: unknown }>(kind === "video" ? "/diffusion/video/jobs" : "/diffusion/jobs", body, { timeoutMs: 60_000 });
       if (typeof answer.jobId !== "string" || !answer.jobId) throw new StudioCoreError("Atomic Core did not return a job id.", "BAD_ANSWER");
       jobId = answer.jobId;
+      if (replaces) this.replaced.set(jobId, replaces);
     } catch (err) {
       if (this.jobs.size === 0) this.scheduleLeaseRelease();
       throw err;
@@ -238,13 +394,23 @@ export class StudioMedia {
     };
     this.jobs.follow(client, job);
     if (this.jobs.size === 0) this.scheduleLeaseRelease();
-    return { jobId, job };
+    return { jobId, job: replaces ? { ...job, replaces } : job };
   }
 
   /** Local video only: Core answers what a clip costs on this machine; a provider never says (REMOTE_UNSUPPORTED). */
   async estimateVideo(raw: unknown): Promise<unknown | null> {
     if ((raw as { provider?: unknown } | null)?.provider !== "local") return null;
-    // Core estimates against the loaded model only.
+    /* Core estimates against the loaded model only. Loading another one for
+       an estimate would stop the generation running, or pause the chat
+       model, for a figure: then the fit's own estimate answers instead. */
+    const model = (raw as { model?: unknown } | null)?.model;
+    if (typeof model === "string" && model && (this.localActive || this.deps.gpu)) {
+      const resolved = await this.local.resolve(model);
+      const loaded = await this.loadedModelId().catch(() => null);
+      if (loaded !== resolved && (this.localActive || this.deps.gpu?.pausesChat(await this.local.needBytes(resolved).catch(() => null)))) {
+        return this.local.estimateWithoutLoad(resolved);
+      }
+    }
     await this.prepareLocal(raw);
     const client = await this.ready();
     const body = toCoreVideoRequest(raw, await this.localDefaults(client, "video"));
@@ -256,20 +422,33 @@ export class StudioMedia {
    * model loaded; `model` may be a bare family id (its quant on disk).
    * The request's `model` is set to the artifact id Core loaded.
    */
-  private async prepareLocal(raw: unknown): Promise<void> {
+  private async prepareLocal(raw: unknown, budgetBytes?: number | null): Promise<void> {
     const r = raw as { model?: unknown; mode?: unknown } | null;
     // Nothing to load for a request the mapping refuses anyway ("Pick a model first.", local image-to-video).
     if (!r || typeof r !== "object" || typeof r.model !== "string" || !r.model || r.mode === "image-to-video") return;
-    const loaded = await this.local.ensureLoaded(r.model, typeof r.mode === "string" ? r.mode : "create");
+    const loaded = await this.local.ensureLoaded(r.model, typeof r.mode === "string" ? r.mode : "create", { budgetBytes });
     (r as { model?: unknown }).model = loaded;
   }
 
   async job(kind: StudioKind, id: string): Promise<StudioJob | null> {
+    if (id.startsWith("q-")) {
+      const q = this.localQueue.find((x) => x.job.id === id);
+      return q ? { ...q.job } : null;
+    }
     const client = await this.ready();
     return normalizeJob((await client.call<{ job?: unknown }>(jobPath(kind, id))).job, kind);
   }
 
   async cancel(kind: StudioKind, id: string): Promise<{ cancelled: boolean; serverStopped: boolean }> {
+    if (id.startsWith("q-")) {
+      const at = this.localQueue.findIndex((x) => x.job.id === id);
+      if (at < 0) return { cancelled: false, serverStopped: false };
+      const [q] = this.localQueue.splice(at, 1);
+      this.deps.gpu?.setQueued(this.localQueue.length);
+      this.deps.emitJob({ ...q!.job, state: "cancelled", queue: null, error: { code: "CANCELLED", message: "Stopped before it started." }, finishedAtMs: Date.now() });
+      this.renumberQueue();
+      return { cancelled: true, serverStopped: false };
+    }
     const client = await this.ready();
     const answer = await client.call<{ cancelled?: boolean; serverStopped?: boolean }>(`${jobPath(kind, id)}/cancel`, {}, { timeoutMs: 15_000 });
     return { cancelled: answer.cancelled === true, serverStopped: answer.serverStopped === true };
@@ -330,6 +509,8 @@ export class StudioMedia {
   }
 
   dispose(): void {
+    this.localQueue.length = 0;
+    this.deps.gpu?.dispose();
     this.jobs.stop();
     this.local.dispose();
     if (this.leaseTimer) clearTimeout(this.leaseTimer);

@@ -895,6 +895,11 @@ let WAIT_TICK = 0;
    (daemon-supervisor.ts): its last notice while an incident is open —
    `restarting`, `restart_failed` or `gave_up` — else null. */
 let DWATCH = null;
+/* [studio-gpu-share] What main says about local generations and the local
+   chat model sharing memory (main/studio-gpu-share.ts GpuShareState, pushed
+   on BR.studio.onGpuShare): `chat: 'yielded'` while a local generation runs
+   with the chat model paused. Null until main has said. */
+let GPUSHARE = null;
 /* ATO-244: main's word that the managed model server found no usable GPU and
    runs on the processor (main/cpu-only.ts), for the start `seq` names. Said
    once per start: on the app line as it arrives, and as the composer's strip
@@ -3499,6 +3504,8 @@ function composer() {
       + ((badKeyForWait(WAIT) || waitWhy(WAIT)) ? '<span class="ob-help ss-why"' + (!badKeyForWait(WAIT) && waitWhyCode(WAIT) ? ' title="' + esc(waitWhyCode(WAIT)) + '"' : '') + '>' + esc(badKeyForWait(WAIT) ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
       + '<span class="ss-grow"></span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
+      // [studio-gpu-share] the way out of a wait for Studio: stop the local generation, and chat goes next.
+      + (studioHoldsWait(WAIT) && GPUSHARE && GPUSHARE.generating ? '<button class="btn btn-g xs" data-act="studio:stopgen">Stop generation</button>' : '')
       + '</div>'
     /* Calm (S3): no busy strip. It said "Thinking 1.3s" / the running
        tool's raw id / "Writing reply" above the composer — and each of
@@ -6200,6 +6207,7 @@ function act(a) {
   if (a === 'cpu:dismiss') { CPUW.dismissed = CPUW.seq; render(); return; }
   if (a === 'cpu:cloud') { CPUW.dismissed = CPUW.seq; render(); selChooseBackend('cloud'); return; }
   if (k === 'engf') { engfAct(v || ''); return; }
+  if (a === 'studio:stopgen') { studioStopGeneration(); return; }   // [studio-gpu-share]
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -7646,6 +7654,7 @@ function refreshSend() {
 /** The waiting line: who, which attempt, and how long until the next try. */
 function waitReadout() {
   if (!WAIT) return '';
+  if (studioHoldsWait(WAIT)) return '';   // [studio-gpu-share] no retries to count: it goes when Studio is done
   const left = Math.max(0, Math.round((WAIT.until - Date.now()) / 1000));
   /* Calm (S4): the provider is named in the strip's sentence, not here, and
      the time already waited is dropped: the failure line says how long the
@@ -7858,9 +7867,42 @@ async function engfAct(verb) {
   // `fresh`: main forgets the active Core's install record first, so a broken copy is downloaded again rather than kept.
   if (verb === 'retry') { if (setup) { ENGF.fresh = true; dlRetry(setup.n); } else llmEngineInstall({fresh: true}); }
 }
+/* [studio-gpu-share] A wait on the local chat model while Studio holds its
+   memory: a turn main holds for the generation (cause `studio_busy`), or an
+   agent's own wait on the local server while the chat model is paused. */
+function studioHoldsWait(wait) {
+  if (!wait) return false;
+  if (wait.cause && wait.cause.kind === 'studio_busy') return true;
+  if (!GPUSHARE || GPUSHARE.chat !== 'yielded') return false;
+  return wait.providerId ? waitIsLocalServer(wait.providerId) : tpActiveIsLocal();
+}
+function studioWaitLine(wait) {
+  if (wait && wait.cause && typeof wait.cause.line === 'string' && wait.cause.line) return wait.cause.line;
+  const kind = GPUSHARE && GPUSHARE.generating ? GPUSHARE.generating.kind : 'image';
+  return 'Waiting for Studio to finish the ' + kind + ', then the chat model loads again';
+}
+function gpuShareApply(st) {
+  GPUSHARE = st && typeof st === 'object' ? st : null;
+  render();
+}
+/** The strip's "Stop generation": the running local generation and the ones queued behind it, so chat goes next. */
+async function studioStopGeneration() {
+  if (!BR || !BR.studio || !BR.studio.cancel) return;
+  const g = GPUSHARE && GPUSHARE.generating;
+  try {
+    const listed = BR.studio.activeJobs ? await BR.studio.activeJobs() : null;
+    const queued = listed && listed.ok && Array.isArray(listed.data) ? listed.data.filter((j) => j && typeof j.id === 'string' && j.id.indexOf('q-') === 0) : [];
+    for (const q of queued) await BR.studio.cancel(q.kind, q.id);
+    if (g && g.jobId) {
+      const r = await BR.studio.cancel(g.kind, g.jobId);
+      if (r && r.ok === false) toast('Could not stop the generation', (r.error && r.error.message) || '', 'bad');
+    }
+  } catch { /* the strip stays; Studio's own Stop still works */ }
+}
 /** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
 function waitWhy(wait) {
   if (!wait) return '';
+  if (studioHoldsWait(wait)) return '';   // [studio-gpu-share] the lead says it all
   const watching = dwatchWords(wait);
   if (watching) return watching;
   const said = wait.cause ? waitCauseWords(wait.cause, wait.providerId) : null;
@@ -7902,6 +7944,7 @@ function waitPickedFailure(wait) {
 }
 /** The strip's lead: "Waiting for …", after the picked provider's failure when there was one. */
 function waitAnn(wait) {
+  if (studioHoldsWait(wait)) return studioWaitLine(wait);   // [studio-gpu-share]
   if (badKeyForWait(wait)) return 'Waiting for ' + (providerWord(selActiveProviderId()) || 'the provider');
   const first = waitPickedFailure(wait);
   return (first ? first.name + ': ' + first.why + ' · waiting for ' : 'Waiting for ') + waitProviderLabel(wait);
@@ -9433,6 +9476,14 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  if (ev.kind === 'provider_recovered' && ev.payload && ev.payload.studio) {
+    // [studio-gpu-share] main let a turn held for Studio go: the model loads now, and the agent's own wait says so.
+    WAIT = null;
+    if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
+    if (item) tpDropWaitNotes(S.streamId);
+    render();
+    return;
+  }
   if (ev.kind === 'provider_recovered') {
     WAIT = null;
     if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
@@ -10486,6 +10537,9 @@ if (BR) {
   /* ATO-123: main brings the local model server back when it stops under a
      route that needs it. A window opened during an incident asks for it. */
   if (BR.onDaemonWatch) BR.onDaemonWatch(dwatchApply);
+  // [studio-gpu-share] the chat model paused for a local generation, and what it waits for.
+  if (BR.studio && BR.studio.onGpuShare) BR.studio.onGpuShare(gpuShareApply);
+  if (BR.studio && BR.studio.gpuShare) BR.studio.gpuShare().then((r) => { if (r && r.ok) gpuShareApply(r.data); }).catch(() => {});
   // ATO-130: Settings' llama.cpp update, waiting for its turn or running.
   if (BR.onUpdatePhase) BR.onUpdatePhase(llmUpdatePhase);
   if (BR.onEngineFailure) BR.onEngineFailure(engfApply);

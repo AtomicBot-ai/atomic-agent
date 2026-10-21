@@ -12,7 +12,7 @@ import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpd
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
-import { homedir, tmpdir } from "node:os";
+import { homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
@@ -27,7 +27,9 @@ import { promisify } from "node:util";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
+import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
+import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
@@ -127,12 +129,16 @@ import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
 // ATO-123: the managed model server, brought back when it dies under the app that started it.
 import {
   afterUpdate,
+  chatForStudio,
+  chatRouteIsLocal,
   daemonWatch,
   daemonWatchState,
   hostDaemonWatch,
   onAgentFrame,
   pairEmbeddingsBeforeServe,
+  resumeChatAfterStudio,
   updateBegins,
+  yieldChatToStudio,
   type UpdateHold,
 } from "./daemon-watch.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
@@ -1160,6 +1166,19 @@ function wireIpc(client: AgentClient): void {
     }
   });
   liveTurnCount = () => liveTurns.size;
+  /* Studio and the local chat model on one memory (studio-gpu-share.ts): a
+     local generation pauses the chat model when the two do not fit (always
+     under Atomic Core, which keeps one model per GPU), the supervisor holds
+     still meanwhile, and the model comes back when Studio is done. */
+  const gpuShare = new GpuShare({
+    profile: () => machineProfile(FAKE_RAM_GB ? FAKE_RAM_GB * 1024 ** 3 : totalmem()),
+    chat: chatForStudio,
+    yieldChat: yieldChatToStudio,
+    resumeChat: resumeChatAfterStudio,
+    say: (line) => console.error(line),
+  });
+  /** Chat turns held for a local generation, and how each is dropped (agent:cancel). */
+  const heldForStudio = new Map<string, () => void>();
   ipcMain.handle("agent:liveTurns", () => [...liveTurns.values()].map((t) => ({ ...t })));
   ipcMain.handle("agent:replayApprovals", () => client.reopenApprovalStream());
   ipcMain.on("analytics:track", (_event, payload: unknown) => A.trackFromRenderer(payload));
@@ -1302,6 +1321,23 @@ function wireIpc(client: AgentClient): void {
       .filter((m) => m && typeof m.role === "string" && typeof m.content === "string")
       .map((m) => ({ role: m.role, content: m.content }));
     if (!clean.length) return { ok: false, error: "no usable messages" };
+    const queuedAt = Date.now();
+    /* Studio holds the memory (studio-gpu-share.ts): a local generation runs
+       with the chat model paused. A turn that needs the local model waits
+       here, with its own line, until the generation ends and the model is on
+       its way back; a cloud turn never asks. */
+    const held = chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
+    if (held) return holdForStudio(held, clean, sessionId, queuedAt);
+    return startTurn(randomUUID(), clean, sessionId, queuedAt, false);
+  });
+
+  async function startTurn(
+    turnId: string,
+    clean: Array<{ role: string; content: string }>,
+    sessionId: string | undefined,
+    queuedAt: number,
+    listed: boolean,
+  ): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     /* Backlog 18 (its second review): a restart a switch held back for the
        turns runs as the last one ends (backend-switch restartAfterSwitch), and
        a message queued behind that turn goes out at that very moment. A turn
@@ -1309,7 +1345,6 @@ function wireIpc(client: AgentClient): void {
        agent it brings up rather than on one being stopped. */
     // One restart can follow another; the turn starts with no await after the last look.
     let waited = false;
-    const queuedAt = Date.now();
     for (let r = switchRestartOnItsWay(); r; r = switchRestartOnItsWay()) {
       waited = true;
       await r;
@@ -1317,21 +1352,71 @@ function wireIpc(client: AgentClient): void {
     if (waited && client.status.state !== "connected") {
       return { ok: false, error: client.status.error ?? "the agent did not come back after the switch restarted it" };
     }
-    const turnId = randomUUID();
     turnNotifier.begin(turnId);
     chatTurns.begin(turnId, Date.now() - queuedAt);
+    const known = typeof sessionId === "string" && sessionId ? sessionId : null;
+    if (!listed) {
+      liveTurns.set(turnId, {
+        turnId, sessionId: known, text: clean[clean.length - 1]!.content, startedAt: Date.now(), firstTurn: !known,
+      });
+      appUpdater()?.turnsChanged();
+    }
+    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
+    return { ok: true, turnId };
+  }
+
+  /* A turn held for a local generation: the window has its id at once, and
+     sees it wait like any parked turn (a `provider_waiting` frame whose cause
+     is `studio_busy`, with the line to show). Stop ends it here; otherwise it
+     starts once the chat model is on its way back, and the agent's own wait
+     covers the model loading. */
+  function holdForStudio(
+    held: HeldTurn,
+    clean: Array<{ role: string; content: string }>,
+    sessionId: string | undefined,
+    queuedAt: number,
+  ): { ok: true; turnId: string } {
+    const turnId = randomUUID();
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
     liveTurns.set(turnId, {
       turnId, sessionId: known, text: clean[clean.length - 1]!.content, startedAt: Date.now(), firstTurn: !known,
     });
     appUpdater()?.turnsChanged();
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
+    let dropped = false;
+    heldForStudio.set(turnId, () => { dropped = true; held.drop(); });
+    const line = waitLine(gpuShare.state().generating?.kind ?? "image");
+    // After the window has the turn's id: an invoke's answer and a frame travel apart.
+    const said = setTimeout(() => {
+      if (dropped) return;
+      client.emit("chat", {
+        turnId, kind: "provider_waiting",
+        payload: { attempt: 1, waited_ms: 0, max_wait_ms: 0, next_retry_ms: 0, reason: line, cause: { kind: "studio_busy", line } },
+      });
+    }, 300);
+    console.error(`[desktop] studio: a chat turn waits for the local generation (the chat model is paused for it)`);
+    void held.wait.then(async () => {
+      clearTimeout(said);
+      heldForStudio.delete(turnId);
+      if (dropped) return;
+      client.emit("chat", { turnId, kind: "provider_recovered", payload: { waited_ms: Date.now() - queuedAt, studio: true } });
+      const res = await startTurn(turnId, clean, sessionId, queuedAt, true);
+      if (!res.ok) client.emit("chat", { turnId, kind: "error", error: res.error });
+    });
     return { ok: true, turnId };
-  });
+  }
 
-  ipcMain.handle("agent:cancel", (_event, turnId: unknown) =>
-    typeof turnId === "string" ? client.cancel(turnId) : false,
-  );
+  ipcMain.handle("agent:cancel", (_event, turnId: unknown) => {
+    if (typeof turnId !== "string") return false;
+    // A turn still held for Studio never reached the agent: it ends here.
+    const drop = heldForStudio.get(turnId);
+    if (drop) {
+      heldForStudio.delete(turnId);
+      drop();
+      client.emit("chat", { turnId, kind: "aborted", error: null });
+      return true;
+    }
+    return client.cancel(turnId);
+  });
 
   ipcMain.handle("agent:approve", async (_event, payload: unknown) => {
     const { approvalId, decision, reason } = payload as {
@@ -2167,6 +2252,7 @@ function wireIpc(client: AgentClient): void {
      OpenRouter key goes to Core over loopback only, never to the window. */
   const studio = wireStudioIpc({
     window: () => win,
+    gpu: gpuShare,
     stateDir: DESKTOP_STATE_DIR,
     dataDir: managedDataDirNow,
     coreVersion: BUNDLED_CORE_VERSION,
@@ -2732,6 +2818,16 @@ function wireIpc(client: AgentClient): void {
      once instead of after its next two looks. Its notices go to the window
      (the waiting strip, Settings › Models) and its lines to the agent log. */
   client.on("chat", (event) => onAgentFrame(event));
+  /* Studio (studio-gpu-share.ts): a turn already running when a local
+     generation paused the chat model waits on the agent's side. Once the
+     generation is over, its wait brings the model back now rather than after
+     the pause a run of images gets; during the generation it changes nothing. */
+  client.on("chat", (ev: { kind?: unknown; payload?: unknown }) => {
+    if (ev?.kind !== "provider_waiting" || ((ev.payload ?? {}) as { cause?: { kind?: unknown } }).cause?.kind === "studio_busy") return;
+    const st = gpuShare.state();
+    if (st.chat !== "yielded" || st.generating || !chatRouteIsLocal()) return;
+    void gpuShare.chatTurn().then((h) => h?.drop()).catch(() => undefined);
+  });
   hostDaemonWatch({
     notify: (notice) => send("app:daemonWatch", notice),
     say: (line, said) => {
