@@ -1353,7 +1353,7 @@ const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', 
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 /* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
    server's log shown there — open or not, its last read, the poll's timer. */
-const DIAG = { copy:[], logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
+const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
@@ -1462,7 +1462,7 @@ const LLMHF = {open:false, step:'ref', reference:'', busy:false, error:null, rep
 /* The Hugging Face mirror field (hf-mirror.js), one state for its two
    places: Settings › Models' Hugging Face card and the wizard's step.
    `state` is main's answer (main/hf-mirror.ts); `draft` what is typed. */
-const HFM = {state:null, draft:'', error:null, saving:false, saved:false, loading:false, failed:false, edited:false};
+const HFM = {state:null, draft:'', error:null, saving:false, saved:false, loading:false, failed:false, edited:false, open:null};
 const HF_PICK_WINDOW = 6;   // hf-pick-list.tsx HF_PICK_WINDOW
 const HF_REF_TITLE_TAIL = '(it has to be a GGUF build)';               // hf-reference-editor.tsx HF_REF_TITLE_LINE
 const HF_REF_EXAMPLES_LINE = 'unsloth/Qwen3.5-4B-GGUF · https://huggingface.co/owner/repo · a link to one .gguf'; // :11-12
@@ -4347,8 +4347,11 @@ function palRows() {
     return 9;
   };
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
-  // cross-entity
-  SESSIONS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
+  // cross-entity. ATO-453: chats used to stop at three title matches, so with many
+  // similar chats the one you wanted never showed. Now up to 20 (the list scrolls),
+  // ranked like the commands above; ties keep the agent's order, most recent first.
+  SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
+    .sort((a, b) => a.k - b.k || a.i - b.i).slice(0, 20).map((x) => x.s)
     .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
@@ -5433,25 +5436,30 @@ function diagnosticsPane() {
       ? [['Agent process', 'pid ' + SET.health.pid + ' · ' + (SET.health.busyTurns === 0 ? 'idle' : SET.health.busyTurns + (SET.health.busyTurns === 1 ? ' turn running' : ' turns running')),
           'Turns running in the agent right now, from any chat, task or bot']]
       : []),
-    ['State folder', short(sd), sd],
+    ['State folder', short(sd), sd, sd],
     // Chat review (Д29): written as the chat and Settings › General write it.
-    ['Working folder', workingDirLabel(wd), wd],
+    ['Working folder', workingDirLabel(wd), wd, wd],
     ['Local model server', llama],
   ];
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
-  DIAG.copy = rows.map(([k, v]) => ({label:k, value:v || ''}));
+  // ATO-723: `open` is the folder its Show in Finder button hands to BR.openPath.
+  DIAG.copy = rows.map(([k, v, , open]) => ({label:k, value:v || '', open:open || ''}));
+  DIAG.agentLog = diagAgentLogPath(sd);
+  const reveal = fileManagerName();
   diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
     + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
     + '<div class="tk-list set-setlist set-diaglist">'
       + rows.map(([k, v, full], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
         + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
+        + (rows[i][3] && BR && BR.openPath ? '<button class="iconbtn sm set-copybtn set-openbtn" data-act="diag:open:' + i + '" title="' + esc(reveal) + '" aria-label="' + esc(reveal + ': ' + k) + '">' + ic('folder') + '</button>' : '')
         + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
     + '</div>'
     + '<div class="set-diagacts">'
       + '<button class="btn btn-p sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
       + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
+      + '<button class="btn btn-s sm" data-act="diag:agentlog"' + (DIAG.agentLog && BR && BR.openPath ? '' : ' disabled') + ' title="' + esc(DIAG.agentLog || 'The state folder is not known yet') + '">' + ic('log') + 'Open agent log</button>'
     + '</div>'
     + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us.</p>'
     + diagLogHTML()
@@ -5479,7 +5487,8 @@ function diagLogHTML() {
     const meta = l && typeof l.size === 'number' ? diagBytes(l.size) + (l.lastReadAt ? ' · read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') : '';
     html += (meta ? '<span class="set-cap">' + esc(meta) + '</span>' : '')
       + '<button class="iconbtn sm" data-act="diag:logRefresh" title="Refresh" aria-label="Refresh the log">' + ic('refresh') + '</button>'
-      + '<button class="btn btn-g xs" data-act="diag:copylog"' + (l && l.text ? '' : ' disabled') + '>' + ic('copy') + 'Copy</button>';
+      + '<button class="btn btn-g xs" data-act="diag:copylog"' + (l && l.text ? '' : ' disabled') + '>' + ic('copy') + 'Copy</button>'
+      + '<button class="btn btn-g xs" data-act="diag:openlog"' + (l && l.path && !l.external && BR && BR.openPath ? '' : ' disabled') + '>' + ic('open') + 'Open log file</button>';
   }
   html += '</div>';
   if (open) {
@@ -5545,7 +5554,30 @@ function diagEnsureLogPoll() {
     diagLogRefresh();
   }, 2000);
 }
+/* ATO-723: the agent's own log, where main writes it (agentLogPath() in
+   main.ts: agent.log in the state folder), joined with this platform's
+   separator. '' while the state folder is not known. */
+function diagAgentLogPath(sd) {
+  if (!sd) return '';
+  const sep = PLATFORM === 'win32' ? '\\' : '/';
+  return sd.replace(/[\\/]+$/, '') + sep + 'agent.log';
+}
+/* ATO-723: a folder or log opened from Diagnostics, with main's own words
+   when it cannot (a log not written yet, a folder that is gone). */
+async function diagOpen(path, what) {
+  if (!path || !BR || !BR.openPath) return;
+  let res = null;
+  try { res = await BR.openPath(path); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  if (!res || !res.ok) toast('Could not open ' + what, (res && res.error) || path, 'bad');
+}
 function diagAct(what) {
+  if (what.startsWith('open:')) {
+    const row = (DIAG.copy || [])[Number(what.slice(5))];
+    if (row && row.open) diagOpen(row.open, row.label.toLowerCase());
+    return;
+  }
+  if (what === 'agentlog') { diagOpen(DIAG.agentLog, 'the agent log'); return; }
+  if (what === 'openlog') { if (DIAG.log && DIAG.log.path && !DIAG.log.external) diagOpen(DIAG.log.path, 'the model server log'); return; }
   // A repaint of the pane, not of the window: the focus stays on the toggle.
   if (what === 'log') { DIAG.logOpen = !DIAG.logOpen; DIAG.statusAsked = false; if (!DIAG.logOpen) diagLogStop(); diagRepaint(); return; }
   if (what === 'logRefresh') { DIAG.statusAsked = false; diagLogRefresh(true); return; }
@@ -6824,6 +6856,9 @@ document.addEventListener('click', (e) => {
     voiceToggle();
     return;
   }
+  // ATO-666: Copy in a code block's header copies that block's code, as written.
+  const mdc = t.closest('[data-mdcopy]');
+  if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\n$/, '') : '', 'Code copied'); return; }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -12655,7 +12690,7 @@ function obHfRefHTML() {
     + obInlineErrHTML()
     + (OB.busy ? '<div class="ob-explain ob-help">' + esc('asking ' + hfMirrorHost(HFM) + '…') + '</div>' : '')
     + '<div class="ob-explain ob-examples">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
-    + hfMirrorHTML(HFM, {esc, ic}, {input:'ob-hf-mirror', save:'data-obact="hf:mirror"'});
+    + hfMirrorFold(hfMirrorHTML(HFM, {esc, ic}, {input:'ob-hf-mirror', save:'data-obact="hf:mirror"'}));
 }
 
 /** hf-pick-list.tsx, ported column for column. */
@@ -14244,7 +14279,9 @@ async function obHfLook() {
     /* huggingface.ts points a blocked huggingface.co at Settings › Models;
        on this step the mirror field is right under the error instead. */
     const said = (res && res.error) || 'the lookup failed';
-    obDispatch({type:'onboarding_error_set', error: said.replace('set a mirror in Settings › Models', 'set a mirror below')});
+    // The mirror field is folded under "Advanced" (hf-mirror.js); unfold it for this.
+    if (said.includes('set a mirror in Settings › Models')) HFM.open = true;
+    obDispatch({type:'onboarding_error_set', error: said.replace('set a mirror in Settings › Models', 'set a mirror under Advanced below')});
     return;
   }
   obDispatch({type:'onboarding_hf_repo_resolved', repo: res.repo});
@@ -14907,7 +14944,8 @@ function obKeydown(e) {
      ring. The browser's own activation fires a click, which lands in the
      same handler a mouse click lands in, so there is still exactly one
      path from a control to its verb. */
-  if ((e.key === 'Enter' || e.key === ' ') && target.tagName === 'BUTTON'
+  // SUMMARY: the mirror's "Advanced" fold (ATO-500) opens on Enter too.
+  if ((e.key === 'Enter' || e.key === ' ') && (target.tagName === 'BUTTON' || target.tagName === 'SUMMARY')
       && target.closest && target.closest('#onboarding')) {
     e.stopPropagation();
     return;
@@ -19532,9 +19570,19 @@ function renderProse(text) {
     const h = md.held[+i];
     const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
-    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h;
+    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
   });
   return html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]);
+}
+/** ATO-666: a fenced block gets a header with its language (the fence's
+    `data-lang`, when the fence named one) and a Copy button. The header sits
+    outside the <pre>, so the block's text is still only the code. One line of
+    markup: the reply is pre-wrap. */
+function codeBlockFrame(pre) {
+  const lang = (/^<pre class="mdpre"[^>]*\sdata-lang="([^"]*)"/.exec(pre) || [])[1] || '';
+  return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>'
+    + '<button class="mdcopy" data-mdcopy title="Copy code" aria-label="Copy code">' + ic('copy') + '<span>Copy</span></button></div>'
+    + pre + '</div>';
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {
@@ -24150,6 +24198,14 @@ function llmExternalHTML() {
    each change carries the restart line. Copy condensed from the schema's own
    comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
 const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
+/* A budget choice in plain words, for its tooltip (about 0.75 words a token).
+   ATO-498: no fixed number for the llama.cpp grammar cap here; today it is
+   499 tokens (MAX_REASONING_BUDGET_TOKENS, #600), and ATO-607 may lift it. */
+function llmTuneBudgetHint(n) {
+  if (n === 0) return 'No limit: the model thinks as long as it wants';
+  const words = Math.round(n * 0.75 / 25) * 25;
+  return 'About ' + words.toLocaleString('en-US') + ' words of thinking';
+}
 /* One knob: a title and one help line each, the choice on the right. */
 function llmTuneRowHTML(title, help, control) {
   return '<div class="llm-tune-row"><span class="llm-tune-body"><span class="llm-tune-t">' + esc(title) + '</span>'
@@ -24157,7 +24213,8 @@ function llmTuneRowHTML(title, help, control) {
 }
 function llmTuneSegHTML(key, cur, opts, label) {
   return '<span class="tk-seg llm-tuneseg" role="group" aria-label="' + esc(label) + '">'
-    + opts.map(([v, txt]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
+    + opts.map(([v, txt, tip]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
+      + (tip ? ' title="' + esc(tip) + '"' : '')
       + (LLMP.tune.busy ? ' disabled' : '') + '>' + esc(txt) + '</button>').join('') + '</span>';
 }
 /* What the last knob write said, under the card it was made in. */
@@ -24186,8 +24243,9 @@ function llmTuneHTML() {
     + llmTuneRowHTML('Thinking', 'Auto keeps the model’s own default. Off asks a reasoning model to answer without thinking first.',
         llmTuneSegHTML('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
     // Д33: the default is the choice lit when nothing is set; the help line no longer spells it out.
-    + llmTuneRowHTML('Thinking budget', 'Tokens a reasoning model may think before it calls a tool. Its final answer is never cut.',
-        llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n)]), 'Thinking budget in tokens'))
+    // ATO-498: plain words first, tokens second; one setting for Local models and Custom server.
+    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (500 tokens is about 375 words). llama.cpp can stop it sooner than the number you pick. One setting for Local models and Custom server. This limit never cuts the final answer.',
+        llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n), llmTuneBudgetHint(n)]), 'Thinking budget in tokens'))
     + '</div>'
     + (T.where !== 'adv' ? llmTuneNoteHTML() : '')
     + '</section>';
@@ -24385,6 +24443,25 @@ function hfMirrorTyped(value, repaint, field) {
   const n = document.getElementById(field);
   if (n && document.activeElement !== n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
 }
+/* ATO-500: few people need a mirror, so the field (hf-mirror.js) sits
+   folded under "Advanced" unless it holds something: a saved mirror, an
+   HF_ENDPOINT override, typed text, "Saved.", a refusal or a save in
+   flight. `HFM.open` is a click on the summary and wins over the rest,
+   except a refusal or a save in flight. It is remembered so a repaint does
+   not fold or unfold it; `toggle` does not bubble, hence the capture. */
+function hfMirrorOpen(st) {
+  if (st.error || st.saving) return true;
+  if (typeof st.open === 'boolean') return st.open;
+  const s = st.state;
+  return !!(st.saved || (s && (s.configured || s.override)) || (typeof st.draft === 'string' && st.draft.trim()));
+}
+function hfMirrorFold(html) {
+  return '<details class="hfm-fold"' + (hfMirrorOpen(HFM) ? ' open' : '') + '><summary class="hfm-sum">Advanced</summary>' + html + '</details>';
+}
+document.addEventListener('toggle', (e) => {
+  const t = e.target;
+  if (t && t.classList && t.classList.contains('hfm-fold')) HFM.open = t.open;
+}, true);
 function llmHfMirrorRepaint() { llmRepaint(); }
 function obHfMirrorRepaint() { if (OB.open) render(); }
 
@@ -24427,6 +24504,8 @@ async function llmHfResolve(raw) {
     // Verbatim. huggingface-ref.ts:77-78 and huggingface-api.ts:45-58 are
     // written for this screen.
     LLMHF.error = (res && res.error) || 'the lookup failed';
+    // A blocked huggingface.co points at the mirror: unfold it (hf-mirror.js).
+    if (/set a mirror/.test(LLMHF.error)) HFM.open = true;
     llmRepaint(); llmHfFocus(); return;
   }
   LLMHF.repo = res.repo; LLMHF.cursor = 0; LLMHF.step = 'pick'; LLMHF.error = null;
@@ -24469,7 +24548,7 @@ function llmHfHTML() {
           : '<button class="btn btn-g sm" data-act="llm:hf:close">Back to the list</button>'
             + '<button class="btn btn-p sm" data-act="llm:hf:look">Look it up</button>')
       + '</div>'
-      + hfMirrorHTML(HFM, {esc, ic}, {input:'llm-hf-mirror', save:'data-act="llm:hf:mirror"'})
+      + hfMirrorFold(hfMirrorHTML(HFM, {esc, ic}, {input:'llm-hf-mirror', save:'data-act="llm:hf:mirror"'}))
     + '</div>'
     + (busy ? tuiHints([['esc cancel', 'llm:hf:cancel']])
             : tuiHints([['enter look it up', 'llm:hf:look'], ['ctrl+l clear', 'llm:hf:clear'], ['esc back to the list', 'llm:hf:close']]))
@@ -25336,6 +25415,11 @@ function llmKey(e, k, inText) {
     if (k === 'l' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!LLMHF.busy) llmAct('hf:clear'); return true; }
     return false;
   }
+  /* The mirror's "Advanced" fold (ATO-500): Enter or Space on its focused
+     summary opens or closes it natively. Taken here without preventDefault,
+     so the branch below does not swallow it or run a lookup instead. */
+  if (LLMHF.open && (k === 'Enter' || k === ' ') && !mod && e.target.tagName === 'SUMMARY'
+      && e.target.closest && e.target.closest('.hfm-fold')) return true;
   if (inText || mod) return false;
   if (LLMP.confirm) {
     if (k === 'y') { e.preventDefault(); llmAct('confirm'); return true; }
