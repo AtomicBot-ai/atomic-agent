@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { runCommand as RunCommandType } from "../../../../sandbox/command-runner.js";
 import {
@@ -7,6 +7,7 @@ import {
   parseExaApiJson,
   parseExaTextResults,
 } from "./exa-provider.js";
+import { WebSearchRateLimitedError } from "../web-search-errors.js";
 
 const MARKER = "__ATOMIC_WEB_SEARCH_META__";
 
@@ -95,6 +96,87 @@ describe("createExaProvider", () => {
       if (previous === undefined) delete process.env.EXA_API_KEY;
       else process.env.EXA_API_KEY = previous;
     }
+  });
+});
+
+/**
+ * ATO-327: the keyless tier may report its limit inside an HTTP 200, as a
+ * JSON-RPC `error` or an `isError` result. It must read as a rate limit,
+ * so the orchestrator parks Exa and asks for a key.
+ */
+describe("createExaProvider keyless limit inside a 200", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function searchKeyless(body: string): Promise<unknown> {
+    vi.stubEnv("EXA_API_KEY", "");
+    const runCommand = (async (_cmd: string, args: string[]) => ({
+      command: "curl",
+      args,
+      exitCode: 0,
+      signal: null,
+      stdout: curlStdout(body),
+      stderr: "",
+      durationMs: 1,
+      timedOut: false,
+      truncated: false,
+    })) as unknown as typeof RunCommandType;
+    const provider = createExaProvider(
+      {
+        endpoint: "https://mcp.exa.ai/mcp",
+        apiEndpoint: "https://api.exa.ai/search",
+        apiKeyEnv: "EXA_API_KEY",
+      },
+      { runCommand, lookup: publicLookup },
+    );
+    return provider
+      .search({
+        query: "q",
+        maxResults: 3,
+        timeoutMs: 10_000,
+        cwd: "/tmp",
+        signal: new AbortController().signal,
+      })
+      .catch((err: unknown) => err);
+  }
+
+  it("reads a JSON-RPC rate-limit error as a rate limit", async () => {
+    const err = await searchKeyless(
+      JSON.stringify({
+        error: {
+          message:
+            "Rate limit exceeded. Create API key at https://dashboard.exa.ai/api-keys",
+        },
+      }),
+    );
+    expect(err).toBeInstanceOf(WebSearchRateLimitedError);
+  });
+
+  it("reads an isError result about the limit as a rate limit", async () => {
+    const err = await searchKeyless(
+      JSON.stringify({
+        result: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Free tier limit hit. Create API key at https://dashboard.exa.ai/api-keys",
+            },
+          ],
+        },
+      }),
+    );
+    expect(err).toBeInstanceOf(WebSearchRateLimitedError);
+  });
+
+  it("leaves any other error a plain failure", async () => {
+    const err = await searchKeyless(
+      JSON.stringify({ error: { message: "Invalid params" } }),
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(WebSearchRateLimitedError);
+    expect((err as Error).message).toBe("Invalid params");
   });
 });
 

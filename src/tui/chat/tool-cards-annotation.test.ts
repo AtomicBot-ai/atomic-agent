@@ -79,6 +79,16 @@ describe("toolCardsAnnotation", () => {
     );
   });
 
+  it("names image generations on their own", () => {
+    expect(
+      toolCardsAnnotation([
+        card("image.generate", { prompt: "a fox" }),
+        card("image.generate", { prompt: "a fox", count: 2 }),
+        card("tasks.list"),
+      ]),
+    ).toBe("2 image generations, 1 other tool call");
+  });
+
   it("counts only successful calls as work; failures are a separate count", () => {
     expect(
       toolCardsAnnotation([

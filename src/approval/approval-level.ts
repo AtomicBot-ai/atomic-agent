@@ -58,6 +58,12 @@ export type ApprovalCategory =
    * covers the reads that follow under it.
    */
   | "fs_read_outside"
+  /**
+   * A generation billed to the operator's cloud account (`image.generate`
+   * on OpenRouter). Level 3 beside `http`: the lowest two levels ask
+   * before money is spent; a local generation never asks.
+   */
+  | "paid_generation"
   | "other";
 
 /**
@@ -69,7 +75,7 @@ export type ApprovalCategory =
  *    session working directory (realpath containment).
  *  - level 3 (home): file writes anywhere under the home directory,
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
- *    is not part of the gate and stays on).
+ *    is not part of the gate and stays on), paid cloud generation.
  *  - level 4 (operator): guarded shell commands, skill scripts,
  *    process kills, and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
@@ -92,6 +98,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fs_write_home: 3,
   fs_trash: 3,
   http: 3,
+  paid_generation: 3,
   shell: 4,
   script: 4,
   proc_kill: 4,
@@ -169,6 +176,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // who would otherwise set `agent.readScope: unrestricted`; the
   // narrower answer, one directory, is the prompt's plain `y`.
   fs_read_outside: true,
+  // "Stop asking about paid images this session" is the operator's call.
+  paid_generation: true,
   other: true,
 };
 
@@ -198,6 +207,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   trust_config: "agent trust config",
   email: "e-mail send",
   fs_read_outside: "read outside the working directory",
+  paid_generation: "paid generation · cloud",
   other: "uncategorised",
 };
 

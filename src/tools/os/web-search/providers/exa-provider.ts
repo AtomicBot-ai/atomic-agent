@@ -1,5 +1,6 @@
 import { assertProviderStatus } from "./assert-provider-status.js";
 import { searchHttp } from "../transport/search-http.js";
+import { WebSearchRateLimitedError } from "../web-search-errors.js";
 import type {
   WebSearchHttpDeps,
   WebSearchProvider,
@@ -36,6 +37,9 @@ interface ExaApiResult {
   published_date?: unknown;
 }
 
+/** How the keyless MCP tier words its quota running out. */
+const KEYLESS_LIMIT_TEXT = /rate limit|create api key/i;
+
 export function createExaProvider(
   config: ExaProviderConfig,
   deps: WebSearchHttpDeps = {},
@@ -71,8 +75,9 @@ export function createExaProvider(
         return parseExaApiJson(response.body, options.maxResults);
       }
 
-      // Keyless MCP tier. The search chain no longer reaches it: without a
-      // key the orchestrator skips Exa (ATO-120). Kept for direct callers.
+      // Keyless MCP tier: the free path the search chain takes without a
+      // key (ATO-327). Its quota runs out fast; a 429 here becomes a
+      // `WebSearchRateLimitedError`, which parks Exa and asks for a key.
       const response = await searchHttp({
         url: config.endpoint,
         method: "POST",
@@ -99,7 +104,23 @@ export function createExaProvider(
         lookup: deps.lookup,
       });
       assertProviderStatus(response, "exa", "Exa");
-      const text = extractExaText(response.body);
+      let text: string;
+      try {
+        text = extractExaText(response.body);
+      } catch (err) {
+        // The free tier can also report its limit inside a 200: a JSON-RPC
+        // `error` or an `isError` result saying so. Typed as a 429, so it
+        // parks Exa and asks for a key like the HTTP status does.
+        const message = err instanceof Error ? err.message : String(err);
+        if (KEYLESS_LIMIT_TEXT.test(message)) {
+          throw new WebSearchRateLimitedError(
+            "exa",
+            null,
+            `Exa free limit reached: ${message}`,
+          );
+        }
+        throw err;
+      }
       return parseExaTextResults(text, options.maxResults);
     },
   };
@@ -141,13 +162,16 @@ export function extractExaText(body: string): string {
         : "Exa returned an error",
     );
   }
-  if (parsed.result?.isError) {
-    throw new Error("Exa returned an error result");
-  }
   const content = parsed.result?.content ?? [];
   const firstText = content.find(
     (entry) => entry.type === "text" && typeof entry.text === "string",
   );
+  if (parsed.result?.isError) {
+    // Keep the result's own words: they say why (a rate limit, say).
+    const detail =
+      typeof firstText?.text === "string" ? `: ${firstText.text.trim().slice(0, 200)}` : "";
+    throw new Error(`Exa returned an error result${detail}`);
+  }
   if (!firstText || typeof firstText.text !== "string") return "";
   return firstText.text;
 }

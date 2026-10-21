@@ -22,6 +22,7 @@ const ALL_OPEN: ToolGateConfig = {
   github: { connected: true },
   email: { available: true },
   fusion: { enabled: true },
+  image: { available: true },
 };
 
 function nameSet(
@@ -119,6 +120,16 @@ describe("filterToolDescriptorsByConfig", () => {
     expect(nameSet(filtered).has("memory.procedures.recall")).toBe(false);
   });
 
+  it("drops image.generate without an OpenRouter key and keeps it with one", () => {
+    const without = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      image: { available: false },
+    });
+    expect(nameSet(without).has("image.generate")).toBe(false);
+    expect(nameSet(without).has("vision.describe")).toBe(true);
+    expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN)).has("image.generate")).toBe(true);
+  });
+
   it("drops every github.* descriptor when no token is in the hub", () => {
     // The tools stay registered and would answer "GitHub is not
     // connected"; a catalog entry for them only invites the model to try.
@@ -191,6 +202,7 @@ describe("filterToolDescriptorsByConfig", () => {
       github: { connected: false },
       email: { available: false },
       fusion: { enabled: false },
+      image: { available: false },
     });
     const names = nameSet(filtered);
     const allGated = [
@@ -204,6 +216,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.tasks,
       ...GATED_TOOL_NAMES.mcp,
       ...GATED_TOOL_NAMES.fusion,
+      ...GATED_TOOL_NAMES.image,
     ];
     for (const dropped of allGated) {
       expect(names.has(dropped)).toBe(false);
@@ -225,6 +238,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.tasks,
       ...GATED_TOOL_NAMES.mcp,
       ...GATED_TOOL_NAMES.fusion,
+      ...GATED_TOOL_NAMES.image,
     ];
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);

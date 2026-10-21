@@ -119,6 +119,7 @@ type BucketId =
   | "github"
   | "web"
   | "memory"
+  | "image"
   | "other";
 
 interface Bucket {
@@ -140,6 +141,7 @@ const BUCKET_ORDER: readonly BucketId[] = [
   "github",
   "web",
   "memory",
+  "image",
   "other",
 ];
 
@@ -185,6 +187,7 @@ function bucketOf(tool: string): BucketId {
     return "web";
   }
   if (tool.startsWith("memory.")) return "memory";
+  if (tool === "image.generate") return "image";
   return "other";
 }
 
@@ -291,5 +294,6 @@ const PHRASES: Record<BucketId, (n: number) => string> = {
   github: (n) => plural(n, "GitHub step", "GitHub steps"),
   web: (n) => plural(n, "web step", "web steps"),
   memory: (n) => plural(n, "memory call", "memory calls"),
+  image: (n) => plural(n, "image generation", "image generations"),
   other: (n) => plural(n, "other tool call", "other tool calls"),
 };

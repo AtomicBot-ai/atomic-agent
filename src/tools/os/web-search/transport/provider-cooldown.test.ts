@@ -66,6 +66,15 @@ describe("createProviderCooldown", () => {
     expect(cooldown.park("exa", T0, null)).toBe(60_000);
   });
 
+  it("does not carry strikes from one tier into the other (ATO-327)", () => {
+    // The free tier's escalation is not the keyed API's history.
+    const cooldown = createProviderCooldown();
+    cooldown.park("exa", T0, null, "keyless");
+    cooldown.park("exa", T0, null, "keyless");
+    expect(cooldown.park("exa", T0, null, "keyed")).toBe(60_000);
+    expect(cooldown.tagOf("exa")).toBe("keyed");
+  });
+
   it("honours a longer Retry-After than the ladder would pick", () => {
     const cooldown = createProviderCooldown();
     expect(cooldown.park("exa", T0, 300_000)).toBe(300_000);
@@ -177,6 +186,34 @@ describe("createPersistentProviderCooldown (#256)", () => {
       now: () => T0,
     });
     expect(second.isParked("exa", T0)).toBe(true);
+  });
+
+  it("keeps the tier a park was earned on across a restart (ATO-327)", () => {
+    const first = createPersistentProviderCooldown({ filePath, now: () => T0 });
+    first.park("exa", T0, null, "keyless");
+    first.park("duckduckgo", T0, null);
+
+    const second = createPersistentProviderCooldown({
+      filePath,
+      now: () => T0 + 1_000,
+    });
+    expect(second.tagOf("exa")).toBe("keyless");
+    expect(second.tagOf("duckduckgo")).toBeUndefined();
+    expect(second.isParked("exa", T0 + 1_000)).toBe(true);
+  });
+
+  it("reads a file written before tags existed as untagged parks", () => {
+    writeFileSync(
+      filePath,
+      JSON.stringify({ exa: { until: T0 + 60_000, strikes: 1 } }),
+      "utf8",
+    );
+    const cooldown = createPersistentProviderCooldown({
+      filePath,
+      now: () => T0,
+    });
+    expect(cooldown.isParked("exa", T0)).toBe(true);
+    expect(cooldown.tagOf("exa")).toBeUndefined();
   });
 
   it("skips malformed entries without dropping the valid ones", () => {
