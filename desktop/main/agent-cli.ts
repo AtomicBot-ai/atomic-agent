@@ -25,6 +25,7 @@ export { managedDataDir } from "./local-llama-key.js";
 import { curatedMeta } from "./model-catalog.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
+import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
 
 const run = promisify(execFile);
 
@@ -1256,6 +1257,13 @@ export async function providerModels(
   opts: { live?: boolean } = {},
 ): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string; stale?: boolean } & ModelListFailure> {
   if (!/^[\w.-]{1,48}$/.test(providerId)) return { ok: false, error: "bad provider id" };
+  // ATO-844: a subscription CLI has no endpoint to list; its models are known here.
+  if (kind === SUBSCRIPTION_CLI_KIND) {
+    const read = await readWholeConfig().catch(() => null);
+    const entry = read?.config?.llm?.providers?.find((p) => p.id === providerId);
+    if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
+    return { ok: true, models: subscriptionCliModels(entry) };
+  }
   const bundled = kind === "openrouter" || kind === "aimlapi";
   const live = opts.live === true;
   const limit = live ? String(LIVE_LIST_LIMIT) : "200";

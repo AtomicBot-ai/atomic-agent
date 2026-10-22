@@ -108,6 +108,8 @@
 /* ATO-161: the request for a key reads as a sentence in ink, not as a failure. */
 .selpop .ob-help.wiz-ask{color:var(--ink)}
 .selpop .ob-help.wiz-envnote{font-size:12px}
+/* ATO-844: the subscription step's per-token billing warning. */
+.selpop .ob-help.tk-help--warn{color:var(--amber-text)}
 
 /* Inside the popover the shell's own body is the scroller, so the list must
    not add a second one — two nested scrollers is how the footer ends up

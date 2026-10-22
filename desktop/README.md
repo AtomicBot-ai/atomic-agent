@@ -450,8 +450,15 @@ Honestly degraded, and labelled as such in the UI:
   desktop caches per connection and falls back to the trace projection.
 - **Session grants.** The HTTP API implements `allow-once` and `deny` only, so
   the card offers exactly those.
-- **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are not in the
-  desktop wizard: their config shape is not one this client writes.
+- **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are in Add
+  provider with the TUI's labels. They have no key screen: the step says the
+  signed-in CLI runs on the user's plan, warns when `ANTHROPIC_API_KEY` /
+  `OPENAI_API_KEY` is set (the CLI may then bill per token), and saves the
+  entry the TUI writes (`kind: "subscription-cli"`, `subscriptionCli.cli`,
+  Claude's default `sonnet`, no model for Codex). Their model list never goes
+  to the network: main answers it from `main/subscription-cli-models.ts`, a
+  copy of the agent's Claude list. Whether the CLI is installed and signed in
+  is not checked here yet.
 - **Settings is the TUI menu.** The bottom-left gear (and ⌘ , and Escape with
   nothing else on screen) opens the menu tree from
   `src/tui/menu/menu-registry.ts` with the Manage tabs on the right — minus the
