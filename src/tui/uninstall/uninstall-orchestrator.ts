@@ -1,9 +1,12 @@
 import {
   DESKTOP_SHARED_WARNING,
+  desktopDataKeptNotice,
   desktopWarningApplies,
   formatBytes,
+  keepDesktopData,
   legacyDesktopDirNotice,
   pathEntryToRemove,
+  plansToDeleteDesktopData,
   resolveUninstallPlan,
   runUninstall,
   type ResolvedUninstallPlan,
@@ -26,6 +29,9 @@ export function toPreview(plan: ResolvedUninstallPlan): UninstallPreview {
     total: formatBytes(plan.measured.totalBytes),
     devCheckout: plan.devCheckout,
     leftInPlace: legacyDir ? [legacyDesktopDirNotice(legacyDir)] : [],
+    ...(plansToDeleteDesktopData(plan)
+      ? { desktopSharedDir: plan.desktop.stateDir }
+      : {}),
   };
 }
 
@@ -59,6 +65,14 @@ export async function loadUninstallPreview(
 
 export interface PerformUninstallOptions {
   readonly stateDir: string;
+  /**
+   * Keep a state directory the desktop app shares and remove only the
+   * terminal program. False only when the operator answered "Delete
+   * too" on the ladder's desktop question; the ladder sends true when
+   * the question was never asked, so a desktop app first seen by this
+   * fresh plan still keeps its folder.
+   */
+  readonly keepDesktopData?: boolean;
   readonly write?: (text: string) => void;
 }
 
@@ -91,6 +105,14 @@ export async function performUninstall(
       `uninstall failed: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     return 1;
+  }
+  if (options.keepDesktopData && plansToDeleteDesktopData(plan)) {
+    write(`  ${desktopDataKeptNotice(plan.desktop.stateDir)}\n`);
+    plan = keepDesktopData(plan);
+    if (plan.targets.length === 0) {
+      write("nothing was removed\n");
+      return 0;
+    }
   }
   const result = await runUninstall({
     targets: plan.targets,

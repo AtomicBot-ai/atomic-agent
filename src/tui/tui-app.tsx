@@ -82,6 +82,8 @@ import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionDeleteModal } from "./session-rail/session-delete-modal.js";
 import { UninstallModal } from "./uninstall/uninstall-modal.js";
+import { answerDesktopQuestion } from "./uninstall/uninstall-key-bindings.js";
+import type { UninstallChoice } from "./uninstall/uninstall-state.js";
 import { SessionPicker } from "./session-rail/session-picker.js";
 import { ThemePicker } from "./theme-picker/theme-picker.js";
 import {
@@ -237,8 +239,11 @@ export interface TuiAppCallbacks {
    * first-run stamps and open the flow. Only called on an idle session.
    */
   onOnboardingRerunRequested?(): void;
-  /** The word was typed and Enter pressed. */
-  onUninstallConfirmed?(): void;
+  /**
+   * The word was typed and Enter pressed (and the desktop question
+   * answered, when the desktop app shares the state folder).
+   */
+  onUninstallConfirmed?(choice: UninstallChoice): void;
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
@@ -2256,6 +2261,19 @@ export function TuiApp({
                       }
                       onFocus={(cursor) =>
                         dispatch({ type: "uninstall_cursor_set", cursor })
+                      }
+                      onDesktopFocus={(cursor) =>
+                        dispatch({
+                          type: "uninstall_desktop_cursor_set",
+                          cursor,
+                        })
+                      }
+                      onDesktopAnswer={(answer) =>
+                        answerDesktopQuestion(answer, {
+                          state,
+                          dispatch,
+                          callbacks,
+                        })
                       }
                     />
                   ) : null}

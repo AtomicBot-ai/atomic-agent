@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DESKTOP_DATA_QUESTION,
   DESKTOP_SHARED_WARNING,
   legacyDesktopDirNotice,
   noDesktopSharing,
@@ -39,6 +40,7 @@ function flow(overrides: Partial<UninstallFlowState> = {}): UninstallFlowState {
     preview: PREVIEW,
     typed: "",
     cursor: "cancel",
+    desktopCursor: "keep",
     errors: [],
     ...overrides,
   };
@@ -186,5 +188,37 @@ describe("uninstall modal: desktop app", () => {
   it("has no left-in-place line when there is no old desktop folder", () => {
     const rendered = joined(flow({ preview: toPreview(plan(SHARED)) }));
     expect(rendered).not.toContain("Left in place");
+  });
+
+  it("marks the preview for the desktop question only when the shared folder is deleted", () => {
+    expect(toPreview(plan(SHARED)).desktopSharedDir).toBe("/Users/op/.atomic-agent");
+    expect(
+      toPreview(plan(noDesktopSharing("/Users/op/.atomic-agent"))).desktopSharedDir,
+    ).toBeUndefined();
+    expect(
+      toPreview(plan(SHARED, ["/Users/op/.local/bin/atomic-agent"])).desktopSharedDir,
+    ).toBeUndefined();
+  });
+
+  it("says on the last-chance screen that the desktop question comes next", () => {
+    const shared = joined(flow({ step: "confirm", preview: toPreview(plan(SHARED)) }));
+    expect(shared).toContain("Next you choose");
+    const alone = joined(
+      flow({
+        step: "confirm",
+        preview: toPreview(plan(noDesktopSharing("/Users/op/.atomic-agent"))),
+      }),
+    );
+    expect(alone).not.toContain("Next you choose");
+  });
+
+  it("asks the desktop question with the folder and both outcomes spelled out", () => {
+    const state = flow({ step: "desktop", preview: toPreview(plan(SHARED)) });
+    const rendered = joined(state);
+    expect(rendered).toContain(DESKTOP_DATA_QUESTION);
+    expect(rendered).toContain("/Users/op/.atomic-agent");
+    expect(rendered).toContain("remove only the terminal program");
+    expect(bodyLines(state, 62).every((l) => l.text.length <= 62)).toBe(true);
+    expect(rendered).not.toContain("—");
   });
 });

@@ -213,4 +213,100 @@ describe("uninstall ladder keys", () => {
       expect(dispatch).not.toHaveBeenCalled();
     }
   });
+
+  describe("desktop question", () => {
+    const SHARED_PREVIEW: UninstallPreview = {
+      ...PREVIEW,
+      desktopSharedDir: "/Users/op/.atomic-agent",
+    };
+    function typedOut(): TuiState {
+      let state = createInitialTuiState(fakeSession());
+      for (const action of [
+        { type: "uninstall_opened" },
+        { type: "uninstall_plan_loaded", preview: SHARED_PREVIEW },
+        { type: "uninstall_review_accepted" },
+        { type: "uninstall_typed_set", typed: "uninstall" },
+      ] as UninstallAction[]) {
+        state = reduceUninstallAction(state, action) ?? state;
+      }
+      return state;
+    }
+    function atDesktop(): TuiState {
+      return (
+        reduceUninstallAction(typedOut(), { type: "uninstall_desktop_asked" }) ??
+        typedOut()
+      );
+    }
+
+    it("enter on the complete word asks the desktop question instead of starting", () => {
+      const { dispatch, onUninstallConfirmed } = press(
+        typedOut(),
+        "",
+        emptyKey({ return: true }),
+      );
+      expect(dispatch).toHaveBeenCalledWith({ type: "uninstall_desktop_asked" });
+      expect(dispatch).not.toHaveBeenCalledWith({ type: "uninstall_started" });
+      expect(onUninstallConfirmed).not.toHaveBeenCalled();
+    });
+
+    it("enter right away keeps the desktop data", () => {
+      const { dispatch, onUninstallConfirmed } = press(
+        atDesktop(),
+        "",
+        emptyKey({ return: true }),
+      );
+      expect(dispatch).toHaveBeenCalledWith({ type: "uninstall_started" });
+      expect(onUninstallConfirmed).toHaveBeenCalledWith({ keepDesktopData: true });
+      expect(dispatch).toHaveBeenCalledWith({ type: "quit_requested" });
+    });
+
+    it("takes a deliberate move to reach Delete too", () => {
+      const { dispatch } = press(atDesktop(), "", emptyKey({ rightArrow: true }));
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "uninstall_desktop_cursor_set",
+        cursor: "delete",
+      });
+      let state = atDesktop();
+      state =
+        reduceUninstallAction(state, {
+          type: "uninstall_desktop_cursor_set",
+          cursor: "delete",
+        }) ?? state;
+      const pressed = press(state, "", emptyKey({ return: true }));
+      expect(pressed.onUninstallConfirmed).toHaveBeenCalledWith({
+        keepDesktopData: false,
+      });
+    });
+
+    it("does not treat y or n as answers", () => {
+      for (const input of ["y", "n"]) {
+        const { dispatch, onUninstallConfirmed } = press(atDesktop(), input);
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(onUninstallConfirmed).not.toHaveBeenCalled();
+      }
+    });
+
+    it("esc cancels the whole uninstall from the desktop question", () => {
+      const { dispatch, onUninstallConfirmed } = press(
+        atDesktop(),
+        "",
+        emptyKey({ escape: true }),
+      );
+      expect(dispatch).toHaveBeenCalledWith({ type: "uninstall_closed" });
+      expect(onUninstallConfirmed).not.toHaveBeenCalled();
+    });
+
+    it("keeps desktop data by default when the question was never asked", () => {
+      let state = openAt("confirm");
+      state =
+        reduceUninstallAction(state, {
+          type: "uninstall_typed_set",
+          typed: "uninstall",
+        }) ?? state;
+      const { onUninstallConfirmed } = press(state, "", emptyKey({ return: true }));
+      // Not asked means not agreed: if the post-exit plan finds the
+      // desktop app after all, its folder must survive.
+      expect(onUninstallConfirmed).toHaveBeenCalledWith({ keepDesktopData: true });
+    });
+  });
 });

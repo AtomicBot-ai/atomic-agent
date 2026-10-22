@@ -29,6 +29,7 @@ import {
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 import { handleUninstallKey } from "./uninstall/uninstall-key-bindings.js";
+import type { UninstallChoice } from "./uninstall/uninstall-state.js";
 import { handleIssueReportKey } from "./issue-report/issue-report-key-bindings.js";
 
 /**
@@ -63,8 +64,12 @@ export interface AppKeyCallbacks {
   onApprovalReply?(approvalId: string, message: string): void;
   /** The operator confirmed "delete the session?" for this thread. */
   onSessionDeleteConfirmed?(sessionId: string): void;
-  /** The word was typed and Enter pressed — take the app down and remove it. */
-  onUninstallConfirmed?(): void;
+  /**
+   * The word was typed and Enter pressed (and, when the desktop app
+   * shares the state folder, its separate question answered): take the
+   * app down and remove it.
+   */
+  onUninstallConfirmed?(choice: UninstallChoice): void;
   /** Issue-report popup: a level was chosen (enter or 1-3). */
   onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
   /** Issue-report popup: the operator confirmed sending. */
