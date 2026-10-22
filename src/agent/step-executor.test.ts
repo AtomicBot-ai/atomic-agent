@@ -163,6 +163,14 @@ describe("executeStep batch handling", () => {
       description: "read",
       readonly: true,
       async run(args) {
+        if (args.path === "missing.txt") {
+          return compressToolResult({
+            tool: "os.fs.read",
+            status: "error",
+            output: "missing.txt does not exist\nsecond line",
+            details: { errorName: "FileNotFoundError" },
+          });
+        }
         return compressToolResult({
           tool: "os.fs.read",
           status: "ok",
@@ -209,7 +217,7 @@ describe("executeStep batch handling", () => {
     return registry;
   }
 
-  async function runWithBody(body: string) {
+  async function runWithBody(body: string, logger?: StructuredLogger) {
     const registry = makeRegistry();
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
     const session = createEmptySessionState({
@@ -246,9 +254,47 @@ describe("executeStep batch handling", () => {
         }),
         grammar,
         profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        ...(logger ? { logger } : {}),
       },
     );
   }
+
+  it("logs each call's path and, for a failure, its reason on the tool executed line (ATO-603)", async () => {
+    const records: LogRecord[] = [];
+    const logger = new StructuredLogger({
+      level: "debug",
+      sinks: [(record) => records.push(record)],
+    });
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "missing.txt" } },
+      { tool: "os.fs.read", args: { path: "a" } },
+    ]);
+    await runWithBody(body, logger);
+    const executed = records
+      .filter((r) => r.message === "tool executed")
+      .sort(
+        (x, y) =>
+          Number(x.context?.["batchIndex"]) - Number(y.context?.["batchIndex"]),
+      );
+    expect(executed).toHaveLength(2);
+    expect(executed[0]?.context).toMatchObject({
+      tool: "os.fs.read",
+      status: "error",
+      path: "missing.txt",
+      reason: "missing.txt does not exist",
+      errorName: "FileNotFoundError",
+    });
+    expect(executed[1]?.context).toMatchObject({
+      tool: "os.fs.read",
+      status: "ok",
+      path: "a",
+    });
+    expect(executed[1]?.context).not.toHaveProperty("reason");
+    expect(JSON.stringify(executed)).not.toContain("read a");
+  });
 
   it("executes a 3-call read batch and returns aligned arrays", async () => {
     const body = JSON.stringify([

@@ -20,6 +20,7 @@ export { REPAIR_MAX_TOKENS } from "./step/step-parsing.js";
 import { prepareStepInference } from "./step/step-inference.js";
 
 import { executeBatch, toBatchInputs } from "./dispatch/batch-scheduler.js";
+import { toolLogFields } from "./tool-log-fields.js";
 
 import { ModelError, detectModelFailure } from "../llm/index.js";
 // The detector moved to the llm layer so the stream consumer can share its
@@ -283,6 +284,7 @@ async function executeStepInner(
         tool: result.tool,
         status: result.status,
         durationMs,
+        ...toolLogFields(inputs[batchIndex]?.call.args, result),
       });
     },
   });
