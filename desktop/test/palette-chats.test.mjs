@@ -32,31 +32,33 @@ function fixture(chatCount, q = 'report') {
   for (const n of ['palRows', 'flatPalRows', 'activatePal', 'palMoreChats']) vm.runInContext(functions.get(n), c);
   return {c, acted, repaints: () => repaints};
 }
+// Values made inside the vm context have its own prototypes, which deepStrictEqual tells apart.
+const eq = (actual, expected) => assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected);
 const kinds = (rows) => rows.map((r) => (r.more ? 'more' : r.badge || 'cmd'));
 
 test('five chats, then "N more chats", then tasks and skills', () => {
   const {c} = fixture(20);
   const rows = c.palRows();
-  assert.deepEqual(kinds(rows), ['session', 'session', 'session', 'session', 'session', 'more', 'task', 'skill']);
+  eq(kinds(rows), ['session', 'session', 'session', 'session', 'session', 'more', 'task', 'skill']);
   const more = rows[5];
   assert.equal(more.t, '15 more chats');
   assert.equal(more.badge, 'session');   // under the same Chats header, no header of its own
-  assert.deepEqual(rows.slice(0, 5).map((r) => r.act), ['ses:c0', 'ses:c1', 'ses:c2', 'ses:c3', 'ses:c4']);
+  eq(rows.slice(0, 5).map((r) => r.act), ['ses:c0', 'ses:c1', 'ses:c2', 'ses:c3', 'ses:c4']);
 });
 
 test('the row opens every matching chat in place, past the old 20, and keeps the palette open', () => {
   const {c, acted, repaints} = fixture(30);
   c.S.cur = 5;
   c.activatePal(5);
-  assert.deepEqual(acted, []);
+  eq(acted, []);
   assert.equal(repaints(), 1);
   const rows = c.palRows();
   assert.equal(rows.filter((r) => r.badge === 'session').length, 30);
   assert.equal(rows.some((r) => r.more), false);
-  assert.deepEqual(kinds(rows).slice(-2), ['task', 'skill']);
+  eq(kinds(rows).slice(-2), ['task', 'skill']);
   assert.equal(rows[c.S.cur].act, 'ses:c5');   // the highlight lands on the sixth chat
   c.activatePal(c.S.cur);
-  assert.deepEqual(acted, ['ses:c5']);
+  eq(acted, ['ses:c5']);
 });
 
 test('a different query starts folded again', () => {
