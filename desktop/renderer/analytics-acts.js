@@ -80,7 +80,7 @@ const ANX_ACTS = (() => {
       llm:{mode:Object.assign(set(llmModes), {next:L, prev:L}), add:L, autoUpdate:L, back:L, backend:L,
         cancel:L, cancelPull:L, configure:L, confirm:L, daemon:L, device:L, edit:L, embToggle:L,
         embedding:L, enter:L, external:{cancel:L, save:L, edit:L}, filter:L, logs:L, logsRefresh:L,
-        pricing:L, refresh:L, remove:L, removeAt:L, row:L, select:L, steer:{y:L, n:L}, tune:L,
+        pricing:L, refresh:L, remove:L, removeAt:L, restartModel:L, row:L, select:L, steer:{y:L, n:L}, tune:L,
         fb:{add:L, local:L, move:L, pick:L, pickCancel:L, remove:L, select:L},
         hf:{add:L, back:L, cancel:L, clear:L, close:L, look:L, mirror:L, row:L}},
       telegram:{advanced:L, clearOwner:L, clearToken:L, enable:L, disable:L, pair:L, refresh:L,
