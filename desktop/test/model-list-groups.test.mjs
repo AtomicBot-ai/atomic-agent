@@ -15,11 +15,15 @@ function slice(start, end) {
   return renderer.slice(i, j);
 }
 
+// Arrays built in the vm belong to its realm: compare a plain copy.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+
 function load({ backend, active, providers, ready, local = [], models = [], lists = {} }) {
   const asked = [];
+  const SEL = { open: true, kind: 'model', filter: '', models, modelsBusy: false, modelsErr: null, local, localBusy: false };
   const ctx = createContext({
     THIS_MACHINE: 'this Mac',
-    SEL: { open: true, kind: 'model', filter: '', models, modelsBusy: false, modelsErr: null, local, localBusy: false },
+    SEL,
     BSW: { readyIds: ready },
     SEL_LIVE_MODELS: new Map(),
     selProviders: () => providers,
@@ -31,7 +35,8 @@ function load({ backend, active, providers, ready, local = [], models = [], list
     hostRamGb: () => 32,
     orderModelsByFit: (ms) => ms,
     onDiskFirst: (ms) => ms,
-    selLocalMatches: () => local,
+    // As the real one: the local models through the search box.
+    selLocalMatches: () => local.filter((m) => !SEL.filter || m.id.toLowerCase().includes(SEL.filter.toLowerCase())),
     fitFor: () => ({ v: 'ok' }),
     modelPickNote: () => null,
     modelDiskFit: () => ({ ok: true }),
@@ -55,7 +60,7 @@ const local = [{ id: 'gemma', downloaded: true, active: true }, { id: 'qwen', do
 test('on the local route, local is first, then each cloud provider with a working key', () => {
   const { ctx } = load({ backend: 'local', active: 'local-llama', providers, ready: ['openrouter', 'gemini'], local });
   const rows = ctx.grouped('local-llama', [{ type: 'localModel', id: 'gemma', active: true }]);
-  assert.deepEqual(ctx.SEL.groups.map((g) => g.id), ['local-llama', 'openrouter', 'gemini']);
+  assert.deepEqual(plain(ctx.SEL.groups.map((g) => g.id)), ['local-llama', 'openrouter', 'gemini']);
   assert.equal(ctx.SEL.groups[0].title, 'On this computer');
   assert.equal(ctx.SEL.groups[1].title, 'OpenRouter');
   assert.ok(ctx.SEL.groups[1].busy, 'a provider not asked yet reads loading');
@@ -68,11 +73,11 @@ test('on the cloud route the active provider is first, then the downloaded local
   ctx.GROUPS.set('openrouter', { models: [{ id: 'openrouter/auto' }] });
   const current = ctx.cloudRows('gemini', [{ id: 'gemini-2.5-flash' }, { id: 'gemini-pro' }], 'gemini-2.5-flash');
   const rows = ctx.grouped('gemini', current);
-  assert.deepEqual(ctx.SEL.groups.map((g) => g.id), ['gemini', 'local-llama', 'openrouter']);
+  assert.deepEqual(plain(ctx.SEL.groups.map((g) => g.id)), ['gemini', 'local-llama', 'openrouter']);
   const by = (g) => rows.filter((r) => r.group === g).map((r) => r.id + (r.active ? '*' : ''));
-  assert.deepEqual(by('gemini'), ['gemini-2.5-flash*', 'gemini-pro']);
-  assert.deepEqual(by('local-llama'), ['gemma'], 'only what is on disk, and not marked current');
-  assert.deepEqual(by('openrouter'), ['openrouter/auto']);
+  assert.deepEqual(plain(by('gemini')), ['gemini-2.5-flash*', 'gemini-pro']);
+  assert.deepEqual(plain(by('local-llama')), ['gemma'], 'only what is on disk, and not marked current');
+  assert.deepEqual(plain(by('openrouter')), ['openrouter/auto']);
   assert.equal(rows.find((r) => r.id === 'openrouter/auto').provider, 'openrouter', 'a row knows whose model it is');
 });
 
@@ -81,7 +86,7 @@ test('the search filters every group at once', () => {
   ctx.SEL.filter = 'auto';
   ctx.GROUPS.set('openrouter', { models: [{ id: 'openrouter/auto' }, { id: 'openai/gpt-5' }] });
   const rows = ctx.grouped('gemini', ctx.cloudRows('gemini', [{ id: 'gemini-pro' }], null));
-  assert.deepEqual(rows.map((r) => r.id), ['openrouter/auto']);
+  assert.deepEqual(plain(rows.map((r) => r.id)), ['openrouter/auto']);
 });
 
 test('each group loads on its own: a refused key is that group’s line, the others still list', async () => {
