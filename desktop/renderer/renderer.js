@@ -1379,7 +1379,11 @@ const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs di
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
   anthropic:'https://console.anthropic.com/settings/keys', groq:'https://console.groq.com/keys', deepseek:'https://platform.deepseek.com/api_keys',
-  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.ai/settings/projects/~current/api-keys', xai:'https://console.x.ai'};
+  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.ai/settings/projects/~current/api-keys', xai:'https://console.x.ai',
+  // ATO-819: the rest of the cloud presets; Moonshot and DashScope point at the international consoles their base URLs use.
+  cerebras:'https://cloud.cerebras.ai', fireworks:'https://fireworks.ai/account/api-keys', moonshot:'https://platform.moonshot.ai/console/api-keys',
+  perplexity:'https://www.perplexity.ai/settings/api', dashscope:'https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key',
+  nous:'https://portal.nousresearch.com', novita:'https://novita.ai/settings/key-management'};
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 // ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
@@ -13386,7 +13390,7 @@ function obWizardHTML() {
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
-      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.env && (!WIZ.keyPresent || WIZ.keyPresent.includes(k.env)) ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
@@ -13959,6 +13963,21 @@ function obOpenCloudWizard() {
   OB_ATOMIC_CHAT.running = null;   // re-asked on this visit to the list
   WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
   WIZ.cur = 0; WIZ.q = null;
+  wizKeyPresenceRead();
+}
+/* ATO-819: the key variables set in the app's environment or the state dir's
+   .env (names only), so the key step offers "leave blank" only when blank
+   would work. null until read: the hint shows, as it did before. */
+function wizKeyPresenceRead() {
+  WIZ.keyPresent = null;
+  const stateDir = memStateDir();
+  if (!BR || !BR.envPresent || !BR.dotenvKeys || !stateDir) return;
+  const names = [...new Set(KIND_ROWS.map((r) => r.env).filter(Boolean))];
+  Promise.all([BR.envPresent(names), BR.dotenvKeys(stateDir)]).then(([env, dot]) => {
+    if (!Array.isArray(env) || !dot || !dot.ok) return;
+    WIZ.keyPresent = env.concat(dot.keys || []);
+    render();
+  }).catch(() => {});
 }
 
 /* Analytics: model_picked, from the row the pick names (a Hugging Face add is not in the list → custom). */
