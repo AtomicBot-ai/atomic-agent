@@ -77,6 +77,13 @@ function renderDaemonStatus(panel: LocalModelsPanelState): DaemonStatusRender {
       label: `running — pid ${d.pid} on 127.0.0.1:${d.port}`,
     };
   }
+  if (d.authMismatch) {
+    return {
+      glyph: "!",
+      color: "red",
+      label: `key rejected: restart the model (pid ${d.pid})`,
+    };
+  }
   return {
     glyph: "!",
     color: "yellow",
@@ -150,6 +157,13 @@ function renderEmbeddingDaemonLine(
       <Text color="green" bold>
         embeddings ✓ running ({id}, pid {info.pid} on 127.0.0.1:
         {info.port})
+      </Text>
+    );
+  }
+  if (info.authMismatch) {
+    return (
+      <Text color="red">
+        embeddings ! key rejected: restart the model (pid {info.pid})
       </Text>
     );
   }
