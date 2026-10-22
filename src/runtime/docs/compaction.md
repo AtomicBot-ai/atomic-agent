@@ -142,7 +142,13 @@ inference. A smaller model/window is rebudgeted on the next build.
 The prompt asks for goal, constraints/preferences, decisions/reasons, completed
 work with evidence, unfinished work/blockers, next actions and essential paths,
 IDs/errors, in the conversation's language. Intentions must be distinguished from
-actions and verified results. Empty, truncated, oversized and non-reducing
+actions and verified results. Identifiers are copied exactly, never generalized into
+wildcard patterns, and no dates or years absent from the records are added. When the
+cut falls inside a turn, so the newest covered request is answered only after the
+covered records, the prompt says so and asks not to list that request as unfinished
+or not started; the extractive summary carries the same note. While that turn is
+still running (no reply yet after the cut), the note only says the request was
+started and asks to keep what remained to do. Empty, truncated, oversized and non-reducing
 summaries are rejected, as are failed checkpoint writes. Automatic failures that
 leave no checkpoint warn
 and suppress further automatic attempts until the next turn; manual requests
@@ -239,6 +245,8 @@ timing counts when no provider usage block is returned.
 Contract tests: [planner/service](../context-compaction.test.ts),
 [extractive/auto service](../context-compaction-extractive.test.ts),
 [extractive builder](../compaction-extractive.test.ts),
+[model summary prompt](../context-compaction-model.test.ts),
+[request after the cut](../compaction-open-request.test.ts),
 [rolling summary](../context-compaction-rolling.test.ts),
 [rolling records](../compaction-rolling.test.ts),
 [rolling state](../../session/session-compaction-rolling.test.ts),
