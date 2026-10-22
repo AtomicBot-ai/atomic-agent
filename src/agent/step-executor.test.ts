@@ -254,6 +254,9 @@ describe("executeStep batch handling", () => {
         }),
         grammar,
         profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
         ...(logger ? { logger } : {}),
       },
     );

@@ -2906,14 +2906,6 @@
       "path": "src/agent/step-executor.test.ts",
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
-      "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 229,
-      "count": 1
-    },
-    {
-      "path": "src/agent/step-executor.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if ( ev.type === \"tool_call_parsed\" || ev.type === \"tool_call_executed\" ) { events.push({ type: ev.type, batchIndex: ev.batchIndex, batchSize: ev.batchSize, }); } }, }",
       "line": 1331,
       "count": 1
