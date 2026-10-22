@@ -187,7 +187,8 @@ describe("runtime provider/context/fallback/reload phases", () => {
     const wired = connectRuntimeFallback({}, fixture.deps);
     await wired.llmComplete({ ...params, providerId: "served" });
     const snapshot = fixture.turnUsageMeter.snapshot("turn");
-    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100 });
+    // #735 records which provider served the turn; no costUsd: unpriced.
+    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100, servedProviderId: "served" });
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
   });
 
