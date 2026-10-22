@@ -25085,14 +25085,25 @@ function llmExternalHTML() {
    (Д33). Leaf `config set` writes; `atag serve` read the file at boot, so
    each change carries the restart line. Copy condensed from the schema's own
    comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
-const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
-/* A budget choice in plain words, for its tooltip (about 0.75 words a token).
-   ATO-498: no fixed number for the llama.cpp grammar cap here; today it is
-   499 tokens (MAX_REASONING_BUDGET_TOKENS, #600), and ATO-607 may lift it. */
+/* ATO-795: only choices llama.cpp can hold. Its grammar caps the bound at
+   499 tokens (MAX_REASONING_BUDGET_TOKENS, #600), so 1500/4000/8000 all ran as
+   499 and cut thinking off mid-thought. No limit (0) is the agent default
+   since config v78. */
+const LLM_TUNE_BUDGET_MAX = 499;
+const LLM_TUNE_BUDGETS = [0, LLM_TUNE_BUDGET_MAX];
+/* A budget choice in plain words, for its tooltip (about 0.75 words a token). */
 function llmTuneBudgetHint(n) {
   if (n === 0) return 'No limit: the model thinks as long as it wants';
   const words = Math.round(n * 0.75 / 25) * 25;
   return 'About ' + words.toLocaleString('en-US') + ' words of thinking';
+}
+/* The budget the knob lights for a stored value: the bound the model really
+   gets. A value above the cap runs as 499, so it lights 499, not No limit
+   (an agent before config v78 still enforces its 1500 default as 499, and a
+   kept 500, 4000 or 8000 is 499 on every agent). Missing or 0 is No limit.
+   The file itself is left alone; picking a choice is what writes it. */
+function llmTuneBudgetShown(raw) {
+  return Number.isInteger(raw) && raw > 0 ? Math.min(raw, LLM_TUNE_BUDGET_MAX) : 0;
 }
 /* One knob: a title and one help line each, the choice on the right. */
 function llmTuneRowHTML(title, help, control) {
@@ -25122,7 +25133,7 @@ function llmTemplateRowHTML() {
 function llmTuneHTML() {
   const lm = llmLocalModels();
   const thinking = lm.thinking === 'on' || lm.thinking === 'off' ? lm.thinking : 'auto';
-  const budget = Number.isInteger(lm.reasoningBudgetTokens) ? lm.reasoningBudgetTokens : 1500;
+  const budget = llmTuneBudgetShown(lm.reasoningBudgetTokens);
   const T = LLMP.tune;
   const budgets = LLM_TUNE_BUDGETS.includes(budget) ? LLM_TUNE_BUDGETS : LLM_TUNE_BUDGETS.concat([budget]).sort((a, b) => a - b);
   return '<section class="llm-section llm-tune"><div class="tk-sh llm-sh"><span class="llm-sh-t">Reasoning</span>'
@@ -25132,7 +25143,7 @@ function llmTuneHTML() {
         llmTuneSegHTML('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
     // Д33: the default is the choice lit when nothing is set; the help line no longer spells it out.
     // ATO-498: plain words first, tokens second; one setting for Local models and Custom server.
-    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (500 tokens is about 375 words). llama.cpp can stop it sooner than the number you pick. One setting for Local models and Custom server. This limit never cuts the final answer.',
+    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (499 tokens is about 375 words). llama.cpp cannot hold a larger limit. One setting for Local models and Custom server. This limit never cuts the final answer.',
         llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n), llmTuneBudgetHint(n)]), 'Thinking budget in tokens'))
     + '</div>'
     + (T.where !== 'adv' ? llmTuneNoteHTML() : '')
