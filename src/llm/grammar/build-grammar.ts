@@ -115,22 +115,37 @@ const CHARS_RULE_RE = /^chars ::= char\*$/m;
  * still refuses whatever arrives another way (an escaped `<|`, a
  * provider without grammars).
  *
- * A three-state automaton over the last character — neutral, after
- * `<`, after `|` — rather than the tempting `"<" [^|] | "|" [^>]`
- * alternatives: those let `<<|` and `||>` through (the first `<` pairs
- * with the second, freeing the `|`). Every alternative is decided by
- * one character, so the sampler carries one stack per string, and the
- * right recursion is the same shape llama.cpp expands `char*` into.
- * Only the reasoning profiles get it; the plain profile's grammar stays
+ * One exception (ATO-800): `|>` after whitespace (a space, or an escaped
+ * `\n`, `\r` or `\t`). Every close marker has a name character right
+ * before its `|>` (`channel|>`, `turn|>`, `im_end|>`), while the pipe
+ * operator in code (`x |> f` in Elixir, F#, OCaml, R, Hack) is written
+ * with a space or at the start of an indented line. Without it a
+ * thinking model rewrote the pipe as `| >` or `||`. `<|` stays excluded
+ * everywhere.
+ *
+ * A four-state automaton over the last character — neutral, after
+ * whitespace, after `<`, after `|` — rather than the tempting
+ * `"<" [^|] | "|" [^>]` alternatives: those let `<<|` and `||>` through
+ * (the first `<` pairs with the second, freeing the `|`). A `|` after
+ * whitespace lands in neutral, where `>` is plain; a second `|` is back
+ * in after-`|`, so ` ||>` stays refused. Whitespace escapes are split
+ * from the other escapes so every alternative is still decided by one
+ * character: the sampler carries one stack per string, and the right
+ * recursion is the same shape llama.cpp expands `char*` into. Only the
+ * reasoning profiles get it; the plain profile's grammar stays
  * byte-identical to `grammars/tool-call.gbnf`.
  */
 const HARDENED_STRING_RULES = [
   "chars ::= str-neutral",
-  'str-neutral ::= ( str-plain str-neutral | "<" str-after-lt | "|" str-after-bar )?',
-  'str-after-lt ::= ( str-plain str-neutral | "<" str-after-lt )?',
-  'str-after-bar ::= ( str-plain-not-gt str-neutral | "<" str-after-lt | "|" str-after-bar )?',
-  'str-plain ::= [^"\\\\\\x00-\\x1f<|] | "\\\\" escape',
-  'str-plain-not-gt ::= [^"\\\\\\x00-\\x1f<|>] | "\\\\" escape',
+  'str-neutral ::= ( str-step | "|" str-after-bar )?',
+  'str-after-ws ::= ( str-step | "|" str-neutral )?',
+  "str-after-lt ::= str-step?",
+  'str-after-bar ::= ( str-plain-not-gt str-neutral | str-ws str-after-ws | "<" str-after-lt | "|" str-after-bar )?',
+  'str-step ::= str-plain str-neutral | str-ws str-after-ws | "<" str-after-lt',
+  String.raw`str-plain ::= [^"\\\x00-\x1f<| ] | str-escape`,
+  String.raw`str-plain-not-gt ::= [^"\\\x00-\x1f<|> ] | str-escape`,
+  String.raw`str-ws ::= " " | "\\" [nrt]`,
+  String.raw`str-escape ::= "\\" ( ["\\/bf] | "u" hex hex hex hex )`,
 ].join("\n");
 
 /**
@@ -142,27 +157,38 @@ const HARDENED_STRING_RULES = [
  * after-`<` and after-`|`, and `<` / `|` count as hard characters (the
  * string may close after them), so a soft character still leads to
  * `reply-pending` from any state.
+ *
+ * The ATO-800 whitespace exception splits whitespace out of both
+ * classes: a space is soft (`reply-pending-ws`, may not close), an
+ * escaped `\n` / `\r` / `\t` is hard (`reply-chars-ws`, may close),
+ * and from either a `|` lands in `reply-chars`, where `>` is a plain
+ * hard character.
  */
 const HARDENED_REPLY_RULES: ReadonlyArray<[RegExp, string]> = [
   [
     /^reply-chars ::= .*$/m,
     [
-      'reply-chars ::= ( reply-hard reply-chars | reply-soft reply-pending | "<" reply-after-lt | "|" reply-after-bar )?',
-      'reply-after-lt ::= ( reply-hard reply-chars | reply-soft reply-pending | "<" reply-after-lt )?',
-      'reply-after-bar ::= ( reply-hard-not-gt reply-chars | reply-soft reply-pending | "<" reply-after-lt | "|" reply-after-bar )?',
+      'reply-chars ::= ( reply-step | "|" reply-after-bar )?',
+      'reply-chars-ws ::= ( reply-step | "|" reply-chars )?',
+      'reply-pending-ws ::= reply-step | "|" reply-chars',
+      "reply-after-lt ::= reply-step?",
+      'reply-after-bar ::= ( reply-hard-not-gt reply-chars | reply-soft reply-pending | " " reply-pending-ws | reply-ws-escape reply-chars-ws | "<" reply-after-lt | "|" reply-after-bar )?',
+      'reply-step ::= reply-hard reply-chars | reply-soft reply-pending | " " reply-pending-ws | reply-ws-escape reply-chars-ws | "<" reply-after-lt',
     ].join("\n"),
   ],
   [
     /^reply-pending ::= .*$/m,
-    'reply-pending ::= reply-hard reply-chars | reply-soft reply-pending | "<" reply-after-lt | "|" reply-after-bar',
+    'reply-pending ::= reply-step | "|" reply-after-bar',
   ],
   [
     /^reply-hard ::= .*$/m,
     [
-      String.raw`reply-hard ::= [^"\\\x00-\x1f<| :(\[{=,] | "\\" escape`,
-      String.raw`reply-hard-not-gt ::= [^"\\\x00-\x1f<|> :(\[{=,] | "\\" escape`,
+      String.raw`reply-hard ::= [^"\\\x00-\x1f<| :(\[{=,] | str-escape`,
+      String.raw`reply-hard-not-gt ::= [^"\\\x00-\x1f<|> :(\[{=,] | str-escape`,
+      String.raw`reply-ws-escape ::= "\\" [nrt]`,
     ].join("\n"),
   ],
+  [/^reply-soft ::= .*$/m, String.raw`reply-soft ::= [:(\[{=,]`],
 ];
 
 function hardenStringRule(grammar: string): string {

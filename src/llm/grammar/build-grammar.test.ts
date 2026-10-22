@@ -209,7 +209,7 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
     }
   });
 
-  it("keeps F37 in the reply body under gemma and qwen: no <| or |>, and still no close after a soft char", async () => {
+  it("keeps F37 in the reply body under gemma and qwen: no <| or |> (bar the ATO-800 pipe), and still no close after a soft char", async () => {
     for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
       const base = await buildGrammar(profile);
       for (const grammar of [base, buildGrammarForTools(base, [])]) {
@@ -220,7 +220,8 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
           "|>a",
           "<<|c",
           "||>",
-          "a |>",
+          "a|>",
+          "a ||>",
           "a <|",
           "a: ",
         ]) {
@@ -248,6 +249,104 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
       `<|channel>thought\nanswer<channel|>\n${REPLY(text)}`;
     expect(gbnfAccepts(gemma, "root", completion("Saved."))).toBe(true);
     expect(gbnfAccepts(gemma, "root", completion("stored in memory:"))).toBe(false);
+  });
+});
+
+describe("the pipe operator after whitespace under a reasoning profile (ATO-800)", () => {
+  /**
+   * F37 took `|>` out of every string, so a thinking model could not
+   * write `x |> f` (Elixir, F#, OCaml, R, Hack) and rewrote it as `| >`.
+   * Every control marker has a name character before its `|>`, so the
+   * grammar now admits `|>` right after a space or an escaped newline,
+   * tab or carriage return, and nowhere else.
+   */
+  const PIPES = [
+    "x |> f",
+    "x |> f |> g",
+    "list\\n  |> Enum.map(&f/1)\\n  |> Enum.sum()",
+    "a\\n|> b",
+    "a\\r\\n|> b",
+    "a\\t|> b",
+    " |>",
+    "| |>",
+    "x |>",
+  ];
+  const MARKERS = [
+    "<channel|>",
+    "turn|>",
+    "<turn|>",
+    "<|im_end|>",
+    "a|>b",
+    "|>a",
+    "a ||>",
+    "a\\n||>",
+    "x <|channel>",
+    "a <|",
+    // An escaped backslash followed by `n` is not a newline.
+    "a\\\\n|>",
+    // A `\u0020` escape is not a pipe seam: only a literal space counts.
+    "a\\u0020|>",
+  ];
+
+  it("admits ` |>` in a string and keeps every marker out, under gemma and qwen", async () => {
+    for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
+      const base = await buildGrammar(profile);
+      for (const grammar of [base, buildGrammarForTools(base, ["os.fs.write"])]) {
+        for (const good of PIPES) {
+          expect(gbnfAccepts(grammar, "string", `"${good}"`), `${profile.id} ${good}`).toBe(
+            true,
+          );
+        }
+        for (const bad of MARKERS) {
+          expect(gbnfAccepts(grammar, "string", `"${bad}"`), `${profile.id} ${bad}`).toBe(
+            false,
+          );
+        }
+      }
+    }
+  });
+
+  it("admits ` |>` in the reply text and keeps markers and the #681 quote trap out", async () => {
+    for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
+      const base = await buildGrammar(profile);
+      for (const grammar of [base, buildGrammarForTools(base, [])]) {
+        for (const good of [...PIPES.filter((p) => !p.startsWith(" ")), "list:\\n"]) {
+          expect(gbnfAccepts(grammar, "reply-text", `"${good}"`), `${profile.id} ${good}`).toBe(
+            true,
+          );
+        }
+        for (const bad of [
+          ...MARKERS,
+          // #681: still no close right after a soft character, the pipe's
+          // own space included.
+          "x |> ",
+          "pipe it: ",
+          "a ",
+          "",
+        ]) {
+          expect(gbnfAccepts(grammar, "reply-text", `"${bad}"`), `${profile.id} ${bad}`).toBe(
+            false,
+          );
+        }
+      }
+    }
+  });
+
+  it("writes an Elixir pipeline in a whole gemma completion while the live corruption stays out", async () => {
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    const write = (content: string): string =>
+      `<|channel>thought\nwrite it<channel|>\n[{"tool":"os.fs.write","args":{"path":"pipe.exs","content":${JSON.stringify(content)}}}]`;
+    expect(
+      gbnfAccepts(gemma, "root", write("def total(xs) do\n  xs\n  |> Enum.map(&(&1 * 2))\n  |> Enum.sum()\nend\n")),
+    ).toBe(true);
+    expect(gbnfAccepts(gemma, "root", write("x |> f<channel|>"))).toBe(false);
+    expect(gbnfAccepts(gemma, "root", write("x |> f\n<|channel>thought"))).toBe(false);
+  });
+
+  it("leaves the plain profile byte-identical: its strings were never hardened", async () => {
+    const plain = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(plain).not.toContain("str-after-ws");
+    expect(gbnfAccepts(plain, "string", '"x |> f"')).toBe(true);
   });
 });
 
