@@ -7046,6 +7046,7 @@ document.addEventListener('click', (e) => {
   // this handler competes for them.
   const cp = t.closest('[data-copy]'); if (cp) { e.preventDefault(); copyMessage(cp.dataset.copy); return; }
   const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
+  const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
@@ -8974,7 +8975,7 @@ function liveFailureRows(rec, ev, wait) {
   try {
     return (wait ? [tpWaitGaveUpEntry(wait)] : []).concat([{id:nid(), k:'system', sev:'err',
       ...turnFailure(ev), tried: tpFallbackFailures(ev.payload), open: false,
-      act: providerFailure(ev) ? 'switch-provider' : null}]);
+      act: providerFailure(ev) ? 'switch-provider' : null, ...deadEngineRow(ev)}]);
   } finally {
     S.turnStartedAt = keep;
   }
@@ -9148,6 +9149,42 @@ function turnFailure(ev) {
   const cat = String((ev && ev.category) || '');
   return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
     detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
+}
+
+/** ATO-771/772: a turn that failed because the managed local model is not
+    running reads as that, with Start model in place of Switch provider
+    (dead-engine.js). {} for any other failure, so the row is as before. Like
+    "not answering", the row is the reason: a refused connection's raw words
+    go to the Agent log, not under Details. */
+function deadEngineRow(ev) {
+  const id = selActiveProviderId();
+  const local = (LIVE_CONFIG && !LIVE_CONFIG.llm) || (!!id && waitIsLocalServer(id));
+  const why = engineDownOf(ev, {local, replied: providerReplied(ev)});
+  if (!why) return {};
+  return {text: esc(DEAD_ENGINE_LINE), detail: '', act: 'start-model', deadEngine: why};
+}
+/** The dead-engine row's own action: Start model, a wait on the app's own restart, or nothing once it is back. */
+function deadEngineActHTML(m) {
+  const offer = deadEngineOffer(m, DWATCH ? DWATCH.kind : null);
+  if (offer.kind === 'wait') return ' <span class="sys-note">' + esc(DEAD_ENGINE_WAIT) + '</span>';
+  if (offer.kind === 'back') return ' <span class="sys-note">' + esc(DEAD_ENGINE_BACK) + '</span>';
+  return ' <button class="btn xs btn-s sysact" data-engine-start="' + esc(m.id) + '"' + (offer.kind === 'starting' ? ' disabled' : '') + '>'
+    + (offer.kind === 'starting' ? 'Starting…' : 'Start model') + '</button>';
+}
+/** Start model on a dead-engine row: the same start as Settings › Models (cli:modelsStart). */
+async function deadEngineStart(rowId) {
+  const m = S.log.find((x) => x.id === rowId);
+  if (!m || m.starting || !BR || !BR.modelsStart) return;
+  // The supervisor is already bringing it back: a second start would race it.
+  if (deadEngineOffer(m, DWATCH ? DWATCH.kind : null).kind === 'wait') { render(); return; }
+  m.starting = true; render();
+  let res;
+  try { res = await BR.modelsStart(); } catch (err) { res = {ok: false, error: String((err && err.message) || err)}; }
+  m.starting = false;
+  if (res && res.ok !== false) m.started = true;
+  else toast("Couldn't start the local model", String((res && (res.error || res.stderr)) || 'the start gave no reason').trim().split('\n').pop(), 'bad');
+  render();
+  if (llmVisible()) llmRefreshStatus();
 }
 
 /** ATO-380: Details under the phrase (own flag `detOpen`). Folded, the text is
@@ -9725,7 +9762,7 @@ function onChatEvent(ev) {
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       ...turnFailure(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
-      act: providerFailure(ev) ? 'switch-provider' : null});
+      act: providerFailure(ev) ? 'switch-provider' : null, ...deadEngineRow(ev)});
     // A turn ended: the steer watermark belongs to the turn that is over
     // (chat-orchestrator.ts resets steeredAhead with the queue). The
     // sent-and-not-yet-echoed list goes with it — a `steer_applied` for this
@@ -19630,8 +19667,12 @@ function sysRetryHTML(m) {
   return '';
 }
 function sysRowHTML(m, times) {
+  const engine = m.act === 'start-model' ? deadEngineOffer(m, DWATCH ? DWATCH.kind : null).kind : '';
   const acts = (m.act === 'switch-provider'
-    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' && !m.noRetry ? sysRetryHTML(m) : '');
+    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '')
+    + (m.act === 'start-model' ? deadEngineActHTML(m) : '')
+    // ATO-772: no Try again while the model is down or coming back; it would only wait on it.
+    + (m.sev === 'err' && !m.noRetry && (!engine || engine === 'back') ? sysRetryHTML(m) : '');
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
     + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts + '</span></div></div>';
