@@ -1050,6 +1050,10 @@ function appendAgentLog(line: string): void {
 }
 
 const AGENT_SAID: string[] = [];
+/** ATO-763: when each AGENT_SAID line came (same order), so an exit is judged on its last words, not a warning from hours before. */
+const AGENT_SAID_AT: number[] = [];
+/** ATO-763: how far back before an exit the agent's lines still count as its last words. */
+const LAST_WORDS_MS = 30_000;
 /** ATO-763: how many AGENT_SAID lines the current agent wrote (reset as one starts), so an exit is judged on its own lines only. */
 let agentSaidSinceStart = 0;
 
@@ -2859,9 +2863,12 @@ function wireIpc(client: AgentClient): void {
     if (d.phase === "starting") A.agentStartFailed({ reason: "exited", exitCode: d.exitCode, signal: d.signal });
     /* ATO-763: the report waits a moment for the agent's last stderr lines
        (the pipe can close after the exit), then sends only their category. */
+    const exitedAt = Date.now();
     setTimeout(() => {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
-      reportAgentExit(d, n > 0 ? AGENT_SAID.slice(-n) : []);
+      const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
+      const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS));
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
@@ -2885,7 +2892,8 @@ function wireIpc(client: AgentClient): void {
        console drawer but out of the ring, which is for what went wrong. */
     if (worthQuoting(event.level)) {
       AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${line.slice(0, 300)}`);
-      if (AGENT_SAID.length > 40) AGENT_SAID.shift();
+      AGENT_SAID_AT.push(Date.now());
+      if (AGENT_SAID.length > 40) { AGENT_SAID.shift(); AGENT_SAID_AT.shift(); }
       agentSaidSinceStart += 1;
     }
     appendAgentLog(`${new Date().toISOString()} ${agentLogTag(event.stream, event.level)} ${line}`);

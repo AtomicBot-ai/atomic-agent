@@ -137,7 +137,8 @@ no agent is running).
   Windows `sentinel_alive`). `last_error` is one word for the agent's last
   error lines (`main/sentry/exit-reason.ts`): oom / port_in_use /
   econnrefused / sqlite / telegram_conflict / permission / missing_file /
-  other, or none when it said nothing; the lines themselves are never sent.
+  other, or none when it said nothing in the 30 s before it exited (older
+  lines do not count); the lines themselves are never sent.
   `uptime` is lt_10s / lt_1m / lt_10m / lt_1h / gte_1h. `sentinel_alive` is
   yes / no: a dead sentinel means the agent closed itself on `--parent-pid`,
   not a crash (ATO-763).
