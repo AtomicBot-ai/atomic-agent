@@ -296,7 +296,7 @@ describe("uninstall ladder keys", () => {
       expect(onUninstallConfirmed).not.toHaveBeenCalled();
     });
 
-    it("starts with keepDesktopData false when the desktop app is not found", () => {
+    it("keeps desktop data by default when the question was never asked", () => {
       let state = openAt("confirm");
       state =
         reduceUninstallAction(state, {
@@ -304,7 +304,9 @@ describe("uninstall ladder keys", () => {
           typed: "uninstall",
         }) ?? state;
       const { onUninstallConfirmed } = press(state, "", emptyKey({ return: true }));
-      expect(onUninstallConfirmed).toHaveBeenCalledWith({ keepDesktopData: false });
+      // Not asked means not agreed: if the post-exit plan finds the
+      // desktop app after all, its folder must survive.
+      expect(onUninstallConfirmed).toHaveBeenCalledWith({ keepDesktopData: true });
     });
   });
 });

@@ -84,7 +84,10 @@ export function handleUninstallKey(
       dispatch({ type: "uninstall_desktop_asked" });
       return true;
     }
-    startRemoval({ keepDesktopData: false }, ctx);
+    // Nobody was asked about desktop data, so nobody agreed to delete
+    // it. The removal re-resolves the plan after the unmount; if a
+    // desktop app shows up in that fresh plan, its folder stays.
+    startRemoval({ keepDesktopData: true }, ctx);
     return true;
   }
   if (key.backspace || key.delete) {

@@ -66,8 +66,11 @@ export async function loadUninstallPreview(
 export interface PerformUninstallOptions {
   readonly stateDir: string;
   /**
-   * The answer to the ladder's desktop question: keep a state directory
-   * the desktop app shares and remove only the terminal program.
+   * Keep a state directory the desktop app shares and remove only the
+   * terminal program. False only when the operator answered "Delete
+   * too" on the ladder's desktop question; the ladder sends true when
+   * the question was never asked, so a desktop app first seen by this
+   * fresh plan still keeps its folder.
    */
   readonly keepDesktopData?: boolean;
   readonly write?: (text: string) => void;
