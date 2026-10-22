@@ -22,7 +22,9 @@ import { mkdir, readdir, realpath, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative } from "node:path";
 
 import { diskShortfall, diskSpaceAt } from "./disk-space.js";
-import { huggingFaceToken, isHuggingFaceUrl, rewriteHuggingFaceUrl } from "./huggingface.js";
+import { isHuggingFaceUrl, rewriteHuggingFaceUrl } from "./huggingface.js";
+import { agentHuggingFaceToken } from "./hf-token.js";
+import { DESKTOP_STATE_DIR } from "./state-dir.js";
 import { DIFFUSION_CATALOG_BASELINE } from "./studio-diffusion-baseline.js";
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
 import type { StudioCoreStatus } from "./studio-core-start.js";
@@ -77,8 +79,13 @@ export interface StudioLocalDeps {
   hostRamBytes?: () => number;
   /** Re-read the Hugging Face mirror setting before a download (hf-mirror.ts syncHfEndpoint). */
   beforeDownload?: () => void;
+  /** ATO-813: the token for a gated repo, read per file; the agent's (environment, then `<stateDir>/.env`) by default. */
+  hfToken?: () => string | null;
   platform?: NodeJS.Platform;
 }
+
+/* ATO-813: the agent's own token, so a gated model downloads with the HF_TOKEN kept in `<stateDir>/.env`. */
+const defaultHfToken = (): string | null => agentHuggingFaceToken(DESKTOP_STATE_DIR);
 
 interface DownloadRun { state: LocalDownloadState; controller: AbortController; done: Promise<void> }
 
@@ -240,7 +247,7 @@ export class StudioLocalModels {
             request: this.deps.request,
             rewrite: rewriteHuggingFaceUrl,
             headers: (url): Record<string, string> => {
-              const token = isHuggingFaceUrl(url) ? huggingFaceToken() : null;
+              const token = isHuggingFaceUrl(url) ? (this.deps.hfToken ?? defaultHfToken)() : null;
               return token ? { Authorization: `Bearer ${token}` } : {};
             },
             onBytes: (delta) => { s.transferred = Math.max(0, s.transferred + delta); push(); },

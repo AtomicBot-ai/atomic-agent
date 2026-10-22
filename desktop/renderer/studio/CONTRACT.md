@@ -254,9 +254,11 @@ Downloads (`localDownload`):
   part files; the next Download resumes them (HTTP Range).
 - Side files shared by several models are fetched once and kept while any
   installed model needs them.
-- Gated repos (`gated: true`) need `HF_TOKEN` in the app's own environment
-  (not the agent's `.env`); without it the download fails with code `GATED` in
-  `LocalDownload.error`.
+- Gated repos (`gated: true`) need `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`),
+  read as the agent reads it: the app's environment, else the agent's
+  `<stateDir>/.env` (`main/hf-token.ts`, ATO-813). Without it the download
+  fails with code `GATED` in `LocalDownload.error`. The token only goes into
+  the request's Authorization header; it is never logged.
 
 ```ts
 interface LocalDownload {
