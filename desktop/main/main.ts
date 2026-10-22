@@ -656,6 +656,10 @@ function engineInstallStream(
     const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
     A.runtimeUpdated(via, updateStartedAt, res, own.signal.aborted);
     if (!own.signal.aborted) noteEngine(res, { clears: true, via });
+    // ATO-821: why the engine did not go in, in agent.log too, not only in the window.
+    if (!res.ok && !own.signal.aborted) sayDesktop(`[desktop] local-llm: the local engine install did not finish (${via}): ${res.error ?? "unknown error"}`);
+    // ATO-821: the launch's install had failed, so its start never ran; this one went in.
+    if (res.ok && !own.signal.aborted && via !== "launch") void startAfterEngineInstall();
     send("cli:pull", {
       id,
       done: true,
@@ -1047,6 +1051,20 @@ function appendAgentLog(line: string): void {
   } catch {
     /* Logging must never be the reason the window breaks. */
   }
+}
+
+/**
+ * ATO-821: a line of the desktop's own about the local engine or model server,
+ * where daemon-watch's lines go: the terminal the app was started from, the
+ * console drawer, and agent.log (tagged by what it says, ATO-121). A line
+ * only on stderr was gone with the window, and the log could not say why the
+ * engine never came up.
+ */
+function sayDesktop(line: string): void {
+  console.error(line);
+  const level = lineLevel(line);
+  send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+  appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
 }
 
 const AGENT_SAID: string[] = [];
@@ -2616,9 +2634,7 @@ function wireIpc(client: AgentClient): void {
     const line = r.daemon === "start-failed"
       ? `[desktop] could not start the local model daemon (${r.modelId}): ${r.error ?? "unknown error"}`
       : `[desktop] started the local model daemon (${r.modelId})`;
-    console.error(line);
-    const level = lineLevel(line);   // ATO-121
-    send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+    sayDesktop(line);   // ATO-121 level; ATO-821: in agent.log too, as this comment always said
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
     // A Core that would not start at launch is told too: the window offers the way out, not a log line.
@@ -9412,15 +9428,15 @@ let launchInstall = false;
 async function installEngineAtLaunch(): Promise<boolean> {
   const r = engineInstallStream("launch");
   if (!r.ok) {
-    console.error(`[desktop] local-llm: the local engine is not installed yet, and its install could not begin now (${r.error}); the model's start installs it`);
+    sayDesktop(`[desktop] local-llm: the local engine is not installed yet, and its install could not begin now (${r.error}); the model's start installs it`);
     return r.error !== SMOKE_OFFLINE;
   }
   launchInstall = true;
   console.error("[desktop] local-llm: installing the local engine before the model starts");
   send("engine:launchInstall", { running: true });
   try {
+    // A failure is said by engineInstallStream itself, in agent.log as well (ATO-821).
     const res = await r.done;
-    if (!res.ok) console.error(`[desktop] local-llm: the local engine install did not finish: ${res.error ?? "unknown error"}`);
     return res.ok;
   } finally {
     launchInstall = false;
@@ -9442,45 +9458,79 @@ async function installEngineAtLaunch(): Promise<boolean> {
 async function startLocalDaemonAtBoot(): Promise<void> {
   let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
   try {
-    const read = await readWholeConfig();
-    if (!read.ok || !read.config) return;
-    const cfg = read.config;
-    if (cfg.localModels?.mode !== "managed") return;
-    // No `llm` block means the agent synthesizes `local-llama`, the local route.
-    const active = cfg.llm ? cfg.llm.activeTextProvider : "local-llama";
-    const entry = cfg.llm?.providers?.find((p) => p.id === active);
-    const localRoute = !cfg.llm || (!!entry && entry.kind === "llama-server");
-    /* Fusion with a local seat needs the daemon as much as the local route:
-       its active provider is the cloud orchestrator, so the check above let
-       it through to nothing, and the only thing that used to start it was a
-       ⇄ swap, as a side effect that made the swap stick (item 11). */
-    const fusionLocalSeat = runModeWantsDaemon(resolveRunMode(cfg as RunModeConfig), cfg.localModels ?? {});
-    if (!localRoute && !fusionLocalSeat) return;
+    const target = await launchStartTarget();
+    if (!target.wants) return;
     backendUp = false;
-    const st = await modelsStatus();
-    if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
+    if (!target.modelId) return;
     /* Atomic Core with its backend not on disk yet (a fresh machine, a 0.0.1
        desktop the config migration moved to Core, a backend removed): the
        start would download it silently first, hundreds of MB, under a spinner.
        It is installed first, with its bar (engineInstallStream, as the setup
        and Settings do), and the model starts after it. A failure is the
-       recovery card (noteEngine), and nothing is started on top of it. */
+       recovery card (noteEngine), and nothing is started on top of it until
+       an install succeeds (ATO-821, startAfterEngineInstall). */
     if (managedEngineNow() === "atomic-core" && !backendInstalled()) {
       const installed = await installEngineAtLaunch();
-      if (!installed) return;
+      if (!installed) { launchStartAfterInstall = true; return; }
     }
     /* Item 11: as the background bring-up — a ⇄ or a start made while the
        model loads queues behind it rather than starting a second daemon, and
        a stop (a cloud switch, Settings › Stop) ends it at once instead of
        waiting out the load. It says how it went through onBackgroundBringUp. */
     const bringUpAt = Date.now();
-    const up = await bringUpAtLaunch(st.status.activeModel);
-    A.localBackendStarted("launch", up.daemon, st.status.activeModel, Date.now() - bringUpAt);
+    const up = await bringUpAtLaunch(target.modelId);
+    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt);
     backendUp = up.daemon === "started" || up.daemon === "untouched" || up.daemon === "restarted";
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     A.launchBackendSettled(backendUp);
+  }
+}
+
+/**
+ * What the launch start brings up, read now: whether the route needs the
+ * managed daemon (`wants`), and the active model when it is on disk
+ * (`modelId`, null when there is none to start).
+ */
+async function launchStartTarget(): Promise<{ wants: boolean; modelId: string | null }> {
+  const none = { wants: false, modelId: null };
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return none;
+  const cfg = read.config;
+  if (cfg.localModels?.mode !== "managed") return none;
+  // No `llm` block means the agent synthesizes `local-llama`, the local route.
+  const active = cfg.llm ? cfg.llm.activeTextProvider : "local-llama";
+  const entry = cfg.llm?.providers?.find((p) => p.id === active);
+  const localRoute = !cfg.llm || (!!entry && entry.kind === "llama-server");
+  /* Fusion with a local seat needs the daemon as much as the local route:
+     its active provider is the cloud orchestrator, so the check above let
+     it through to nothing, and the only thing that used to start it was a
+     ⇄ swap, as a side effect that made the swap stick (item 11). */
+  const fusionLocalSeat = runModeWantsDaemon(resolveRunMode(cfg as RunModeConfig), cfg.localModels ?? {});
+  if (!localRoute && !fusionLocalSeat) return none;
+  const st = await modelsStatus();
+  if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return { wants: true, modelId: null };
+  return { wants: true, modelId: st.status.activeModel };
+}
+
+/* ATO-821: the launch's engine install failed, so the launch start never ran.
+   The next install that succeeds (the download card's Retry, Settings'
+   install, the recovery card's Download again) starts the model as the launch
+   would have, when the route still needs it and the model is still on disk.
+   Once: a later install finds the flag down. Via "update", the start after an
+   engine install: the window hears how it went (onBackgroundBringUp). */
+let launchStartAfterInstall = false;
+async function startAfterEngineInstall(): Promise<void> {
+  if (!launchStartAfterInstall) return;
+  launchStartAfterInstall = false;
+  try {
+    const target = await launchStartTarget();
+    if (!target.modelId) return;
+    sayDesktop(`[desktop] local-llm: the local engine is installed now; starting ${target.modelId}, as the launch would have`);
+    await bringUpAtLaunch(target.modelId, "update");
+  } catch (err) {
+    console.error(`[desktop] local daemon start after the engine install failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
