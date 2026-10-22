@@ -41,8 +41,8 @@ export function deriveSetupState(panel: TelegramPanelState): SetupView {
   if (panel.mode === "pairingActive") {
     return {
       step: "pairing_active",
-      title: "Open Telegram and DM your bot",
-      body: "Send any text from the account you want to register as the owner. Group / channel messages are ignored.",
+      title: "Open Telegram and send your bot the code",
+      body: "From the account you want to register as the owner, send /start followed by the 6-digit code shown when pairing started. Other messages are ignored.",
       cta: "Esc to cancel",
       isTerminal: false,
     };
@@ -95,7 +95,7 @@ export function deriveSetupState(panel: TelegramPanelState): SetupView {
       return {
         step: "pairing_failed",
         title: "Pairing didn't complete",
-        body: "Nobody DMed the bot in time, so we can't confirm who owns this assistant.",
+        body: "Nobody sent the bot the pairing code in time, so we can't confirm who owns this assistant.",
         cta: "Press Enter to open another pairing window",
         isTerminal: false,
       };
@@ -103,7 +103,7 @@ export function deriveSetupState(panel: TelegramPanelState): SetupView {
     return {
       step: "needs_pairing",
       title: "One last step — confirm it's you",
-      body: "Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.",
+      body: "Open a pairing window, then send your bot /start and the 6-digit code it shows. Atomic Agent will recognise you as the owner.",
       cta: "Press Enter to open the pairing window",
       isTerminal: false,
     };
