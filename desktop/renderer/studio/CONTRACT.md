@@ -453,6 +453,12 @@ then `setPoster`. The tile then shows the poster through `preview`. Any failure
 (no decoder, a tainted canvas, Core refuses) is silent: the tile keeps its play
 icon. A clip that just finished gets one the same way.
 
+A clip opened "From chat" (`STUDIO.openFile`, not a gallery item) has no
+gallery id, so Core cannot keep a poster for it. The page draws the same frame
+as a PNG data URL and keeps it in memory for the session (the last 24 such
+clips), set as the player's `poster`; nothing is sent to Core or written to
+disk. Same once-per-session rule and the same silent failure.
+
 ## Price
 
 ```ts
@@ -481,6 +487,5 @@ Not bridge calls; the pages use them instead of reaching into renderer.js.
 
 ## Not in this foundation
 
-- Video posters for clips from a chat (they are not gallery items).
 - Stopping an engine install, or a load, half-way.
 - Local image-to-video (Core refuses it).
