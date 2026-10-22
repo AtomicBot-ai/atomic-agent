@@ -154,11 +154,10 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
         },
         item("Keyboard Shortcuts", "shortcuts", "CommandOrControl+/"),
         sep,
-        {
-          label: "Report an Issue…",
-          click: () =>
-            void shell.openExternal("https://github.com/AtomicBot-ai/atomic-agent/issues"),
-        },
+        /* ATO-279: the same `help.report` act as the in-app button, so the
+           menu's report is counted (ui_action) and opens the same prefilled
+           issue with a saved support report, not the bare issue list. */
+        item("Report an Issue…", "help.report"),
         ...(mac ? [] : [sep, { role: "about" } as MenuItemConstructorOptions]),
       ],
     },
