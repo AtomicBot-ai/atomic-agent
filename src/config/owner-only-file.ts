@@ -1,5 +1,7 @@
 import { chmodSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
+import { restrictWindowsAcl } from "./windows-acl.js";
+
 /** Owner read/write only: the mode `config.json` and `.env` are kept at. */
 export const OWNER_ONLY_FILE_MODE = 0o600;
 
@@ -18,12 +20,20 @@ export const OWNER_ONLY_FILE_MODE = 0o600;
  * The tmp file is created exclusively, after removing one a crash may
  * have left: a leftover keeps the mode it was created with, and writing
  * into it would put the new content on disk at that mode until the
- * rename. Windows has no POSIX modes; there the chmod is a no-op and the
- * file keeps its folder's ACL.
+ * rename.
+ *
+ * Windows has no POSIX modes, so the chmod is a no-op there. Instead the
+ * tmp file's ACL is narrowed to the current user (`restrictWindowsAcl`,
+ * the same helper `.env` uses) before the rename, which keeps that ACL,
+ * so the desktop's inline provider keys in `config.json` are not left
+ * readable through the folder's inherited grants (ATO-727). Best effort:
+ * if it fails the file keeps the inherited ACL and the write still
+ * succeeds. `restrictAcl` is a test seam; production callers omit it.
  */
 export function writeOwnerOnlyFileAtomicSync(
   path: string,
   payload: string,
+  restrictAcl: (path: string) => void = restrictWindowsAcl,
 ): void {
   const tmp = `${path}.tmp-${process.pid}`;
   try {
@@ -36,6 +46,11 @@ export function writeOwnerOnlyFileAtomicSync(
     mode: OWNER_ONLY_FILE_MODE,
     flag: "wx",
   });
+  try {
+    restrictAcl(tmp);
+  } catch {
+    // Never fail a config write over permissions; see above.
+  }
   try {
     renameSync(tmp, path);
   } catch (err) {

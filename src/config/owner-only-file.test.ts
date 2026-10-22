@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -20,6 +20,11 @@ import {
   OWNER_ONLY_FILE_MODE,
   writeOwnerOnlyFileAtomicSync,
 } from "./owner-only-file.js";
+import { restrictWindowsAcl } from "./windows-acl.js";
+
+// The real helper is a no-op off Windows and is covered by
+// windows-acl.test.ts; here only the call from the write path matters.
+vi.mock("./windows-acl.js", () => ({ restrictWindowsAcl: vi.fn() }));
 
 const posix = process.platform !== "win32";
 const modeOf = (path: string): number => statSync(path).mode & 0o777;
@@ -121,5 +126,60 @@ describe("config.json is written owner-only", () => {
     const path = join(dir, "nested", "config.json");
     writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
     if (posix) expect(modeOf(path)).toBe(0o600);
+  });
+});
+
+// ATO-727: on Windows chmod does nothing, so config.json (which can hold
+// the desktop's inline provider keys) gets the same owner-only ACL as .env.
+describe("config.json gets an owner-only ACL on Windows", () => {
+  let dir: string;
+  const restrict = vi.mocked(restrictWindowsAcl);
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "owner-only-acl-"));
+    restrict.mockReset();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("narrows the tmp file's ACL before it is renamed into place", () => {
+    const path = join(dir, "config.json");
+    const tmp = `${path}.tmp-${process.pid}`;
+    // Recorded, not asserted, inside the call: the write swallows any
+    // throw from the ACL step, which would hide a failed expectation.
+    const seen: { target: string; tmpText: string; finalExists: boolean }[] = [];
+    restrict.mockImplementation((target) => {
+      seen.push({
+        target,
+        tmpText: readFileSync(target, "utf8"),
+        finalExists: existsSync(path),
+      });
+    });
+    writeOwnerOnlyFileAtomicSync(path, "{}\n");
+    // Called on the tmp file, with the payload already in it, before
+    // anything reaches the real path.
+    expect(seen).toEqual([{ target: tmp, tmpText: "{}\n", finalExists: false }]);
+    expect(readFileSync(path, "utf8")).toBe("{}\n");
+  });
+
+  it("is applied by both config writers", () => {
+    const path = getUserConfigPath(dir);
+    writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+    writeRawUserConfigFileSync(path, { version: 1, log: { level: "info" } });
+    expect(restrict.mock.calls).toEqual([
+      [`${path}.tmp-${process.pid}`],
+      [`${path}.tmp-${process.pid}`],
+    ]);
+  });
+
+  it("never fails the write when narrowing the ACL throws", () => {
+    const path = join(dir, "config.json");
+    writeOwnerOnlyFileAtomicSync(path, "kept\n", () => {
+      throw new Error("icacls missing");
+    });
+    expect(readFileSync(path, "utf8")).toBe("kept\n");
+    expect(readdirSync(dir)).toEqual(["config.json"]);
   });
 });
