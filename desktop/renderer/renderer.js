@@ -2657,11 +2657,22 @@ function item(m) {
 /** ATO-467: "Thought for 12 s" once this window timed the row, from its first
     reasoning frame to the turn's next frame of another kind (REASON_ENDS).
     A row still thinking, one under a second, and a reopened chat's rows (the
-    store keeps no times for reasoning) say "Reasoning", as before. */
+    store keeps no times for reasoning) say "Reasoning", as before.
+    ATO-820: a model that thinks again in the same row after its reply began
+    adds that span to `thoughtMs` (see reasonReopen), so the label is the sum
+    of every span and not only the first. */
 const REASON_ENDS = new Set(['delta', 'tool_progress', 'progress_note', 'reply_attachments', 'finish', 'done', 'aborted', 'error']);
 function reasonLabel(m) {
-  const ms = m.startedAt && m.endedAt ? m.endedAt - m.startedAt : 0;
+  if (!m.startedAt || !m.endedAt) return 'Reasoning';
+  const ms = (m.thoughtMs || 0) + (m.endedAt - m.startedAt);
   return ms >= 1000 ? 'Thought for ' + dur(ms) : 'Reasoning';
+}
+/** ATO-820: a closed reasoning row that gets more thinking banks its span and restarts the clock. */
+function reasonReopen(block, at) {
+  if (!block.startedAt || !block.endedAt) return;
+  block.thoughtMs = (block.thoughtMs || 0) + (block.endedAt - block.startedAt);
+  block.startedAt = at;
+  block.endedAt = null;
 }
 
 /* ============================================================
@@ -9575,7 +9586,7 @@ function onChatEvent(ev) {
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
       streamPaint('chat');   // a new row in the transcript
-    }
+    } else reasonReopen(block, ev.at || Date.now());
     block.text += text;
     // 13/14: one paint per frame for however many chunks arrive in it, and
     // only what the text reaches — see streamPaint.
@@ -13578,7 +13589,7 @@ function obFootHTML() {
       break;
     case 'finished':
       if (!OB.settleSlow) return '';
-      right = obBtn('nav:back', 'Open the app now', 'btn-p', false, '', 'arrowR');
+      right = obBtn('open:now', 'Open the app now', 'btn-p', false, '', 'arrowR');
       break;
     default:
       return '';
@@ -14889,9 +14900,12 @@ async function obReadiness() {
  * operator already declined.  Nothing routes around the import screen:
  * its own skip row is the only way past it.
  */
-/* ATO-440: after 20 s the closing screen offers "Open the app now" (and Escape),
-   closing the overlay as obSettle does. Cost: a settle still out may stamp nothing
-   (setup opens again next launch) and this does not restart the agent; one that lands later still does both. */
+/* ATO-440: after 20 s the closing screen offers "Open the app now" (and Escape).
+   ATO-820: leaving there only closes the overlay. The settle still out (or a
+   new one, when none is) goes on behind it as `leftEarly`: it raises no more
+   offers, and still writes the closing stamp and restarts the agent, so setup
+   does not open again next launch. The way out is the `onboarding:openNow`
+   act, so analytics counts it as a ui_action. */
 function obSettleSlowClear() { clearTimeout(OB_SETTLE_SLOW_TIMER); OB_SETTLE_SLOW_TIMER = null; OB.settleSlow = false; }
 function obSettleSlowArm() {
   obSettleSlowClear();
@@ -14902,8 +14916,18 @@ function obSettleSlowArm() {
 }
 function obFinishedKey(input, key) {
   if (!key.escape || !OB.settleSlow) return false;
-  obSettleSlowClear(); OB.open = false; OB.settling = false; obSkyStop(); render();
+  ANX.via('key');
+  act('onboarding:openNow');
   return true;
+}
+function obOpenNow() {
+  if (!OB.open || OB.step !== 'finished' || !OB.settleSlow) return;
+  obSettleSlowClear();
+  OB.leftEarly = true;
+  OB.open = false;
+  obSkyStop();
+  render();
+  if (!OB.settling) obSettle();
 }
 
 async function obSettle() {
@@ -14919,7 +14943,7 @@ async function obSettle() {
   const outcome = OB.outcome || 'skipped';
   const state = await obReadiness();
   if (stale()) return;
-  if (!OB.open) { OB.settling = false; return; }
+  if (!OB.open && !OB.leftEarly) { OB.settling = false; return; }
   /* r8: `handOver` is the operator saying "put me in the agent now", from
      one of the two rows that promised exactly that. Neither remaining offer
      is raised on it — not the second backend (both rows sit under a cloud
@@ -14934,7 +14958,7 @@ async function obSettle() {
      this screen"), and it is on purpose: those two rows name the agent, and
      the operator filed the bug that they did not deliver it. Every other
      way out of the flow still goes through the import step exactly once. */
-  const offer = OB.skipSecondOffer || OB.handOver ? null : obDecideSecondBackend({
+  const offer = OB.skipSecondOffer || OB.handOver || OB.leftEarly ? null : obDecideSecondBackend({
     outcome,
     cloudReady: state.cloudReady,
     localReady: state.localReady,
@@ -14950,10 +14974,10 @@ async function obSettle() {
     obStampOnce('proposedSecondBackendAt');
     return;
   }
-  if (!OB.handOver && !state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
+  if (!OB.handOver && !OB.leftEarly && !state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
     const agents = await obDetectAgents();
     if (stale()) return;
-    if (!OB.open) { OB.settling = false; return; }
+    if (!OB.open && !OB.leftEarly) { OB.settling = false; return; }
     if (agents.length > 0) {
       OB.settling = false;
       obDispatch({type:'onboarding_import_opened', agents});
@@ -15007,6 +15031,8 @@ async function obSettle() {
   if (res && res.ok === false) {
     OB.settling = false;
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
+    // ATO-820: nobody is on the closing screen to read it.
+    if (OB.leftEarly) toast('Setup was not saved', 'It opens again next launch.');
     return;
   }
   obSettleSlowClear();
@@ -15080,7 +15106,7 @@ async function openOnboarding(at) {
     open: true, step: first, offer: null, resumeAfterCloud: null, localModelId: null,
     outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
-    introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
+    introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false, leftEarly: false,
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
@@ -15467,6 +15493,7 @@ function obControlClick(spec) {
     return;
   }
   if (spec === 'nav:back') { obPress('esc'); return; }
+  if (spec === 'open:now') { act('onboarding:openNow'); return; }
   if (spec === 'nav:go') { obPress('enter'); return; }
   if (spec === 'url:skip') {
     // "empty enter skips embeddings" (obFooter), as a control that says so.
@@ -15517,6 +15544,7 @@ if (BR) {
     if (a === 'onboarding') { openOnboarding(); return; }
     // Calm (S6): the composer's "Set up a model" chip — straight to the choice, no title card.
     if (a === 'onboarding:choose') { openOnboarding('choose'); return; }
+    if (a === 'onboarding:openNow') { obOpenNow(); return; }
     if (a === 'dl:cancel') { dlCancel(); return; }
     /* r6 — three lanes found this one independently, and the operator
        named it himself: "when I click on next, nothing happens. But when I
