@@ -140,7 +140,7 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
   }
 
   const REFUSAL =
-    "refused: sales.csv is an input the request names (2,402 lines → 10); edit it in place (os.fs.edit / os.fs.patch), or pass overwrite: true if replacing it is really what the user asked for";
+    "refused: sales.csv is an input the request names (2,402 lines → 10); leave it as it is and write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). If the user wants this file itself replaced, ask them in your reply first";
 
   it("refuses before the approval prompt, leaves the file alone, and names the way onward", async () => {
     const before = csv(2401);
@@ -151,6 +151,8 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
     );
     expect(result.status).toBe("error");
     expect(result.summary).toBe(REFUSAL);
+    // ATO-849: the refusal must not hand the model the bypass.
+    expect(result.summary).not.toContain("overwrite");
     expect(result.details).toMatchObject({
       refused: "input",
       input: "request",
@@ -251,14 +253,14 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
       ctx(),
     );
     expect(spelled.summary).toBe(
-      `refused: ${join(dir, "data.csv")} is an input the request names (6 lines → 1); edit it in place (os.fs.edit / os.fs.patch), or pass overwrite: true if replacing it is really what the user asked for`,
+      `refused: ${join(dir, "data.csv")} is an input the request names (6 lines → 1); leave it as it is and write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). If the user wants this file itself replaced, ask them in your reply first`,
     );
 
     await writeFile(join(dir, "huge.bin"), Buffer.alloc(RESTORE_MAX_BYTES + 1, 0x61));
     request = "Inspect huge.bin";
     const huge = await tools().write.run({ path: "huge.bin", content: "tiny\n" }, ctx());
     expect(huge.summary).toBe(
-      "refused: huge.bin is an input the request names (5.0 MB → 1 line); edit it in place (os.fs.edit / os.fs.patch), or pass overwrite: true if replacing it is really what the user asked for",
+      "refused: huge.bin is an input the request names (5.0 MB → 1 line); leave it as it is and write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). If the user wants this file itself replaced, ask them in your reply first",
     );
     expect(existsSync(join(dir, "huge.bin"))).toBe(true);
   });

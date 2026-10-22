@@ -26,9 +26,12 @@ import type { FileRestoreStore } from "./fs-restore-store.js";
  * restore store's created set), and whose basename appears in the
  * turn's pinned request (`pickOriginalRequest`; for a worker, the
  * ORIGINAL REQUEST block of its brief — `quotedRequestText`), the call
- * is refused with the counts and the way onward: edit it in place
- * (`os.fs.edit` / `os.fs.patch`, never refused by this rule), or pass
- * `overwrite: true` when replacing it is what the user asked for.
+ * is refused with the counts and the way onward: write the result to a
+ * new file, edit it in place (`os.fs.edit` / `os.fs.patch`, never
+ * refused by this rule), or ask the user. The refusal never names
+ * `overwrite: true`: live (ATO-849), small models read that hint as the
+ * next step and replaced the user's input on the very next call, so the
+ * refusal itself was the bypass.
  *
  * The request's own words lift the rule: a basename within
  * `REPLACE_VERB_WINDOW_WORDS` words after "rewrite", "replace",
@@ -212,8 +215,9 @@ export function formatReplacementCounts(
 
 /**
  * The same head for both reasons; the tail differs because the way
- * onward does — a worker told to pass `overwrite: true` for a declared
- * input would loop on a key that is ignored for it.
+ * onward does: a worker cannot reach the user, so it hands the question
+ * to the orchestrator. Neither tail suggests `overwrite: true` (see the
+ * top of this file).
  */
 function refusal(
   reason: InputRefusal["reason"],
@@ -223,7 +227,7 @@ function refusal(
   const counts = formatReplacementCounts(input.prior, linesAfter);
   const text =
     reason === "request"
-      ? `refused: ${input.display} is an input the request names (${counts}); edit it in place (os.fs.edit / os.fs.patch), or pass overwrite: true if replacing it is really what the user asked for`
+      ? `refused: ${input.display} is an input the request names (${counts}); leave it as it is and write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). If the user wants this file itself replaced, ask them in your reply first`
       : `refused: ${input.display} is an input this fan-out declared (${counts}); edit it in place (os.fs.edit / os.fs.patch) — a worker cannot replace a declared input; if the task needs it replaced, say so in your reply so the orchestrator can redeclare it`;
   return {
     reason,
