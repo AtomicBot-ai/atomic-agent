@@ -1,6 +1,5 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import { createInterface } from "node:readline";
 
 import {
   formatApprovalCategory,
@@ -26,6 +25,10 @@ import {
   isFailedSessionStatus,
   type SessionState,
 } from "../session/session-state.js";
+import {
+  createStdinLineQueue,
+  type StdinLineQueue,
+} from "./stdin-line-queue.js";
 
 interface RunArgs {
   workingDir: string;
@@ -143,42 +146,64 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
 }
 
 /**
+ * Whether a stdin line answers an approval prompt: one of the offered
+ * keys (`y`, `s`, `a`, `n`), `yes` / `no`, or an empty line (Enter, the
+ * default `N`), in any case. Anything else is a message for the agent,
+ * not an answer.
+ */
+export function isApprovalAnswer(line: string): boolean {
+  return /^(y|yes|n|no|s|a|)$/.test(line.trim().toLowerCase());
+}
+
+/**
  * Interactive approval over stdin. We ask the operator to confirm each
  * dangerous action; `y`/`yes` approves this call, `s` also grants the
  * category for the session, `a` grants this shell command shape.
- * Anything else is a refusal. The grant options mirror the TUI prompt;
+ * Any other answer (`n`, `no`, Enter, a grant key this request does not
+ * offer) is a refusal. The grant options mirror the TUI prompt;
  * they are offered here too because a CLI operator has the same physical
  * access to the machine. A category that is never grantable
  * (`isGrantableCategory`: trust config, e-mail, fusion fan-out) only
  * ever shows `y/N`.
+ *
+ * The answer is the next line of the same stdin queue the chat loop
+ * reads (ATO-802), so a piped "y" written together with the next
+ * message answers this prompt and the message stays queued for the
+ * next turn. Only a line shaped like an answer (`isApprovalAnswer`) is
+ * taken: any other line is a refusal and stays queued as the next
+ * message, so a driver that pipes "task\ncontinue" without answering
+ * loses nothing to the prompt. EOF before an answer is a refusal.
  */
 async function promptApproval(
   request: ApprovalRequest,
+  lines: StdinLineQueue,
 ): Promise<CliApprovalAnswer> {
   const grantCategory = canGrantCategory(request);
   const grantShape = canGrantShape(request);
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    process.stderr.write(formatCliApprovalPrompt(request));
-    const answer = (await new Promise<string>((r) => rl.question("", r)))
-      .trim()
-      .toLowerCase();
-    if (answer === "s" && grantCategory) {
-      process.stderr.write(
-        `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,
-      );
-      return { approved: true, grant: "category" };
-    }
-    if (answer === "a" && grantShape) {
-      process.stderr.write(
-        `\n  granted: ${request.commandShape} commands for this session\n`,
-      );
-      return { approved: true, grant: "shape" };
-    }
-    return { approved: /^(y|yes)$/.test(answer) };
-  } finally {
-    rl.close();
+  process.stderr.write(formatCliApprovalPrompt(request));
+  const head = await lines.peek();
+  if (head === null) return { approved: false };
+  if (!isApprovalAnswer(head)) {
+    process.stderr.write(
+      "\n  denied: the next input line is not an answer, kept as the next message\n",
+    );
+    return { approved: false };
   }
+  await lines.next();
+  const answer = head.trim().toLowerCase();
+  if (answer === "s" && grantCategory) {
+    process.stderr.write(
+      `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,
+    );
+    return { approved: true, grant: "category" };
+  }
+  if (answer === "a" && grantShape) {
+    process.stderr.write(
+      `\n  granted: ${request.commandShape} commands for this session\n`,
+    );
+    return { approved: true, grant: "shape" };
+  }
+  return { approved: /^(y|yes)$/.test(answer) };
 }
 
 /** Transport failures that mean "nothing answered at the configured URL". */
@@ -285,8 +310,8 @@ interface ChatLoopOptions {
    */
   maxSteps?: number;
   controller: AbortController;
-  /** True while an approval prompt is reading its own answer from stdin. */
-  isApprovalPending?: () => boolean;
+  /** Stdin lines, shared with the approval prompt. */
+  lines: StdinLineQueue;
 }
 
 /**
@@ -352,51 +377,11 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     }
   };
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stderr,
-    terminal: process.stdin.isTTY === true,
-  });
-
-  rl.setPrompt("you> ");
-
-  // Every stdin line is queued the moment readline emits it. Reading
-  // with `rl.question()` dropped any line that arrived while a turn was
-  // running (readline only hands a line to a pending question), so a
-  // driver that wrote "task" and then "continue" up front got one turn
-  // and an EOF (ATO-781). EOF ends the loop only once the queue is
-  // drained. A line read while an approval prompt is open belongs to
-  // that prompt's own reader, so it is not queued as a user message.
-  const queued: string[] = [];
-  let inputClosed = false;
-  let wake: (() => void) | null = null;
-  rl.on("line", (line) => {
-    if (opts.isApprovalPending?.() === true) return;
-    queued.push(line);
-    wake?.();
-  });
-  rl.once("close", () => {
-    inputClosed = true;
-    wake?.();
-  });
-
-  const nextLine = async (): Promise<string | null> => {
-    if (queued.length === 0 && !inputClosed) rl.prompt();
-    while (queued.length === 0) {
-      if (inputClosed) return null;
-      await new Promise<void>((resolveWake) => {
-        wake = resolveWake;
-      });
-      wake = null;
-    }
-    return queued.shift() ?? null;
-  };
-
   try {
     while (true) {
       if (opts.controller.signal.aborted) break;
       if (session.status === "completed") break;
-      const line = await nextLine();
+      const line = await opts.lines.next("you> ");
       if (line === null) break;
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
@@ -408,7 +393,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
       await driveTurn(trimmed);
     }
   } finally {
-    rl.close();
+    opts.lines.close();
   }
   return session;
 }
@@ -435,7 +420,9 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   );
 
   let approvalChain: Promise<unknown> = Promise.resolve();
-  let pendingApprovals = 0;
+  // Created once the runtime is up (a failed boot must not leave stdin
+  // open); approvals only arrive during a turn, after that.
+  let stdinLines: StdinLineQueue | null = null;
 
   // The hint only applies when a transport failure means "local llama is
   // down" — i.e. the active text route IS the local server. On a cloud
@@ -460,23 +447,37 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         if (line) process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {
-        pendingApprovals += 1;
-        approvalChain = approvalChain.then(async () => {
-          let answer: CliApprovalAnswer;
-          try {
-            answer = await promptApproval(request);
-          } finally {
-            pendingApprovals -= 1;
-          }
-          runtime.approvals.resolve({
-            approvalId: request.approvalId,
-            approved: answer.approved,
-            // No reason on a deny: it would reach the model as the
-            // user's own words (see `ApprovalDecision.reason`).
-            ...(answer.approved ? { reason: "cli-approved" } : {}),
-            ...(answer.grant ? { grant: answer.grant } : {}),
+        // A prompt that fails is a refusal, and the chain never stays
+        // rejected: a rejected chain would skip every later approval and
+        // leave its request unresolved, hanging the turn (ATO-802).
+        approvalChain = approvalChain
+          .then(async () => {
+            let answer: CliApprovalAnswer;
+            try {
+              answer =
+                stdinLines === null
+                  ? { approved: false }
+                  : await promptApproval(request, stdinLines);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              process.stderr.write(
+                `\n  approval prompt failed (${msg}); denied\n`,
+              );
+              answer = { approved: false };
+            }
+            runtime.approvals.resolve({
+              approvalId: request.approvalId,
+              approved: answer.approved,
+              // No reason on a deny: it would reach the model as the
+              // user's own words (see `ApprovalDecision.reason`).
+              ...(answer.approved ? { reason: "cli-approved" } : {}),
+              ...(answer.grant ? { grant: answer.grant } : {}),
+            });
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            process.stderr.write(`approval could not be resolved: ${msg}\n`);
           });
-        });
       },
       onChannelStatus: (status) => {
         const suffix =
@@ -510,6 +511,11 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   let exitCode = 0;
   try {
     const session = runtime.createSession();
+    stdinLines = createStdinLineQueue({
+      input: process.stdin,
+      output: process.stderr,
+      terminal: process.stdin.isTTY === true,
+    });
     const finalSession = await runChatLoop({
       runtime,
       initialSession: session,
@@ -517,7 +523,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       // (the leg length) made every task stop at the first leg.
       ...(parsed.maxSteps === null ? {} : { maxSteps: parsed.maxSteps }),
       controller,
-      isApprovalPending: () => pendingApprovals > 0,
+      lines: stdinLines,
     });
     runtime.sessionStore.save(finalSession);
     process.stderr.write(
@@ -545,6 +551,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     process.stderr.write(`fatal: ${msg}\n`);
     exitCode = 1;
   } finally {
+    stdinLines?.close();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     await runtime.shutdown();
