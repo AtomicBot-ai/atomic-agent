@@ -2504,8 +2504,12 @@ function chatStatusWord(s) {
 }
 
 /* ---------------- content ---------------- */
+let CHAT_MEDIA_VIEW = '';
 function renderContent() {
   const c = $('#content');
+  // ATO-811: a reply's clip stops when its chat leaves the screen (another chat, Studio), before the old DOM goes.
+  const mediaView = S.room + ':' + S.sessionId;
+  if (mediaView !== CHAT_MEDIA_VIEW) { CHAT_MEDIA_VIEW = mediaView; if (typeof pauseChatMedia === 'function') pauseChatMedia(); }
   // Studio: the shell keeps its page's DOM between renders and only mounts it when the room changes.
   if (S.room === 'studio') { if (window.STUDIO) STUDIO.mount(c); return; }
   if (window.STUDIO) STUDIO.leave();
