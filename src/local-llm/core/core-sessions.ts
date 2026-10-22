@@ -3,7 +3,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CoreUnavailableError } from "./core-errors.js";
 import { setTimeout as delay } from "node:timers/promises";
-import { activeCoreVersion, coreRoot, coreSessionPath, orphanedCoreSession, readCoreBackend, readCoreJson, writeCoreJson, type CoreSession, type CoreSessionRecord } from "./core-state.js";
+import { activeCoreVersion, coreLoopbackPort, coreRoot, coreSessionPath, orphanedCoreSession, readCoreBackend, readCoreJson, writeCoreJson, type CoreSession, type CoreSessionRecord } from "./core-state.js";
 import { connectCore, ensureCore, withCoreClient } from "./core-client.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
 
@@ -184,7 +184,8 @@ export async function coreSessionStatus(dataDir: string, role: "chat" | "embeddi
   const snapshot = await client.snapshot();
   const session = snapshot.sessions.find(s => s.provider === record.provider && s.model_id === record.model_id && s.port === record.port && s.model_path === record.model_path);
   if (!session) return null;
-  if (session.pid !== record.pid || session.generation !== record.generation || client.instanceId !== record.instanceId) {
+  if (session.pid !== record.pid || session.generation !== record.generation || client.instanceId !== record.instanceId ||
+      session.api_key !== record.api_key) {
     // A status poll must not contend with a long install/load. Only a changed
     // owner needs a short, guarded refresh; the next poll can retry it.
     await withCoreOperation(dataDir, async () => {
@@ -195,6 +196,30 @@ export async function coreSessionStatus(dataDir: string, role: "chat" | "embeddi
     }, { waitMs: 0 }).catch(() => {});
   }
   return session;
+}
+
+/**
+ * A Core model server answered 401: the key in `core/<role>.json` is not
+ * the one its session runs with now (Core restarted the session, or the
+ * record went stale). Ask the running Core once for the session recorded
+ * on that port and return its current key; `coreSessionStatus` refreshes
+ * the record on the way. Only a loopback URL on a recorded Core port
+ * qualifies (`coreLoopbackPort`), so the key never follows a configured
+ * URL to another host. Never starts Core. `null` when nothing better is
+ * known: no Core session on that port, Core down, or the session gone.
+ */
+export async function refreshCoreKeyForUrl(dataDir: string, url: string, status: typeof coreSessionStatus = coreSessionStatus): Promise<string | null> {
+  const port = coreLoopbackPort(url);
+  if (port === null) return null;
+  for (const role of ["chat", "embedding"] as const) {
+    const record = readCoreJson<CoreSessionRecord>(coreSessionPath(dataDir, role));
+    if (!record || String(record.port) !== port) continue;
+    try {
+      const session = await status(dataDir, role);
+      return typeof session?.api_key === "string" && session.api_key ? session.api_key : null;
+    } catch { return null; }
+  }
+  return null;
 }
 
 /**
