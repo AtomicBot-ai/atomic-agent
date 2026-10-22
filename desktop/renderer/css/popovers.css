@@ -65,6 +65,13 @@
 .selpop .modelrow .selnote2.tight{color:var(--amber-text)}
 /* Models this Mac cannot run: named, with what they need, not offered. */
 .selpop .selouth{flex:none;margin:8px 10px 2px;font:600 12px/1.3 var(--font-ui);color:var(--ink-2)}
+/* ATO-730: the model list's group headings (On this computer, each cloud
+   provider), and a group's own failed list in the danger colour. */
+.selpop .selgrp{flex:none;margin:10px 10px 2px;font:600 12px/1.3 var(--font-ui);color:var(--ink-2)}
+.selpop .selgrp:first-child{margin-top:4px}
+.selpop .selgrperr{flex:none;display:flex;align-items:flex-start;gap:8px;padding:6px 10px;font-size:12.5px;line-height:1.45;
+  color:var(--danger);overflow-wrap:anywhere}
+.selpop .selgrperr > svg{flex:none;width:14px;height:14px;margin-top:2px}
 .selpop .selout{flex:none;display:flex;align-items:center;gap:10px;min-height:34px;padding:4px 10px}
 .selpop .selout .nm{flex:1;min-width:0;font:500 13px/1.3 var(--font-ui);color:var(--ink-2);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
