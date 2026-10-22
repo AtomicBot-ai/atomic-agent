@@ -23,10 +23,10 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
   NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
-  SWITCH_REFUSALS, uiActionOk, UI_VIA,
+  SUPERVISOR_KINDS, SWITCH_REFUSALS, uiActionOk, UI_VIA,
 } from "./catalog-values.js";
 
 export * from "./catalog-values.js";
@@ -185,6 +185,20 @@ export const EVENTS: Record<string, EventSpec> = {
   engine_recovery_shown: {
     owner: "main",
     props: { engine: en(LOCAL_ENGINES, { nullable: true }), stage: en(ENGINE_FAILURE_STAGES), via: en(ENGINE_RECOVERY_VIA) },
+  },
+  /* ATO-773: the engine watchdog (main/daemon-supervisor.ts) brought the local
+     server back, could not, or stopped trying. `quick_deaths` is its crash-loop
+     count, `after_ms` how long a restart took, `fault` a code for the server
+     log's failure line (never the line). Its `clear` is not sent. */
+  local_backend_supervised: {
+    owner: "main",
+    props: {
+      kind: en(SUPERVISOR_KINDS),
+      quick_deaths: int({ max: 99, nullable: true }),
+      after_ms: int({ nullable: true }),
+      engine: en(LOCAL_ENGINES, { nullable: true }),
+      fault: en(ENGINE_FAULTS, { nullable: true }),
+    },
   },
   backend_switched: {
     owner: "main",

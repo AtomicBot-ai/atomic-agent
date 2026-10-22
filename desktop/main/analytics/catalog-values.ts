@@ -28,6 +28,10 @@ export const LOCAL_ENGINES = ["atomic-core", "llama-server"] as const;
 export const ENGINE_FAILURE_STAGES = ["download", "verify", "backend", "blocked", "start"] as const;
 /** `engine_recovery_shown.via`: what put the recovery card up (main.ts noteEngine). */
 export const ENGINE_RECOVERY_VIA = ["launch", "swap", "update", "start", "switch", "setup", "settings", "other"] as const;
+/** `local_backend_supervised.kind`: what the engine watchdog did (main/daemon-supervisor.ts SupervisorNotice, without `clear`). */
+export const SUPERVISOR_KINDS = ["restarting", "restarted", "restart_failed", "gave_up"] as const;
+/** `local_backend_supervised.fault`: the server log's failure line as a code (classify.ts engineFault); the line itself is never sent. */
+export const ENGINE_FAULTS = ["oom", "port_in_use", "load_failed", "missing_lib", "crash", "unknown"] as const;
 export const CODING_MODES = ["default", "plan", "auto", "bypass", "other"] as const;
 export const FIT = ["comfortable", "tight", "over"] as const;
 /** `model_picked.host_ram_gb`: ≤12 → 8, ≤24 → 16, ≤48 → 32, else 64 (renderer/analytics.js ramBucket). */

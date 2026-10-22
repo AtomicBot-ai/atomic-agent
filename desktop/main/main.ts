@@ -2833,7 +2833,11 @@ function wireIpc(client: AgentClient): void {
     void gpuShare.chatTurn().then((h) => h?.drop()).catch(() => undefined);
   });
   hostDaemonWatch({
-    notify: (notice) => send("app:daemonWatch", notice),
+    notify: (notice) => {
+      // ATO-773: what the watchdog did, as codes and counts (analytics/setup localBackendSupervised).
+      A.localBackendSupervised(notice, daemonWatch.state().quickDeaths);
+      send("app:daemonWatch", notice);
+    },
     say: (line, said) => {
       console.error(line);
       // ATO-121: "the app is stopping the model server…" is INFO, a failed restart ERROR (agent-output lineLevel).
