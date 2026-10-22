@@ -600,10 +600,11 @@ Honestly degraded, and labelled as such in the UI:
   files and drops the config entry, so the pane's `d` is the whole undo. The
   first-run wizard's step 2 carries the TUI's own pinned row,
   `Add a model from Hugging Face…`, which opens this same branch in
-  Settings — one implementation, not two. Gated repos: a 401/403 listing adds
-  one line when `HF_TOKEN` is *named* in `<stateDir>/.env` (never its value),
-  because `atag models pull` reads that file and this window does not, so a
-  gated repo can fail to list here and download fine.
+  Settings — one implementation, not two. Gated repos: the listing and the
+  projector download send `HF_TOKEN` (then `HUGGING_FACE_HUB_TOKEN`) the way
+  the agent reads it, from this app's environment or else `<stateDir>/.env`
+  (main/hf-token.ts, ATO-853), so a repo that downloads with `atag models
+  pull` also lists here.
 - **Ollama is a provider here, never a download source.** atomic-agent has
   no Ollama download path of any kind — no registry client, nothing reading
   `~/.ollama`, no converter; the only Ollama code in the agent is two

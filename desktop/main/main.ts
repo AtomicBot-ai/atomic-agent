@@ -191,8 +191,6 @@ import {
   envPresent,
   // Settings › Connections › Composio: composio.userId / sessionId / mcpUrl in one write
   configSetPaths,
-  // Item 7A — the HF_TOKEN asymmetry note on a gated listing (names only)
-  stateDirPath,
   type ImportRunInput,
   // r5 item 7 (setup wizard): the streamed runtime phase, the custom-endpoint
   // whole-file write, and the four import sources the flow's last step offers.
@@ -1035,28 +1033,6 @@ function hfMirrorSources(): HfMirrorSources {
   return { config, env: process.env.HF_ENDPOINT, dotenv };
 }
 
-/**
- * The one honest thing this window can add to a gated-repo refusal.
- *
- * `atag models pull` reads HF_TOKEN out of <stateDir>/.env — load-config
- * applies the NAMES into process.env on every CLI run — while this
- * process sees only its own environment, so a gated repo can fail to LIST
- * here and download fine. Names only: the value is never read.
- *
- * Extracted from the cli:hfResolve handler so the sentence can be
- * asserted without a gated repo and a token on disk (review fix: it was
- * the one string in this feature the desktop authored on top of the port,
- * and nothing checked it).
- */
-function hfGatedTokenHint(message: string, dir: string): string {
-  if (!/Hugging Face returned 40[13]/.test(message)) return message;
-  const names = dotenvKeys(dir).keys.filter((k) => k === "HF_TOKEN" || k === "HUGGING_FACE_HUB_TOKEN");
-  if (names.length === 0 || envPresent(names).length > 0) return message;
-  return message
-    + ` (${names.join(" / ")} is named in ${dir}/.env, which \`atag models pull\` reads and this window does not`
-    + " — start the app with it exported and the listing will see it too.)";
-}
-
 /* N3 — the agent's output, on disk.
    Everything `atag serve` said lived in the console drawer's 300-line ring,
    in memory, and went with the window: quitting the app destroyed the
@@ -1634,7 +1610,9 @@ function wireIpc(client: AgentClient): void {
       if (controller.signal.aborted) return { ok: false, cancelled: true, error: "cancelled" };
       const message = err instanceof Error ? err.message : String(err);
       A.hfLookupDone({ error: message });   // reduced to an enum there; the message never leaves
-      return { ok: false, error: hfGatedTokenHint(message, stateDirPath()) };
+      /* ATO-853: no extra line about HF_TOKEN in <stateDir>/.env any more: the
+         listing reads that file too (huggingface.ts huggingFaceToken). */
+      return { ok: false, error: message };
     }
   });
   /* The Hugging Face mirror (hf-mirror.ts): what the field shows, and its
@@ -6390,43 +6368,6 @@ async function hfAndDeltaTest(
     bad.error === badWanted && bad.repoId === null && badBody.includes(badWanted)
       && ds.error === "hf://datasets/… points at a dataset, not a model repo",
     `${JSON.stringify(bad.error)} / ${JSON.stringify(ds.error)}`,
-  );
-
-  /* Review fix: the desktop's own added sentence on that 401 — the only
-     string this feature authored on top of the port, and the only place
-     `dotenvKeys`/`envPresent` are consulted from the HF path. Driven over
-     a throwaway directory so it needs neither a gated repo nor a token in
-     the operator's own .env — and so "names only, never values" is
-     demonstrable: the file below holds a value the message must not show. */
-  const hintDir = join(app.getPath("temp"), `atag-hf-hint-${process.pid}`);
-  const base401 = "Hugging Face returned 401: either no such repo, or it is gated.";
-  const base403 = "Hugging Face returned 403: either no such repo, or it is gated.";
-  const base404 = "Hugging Face returned 404: no repo or revision by that name.";
-  let hintWith = "";
-  let hintWithout = "";
-  let hintOther = "";
-  try {
-    mkdirSync(hintDir, { recursive: true });
-    writeFileSync(join(hintDir, ".env"), "HF_TOKEN=hf_not-a-real-token\n");
-    hintWith = hfGatedTokenHint(base401, hintDir);
-    hintOther = hfGatedTokenHint(base404, hintDir);
-    rmSync(join(hintDir, ".env"), { force: true });
-    hintWithout = hfGatedTokenHint(base403, hintDir);
-  } finally {
-    rmSync(hintDir, { recursive: true, force: true });
-  }
-  // Exported in this process, the hint would be a lie — `models pull` and
-  // this window would both already see it — so it is correctly withheld.
-  const tokenExported = envPresent(["HF_TOKEN"]).length > 0;
-  const hintWanted = tokenExported
-    ? base401
-    : base401 + ` (HF_TOKEN is named in ${hintDir}/.env, which \`atag models pull\` reads and this window does not`
-      + " — start the app with it exported and the listing will see it too.)";
-  check(
-    "hf: a 401 with a token named in <stateDir>/.env says where `models pull` reads it, and never its value",
-    hintWith === hintWanted && !hintWith.includes("hf_not-a-real-token")
-      && hintWithout === base403 && hintOther === base404,
-    `${JSON.stringify(hintWith)}${tokenExported ? " (HF_TOKEN is exported here, so the hint is withheld)" : ""}`,
   );
 
   // ---- every paste form parses (network-gated) ----
