@@ -18,6 +18,14 @@
  * start or install the app itself ended on its time limit while Core was
  * still downloading is a download that did not finish (`reason: incomplete`),
  * not a generic error.
+ *
+ * ATO-374: a model Core could not load (Core's MODEL_LOAD_FAILED, or the
+ * model server's own "failed to load model") is not an engine problem either:
+ * downloading the engine again changes nothing, so it reads as its own
+ * sentence with no action (`reason: load`). And when the agent switched a
+ * start to the CPU build because the GPU build could not serve the model
+ * (today the managed llama.cpp start prints it; Core's own fallback is
+ * ATO-344), the window says so in one line (CPU_FALLBACK_LINE).
  */
 
 /** The agent's retry hint, printed at the end of every Core failure (CORE_RETRY_HINT). */
@@ -46,9 +54,10 @@ export type EngineFailureStage = "download" | "verify" | "backend" | "blocked" |
  * non-retryable reason codes (NOT_RETRYABLE in src/local-llm/core/core-errors.ts):
  * nothing "Download again" can change, so the card says so instead of offering
  * it. `incomplete`: a start or an install the app ended on its time limit
- * while Core was still downloading.
+ * while Core was still downloading. `load`: Core is installed and running,
+ * but the model itself did not load (ATO-374).
  */
-export type EngineFailureReason = "unsupported" | "version" | "no_backend" | "disk" | "incomplete";
+export type EngineFailureReason = "unsupported" | "version" | "no_backend" | "disk" | "incomplete" | "load";
 export interface EngineFailure {
   stage: EngineFailureStage;
   /** One plain sentence: why the engine is not ready. */
@@ -58,7 +67,29 @@ export interface EngineFailure {
   /** Whether "Download again" can help. False: the card shows `why` alone. */
   retryable: boolean;
   reason?: EngineFailureReason;
+  /** The agent had switched this start to the CPU build before it failed: the card adds CPU_FALLBACK_LINE. */
+  cpuFallback?: boolean;
 }
+
+/** What the reader knows besides the text: `core`, the managed engine is Atomic Core. */
+export interface EngineFailureContext {
+  core?: boolean;
+}
+
+/** The one line for a start the agent moved to the CPU build (ATO-374, Nadya's wording). */
+export const CPU_FALLBACK_LINE = "The model couldn't load on your graphics card. Switched to the CPU build, it will be slower.";
+/* The agent's words when it moves a start to the CPU build: the managed
+   llama.cpp start's "falling back to the CPU build" / "retrying start on the
+   CPU build" (src/cli/models-handlers.ts), and the plainer "switched to the
+   CPU build" a Core fallback (ATO-344) is expected to print. */
+const CPU_FALLBACK = /falling back to the CPU build|retrying start on the CPU build|switch(?:ed|ing) to the CPU build/i;
+
+/* A model Core is running but could not load: Core's error code, and the
+   model server's own wordings (llama.cpp prints "failed to load model" and
+   "error loading model"). Read only with Core in play: under llama.cpp the
+   same words are the supervisor's business, not this card's. */
+const MODEL_LOAD = /\bMODEL_LOAD_FAILED\b|failed to load (?:the )?model|(?:could not|couldn't|unable to) load (?:the )?model\b|error loading model|llama_model_load|model load(?:ing)? failed/i;
+const WHY_LOAD = "The model couldn't load on this computer. Try a smaller model, or use a cloud model.";
 
 const WHY: Record<EngineFailureStage, string> = {
   download: "The engine download failed. Check your connection and try again.",
@@ -102,7 +133,7 @@ const NOT_A_FAILURE = /Stop local models before (?:updating|switching) the engin
  * own failures count: its retry hint (or an older hint), one of its stage
  * sentences, or a line naming Atomic Core.
  */
-export function engineFailureIn(text: string | null | undefined): EngineFailure | null {
+export function engineFailureIn(text: string | null | undefined, ctx: EngineFailureContext = {}): EngineFailure | null {
   const all = String(text ?? "");
   if (!all.trim()) return null;
   if (CORE_PROGRESS.test(all) && APP_TIME_LIMIT.test(all)) {
@@ -110,8 +141,10 @@ export function engineFailureIn(text: string | null | undefined): EngineFailure 
     return { stage: "download", why: WHY_INCOMPLETE, detail: line.slice(0, 300), retryable: true, reason: "incomplete" };
   }
   const hintAt = CORE_HINTS.map((h) => all.indexOf(h)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
+  const loadFailed = MODEL_LOAD.test(all);
   if (hintAt === undefined && !STAGE_SENTENCES.some(([re]) => re.test(all))
-    && !/Atomic (?:Chat )?Core|atomic-chat-core|CoreUnavailable/i.test(all)) return null;
+    && !/Atomic (?:Chat )?Core|atomic-chat-core|CoreUnavailable|\bMODEL_LOAD_FAILED\b/i.test(all)
+    && !(ctx.core && loadFailed)) return null;
   if (NOT_A_FAILURE.test(all)) return null;
   const stage = stageOf(all);
   const detail = (hintAt === undefined ? all : all.slice(0, hintAt))
@@ -120,8 +153,16 @@ export function engineFailureIn(text: string | null | undefined): EngineFailure 
   const clean = detail.replace(/\s*\(TUI:[^)]*\)\.?\s*$/, "").slice(0, 300);
   const structured = /"retryable"\s*:\s*false/.test(all);
   const fixed = NOT_RETRYABLE.find(([re]) => re.test(all))?.[1];
-  if (fixed) return { stage, why: WHY_NOT_RETRYABLE[fixed], detail: clean, retryable: false, reason: fixed };
-  return { stage, why: WHY[stage], detail: clean, retryable: !structured };
+  const fellBack = CPU_FALLBACK.test(all) ? { cpuFallback: true } : {};
+  if (fixed) return { stage, why: WHY_NOT_RETRYABLE[fixed], detail: clean, retryable: false, reason: fixed, ...fellBack };
+  // The engine is there and the model is what failed: Download again cannot help.
+  if (loadFailed && stage !== "blocked") return { stage: "start", why: WHY_LOAD, detail: clean, retryable: false, reason: "load", ...fellBack };
+  return { stage, why: WHY[stage], detail: clean, retryable: !structured, ...fellBack };
+}
+
+/** Whether a piece of agent output says the start was moved to the CPU build. */
+export function cpuFallbackIn(text: string | null | undefined): boolean {
+  return CPU_FALLBACK.test(String(text ?? ""));
 }
 
 function stageOf(text: string): EngineFailureStage {
@@ -144,11 +185,25 @@ function stageOf(text: string): EngineFailureStage {
  * `stderr`, `refusal`, a switch's `daemonLine`), one level deep. Anything
  * else in it is not read.
  */
-export function engineFailureOf(value: unknown): EngineFailure | null {
-  if (!value || typeof value !== "object") return typeof value === "string" ? engineFailureIn(value) : null;
+export function engineFailureOf(value: unknown, ctx: EngineFailureContext = {}): EngineFailure | null {
+  if (!value || typeof value !== "object") return typeof value === "string" ? engineFailureIn(value, ctx) : null;
   const v = value as Record<string, unknown>;
   if (v["ok"] === true && v["daemon"] !== "start-failed") return null;
-  const said = ["error", "stderr", "refusal", "daemonLine", "daemonError"]
-    .map((k) => v[k]).filter((s): s is string => typeof s === "string" && s.length > 0);
-  return said.length ? engineFailureIn(said.join("\n")) : null;
+  const said = saidIn(v);
+  return said ? engineFailureIn(said, ctx) : null;
+}
+
+/**
+ * Whether an IPC answer, failed or not, says the agent moved the start to
+ * the CPU build. A start that then served is the common case: no failure
+ * card, but the person should know why replies are slow.
+ */
+export function cpuFallbackOf(value: unknown): boolean {
+  if (!value || typeof value !== "object") return typeof value === "string" && cpuFallbackIn(value);
+  return cpuFallbackIn(saidIn(value as Record<string, unknown>));
+}
+
+function saidIn(v: Record<string, unknown>): string {
+  return ["error", "stderr", "refusal", "daemonLine", "daemonError"]
+    .map((k) => v[k]).filter((s): s is string => typeof s === "string" && s.length > 0).join("\n");
 }
