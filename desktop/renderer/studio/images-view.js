@@ -378,7 +378,7 @@ function simgJobOf(id) { return String(id || '').replace(/-\d+$/, ''); }
 
 function simgvStage(IM) {
   const live = IM.job && (IM.job.state === 'queued' || IM.job.state === 'generating');
-  const item = IM.sel ? IM.items.find((x) => x.id === IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null) : null;
+  const item = IM.sel ? IM.items.find((x) => x.id === IM.sel) || (IM.pinnedMore || []).find((x) => x.id === IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null) : null;
   if (live) return '<div class="st-viewer grid">' + (IM.form.source ? '<div class="st-blurbg" data-pic="' + esc(IM.form.source.key) + '"></div>' : '') + simgvProgress(IM) + '</div>';
   if (IM.jobErr) return '<div class="st-viewer grid">' + simgvError(IM) + '</div>';
   if (item) return '<div class="st-viewer well">' + simgvResult(IM, item) + '</div>';
@@ -386,7 +386,7 @@ function simgvStage(IM) {
 }
 
 function simgvGallery(IM) {
-  const pinned = IM.items.filter((x) => x.pinned);
+  const pinned = simgPinnedList(IM.items, IM.pinnedMore);
   const list = IM.filter === 'pinned' ? pinned : IM.items;
   const live = IM.job && (IM.job.state === 'queued' || IM.job.state === 'generating');
   const ghosts = live && IM.filter !== 'pinned' ? Math.min(IM.jobCount || 1, 8) : 0;
@@ -397,7 +397,7 @@ function simgvGallery(IM) {
     + '<button class="' + (IM.filter === 'pinned' ? 'on' : '') + '" ' + SIMGV_A('filter:pinned') + '>Pinned' + (pinned.length ? ' · ' + pinned.length : '') + '</button></div></div>';
   if (!list.length && !ghosts) {
     return head + '<div class="st-galempty">' + ic(IM.filter === 'pinned' ? 'pin' : 'image')
-      + esc(IM.galErr ? IM.galErr.message : IM.filter === 'pinned' ? 'Nothing pinned yet.' : 'Nothing yet. Images you make here and in chats land in one place.') + '</div>';
+      + esc(IM.galErr ? IM.galErr.message : IM.filter === 'pinned' ? (IM.pinnedLoading ? 'Looking for pinned images…' : IM.pinnedPartial ? 'Nothing pinned among the newest images. Load more under All to find older ones.' : 'Nothing pinned yet.') : 'Nothing yet. Images you make here and in chats land in one place.') + '</div>';
   }
   return head + '<div class="st-thumbs' + (IM.picking ? ' picking' : '') + '">'
     + Array.from({length: ghosts}, () => '<div class="st-th ghost shim"></div>').join('')
@@ -405,7 +405,8 @@ function simgvGallery(IM) {
       + ' data-pic="' + esc(x.thumbnailPath || x.path) + '" data-id="' + esc(x.id) + '">'
       + (x.pinned ? '<span class="st-pin">' + ic('pin') + '</span>' : '') + '</button>').join('')
     + '</div>'
-    + (IM.hasMore && IM.filter === 'all' ? '<button class="loadmore" ' + SIMGV_A('more') + '>Load more</button>' : '');
+    + (IM.hasMore && IM.filter === 'all' ? '<button class="loadmore" ' + SIMGV_A('more') + '>Load more</button>' : '')
+    + (IM.filter === 'pinned' && IM.pinnedPartial && !IM.pinnedLoading ? '<div class="st-galempty">' + esc('Older pinned images may be missing here. Load more under All to find them.') + '</div>' : '');
 }
 
 function simgvPage(IM) {

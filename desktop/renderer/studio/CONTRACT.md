@@ -86,6 +86,11 @@ Every call resolves (never rejects) to
 | `onGpuShare(cb)` | subscribe; returns unsubscribe. `cb(state: GpuShareState)` on every change |
 
 `gallery`, `pin`, `galleryDelete` ids: image `<jobId>-<NN>`, video the job id.
+Core's listing has no pinned filter (`?offset&limit&includeArchived` only), so
+the Images page's Pinned tab reads the pages it has not loaded yet with
+`gallery` (200 a page, at most 10 pages) and keeps the pinned items it finds
+beside the loaded ones; past the cap it says older pinned images may be
+missing.
 
 ### Paths
 

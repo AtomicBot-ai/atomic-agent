@@ -246,6 +246,52 @@ test('gallery ids group by job', () => {
   assert.equal(simgJobOf('abc-def-01'), 'abc-def');
 });
 
+/* ---------- Pinned tab (Core lists by page only) ---------- */
+
+const galleryOf = (n, pinnedAt) => Array.from({length: n}, (_, i) => ({id: 'job' + i + '-01', createdAtMs: 10_000 - i, pinned: pinnedAt.includes(i)}));
+const pager = (all, calls) => async (offset, limit) => {
+  calls.push([offset, limit]);
+  const items = all.slice(offset, offset + limit);
+  return {ok: true, data: {items, hasMore: offset + items.length < all.length, total: all.length}};
+};
+
+test('the Pinned tab finds pinned images in pages the window has not loaded', async () => {
+  const all = galleryOf(450, [3, 120, 449]);
+  const calls = [];
+  const r = await L.simgFindPinned(pager(all, calls), 50);
+  assert.deepEqual(r.items.map((x) => x.id), ['job120-01', 'job449-01']);
+  assert.equal(r.complete, true);
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls, [[50, 200], [250, 200]]);
+});
+
+test('reading pinned images stops at the cap and says the list may be partial', async () => {
+  const all = galleryOf(100, [5, 95]);
+  const calls = [];
+  const r = await L.simgFindPinned(pager(all, calls), 0, {pageSize: 10, maxPages: 3});
+  assert.deepEqual(r.items.map((x) => x.id), ['job5-01']);
+  assert.equal(r.complete, false);
+  assert.equal(calls.length, 3);
+});
+
+test('a failed page keeps the pinned images found before it', async () => {
+  const all = galleryOf(30, [2, 25]);
+  let n = 0;
+  const r = await L.simgFindPinned(async (offset, limit) => (n++ ? {ok: false, error: {code: 'CORE', message: 'x'}} : pager(all, [])(offset, limit)), 0, {pageSize: 10});
+  assert.deepEqual(r.items.map((x) => x.id), ['job2-01']);
+  assert.equal(r.ok, false);
+  assert.equal(r.complete, false);
+  const thrown = await L.simgFindPinned(async () => { throw new Error('gone'); }, 0);
+  assert.deepEqual(thrown, {items: [], complete: false, ok: false});
+});
+
+test('the Pinned list joins loaded and found items, newest first, each once, only pinned ones', () => {
+  const loaded = [{id: 'a', createdAtMs: 5, pinned: true}, {id: 'b', createdAtMs: 4, pinned: false}];
+  const more = [{id: 'c', createdAtMs: 1, pinned: true}, {id: 'a', createdAtMs: 5, pinned: true}, {id: 'd', createdAtMs: 3, pinned: false}];
+  assert.deepEqual(L.simgPinnedList(loaded, more).map((x) => x.id), ['a', 'c']);
+  assert.deepEqual(L.simgPinnedList(loaded, undefined).map((x) => x.id), ['a']);
+});
+
 test('index.html loads the Studio shell and pages before renderer.js, and lets video play', () => {
   const index = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
   const at = (s) => index.indexOf(s);
