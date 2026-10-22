@@ -36,7 +36,7 @@ Every call resolves (never rejects) to
 | `CORE_START_FAILED`, `CORE_UNREACHABLE`, `CORE_TIMEOUT`, `CORE_BUSY`, `CORE_MISMATCH`, `CORE_INVALID`, `CORE_LOCK_STALE` | Atomic Core could not be used; offer Retry |
 | `JOB_BUSY` | 4 cloud jobs already running (Core `MAX_REMOTE_JOBS`), or a local one |
 | `GPU_BUSY`, `MODEL_NOT_LOADED`, `OUT_OF_MEMORY`, `DISK_FULL`, `QUEUE_FULL` | Core's diffusion codes (`src/contracts/errors.ts`) |
-| `REMOTE_RATE_LIMITED` | OpenRouter's upstream for the model answered 429 (a job that failed after it started may carry only Core's words, "openrouter is rate-limiting requests"): the Images card names the model, says nothing was charged, and offers Retry and another cloud model that runs the mode, GPT Image first (ATO-830) |
+| `REMOTE_RATE_LIMITED` | OpenRouter's upstream for the model answered 429 (a job that failed after it started may carry only Core's words, "openrouter is rate-limiting requests"; those words count only on a code that does not already name the failure, and never on a local job): the Images card names the model, says OpenRouter does not charge for a request it turned away, and offers Retry and another cloud model that runs the mode, GPT Image first (ATO-830) |
 | `REMOTE_AUTH_FAILED`, `REMOTE_QUOTA`, `REMOTE_CONTENT_BLOCKED`, `REMOTE_REJECTED`, `REMOTE_UNSUPPORTED`, `REMOTE_UNAVAILABLE`, `REMOTE_TIMEOUT`, `REMOTE_NOT_CONFIGURED`, `UNSUPPORTED_WORKFLOW` | provider refusals, already worded |
 | `JOB_NOT_FOUND` | Core lost the job (restart); only on `onJob` |
 | `DISK_SPACE` | `localDownload` refused before any byte moved; message is ATO-507's "Needs 19.7 GB, 12.1 GB free on this disk." |

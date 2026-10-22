@@ -20,6 +20,9 @@ test('a 429 is recognised by its code and by Core’s own words on a failed job'
   assert.ok(V.simgRateLimited({code: 'FAILED', message: 'openrouter is rate-limiting requests.'}));
   assert.ok(V.simgRateLimited({code: 'INTERNAL', message: 'upstream answered 429'}));
   assert.ok(!V.simgRateLimited({code: 'REMOTE_QUOTA', message: 'out of credits'}));
+  assert.ok(!V.simgRateLimited({code: 'INVALID_DIMENSIONS', message: 'Width 429 is not a multiple of 16.'}), 'a number is not a status');
+  assert.ok(!V.simgRateLimited({code: 'FAILED', message: 'Generation failed: needs 429 MB more.'}));
+  assert.ok(!V.simgRateLimited({code: 'REMOTE_CONTENT_BLOCKED', message: 'The model refused this prompt (rate limit policy).'}), 'a code that already says what failed wins');
   assert.ok(!V.simgRateLimited(null));
 });
 
@@ -30,10 +33,11 @@ test('the other model is never the one that failed, runs the mode, and is GPT Im
   assert.equal(V.simgAltModel([flare], {id: flare.id}, 'create'), null);
 });
 
-test('the card names the model, says nothing was charged, and carries no em dash', () => {
+test('the card names the model, says a turned-away request is not billed, and carries no em dash', () => {
   const line = V.simgRateLimitLine('Nano Banana 2.1');
   assert.match(line, /provider for Nano Banana 2\.1 is busy right now/);
-  assert.match(line, /Nothing was charged/);
+  assert.match(line, /does not charge for a request it turned away/);
+  assert.doesNotMatch(line, /Nothing was charged/, 'a several-image job can be refused part way');
   assert.doesNotMatch(line, /—/);
 });
 
@@ -52,6 +56,8 @@ test('the rate-limit card offers Retry, the other model and Close', () => {
   const other = ctx.err({jobErr: {code: 'REMOTE_QUOTA', message: 'out of credits'}, catalog, form: {mode: 'create'}});
   assert.match(other, /That did not work/);
   assert.doesNotMatch(other, /trymodel/);
+  const localJob = ctx.err({jobErr: {code: 'FAILED', message: 'rate limit'}, lastReq: {model: local.id, provider: 'local'}, catalog, form: {mode: 'create'}});
+  assert.doesNotMatch(localJob, /trymodel/, 'a local job is never an OpenRouter rate limit');
 });
 
 test('Try <model> switches to it and generates again', () => {

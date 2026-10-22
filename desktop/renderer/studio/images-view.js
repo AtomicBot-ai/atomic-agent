@@ -254,8 +254,16 @@ function simgPhaseRows(at) {
    answers 429 when it is out of quota. Core passes it on as
    REMOTE_RATE_LIMITED, or as its own words ("openrouter is rate-limiting
    requests") on a job that failed after it started. */
+const SIMG_NOT_RATE = /^(NO_KEY|JOB_BUSY|GPU_BUSY|MODEL_|SIDE_FILE_|OUT_OF_MEMORY|QUEUE_FULL|DISK_|CORE_|INVALID_|UNKNOWN_MODEL|ENGINE_|DOWNLOAD_FAILED|CANCELLED|OUTSIDE|UNSUPPORTED_WORKFLOW|REMOTE_(?!RATE_LIMITED$|UNAVAILABLE$))/;
 function simgRateLimited(e) {
-  return !!e && (e.code === 'REMOTE_RATE_LIMITED' || /rate[ -]?limit|\b429\b/i.test(String(e.message || '')));
+  if (!e) return false;
+  if (e.code === 'REMOTE_RATE_LIMITED') return true;
+  /* The words only on a code that does not already say what went wrong: a
+     size of 429 or a quota message is not a rate limit. A bare 429 counts
+     only beside the words that make it a status. */
+  if (SIMG_NOT_RATE.test(String(e.code || ''))) return false;
+  const msg = String(e.message || '');
+  return /rate[ -]?limit|too many requests/i.test(msg) || (/\b429\b/.test(msg) && /http|status|upstream|answered|returned/i.test(msg));
 }
 
 /* Another cloud model to offer when one is rate limited: never the one that
@@ -269,14 +277,16 @@ function simgAltModel(models, failed, mode) {
 }
 
 /* The rate-limit card's words: which model's provider is busy, and that a
-   429 costs nothing, so Retry and another model are both safe. */
+   turned-away request is not billed. Not "nothing was charged": a job of
+   several images can be refused after some of them were made. */
 function simgRateLimitLine(name) {
-  return 'OpenRouter\u2019s provider for ' + (name || 'this model') + ' is busy right now. Nothing was charged. Try again in a moment, or use another model.';
+  return 'OpenRouter\u2019s provider for ' + (name || 'this model') + ' is busy right now. OpenRouter does not charge for a request it turned away. Try again in a moment, or use another model.';
 }
 
 function simgvError(IM) {
   const e = IM.jobErr || {};
-  if (simgRateLimited(e)) return simgvRateLimited(IM);
+  // A local job never went to OpenRouter, whatever its words say.
+  if (simgRateLimited(e) && (IM.lastReq || {}).provider !== 'local') return simgvRateLimited(IM);
   const key = e.code === 'NO_KEY';
   const core = /^CORE_/.test(e.code || '');
   return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
