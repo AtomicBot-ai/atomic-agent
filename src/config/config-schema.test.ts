@@ -2313,11 +2313,11 @@ describe("localModels.useServerTemplate / thinking (F31)", () => {
   });
 });
 
-describe("localModels.reasoningBudgetTokens (F49, config v68)", () => {
-  it("defaults to 1500 tokens", () => {
+describe("localModels.reasoningBudgetTokens (F49, config v68; default 0 since v78)", () => {
+  it("defaults to 0, no bound", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
-    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
-    expect(USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(0);
+    expect(USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens).toBe(0);
   });
 
   it("accepts 0 (unbounded) and an integer in [64, 32768], naming the field otherwise", () => {
@@ -2342,7 +2342,7 @@ describe("localModels.reasoningBudgetTokens (F49, config v68)", () => {
       version: 67,
       localModels: { thinking: "off" },
     });
-    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(0);
     expect(parsed.localModels.thinking).toBe("off");
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
   });

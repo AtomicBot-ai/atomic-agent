@@ -5,11 +5,11 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 77; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 78; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
-Current checked examples: localModels mode=external, thinking=auto, reasoningBudgetTokens=1500, completionMaxTokens=16384; agent tokenBudget=3000 and maxSteps=25, with task-wide maxSteps=1000/maxDurationMs=7200000 and autoContinue=true. These are different budgets, not a promise that every task ends after 25 steps.
+Current checked examples: localModels mode=external, thinking=auto, reasoningBudgetTokens=0 (no bound), completionMaxTokens=16384; agent tokenBudget=3000 and maxSteps=25, with task-wide maxSteps=1000/maxDurationMs=7200000 and autoContinue=true. These are different budgets, not a promise that every task ends after 25 steps.
 
 Memory embeddings are off by default; query rewriting, links, evolution, lessons/procedures/consolidation/voting are enabled. Typed notes, reflection segmentation and anySpeaker are disabled. Retention is disabled by default. Environment overrides and migrations can make an existing install differ.
 
@@ -22,6 +22,10 @@ For input versions below 75, validated providers without `modelMode` receive `cl
 ## Atomic Core default engine migration
 
 Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before it the Atomic Core choice sat behind an opt-in environment variable, so a stored `llama-server` was the written default rather than a decision: for input versions below 77 a missing or `llama-server` engine becomes `atomic-core`. Nothing else in the file changes, including external mode and every other managed field. From version 77 an explicit `llama-server` is honoured, so switching back with `models engine llama-server` survives later loads. Unknown engine values still fail validation. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
+
+## Reasoning budget default migration
+
+Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound, as it was before version 68. llama.cpp clamps a grammar repetition to 1,999 characters, so the old default of 1500 tokens was really 499 and cut thinking models off mid-thought. Every file since version 68 carries the value the schema wrote, so for input versions below 78 a stored value of exactly `1500` is read as that default and becomes `0`. Any other value, including a lower positive bound, is kept, and a missing field takes the new default. From version 78 an explicit `1500` is honoured. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
 ## Scalar validation
 

@@ -19,8 +19,12 @@
 
 import { LLAMA_SERVER_GBNF_MAX_REPETITION } from "./grammar/reasoning-prelude.js";
 
-/** `localModels.reasoningBudgetTokens` when the file predates the field. */
-export const DEFAULT_REASONING_BUDGET_TOKENS = 1500;
+/**
+ * `localModels.reasoningBudgetTokens` when the file predates the field:
+ * `0`, no bound (config v78). The old 1,500 was clamped to 499 by the
+ * llama.cpp cap below and cut thinking models off mid-thought.
+ */
+export const DEFAULT_REASONING_BUDGET_TOKENS = 0;
 
 /**
  * Characters per budget token. Deliberately on the generous side of an
@@ -70,8 +74,8 @@ export function effectiveReasoningBudgetTokens(budgetTokens: number): number {
 /**
  * Note once, at boot, that the configured budget is above what llama.cpp
  * can enforce, so the config value is not mistaken for the real bound.
- * `info`, not `warn`: the shipped default (1,500) is above the cap too,
- * and this is a fact about the engine, not a fault in the config. Logged
+ * `info`, not `warn`: this is a fact about the engine, not a fault in
+ * the config. The shipped default (`0`, no bound) never logs it. Logged
  * through the runtime logger because stdout belongs to the TUI.
  */
 export function logReasoningBudgetCap(

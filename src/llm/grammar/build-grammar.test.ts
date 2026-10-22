@@ -201,8 +201,18 @@ describe("the reasoning budget (F49)", () => {
   const GEMMA = (body: string): string =>
     `<|channel>thought\n${body}<channel|>\n${CALL}`;
 
-  it("bounds the think prelude at the default budget, clamped to llama.cpp's 1,999-char GBNF limit (#600)", async () => {
+  it("leaves the think prelude unbounded at the default budget (0 since config v78)", async () => {
     const qwen = await buildGrammar(QWEN_THINK_PROFILE);
+    expect(qwen).toContain("think-body ::= think-fragment*");
+    expect(qwen).not.toMatch(/think-char\{0,\d+\}/);
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    expect(gemma).toContain("channel-body ::= channel-fragment*");
+  });
+
+  it("bounds the think prelude at a configured budget, clamped to llama.cpp's 1,999-char GBNF limit (#600)", async () => {
+    const qwen = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 1500,
+    });
     expect(qwen).toContain("think-body ::= think-char{0,1999}");
     expect(qwen).toContain(
       'think-char ::= [^<] | "<" [^/] | "</" [^t] | "</t" [^h] | "</th" [^i] | "</thi" [^n] | "</thin" [^k] | "</think" [^>]',
@@ -212,7 +222,9 @@ describe("the reasoning budget (F49)", () => {
     );
     expect(qwen).not.toContain("think-fragment");
     // Gemma's channel prelude is bounded the same way.
-    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 1500,
+    });
     expect(gemma).toContain("channel-body ::= channel-char{0,1999}");
     expect(gemma).toContain('channel-char ::= [^<] | "<" [^c]');
     expect(gemma).not.toContain("channel-fragment");
@@ -255,7 +267,10 @@ describe("the reasoning budget (F49)", () => {
   });
 
   it("keeps the string small — llama.cpp expands {0,N} server-side, the request does not carry it", async () => {
-    const bounded = await buildGrammar(QWEN_THINK_PROFILE);
+    const bounded = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 1500,
+    });
+    expect(bounded).toContain("think-char{0,1999}");
     const unbounded = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
       reasoningBudgetTokens: 0,
     });
