@@ -171,12 +171,23 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
      model meanwhile" — rather than from the composer's own panes, so its
      Cancel closes the popover instead of falling back to the backend list. */
   alone:false };
-/* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
-   kinds, whose config shape the desktop does not write. */
+/* Kind rows in the TUI's KIND_ROW_ORDER. ATO-844: the two subscription-CLI
+   rows come after the three one-key services rather than first, as the TUI
+   has them, so the rows the app and its smoke address by position keep their
+   place. They save the entry the TUI's wizard writes
+   (providers-wizard-build-entry.ts): the same id, `kind:'subscription-cli'`,
+   the CLI's name in `subscriptionCli`, and Claude's default model (Codex picks
+   its own, so it has none). `word` is the provider's name on its own;
+   `billingEnv` is the variable that makes the CLI bill per token instead of
+   the plan (providers-orchestrator.ts). Labels are the TUI's (#710). */
 const KIND_ROWS = [
   {id:'openrouter', kind:'openrouter', label:'OpenRouter (cloud chat + optional cloud embed)', env:'OPENROUTER_API_KEY', defaultModel:'openrouter/auto'},
   {id:'aimlapi', kind:'aimlapi', label:'AI/ML API (1000+ models, OpenAI-compatible)', env:'AIMLAPI_API_KEY'},
   {id:'gemini', kind:'gemini', label:'Gemini (Google AI)', env:'GEMINI_API_KEY', defaultModel:'gemini-2.5-flash'},
+  {id:'claude-cli', kind:'subscription-cli', subscriptionCli:'claude', word:'Claude Code', billingEnv:'ANTHROPIC_API_KEY', defaultModel:'sonnet',
+   label:'Claude Code subscription: the agent runs on your plan (signed-in `claude`)'},
+  {id:'codex-cli', kind:'subscription-cli', subscriptionCli:'codex', word:'Codex', billingEnv:'OPENAI_API_KEY', defaultModel:'',
+   label:'OpenAI Codex subscription: the agent runs on your plan (signed-in `codex`)'},
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
@@ -313,7 +324,7 @@ function savedKeyInvalid(p) {
 }
 function savedKeyLine(id) { return 'The key saved for ' + providerWord(id) + ' has a character keys don’t have; paste it again.'; }
 /* ATO-161: the add-provider step's request for a key, and whether WIZ.error is that request rather than a failure. */
-function wizService(row) { return String((row && row.label) || '').split(' (')[0] || 'this provider'; }
+function wizService(row) { return String((row && (row.word || row.label)) || '').split(' (')[0] || 'this provider'; }
 function keyAskLine(row) { const svc = wizService(row); return 'Paste your ' + svc + (/\bAPI$/.test(svc) ? ' key' : ' API key') + ' to continue.'; }
 function wizErrSoft() { return !!WIZ.error && WIZ.error === WIZ.softError; }
 /* B04: the line is about the provider's address, not the key — the key field stays unlit. */
@@ -2074,7 +2085,7 @@ function providerWord(id) {
   const s = String(id || '');
   if (s === 'no provider') return 'No provider';
   const p = PRESETS.find((x) => x.id === s) || KIND_ROWS.find((x) => x.id === s && !x.custom);
-  return p ? p.label.split(' (')[0] : TUI_ONLY_PRESET_WORDS[s] || s;
+  return p ? p.word || p.label.split(' (')[0] : TUI_ONLY_PRESET_WORDS[s] || s;
 }
 /** A model id → the local catalogue's `name` without the file-format tail
     ("Gemma 4 E4B QAT GGUF" → "Gemma 4 E4B"); otherwise the id as before. */
@@ -13361,6 +13372,19 @@ function obWizardHTML() {
      screen. The desktop's add-provider wizard has neither phase, so those
      two titles have nowhere honest to go and are NOT rendered. */
   if (WIZ.phase === 'pick_model') return wizModelStepHTML(true);
+  if (k.subscriptionCli) {
+    return '<div class="ob-wiz">'
+      + '<div class="ob-kicker">Subscription</div>'
+      + '<div class="ob-h">' + providerMark(k.id) + esc(wizService(k)) + '</div>'
+      + wizSubscriptionLines(k).map((l) => '<div class="ob-help' + (l.warn ? ' is-warn' : '') + '">' + esc(l.text) + '</div>').join('')
+      + (WIZ.error ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(WIZ.error) + '</span></div>'
+          + (wizErrDetail() ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '') : '')
+      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
+        + ic('chevL') + 'Back</button><span class="grow"></span>'
+        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+        + (verifying ? 'Adding…' : 'Add' + ic('arrowR')) + '</button></div>'
+      + '</div>';
+  }
   /* B.4 — one label, not three: "API key" once as the kicker, the provider
      (with its mark) as the title, and naming the field is the placeholder's
      job. The .env sentence is the copy contract's, verbatim, under the field.
@@ -18982,7 +19006,7 @@ function wizardHTML() {
         '<button class="modelrow' + (taken.has(k.id) ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
         + providerMark(k.custom ? '' : k.id, 'sm')
         + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
-        + '<span class="cap">' + (k.custom ? esc('you supply the URL') : '<span class="mono">' + esc(k.baseUrl || k.kind) + '</span>')
+        + '<span class="cap">' + (k.custom ? esc('you supply the URL') : k.subscriptionCli ? esc('no API key') : '<span class="mono">' + esc(k.baseUrl || k.kind) + '</span>')
         + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
       + '</div></div>',
       '<button class="btn btn-g xs" data-act="wiz:cancel">Cancel</button>');
@@ -19020,6 +19044,16 @@ function wizardHTML() {
   if (WIZ.phase === 'pick_model') {
     return selShell(WIZ.savedLabel || 'Choose a model',
       '<div class="selbody">' + wizModelStepHTML(false) + '</div>', wizModelStepFoot(), lead);
+  }
+  if (k.subscriptionCli) {
+    return selShell(wizService(k),
+      '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => '<p class="ob-help' + (l.warn ? ' tk-help--warn' : '') + '">' + esc(l.text) + '</p>').join('')
+      + (WIZ.error ? '<div class="ob-err"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
+      + '</div>',
+      '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
+        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : 'Add') + '</button>',
+      lead);
   }
   /* This is the SECOND place the app asks for an API key — the wizard's own
      screen is the other — and the two had drifted: this one wrote the error
@@ -19110,6 +19144,55 @@ async function wizRemoveIfIncomplete(id) {
   } catch (e) { /* the boot-time prune is the net under this */ }
 }
 
+/* ATO-844 — the subscription rows (Claude Code, Codex). No key screen: the
+   CLI signs in on its own, so the step says what will run and saves the
+   entry the TUI writes. Whether the billing variable is set (the environment,
+   then the state directory's .env) is asked once per variable and only yes or
+   no comes back; set, the CLI may bill the API per token instead of the plan,
+   and the step says so, as the TUI's providers-orchestrator.ts does. */
+const WIZ_BILLING = new Map();
+function wizBillingSet(env) {
+  if (!env) return false;
+  if (WIZ_BILLING.has(env)) return WIZ_BILLING.get(env) === true;
+  WIZ_BILLING.set(env, 'asking');
+  if (!BR || !BR.providerKeyPresent) return false;
+  Promise.resolve(BR.providerKeyPresent({kind:'subscription-cli', apiKeyEnvVar: env}))
+    .then((r) => { WIZ_BILLING.set(env, !!(r && r.ok && r.present)); if (WIZ.row && WIZ.row.billingEnv === env) render(); })
+    .catch(() => WIZ_BILLING.set(env, false));
+  return false;
+}
+/** What the subscription step says, in order: what runs, then the billing warning when it applies. */
+function wizSubscriptionLines(k) {
+  const lines = [{text: 'No API key needed. The agent runs your signed-in ' + k.subscriptionCli
+    + ' CLI on your ' + wizService(k) + ' plan, so it must be installed and signed in on ' + THIS_MACHINE + '.'}];
+  if (wizBillingSet(k.billingEnv)) {
+    lines.push({warn: true, text: k.billingEnv + ' is set on ' + THIS_MACHINE + ', so the ' + k.subscriptionCli
+      + ' CLI may bill your API account per token instead of your plan. Unset it to use only your subscription.'});
+  }
+  return lines;
+}
+/** The entry the TUI's wizard writes for this row (buildProviderEntryFromWizard). */
+function wizSubscriptionEntry(k) {
+  return {id: k.id, kind: k.kind, subscriptionCli: {cli: k.subscriptionCli}, ...(k.defaultModel ? {defaultChatModel: k.defaultModel} : {})};
+}
+async function wizSubscriptionStep(k) {
+  const id = k.id;
+  /* The model step's second pass: the entry is saved, the choice is made. */
+  if (WIZ.modelChosen) return wizActivate(k, id, WIZ.modelPick || '', null);
+  WIZ.phase = 'verifying'; WIZ.error = null; WIZ.errorDetail = null; WIZ.noFundsNote = null; render();
+  const res = await BR.upsertProvider(wizSubscriptionEntry(k));
+  if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
+  /* Main answers this from the built-in list (subscription-cli-models.ts), never the network. */
+  const listed = BR.providerModels ? await BR.providerModels(id, k.kind).catch(() => null) : null;
+  const models = listed && listed.ok && Array.isArray(listed.models) ? listed.models : [];
+  if (!models.length) return wizActivate(k, id, '', null);
+  const model = models.some((m) => m.id === k.defaultModel) ? k.defaultModel : models[0].id;
+  WIZ.phase = 'pick_model';
+  WIZ.models = models; WIZ.modelPick = model; WIZ.defaultModel = model;
+  WIZ.savedId = id; WIZ.savedLabel = wizService(k); WIZ.unverifiedNote = null;
+  render();
+}
+
 async function wizNext() {
   WIZ.stepping = true;
   try {
@@ -19126,6 +19209,7 @@ async function wizNext() {
 
 async function wizNextStep() {
   const k = WIZ.row; if (!k) return;
+  if (k.subscriptionCli) return wizSubscriptionStep(k);
   /* Read the fields only when they are ON SCREEN. wizNext runs a second time
      for the model step — the choice is made and the save is re-entered — and
      by then the key and URL inputs are gone, so an unconditional read set
@@ -19407,12 +19491,19 @@ async function wizNextStep() {
     render();
     return;
   }
+  return wizActivate(k, id, model, unverified);
+}
+
+/* The model is chosen and the provider saved: activate it, then close the
+   wizard. Shared by the key path above and the subscription path (ATO-844),
+   whose Codex row has no model to name, so it activates the provider alone. */
+async function wizActivate(k, id, model, unverified) {
   WIZ.modelChosen = false;
   // Lane B — backend switch: one write for the model + the activation, then
   // the restart main does for it. Not while a turn runs, in any chat (Backlog 28).
   if (restartStopsTurn()) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
   const sel = await swxRun('switching…', {providerId: id, model},
-    () => SWXBR.selectCloudModel(id, model),
+    () => model ? SWXBR.selectCloudModel(id, model) : SWXBR.activateProvider(id),
     () => { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); });
   if (sel && sel.superseded) return;
   if (sel && sel.cancelled) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, not activated: the switch was cancelled'; render(); refreshLiveConfig(); return; }
@@ -19424,7 +19515,7 @@ async function wizNextStep() {
       : 'saved, but could not activate it' + (sel && sel.error ? ': ' + sel.error : '');
     render(); refreshLiveConfig(); return;
   }
-  bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
+  bswReport(sel, model ? 'Selected chat model ' + id + '/' + model + '.' : 'Selected provider ' + id + '.');
   WIZ.unfinishedId = null;   // U29: finished, so it stays
   WIZ.phase = null;
   WIZ.forId = null;
@@ -19433,7 +19524,7 @@ async function wizNextStep() {
      step, where `closeSelector()` would close a popup that is not open
      and drop the flow on a blank screen. The reducer's own
      `providers_wizard_succeeded` branch decides where it goes next. */
-  const added = k.label.split(' (')[0] + ' \u00b7 ' + model + (unverified ? ' \u00b7 not verified: ' + unverified : '')
+  const added = wizService(k) + (model ? ' \u00b7 ' + model : '') + (unverified ? ' \u00b7 not verified: ' + unverified : '')
     + (WIZ.noFundsNote ? ' \u00b7 the account has no funds' : '');   // Backlog 40
   if (OB.open && OB.step === 'cloud') {
     OB.restarted = !!(sel && sel.restart);
