@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { estimateTokens } from "../prompt/token-budget.js";
 import type { CompactionPlan } from "../prompt/plan-compaction.js";
-import { assistantToolCallTurn, toolResultTurn, userTurn, type ConversationTurn } from "../session/conversation-turn.js";
-import { compactionBoundaryHash, safeCompactionCuts, summaryTextHash } from "../session/session-compaction.js";
+import { assistantReplyTurn, assistantToolCallTurn, toolResultTurn, userTurn, type ConversationTurn } from "../session/conversation-turn.js";
+import { compactionBoundaryHash, finishedTurnCompactionCuts, safeCompactionCuts, summaryTextHash } from "../session/session-compaction.js";
 import { createEmptySessionState, type SessionState } from "../session/session-state.js";
 import { compactFromRolling, renderRollingSource } from "./compaction-rolling.js";
 
@@ -19,6 +19,19 @@ function session(list: ConversationTurn[], rollingThrough?: number, summary = "G
   if (rollingThrough !== undefined) state.rollingSummary = { version: 1, summary, from: 0, baseHash: summaryTextHash(""),
     coveredThrough: rollingThrough, boundaryHash: compactionBoundaryHash(list[rollingThrough - 1]!), createdAt: 1, model: "bg-model" };
   return state;
+}
+/** Finished turns of eight records each: request, three read steps, answer. */
+function chat(count: number): ConversationTurn[] {
+  const out: ConversationTurn[] = [];
+  for (let t = 0; t < count; t++) {
+    out.push(userTurn(`REQUEST ${t}: summarize the module`));
+    for (let i = 0; i < 3; i++) {
+      out.push(assistantToolCallTurn({ tool: "os.fs.read", args: { path: `/src/turn-${t}-${i}.ts` } }));
+      out.push(toolResultTurn({ tool: "os.fs.read", status: "ok", summary: `BODY_${t}_${i} ${"content ".repeat(20)}` }));
+    }
+    out.push(assistantReplyTurn(`ANSWER ${t}: done`));
+  }
+  return out;
 }
 const plan = (through: number, summaryMaxTokens = 600): CompactionPlan => ({ reason: "threshold", from: 0, through, summaryMaxTokens, targetTokens: 5000, tokensBefore: 9000 });
 
@@ -47,6 +60,32 @@ describe("rolling summary job input", () => {
     const source = renderRollingSource(huge, 0, huge.length, 500)!;
     expect(source.through).toBe(1);
     expect(estimateTokens(source.text)).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("rolling summary watermark at a finished turn", () => {
+  it("stops after an answer rather than inside the next turn", () => {
+    const list = chat(4);
+    const oneTurn = estimateTokens(renderRollingSource(list, 0, 8, 100_000)!.text);
+    const source = renderRollingSource(list, 0, list.length, Math.floor(oneTurn * 1.5))!;
+    expect(source.through).toBe(8);
+    expect(finishedTurnCompactionCuts(list)).toContain(source.through);
+  });
+
+  it("falls back to a cut inside the turn when the first finished turn alone is over the cap", () => {
+    const list = chat(4);
+    const oneTurn = estimateTokens(renderRollingSource(list, 0, 8, 100_000)!.text);
+    const source = renderRollingSource(list, 0, list.length, Math.floor(oneTurn / 2))!;
+    expect(source.through).toBeLessThan(8);
+    expect(safeCompactionCuts(list)).toContain(source.through);
+  });
+
+  it("moves a finished-turn cut on to the next answer, never to a watermark inside a turn", () => {
+    const list = chat(4);
+    expect(compactFromRolling(session(list, 11), plan(8))).toMatchObject({ through: 16 });
+    expect(compactFromRolling(session(list, 16), plan(8))).toMatchObject({ through: 16 });
+    // No later finished turn leaves a record outside the checkpoint.
+    expect(compactFromRolling(session(list, 27), plan(16))).toBeNull();
   });
 });
 

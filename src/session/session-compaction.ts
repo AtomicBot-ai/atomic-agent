@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SessionState } from "./session-state.js";
-import { findCurrentMacroTurnStart, macroTurnBoundaries, type ConversationTurn } from "./conversation-turn.js";
+import { findCurrentMacroTurnStart, isFinalReplyTurn, macroTurnBoundaries, type ConversationTurn } from "./conversation-turn.js";
 
 export type CompactionReason = "manual" | "threshold" | "pairs" | "overflow";
 export interface SessionCompaction {
@@ -102,6 +102,28 @@ export function safeCompactionCuts(turns: readonly ConversationTurn[]): number[]
     if (pending === 0 && turns[i + 1]?.kind !== "tool_result") cuts.push(i + 1);
   }
   return cuts;
+}
+
+/**
+ * The safe cuts that close a finished turn: the last covered record is the
+ * agent's final reply and the next record is a new user message (or there is
+ * none). A checkpoint there keeps a request together with its answer, so the
+ * summary does not list finished work as unfinished. Planners try these first
+ * and fall back to {@link safeCompactionCuts} (a cut inside one long turn);
+ * loading still accepts any safe cut, so older checkpoints stay valid.
+ */
+export function finishedTurnCompactionCuts(turns: readonly ConversationTurn[]): number[] {
+  return safeCompactionCuts(turns).filter((cut) => closesFinishedTurn(turns, cut));
+}
+
+/** Safe cuts in ascending order: finished-turn cuts first, then the rest. */
+export function preferredCompactionCuts(turns: readonly ConversationTurn[]): number[] {
+  const safe = safeCompactionCuts(turns);
+  return [...safe.filter((cut) => closesFinishedTurn(turns, cut)), ...safe.filter((cut) => !closesFinishedTurn(turns, cut))];
+}
+
+function closesFinishedTurn(turns: readonly ConversationTurn[], cut: number): boolean {
+  return isFinalReplyTurn(turns[cut - 1]) && (cut >= turns.length || turns[cut]?.kind === "user");
 }
 
 export function compactionPins(state: Pick<SessionState, "turns">, offset: number): string {

@@ -94,7 +94,15 @@ applies to that step's route), the ratio is at most 0.35: every later step
 re-reads the whole prompt there, so a smaller kept tail is cheaper per step and
 postpones the next compaction. Summary reserve is bounded by the configured maximum, 20% of the
 history allowance, and half the target so small manual operations remain useful.
+The planner tries cuts at the end of a finished turn first (the agent's final
+reply, followed by a new user message), so a request and its answer stay on the
+same side of the checkpoint; a cut inside a turn is used only when none of those
+fits. Loading still accepts any safe cut, so older checkpoints stay valid.
 When no safe reduction with a fresh complete tail exists, the result is `noop`.
+It is also `noop`, without a model call, for a manual request when the history
+allowance leaves under 128 tokens for a summary ("the model's context window is too small"), and for a
+manual request whose summary reserve is bound by the already small history while
+the saved checkpoint summary takes 75% of it or more ("nothing to compact").
 
 The runtime summarizes the prior checkpoint plus newly covered **original**
 records, including rows previously hidden by the packer. If the complete request
@@ -191,7 +199,9 @@ would evict the conversation's cache. It reads the previous rolling summary (or 
 current checkpoint) plus only the records after its watermark, rendered as
 history (the prompt's capped renderer, each record at most 2000 characters), up to
 the cut a compaction would make now and at most 12k estimated tokens; the rest is
-left to the next job. Fewer than 256 tokens of new records do not start a call. The call uses the compaction route, provider framing, side
+left to the next job. The watermark stops at the end of a finished turn when one
+fits, and inside a turn only when no turn ends in range or the first one alone is
+over that size. Fewer than 256 tokens of new records do not start a call. The call uses the compaction route, provider framing, side
 slot and `compaction:<sessionId>` usage, with `timeoutMs` capped at five minutes
 per job; a job that times out stops jobs for that session until restart. The
 summary may use 60% of the planned summary size. It is saved only if no turn runs
@@ -203,7 +213,9 @@ record hash and the model. It is valid only while all of these still match and t
 watermark is a safe cut, so edits, forks and compaction make it stale. At
 compaction under `auto`, a valid one is used without a call: its text plus an
 extractive summary of the records from its watermark to the cut (a watermark past
-the planned cut becomes the cut, keeping at least one record outside it). When it
+the planned cut becomes the cut, keeping at least one record outside it; when the
+planned cut ends a finished turn and the watermark does not, the cut moves on to
+the next finished turn's end instead). When it
 is stale, too large, leaves under 96 tokens for those records, covers less than
 half of the checkpoint's records (by rendered size), or its checkpoint would not
 reach the target, compaction proceeds as described above. Every successful compaction removes it; an applied
@@ -230,6 +242,7 @@ Contract tests: [planner/service](../context-compaction.test.ts),
 [rolling summary](../context-compaction-rolling.test.ts),
 [rolling records](../compaction-rolling.test.ts),
 [rolling state](../../session/session-compaction-rolling.test.ts),
+[finished-turn cuts](../../session/session-compaction.test.ts),
 [HTTP/runtime/persistence](../../http/route-compaction.test.ts),
 [NDJSON](../../sidecar/compaction.test.ts),
 [TUI commands](../../tui/commands/slash-command-handler.test.ts),
