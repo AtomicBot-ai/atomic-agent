@@ -282,6 +282,39 @@ describe("local model configuration domain seams", () => {
     expect(parsed.managed.port).toBe(19555);
   });
 
+  it.each([
+    { version: 77, raw: 1500, expected: 0 },
+    { version: 68, raw: 1500, expected: 0 },
+    { version: 77, raw: "1500", expected: 0 },
+    { version: 77, raw: 499, expected: 499 },
+    { version: 77, raw: 2000, expected: 2000 },
+    { version: 77, raw: 0, expected: 0 },
+    { version: 77, raw: undefined, expected: 0 },
+    { version: 78, raw: 1500, expected: 1500 },
+    { version: 78, raw: undefined, expected: 0 },
+  ])("moves the old 1500 reasoning budget default to 0 at v78 (v$version / $raw)", ({ version, raw, expected }) => {
+    const input = { thinking: "on", reasoningBudgetTokens: raw, managed: { port: 19555 } };
+    const parsed = schema.parseUserConfigFile({ version, localModels: input }).localModels;
+    expect(parsed.reasoningBudgetTokens).toBe(expected);
+    expect(parseLocal(input, version).reasoningBudgetTokens).toBe(expected);
+    // The migration touches the budget only.
+    expect(parsed.thinking).toBe("on");
+    expect(parsed.managed.port).toBe(19555);
+  });
+
+  it("writes the current version so a later 1500 choice survives reloads", () => {
+    const migrated = schema.parseUserConfigFile({ version: 77, localModels: { reasoningBudgetTokens: 1500 } });
+    expect(migrated.localModels.reasoningBudgetTokens).toBe(0);
+    expect(migrated.version).toBe(schema.USER_CONFIG_VERSION);
+    migrated.localModels.reasoningBudgetTokens = 1500;
+    expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.reasoningBudgetTokens).toBe(1500);
+  });
+
+  it("still validates the reasoning budget before applying the migration", () => {
+    expect(thrownError(() => schema.parseUserConfigFile({ version: 77, localModels: { reasoningBudgetTokens: 12 } })))
+      .toMatchObject({ field: "localModels.reasoningBudgetTokens" });
+  });
+
   it("still rejects an unknown engine, before and after the migration", () => {
     for (const version of [76, 77]) {
       expect(thrownError(() => schema.parseUserConfigFile({ version, localModels: { managed: { engine: "ollama" } } })))

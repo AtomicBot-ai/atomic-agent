@@ -935,7 +935,7 @@ export interface UserConfigFile {
 // named in the conversation (`src/tools/read-scope/`). A DEFAULT-BEHAVIOUR
 // CHANGE: an older file has no field and takes `"working-dir"`; the
 // pre-v67 behaviour is one line away (`agent.readScope: "unrestricted"`).
-// v68: `localModels.reasoningBudgetTokens` (default 1500, `0` =
+// v68: `localModels.reasoningBudgetTokens` (default 1500 until v78, `0` =
 // unbounded) — the GBNF prelude of a local reasoning model is bounded at
 // `budget × 4` characters, after which only the close sentinel is
 // admitted; the forced final step keeps an unbounded prelude. Additive:
@@ -988,7 +988,12 @@ export interface UserConfigFile {
 // choice: it migrates to `atomic-core`. llama.cpp stays selectable, and an
 // explicit `llama-server` in a v77+ file is honoured. Other fields, external
 // mode included, are untouched.
-export const USER_CONFIG_VERSION = 77;
+// v78: `localModels.reasoningBudgetTokens` defaults to `0` (no bound, as
+// before v68). llama.cpp clamps the grammar bound to 499 tokens, so the
+// old 1500 default cut thinking models off mid-thought. An older file
+// holding exactly 1500 (written by the schema, not the operator) migrates
+// to `0`; any other value is a deliberate choice and is kept.
+export const USER_CONFIG_VERSION = 78;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1141,6 +1146,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   74,
   75,
   76,
+  77,
   USER_CONFIG_VERSION,
 ];
 

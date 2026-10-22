@@ -9,7 +9,7 @@ describe("buildReasoningPreludeRules budget clamp (llama.cpp GBNF MAX_REPETITION
   const SENTINEL = "</think";
 
   it("clamps budgets above llama.cpp's safe GBNF ceiling to 1,999", () => {
-    // Default production budget: 1,500 tokens × 4 = 6,000 chars → clamped.
+    // A 1,500-token budget (the pre-v78 default): 6,000 chars → clamped.
     const rules = buildReasoningPreludeRules(
       "think",
       SENTINEL,

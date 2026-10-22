@@ -22,8 +22,12 @@
 import { LLAMA_SERVER_GBNF_MAX_REPETITION } from "./grammar/reasoning-prelude.js";
 import type { ModelProfile } from "./model-profile.js";
 
-/** `localModels.reasoningBudgetTokens` when the file predates the field. */
-export const DEFAULT_REASONING_BUDGET_TOKENS = 1500;
+/**
+ * `localModels.reasoningBudgetTokens` when the file predates the field:
+ * `0`, no bound (config v78). The old 1,500 was clamped to 499 by the
+ * llama.cpp cap below and cut thinking models off mid-thought.
+ */
+export const DEFAULT_REASONING_BUDGET_TOKENS = 0;
 
 /**
  * Characters per budget token. Deliberately on the generous side of an
