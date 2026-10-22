@@ -16760,6 +16760,9 @@ async function selActivate(row) {
     const res = await swxRun('switching…', {providerId: pid, model: row.id},
       () => SWXBR.selectCloudModel(pid, row.id));
     if (res && res.superseded) return;
+    // ATO-732: a model from another provider's group whose key is missing or
+    // refused opens that provider's key window, as picking the provider does.
+    if (res && res.needsKey) { bswOpenKey(pid, res.keyInvalid); return; }
     if (!res || !res.ok) toast('Could not select the model', (res && res.error) || '');
     else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
     return;
