@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  DESKTOP_SHARED_WARNING,
+  legacyDesktopDirNotice,
+  noDesktopSharing,
+  type DesktopSharing,
+  type ResolvedUninstallPlan,
+} from "../../uninstall/index.js";
 import { bodyLines } from "./uninstall-modal.js";
+import { toPreview } from "./uninstall-orchestrator.js";
 import type {
   UninstallFlowState,
   UninstallPreview,
@@ -89,5 +97,94 @@ describe("uninstall modal copy", () => {
     expect(text(flow({ step: "failed", errors: ["EACCES"] }))).toContain(
       "EACCES",
     );
+  });
+});
+
+function plan(
+  desktop: DesktopSharing,
+  paths: readonly string[] = ["/Users/op/.atomic-agent", "/Users/op/.local/bin/atomic-agent"],
+): ResolvedUninstallPlan {
+  const targets = paths.map((path) => ({
+    path,
+    label: path.endsWith(".atomic-agent") ? "state" : "the binary",
+    group: path.endsWith(".atomic-agent") ? ("data" as const) : ("program" as const),
+  }));
+  return {
+    targets,
+    measured: {
+      targets: targets.map((t) => ({ ...t, exists: true, bytes: 1024 })),
+      totalBytes: 1024 * targets.length,
+    },
+    devCheckout: false,
+    installDir: "/Users/op/.local/bin",
+    desktop,
+  };
+}
+
+const SHARED: DesktopSharing = {
+  stateDir: "/Users/op/.atomic-agent",
+  signals: ["state-dirs-record"],
+  sharesStateDir: true,
+  legacyDir: null,
+};
+
+/** The review text with the panel's soft wraps joined back up. */
+const joined = (state: UninstallFlowState): string =>
+  bodyLines(state, 62)
+    .map((line) => line.text.trim())
+    .join(" ");
+
+describe("uninstall modal: desktop app", () => {
+  it("warns right under the state folder row when the desktop shares it", () => {
+    const lines = bodyLines(flow({ preview: toPreview(plan(SHARED)) }), 62);
+    const stateRow = lines.findIndex((l) => l.text.includes("/Users/op/.atomic-agent "));
+    expect(lines[stateRow + 1]?.tone).toBe("warn");
+    expect(joined(flow({ preview: toPreview(plan(SHARED)) }))).toContain(
+      DESKTOP_SHARED_WARNING,
+    );
+    // Wrapped, not clipped: every row fits the panel.
+    expect(lines.every((l) => l.text.length <= 62)).toBe(true);
+  });
+
+  it("says nothing about the desktop when it is not found", () => {
+    const rendered = joined(
+      flow({ preview: toPreview(plan(noDesktopSharing("/Users/op/.atomic-agent"))) }),
+    );
+    expect(rendered).not.toContain("desktop app");
+  });
+
+  it("does not warn when the state folder is not in the plan (keep-data)", () => {
+    const rendered = joined(
+      flow({ preview: toPreview(plan(SHARED, ["/Users/op/.local/bin/atomic-agent"])) }),
+    );
+    expect(rendered).not.toContain(DESKTOP_SHARED_WARNING);
+  });
+
+  it("lists an old desktop folder as left in place", () => {
+    const legacy: DesktopSharing = {
+      ...noDesktopSharing("/Users/op/.atomic-agent"),
+      signals: ["legacy-dir"],
+      legacyDir: "/Users/op/.atomic-agent-desktop",
+    };
+    const rendered = joined(flow({ preview: toPreview(plan(legacy)) }));
+    expect(rendered).toContain(legacyDesktopDirNotice("/Users/op/.atomic-agent-desktop"));
+    expect(rendered).not.toContain(DESKTOP_SHARED_WARNING);
+  });
+
+  it("repeats the warning on the last-chance screen, only when it applies", () => {
+    const shared = joined(flow({ step: "confirm", preview: toPreview(plan(SHARED)) }));
+    expect(shared).toContain(DESKTOP_SHARED_WARNING);
+    const alone = joined(
+      flow({
+        step: "confirm",
+        preview: toPreview(plan(noDesktopSharing("/Users/op/.atomic-agent"))),
+      }),
+    );
+    expect(alone).not.toContain("desktop app");
+  });
+
+  it("has no left-in-place line when there is no old desktop folder", () => {
+    const rendered = joined(flow({ preview: toPreview(plan(SHARED)) }));
+    expect(rendered).not.toContain("Left in place");
   });
 });

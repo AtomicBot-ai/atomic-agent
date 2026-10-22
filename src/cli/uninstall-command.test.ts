@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ResolvedUninstallPlan } from "../uninstall/index.js";
+import {
+  noDesktopSharing,
+  type ResolvedUninstallPlan,
+} from "../uninstall/index.js";
 import {
   uninstallCommand,
   type UninstallCommandDeps,
@@ -29,6 +32,7 @@ function makePlan(
     },
     devCheckout: false,
     installDir: "/Users/op/.local/bin",
+    desktop: noDesktopSharing("/Users/op/.atomic-agent"),
     ...overrides,
   };
 }

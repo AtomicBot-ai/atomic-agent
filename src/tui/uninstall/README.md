@@ -13,7 +13,7 @@ This feature presents the removal plan and deliberate confirmation before handin
 
 ## Operations and ownership
 
-[Orchestration](uninstall-orchestrator.ts) measures the domain plan and formats preview rows. Confirmation only flags the post-exit handoff and dispatches quit_requested. [tui-command](../tui-command.ts) unmounts the UI and awaits orchestrator/runtime shutdown before calling performUninstall. This prevents deletion while stores/server resources are still live. Domain [plan resolution](../../uninstall/resolve-uninstall-plan.ts) and [removal](../../uninstall/run-uninstall.ts) retain ownership of targets, platform paths and removal outcomes; view relocation changes none of them.
+[Orchestration](uninstall-orchestrator.ts) measures the domain plan and formats preview rows. When the desktop app shares the state directory, the state row carries the domain's shared-folder warning, wrapped in the warn tone directly under it; an old `~/.atomic-agent-desktop` adds a muted "Left in place" line after the total. The wording comes from [desktop-notices.ts](../../uninstall/desktop-notices.ts), the same strings the CLI prints. Confirmation only flags the post-exit handoff and dispatches quit_requested. [tui-command](../tui-command.ts) unmounts the UI and awaits orchestrator/runtime shutdown before calling performUninstall. This prevents deletion while stores/server resources are still live. Domain [plan resolution](../../uninstall/resolve-uninstall-plan.ts) and [removal](../../uninstall/run-uninstall.ts) retain ownership of targets, platform paths and removal outcomes; view relocation changes none of them.
 
 ## Checks
 

@@ -3,6 +3,11 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import {
+  detectDesktopSharing,
+  type DesktopSharing,
+  type DetectDesktopSharingInput,
+} from "./detect-desktop-sharing.js";
+import {
   measureUninstallPlan,
   type MeasuredPlan,
 } from "./measure-uninstall-plan.js";
@@ -24,6 +29,12 @@ export interface ResolvedUninstallPlan {
   readonly devCheckout: boolean;
   /** `dirname(execPath)`, shown so the operator can check it themselves. */
   readonly installDir: string;
+  /**
+   * Whether the desktop app shares the state directory, and whether an
+   * old desktop directory was left behind. Read for warnings only: it
+   * never adds or drops a target.
+   */
+  readonly desktop: DesktopSharing;
 }
 
 /**
@@ -52,6 +63,10 @@ export interface ResolveUninstallPlanOptions {
   readonly keepData?: boolean;
   /** Drop the binary and its assets from the plan (`--keep-binary`). */
   readonly keepBinary?: boolean;
+  /** Environment for the desktop lookup. Defaults to `process.env`. */
+  readonly env?: NodeJS.ProcessEnv;
+  /** File-system probes for the desktop lookup, injectable for tests. */
+  readonly desktopProbe?: Pick<DetectDesktopSharingInput, "exists" | "readFile">;
 }
 
 /**
@@ -91,6 +106,13 @@ export async function resolveUninstallPlan(
     measured: await measureUninstallPlan(targets),
     devCheckout: !binaryPresent,
     installDir,
+    desktop: detectDesktopSharing({
+      stateDir: options.stateDir,
+      homeDir,
+      platform,
+      env: options.env ?? process.env,
+      ...options.desktopProbe,
+    }),
   };
 }
 

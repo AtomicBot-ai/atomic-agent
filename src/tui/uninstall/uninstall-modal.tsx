@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactElement, ReactNode } from "react";
 
 import { fitToWidth } from "../components/fit-to-width.js";
+import { wrapText } from "../render/wrap-text.js";
 import {
   MouseTarget,
   useMouseCommands,
@@ -181,6 +182,7 @@ function reviewLines(
       Math.max(0, inner - size.length - 1),
     );
     lines.push({ text: `${path}${size}`, tone: "normal" });
+    if (row.warning) lines.push(...wrapped(row.warning, inner, "warn"));
   }
   const hidden = preview.rows.length - shown.length;
   if (hidden > 0) {
@@ -193,6 +195,9 @@ function reviewLines(
       text: " no installed binary here — data only.",
       tone: "muted",
     });
+  }
+  for (const notice of preview.leftInPlace ?? []) {
+    lines.push(...wrapped(notice, inner, "muted"));
   }
   lines.push({ text: "", tone: "muted" });
   lines.push({
@@ -207,17 +212,33 @@ function reviewLines(
   return lines;
 }
 
+/** A sentence soft-wrapped into the panel, one leading space per row. */
+function wrapped(
+  text: string,
+  inner: number,
+  tone: BodyLine["tone"],
+): BodyLine[] {
+  return wrapText(text, Math.max(1, inner - 2)).map((row) => ({
+    text: ` ${row}`,
+    tone,
+  }));
+}
+
 function confirmLines(
   flow: UninstallFlowState,
-  _inner: number,
+  inner: number,
 ): readonly BodyLine[] {
   const armed = isUninstallConfirmed(flow.typed);
+  // The desktop warning is repeated here: this is the screen the
+  // operator acts on, and the review screen may have scrolled past.
+  const desktopWarning = flow.preview?.rows.find((row) => row.warning)?.warning;
   return [
     { text: "", tone: "muted" },
     {
       text: ` Deleting ${flow.preview?.total ?? "everything"} permanently.`,
       tone: "warn",
     },
+    ...(desktopWarning ? wrapped(desktopWarning, inner, "warn") : []),
     { text: "", tone: "muted" },
     {
       text: ` Type ${UNINSTALL_CONFIRM_WORD} to enable the last key:`,

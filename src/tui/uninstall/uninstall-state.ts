@@ -8,6 +8,11 @@ export interface UninstallPreviewRow {
   readonly label: string;
   readonly size: string;
   readonly group: "data" | "program";
+  /**
+   * A warning shown directly under this row: the desktop app shares this
+   * folder (src/uninstall/desktop-notices.ts owns the wording).
+   */
+  readonly warning?: string;
 }
 
 export interface UninstallPreview {
@@ -15,6 +20,8 @@ export interface UninstallPreview {
   readonly total: string;
   /** True when a dev checkout means only data is listed. */
   readonly devCheckout: boolean;
+  /** Lines about what stays on disk, e.g. an old desktop directory. */
+  readonly leftInPlace?: readonly string[];
 }
 
 /**
