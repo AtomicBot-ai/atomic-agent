@@ -4017,7 +4017,10 @@ async function smokeTest(): Promise<void> {
     // leave the route changed.
     // Run mode — Fusion: resolver, rows, writes through the planners, frames. No restart.
     await fusionSmokeTest(js, check);
-    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS, smokeDownloads);
+    /* ATO-765: task 765 crashes and reloads the page, and everything below
+       still reads what earlier checks left in it (window.__swxTimes()), so
+       765 runs at the very end of the full pass instead. */
+    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS.filter((t) => t !== "765"), smokeDownloads);
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".
@@ -4096,6 +4099,8 @@ async function smokeTest(): Promise<void> {
         ? ".env identical; sessions/memory/tasks unchanged in size"
         : sensitive.map((k) => `${k}: ${tuiSnapshot[k]} → ${tuiAfter[k]}`).join("; "),
     );
+    // ATO-765 last: it crashes the page on purpose, and the reloaded page has forgotten the run so far.
+    await releaseFixesSmokeTest(js, check, ["765"], smokeDownloads);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
