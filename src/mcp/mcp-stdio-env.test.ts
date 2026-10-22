@@ -75,6 +75,22 @@ describe("buildMcpStdioEnv (ATO-346)", () => {
     expect(env).toEqual({ PATH: "/bin" });
   });
 
+  it("passes the display, SSH agent socket and Docker host", () => {
+    const env = buildMcpStdioEnv(undefined, {
+      DISPLAY: ":0",
+      SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
+      DOCKER_HOST: "unix:///run/colima.sock",
+      PSModulePath: "C:\\Windows\\Modules",
+      GITHUB_TOKEN: "leak",
+    });
+    expect(env).toEqual({
+      DISPLAY: ":0",
+      SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
+      DOCKER_HOST: "unix:///run/colima.sock",
+      PSModulePath: "C:\\Windows\\Modules",
+    });
+  });
+
   it("keeps the list free of credential-shaped names", () => {
     for (const name of MCP_INHERITED_ENV_VARS) {
       expect(name).not.toMatch(/KEY|TOKEN|SECRET|PASSWORD/i);

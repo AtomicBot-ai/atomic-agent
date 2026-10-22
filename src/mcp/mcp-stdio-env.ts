@@ -26,9 +26,32 @@ export const MCP_INHERITED_ENV_VARS: readonly string[] = [
   "LANGUAGE",
   "LC_ALL",
   "LC_CTYPE",
+  "LC_MESSAGES",
+  "LC_NUMERIC",
+  "LC_COLLATE",
+  "LC_TIME",
   "TZ",
   "TMPDIR",
+  "__CF_USER_TEXT_ENCODING",
   "XDG_RUNTIME_DIR",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+  // A headed browser (Playwright, Puppeteer servers) on Linux needs the
+  // display; git over SSH needs the agent socket (a path, not a key: the
+  // server can already read ~/.ssh as the user).
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "SSH_AUTH_SOCK",
+  // Servers launched as `docker run -i ...` against Colima, OrbStack or a
+  // remote engine.
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "DOCKER_CONFIG",
+  "DOCKER_CERT_PATH",
+  "DOCKER_TLS_VERIFY",
   // Windows: profile, system dirs, and what `cmd.exe /c` needs to resolve
   // a bare `npx` (see `resolveStdioCommand`).
   "APPDATA",
@@ -51,7 +74,15 @@ export const MCP_INHERITED_ENV_VARS: readonly string[] = [
   "PROGRAMW6432",
   "COMMONPROGRAMFILES",
   "COMMONPROGRAMFILES(X86)",
+  "COMMONPROGRAMW6432",
+  "ALLUSERSPROFILE",
+  "PUBLIC",
+  "COMPUTERNAME",
+  "PSMODULEPATH",
   "PROCESSOR_ARCHITECTURE",
+  "PROCESSOR_IDENTIFIER",
+  "PROCESSOR_LEVEL",
+  "PROCESSOR_REVISION",
   "NUMBER_OF_PROCESSORS",
   "OS",
   // Network: proxies and extra CA bundles, without which a server behind
