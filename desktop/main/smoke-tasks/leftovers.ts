@@ -27,7 +27,7 @@ import { taskkillPath } from "../platform.js";
  *     failure instead of throwing it.
  */
 
-export interface Holder { pid: number; name: string; commandLine: string }
+export interface Holder { pid: number; parentPid: number | null; parent: string; name: string; commandLine: string }
 
 const powershell = (systemRoot?: string) =>
   win32.join(systemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -53,17 +53,24 @@ export function holdersOf(dir: string): Promise<Holder[]> {
   const needle = dir.replace(/'/g, "''");
   const script =
     `$d = '${needle}'; ` +
-    "@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($d, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | " +
-    "Select-Object ProcessId, Name, CommandLine) | ConvertTo-Json -Compress";
+    "$all = @(Get-CimInstance Win32_Process); " +
+    "@($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($d, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | " +
+    "Select-Object ProcessId, ParentProcessId, Name, CommandLine, @{n='Parent';e={ $pp = $_.ParentProcessId; ($all | Where-Object { $_.ProcessId -eq $pp } | Select-Object -First 1).CommandLine }}) | ConvertTo-Json -Compress";
   return new Promise((resolve) => {
     execFile(powershell(process.env.SystemRoot), ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: 30_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
       if (err || !stdout.trim()) return resolve([]);
       try {
         const parsed = JSON.parse(stdout) as unknown;
-        const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{ ProcessId?: number; Name?: string; CommandLine?: string }>;
+        const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{ ProcessId?: number; ParentProcessId?: number; Parent?: string | null; Name?: string; CommandLine?: string }>;
         resolve(rows
           .filter((r) => typeof r.ProcessId === "number" && r.ProcessId !== process.pid && !/powershell/i.test(r.Name ?? ""))
-          .map((r) => ({ pid: r.ProcessId as number, name: r.Name ?? "", commandLine: r.CommandLine ?? "" })));
+          .map((r) => ({
+            pid: r.ProcessId as number,
+            parentPid: typeof r.ParentProcessId === "number" ? r.ParentProcessId : null,
+            parent: r.Parent ?? "",
+            name: r.Name ?? "",
+            commandLine: r.CommandLine ?? "",
+          })));
       } catch {
         resolve([]);
       }
@@ -71,9 +78,11 @@ export function holdersOf(dir: string): Promise<Holder[]> {
   });
 }
 
-/** One line per holder for a check's detail: pid, name and the start of its command line. */
+/** One line per holder for a check's detail: pid, name, its command line, and what started it (if still there). */
 export function describeHolders(holders: Holder[]): string {
-  return holders.map((h) => `${h.pid} ${h.name} ${JSON.stringify(h.commandLine.slice(0, 200))}`).join("; ");
+  return holders
+    .map((h) => `${h.pid} ${h.name} ${JSON.stringify(h.commandLine.slice(0, 400))} (parent ${h.parentPid ?? "?"}${h.parent ? ` ${JSON.stringify(h.parent.slice(0, 300))}` : ", gone"})`)
+    .join("; ");
 }
 
 /** Remove `dir`, retrying while Windows still holds it. Null when it is gone, else the error, never thrown. */
