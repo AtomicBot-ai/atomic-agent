@@ -14,8 +14,12 @@ const MANAGED_LOCAL_LINK = "local-llama";
  * ATO-772).
  *
  * Judged only for the built-in `local-llama` link in managed mode, the same
- * link the local-models orchestrator starts and stops. Everything else is
- * `unknown`, which keeps the wait as it was: an external server
+ * link the local-models orchestrator starts and stops, and only while it is
+ * the active text provider: the model the operator runs. Behind a cloud
+ * provider it is a fallback tail the turn fell over to, and a cloud outage
+ * there keeps its wait (the cloud may come back) instead of ending with
+ * "the local model isn't running". Everything else is `unknown`, which
+ * keeps the wait as it was: an external server
  * (`mode: "external"`) is the operator's to run and may come back on its
  * own, a cloud link is not a process on this machine, and a custom-id
  * `llama-server` entry is almost always a server the operator runs.
@@ -28,9 +32,11 @@ const MANAGED_LOCAL_LINK = "local-llama";
 export function readLocalEngineState(
   providerId: string | undefined,
   cfg: Pick<AtomicAgentConfig, "localModels" | "paths">,
+  activeTextProvider: string,
   liveness: (dataDir: string) => ManagedEngineLiveness = readManagedEngineLiveness,
 ): LocalEngineState {
   if (providerId !== MANAGED_LOCAL_LINK) return "unknown";
+  if (activeTextProvider !== MANAGED_LOCAL_LINK) return "unknown";
   if (cfg.localModels.mode !== "managed") return "unknown";
   let state: ManagedEngineLiveness;
   try {

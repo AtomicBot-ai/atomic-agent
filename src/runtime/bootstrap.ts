@@ -467,8 +467,10 @@ export async function createAgentRuntime(
     // A refused connection to a managed local model whose process is gone
     // ends the turn at once instead of parking it (ATO-772). Read live, so
     // a mode switch or a model start between turns is seen.
-    localEngineState: (providerId: string | undefined) =>
-      readLocalEngineState(providerId, getConfig()),
+    localEngineState: (providerId: string | undefined) => {
+      const config = getConfig();
+      return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
+    },
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.

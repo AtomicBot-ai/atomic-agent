@@ -100,6 +100,19 @@ describe("loop_failed over SSE", () => {
     ]);
   });
 
+  it("keeps code local_engine_down when links failed before the local one", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const tail = new TypeError("fetch failed");
+    attachFailedAttempts(tail, [{ providerId: "openrouter", error: refusal() }]);
+    const down = new LocalEngineDownError("local-llama", tail);
+
+    hook({ type: "loop_failed", error: down, category: classifyFailure(down) } as never);
+
+    expect(sse.written).toHaveLength(1);
+    expect(sse.written[0]!.payload).toMatchObject({ code: "local_engine_down" });
+  });
+
   it("puts local_engine_down in the envelope's code for an OpenAI-compatible client", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(false));

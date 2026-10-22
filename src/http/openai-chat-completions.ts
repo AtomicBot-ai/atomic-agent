@@ -667,6 +667,9 @@ export function buildStreamEventHook(
           : event.error.message;
         emitStreamError(sse, env, message, classifyFailure(primary), {
           ...billingCauseFrame(primary),
+          // The chain fell over to the managed local link and its model
+          // process is gone: the host still needs the code to offer a start.
+          ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
           fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
         });
         return;
