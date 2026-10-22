@@ -1602,9 +1602,10 @@ benchmark after health is ready.
 A turn on the managed local model that fails because its engine is not
 running (it never started, or it died) says "The local model isn't running."
 with one button, **Start model**, the same start as Settings › Models
-(`cli:modelsStart`). It is known from the agent's `local_engine_down` reason on
-the error frame, or, with an agent that has no such reason yet, from a refused
-connection on the local route only. While the app's own supervisor
+(`cli:modelsStart`). It is known from `code: "local_engine_down"` on the
+turn's failure frame, which arrives after the step's raw `fetch failed` error
+frame and replaces it as the turn's reason, or, with an agent that sends no
+such code, from a refused connection on the local route only. While the app's own supervisor
 (`main/daemon-supervisor.ts`) is bringing the server back, the row says so and
 offers no second start; once the model is up, the row's Try again resends the
 message. Words and rules: [dead-engine.js](renderer/dead-engine.js).

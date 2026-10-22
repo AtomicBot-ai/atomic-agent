@@ -9,8 +9,10 @@
    the row waits for it instead of offering a second start.
 
    Two ways to know. A newer agent ends such a turn with a machine-readable
-   reason, `local_engine_down` (on the error frame's `cause.kind`, or as its
-   `reason` / `category`). Today's agent has no such reason: its sentence
+   reason: `code: "local_engine_down"` on the turn's failure frame (the
+   extensions SSE `error` frame, `{error, category, code}`). That frame comes
+   AFTER the step's first raw `fetch failed` error frame, so renderer.js lets
+   it replace the held first one. Today's agent has no such code: its sentence
    names a refused connection or a provider that is not answering, and that
    only means the engine is down when the route is the managed local model.
    renderer.js owns the rows (turnFailure, sysRowHTML, deadEngineStart). */
@@ -25,12 +27,13 @@ function engineDownReasonIn(ev) {
   if (!ev) return false;
   const p = ev.payload || {};
   const code = DEAD_ENGINE_REASON;
-  return (p.cause && p.cause.kind === code) || p.reason === code || p.kind === code
-    || p.category === code || ev.category === code || ev.reason === code;
+  // The agent's field is `code` (ATO-772); the others cost nothing to also accept.
+  return p.code === code || ev.code === code
+    || (p.cause && p.cause.kind === code) || p.reason === code || p.category === code;
 }
 
 /** Words of an older agent that mean nothing answered on the local port. */
-const ENGINE_DOWN_WORDS = /ECONNREFUSED|connection refused|connect refused|is not answering|isn't answering|not answering/i;
+const ENGINE_DOWN_WORDS = /ECONNREFUSED|connection refused|connect refused|not answering|isn't answering|local model isn't running/i;
 
 /**
  * Why a failed turn reads as the local model not running, or null.

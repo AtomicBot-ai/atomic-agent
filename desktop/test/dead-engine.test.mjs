@@ -22,22 +22,28 @@ test("the agent's local_engine_down reason is read wherever the frame carries it
   const code = D.DEAD_ENGINE_REASON;
   assert.equal(code, "local_engine_down");
   for (const ev of [
+    // The agent's frame (ATO-772): {error, category, code} under payload, as agent-client.ts forwards it.
+    { kind: "error", error: "The local model isn't running.", category: "transport",
+      payload: { error: "The local model isn't running.", category: "transport", code } },
+    { kind: "error", error: "x", code },
     { kind: "error", error: "x", payload: { cause: { kind: code } } },
     { kind: "error", error: "x", payload: { reason: code } },
     { kind: "error", error: "x", payload: { category: code } },
-    { kind: "error", error: "x", category: code },
   ]) {
     assert.equal(D.engineDownReasonIn(ev), true, JSON.stringify(ev));
     // The agent's own verdict holds on any route the window thinks it is on.
     assert.equal(D.engineDownOf(ev, CLOUD), "reason");
   }
   assert.equal(D.engineDownReasonIn({ kind: "error", error: "x", payload: { cause: { kind: "billing" } } }), false);
+  assert.equal(D.engineDownReasonIn({ kind: "error", error: "fetch failed", payload: { error: "fetch failed", category: "transport" } }), false);
   assert.equal(D.engineDownReasonIn(null), false);
 });
 
 test("today's agent: a refused connection or 'not answering' on the local route", () => {
   assert.equal(D.engineDownOf({ error: "fetch failed: connect ECONNREFUSED 127.0.0.1:8080", category: "transport" }, LOCAL), "refused");
   assert.equal(D.engineDownOf({ error: "local-llama is not answering at 127.0.0.1:8080" }, LOCAL), "refused");
+  // The agent's sentence without its code (a host that drops unknown fields) still reads right on the local route.
+  assert.equal(D.engineDownOf({ error: "The local model isn't running." }, LOCAL), "refused");
 });
 
 test("the same words on a cloud or external route are not the local model", () => {

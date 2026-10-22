@@ -9376,7 +9376,9 @@ function onChatEvent(ev) {
     const held = STREAM_ERR.get(ev.turnId);
     // The first failure names what went wrong, unless the turn recovered
     // from it and failed again later — then the later one is the story.
-    if (!held || held.after) STREAM_ERR.set(ev.turnId, {ev, after:false});
+    // ATO-772: the turn's own failure frame with `code: local_engine_down`
+    // follows the step's raw `fetch failed`, and it is the reason.
+    if (!held || held.after || (engineDownReasonIn(ev) && !engineDownReasonIn(held.ev))) STREAM_ERR.set(ev.turnId, {ev, after:false});
     return;
   }
   // Backlog 24: whose turn this frame is, read before the bookkeeping below forgets it.
