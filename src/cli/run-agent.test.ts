@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -137,8 +144,11 @@ describe("formatLlamaUnreachableHint", () => {
   });
 });
 
-/** Raw model output the stubbed llama-server replays on every step. */
-const model = vi.hoisted(() => ({ emits: "" }));
+/**
+ * Raw model output the stubbed llama-server replays on every step, after
+ * the one-shot `script` entries (one per step, in order) run out.
+ */
+const model = vi.hoisted(() => ({ emits: "", script: [] as string[] }));
 
 /** The options `runAgentCommand` handed `runtime.runTurn`, per turn. */
 const turnOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
@@ -182,7 +192,7 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
     // not a tool call; feeding it the step payload would have it parse
     // the fixture as notes.
     if (params.sessionId.startsWith("reflection:")) return completion("");
-    return completion(model.emits);
+    return completion(model.script.shift() ?? model.emits);
   };
   return {
     ...actual,
@@ -231,6 +241,7 @@ describe("runAgentCommand exit codes", () => {
     process.env.ATOMIC_AGENT_GRAMMARS_DIR = join(process.cwd(), "grammars");
     resetConfigCache();
     model.emits = "";
+    model.script = [];
     stderr = "";
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
@@ -371,6 +382,57 @@ describe("runAgentCommand exit codes", () => {
     expect(turnMessages).toEqual(["the task", "continue", "and wrap up"]);
     expect(stderr).toContain('"turnCount": 3');
   }, 60_000);
+
+  describe("approval answers come from the same stdin queue (ATO-802)", () => {
+    const WRITE = JSON.stringify({
+      tool: "os.fs.write",
+      args: { path: "out.txt", content: "written" },
+    });
+    const REPLY = (text: string): string =>
+      JSON.stringify({ tool: "reply", args: { text } });
+
+    it("takes a piped y for the approval and keeps the next message for the next turn", async () => {
+      // Default approval level 1 asks before a workspace write. The task,
+      // the answer and the next message arrive in one chunk, all read
+      // before the approval opens.
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("wrote it")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\ny\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(stderr).toContain("approval required for tool: os.fs.write");
+      expect(readFileSync(join(workingDir, "out.txt"), "utf8")).toBe("written");
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+
+    it("denies when the approval prompt fails, and later stdin lines still run", async () => {
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      // The prompt's own stderr write throws once: the prompt fails
+      // before it reads an answer.
+      let failed = false;
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+        const text = typeof chunk === "string" ? chunk : String(chunk);
+        if (!failed && text.includes("approval required for tool")) {
+          failed = true;
+          throw new Error("stderr is gone");
+        }
+        stderr += text;
+        return true;
+      });
+      feedStdin(["write the file\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(failed).toBe(true);
+      expect(stderr).toContain("approval prompt failed (stderr is gone); denied");
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+  });
 });
 
 /**

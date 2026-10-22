@@ -1,0 +1,65 @@
+import { createInterface } from "node:readline";
+
+/**
+ * The one reader of stdin for `atomic-agent run`. Every line is queued
+ * the moment readline emits it and handed out in arrival order, to the
+ * chat loop and to the approval prompt alike.
+ *
+ * A single reader matters for piped input: a driver that writes
+ * "task", "y" and the next message at once has all three lines read
+ * before the approval opens. A second reader for the approval (the old
+ * shape) never saw the "y", and the main reader dropped every line read
+ * while the approval was open, so the next message was lost (ATO-802).
+ */
+export interface StdinLineQueue {
+  /**
+   * The next line, in arrival order; `null` once input has ended and
+   * every queued line was handed out. When nothing is queued and
+   * `prompt` is given, it is shown before waiting.
+   */
+  next(prompt?: string): Promise<string | null>;
+  /**
+   * Stop reading; pending and later `next` calls resolve `null`. Safe to
+   * call more than once.
+   */
+  close(): void;
+}
+
+export interface StdinLineQueueOptions {
+  input: NodeJS.ReadableStream;
+  output: NodeJS.WritableStream;
+  terminal: boolean;
+}
+
+export function createStdinLineQueue(
+  options: StdinLineQueueOptions,
+): StdinLineQueue {
+  const rl = createInterface(options);
+  const lines: string[] = [];
+  const waiters: Array<(line: string | null) => void> = [];
+  let ended = false;
+  rl.on("line", (line) => {
+    const waiter = waiters.shift();
+    if (waiter) waiter(line);
+    else lines.push(line);
+  });
+  rl.once("close", () => {
+    ended = true;
+    for (const waiter of waiters.splice(0)) waiter(null);
+  });
+  return {
+    next(prompt) {
+      const line = lines.shift();
+      if (line !== undefined) return Promise.resolve(line);
+      if (ended) return Promise.resolve(null);
+      if (prompt !== undefined) {
+        rl.setPrompt(prompt);
+        rl.prompt();
+      }
+      return new Promise((resolveLine) => waiters.push(resolveLine));
+    },
+    close() {
+      if (!ended) rl.close();
+    },
+  };
+}
