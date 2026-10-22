@@ -6167,14 +6167,6 @@
       "count": 1
     },
     {
-      "path": "src/tui/uninstall/uninstall-keys.test.ts",
-      "code": 2561,
-      "message": "Object literal may only specify known properties, but 'typed' does not exist in type '{ type: string; }'. Did you mean to write 'type'?",
-      "anchor": "typed",
-      "line": 145,
-      "count": 3
-    },
-    {
       "path": "src/uninstall/windows-user-path.test.ts",
       "code": 2493,
       "message": "Tuple type '[]' of length '0' has no element at index '0'.",

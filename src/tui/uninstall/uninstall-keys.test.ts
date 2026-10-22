@@ -69,6 +69,11 @@ function openAt(step: "loading" | "review" | "confirm" | "closing"): TuiState {
   return state;
 }
 
+/** One reducer step, typed so the action literal is checked against UninstallAction. */
+function applyAction(state: TuiState, action: UninstallAction): TuiState {
+  return reduceUninstallAction(state, action) ?? state;
+}
+
 function press(state: TuiState, input: string, key: Key = emptyKey()) {
   const dispatch = vi.fn();
   const onUninstallConfirmed = vi.fn();
@@ -139,11 +144,10 @@ describe("uninstall ladder keys", () => {
 
   it("enter does nothing until the word is complete", () => {
     let state = openAt("confirm");
-    state =
-      reduceUninstallAction(state, {
-        type: "uninstall_typed_set",
-        typed: "uninstal",
-      }) ?? state;
+    state = applyAction(state, {
+      type: "uninstall_typed_set",
+      typed: "uninstal",
+    });
     const { dispatch, onUninstallConfirmed } = press(
       state,
       "",
@@ -155,11 +159,10 @@ describe("uninstall ladder keys", () => {
 
   it("enter fires once the word is complete", () => {
     let state = openAt("confirm");
-    state =
-      reduceUninstallAction(state, {
-        type: "uninstall_typed_set",
-        typed: "uninstall",
-      }) ?? state;
+    state = applyAction(state, {
+      type: "uninstall_typed_set",
+      typed: "uninstall",
+    });
     const { dispatch, onUninstallConfirmed } = press(
       state,
       "",
@@ -174,11 +177,10 @@ describe("uninstall ladder keys", () => {
 
   it("backspace clears what was typed", () => {
     let state = openAt("confirm");
-    state =
-      reduceUninstallAction(state, {
-        type: "uninstall_typed_set",
-        typed: "uni",
-      }) ?? state;
+    state = applyAction(state, {
+      type: "uninstall_typed_set",
+      typed: "uni",
+    });
     const { dispatch } = press(state, "", emptyKey({ backspace: true }));
     expect(dispatch).toHaveBeenCalledWith({
       type: "uninstall_typed_set",
@@ -267,11 +269,10 @@ describe("uninstall ladder keys", () => {
         cursor: "delete",
       });
       let state = atDesktop();
-      state =
-        reduceUninstallAction(state, {
-          type: "uninstall_desktop_cursor_set",
-          cursor: "delete",
-        }) ?? state;
+      state = applyAction(state, {
+        type: "uninstall_desktop_cursor_set",
+        cursor: "delete",
+      });
       const pressed = press(state, "", emptyKey({ return: true }));
       expect(pressed.onUninstallConfirmed).toHaveBeenCalledWith({
         keepDesktopData: false,
@@ -298,11 +299,10 @@ describe("uninstall ladder keys", () => {
 
     it("keeps desktop data by default when the question was never asked", () => {
       let state = openAt("confirm");
-      state =
-        reduceUninstallAction(state, {
-          type: "uninstall_typed_set",
-          typed: "uninstall",
-        }) ?? state;
+      state = applyAction(state, {
+        type: "uninstall_typed_set",
+        typed: "uninstall",
+      });
       const { onUninstallConfirmed } = press(state, "", emptyKey({ return: true }));
       // Not asked means not agreed: if the post-exit plan finds the
       // desktop app after all, its folder must survive.
