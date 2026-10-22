@@ -1637,6 +1637,19 @@ newly opened selector or overwrite the selected target. Interactive local starts
 use `models start --interactive` to avoid waiting for the optional throughput
 benchmark after health is ready.
 
+### When the local model is not running
+
+A turn on the managed local model that fails because its engine is not
+running (it never started, or it died) says "The local model isn't running."
+with one button, **Start model**, the same start as Settings › Models
+(`cli:modelsStart`). It is known from `code: "local_engine_down"` on the
+turn's failure frame, which arrives after the step's raw `fetch failed` error
+frame and replaces it as the turn's reason, or, with an agent that sends no
+such code, from a refused connection on the local route only. While the app's own supervisor
+(`main/daemon-supervisor.ts`) is bringing the server back, the row says so and
+offers no second start; once the model is up, the row's Try again resends the
+message. Words and rules: [dead-engine.js](renderer/dead-engine.js).
+
 ## Atomic Chat Core, the default local engine
 
 Atomic Chat Core is the default local engine. The agent's config migration writes `localModels.managed.engine: "atomic-core"` for everyone, and a config with no engine named runs Core too; the desktop reads it the same way (`managedEngineOf` in `main/agent-cli.ts`, `composerEngineId` in `renderer/composer-engines.js`). Only an explicit `"llama-server"` is llama.cpp. The engine is not a choice in the normal UI: the Local route draws only the backend and model controls, and a Fusion seat lists one neutral local row, **This computer** ("Local model · runs on this machine"), which keeps whichever engine is configured. llama.cpp is never shown in the app, failure states included: it is a support-only fallback reached with `atomic-agent models engine llama-server`. There is no experimental flag any more.

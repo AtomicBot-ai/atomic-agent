@@ -423,6 +423,8 @@
 .sysrow .sys-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:-3px}
 .sysrow .sys-acts .btn{height:26px}
 .sysrow .sys-acts .btn svg{width:12px;height:12px}
+/* ATO-772: the dead-engine row's wait on the app's own restart, in place of its button. */
+.sysrow .sys-acts .sys-note{font-size:12px;color:var(--ink-3)}
 .sysrow code{font:400 12px var(--font-mono);color:var(--ink)}
 /* Fusion's first-switch intro (fusion-intro.ts): the tree mark, then paragraphs. */
 .sysrow.sys-block{grid-template-columns:0 minmax(0,1fr);column-gap:0}
