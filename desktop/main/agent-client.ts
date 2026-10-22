@@ -558,6 +558,8 @@ export class AgentClient extends EventEmitter {
   private readonly lingering = new Set<ChildProcess>();
   /** Windows (ATO-177): each agent's stand-in for the app, the process it watches (spawnWatchSentinel). */
   private readonly sentinels = new Map<ChildProcess, ChildProcess>();
+  /** ATO-763: when each child was spawned, for the uptime an unexpected exit reports. */
+  private readonly spawnedAt = new WeakMap<ChildProcess, number>();
   private readonly opts: AgentClientOptions;
   private readonly recordPath: string;
 
@@ -729,6 +731,7 @@ export class AgentClient extends EventEmitter {
       throw err;
     }
     this.child = child;
+    this.spawnedAt.set(child, Date.now());
     if (sentinel) this.sentinels.set(child, sentinel);
 
     /* Whole lines, however the pipe cut them, each with its level when it is
@@ -756,8 +759,10 @@ export class AgentClient extends EventEmitter {
     child.on("exit", (code, signal) => {
       // A child a stop let go of is gone at last: nothing waits for it any more, and its record goes.
       if (this.lingering.delete(child) && child.pid !== undefined) forgetServeRecord(this.recordPath, child.pid);
+      // ATO-763: read before the stand-in is ended below, or it would always read as gone.
+      const sentinelAlive = this.sentinelAlive(child);
       this.endSentinel(child);
-      this.childExited(child, code, signal);
+      this.childExited(child, code, signal, sentinelAlive);
     });
     /* A child that could not be spawned at all (not executable, say) emits
        `error` and has no pid. Unheard, that event is an uncaught exception in
@@ -794,7 +799,7 @@ export class AgentClient extends EventEmitter {
    * client's child at all, ended as it was asked to, and the record, the
    * approval stream and the status now belong to the agent after it.
    */
-  private childExited(child: ChildProcess, code: number | null, signal: NodeJS.Signals | null): void {
+  private childExited(child: ChildProcess, code: number | null, signal: NodeJS.Signals | null, sentinelAlive: boolean | null = null): void {
     if (this.child !== child) return;
     this.child = null;
     this.port = null;
@@ -807,7 +812,15 @@ export class AgentClient extends EventEmitter {
       return;
     }
     // Analytics / error reporting: numbers and a signal name only, never the agent's output.
-    this.emit("unexpected-exit", { exitCode: code, signal, phase: this.status.state === "starting" ? "starting" : "running" });
+    // ATO-763: how long it ran and, on Windows, whether its stand-in for the app was still up.
+    const at = this.spawnedAt.get(child);
+    this.emit("unexpected-exit", {
+      exitCode: code,
+      signal,
+      phase: this.status.state === "starting" ? "starting" : "running",
+      uptimeMs: at === undefined ? null : Date.now() - at,
+      sentinelAlive,
+    });
     this.setStatus({
       state: "error",
       port: null,
@@ -1488,6 +1501,13 @@ export class AgentClient extends EventEmitter {
     if (this.lingering.size === 0) return true;
     const exits = Promise.all([...this.lingering].map((child) => exitOf(child)));
     return settlesWithin(exits, this.opts.lingerWaitMs ?? LINGER_WAIT_MS);
+  }
+
+  /** Windows (ATO-177): whether the stand-in `child` watches is still running; null when it has none. */
+  private sentinelAlive(child: ChildProcess): boolean | null {
+    const sentinel = this.sentinels.get(child);
+    if (!sentinel) return null;
+    return sentinel.exitCode === null && sentinel.signalCode === null;
   }
 
   /** Windows (ATO-177): ends the stand-in `child` watches, which asks it to close; once is enough. */

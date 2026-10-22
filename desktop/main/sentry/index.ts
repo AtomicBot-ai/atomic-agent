@@ -7,4 +7,5 @@ export {
   wireProcessErrorReporting,
   wireWindowErrorReporting,
 } from "./handlers.js";
+export { LAST_ERROR_CATEGORIES, LAST_LINES, lastErrorCategory, uptimeBucket, type LastErrorCategory } from "./exit-reason.js";
 export { KNOWN_TYPES, MAX_FRAMES, safeBasename, safeMessage, safeTag, safeType, sanitizeStack, STATIC_MESSAGE_ERRORS } from "./scrub.js";

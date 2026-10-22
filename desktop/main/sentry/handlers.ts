@@ -16,6 +16,7 @@ import { app, type BrowserWindow } from "electron";
 
 import { windowCrashed } from "../analytics/index.js";
 import { reportError } from "./client.js";
+import { lastErrorCategory, uptimeBucket } from "./exit-reason.js";
 
 /** Main process and app-wide events. Call once, early. */
 export function wireProcessErrorReporting(): void {
@@ -74,12 +75,29 @@ export function reportRendererError(payload: unknown): void {
   });
 }
 
-/** The agent child exited when nobody stopped it: tags only. */
-export function reportAgentExit(detail: { exitCode?: number | null; signal?: string | null; phase?: string }): void {
+/**
+ * The agent child exited when nobody stopped it: tags only. ATO-763: also
+ * `last_error` (a category of its last error lines, exit-reason.ts; the lines
+ * themselves are never sent), `uptime` as a bucket, and on Windows
+ * `sentinel_alive`: whether the stand-in it watches was still up. A dead
+ * sentinel means the agent closed itself on `--parent-pid`, not a crash.
+ */
+export function reportAgentExit(
+  detail: { exitCode?: number | null; signal?: string | null; phase?: string; uptimeMs?: number | null; sentinelAlive?: boolean | null },
+  lastLines: readonly string[] = [],
+): void {
+  const sentinel = typeof detail.sentinelAlive === "boolean" ? (detail.sentinelAlive ? "yes" : "no") : undefined;
   reportError({
     source: "agent-exit",
     name: "AgentExited",
     level: "warning",
-    tags: { kind: detail.phase ?? "running", exit_code: detail.exitCode ?? undefined, reason: detail.signal ?? undefined },
+    tags: {
+      kind: detail.phase ?? "running",
+      exit_code: detail.exitCode ?? undefined,
+      reason: detail.signal ?? undefined,
+      last_error: lastErrorCategory(lastLines),
+      uptime: uptimeBucket(detail.uptimeMs) ?? undefined,
+      ...(sentinel ? { sentinel_alive: sentinel } : {}),
+    },
   });
 }
