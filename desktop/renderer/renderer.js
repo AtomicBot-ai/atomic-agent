@@ -3047,7 +3047,8 @@ function toolLine(m) {
     return 'Generated ' + plural(k, 'image') + (a.prompt ? ' · ' + quote(a.prompt) : '');
   }
   // "Generated a video · 4 s · Veo 3.1 Fast": the length and the model, the money's two levers (chat-media.js).
-  if (n === 'video.generate') return esc(videoToolLine(a));
+  // ATO-815: the model as the result (or the running card's progress) names it, not guessed from the args.
+  if (n === 'video.generate') return esc(videoToolLine(a, {out, label: m.progress ? m.progress.label : ''}));
   if (n === 'fusion.delegate') {
     /* ATO-235: only whole args are counted. A live card's are clipped to 120
        characters, so its tasks come from the approval request (fzTasks, set
