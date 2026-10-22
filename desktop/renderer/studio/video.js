@@ -335,13 +335,24 @@
     return !(tried && tried[item.id]);
   }
 
+  /**
+   * Whether the window should draw a poster for a clip opened from a chat: it
+   * has no gallery id, so Core cannot keep one; the frame stays in memory for
+   * this session, keyed by the item id. Tried once, like a gallery clip.
+   */
+  function needsChatPoster(item, tried) {
+    if (!item || !item.fromChat || typeof item.id !== 'string' || !item.id) return false;
+    if (typeof item.path !== 'string' || !item.path) return false;
+    return !(tried && tried[item.id]);
+  }
+
   /** The time a poster frame is taken at: 0.5 s in, or the middle of a shorter clip. */
   function posterTime(duration) {
     return Number.isFinite(duration) && duration > 0 ? Math.min(0.5, duration / 2) : 0.5;
   }
 
   const helpers = {
-    needsPoster, posterTime,
+    needsPoster, needsChatPoster, posterTime,
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
     supportsImageStart, localDims, buildRequest, blockReason, priceParams, priceLabel, generateLabel,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
@@ -446,8 +457,31 @@
       }).catch(() => undefined);   // no poster: the tile keeps its play icon
     }
 
-    /** PNG bytes of a frame ~0.5 s into the clip (Core takes only a PNG), or null. */
-    function makePoster(it) {
+    /* Posters for clips from a chat, kept in memory only (Core has no id for them). */
+    const CHAT_POSTERS_MAX = 24;
+    const chatPosterIds = [];
+
+    /** A clip from a chat: one frame drawn here as a data URL and shown; nothing is sent to Core. */
+    function ensureChatPoster(it) {
+      if (!needsChatPoster(it, posterTried)) return;
+      posterTried[it.id] = true;
+      posterChain = posterChain.then(() => makePoster(it, 'dataUrl')).then((url) => {
+        if (!url) return;
+        chatPosterIds.push(it.id);
+        while (chatPosterIds.length > CHAT_POSTERS_MAX) {
+          const old = chatPosterIds.shift();
+          delete S.thumbs[old]; delete posterTried[old];
+        }
+        S.thumbs[it.id] = url;
+        if (!S.result || S.result.id !== it.id) return;
+        /* Set it on the player in place: repainting the stage would stop a clip already playing. */
+        const v = S.root && S.root.querySelector ? S.root.querySelector('.studio-video-player') : null;
+        if (v) v.setAttribute('poster', url); else paint('stage');
+      }).catch(() => undefined);   // no poster: the player looks as before
+    }
+
+    /** A frame ~0.5 s into the clip: PNG bytes (Core takes only a PNG), or a PNG data URL with as = 'dataUrl'; null on failure. */
+    function makePoster(it, as) {
       const doc = g.document;
       const src = g.STUDIO && typeof g.STUDIO.mediaUrl === 'function' ? g.STUDIO.mediaUrl(it.path) : '';
       if (!doc || !src) return Promise.resolve(null);
@@ -473,6 +507,10 @@
             const c = doc.createElement('canvas');
             c.width = Math.max(1, Math.round(w * scale)); c.height = Math.max(1, Math.round(h * scale));
             c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+            if (as === 'dataUrl') {
+              const url = c.toDataURL('image/png');
+              return finish(typeof url === 'string' && url.startsWith('data:image/png') ? url : null);
+            }
             c.toBlob((blob) => {
               if (!blob) return finish(null);
               blob.arrayBuffer().then((buf) => finish(new Uint8Array(buf)), () => finish(null));
@@ -485,6 +523,7 @@
 
     async function loadThumb(it) {
       const br = BR();
+      if (it.fromChat) { ensureChatPoster(it); return; }
       if (br && !it.thumbnailPath) { ensurePoster(it); return; }
       if (!br || !it.thumbnailPath || S.thumbs[it.id] !== undefined) return;
       S.thumbs[it.id] = null;
@@ -1080,10 +1119,11 @@
 
     function viewFromChat(it) {
       const name = String(it.path).split(/[\\/]/).pop() || it.path;
+      const th = S.thumbs[it.id];
       let h = '<div class="studio-viewer studio-video-result">';
       h += S.playError
-        ? '<div class="studio-video-noplay"><span>' + NO_PLAY + '</span></div>'
-        : '<video class="studio-video-player" controls preload="metadata" src="' + escHtml(S.videoSrc) + '"></video>';
+        ? '<div class="studio-video-noplay">' + (th ? '<img alt="" src="' + escHtml(th) + '">' : '') + '<span>' + NO_PLAY + '</span></div>'
+        : '<video class="studio-video-player" controls preload="metadata"' + (th ? ' poster="' + escHtml(th) + '"' : '') + ' src="' + escHtml(S.videoSrc) + '"></video>';
       if (S.notice) h += '<div class="studio-notebox">' + icon('info') + '<span>' + escHtml(S.notice) + '</span></div>';
       h += '<div class="studio-below"><span class="studio-meta" title="' + escHtml(it.path) + '">From chat · ' + escHtml(name) + '</span>'
         + '<button class="studio-btn" data-vact="save-as">' + icon('download') + 'Save as…</button>'

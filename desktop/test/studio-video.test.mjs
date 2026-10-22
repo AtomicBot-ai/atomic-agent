@@ -215,3 +215,47 @@ test('posters: only a Studio clip without one, tried once per session', () => {
   assert.equal(V.posterTime(0.6), 0.3);
   assert.equal(V.posterTime(NaN), 0.5);
 });
+
+test('posters for clips from a chat: drawn when not tried yet, never for a gallery clip', () => {
+  const chat = { id: 'chat:/home/u/clip.mp4', path: '/home/u/clip.mp4', fromChat: true, thumbnailPath: null };
+  assert.equal(V.needsChatPoster(chat, {}), true);
+  assert.equal(V.needsChatPoster(chat, { [chat.id]: true }), false);
+  assert.equal(V.needsChatPoster({ ...chat, path: '' }, {}), false);
+  assert.equal(V.needsChatPoster({ id: 'job-1', path: '/data/studio/videos/job-1.webm', thumbnailPath: null }, {}), false);
+  assert.equal(V.needsChatPoster(null, {}), false);
+});
+
+test('a clip opened from a chat gets an in-memory poster; Core is not asked to keep it', async () => {
+  const made = [];
+  const document = {
+    createElement(tag) {
+      if (tag === 'canvas') return { width: 0, height: 0, getContext: () => ({ drawImage() {} }), toDataURL: () => 'data:image/png;base64,QUJD' };
+      const on = {};
+      const v = {
+        videoWidth: 1280, videoHeight: 720, duration: 4,
+        addEventListener: (ev, fn) => { on[ev] = fn; },
+        removeAttribute() {}, load() {},
+        set currentTime(_t) { setImmediate(() => on.seeked && on.seeked()); },
+        set src(_s) { setImmediate(() => on.loadedmetadata && on.loadedmetadata()); },
+      };
+      made.push(v);
+      return v;
+    },
+  };
+  const setPosterCalls = [];
+  let page;
+  load({
+    document, setTimeout, clearTimeout,
+    STUDIO: { pages: {}, register: (_k, p) => { page = p; }, mediaUrl: (p) => 'file://' + p },
+    atomic: { studio: { setPoster: async (...a) => { setPosterCalls.push(a); return { ok: true, data: null }; } } },
+  });
+  page.focusFile('/home/u/clip.mp4');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(page._state.result.fromChat, true);
+  assert.equal(page._state.thumbs['chat:/home/u/clip.mp4'], 'data:image/png;base64,QUJD');
+  assert.equal(setPosterCalls.length, 0);
+  assert.equal(made.length, 1);
+  page.focusFile('/home/u/clip.mp4');   // tried once per session
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(made.length, 1);
+});
