@@ -428,12 +428,20 @@ describe("TuiTelegramOrchestrator", () => {
       const bus = makeBus();
       const orch = new TuiTelegramOrchestrator(makeRuntime(channel), bus);
       await orch.startPairing();
+      // The code is shown on the Integrations status line, the tab the
+      // command switches to, and kept out of the runtime feed, which
+      // issue reports include.
+      const status = bus.actions
+        .filter((a) => a.type === "integrations_action_settled")
+        .map((a) => String(a.message));
+      expect(status[0]).toContain("/start 123456");
+      expect(status[0]).toContain("@my_bot");
+      expect(status[0]).toContain("5 minutes");
+      expect(status[1]).toBe("Paired: @new_owner is now the owner.");
       const lines = infoLines(bus);
-      expect(lines[0]).toContain("/start 123456");
-      expect(lines[0]).toContain("@my_bot");
-      expect(lines[0]).toContain("5 minutes");
-      expect(lines[1]).toBe("Paired: @new_owner is now the owner.");
-      expect(lines.join("\n")).not.toContain("—");
+      expect(lines.join("\n")).not.toContain("123456");
+      expect(lines[lines.length - 1]).toBe("Paired: @new_owner is now the owner.");
+      expect([...status, ...lines].join("\n")).not.toContain("—");
       orch.shutdown();
     });
 

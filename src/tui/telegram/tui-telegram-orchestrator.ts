@@ -349,7 +349,8 @@ export class TuiTelegramOrchestrator {
 
   /**
    * `/telegram pair` and the connect flow: open a window and narrate it
-   * as info lines (the code, then who became the owner).
+   * on the Integrations status line (the code, then who became the
+   * owner); the runtime feed gets the same lines minus the code.
    */
   async startPairing(
     timeoutMs: number = DEFAULT_PAIRING_TIMEOUT_MS,
@@ -360,7 +361,7 @@ export class TuiTelegramOrchestrator {
         this.emitInfo(request.reason);
         return;
       case "confirm_replace":
-        this.emitInfo(
+        this.emitPairingLine(
           replaceOwnerPrompt({
             ownerUserId: request.ownerUserId,
             confirmSeconds: REPLACE_OWNER_CONFIRM_MS / 1000,
@@ -369,9 +370,18 @@ export class TuiTelegramOrchestrator {
         );
         return;
       case "opened": {
-        this.emitInfo(pairingInstruction(request));
-        const claim = await request.outcome;
+        // The code goes to the Integrations status line only, the tab
+        // `/telegram pair` switches to. The runtime feed lands in issue
+        // reports, so it gets a line without the code.
+        this.bus.emit({
+          type: "integrations_action_settled",
+          message: pairingInstruction(request),
+        });
         this.emitInfo(
+          "telegram: pairing window open; the code is on the Integrations tab",
+        );
+        const claim = await request.outcome;
+        this.emitPairingLine(
           claim ? pairedOwnerLine(claim) : "Pairing window closed without a claim.",
         );
         return;
@@ -467,6 +477,16 @@ export class TuiTelegramOrchestrator {
 
   private emitInfo(line: string): void {
     this.bus.emit({ type: "runtime_info", line });
+  }
+
+  /**
+   * A `/telegram pair` line the operator must see: the Integrations
+   * status line (where the command lands) and the runtime feed. Never
+   * called with the code (see `startPairing`).
+   */
+  private emitPairingLine(line: string): void {
+    this.bus.emit({ type: "integrations_action_settled", message: line });
+    this.emitInfo(line);
   }
 
   /** Press → call channel → emit started/settled with shared busy + error surface. */
