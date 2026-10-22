@@ -1,4 +1,5 @@
 import { coreKeyForUrl } from "../local-llm/core/core-state.js";
+import { refreshCoreKeyForUrl } from "../local-llm/core/core-sessions.js";
 import { ENV_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
@@ -494,6 +495,12 @@ export interface LlamaServerClientOptions {
    * immediately so retry logic is exercised without real time.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Asked once when a completion is refused with 401: the current key for
+   * the server at `url`, or `null`. Defaults to re-reading the managed
+   * Core session's key (`refreshCoreKeyForUrl`). Injectable for tests.
+   */
+  refreshApiKey?: (url: string) => Promise<string | null>;
 }
 
 export interface LlamaServerProps {
@@ -528,6 +535,7 @@ export class LlamaServerClient {
   private readonly completionRetriesOverride: number | undefined;
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly refreshApiKey: (url: string) => Promise<string | null>;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
   /**
@@ -590,6 +598,8 @@ export class LlamaServerClient {
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
     this.sleep = options.sleep ?? defaultSleep;
+    this.refreshApiKey = options.refreshApiKey ??
+      ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
   }
 
   /**
@@ -879,6 +889,7 @@ export class LlamaServerClient {
         }
       },
       request.signal,
+      headers,
     );
   }
 
@@ -934,6 +945,7 @@ export class LlamaServerClient {
           }
         },
         request.signal,
+        headers,
       );
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
@@ -1593,6 +1605,18 @@ export class LlamaServerClient {
     return headers;
   }
 
+  /**
+   * Put the server's current key into `headers`. True when it is a
+   * different key from the one just refused, so a replay can succeed.
+   */
+  private async refreshKey(url: string, headers: Record<string, string>): Promise<boolean> {
+    let key: string | null;
+    try { key = await this.refreshApiKey(url); } catch { key = null; }
+    if (!key || headers.authorization === `Bearer ${key}`) return false;
+    headers.authorization = `Bearer ${key}`;
+    return true;
+  }
+
   private resolveRetryParams(): { maxAttempts: number; backoffMs: number } {
     const config = getConfig();
     const maxAttempts = Math.max(
@@ -1612,14 +1636,20 @@ export class LlamaServerClient {
    * failures — network errors surface as `LlamaServerError` with
    * `status === null`, and 5xx responses come through with `status >= 500`.
    * Grammar/validation 4xx errors and abort signals short-circuit.
+   *
+   * With `headers`, a 401 asks for a fresh key once (`refreshKey`) and,
+   * when there is a different one, replays the request with it outside
+   * the retry budget; a 401 that stands says what to do about it.
    */
   private async runWithRetry<T>(
     url: string,
     attempt: () => Promise<T>,
     signal?: AbortSignal,
+    headers?: Record<string, string>,
   ): Promise<T> {
     const { maxAttempts, backoffMs } = this.resolveRetryParams();
     let lastError: unknown;
+    let keyRefreshed = false;
     for (let i = 1; i <= maxAttempts; i += 1) {
       if (signal?.aborted) {
         throw new LlamaServerError("completion aborted by caller", null, url);
@@ -1632,6 +1662,16 @@ export class LlamaServerClient {
         // surfaces as a `status === null` LlamaServerError which would
         // otherwise be treated as a transient network failure.
         if (signal?.aborted) throw err;
+        if (headers && isUnauthorized(err)) {
+          if (!keyRefreshed) {
+            keyRefreshed = true;
+            if (await this.refreshKey(url, headers)) {
+              i -= 1;
+              continue;
+            }
+          }
+          throw keyRefusedError(err);
+        }
         if (!isRetryableLlamaError(err) || i >= maxAttempts) throw err;
         await this.sleep(computeBackoffMs(backoffMs, i));
       }
@@ -1769,6 +1809,27 @@ function isRetryableLlamaError(err: unknown): boolean {
   if (err.status === null) return true;
   if (err.status >= 500 && err.status < 600) return true;
   return false;
+}
+
+function isUnauthorized(err: unknown): err is LlamaServerError {
+  return err instanceof LlamaServerError && err.status === 401;
+}
+
+/**
+ * A 401 that a fresh key did not cure. Still a 401, so it classifies as
+ * before; the words say what fixes it instead of a bare status.
+ */
+function keyRefusedError(err: LlamaServerError): LlamaServerError {
+  return new LlamaServerError(
+    `${err.message}. The local model server refused the agent's key. ` +
+      "For the model the agent runs, restart it (atomic-agent models stop, then atomic-agent models start); " +
+      "for your own server, check localModels.apiKey or ATOMIC_AGENT_LLAMA_API_KEY.",
+    401,
+    err.url,
+    false,
+    err.code,
+    { cause: err },
+  );
 }
 
 /**

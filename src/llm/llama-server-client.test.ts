@@ -2346,3 +2346,83 @@ describe("LlamaServerClient auth header (#582)", () => {
     expect(auth).toEqual(["Bearer fixed-key"]);
   });
 });
+
+describe("LlamaServerClient on a 401 re-reads the key once (ATO-837)", () => {
+  function clientAccepting(
+    goodKey: string,
+    auth: Array<string | null>,
+    refreshApiKey: (url: string) => Promise<string | null>,
+  ): LlamaServerClient {
+    return new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      apiKey: "stale-key",
+      completionRetries: 1,
+      progressWatch: false,
+      refreshApiKey,
+      fetchImpl: createMockFetch(async (_url, init) => {
+        const headers = (init.headers ?? {}) as Record<string, string>;
+        const header = headers.authorization ?? null;
+        auth.push(header);
+        if (header !== `Bearer ${goodKey}`) {
+          return new Response(JSON.stringify({ error: { code: 401, message: "Invalid API Key" } }), { status: 401 });
+        }
+        if (headers.accept === "text/event-stream") {
+          return new Response('data: {"content":"x","stop":true}\n\n', {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return new Response(JSON.stringify({ content: "x", stop: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    });
+  }
+
+  it("replays the completion with the key Core reports now", async () => {
+    const auth: Array<string | null> = [];
+    const asked: string[] = [];
+    const client = clientAccepting("fresh-key", auth, async (url) => { asked.push(url); return "fresh-key"; });
+    await expect(client.complete({ prompt: "p" })).resolves.toMatchObject({ content: "x" });
+    expect(auth).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+    expect(asked).toEqual(["http://127.0.0.1:9999/completion"]);
+  });
+
+  it("does the same for the stream's opening request", async () => {
+    const auth: Array<string | null> = [];
+    const client = clientAccepting("fresh-key", auth, async () => "fresh-key");
+    const stream = client.completeStream({ prompt: "p" });
+    let final: CompletionResult | null = null;
+    for (;;) {
+      const next = await stream.next();
+      if (next.done) { final = next.value; break; }
+    }
+    expect(final?.content).toBe("x");
+    expect(auth).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+  });
+
+  it("asks once and says what to do when the key is still refused", async () => {
+    const auth: Array<string | null> = [];
+    let asks = 0;
+    const client = clientAccepting("never", auth, async () => { asks += 1; return "fresh-key"; });
+    const err = await client.complete({ prompt: "p" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect((err as LlamaServerError).status).toBe(401);
+    expect((err as LlamaServerError).message).toContain("refused the agent's key");
+    expect((err as LlamaServerError).message).toContain("atomic-agent models start");
+    expect(asks).toBe(1);
+    expect(auth).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+  });
+
+  it("does not replay when there is no other key", async () => {
+    const auth: Array<string | null> = [];
+    for (const answer of [null, "stale-key"]) {
+      auth.length = 0;
+      const client = clientAccepting("fresh-key", auth, async () => answer);
+      const err = await client.complete({ prompt: "p" }).catch((e: unknown) => e);
+      expect((err as LlamaServerError).status).toBe(401);
+      expect(auth).toEqual(["Bearer stale-key"]);
+    }
+  });
+});

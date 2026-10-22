@@ -122,6 +122,12 @@ export interface LlamaEmbeddingClientOptions {
    * `authorization` header.
    */
   getApiKey?: () => string | null | undefined;
+  /**
+   * Asked once when the daemon answers 401: its current key, or `null`.
+   * A different key replays the request once (a managed Core session
+   * whose key changed under the record, ATO-837).
+   */
+  refreshApiKey?: () => Promise<string | null>;
   /** The model's task prompts (`EmbeddingModelDef.prompts`), applied per request purpose. */
   prompts?: EmbeddingPrompts;
 }
@@ -137,6 +143,7 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
   private readonly timeoutMs: number;
   private readonly fetchFn: typeof fetch;
   private readonly getApiKey: () => string | null | undefined;
+  private readonly refreshApiKey: (() => Promise<string | null>) | undefined;
   private readonly prompts: EmbeddingPrompts | undefined;
 
   constructor(opts: LlamaEmbeddingClientOptions) {
@@ -151,6 +158,7 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.fetchFn = opts.fetch ?? globalThis.fetch;
     this.getApiKey = opts.getApiKey ?? (() => null);
+    this.refreshApiKey = opts.refreshApiKey;
     this.prompts = opts.prompts;
   }
 
@@ -164,20 +172,25 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
       };
       const apiKey = this.getApiKey();
       if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-      const res = await this.fetchFn(`${this.url}/embedding`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ content: promptedEmbeddingText(req, this.prompts) }),
-        signal,
-      });
+      const body = JSON.stringify({ content: promptedEmbeddingText(req, this.prompts) });
+      const send = () => this.fetchFn(`${this.url}/embedding`, { method: "POST", headers, body, signal });
+      let res = await send();
+      if (res.status === 401 && this.refreshApiKey) {
+        const fresh = await this.refreshApiKey().catch(() => null);
+        if (fresh && headers.authorization !== `Bearer ${fresh}`) {
+          // The refused reply is not read; let its connection go.
+          void res.body?.cancel().catch(() => undefined);
+          headers.authorization = `Bearer ${fresh}`;
+          res = await send();
+        }
+      }
       if (!res.ok) {
         const txt = await res.text().catch(() => "(no body)");
         throw new EmbeddingUnavailableError(
           `embedding daemon returned HTTP ${res.status}: ${txt.slice(0, 200)}`,
         );
       }
-      const body = (await res.json()) as unknown;
-      const raw = extractEmbeddingArray(body);
+      const raw = extractEmbeddingArray((await res.json()) as unknown);
       if (!raw) {
         throw new EmbeddingUnavailableError(
           "embedding daemon response shape unrecognised",
