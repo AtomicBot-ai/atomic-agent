@@ -599,10 +599,12 @@ export type AgentLoopEvent =
   | {
       /**
        * The completion for step `stepIndex` came back cut off, and the
-       * same step is being retried with a different request: a larger
-       * reply cap, or a prompt re-packed to the context window the
-       * server just revealed. Fired once per retry; a second cut on the
-       * same step fails the turn with the cause in the message.
+       * same step is being retried with a different request: a notice
+       * asking for a shorter reply plus a larger reply cap, a held cap,
+       * or a prompt re-packed to the context window the server just
+       * revealed. Fired once per retry; once the step's or the turn's
+       * retries are spent (`planTruncationRetry`), the next cut fails
+       * the turn with the cause in the message.
        */
       type: "completion_truncated";
       stepIndex: number;

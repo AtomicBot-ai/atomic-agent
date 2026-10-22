@@ -10,7 +10,7 @@ import { readErrnoCode } from "../../llm/errno-code.js";
 import { readProviderErrorVerdict } from "../../llm/reliability/provider-error-verdict.js";
 import { classifyProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-rejection-recovery.js";
-import { composeTruncationNotice, planTruncationRetry, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
+import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
 import { PARSE_RECOVERY_BUDGET, composeParseFailureNotice, isRecoverableParseFailure } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./empty-completion-recovery.js";
 import { FINALIZATION_REQUEST_DEADLINE_MS, type RequestDeadline } from "../request-deadline.js";
@@ -35,6 +35,8 @@ export interface TurnRecoveryContext {
   durationCeilingMs: number;
   providerWaitCfg: { enabled: boolean; maxWaitMs: number };
   recoveryStepAvailable: (stepIndex: number) => boolean;
+  /** The model mode serving the step; absent (legacy wiring) reads as `local`. */
+  modelMode?: "local" | "cloud";
 }
 
 export type TurnRecoveryDecision =
@@ -55,6 +57,7 @@ export function recoverTurnStep(
     effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
     durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
   } = context;
+  const modelMode = context.modelMode ?? "local";
   requestDeadline.dispose();
   let runError: Error | null = err instanceof Error ? err : new Error(String(err));
   let category = classifyFailure(err);
@@ -125,17 +128,22 @@ export function recoverTurnStep(
     return { kind: "stop" };
   }
   // The reply was cut short. Retry the step with a request the wall
-  // does not apply to — a larger cap, or a prompt packed to the
-  // window the server just revealed. Same replay argument as the
-  // outage wait below: the completion failed before any tool ran.
-  // Ahead of the finalization guard on purpose: the summary step
-  // is the one a reasoning model is likeliest to think past, and
-  // one bounded retry that replays nothing is not "more work".
+  // does not apply to: a notice asking for less, plus a larger cap, a
+  // held cap or a prompt packed to the window the server just
+  // revealed. Same replay argument as the outage wait below: the
+  // completion failed before any tool ran. Ahead of the finalization
+  // guard on purpose: the summary step is the one a reasoning model is
+  // likeliest to think past, and a bounded retry that replays nothing
+  // is not "more work".
+  const stepTruncationAttempts =
+    turn.truncationRetry?.stepIndex === i ? turn.truncationRetry.attempts : 0;
   const truncationPlan: TruncationRetryPlan | null = cancelled
     ? null
     : planTruncationRetry({
         error: err,
-        alreadyRetried: turn.truncationRetry?.stepIndex === i,
+        stepAttempts: stepTruncationAttempts,
+        turnAttempts: turn.truncationRetries,
+        modelMode,
         contextWindow: deps.contextWindow?.() ?? null,
         fallbackMaxTokens: getConfig().localModels.completionMaxTokens,
         canFitWindow: deps.onContextWindowObserved !== undefined,
@@ -143,13 +151,25 @@ export function recoverTurnStep(
   if (truncationPlan !== null) {
     const detail: TruncationDetail = truncationPlan.detail;
     const retry: TruncationRetry = truncationPlan.retry;
+    const retryCap = truncationRetryMaxTokens(retry);
     turn.truncationRetry = {
       stepIndex: i,
-      original: runError,
-      ...(retry.kind === "raise_cap"
-        ? { maxTokens: retry.maxTokens }
+      attempts: stepTruncationAttempts + 1,
+      // The step's first cut: the failure reported if the provider
+      // refuses the retry's cap.
+      original:
+        stepTruncationAttempts > 0 && turn.truncationRetry !== null
+          ? turn.truncationRetry.original
+          : runError,
+      ...(retryCap !== undefined ? { maxTokens: retryCap } : {}),
+      // A held cap is one the provider already accepted: a size refusal
+      // of the retry is about the prompt, and the repack below may run.
+      ...(retry.kind === "raise_cap" ||
+      (retryCap !== undefined && detail.requestedMaxTokens === undefined)
+        ? { raised: true as const }
         : {}),
     };
+    turn.truncationRetries += 1;
     if (retry.kind === "fit_window") {
       deps.onContextWindowObserved?.(retry.contextWindow);
     }
@@ -186,9 +206,12 @@ export function recoverTurnStep(
       // `null` in the log: the request carried no cap at all.
       requestedMaxTokens: detail.requestedMaxTokens ?? null,
       retry: retry.kind,
-      ...(retry.kind === "raise_cap"
-        ? { maxTokens: retry.maxTokens }
-        : { contextWindow: retry.contextWindow }),
+      attempt: stepTruncationAttempts + 1,
+      ...(retryCap !== undefined
+        ? { maxTokens: retryCap }
+        : retry.kind === "fit_window"
+          ? { contextWindow: retry.contextWindow }
+          : {}),
     });
     runError = null;
     return { kind: "retry_same" };
@@ -365,7 +388,7 @@ export function recoverTurnStep(
         alreadyRetried: turn.sizeRepackRetry?.stepIndex === i,
         raisedCapRefused:
           turn.truncationRetry?.stepIndex === i &&
-          turn.truncationRetry.maxTokens !== undefined,
+          turn.truncationRetry.raised === true,
         transport: effectiveTransport,
         promptTokens: turn.lastPromptTokens,
         contextWindow: deps.contextWindow?.() ?? null,
@@ -515,6 +538,7 @@ export function recoverTurnStep(
   // with the truncation that started it, which names the knob.
   if (
     turn.truncationRetry?.stepIndex === i &&
+    turn.truncationRetry.raised === true &&
     turn.truncationRetry.maxTokens !== undefined &&
     isRequestSizeRejection(err)
   ) {

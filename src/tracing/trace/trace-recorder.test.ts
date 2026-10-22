@@ -896,6 +896,15 @@ describe("createTraceRecorder", () => {
       requestedMaxTokens: 8_192,
       retry: { kind: "fit_window", contextWindow: 32_768 },
     });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 7,
+      cause: "reply_cap",
+      completionTokens: 64_000,
+      promptTokens: 40_000,
+      requestedMaxTokens: 64_000,
+      retry: { kind: "same_cap", maxTokens: 64_000 },
+    });
     const recorded = events.filter((e) => e.type === "completion_truncated");
     expect(recorded).toEqual([
       expect.objectContaining({
@@ -914,6 +923,11 @@ describe("createTraceRecorder", () => {
         cause: "context_window",
         retry: "fit_window",
         retryValue: 32_768,
+      }),
+      expect.objectContaining({
+        stepIndex: 7,
+        retry: "same_cap",
+        retryValue: 64_000,
       }),
     ]);
   });

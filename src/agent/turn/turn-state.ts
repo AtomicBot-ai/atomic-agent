@@ -32,16 +32,28 @@ export interface TurnLoopState {
   /** Retried a step after an outage and have not yet seen it succeed. */
   awaitingRecovery: boolean;
   // Truncation retry. A reply the server cut short is not a verdict on
-  // the step either — but unlike an outage, replaying the same request
-  // is pointless, so the retry changes it: a larger reply cap when the
-  // cap was spent, a re-packed prompt when the window filled. One
-  // retry per step index; the second cut ends the turn.
+  // the step either, but unlike an outage, replaying the same request
+  // is pointless, so the retry changes it: a notice asking for a
+  // shorter reply, and a larger cap, a held cap or a re-packed prompt
+  // (`planTruncationRetry`). Bounded per step index and per turn.
   truncationRetry: {
     stepIndex: number;
+    /** Retries this step index has taken; a new step index starts at 1. */
+    attempts: number;
     maxTokens?: number;
+    /**
+     * The retry sends a cap above the one the cut request carried (or a
+     * cap where it carried none), so a size refusal of it is the cap's.
+     */
+    raised?: true;
     /** The truncation that started the retry, for the message if the retry is refused. */
     original: Error;
   } | null;
+  /**
+   * Truncation retries taken by back-to-back steps that each needed one;
+   * a step that completes without a cut resets it.
+   */
+  truncationRetries: number;
   /** The step index already retried after a request-size refusal. */
   sizeRepackRetry: { stepIndex: number } | null;
   /** The loop's own estimate of the last prompt built, for the repack fallback. */
@@ -89,6 +101,7 @@ export function createTurnLoopState(): TurnLoopState {
     outageAttempts: 0,
     awaitingRecovery: false,
     truncationRetry: null,
+    truncationRetries: 0,
     sizeRepackRetry: null,
     lastPromptTokens: 0,
     lastBoundaryIndex: -1,
