@@ -36,6 +36,7 @@ import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
   buildStreamChunk,
+  buildUsageChunk,
   buildUsagePayload,
 } from "./openai-chunks.js";
 
@@ -62,12 +63,15 @@ interface ChatCompletionRequest {
   model?: string;
   messages?: Array<{ role?: string; content?: string }>;
   stream?: boolean;
+  stream_options?: { include_usage?: boolean };
   session_id?: string;
 }
 
 interface ParsedRequest {
   model: string;
   stream: boolean;
+  /** `stream_options.include_usage`: end the stream with a usage chunk. */
+  includeUsage: boolean;
   systemPrompt: string | null;
   userMessage: string;
   firstUserMessage: string;
@@ -323,6 +327,17 @@ async function handleStream(
       finishReason: final.finish_reason === "length" ? "length" : "stop",
     }),
   );
+  if (env.request.includeUsage) {
+    sse.writeEvent(
+      null,
+      buildUsageChunk({
+        completionId: env.completionId,
+        created: env.created,
+        model: env.request.model,
+        usage,
+      }),
+    );
+  }
   sse.writeRaw("data: [DONE]\n\n");
   sse.close();
 }
@@ -933,6 +948,7 @@ async function parseRequestBody(
         ? body.model
         : MODEL_DEFAULT,
     stream: Boolean(body.stream),
+    includeUsage: body.stream_options?.include_usage === true,
     systemPrompt,
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,

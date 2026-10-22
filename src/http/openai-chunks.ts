@@ -73,17 +73,49 @@ export function buildStreamChunk(input: StreamChunkInput): StreamChunk {
 }
 
 /**
- * Derive a usage payload from the final turn outcome. Atomic-agent does
- * not track per-turn aggregated token counts yet — the metrics layer emits the
- * figures per-step via metrics, but does not fold them into
- * `RunTurnResult`. Until that plumbing lands we surface zeros so the
- * response is still schema-valid.
+ * Derive a usage payload from the final turn outcome: the tokens every
+ * LLM call of the turn reported, summed (`RunTurnResult.usage`, from the
+ * runtime's turn usage meter). A turn whose provider reported no usage
+ * still gets zeros, so the response stays schema-valid.
  */
-export function buildUsagePayload(_result: RunTurnResult): UsagePayload {
+export function buildUsagePayload(result: RunTurnResult): UsagePayload {
+  const prompt = result.usage?.promptTokens ?? 0;
+  const completion = result.usage?.completionTokens ?? 0;
   return {
-    prompt_tokens: 0,
-    completion_tokens: 0,
-    total_tokens: 0,
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+  };
+}
+
+export interface UsageChunk {
+  id: string;
+  object: "chat.completion.chunk";
+  created: number;
+  model: string;
+  choices: [];
+  usage: UsagePayload;
+}
+
+/**
+ * The extra chunk OpenAI streams when a request sets
+ * `stream_options.include_usage`: sent after the finish chunk and before
+ * `data: [DONE]`, with an empty `choices` array and the whole request's
+ * `usage`.
+ */
+export function buildUsageChunk(input: {
+  completionId: string;
+  created: number;
+  model: string;
+  usage: UsagePayload;
+}): UsageChunk {
+  return {
+    id: input.completionId,
+    object: "chat.completion.chunk",
+    created: input.created,
+    model: input.model,
+    choices: [],
+    usage: input.usage,
   };
 }
 

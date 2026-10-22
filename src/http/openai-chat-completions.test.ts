@@ -399,6 +399,51 @@ describe("POST /v1/chat/completions (streaming)", () => {
     }
   });
 
+  it("ends with OpenAI's usage chunk carrying the turn's real tokens when stream_options.include_usage is set (ATO-276)", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedToolThenReply(),
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        stream: true,
+        stream_options: { include_usage: true },
+        messages: [{ role: "user", content: "inspect the page" }],
+      });
+      expect(response.status).toBe(200);
+      const text = await readAllText(response);
+      const frames = text.split("\n").filter((line) => line.startsWith("data: ")).map((line) => line.slice(6));
+      expect(frames.at(-1)).toBe("[DONE]");
+      const last = JSON.parse(frames.at(-2)!) as { object: string; choices: unknown[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
+      expect(last.object).toBe("chat.completion.chunk");
+      expect(last.choices).toEqual([]);
+      // Every completion of the turn reported its tokens (timings, as a local server does).
+      expect(last.usage.prompt_tokens).toBeGreaterThan(0);
+      expect(last.usage.completion_tokens).toBeGreaterThan(0);
+      expect(last.usage.total_tokens).toBe(last.usage.prompt_tokens + last.usage.completion_tokens);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("sends no usage chunk unless the request asks for it", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedToolThenReply(),
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        stream: true,
+        messages: [{ role: "user", content: "inspect the page" }],
+      });
+      const text = await readAllText(response);
+      expect(text).not.toMatch(/"choices":\[\]/);
+      expect(text).not.toMatch(/"prompt_tokens"/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("emits errors as a canonical OpenAI envelope when extensions are off", async () => {
     const harness = await startTestHarness({
       llamaComplete: async () => {

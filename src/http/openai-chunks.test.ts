@@ -8,7 +8,7 @@ import {
   toolResultTurn,
   userTurn,
 } from "../session/conversation-turn.js";
-import { buildFinalAssistantPayload } from "./openai-chunks.js";
+import { buildFinalAssistantPayload, buildUsageChunk, buildUsagePayload } from "./openai-chunks.js";
 
 function result(
   turns: ReturnType<typeof userTurn>[],
@@ -70,6 +70,23 @@ describe("buildFinalAssistantPayload", () => {
     expect(payload).toEqual({
       message: { role: "assistant", content: "" },
       finish_reason: "cancelled",
+    });
+  });
+});
+
+describe("buildUsagePayload (ATO-276)", () => {
+  it("reports the turn's metered tokens", () => {
+    const withUsage = { ...result([userTurn("hi", 1)]), usage: { promptTokens: 150, completionTokens: 10 } } as RunTurnResult;
+    expect(buildUsagePayload(withUsage)).toEqual({ prompt_tokens: 150, completion_tokens: 10, total_tokens: 160 });
+  });
+
+  it("stays schema-valid with zeros when the provider reported nothing", () => {
+    expect(buildUsagePayload(result([userTurn("hi", 1)]))).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+  });
+
+  it("builds OpenAI's include_usage chunk: empty choices plus usage", () => {
+    expect(buildUsageChunk({ completionId: "c", created: 1, model: "m", usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } })).toEqual({
+      id: "c", object: "chat.completion.chunk", created: 1, model: "m", choices: [], usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
     });
   });
 });

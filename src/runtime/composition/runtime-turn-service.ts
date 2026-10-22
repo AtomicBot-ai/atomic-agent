@@ -576,6 +576,7 @@ export function createRuntimeTurnService(
     const engineTag = localEngine ? { localEngine } : {};
     try {
       const result = await turnController.enqueue(submission);
+      const usage = turnUsageMeter.snapshot(session.id);
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
         provider: providerRegistry.activeText.name,
         model: resolveActiveModelName(),
@@ -583,9 +584,13 @@ export function createRuntimeTurnService(
         latencyMs: Date.now() - startedAt,
         stepCount: result.stepCount,
         outcome: result.reason,
-        ...turnUsageMeter.snapshot(session.id),
+        ...usage,
       });
-      return result;
+      // The same totals reach the caller, e.g. the OpenAI-compatible
+      // endpoint's `usage` (ATO-276).
+      return usage.promptTokens !== undefined && usage.completionTokens !== undefined
+        ? { ...result, usage: { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens } }
+        : result;
     } catch (error) {
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
         provider: providerRegistry.activeText.name,
