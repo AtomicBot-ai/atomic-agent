@@ -16897,6 +16897,8 @@ function selectorHTML() {
       + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This (Mac|computer) has.*$/, '')) + '</span></div>').join('')
     : '';
   const groups = SEL.groups;
+  // Review: set the out-of-reach block off when the list above it is only the Download row.
+  const outSep = (n) => (outHTML && n === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '');
   const rowHTML = (r, i) => {
         const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
         /* Chat review (Д21): the row's own way out. A span, not a button: it
@@ -16939,16 +16941,16 @@ function selectorHTML() {
       + (g.busy ? '<div class="selnote cap"><span class="tk-spin"></span>' + (gi === 0 ? 'Loading models\u2026' : 'loading\u2026') + '</div>' : '')
       + (g.err ? (gi === 0 ? '<div class="cap selerr" style="color:var(--danger)">' : '<div class="cap selgrperr">')
         + ic('alert') + '<span>' + esc(gi === 0 ? g.err : 'could not load: ' + g.err) + '</span></div>' : '')
-      + own.join('');
+      + own.join('')
+      // The local models this Mac cannot run close the local group, not whichever group is last.
+      + (g.id === LOCAL_GROUP ? outSep(own.length) + outHTML : '');
   }).join('') : '';
   const list = '<div class="sellist">'
     + (groups ? groupsHTML
       : (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
         + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
         + rows.map(rowHTML).join(''))
-    // Review: set the out-of-reach block off when the list above it is only the Download row.
-    + (outHTML && rows.length === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '')
-    + outHTML
+    + (groups ? '' : outSep(rows.length) + outHTML)
     + (!real.length && !out.length && (SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
