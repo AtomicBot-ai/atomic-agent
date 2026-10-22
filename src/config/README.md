@@ -27,6 +27,8 @@ This area owns configuration and compatibility. Read [AGENTS.md](AGENTS.md) befo
 - [webhook-config.ts](webhook-config.ts)
 - [load-config.ts](load-config.ts)
 - [config-file.ts](config-file.ts)
+- [config-shape.ts](config-shape.ts)
+- [carry-unknown-config-keys.ts](carry-unknown-config-keys.ts)
 - [config-cache.ts](config-cache.ts)
 - [llm-config.ts](llm-config.ts)
 - [llm-provider-commands.ts](llm-provider-commands.ts)

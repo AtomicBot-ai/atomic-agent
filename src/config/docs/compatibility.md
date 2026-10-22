@@ -87,9 +87,13 @@ Discord's present owner list wins over the legacy scalar regardless of file vers
 
 Preserve validation of provider/model pins and run mode. Writes that change user config must reset the cache as required by the existing API. Credential storage uses owner-only files and platform-specific ACL handling; missing optional credentials and required credentials have different behavior.
 
+## Keys from a newer build
+
+The desktop app and the terminal agent share one `config.json`, so an older build often saves a file a newer build wrote. The parse keeps unknown top-level blocks and drops unknown keys inside known blocks; `writeUserConfigFileSync` then reads the file on disk and puts back the keys it does not know inside fixed blocks, while known keys always come from the data being written, even when absent. Dictionaries (`webhooks`, `mcp.servers`, `llm.providers`), arrays and everything inside list entries are whole values from that data, so a removed server or provider stays removed. [config-shape.ts](../config-shape.ts) lists which blocks are fixed and which are dictionaries, plus known keys outside the defaults (`llm` and the retired `telemetry`, `agent.approvalRequired` and `discord.ownerUserId`); its test fails when a new block in the defaults is in neither list. The `llm` block is not descended, so nested keys there follow the parse.
+
 ## Sources and tests
 
-- [Defaults/parser](../config-schema.ts), [precedence](../load-config.ts), [file writes](../config-file.ts), [cache](../config-cache.ts), [owner-only files](../owner-only-file.ts).
+- [Defaults/parser](../config-schema.ts), [precedence](../load-config.ts), [file writes](../config-file.ts), [unknown-key carry](../carry-unknown-config-keys.ts), [cache](../config-cache.ts), [owner-only files](../owner-only-file.ts).
 - [Schema tests](../config-schema.test.ts), [LLM config](../llm-config.test.ts), [run-mode config](../llm-run-mode-config.test.ts).
 
 ## Execution and resource policies

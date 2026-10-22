@@ -388,6 +388,86 @@ describe("configCommand", () => {
       });
     });
 
+    // ATO-768: the desktop's save path. It reads the shared file with
+    // `get --with-sha256`, edits its copy and sends the whole thing back
+    // with `set - --expect-sha256`. When a newer build (the TUI, say)
+    // wrote the file, this build's parse drops the nested keys it does
+    // not know from the copy; the write must not drop them from disk.
+    describe("an older build saving a newer build's file", () => {
+      const NEWER = USER_CONFIG_VERSION + 1;
+      const seedNewer = () =>
+        writeFileSync(
+          configPath(),
+          JSON.stringify(
+            {
+              version: NEWER,
+              blockFromTheFuture: { keep: "me" },
+              memory: { futureKey: 1 },
+              tui: { futureFlag: true },
+              mcp: {
+                servers: [
+                  {
+                    name: "old",
+                    transport: { kind: "stdio", command: "npx", args: ["-y", "mcp"] },
+                  },
+                ],
+              },
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      const withMaxSteps = (config: Record<string, unknown>, maxSteps: number) => ({
+        ...config,
+        agent: { ...(config.agent as Record<string, unknown>), maxSteps },
+      });
+
+      it("keeps the newer build's keys and version through get and set -", async () => {
+        seedNewer();
+        const { sha256: hash, config } = await readWithHash();
+        const code = await configCommand(
+          ["set", "-", "--expect-sha256", hash],
+          stdinOf(JSON.stringify(withMaxSteps(config, 42))),
+        );
+        expect(code).toBe(0);
+        const onDisk = JSON.parse(readFileSync(configPath(), "utf8"));
+        expect(onDisk.agent.maxSteps).toBe(42);
+        expect(onDisk.memory.futureKey).toBe(1);
+        expect(onDisk.tui.futureFlag).toBe(true);
+        expect(onDisk.blockFromTheFuture).toEqual({ keep: "me" });
+        expect(onDisk.version).toBe(NEWER);
+        expect(onDisk.mcp.servers.map((s: { name: string }) => s.name)).toEqual(["old"]);
+      });
+
+      it("still refuses with exit 3 when the file changed between get and set", async () => {
+        seedNewer();
+        const { sha256: hash, config } = await readWithHash();
+        const changed = JSON.parse(readFileSync(configPath(), "utf8"));
+        changed.memory.futureKey = 2;
+        writeFileSync(configPath(), JSON.stringify(changed, null, 2) + "\n");
+        const before = readFileSync(configPath(), "utf8");
+        const code = await configCommand(
+          ["set", "-", "--expect-sha256", hash],
+          stdinOf(JSON.stringify(withMaxSteps(config, 43))),
+        );
+        expect(code).toBe(3);
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+      });
+
+      it("does not bring back an MCP server the copy removed", async () => {
+        seedNewer();
+        const { sha256: hash, config } = await readWithHash();
+        const code = await configCommand(
+          ["set", "-", "--expect-sha256", hash],
+          stdinOf(JSON.stringify({ ...config, mcp: { servers: [] } })),
+        );
+        expect(code).toBe(0);
+        const onDisk = JSON.parse(readFileSync(configPath(), "utf8"));
+        expect(onDisk.mcp.servers).toEqual([]);
+        expect(onDisk.memory.futureKey).toBe(1);
+      });
+    });
+
     it("leaves set - without the flag unconditional", async () => {
       await readWithHash();
       expect(await configCommand(["set", "agent.maxSteps", "33"])).toBe(0);
