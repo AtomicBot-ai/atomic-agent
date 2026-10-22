@@ -15,8 +15,8 @@
  * The grammar bound is also capped by llama.cpp itself: a `{0,N}`
  * quantifier above 1,999 is rejected or ignored (#600), so the bound a
  * model actually gets is at most `MAX_REASONING_BUDGET_TOKENS`, whatever
- * the config asks for. With the shipped default of 1,500, a cut step
- * reads about 500, not 1,500.
+ * the config asks for. With a budget of 1,500, a cut step reads about
+ * 500, not 1,500.
  */
 
 import { LLAMA_SERVER_GBNF_MAX_REPETITION } from "./grammar/reasoning-prelude.js";
@@ -80,10 +80,9 @@ export const REASONING_BUDGET_DISABLE_HINT = "set localModels.reasoningBudgetTok
  * Only for a model that thinks: a profile with a reasoning prelude
  * (`qwen-think`, `gemma4-think`) and `localModels.thinking` not `off`.
  * Every other model has no prelude, so the line would be noise about a
- * bound it never meets. `info`, not `warn`: the shipped default (1,500)
- * is above the cap too, and this is a fact about the engine, not a fault
- * in the config. Logged through the runtime logger because stdout
- * belongs to the TUI.
+ * bound it never meets. `info`, not `warn`: this is a fact about the
+ * engine, not a fault in the config. Logged through the runtime logger
+ * because stdout belongs to the TUI.
  */
 export function logReasoningBudgetCap(
   logger: { info(message: string, context?: Record<string, unknown>): void },

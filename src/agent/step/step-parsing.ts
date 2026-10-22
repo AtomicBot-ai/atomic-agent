@@ -592,7 +592,7 @@ export interface StepRepairArgs {
   promptCarriesPrefill: boolean;
   thinkingOff: boolean;
   replyCap: number;
-  /** `localModels.reasoningBudgetTokens` for this step; the shipped default when absent. */
+  /** `localModels.reasoningBudgetTokens` for this step; `DEFAULT_REASONING_BUDGET_TOKENS` when absent. */
   reasoningBudgetTokens?: number;
   parsed: Extract<ToolCallBatchParseResult, { ok: false }>;
   assumesOpenReasoning: (completion: CompletionResult) => boolean;

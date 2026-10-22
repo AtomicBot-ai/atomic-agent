@@ -40,7 +40,7 @@ import { replyTool } from "../tools/conversation/reply.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import { reviewStallToolSet } from "./review-stall.js";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { effectiveReasoningBudgetTokens } from "../llm/reasoning-budget.js";
+import { MAX_REASONING_BUDGET_TOKENS, effectiveReasoningBudgetTokens } from "../llm/reasoning-budget.js";
 import { ApprovalGate, requireApproval } from "../approval/index.js";
 import type { ApprovalRequest } from "../approval/index.js";
 import {
@@ -1074,100 +1074,120 @@ describe("executeStep batch handling", () => {
     "for thinking profiles strips and re-appends the <think> open tag, " +
       "and caps the repair completion at REPAIR_MAX_TOKENS plus the reasoning budget",
     async () => {
-      const registry = makeRegistry();
-      const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
-      const session = createEmptySessionState({
-        id: "s-repair-think",
-        workingDir: "/w",
-      });
-      const prompts: string[] = [];
-      const maxTokensSeen: Array<number | undefined> = [];
-      // Bodies are what llama-server returns AFTER the appended
-      // `<think>` prefill; the executor's normalizeContent prepends
-      // the prefix back, so we close the think-block immediately and
-      // emit the JSON body. The repair attempt has the same shape:
-      // prompt ends with `<think>` (re-appended after strip), model
-      // closes it and emits JSON.
-      // Mid-batch terminal: invalid (`finish` must be last); the model
-      // recovers with a clean solo reply on the repair attempt.
-      const bodies = [
-        `</think>${JSON.stringify([
-          { tool: "finish", args: { summary: "done" } },
-          { tool: "os.fs.read", args: { path: "a" } },
-        ])}`,
-        `</think>${JSON.stringify({ tool: "reply", args: { text: "done" } })}`,
-      ];
-      let calls = 0;
-      const outcome = await executeStep(
-        {
-          session,
-          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
-          capabilities: CAPS,
-          skillCatalog: SKILLS,
-          stepIndex: 0,
-          signal: new AbortController().signal,
-          userMessage: "x",
-        },
-        {
-          registry,
-          slotManager: new SlotManager(2),
-          llmComplete: async ({ prompt, maxTokens }) => {
-            prompts.push(prompt);
-            maxTokensSeen.push(maxTokens);
-            const content = bodies[calls] ?? bodies[bodies.length - 1]!;
-            calls += 1;
-            return {
-              content,
-              reasoningContent: "",
-              stop: true,
-              truncated: false,
-              timing: {
-                promptMs: 1,
-                predictedMs: 1,
-                promptTokens: 20,
-                predictedTokens: 5,
-              },
-              cacheHitTokens: 0,
-              slotId: 0,
-              modelId: "mock",
-            };
+      // An explicit budget above the llama.cpp cap, so the expected cap
+      // does not depend on the config default.
+      const BUDGET = 1500;
+      const previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+      const stateDir = mkdtempSync(join(tmpdir(), "repair-think-"));
+      writeFileSync(
+        join(stateDir, "config.json"),
+        JSON.stringify({ localModels: { reasoningBudgetTokens: BUDGET } }),
+      );
+      process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+      resetConfigCache();
+      try {
+        const registry = makeRegistry();
+        const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir, {
+          reasoningBudgetTokens: BUDGET,
+        });
+        const session = createEmptySessionState({
+          id: "s-repair-think",
+          workingDir: "/w",
+        });
+        const prompts: string[] = [];
+        const maxTokensSeen: Array<number | undefined> = [];
+        // Bodies are what llama-server returns AFTER the appended
+        // `<think>` prefill; the executor's normalizeContent prepends
+        // the prefix back, so we close the think-block immediately and
+        // emit the JSON body. The repair attempt has the same shape:
+        // prompt ends with `<think>` (re-appended after strip), model
+        // closes it and emits JSON.
+        // Mid-batch terminal: invalid (`finish` must be last); the model
+        // recovers with a clean solo reply on the repair attempt.
+        const bodies = [
+          `</think>${JSON.stringify([
+            { tool: "finish", args: { summary: "done" } },
+            { tool: "os.fs.read", args: { path: "a" } },
+          ])}`,
+          `</think>${JSON.stringify({ tool: "reply", args: { text: "done" } })}`,
+        ];
+        let calls = 0;
+        const outcome = await executeStep(
+          {
+            session,
+            toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+            capabilities: CAPS,
+            skillCatalog: SKILLS,
+            stepIndex: 0,
+            signal: new AbortController().signal,
+            userMessage: "x",
           },
-          grammar,
-          profile: QWEN_THINK_PROFILE,
-        },
-      );
+          {
+            registry,
+            slotManager: new SlotManager(2),
+            llmComplete: async ({ prompt, maxTokens }) => {
+              prompts.push(prompt);
+              maxTokensSeen.push(maxTokens);
+              const content = bodies[calls] ?? bodies[bodies.length - 1]!;
+              calls += 1;
+              return {
+                content,
+                reasoningContent: "",
+                stop: true,
+                truncated: false,
+                timing: {
+                  promptMs: 1,
+                  predictedMs: 1,
+                  promptTokens: 20,
+                  predictedTokens: 5,
+                },
+                cacheHitTokens: 0,
+                slotId: 0,
+                modelId: "mock",
+              };
+            },
+            grammar,
+            profile: QWEN_THINK_PROFILE,
+          },
+        );
 
-      expect(outcome.terminal).toBe("turn");
-      expect(prompts).toHaveLength(2);
+        expect(outcome.terminal).toBe("turn");
+        expect(prompts).toHaveLength(2);
 
-      // First call: standard prompt — buildPrompt appends the `<think>`
-      // prefill at the very end so qwen-think starts in reasoning mode.
-      expect(prompts[0]!.trimEnd().endsWith("<think>")).toBe(true);
+        // First call: standard prompt — buildPrompt appends the `<think>`
+        // prefill at the very end so qwen-think starts in reasoning mode.
+        expect(prompts[0]!.trimEnd().endsWith("<think>")).toBe(true);
 
-      // Repair call: the trailing `<think>` must be stripped (otherwise
-      // the repair instructions would land INSIDE the open think-block
-      // and the model would loop on self-deliberation), then re-appended
-      // at the very end so the model continues in its normal think →
-      // `</think>` → JSON flow (bounded by `repairReplyCap`).
-      const repairPrompt = prompts[1]!;
-      expect(repairPrompt).toContain("### tool-call-repair");
-      expect(repairPrompt.trimEnd().endsWith("<think>")).toBe(true);
-      // The repair body must contain exactly one `<think>` open tag
-      // (the trailing one) and no closing `</think>` — the model emits
-      // the close marker itself in its response.
-      const openTagOccurrences = repairPrompt.match(/<think>/g) ?? [];
-      expect(openTagOccurrences.length).toBe(1);
-      expect(repairPrompt).not.toContain("</think>");
+        // Repair call: the trailing `<think>` must be stripped (otherwise
+        // the repair instructions would land INSIDE the open think-block
+        // and the model would loop on self-deliberation), then re-appended
+        // at the very end so the model continues in its normal think →
+        // `</think>` → JSON flow (bounded by `repairReplyCap`).
+        const repairPrompt = prompts[1]!;
+        expect(repairPrompt).toContain("### tool-call-repair");
+        expect(repairPrompt.trimEnd().endsWith("<think>")).toBe(true);
+        // The repair body must contain exactly one `<think>` open tag
+        // (the trailing one) and no closing `</think>` — the model emits
+        // the close marker itself in its response.
+        const openTagOccurrences = repairPrompt.match(/<think>/g) ?? [];
+        expect(openTagOccurrences.length).toBe(1);
+        expect(repairPrompt).not.toContain("</think>");
 
-      // Hard cap on the repair completion (defends against runaway
-      // reasoning loops on the structured-repair path), raised by the
-      // reasoning budget the grammar enforces so thinking cannot eat it.
-      expect(maxTokensSeen[0]).toBeUndefined();
-      expect(maxTokensSeen[1]).toBe(
-        REPAIR_MAX_TOKENS + effectiveReasoningBudgetTokens(getConfig().localModels.reasoningBudgetTokens),
-      );
-      expect(maxTokensSeen[1]).toBeGreaterThan(REPAIR_MAX_TOKENS);
-      expect(REPAIR_MAX_TOKENS).toBeLessThanOrEqual(1024);
+        // Hard cap on the repair completion (defends against runaway
+        // reasoning loops on the structured-repair path), raised by the
+        // reasoning budget the grammar enforces so thinking cannot eat it.
+        expect(maxTokensSeen[0]).toBeUndefined();
+        expect(getConfig().localModels.reasoningBudgetTokens).toBe(BUDGET);
+        expect(maxTokensSeen[1]).toBe(
+          REPAIR_MAX_TOKENS + effectiveReasoningBudgetTokens(BUDGET),
+        );
+        expect(maxTokensSeen[1]).toBe(REPAIR_MAX_TOKENS + MAX_REASONING_BUDGET_TOKENS);
+        expect(REPAIR_MAX_TOKENS).toBeLessThanOrEqual(1024);
+      } finally {
+        if (previousStateDir === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;
+        else process.env.ATOMIC_AGENT_STATE_DIR = previousStateDir;
+        resetConfigCache();
+      }
     },
   );
 

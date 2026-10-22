@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GEMMA4_THINK_PROFILE, PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE } from "../../llm/model-profile.js";
-import { MAX_REASONING_BUDGET_TOKENS } from "../../llm/reasoning-budget.js";
+import { DEFAULT_REASONING_BUDGET_TOKENS, MAX_REASONING_BUDGET_TOKENS } from "../../llm/reasoning-budget.js";
 import { REPAIR_MAX_TOKENS, repairReplyCap } from "./step-parsing.js";
 
 describe("repair completion cap", () => {
@@ -13,8 +13,10 @@ describe("repair completion cap", () => {
     for (const profile of [QWEN_THINK_PROFILE, GEMMA4_THINK_PROFILE]) {
       expect(repairReplyCap("grammar", 8192, { profile, budgetTokens: 1500 })).toBe(REPAIR_MAX_TOKENS + MAX_REASONING_BUDGET_TOKENS);
       expect(repairReplyCap("grammar", 8192, { profile, budgetTokens: 64 })).toBe(REPAIR_MAX_TOKENS + 64);
-      // Absent budget: the shipped default, which the grammar also falls back to.
-      expect(repairReplyCap("grammar", 8192, { profile })).toBe(REPAIR_MAX_TOKENS + MAX_REASONING_BUDGET_TOKENS);
+      // Absent budget: whatever the default is, the same cap as passing it, as the grammar falls back to it too.
+      expect(repairReplyCap("grammar", 8192, { profile })).toBe(
+        repairReplyCap("grammar", 8192, { profile, budgetTokens: DEFAULT_REASONING_BUDGET_TOKENS }),
+      );
     }
   });
 
