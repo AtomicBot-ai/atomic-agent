@@ -6006,6 +6006,27 @@ function copyText(text, okTitle, okSub) {
 /* ============================================================
    behaviour
    ============================================================ */
+/** Help › Report an issue (the menu, the palette, /report): a prefilled issue in the browser and a
+    support report saved beside it. ATO-279: the native menu reaches it through `help.report` too, so
+    it is counted, and it works over first-run setup (which lets this act through). */
+function helpReport() {
+  const b2 = BUILD || {};
+  const body = [
+    'What happened:', '', '', 'What I expected:', '', '',
+    '---', 'Atomic Agent ' + (b2.version || '?') + (b2.build ? ' (' + b2.build + ')' : '') + ' · ' + (b2.platform || '?') + ' ' + (b2.arch || '?'),
+    'Agent: ' + (S.live.binary || 'not started'),
+  ].join('\n');
+  const url = 'https://github.com/AtomicBot-ai/atomic-agent/issues/new'
+    + '?title=' + encodeURIComponent('[desktop] ')
+    + '&body=' + encodeURIComponent(body);
+  if (BR && BR.debugBundle) {
+    BR.debugBundle('report').then((res) => {
+      if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
+    }).catch(() => {});
+  }
+  if (BR && BR.openExternal) BR.openExternal(url);
+}
+
 function act(a) {
   if (!a) return;
   /* Item 7 lane fix, found by the suite rather than by a spec: `split(':')`
@@ -6055,25 +6076,7 @@ function act(a) {
      about how the provider is saved and activated differs; only whether we
      were allowed to claim the key works. */
   if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
-  if (a === 'help.report' || a === 'report') {
-    close(); render();
-    const b2 = BUILD || {};
-    const body = [
-      'What happened:', '', '', 'What I expected:', '', '',
-      '---', 'Atomic Agent ' + (b2.version || '?') + (b2.build ? ' (' + b2.build + ')' : '') + ' · ' + (b2.platform || '?') + ' ' + (b2.arch || '?'),
-      'Agent: ' + (S.live.binary || 'not started'),
-    ].join('\n');
-    const url = 'https://github.com/AtomicBot-ai/atomic-agent/issues/new'
-      + '?title=' + encodeURIComponent('[desktop] ')
-      + '&body=' + encodeURIComponent(body);
-    if (BR && BR.debugBundle) {
-      BR.debugBundle('report').then((res) => {
-        if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
-      }).catch(() => {});
-    }
-    if (BR && BR.openExternal) BR.openExternal(url);
-    return;
-  }
+  if (a === 'help.report' || a === 'report') { close(); render(); helpReport(); return; }
   /* Run mode — every route to it lands here or in fzSlash: the native menu's
      Run › Where it runs…, the Settings › LLM cards and worker count, the
      composer's ⇄, and the palette row. One switch path per verb, shared with
@@ -15599,6 +15602,10 @@ if (BR) {
        the download strip when this was written (item 7), uncovering the
        toolbar; it covers the whole window again since backlog 18, and this
        guard stays as the rule rather than the geometry. */
+    /* ATO-279: Help › Report an Issue… still opens over setup, as it did when
+       the menu went straight to the browser; without close(), which would
+       drop a provider wizard in progress. */
+    if (OB.open && a === 'help.report') { helpReport(); return; }
     if (OB.open) return;
     return prevAct(a);
   };
