@@ -316,6 +316,14 @@ Real, driven by the running agent:
   restart would abort it). Picking a cloud model applies and closes before
   the write confirms; picking a local model keeps the popup open until the
   daemon has answered.
+  On the local and cloud routes (not Fusion, not the custom server) the model
+  pane is grouped (ATO-730): the current route's group first with its rows as
+  before, then `On this computer` (downloaded local models) and one group per
+  cloud provider with a working key. Each cloud group loads its catalogue when
+  the list opens and shows its own `loading…` or `could not load` line, so one
+  slow or refused provider never holds up the others; the search filters every
+  group. A cloud row is written to its own provider (`row.provider`), never to
+  the active one.
 - the TUI's pre-turn gate for the managed local route: with no local model
   selected, or one that is not on disk, the turn is refused with the TUI's
   text and the message goes back into the editor (`… (message returned to

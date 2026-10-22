@@ -31,7 +31,10 @@ export async function checks55(js: Js, check: Check): Promise<void> {
       for (let i = 0; i < 100 && (SEL.localBusy || SEL.modelsBusy); i++) await new Promise((res) => setTimeout(res, 50));
       await new Promise((res) => setTimeout(res, 100));
       const pop = document.querySelector('#overlays .selpop');
-      const rows = pop ? [...pop.querySelectorAll('.sellist > .modelrow, .sellist > .selouth, .sellist > .selout')] : [];
+      const all = pop ? [...pop.querySelectorAll('.sellist > .modelrow, .sellist > .selouth, .sellist > .selout, .sellist > .selgrp')] : [];
+      // ATO-730: the list is grouped; only the first group (the local route's own) is ordered here.
+      const nextGroup = all.findIndex((n, i) => i > 0 && n.classList.contains('selgrp'));
+      const rows = (nextGroup < 0 ? all : all.slice(0, nextGroup)).filter((n) => !n.classList.contains('selgrp'));
       const ids = rows.map((n) => n.classList.contains('modelrow') ? (n.dataset.id || '?') : n.classList.contains('selouth') ? '#out-head' : '#out');
       const model = {pop: !!pop, done: pop ? pop.querySelectorAll('[data-act="close"]').length : null, ids,
         backend: selBackend()};

@@ -16484,7 +16484,9 @@ async function selLoadModels(providerId) {
 
 function selEnterModelPane() {
   const id = composerModelProvider();
-  if (selBackend() === 'local' || selBackend() === 'custom' || id === 'local-llama') { if (!SEL.local.length) selLoadLocal(); return; }
+  // ATO-730: the grouped list (local and cloud routes) loads the other groups too.
+  if (SEL.kind === 'model' && (selBackend() === 'local' || selBackend() === 'cloud')) selLoadGroups();
+  if (selBackend() === 'local' || selBackend() === 'custom' || id === 'local-llama') { if (!SEL.local.length && !SEL.localBusy) selLoadLocal(); return; }
   if (id && SEL.modelsFor !== id && selProviders().some((p) => p.id === id)) selLoadModels(id);
 }
 
@@ -16528,6 +16530,7 @@ function customServerUrl() {
 }
 /** Rows for the current pane, as objects the delegate can act on by index. */
 function selRows() {
+  SEL.groups = null;
   if (SEL.kind === 'backend') {
     // Lane B — backend switch: composer-switch-rows.ts backendRows, in
     // its order (cloud, local, custom) with its details. Review fix: the
@@ -16606,40 +16609,117 @@ function selRows() {
        row at all: selOutOfReach draws it under "Needs more memory than this
        Mac has", with no download one click away. One already on disk stays
        a row (it is the operator's to use), with its caution. */
-    const ram = hostRamGb();
-    const rows = onDiskFirst(orderModelsByFit(selLocalMatches(), ram))
-      .filter((m) => m.downloaded || m.active || fitFor(m, ram).v !== 'over')
-      .map((m) => {
-        const note = modelPickNote(m, ram);
-        // ATO-507: a download with no room for it on this disk has no Download chip, and says why.
-        const disk = modelDiskFit(m);
-        return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
-          detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
-            .filter(Boolean).join(' · '),
-          note, noRoom: disk.ok ? null : disk.text};
-      });
+    const rows = selLocalRows(custom);
     // The TUI's deep-link row (model:local:download-more), outside the filter —
     // the `local` branch only, exactly as modelRows has it. ATO-167: FIRST, not
     // last: under a long list it was the row nobody found (Danya: "the download
     // button should be higher").
     if (!custom) rows.unshift({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens Settings › Models', active:false});
-    return rows;
+    // ATO-730: the local route's list is the first group of all of them.
+    return custom ? rows : selGroupedRows('local-llama', rows);
   }
   // A local orchestrator has no cloud catalogue: the TUI's modelRows lists nothing there.
   if (selBackend() === 'fusion' && !selProviders().some((p) => p.id === selActiveProviderId())) return [];
-  const entry = selProviders().find((p) => p.id === selActiveProviderId());
-  const chosen = entry && entry.defaultChatModel;
+  const pid = selActiveProviderId();
+  const entry = selProviders().find((p) => p.id === pid);
+  const rows = selCloudRows(pid, SEL.models, entry && entry.defaultChatModel);
+  return selBackend() === 'cloud' ? selGroupedRows(pid, rows) : rows;
+}
+
+/* The local model rows, ordered for this Mac (selRows' local branch). */
+function selLocalRows(custom) {
+  const ram = hostRamGb();
+  return onDiskFirst(orderModelsByFit(selLocalMatches(), ram))
+    .filter((m) => m.downloaded || m.active || fitFor(m, ram).v !== 'over')
+    .map((m) => {
+      const note = modelPickNote(m, ram);
+      // ATO-507: a download with no room for it on this disk has no Download chip, and says why.
+      const disk = modelDiskFit(m);
+      return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
+        detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
+          .filter(Boolean).join(' · '),
+        note, noRoom: disk.ok ? null : disk.text};
+    });
+}
+
+/* One cloud provider's catalogue as rows, through the search box. `provider`
+   is whose model it is: a row from another provider's group must never be
+   written onto the active one (selActivate). */
+function selCloudRows(provider, models, chosen) {
   const f = SEL.filter.toLowerCase();
-  return SEL.models
+  return (models || [])
     .filter((m) => {
       if (!f) return true;
       const tags = (m.supportsVision ? 'vision ' : '') + (m.supportsTools && m.supportsTools !== 'none' ? 'tools ' : '');
       return modelMatches(m.id, tags, f);
     })
-    .map((m) => ({type:'cloudModel', id:m.id, label:m.id, active:m.id === chosen,
+    .map((m) => ({type:'cloudModel', id:m.id, label:m.id, provider, active:!!chosen && m.id === chosen,
       detail: (m.contextWindow ? fmtContextWindow(m.contextWindow) + ' context' : '')
         + (m.supportsTools && m.supportsTools !== 'none' ? ' · tools' : '')
         + (m.supportsVision ? ' · vision' : '')}));
+}
+
+/* ATO-730 (U-55, variant A) — the model chip lists every model it can, in
+   groups: "On this computer" (the downloaded local models) and one group per
+   cloud provider with a working key. The current route's group is first and
+   keeps its own rows exactly as before (its current model marked, the local
+   route's Download row and catalogue); the other groups are what can be
+   picked without a download. Each cloud group loads its own catalogue when
+   the list opens, with its own loading or error line, and one slow or
+   refused provider never holds up the others. The search box filters every
+   group at once. Fusion's seat lists and the custom route are not grouped.
+   SEL.groups is the order and status selectorHTML draws; null when the pane
+   is not grouped. */
+const SEL_GROUPS = new Map();
+const LOCAL_GROUP = 'local-llama';
+function selModelGroups(current) {
+  const ids = [current];
+  if (current !== LOCAL_GROUP) ids.push(LOCAL_GROUP);
+  for (const p of selProviders()) if (BSW.readyIds.includes(p.id) && ids.indexOf(p.id) < 0) ids.push(p.id);
+  return ids.map((id) => {
+    const own = SEL_GROUPS.get(id) || {};
+    const status = id === current ? (id === LOCAL_GROUP ? {busy: SEL.localBusy, err: null} : {busy: SEL.modelsBusy, err: SEL.modelsErr})
+      : id === LOCAL_GROUP ? {busy: SEL.localBusy, err: null}
+      : {busy: !!own.busy || !SEL_GROUPS.has(id), err: own.err || null};
+    return {id, title: id === LOCAL_GROUP ? 'On this computer' : providerWord(id), busy: status.busy, err: status.err};
+  });
+}
+function selGroupedRows(current, currentRows) {
+  const groups = selModelGroups(current);
+  const out = [];
+  for (const g of groups) {
+    const rows = g.id === current ? currentRows
+      // Another route's local models: only the downloaded ones, none of them current.
+      : g.id === LOCAL_GROUP ? selLocalRows(false).filter((r) => r.downloaded).map((r) => Object.assign(r, {active: false}))
+      : selCloudRows(g.id, (SEL_GROUPS.get(g.id) || {}).models, null);
+    for (const r of rows) { r.group = g.id; out.push(r); }
+  }
+  SEL.groups = groups;
+  // A provider whose key turned good after the list opened has not been asked yet.
+  if (groups.some((g) => g.id !== current && g.id !== LOCAL_GROUP && !SEL_GROUPS.has(g.id))) queueMicrotask(selLoadGroups);
+  return out;
+}
+/* Every other group's catalogue, each on its own. A list already in hand is
+   kept for the session (a live one from selLoadModels first); a group that
+   failed asks again the next time the list opens. */
+function selLoadGroups() {
+  const current = selBackend() === 'local' ? LOCAL_GROUP : selActiveProviderId();
+  if (current !== LOCAL_GROUP && !SEL.local.length && !SEL.localBusy) selLoadLocal();
+  for (const p of selProviders()) {
+    if (p.id === current || !BSW.readyIds.includes(p.id)) continue;
+    const had = SEL_GROUPS.get(p.id);
+    if (had && (had.busy || had.models)) continue;
+    const live = SEL_LIVE_MODELS.get(p.id);
+    if (live) { SEL_GROUPS.set(p.id, {models: live}); continue; }
+    SEL_GROUPS.set(p.id, {busy: true});
+    Promise.resolve(BR.providerModels(p.id, p.kind || ''))
+      .then((res) => {
+        SEL_GROUPS.set(p.id, res && res.ok ? {models: res.models || []}
+          : {err: modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not load its models'});
+      })
+      .catch((e) => SEL_GROUPS.set(p.id, {err: String((e && e.message) || e || 'could not load its models')}))
+      .then(() => { if (SEL.open && SEL.kind === 'model') render(); });
+  }
 }
 
 async function selActivate(row) {
@@ -16735,7 +16815,8 @@ async function selActivate(row) {
        being true when the row started awaiting swxRun. The popup still
        closes first, but nothing confirms in the background: the composer
        is locked until the switch is live. */
-    const pid = selActiveProviderId();
+    // ATO-730: a row from another provider's group is that provider's model.
+    const pid = row.provider || selActiveProviderId();
     /* r5 item 10. This row was ALREADY optimistic — and wrongly so: it
        mutated the live provider entry in place (`entry.defaultChatModel =
        row.id`) and never awaited, so the operator could send a message at
@@ -16748,6 +16829,9 @@ async function selActivate(row) {
     const res = await swxRun('switching…', {providerId: pid, model: row.id},
       () => SWXBR.selectCloudModel(pid, row.id));
     if (res && res.superseded) return;
+    // ATO-732: a model from another provider's group whose key is missing or
+    // refused opens that provider's key window, as picking the provider does.
+    if (res && res.needsKey) { bswOpenKey(pid, res.keyInvalid); return; }
     if (!res || !res.ok) toast('Could not select the model', (res && res.error) || '');
     else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
     return;
@@ -16860,7 +16944,7 @@ function selectorHTML() {
   // provider" last / "Download more models…" first, ATO-167), so, as in the TUI, an empty
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
-  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !((SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter)) {
+  if (!rows.length && !SEL.groups && !SEL.modelsBusy && !SEL.localBusy && !((SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter)) {
     return selShell(title, '<div class="selbody"><p class="selnote cap">Nothing to show.</p></div>', '');
   }
 
@@ -16884,10 +16968,10 @@ function selectorHTML() {
       + '<span class="nm">' + selHilite(llmModelName(m), SEL.filter) + '</span>'
       + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This (Mac|computer) has.*$/, '')) + '</span></div>').join('')
     : '';
-  const list = '<div class="sellist">'
-    + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
-    + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
-    + rows.map((r, i) => {
+  const groups = SEL.groups;
+  // Review: set the out-of-reach block off when the list above it is only the Download row.
+  const outSep = (n) => (outHTML && n === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '');
+  const rowHTML = (r, i) => {
         const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
         /* Chat review (Д21): the row's own way out. A span, not a button: it
            sits inside the row's <button>, and the click delegate takes its
@@ -16913,10 +16997,32 @@ function selectorHTML() {
           + '</button>'
           // ATO-167: a leading action row (Download more models…) is set off from the models under it.
           + (r.type === 'action' && i === 0 && rows.length > 1 ? '<div class="tk-sep selsep"></div>' : '');
-      }).join('')
-    // Review: set the out-of-reach block off when the list above it is only the Download row.
-    + (outHTML && rows.length === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '')
-    + outHTML
+      };
+  /* ATO-730: grouped, each group carries its own heading and its own loading
+     or error line; ungrouped, the one list keeps its lines on top. */
+  /* The current route's group (first) keeps the list's own lines, the ones
+     the drivers read; the other groups' lines are their own. */
+  const groupsHTML = groups ? groups.map((g, gi) => {
+    const own = [];
+    rows.forEach((r, i) => { if (r.group === g.id) own.push(rowHTML(r, i)); });
+    const bare = gi > 0 && !own.length && !g.busy && !g.err;
+    // A search hides another group with nothing that matches; unsearched, an empty group says so.
+    if (bare && SEL.filter) return '';
+    return '<div class="selgrp" data-group="' + esc(g.id) + '">' + esc(g.title) + '</div>'
+      + (bare ? '<div class="selnote cap">' + (g.id === LOCAL_GROUP ? 'No models downloaded yet' : 'No models listed') + '</div>' : '')
+      + (g.busy ? '<div class="selnote cap"><span class="tk-spin"></span>' + (gi === 0 ? 'Loading models\u2026' : 'loading\u2026') + '</div>' : '')
+      + (g.err ? (gi === 0 ? '<div class="cap selerr" style="color:var(--danger)">' : '<div class="cap selgrperr">')
+        + ic('alert') + '<span>' + esc(gi === 0 ? g.err : 'could not load: ' + g.err) + '</span></div>' : '')
+      + own.join('')
+      // The local models this Mac cannot run close the local group, not whichever group is last.
+      + (g.id === LOCAL_GROUP ? outSep(own.length) + outHTML : '');
+  }).join('') : '';
+  const list = '<div class="sellist">'
+    + (groups ? groupsHTML
+      : (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
+        + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
+        + rows.map(rowHTML).join(''))
+    + (groups ? '' : outSep(rows.length) + outHTML)
     + (!real.length && !out.length && (SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
