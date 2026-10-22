@@ -93,12 +93,27 @@ export function findLooseEditMatch(
   let end = last.start + last.text.length;
   // A leading or trailing newline in `oldString` takes the neighbouring
   // newline with it, as the exact match would have.
-  if (oldString.startsWith("\n") && start > 0) start -= 1;
+  if (oldString.startsWith("\n") && start > 0) {
+    start -= source.slice(start - 2, start) === "\r\n" ? 2 : 1;
+  }
   if (/\n$/.test(oldString)) {
     const lineEnd = last.end;
     end = source[lineEnd] === "\n" ? lineEnd + 1 : lineEnd;
   }
   return { kind: "unique", match: { start, end } };
+}
+
+/**
+ * `newString` with the line endings of the text it replaces. A loose
+ * match is how a CRLF file meets an LF `oldString` at all, and the
+ * model's `newString` is LF too: spliced in as sent, it would leave the
+ * edited lines LF in a CRLF file. When the replaced span uses `\r\n`,
+ * every bare `\n` in `newString` becomes `\r\n`; otherwise it is
+ * returned unchanged.
+ */
+export function matchLineEndings(newString: string, replaced: string): string {
+  if (!replaced.includes("\r\n")) return newString;
+  return newString.replace(/\r?\n/g, "\r\n");
 }
 
 /**

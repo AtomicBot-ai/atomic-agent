@@ -17,6 +17,7 @@ import {
 } from "./fs-edit-diff.js";
 import {
   findLooseEditMatch,
+  matchLineEndings,
   nearestFragment,
   type LooseEditMatch,
 } from "./fs-edit-match.js";
@@ -65,7 +66,10 @@ export function buildOsFsEditTool(
       const updated =
         loose !== null
           ? original.slice(0, loose.start) +
-            args.newString +
+            matchLineEndings(
+              args.newString,
+              original.slice(loose.start, loose.end),
+            ) +
             original.slice(loose.end)
           : args.replaceAll
             ? replaceAll(original, args.oldString, args.newString)
@@ -194,10 +198,13 @@ function resolveLooseMatch(original: string, oldString: string): LooseEditMatch 
     );
   }
   const fragment = nearestFragment(original, oldString);
+  // The quote of the file goes on its own line: the first line of an
+  // error is what the `tool executed` log keeps, and file text stays
+  // out of the log.
   throw new Error(
     fragment === null
       ? "os.fs.edit: `oldString` was not found in the target file. Provide the exact substring (including whitespace/indent). For a rename, a one-line oldString with replaceAll: true is safer."
-      : `os.fs.edit: \`oldString\` was not found in the target file. Nearest text in the file, as JSON: ${fragment}. Copy it exactly (blank lines and indentation included), or use a shorter one-line oldString.`,
+      : `os.fs.edit: \`oldString\` was not found in the target file.\nNearest text in the file, as JSON: ${fragment}. Copy it exactly (blank lines and indentation included), or use a shorter one-line oldString.`,
   );
 }
 

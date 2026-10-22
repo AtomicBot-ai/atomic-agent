@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   NEAREST_FRAGMENT_MAX_CHARS,
   findLooseEditMatch,
+  matchLineEndings,
   nearestFragment,
 } from "./fs-edit-match.js";
 
@@ -11,7 +12,12 @@ const MAIN_PY =
 function applied(source: string, oldString: string, newString: string): string {
   const lookup = findLooseEditMatch(source, oldString);
   if (lookup.kind !== "unique") throw new Error(`expected unique, got ${lookup.kind}`);
-  return source.slice(0, lookup.match.start) + newString + source.slice(lookup.match.end);
+  const { start, end } = lookup.match;
+  return (
+    source.slice(0, start) +
+    matchLineEndings(newString, source.slice(start, end)) +
+    source.slice(end)
+  );
 }
 
 describe("findLooseEditMatch", () => {
@@ -25,8 +31,18 @@ describe("findLooseEditMatch", () => {
   it("ignores trailing spaces and carriage returns on either side", () => {
     const source = "a = 1   \r\nb = 2\r\nc = 3\r\n";
     expect(applied(source, "a = 1\nb = 2  ", "a = 10\nb = 20")).toBe(
-      "a = 10\nb = 20\r\nc = 3\r\n",
+      "a = 10\r\nb = 20\r\nc = 3\r\n",
     );
+  });
+
+  it("keeps a CRLF file CRLF across a newline-bounded oldString", () => {
+    const source = "z\r\na\r\n\r\nb\r\nc\r\n";
+    expect(applied(source, "\na\nb\n", "\nx\ny\n")).toBe("z\r\nx\r\ny\r\nc\r\n");
+  });
+
+  it("leaves newString alone over LF text and makes it CRLF over CRLF text", () => {
+    expect(matchLineEndings("x\ny", "a\nb")).toBe("x\ny");
+    expect(matchLineEndings("x\ny\r\nz", "a\r\nb")).toBe("x\r\ny\r\nz");
   });
 
   it("takes the line's newline when oldString ends with one", () => {
