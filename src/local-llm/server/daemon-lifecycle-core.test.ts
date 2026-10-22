@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -11,10 +11,11 @@ vi.mock("../core/core-sessions.js", async (importOriginal) => ({
   loadCoreSession: loadCoreSessionMock,
 }));
 
-import { resolveModelFilePath, resolvePidFilePath } from "../backend-paths.js";
+import { resolveLogFilePath, resolveModelFilePath, resolvePidFilePath } from "../backend-paths.js";
 import { getLocalModelDef } from "../catalog/models-catalog.js";
 import { CORE_VERSION, coreVersionDir } from "../core/core-state.js";
 import { readThroughputRecord, startDaemon } from "./daemon-lifecycle.js";
+import { describeServerFault } from "./server-fault.js";
 
 const MODEL = "qwen-3.5-4b";
 
@@ -106,6 +107,29 @@ describe("startDaemon under Atomic Core", () => {
       const result = await startDaemon({ engine: "atomic-core", dataDir, modelId: MODEL, port, device: "cpu", throughputProbe: false });
       expect(result.tokensPerSecond).toBeNull();
       expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/completion"))).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks the run in the log Core writes its llama-server's output to, so only this run's out-of-memory is reported (ATO-335)", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "daemon-core-fault-"));
+    const port = 19_314;
+    try {
+      stage(dataDir, []);
+      const core = coreLoads(port);
+      vi.stubGlobal("fetch", vi.fn(async () => {
+        if (!core.loaded()) throw new Error("ECONNREFUSED");
+        return new Response("{}", { status: 200 });
+      }));
+      // An earlier llama-server-engine run that ran out of memory.
+      const log = resolveLogFilePath(dataDir);
+      writeFileSync(log, "[atomic-agent] launch: model old\nggml_metal: kIOGPUCommandBufferCallbackErrorOutOfMemory\n");
+      await startDaemon({ engine: "atomic-core", dataDir, modelId: MODEL, port, device: "cpu", throughputProbe: false });
+      expect(describeServerFault(readFileSync(log, "utf-8"))).toBeNull();
+      // Core appends its llama-server's output to this same log (the load's `logPath`).
+      appendFileSync(log, "llama_decode: failed: kIOGPUCommandBufferCallbackErrorOutOfMemory\n");
+      expect(describeServerFault(readFileSync(log, "utf-8"))?.summary).toMatch(/ran out of memory 1 time/);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

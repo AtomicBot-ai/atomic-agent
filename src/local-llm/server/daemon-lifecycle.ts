@@ -14,6 +14,7 @@ import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   openSync,
@@ -1123,7 +1124,42 @@ export async function startDaemon(
     contextSize,
   );
 
+  // The launch decisions, in the daemon's own log where a reader looking
+  // at the flags will look for them. Their first line is also the marker
+  // `currentRunLog` scopes faults by, so an error of an earlier run is not
+  // reported against this one.
+  const reuseWhy =
+    prefixReuse && prefixReuse.reasons.length > 0
+      ? ` — ${prefixReuse.reasons.join("; ")}` +
+        (effectivePrefixReuse === "partial" && prefixReuse.prefixReuse === "none"
+          ? " (--swa-full restores partial reuse)"
+          : "")
+      : "";
+  const launchNotes = [
+    `[atomic-agent] launch: model ${model.id}` +
+      (header
+        ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
+        : " (header unreadable)"),
+    `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
+      (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
+      (contextNote ? `, ${contextNote}` : ""),
+    `[atomic-agent] launch: ${swaFull.reason}`,
+    `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
+    "",
+  ].join("\n");
+
   if (opts.engine === "atomic-core") {
+    // Core appends its llama-server's output to the `logPath` the load
+    // names, which is this same log (`loadCoreSession`), so `models status`
+    // and the supervisor read Core's out-of-memory errors where they read
+    // the managed server's. Without this marker they would scope by the
+    // last llama-server-engine launch and report its stale faults. Best
+    // effort: a log that cannot be written must not fail the start.
+    try {
+      appendFileSync(resolveLogFilePath(opts.dataDir), launchNotes);
+    } catch {
+      /* no marker: faults stay unscoped, as before */
+    }
     const session = await loadCoreSession(opts.dataDir, {
       role: "chat", modelId: model.id, modelPath, port: opts.port, args,
       ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
@@ -1154,30 +1190,7 @@ export async function startDaemon(
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {
-    // The launch decisions, in the daemon's own log where a reader
-    // looking at the flags will look for them.
-    const reuseWhy =
-      prefixReuse && prefixReuse.reasons.length > 0
-        ? ` — ${prefixReuse.reasons.join("; ")}` +
-          (effectivePrefixReuse === "partial" && prefixReuse.prefixReuse === "none"
-            ? " (--swa-full restores partial reuse)"
-            : "")
-        : "";
-    writeSync(
-      logFd,
-      [
-        `[atomic-agent] launch: model ${model.id}` +
-          (header
-            ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
-            : " (header unreadable)"),
-        `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
-          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
-          (contextNote ? `, ${contextNote}` : ""),
-        `[atomic-agent] launch: ${swaFull.reason}`,
-        `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
-        "",
-      ].join("\n"),
-    );
+    writeSync(logFd, launchNotes);
     opts.signal?.throwIfAborted();
     const child = spawn(binPath, args, {
       stdio: ["ignore", logFd, logFd],
