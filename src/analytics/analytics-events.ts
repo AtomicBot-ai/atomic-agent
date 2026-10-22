@@ -90,15 +90,23 @@ export interface MessageEventContext {
  * Emit the one-time `app_installed` event. No-ops when analytics is
  * disabled (`client` is null) or the event was already sent for this
  * install.
+ *
+ * The "sent" flag is set only after PostHog confirmed delivery
+ * (`captureConfirmed`). Setting it right after queueing lost the install
+ * for good on a first launch without network: posthog-node keeps its
+ * queue in memory only, so the event died with the process while the
+ * flag said it had gone (ATO-717). An undelivered event is now simply
+ * tried again on the next launch. Never rejects; callers need not await
+ * it.
  */
-export function captureAppInstalled(
+export async function captureAppInstalled(
   client: AnalyticsClient | null,
   store: AnalyticsStateStore,
   context: AppInstalledContext = {},
-): void {
+): Promise<void> {
   if (!client) return;
   if (store.isAppInstalledSent()) return;
-  client.capture(ANALYTICS_EVENTS.appInstalled, {
+  const delivered = await client.captureConfirmed(ANALYTICS_EVENTS.appInstalled, {
     ...(context.installChannel !== undefined
       ? { install_channel: context.installChannel }
       : {}),
@@ -106,7 +114,7 @@ export function captureAppInstalled(
       ? { other_surface_installed: context.otherSurfaceInstalled }
       : {}),
   });
-  store.markAppInstalledSent();
+  if (delivered) store.markAppInstalledSent();
 }
 
 /**
