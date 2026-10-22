@@ -10,13 +10,14 @@ import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
-export type { AgentRuntime, CreateAgentRuntimeOptions, RuntimeEventHandlers } from "./runtime-contract.js";
+export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
 export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
 import { createRuntimeObservability } from "./composition/runtime-observability.js";
 import { createRuntimeTraces } from "./composition/runtime-traces.js";
 import { prepareRuntimeLocalProfile, connectRuntimeLocalProfile } from "./composition/runtime-local-profile.js";
 import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads } from "./composition/runtime-inference.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
+import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
 import { resolve } from "node:path";
@@ -257,6 +258,20 @@ export async function createAgentRuntime(
     },
   });
   const { profileStore, notesStore, embeddingClient, linkStore, lessonStore, procedureStore, voteStore } = memoryStores;
+  // A later embedding model pick reattaches memory through this switch
+  // instead of waiting for a restart (ATO-351). It owns the backfill
+  // from here on, so shutdown stops it through the switch.
+  const memoryEmbeddings = createMemoryEmbeddingSwitch({
+    notesStore,
+    metrics,
+    logger,
+    readConfig: () => getConfig(),
+    initial: {
+      health: memoryStores.embeddingHealth,
+      modelId: memoryStores.embeddingHealth === "disabled" ? null : (config.localModels.embeddings.modelId ?? null),
+      backfill: memoryStores.embeddingBackfill,
+    },
+  });
 
   const sessionStore = prepareRuntimeSessionStore(config, logger);
   // The commands `os.shell.run` detached at the default timeout (F47).
@@ -593,7 +608,7 @@ export async function createAgentRuntime(
   const lifecycle = createRuntimeLifecycle({
     sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
-    embeddingBackfill: memoryStores.embeddingBackfill,
+    embeddingBackfill: memoryEmbeddings,
     get scheduler() { return scheduler; },
     get taskRunner() { return taskRunner; },
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },
@@ -696,6 +711,7 @@ export async function createAgentRuntime(
     refreshLocalModelProfile: async () => {
       await profileManager?.refresh();
     },
+    reconnectMemoryEmbeddings: () => memoryEmbeddings.reconnect(),
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
