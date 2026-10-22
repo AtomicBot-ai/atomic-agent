@@ -10,7 +10,7 @@ import { resolveActiveToolTransport } from "../../llm/provider/registry/resolve-
 import { modelWantsStrictTools } from "../../llm/provider/model-strict-tools.js";
 import { resolveRunMode, type ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { sanitizeModelAlias } from "../../analytics/index.js";
-import type { TurnUsageMeter } from "../../analytics/index.js";
+import { completionUsageForTurn, type TurnUsageMeter } from "../../analytics/index.js";
 import type { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import type { ResolvedModel } from "../../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
@@ -266,9 +266,12 @@ export function connectRuntimeFallback(
     result: CompletionResult,
     servedProviderId: string,
   ): void => {
-    if (!result.usage) return;
-    const model = resolveModelPricing(result.modelId, servedProviderId);
-    if (costAccumulator) {
+    // A local llama-server sends no usage block; its timings still count
+    // toward the turn's tokens (the meter only), but are never priced.
+    const metered = completionUsageForTurn(result);
+    if (!metered) return;
+    const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    if (costAccumulator && result.usage) {
       costAccumulator.recordTurn({
         modelId: result.modelId,
         usage: result.usage,
@@ -278,7 +281,7 @@ export function connectRuntimeFallback(
     if (params.sessionId) {
       turnUsageMeter.record({
         sessionId: params.sessionId,
-        usage: result.usage,
+        usage: metered,
         ...(model ? { model } : {}),
       });
     }
@@ -289,11 +292,12 @@ export function connectRuntimeFallback(
     result: CompletionResult,
     servedProviderId: string,
   ): void => {
-    if (!result.usage || !sessionId) return;
-    const model = resolveModelPricing(result.modelId, servedProviderId);
+    const metered = completionUsageForTurn(result);
+    if (!metered || !sessionId) return;
+    const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
     turnUsageMeter.record({
       sessionId,
-      usage: result.usage,
+      usage: metered,
       ...(model ? { model } : {}),
     });
   };

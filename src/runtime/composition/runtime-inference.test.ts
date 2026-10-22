@@ -156,6 +156,20 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
   });
 
+  it("a local completion without a usage block still counts its timings toward the turn, unpriced (ATO-276)", async () => {
+    const fixture = fallback();
+    const served = providers.providerRegistry.getProvider("served");
+    if (!served) throw new Error("served fixture missing");
+    const local: CompletionResult = { ...completion(), timing: { promptMs: 1, predictedMs: 2, promptTokens: 300, predictedTokens: 20 }, cacheHitTokens: 100 };
+    delete local.usage;
+    vi.spyOn(served, "complete").mockResolvedValue(local);
+    const wired = connectRuntimeFallback({}, fixture.deps);
+    await wired.llmComplete({ ...params, providerId: "served" });
+    const snapshot = fixture.turnUsageMeter.snapshot("turn");
+    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100 });
+    expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
+  });
+
   it("prepareLocalLink warms a cold local route once and later refreshes only stale state", async () => {
     const fixture = fallback();
     const events: string[] = [];

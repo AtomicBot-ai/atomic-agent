@@ -36,6 +36,7 @@ import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
   buildStreamChunk,
+  buildUsageChunk,
   buildUsagePayload,
 } from "./openai-chunks.js";
 
@@ -62,12 +63,15 @@ interface ChatCompletionRequest {
   model?: string;
   messages?: Array<{ role?: string; content?: string }>;
   stream?: boolean;
+  stream_options?: { include_usage?: boolean };
   session_id?: string;
 }
 
 interface ParsedRequest {
   model: string;
   stream: boolean;
+  /** `stream_options.include_usage`: end the stream with a usage chunk. */
+  includeUsage: boolean;
   systemPrompt: string | null;
   userMessage: string;
   firstUserMessage: string;
@@ -102,6 +106,14 @@ export function createChatCompletionsHandler(): HttpHandler {
       session,
     });
   };
+}
+
+/**
+ * With `stream_options.include_usage`, OpenAI puts `usage: null` on every
+ * chunk before the final usage chunk; without it, chunks carry no field.
+ */
+function nullUsage(env: TurnEnv): { usage?: null } {
+  return env.request.includeUsage ? { usage: null } : {};
 }
 
 interface TurnEnv {
@@ -230,6 +242,7 @@ async function handleStream(
       created: env.created,
       model: env.request.model,
       delta: { role: "assistant" },
+      ...nullUsage(env),
     }),
   );
   if (env.request.extensionsEnabled) {
@@ -281,6 +294,7 @@ async function handleStream(
         created: env.created,
         model: env.request.model,
         finishReason: "stop",
+        ...nullUsage(env),
       }),
     );
     sse.writeRaw("data: [DONE]\n\n");
@@ -321,8 +335,20 @@ async function handleStream(
       created: env.created,
       model: env.request.model,
       finishReason: final.finish_reason === "length" ? "length" : "stop",
+      ...nullUsage(env),
     }),
   );
+  if (env.request.includeUsage) {
+    sse.writeEvent(
+      null,
+      buildUsageChunk({
+        completionId: env.completionId,
+        created: env.created,
+        model: env.request.model,
+        usage,
+      }),
+    );
+  }
   sse.writeRaw("data: [DONE]\n\n");
   sse.close();
 }
@@ -381,6 +407,7 @@ export function buildStreamEventHook(
         created: env.created,
         model: env.request.model,
         delta: { content },
+        ...nullUsage(env),
       }),
     );
   };
@@ -933,6 +960,7 @@ async function parseRequestBody(
         ? body.model
         : MODEL_DEFAULT,
     stream: Boolean(body.stream),
+    includeUsage: body.stream_options?.include_usage === true,
     systemPrompt,
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,

@@ -1,4 +1,4 @@
-import type { CompletionUsage } from "../llm/provider/completion-types.js";
+import type { CompletionTiming, CompletionUsage } from "../llm/provider/completion-types.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 
@@ -125,4 +125,29 @@ export class TurnUsageMeter {
       ...(bucket.sawPricedUsage ? { costUsd: bucket.costUsd } : {}),
     };
   }
+}
+
+/**
+ * The usage a completion contributes to its turn: the provider's own
+ * `usage` block when it sent one (cloud providers), otherwise the token
+ * counts in its `timing` (a local llama-server reports no `usage` block,
+ * only `timings`: the whole prompt with the reused prefix, and the
+ * generated tokens). A completion with neither, or with zero counts,
+ * contributes nothing, so absent data stays absent.
+ */
+export function completionUsageForTurn(result: {
+  usage?: CompletionUsage;
+  timing?: CompletionTiming;
+  cacheHitTokens?: number;
+}): CompletionUsage | undefined {
+  if (result.usage) return result.usage;
+  const promptTokens = result.timing?.promptTokens ?? 0;
+  const completionTokens = result.timing?.predictedTokens ?? 0;
+  if (promptTokens <= 0 && completionTokens <= 0) return undefined;
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    ...(result.cacheHitTokens !== undefined && result.cacheHitTokens > 0 ? { cachedTokens: result.cacheHitTokens } : {}),
+  };
 }

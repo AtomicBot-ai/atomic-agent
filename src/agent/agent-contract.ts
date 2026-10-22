@@ -842,4 +842,11 @@ export interface RunTurnResult {
    * on every ordinary turn.
    */
   undelivered?: readonly string[];
+  /**
+   * Tokens the turn's LLM calls reported, summed by the runtime's turn
+   * usage meter. Set by `runtime.runTurn` on a person's turn when the
+   * provider reported usage; absent on scheduler and fusion turns and
+   * when no call reported any, so a missing figure never reads as zero.
+   */
+  usage?: { promptTokens: number; completionTokens: number };
 }

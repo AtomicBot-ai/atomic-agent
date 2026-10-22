@@ -236,6 +236,19 @@ describe("runtime turn ownership recipes", () => {
     expect(capture).toHaveBeenCalledWith(null, fixture.deps.telemetry.analyticsStateStore, expect.objectContaining({ outcome: "reply", stepCount: 1 }));
   });
 
+  it("hands a person's turn its metered token totals, and leaves them off when nothing was reported (ATO-276)", async () => {
+    const meter = fixture.deps.telemetry.turnUsageMeter;
+    fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) => {
+      meter.record({ sessionId: value.id, usage: { promptTokens: 120, completionTokens: 8, totalTokens: 128 } });
+      meter.record({ sessionId: value.id, usage: { promptTokens: 30, completionTokens: 2, totalTokens: 32 } });
+      return result(value, options);
+    });
+    const metered = await fixture.service.runTurn(session("metered"), "request");
+    expect(metered.usage).toEqual({ promptTokens: 150, completionTokens: 10 });
+    const silent = await fixture.service.runTurn(session("silent"), "request");
+    expect(silent.usage).toBeUndefined();
+  });
+
   it("late naming rereads stored state and respects an operator's first title", async () => {
     vi.useFakeTimers(); fixture.config.agent.nameSessions = true;
     const gate = deferred<CompletionResult>();
