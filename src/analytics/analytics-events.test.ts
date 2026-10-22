@@ -230,7 +230,7 @@ describe("captureMessageSent", () => {
     const client = fakeClient();
     const store = fakeStore({ firstMessage: true });
     captureMessageSent(client, store, ctx);
-    const payload = client.capture.mock.calls[0][1];
+    const payload = client.capture.mock.calls[0]?.[1];
     expect(payload).not.toHaveProperty("cached_tokens");
     expect(payload).not.toHaveProperty("fallback_calls");
   });
