@@ -18,6 +18,9 @@ import {
   isWanderingProneTool,
   WANDERING_CEILING_SHARE,
 } from "./loop-detector.js";
+import type { BatchLoopSignal } from "./dispatch/batch-contract.js";
+import { runSyncLoopGate } from "./dispatch/batch-gates.js";
+import { toBatchInputs } from "./dispatch/batch-scheduler.js";
 
 function mkResult(
   overrides: Partial<CompressedToolResult> = {},
@@ -1168,5 +1171,103 @@ describe("outcome-repeat detector (F25)", () => {
     expect(formatOutcomeRepeatNotice({ tool: "os.fs.glob", count: 5 })).toContain(
       "Same result 5 times",
     );
+  });
+});
+
+// ATO-603 (left over from ATO-308): a Fusion planner re-sent
+// `[os.fs.read /dev/null, os.fs.list]` step after step. These run the
+// real synchronous gate with the default thresholds and record outcomes
+// the way the scheduler does, to pin that a call failing over and over
+// never blocks a different call that succeeds beside it.
+describe("loop gate: a successful call next to a repeating failure", () => {
+  const READ_FAIL = { tool: "os.fs.read", args: { path: "/dev/null" } };
+  const failResult = mkResult({
+    tool: "os.fs.read",
+    status: "error",
+    summary: "/dev/null is not a regular file",
+  });
+
+  /** One step: gate each call, then record the real outcome of the ones that ran. */
+  function runStep(
+    tracker: ToolLoopTracker,
+    calls: { tool: string; args: Record<string, unknown> }[],
+    outcomeOf: (tool: string) => CompressedToolResult,
+  ): { proceeded: boolean[]; signals: BatchLoopSignal[] } {
+    const signals: BatchLoopSignal[] = [];
+    const proceeded: boolean[] = [];
+    const context = {
+      workingDir: "/w",
+      sessionId: "s-ato-603",
+      stepIndex: 0,
+      signal: new AbortController().signal,
+      tracker,
+    };
+    for (const input of toBatchInputs(calls)) {
+      const gate = runSyncLoopGate(input, context, signals);
+      proceeded.push(gate.proceed);
+      if (gate.proceed) {
+        tracker.recordOutcome(
+          input.call.tool,
+          input.call.args,
+          outcomeOf(input.call.tool),
+        );
+      }
+    }
+    return { proceeded, signals };
+  }
+
+  it("keeps running a list whose result changes while the failing read beside it is vetoed", () => {
+    const tracker = new ToolLoopTracker();
+    let readVetoed = false;
+    for (let step = 0; step < 10; step += 1) {
+      const { proceeded, signals } = runStep(
+        tracker,
+        [READ_FAIL, { tool: "os.fs.list", args: { path: "." } }],
+        (tool) =>
+          tool === "os.fs.read"
+            ? failResult
+            : mkResult({ tool, summary: `${step + 1} entries` }),
+      );
+      expect(proceeded[1]).toBe(true);
+      if (!proceeded[0]) readVetoed = true;
+      // A repeat warning is advisory; nothing about the list may refuse it.
+      expect(
+        signals.filter((s) => s.tool === "os.fs.list" && s.kind !== "warn"),
+      ).toEqual([]);
+      expect(signals.some((s) => s.kind === "breaker")).toBe(false);
+    }
+    expect(readVetoed).toBe(true);
+  });
+
+  it("keeps running a list over a new folder each step beside the failing read", () => {
+    const tracker = new ToolLoopTracker();
+    for (let step = 0; step < 10; step += 1) {
+      const { proceeded } = runStep(
+        tracker,
+        [READ_FAIL, { tool: "os.fs.list", args: { path: `dir-${step}` } }],
+        (tool) =>
+          tool === "os.fs.read" ? failResult : mkResult({ tool, summary: "a.txt" }),
+      );
+      expect(proceeded[1]).toBe(true);
+    }
+  });
+
+  it("gates an identical list only on its own history: the failing neighbour changes nothing", () => {
+    const firstVetoStep = (withNeighbour: boolean): number => {
+      const tracker = new ToolLoopTracker();
+      const list = { tool: "os.fs.list", args: { path: "." } };
+      for (let step = 0; step < 10; step += 1) {
+        const calls = withNeighbour ? [READ_FAIL, list] : [list];
+        const { proceeded } = runStep(tracker, calls, (tool) =>
+          tool === "os.fs.read" ? failResult : mkResult({ tool, summary: "a.txt" }),
+        );
+        if (!proceeded[calls.length - 1]) return step;
+      }
+      return -1;
+    };
+    // The same listing five times is a no-progress repeat of its own;
+    // the read failing next to it must not bring that stop any closer.
+    expect(firstVetoStep(false)).toBe(5);
+    expect(firstVetoStep(true)).toBe(firstVetoStep(false));
   });
 });
