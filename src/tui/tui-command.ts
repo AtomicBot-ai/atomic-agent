@@ -205,6 +205,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // llama-server, in the same post-exit slot the self-update restart
   // uses (see the end of this function).
   let uninstallRequested = false;
+  // The answer to the ladder's desktop question, when it was asked.
+  let uninstallKeepDesktopData = false;
 
   const logSink: LogSink = (record: LogRecord) => bus.emitLog(record);
   const metricSink: MetricSink = (sample: MetricSample) =>
@@ -507,8 +509,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void loadUninstallPreview(bus, config.paths.stateDir),
         onOnboardingRerunRequested: () =>
           reopenOnboarding((action) => bus.emit(action)),
-        onUninstallConfirmed: () => {
+        onUninstallConfirmed: (choice) => {
           uninstallRequested = true;
+          uninstallKeepDesktopData = choice.keepDesktopData;
           orchestrator.quit();
         },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
@@ -922,7 +925,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // mutually exclusive and this one has to win: re-exec'ing a binary we
   // just deleted would be the last thing the operator saw.
   if (uninstallRequested) {
-    return performUninstall({ stateDir: config.paths.stateDir });
+    return performUninstall({
+      stateDir: config.paths.stateDir,
+      keepDesktopData: uninstallKeepDesktopData,
+    });
   }
 
   // Self-update restart handoff. The runtime is fully shut down and the

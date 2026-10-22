@@ -88,7 +88,7 @@ One command removes everything: the state directory (config, memory, sessions, t
 atomic-agent uninstall
 ```
 
-It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept; this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, keep the binary with `--keep-binary`, leave your shell rc file alone with `--keep-path`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`). The desktop app (0.0.3 and later) shares the same `~/.atomic-agent` folder, so uninstalling without `--keep-data` deletes its chats, settings, keys and models too; the plan warns you when it finds the desktop app.
+It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept; this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, keep the binary with `--keep-binary`, leave your shell rc file alone with `--keep-path`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`). The desktop app (0.0.3 and later) shares the same `~/.atomic-agent` folder. When uninstall finds it, an interactive run asks a separate question before deleting that folder (answer no to remove only the terminal program), and a `--yes` run keeps the folder and says why; add `--include-desktop-data` to delete it in a script.
 
 ### Troubleshooting
 

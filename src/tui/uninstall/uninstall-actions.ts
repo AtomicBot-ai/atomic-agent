@@ -10,7 +10,14 @@ export type UninstallAction =
   | { type: "uninstall_review_accepted" }
   | { type: "uninstall_typed_set"; typed: string }
   /**
-   * The word checked out. Moves to `closing`; the caller then asks the
+   * The word checked out and the plan deletes a folder the desktop app
+   * uses: `confirm` → `desktop`, the separate question about its data.
+   */
+  | { type: "uninstall_desktop_asked" }
+  | { type: "uninstall_desktop_cursor_set"; cursor: "keep" | "delete" }
+  /**
+   * The word checked out (and, when the desktop shares the folder, the
+   * `desktop` question was answered). Moves to `closing`; the caller then asks the
    * app to quit, and the removal happens after the unmount.
    */
   | { type: "uninstall_started" }
@@ -23,6 +30,8 @@ const UNINSTALL_ACTION_TYPES = new Set<string>([
   "uninstall_cursor_set",
   "uninstall_review_accepted",
   "uninstall_typed_set",
+  "uninstall_desktop_asked",
+  "uninstall_desktop_cursor_set",
   "uninstall_started",
   "uninstall_closed",
 ]);

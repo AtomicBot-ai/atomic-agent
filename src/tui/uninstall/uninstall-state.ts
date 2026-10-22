@@ -22,6 +22,21 @@ export interface UninstallPreview {
   readonly devCheckout: boolean;
   /** Lines about what stays on disk, e.g. an old desktop directory. */
   readonly leftInPlace?: readonly string[];
+  /**
+   * Set when the plan would delete a state directory the desktop app
+   * uses. The ladder then asks a separate `desktop` question after the
+   * typed word, before anything of the desktop's is deleted.
+   */
+  readonly desktopSharedDir?: string;
+}
+
+/**
+ * What the operator decided on the `desktop` step, handed to the
+ * post-exit removal. `keepDesktopData` keeps the shared state directory
+ * and removes only the terminal program.
+ */
+export interface UninstallChoice {
+  readonly keepDesktopData: boolean;
 }
 
 /**
@@ -40,7 +55,7 @@ export interface UninstallPreview {
  * WAL and a directory that reappears a second after you removed it.
  */
 export type UninstallStep =
-  "loading" | "review" | "confirm" | "closing" | "failed";
+  "loading" | "review" | "confirm" | "desktop" | "closing" | "failed";
 
 export interface UninstallFlowState {
   readonly step: UninstallStep;
@@ -49,6 +64,11 @@ export interface UninstallFlowState {
   readonly typed: string;
   /** Focused button on `review`. Starts on `cancel`, always. */
   readonly cursor: "continue" | "cancel";
+  /**
+   * Focused button on `desktop`. Starts on `keep`, always: the answer
+   * that loses nothing is the one Enter reaches without a move.
+   */
+  readonly desktopCursor: "keep" | "delete";
   /** Populated on `failed`: the plan could not be built. */
   readonly errors: readonly string[];
 }
@@ -66,6 +86,7 @@ export function initialUninstallFlow(): UninstallFlowState {
     preview: null,
     typed: "",
     cursor: "cancel",
+    desktopCursor: "keep",
     errors: [],
   };
 }
