@@ -1515,6 +1515,25 @@ describe("truncated completion", () => {
     expect(line).not.toContain("undefined");
   });
 
+  it("says the cap is held and a shorter reply asked for on a same-cap retry", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 2,
+        cause: "reply_cap",
+        completionTokens: 64_000,
+        promptTokens: 40_000,
+        requestedMaxTokens: 64_000,
+        retry: { kind: "same_cap", maxTokens: 64_000 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("reply cut off at 64000 tokens (cap 64000)");
+    expect(line).toContain("step 3 with a 64000-token cap");
+    expect(line).toContain("shorter reply");
+  });
+
   it("explains a size-rejection repack in the operator's terms (F30)", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), {
       type: "agent_event",

@@ -570,7 +570,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("reply");
     expect(calls).toBe(2);
     // The first completion ran under the config cap (16,384); the retry
-    // under 4× of it, clamped to the 32,768 ceiling.
+    // under 2× of it (local), which is the 32,768 ceiling.
     expect(capsSeen[0]).toBeUndefined();
     expect(capsSeen[1]).toBe(32_768);
     // The model is told why it is being asked again.
@@ -1175,6 +1175,178 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       "model: model response truncated at 16384 tokens",
     );
     expect(failures[0]).not.toContain("rejected the request");
+  });
+
+  describe("on a cloud model", () => {
+    const CLOUD_POLICY = {
+      activeProviderId: "cloud",
+      providers: [{ id: "cloud", modelId: null, mode: "cloud" as const, models: {} }],
+    };
+    function cutAt(cap: number) {
+      return {
+        ...makeCompletion(""),
+        reasoningContent: "Drafting the whole report in one reply",
+        stop: false,
+        truncated: true,
+        sentMaxTokens: cap,
+        usage: {
+          promptTokens: 40_000,
+          completionTokens: cap,
+          totalTokens: 40_000 + cap,
+        },
+      };
+    }
+    function noopRegistry() {
+      const registry = buildDefaultToolRegistry();
+      registry.register({
+        name: "noop",
+        description: "no-op",
+        readonly: true,
+        async run() {
+          return {
+            tool: "noop",
+            status: "ok" as const,
+            summary: "noop",
+            details: {},
+            truncated: false,
+          };
+        },
+      });
+      return registry;
+    }
+
+    it("retries a cut at a 64000 cap under the same cap instead of failing the turn", async () => {
+      // ATO-780: GLM-5 with maxOutputTokens 64000. The old four-fold
+      // raise clamped to 32768, which is no raise, so the turn failed
+      // with 20-40 minutes of work lost.
+      const capsSeen: Array<number | undefined> = [];
+      const prompts: string[] = [];
+      const events: Array<{ type: string } & Record<string, unknown>> = [];
+      let calls = 0;
+      const loop = new AgentLoop({
+        registry: noopRegistry(),
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        llmComplete: async ({ maxTokens, prompt }) => {
+          calls += 1;
+          capsSeen.push(maxTokens);
+          prompts.push(prompt);
+          if (calls <= 2) {
+            return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+          }
+          if (calls === 3) return cutAt(64_000);
+          return makeCompletion(
+            JSON.stringify({ tool: "reply", args: { text: "report written" } }),
+          );
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        onEvent: (event) => {
+          if (
+            event.type === "completion_truncated" ||
+            event.type === "loop_failed"
+          ) {
+            events.push(event as { type: string } & Record<string, unknown>);
+          }
+        },
+      });
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-trunc-cloud", workingDir }),
+        {
+          userMessage: "write the report",
+          maxSteps: 10,
+          taskMaxSteps: 10,
+          modelModePolicy: CLOUD_POLICY,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.reason).toBe("reply");
+      expect(calls).toBe(4);
+      expect(capsSeen[3]).toBe(64_000);
+      // The retry carries the notice: why it is asked again, and how.
+      expect(prompts[3]).toContain("cut off after 64000 tokens");
+      expect(prompts[2]).not.toContain("cut off after");
+      expect(prompts[3]).toContain("write it in parts");
+      expect(events).toEqual([
+        expect.objectContaining({
+          type: "completion_truncated",
+          stepIndex: 2,
+          cause: "reply_cap",
+          retry: { kind: "same_cap", maxTokens: 64_000 },
+        }),
+      ]);
+      // The two steps before the cut are still in the session.
+      expect(result.session.stepCount).toBe(3);
+    });
+
+    it("survives two cuts of the same step and completes on the third reply", async () => {
+      let calls = 0;
+      const loop = new AgentLoop({
+        registry: buildDefaultToolRegistry(),
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        llmComplete: async () => {
+          calls += 1;
+          if (calls <= 2) return cutAt(32_768);
+          return makeCompletion(
+            JSON.stringify({ tool: "reply", args: { text: "done" } }),
+          );
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+      });
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-trunc-cloud-twice", workingDir }),
+        {
+          userMessage: "write the report",
+          maxSteps: 5,
+          taskMaxSteps: 5,
+          modelModePolicy: CLOUD_POLICY,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.reason).toBe("reply");
+      expect(calls).toBe(3);
+    });
+
+    it("fails, rather than hangs, when every reply is cut", async () => {
+      const failures: string[] = [];
+      let calls = 0;
+      const loop = new AgentLoop({
+        registry: buildDefaultToolRegistry(),
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        llmComplete: async () => {
+          calls += 1;
+          return cutAt(64_000);
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        onEvent: (event) => {
+          if (event.type === "loop_failed") {
+            failures.push(`${event.category}: ${event.error.message}`);
+          }
+        },
+      });
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-trunc-cloud-forever", workingDir }),
+        {
+          userMessage: "write the report",
+          maxSteps: 5,
+          taskMaxSteps: 5,
+          modelModePolicy: CLOUD_POLICY,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.reason).toBe("failed");
+      // One attempt plus the step's two retries.
+      expect(calls).toBe(3);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain("model response truncated at 64000 tokens");
+    });
   });
 
   it("does not wait out a failure that will never fix itself", async () => {

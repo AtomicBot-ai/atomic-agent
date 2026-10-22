@@ -833,8 +833,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     }
     case "completion_truncated": {
       // One line per retry, in the operator's terms: what was cut, and
-      // what the retry changes. The turn only fails on the second cut,
-      // and that message names the wall and the knob.
+      // what the retry changes. The turn fails once the retries are
+      // spent, and that message names the wall and the knob.
       const cut =
         event.completionTokens > 0
           ? `reply cut off at ${event.completionTokens} tokens`
@@ -846,7 +846,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const line =
         event.retry.kind === "raise_cap"
           ? `» ${cut} (${cap}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
-          : `» ${cut}: the model server ran out of context at ~${event.retry.contextWindow} tokens — trimming the conversation to fit and retrying step ${event.stepIndex + 1}`;
+          : event.retry.kind === "same_cap"
+            ? `» ${cut} (${cap}). Retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap and asking for a shorter reply`
+            : `» ${cut}: the model server ran out of context at ~${event.retry.contextWindow} tokens — trimming the conversation to fit and retrying step ${event.stepIndex + 1}`;
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: null,
