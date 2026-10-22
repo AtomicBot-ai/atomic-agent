@@ -47,6 +47,23 @@ describe("toolLogFields", () => {
     expect(toolLogFields(undefined, result())).toEqual({});
   });
 
+  it("logs no path or reason for tools outside os.fs, only the error name", () => {
+    const fields = toolLogFields(
+      { path: "https://api.example.com/x?token=SECRET", from: "me@example.com" },
+      result({
+        tool: "os.shell.run",
+        status: "error",
+        summary: "$ curl -H 'Authorization: Bearer SECRET' https://x\nexit: 1",
+        details: { errorName: "ShellError" },
+      }),
+    );
+    expect(fields).toEqual({ errorName: "ShellError" });
+    expect(JSON.stringify(fields)).not.toContain("SECRET");
+    expect(
+      toolLogFields({ path: "notes" }, result({ tool: "mcp.drive.get" })),
+    ).toEqual({});
+  });
+
   it("clips a long path and a long reason", () => {
     const long = "x".repeat(TOOL_LOG_FIELD_MAX_CHARS + 50);
     const fields = toolLogFields(

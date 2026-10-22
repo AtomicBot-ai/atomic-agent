@@ -11,9 +11,19 @@ export const TOOL_LOG_FIELD_MAX_CHARS = 200;
 const PATH_ARG_KEYS = ["path", "from"] as const;
 
 /**
- * Extra fields for the `tool executed` log line: the path the call named
- * (never any file contents) and, for a failed call, the first line of
- * its error. Without them a loop of failing calls (ATO-308: a planner
+ * Tools whose path argument and error text are safe to log. An os.fs
+ * error names the path and what went wrong; other tools' errors are not
+ * that tame: an `os.shell.run` failure starts with the command line
+ * (which can carry a token) and echoes its output, and an MCP tool's
+ * `path`/`from` argument can be a URL or an email address. Those keep
+ * only `errorName`.
+ */
+const LOGGABLE_TOOL_PREFIX = "os.fs.";
+
+/**
+ * Extra fields for the `tool executed` log line: for an os.fs call, the
+ * path it named (never any file contents) and, when it failed, the first
+ * line of its error; for any failed call, its error name. Without them a loop of failing calls (ATO-308: a planner
  * reading /dev/null step after step) shows in the log only as a tool
  * name and a status. Both are clipped so one long argument cannot bloat
  * the local log.
@@ -23,10 +33,11 @@ export function toolLogFields(
   result: CompressedToolResult,
 ): { path?: string; reason?: string; errorName?: string } {
   const fields: { path?: string; reason?: string; errorName?: string } = {};
-  const path = pathOf(args);
+  const loggable = result.tool.startsWith(LOGGABLE_TOOL_PREFIX);
+  const path = loggable ? pathOf(args) : undefined;
   if (path !== undefined) fields.path = path;
   if (result.status !== "error") return fields;
-  const reason = firstLine(result.summary);
+  const reason = loggable ? firstLine(result.summary) : undefined;
   if (reason !== undefined) fields.reason = reason;
   if (typeof result.details.errorName === "string") {
     fields.errorName = result.details.errorName;
