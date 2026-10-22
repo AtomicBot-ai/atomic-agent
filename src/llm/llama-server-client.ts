@@ -4,6 +4,7 @@ import { getConfig } from "../config/index.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { readErrnoCode } from "./errno-code.js";
 import { discardResponseBody } from "./discard-response-body.js";
+import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -380,14 +381,35 @@ export class LlamaServerError extends Error {
      * that both surface as `status === null`.
      */
     public readonly code: string | undefined = undefined,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; body?: LlamaErrorBody },
   ) {
     super(message);
     this.name = "LlamaServerError";
     if (options?.cause !== undefined) {
       (this as { cause?: unknown }).cause = options.cause;
     }
+    if (options?.body !== undefined) this.body = options.body;
   }
+
+  /**
+   * The reason code out of an HTTP error body, when llama.cpp sent one
+   * (`{"error":{"type":"exceed_context_size_error",...}}`). Only the
+   * type is kept, never the server's message: the error reporter reads
+   * `body.type` through its strict pattern for the `upstream_error_type`
+   * tag, the same field `OpenAiHttpError` carries.
+   */
+  readonly body?: LlamaErrorBody;
+}
+
+/** What a llama-server error body says, reduced to its reason code. */
+export interface LlamaErrorBody {
+  readonly type: string;
+}
+
+/** `error.type` of a llama-server error body, or undefined. Pure; never throws. */
+export function readLlamaErrorBody(rawBody: string): LlamaErrorBody | undefined {
+  const type = parseProviderErrorBody(rawBody).type;
+  return type !== undefined ? { type } : undefined;
 }
 
 /** Cap on how much of a server error body we fold into the message. */
@@ -439,8 +461,11 @@ async function buildHttpError(
   url: string,
 ): Promise<LlamaServerError> {
   let detail = "";
+  let body: LlamaErrorBody | undefined;
   try {
-    detail = extractLlamaErrorDetail(await response.text());
+    const text = await response.text();
+    detail = extractLlamaErrorDetail(text);
+    body = readLlamaErrorBody(text);
   } catch {
     // Body already consumed / unreadable — keep the status-only message.
   }
@@ -449,6 +474,9 @@ async function buildHttpError(
     detail ? `${base}: ${detail}` : base,
     response.status,
     url,
+    false,
+    undefined,
+    body !== undefined ? { body } : undefined,
   );
 }
 
