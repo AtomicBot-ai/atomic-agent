@@ -32,7 +32,8 @@ function load(present) {
 
 test('both subscription rows are offered with the terminal labels, after the one-key services', () => {
   const { ctx } = load(false);
-  const ids = ctx.rows.map((k) => k.id);
+  // Arrays built in the vm belong to its realm: compare a plain copy.
+  const ids = JSON.parse(JSON.stringify(ctx.rows.map((k) => k.id)));
   assert.equal(ids[0], 'openrouter', 'row 0 stays OpenRouter');
   assert.deepEqual(ids.slice(3, 5), ['claude-cli', 'codex-cli']);
   assert.equal(ctx.rows[3].label, 'Claude Code subscription: the agent runs on your plan (signed-in `claude`)');
