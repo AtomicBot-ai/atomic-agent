@@ -34,6 +34,22 @@ test('the video.generate card names the length and the model, like image.generat
   assert.match(M.VIDEO_PAID_WHY, /^OpenRouter charges your account for this video\. Stop doesn't cancel the charge\.$/);
 });
 
+test('ATO-815: the card names the model the result or the progress says the call ran on', () => {
+  const out = 'Saved a 6-second video made with kwaivgi/kling-video-o1 on OpenRouter:\n- /w/clip.mp4\nTo show it to the user, pass this path in reply.attachments.';
+  // No args (clipped, or missing): the result's model, not the default.
+  assert.equal(M.videoToolLine(null, { out }), 'Generated a video · 4 s · Kling Video O1');
+  // The result wins over what the args asked for.
+  assert.equal(M.videoToolLine({ model: 'google/veo-3.1' }, { out }), 'Generated a video · 4 s · Kling Video O1');
+  // While it runs: the progress label names it.
+  assert.equal(M.videoModelRan('', 'sent to google/veo-3.1 on OpenRouter'), 'google/veo-3.1');
+  assert.equal(M.videoModelRan('', 'making the video with google/veo-3.1 · about 40% · 2 min elapsed'), 'google/veo-3.1');
+  assert.equal(M.videoToolLine({}, { label: 'sent to google/veo-3.1 on OpenRouter' }), 'Generated a video · 4 s · Veo 3.1');
+  // Nothing names it (older agent, failed call): the args, then the default, as before.
+  assert.equal(M.videoModelRan('video.generate: the provider is busy', ''), '');
+  assert.equal(M.videoToolLine({ model: 'google/veo-3.1' }, { out: 'video.generate: failed' }), 'Generated a video · 4 s · Veo 3.1');
+  assert.equal(M.videoToolLine({}, {}), 'Generated a video · 4 s · Veo 3.1 Fast');
+});
+
 test('tool_update goes to the newest running card of that tool in that turn', () => {
   const log = [
     { k: 'tool', name: 'video.generate', ok: true, turn: 't1', id: 1 },
@@ -79,4 +95,49 @@ test('the running card says how far it got; nothing once it is done', () => {
   assert.match(html, /About 50% · 1 min/);
   assert.equal(M.toolProgressHTML({ ok: true, progress: running.progress }), '');
   assert.equal(M.toolProgressHTML({ ok: null }), '');
+});
+
+// ATO-811: a clip playing in a reply stops when its chat leaves the screen and is back paused.
+test('leaving the chat pauses a reply clip, and coming back does not start it again', () => {
+  const fakeVideo = () => {
+    const on = {};
+    return {
+      paused: true, isConnected: false, parent: null, plays: 0,
+      addEventListener(t, f) { (on[t] = on[t] || []).push(f); },
+      fire(t) { (on[t] || []).forEach((f) => f()); },
+      play() { this.plays++; this.paused = false; this.fire('playing'); return Promise.resolve(); },
+      pause() { this.paused = true; this.fire('pause'); },
+      cloneNode() { return fakeVideo(); },
+    };
+  };
+  const slot = (path) => ({
+    dataset: { chatVid: path },
+    appendChild(n) { n.isConnected = true; n.parent = this; },
+    contains(n) { return n.parent === this; },
+  });
+  const root = (slots) => ({
+    querySelectorAll(sel) { return sel === '[data-chat-vid]:not([data-hyd])' ? slots.filter((s) => !s.dataset.hyd) : []; },
+  });
+  const had = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { STUDIO: { mediaUrl: (p) => 'file://' + p } };
+  globalThis.document = { createElement: () => fakeVideo() };
+  try {
+    const path = '/w/ato-811.mp4';
+    const st = M.chatVideo(path);
+    M.chatVideoHydrate(root([slot(path)]));
+    const v = st.node;
+    v.play();                                   // the person starts the clip
+    assert.equal(st.playing, true);
+    M.pauseChatMedia(root([]));                 // another chat or Studio is opened
+    assert.equal(v.paused, true, 'the clip stops when its chat leaves the screen');
+    assert.equal(st.playing, false);
+    v.isConnected = false; v.parent = null;     // the old transcript goes
+    v.fire('pause');                            // the browser's own pause for the removal
+    M.chatVideoHydrate(root([slot(path)]));     // the chat is back
+    assert.equal(v.isConnected, true);
+    assert.equal(v.plays, 1, 'the clip does not start by itself on the way back');
+    assert.equal(v.paused, true);
+  } finally {
+    globalThis.window = had.window; globalThis.document = had.document;
+  }
 });

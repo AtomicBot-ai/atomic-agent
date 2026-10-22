@@ -41,6 +41,7 @@ import { app } from "electron";
 import { configGet, configSetWhole, localDaemonRunning, type UserConfigShape } from "../agent-cli.js";
 import { resolveBinary } from "../agent-client.js";
 import { bringUpAtLaunch, bringUpInFlight, startDaemonNow, supersedeBringUp } from "../backend-switch.js";
+import { describeHolders, endTree, holdersOf, removeDir } from "./leftovers.js";
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -227,7 +228,8 @@ async function quitChecks(check: Check, standInScript: string, dir: string, real
       `stand-in pid ${server} ${alive(server) ? "STILL RUNNING" : "gone"} after the app exited; port ${port}: ${await health(port)}`,
     );
   } finally {
-    if (second && second.exitCode === null && second.signalCode === null) second.kill("SIGKILL");
+    // The second window and its helpers (Windows: the whole tree, leftovers.ts).
+    if (second?.pid && second.exitCode === null && second.signalCode === null) await endTree(second.pid);
     signal(server, "SIGKILL");
   }
 }
@@ -421,6 +423,15 @@ export async function checks30(js: Js, check: Check): Promise<void> {
     }
     await reviveChecks(js, check, standInScript, dir, realBin);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    /* A helper of the second window still holding its profile must not turn
+       into an EPERM that ends the task (leftovers.ts): say who, end it, and
+       retry the removal. */
+    const holders = await holdersOf(dir);
+    if (holders.length) {
+      console.error(`[smoke] T30: still running in the checks' folder: ${describeHolders(holders)}`);
+      for (const h of holders) await endTree(h.pid);
+    }
+    const rmError = await removeDir(dir);
+    if (rmError) console.error(`[smoke] T30: the checks' folder was not removed: ${rmError}`);
   }
 }

@@ -8,6 +8,7 @@ import {
 } from "../render/tool-args-preview.js";
 import { theme } from "../theme/theme.js";
 import type { StreamingToolCall, ToolCardEntry } from "../tui-state.js";
+import { ToolCardPathChip, toolCardFilePath } from "./tool-card-path-chip.js";
 import {
   annotationTail,
   toolCardsAnnotationParts,
@@ -40,7 +41,8 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
     isFinalised && card.finishedAt
       ? `${card.finishedAt - card.startedAt}ms`
       : "…";
-  const header = (
+  const filePath = isFinalised ? toolCardFilePath(card) : null;
+  const toggle = (
     <ExpandToggle cardId={card.id}>
       <Text>
         <Text color={color}>
@@ -66,6 +68,20 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
       </Text>
     </ExpandToggle>
   );
+  // A finished read / write / edit card carries `[copy path]` on the
+  // header row, as a sibling of the expand toggle rather than inside its
+  // `Text` (a nested target gets no hit box of its own).
+  const header =
+    filePath === null ? (
+      toggle
+    ) : (
+      <Box flexDirection="row">
+        <Box flexShrink={1} minWidth={0}>
+          {toggle}
+        </Box>
+        <ToolCardPathChip path={filePath} />
+      </Box>
+    );
   if (!expanded) {
     return (
       <Box flexDirection="column" marginBottom={1}>

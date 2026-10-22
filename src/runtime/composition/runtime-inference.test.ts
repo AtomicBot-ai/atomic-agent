@@ -11,6 +11,7 @@ import { DEFAULT_FALLBACK_TIMING, ProviderFallbackChain } from "../../llm/fallba
 import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import { TurnUsageMeter } from "../../analytics/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
+import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
 import { connectRuntimeFallback, connectRuntimeProviders, createRuntimeModelContext, createRuntimeProviderReloads, type RuntimeProviders } from "./runtime-inference.js";
 
 function completion(modelId = "priced-model"): CompletionResult {
@@ -138,6 +139,26 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.00002);
   });
 
+  // ATO-277: message_sent reads the served link from the meter.
+  it("a fallover records the link that actually served, and counts it as a fallback", async () => {
+    const fixture = fallback();
+    fixture.turnUsageMeter.begin("turn", "cloud");
+    const cloud = providers.providerRegistry.getProvider("cloud");
+    const served = providers.providerRegistry.getProvider("served");
+    if (!cloud || !served) throw new Error("provider fixtures missing");
+    vi.spyOn(cloud, "complete").mockRejectedValue(
+      new OpenAiHttpError("unavailable", 503, "http://cloud.invalid", false, null, "cloud"),
+    );
+    vi.spyOn(served, "complete").mockResolvedValue(completion());
+    const wired = connectRuntimeFallback({}, fixture.deps);
+    await wired.llmComplete(params);
+    expect(fixture.turnUsageMeter.snapshot("turn")).toMatchObject({
+      servedProviderId: "served",
+      fallbackCalls: 1,
+      promptTokens: 10,
+    });
+  });
+
   it("stream usage reaches the turn meter without double recording the unary cost accumulator", async () => {
     const fixture = fallback();
     const served = providers.providerRegistry.getProvider("served");
@@ -153,6 +174,21 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(next.value.servedTransport).toBe("native_tools");
     while (!next.done) next = await stream.next();
     expect(fixture.turnUsageMeter.snapshot("turn")).toMatchObject({ promptTokens: 10, completionTokens: 5, costUsd: 0.00002 });
+    expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
+  });
+
+  it("a local completion without a usage block still counts its timings toward the turn, unpriced (ATO-276)", async () => {
+    const fixture = fallback();
+    const served = providers.providerRegistry.getProvider("served");
+    if (!served) throw new Error("served fixture missing");
+    const local: CompletionResult = { ...completion(), timing: { promptMs: 1, predictedMs: 2, promptTokens: 300, predictedTokens: 20 }, cacheHitTokens: 100 };
+    delete local.usage;
+    vi.spyOn(served, "complete").mockResolvedValue(local);
+    const wired = connectRuntimeFallback({}, fixture.deps);
+    await wired.llmComplete({ ...params, providerId: "served" });
+    const snapshot = fixture.turnUsageMeter.snapshot("turn");
+    // #735 records which provider served the turn; no costUsd: unpriced.
+    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100, servedProviderId: "served" });
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
   });
 

@@ -25,6 +25,7 @@ export { managedDataDir } from "./local-llama-key.js";
 import { curatedMeta } from "./model-catalog.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
+import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
 
 const run = promisify(execFile);
 
@@ -1256,6 +1257,13 @@ export async function providerModels(
   opts: { live?: boolean } = {},
 ): Promise<{ ok: boolean; models?: SearchedModel[]; error?: string; stale?: boolean } & ModelListFailure> {
   if (!/^[\w.-]{1,48}$/.test(providerId)) return { ok: false, error: "bad provider id" };
+  // ATO-844: a subscription CLI has no endpoint to list; its models are known here.
+  if (kind === SUBSCRIPTION_CLI_KIND) {
+    const read = await readWholeConfig().catch(() => null);
+    const entry = read?.config?.llm?.providers?.find((p) => p.id === providerId);
+    if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
+    return { ok: true, models: subscriptionCliModels(entry) };
+  }
   const bundled = kind === "openrouter" || kind === "aimlapi";
   const live = opts.live === true;
   const limit = live ? String(LIVE_LIST_LIMIT) : "200";
@@ -2249,6 +2257,19 @@ export async function localDaemonRunning(opts: { reapWedged?: boolean } = {}): P
   const daemon = /^daemon:[ \t]+running \(pid (\d+)\)[ \t]*(\S*)/m.exec(res.stdout);
   if (!daemon) return false;
   if (opts.reapWedged === false) return true;
+  /* ATO-852: `health: key rejected` (agent with #721): a server answers on the
+     port but refuses the running model's key, so every request fails. It is
+     as useless as a wedged one, and the agent's own advice is `models stop`,
+     then `models start`: stopped here, so the start that asked brings up a
+     fresh one with a key that matches. An older agent never prints it. */
+  if (healthKeyRejected(/^health:[ \t]*(.*)$/m.exec(res.stdout)?.[1])) {
+    const stop = await modelsStop({ repair: true });
+    console.error(
+      `[desktop] the model server (pid ${daemon[1]}) rejects its model's key — `
+        + (stop.ok ? "stopped it" : `could not stop it: ${stop.error ?? "unknown error"}`),
+    );
+    return false;
+  }
   // `health:` is not `ok` while a model loads either (the agent reads llama-server's 503 as `down`), so the port itself is asked.
   const port = portOfUrl(daemon[2] ?? "");
   if (port === null || !(await refusesThroughout(port, WEDGED_GRACE_MS))) return true;
@@ -2259,6 +2280,11 @@ export async function localDaemonRunning(opts: { reapWedged?: boolean } = {}): P
       + (stop.ok ? "stopped it" : `could not stop it: ${stop.error ?? "unknown error"}`),
   );
   return false;
+}
+
+/** ATO-852: `models status`'s `health: key rejected` (agent with #721); an older agent's words never match. */
+export function healthKeyRejected(health: string | null | undefined): boolean {
+  return /^key rejected\b/i.test(String(health ?? "").trim());
 }
 
 /** Item 31: how long a live daemon's port may refuse connections before the daemon counts as down. */
@@ -2982,6 +3008,8 @@ export interface ModelsStatus {
   daemonPid: number | null;
   daemonUrl: string | null;
   health: string | null;
+  /** ATO-852: `health: key rejected`: the server on the port refuses the model's key (restart the model). */
+  keyRejected: boolean;
   url: string | null;
   /** `~N tok/s` from the `models start` that brought up THIS daemon pid; null when unmeasured. */
   tokensPerSecond: number | null;
@@ -3031,6 +3059,7 @@ export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStat
       daemonPid: pid ? Number(pid[1]) : null,
       daemonUrl: urlMatch ? urlMatch[0] : null,
       health: fields["health"] || null,
+      keyRejected: healthKeyRejected(fields["health"]),
       url: fields["url"] || null,
       tokensPerSecond: pid && lastChatSpeed && lastChatSpeed.pid === Number(pid[1]) ? lastChatSpeed.tokensPerSecond : null,
       fault: fields["fault"] || null,

@@ -13,7 +13,7 @@ import type {
   SkillCatalogEntry,
   ToolDescriptor,
 } from "../../prompt/stable-prefix.js";
-import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
+import { formatAgentErrorForChat, formatLocalEngineDownForChat } from "./format-agent-error-for-chat.js";
 
 const TRANSPORT = "Turn failed: couldn't get a reply from the provider.";
 const MODEL = "Turn failed: the model didn't give a usable answer.";
@@ -501,5 +501,13 @@ describe("formatAgentErrorForChat — llama failures through the real pipeline",
     // reject it identically.
     const text = await chatTextForLlamaStatus(400);
     expect(text).toBe(`${GENERIC}\nDetails: llama-server returned http 400`);
+  });
+});
+
+describe("formatLocalEngineDownForChat (ATO-772)", () => {
+  it("says the local model is not running and gives the start command", () => {
+    expect(formatLocalEngineDownForChat()).toBe(
+      "Turn failed. The local model isn't running.\n  Start it with: atomic-agent models start",
+    );
   });
 });

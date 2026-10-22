@@ -8,11 +8,13 @@ import {
   stopCoreEmbedding,
 } from "../core/core-embedding.js";
 import type { DownloadFileOptions } from "../downloads/download-file.js";
+import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   openSync,
@@ -771,6 +773,13 @@ export interface DaemonStatus {
    * It still serves; the next start or stop restarts Core to reap it.
    */
   coreOrphaned?: boolean;
+  /**
+   * A server answers `/health` on the session's port but rejects the
+   * session's key (401/403 on the key-guarded `/props`): a stale or
+   * another llama-server holds the port. Never `healthy`; real requests
+   * would fail with 401. Only checked for Atomic Core sessions.
+   */
+  authMismatch?: boolean;
 }
 
 export async function probeLlamaHealth(
@@ -790,6 +799,31 @@ export async function probeLlamaHealth(
   } catch {
     return "down";
   }
+}
+
+/**
+ * `/health` answers without a key, so a stale or foreign llama-server on
+ * an Atomic Core session's port used to read healthy while every real
+ * request failed with 401. After a passing `/health`, ask the key-guarded
+ * `/props` with the session's own key (llama.cpp exempts `/v1/models`
+ * from `--api-key`, so that would prove nothing). Only an explicit
+ * 401/403 turns the verdict; any other answer keeps `/health`'s.
+ */
+async function probeCoreSessionHealth(
+  port: number,
+  apiKey: string,
+): Promise<Pick<DaemonStatus, "healthy" | "loading" | "authMismatch">> {
+  const health = await probeLlamaHealth(port);
+  if (health !== "ok") return { healthy: false, loading: health === "loading" };
+  const verdict = await verifyGuardedEndpoint(
+    { reachable: true, status: 200, kind: "llama-server", error: null, latencyMs: 0 },
+    `http://127.0.0.1:${port}`,
+    2000,
+    apiKey,
+  );
+  return verdict.kind === "llama-auth"
+    ? { healthy: false, loading: false, authMismatch: true }
+    : { healthy: true, loading: false };
 }
 
 /**
@@ -865,6 +899,37 @@ export function readRunningPid(
     return null;
   }
   return pid;
+}
+
+/** Liveness of the managed chat engine's recorded process. */
+export type ChatDaemonPidState = "alive" | "dead" | "no_pid";
+
+/**
+ * Whether the managed chat engine's recorded process is alive, for
+ * diagnostics: the Core session record's pid when there is one, else the
+ * pid file. A live process owned by another user counts as `alive`. Unlike
+ * `readRunningPid` this never deletes a stale record, so a failure report
+ * reading it cannot change engine state.
+ */
+export function readChatDaemonPidState(dataDir: string): ChatDaemonPidState {
+  const pid = readRecordedChatPid(dataDir);
+  if (pid === null) return "no_pid";
+  return classifyPidLiveness(pid) === "dead" ? "dead" : "alive";
+}
+
+function readRecordedChatPid(dataDir: string): number | null {
+  try {
+    const record = JSON.parse(readFileSync(coreSessionPath(dataDir, "chat"), "utf-8")) as { pid?: unknown };
+    if (Number.isInteger(record.pid) && (record.pid as number) > 0) return record.pid as number;
+  } catch {
+    /* no Core session record: fall back to the pid file */
+  }
+  try {
+    const pid = Number(readFileSync(resolvePidFilePath(dataDir), "utf-8").trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1090,7 +1155,42 @@ export async function startDaemon(
     contextSize,
   );
 
+  // The launch decisions, in the daemon's own log where a reader looking
+  // at the flags will look for them. Their first line is also the marker
+  // `currentRunLog` scopes faults by, so an error of an earlier run is not
+  // reported against this one.
+  const reuseWhy =
+    prefixReuse && prefixReuse.reasons.length > 0
+      ? ` — ${prefixReuse.reasons.join("; ")}` +
+        (effectivePrefixReuse === "partial" && prefixReuse.prefixReuse === "none"
+          ? " (--swa-full restores partial reuse)"
+          : "")
+      : "";
+  const launchNotes = [
+    `[atomic-agent] launch: model ${model.id}` +
+      (header
+        ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
+        : " (header unreadable)"),
+    `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
+      (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
+      (contextNote ? `, ${contextNote}` : ""),
+    `[atomic-agent] launch: ${swaFull.reason}`,
+    `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
+    "",
+  ].join("\n");
+
   if (opts.engine === "atomic-core") {
+    // Core appends its llama-server's output to the `logPath` the load
+    // names, which is this same log (`loadCoreSession`), so `models status`
+    // and the supervisor read Core's out-of-memory errors where they read
+    // the managed server's. Without this marker they would scope by the
+    // last llama-server-engine launch and report its stale faults. Best
+    // effort: a log that cannot be written must not fail the start.
+    try {
+      appendFileSync(resolveLogFilePath(opts.dataDir), launchNotes);
+    } catch {
+      /* no marker: faults stay unscoped, as before */
+    }
     const session = await loadCoreSession(opts.dataDir, {
       role: "chat", modelId: model.id, modelPath, port: opts.port, args,
       ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
@@ -1121,30 +1221,7 @@ export async function startDaemon(
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {
-    // The launch decisions, in the daemon's own log where a reader
-    // looking at the flags will look for them.
-    const reuseWhy =
-      prefixReuse && prefixReuse.reasons.length > 0
-        ? ` — ${prefixReuse.reasons.join("; ")}` +
-          (effectivePrefixReuse === "partial" && prefixReuse.prefixReuse === "none"
-            ? " (--swa-full restores partial reuse)"
-            : "")
-        : "";
-    writeSync(
-      logFd,
-      [
-        `[atomic-agent] launch: model ${model.id}` +
-          (header
-            ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
-            : " (header unreadable)"),
-        `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
-          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
-          (contextNote ? `, ${contextNote}` : ""),
-        `[atomic-agent] launch: ${swaFull.reason}`,
-        `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
-        "",
-      ].join("\n"),
-    );
+    writeSync(logFd, launchNotes);
     opts.signal?.throwIfAborted();
     const child = spawn(binPath, args, {
       stdio: ["ignore", logFd, logFd],
@@ -1303,13 +1380,11 @@ export async function getDaemonStatus(
   if (existsSync(coreSessionPath(dataDir, "chat"))) {
     const orphan = orphanedCoreSession(dataDir, "chat");
     if (orphan) {
-      const health = await probeLlamaHealth(orphan.port);
-      return { running: true, pid: orphan.pid, port: orphan.port, healthy: health === "ok", loading: health === "loading", coreOrphaned: true };
+      return { running: true, pid: orphan.pid, port: orphan.port, ...(await probeCoreSessionHealth(orphan.port, orphan.api_key)), coreOrphaned: true };
     }
     const session = await coreSessionStatus(dataDir, "chat");
-    const health = session ? await probeLlamaHealth(session.port) : "down";
-    return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,
-      healthy: session !== null && health === "ok", loading: session !== null && health === "loading" };
+    if (!session) return { running: false, pid: null, port, healthy: false, loading: false };
+    return { running: true, pid: session.pid, port: session.port, ...(await probeCoreSessionHealth(session.port, session.api_key)) };
   }
   const pid = readRunningPid(dataDir);
   const h = await probeLlamaHealth(port);
@@ -1659,13 +1734,11 @@ export async function getEmbeddingDaemonStatus(
   if (existsSync(coreSessionPath(dataDir, "embedding"))) {
     const orphan = orphanedCoreSession(dataDir, "embedding");
     if (orphan) {
-      const health = await probeLlamaHealth(orphan.port);
-      return { running: true, pid: orphan.pid, port: orphan.port, healthy: health === "ok", loading: health === "loading", coreOrphaned: true };
+      return { running: true, pid: orphan.pid, port: orphan.port, ...(await probeCoreSessionHealth(orphan.port, orphan.api_key)), coreOrphaned: true };
     }
     const session = await coreSessionStatus(dataDir, "embedding");
-    const health = session ? await probeLlamaHealth(session.port) : "down";
-    return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,
-      healthy: session !== null && health === "ok", loading: session !== null && health === "loading" };
+    if (!session) return { running: false, pid: null, port, healthy: false, loading: false };
+    return { running: true, pid: session.pid, port: session.port, ...(await probeCoreSessionHealth(session.port, session.api_key)) };
   }
   const pid = readRunningPid(dataDir, "embedding");
   const h = await probeLlamaHealth(port);

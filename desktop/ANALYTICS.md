@@ -72,9 +72,9 @@ send `ui` events.
 
 | Group | Main process | Renderer |
 |---|---|---|
-| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
+| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
 | Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out), `custom_endpoint_tested` |
-| Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `engine_recovery_shown`, `backend_switched`, `fusion_configured` | |
+| Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `engine_recovery_shown`, `backend_switched`, `fusion_configured` | |
 | Chat | `chat_turn_ui` | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
 | App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
@@ -115,6 +115,15 @@ Notes on specific properties:
   The failure itself is the agent's own `local_engine_failed`, sent by the
   `models` command that failed (src/analytics); the desktop no longer sends
   an event of that name, so one failure is never counted twice.
+- `local_backend_supervised` (ATO-773): the engine watchdog
+  (`main/daemon-supervisor.ts`) acted on the managed local server. `kind` is
+  restarting / restarted / restart_failed / gave_up (its `clear` is not
+  sent); `quick_deaths` its crash-loop count; `after_ms` how long a restart
+  took (restarted only); `engine` as above; `fault` (restart_failed and
+  gave_up only) a code for the server log's failure line: oom / port_in_use /
+  load_failed / missing_lib / crash / unknown, or null when the log names
+  none. The line itself, the restart's error text and its reason are never
+  sent.
 - `llama_runtime_updated.trigger`: `setup` (the first-run runtime phase),
   `settings` (Settings' engine install or update, and Download again), or
   `launch` (the launch installing Atomic Core's backend before it starts the
@@ -132,7 +141,16 @@ no agent is running).
 - Caught: main-process uncaught exceptions and rejections, renderer
   `error` / `unhandledrejection`, `render-process-gone`, `child-process-gone`,
   `unresponsive`, `did-fail-load` (main frame, error code only),
-  `preload-error`, and the agent exiting unexpectedly (tags only).
+  `preload-error`, and the agent exiting unexpectedly (tags only:
+  `kind`, `exit_code`, `reason` (the signal), `last_error`, `uptime`, and on
+  Windows `sentinel_alive`). `last_error` is one word for the agent's last
+  error lines (`main/sentry/exit-reason.ts`): oom / port_in_use /
+  econnrefused / sqlite / telegram_conflict / permission / missing_file /
+  other, or none when it said nothing in the 30 s before it exited (older
+  lines do not count); the lines themselves are never sent.
+  `uptime` is lt_10s / lt_1m / lt_10m / lt_1h / gte_1h. `sentinel_alive` is
+  yes / no: a dead sentinel means the agent closed itself on `--parent-pid`,
+  not a crash (ATO-763).
 - Scrubbing: the message is dropped (no message type is allowlisted); the
   type is kept only when it matches `SomethingError` / `SomethingException`
   or is one of the shell's own names, else `Error`; a renderer value that is
@@ -142,8 +160,13 @@ no agent is running).
 - Every event: `platform: node`, `sdk.settings.infer_ip: never`,
   `user: {id: <install id>, ip_address: null}`, tags `surface`, `component`,
   `desktop_version`, `install_channel`, `run_mode`, `platform`, `arch`, plus
-  `kind` / `reason` / `exit_code` enums. At most 30 reports per session,
+  `kind` / `reason` / `exit_code` enums. `RenderProcessGone` also carries
+  `recovered` (`yes`: main reloaded the page; `no`: it crashed more than
+  twice in a minute and the person was asked instead, ATO-765). At most 30 reports per session,
   3 per signature.
+- An unexpected agent exit also carries `auto_restart_attempt`: 0 when the
+  agent that ended was not started by an automatic restart, else which of
+  the three attempts started it (ATO-767, `main/agent-auto-restart.ts`).
 - DSN: `ATOMIC_DESKTOP_SENTRY_DSN`, else the agent's. Same switch as
   analytics.
 

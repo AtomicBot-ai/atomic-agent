@@ -4,7 +4,7 @@
  * pick an enum and never leaves this file.
  */
 
-import { PROVIDER_PRESETS } from "./catalog.js";
+import { PROVIDER_PRESETS, SUPERVISOR_KINDS } from "./catalog.js";
 
 /** Provider preset id, or `custom` for anything a user named themselves. */
 export function presetOf(id: unknown): string {
@@ -109,4 +109,43 @@ export function voiceError(code: unknown): "spawn" | "too_long" | "other" {
   if (code === "spawn") return "spawn";
   if (code === "too-long") return "too_long";
   return "other";
+}
+
+/**
+ * ATO-773: the line daemon-watch describeFault picked from the model server's
+ * log, as a code. The line can hold paths and model names; only the code
+ * leaves this file. No line at all is null.
+ */
+export function engineFault(line: unknown): "oom" | "port_in_use" | "load_failed" | "missing_lib" | "crash" | "unknown" | null {
+  if (typeof line !== "string" || !line.trim()) return null;
+  if (/library not loaded|cannot open shared object|shared librar|image not found|\.(dll|dylib|so)\b/i.test(line)) return "missing_lib";
+  if (/out of memory|failed to allocate|insufficient memory|\boom\b/i.test(line)) return "oom";
+  if (/address already in use|couldn'?t bind|EADDRINUSE/i.test(line)) return "port_in_use";
+  if (/error loading model|failed to (load|initiali[sz]e)/i.test(line)) return "load_failed";
+  if (/segmentation fault|abort|SIGSEGV|SIGABRT/i.test(line)) return "crash";
+  return "unknown";
+}
+
+/**
+ * ATO-773: `local_backend_supervised` props from a supervisor notice
+ * (daemon-supervisor SupervisorNotice), or null for one that is not sent
+ * (`clear`, ATO-244's CPU word on the same channel). `quickDeaths` is the
+ * supervisor's count now, for the kinds whose notice carries none. The
+ * notice's `reason` and `error` are text and are never read.
+ */
+export function supervisedProps(notice: unknown, quickDeaths: number | null): {
+  kind: string; quick_deaths: number | null; after_ms: number | null; fault: string | null;
+} | null {
+  const n = (notice && typeof notice === "object" ? notice : {}) as {
+    kind?: unknown; quickDeaths?: unknown; deaths?: unknown; afterMs?: unknown; fault?: unknown;
+  };
+  const kind = typeof n.kind === "string" && (SUPERVISOR_KINDS as readonly string[]).includes(n.kind) ? n.kind : null;
+  if (!kind) return null;
+  const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    kind,
+    quick_deaths: kind === "gave_up" ? count(n.deaths) : kind === "restarting" ? count(n.quickDeaths) : count(quickDeaths),
+    after_ms: kind === "restarted" ? count(n.afterMs) : null,
+    fault: kind === "restart_failed" || kind === "gave_up" ? engineFault(n.fault) : null,
+  };
 }

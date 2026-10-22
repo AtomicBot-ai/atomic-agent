@@ -11,14 +11,13 @@
  * every flow opened is closed again with nothing written to config.
  */
 
-import { execFile } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { app } from "electron";
 
 import type { BootPaintSummary } from "../boot-paint.js";
+import { describeHolders, endTree, holdersOf, removeDir, runSecondCopy } from "./leftovers.js";
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -139,23 +138,37 @@ export async function checks03(js: Js, check: Check): Promise<void> {
   type Probe = BootPaintSummary & { fresh: boolean | null; open: boolean };
   let probe: Probe | null = null;
   let why = "";
+  /* What still ran in `root` once the probe was gone, and whether `root`
+     could be removed. Neither ends the task (leftovers.ts): on Windows a
+     helper that outlives the probe holds its Chromium profile, and a throw
+     from here used to lose the two checks below. */
+  let left = "";
   try {
     const state = join(root, "state");
     mkdirSync(state, { recursive: true });
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
+    const res = await runSecondCopy(
       [app.getAppPath(), "--first-run-probe", `--user-data-dir=${join(root, "chromium")}`],
-      { env: { ...process.env, ATOMIC_AGENT_STATE_DIR: state }, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 },
+      { ...process.env, ATOMIC_AGENT_STATE_DIR: state },
+      120_000,
     );
-    const line = stdout.split(/\r?\n/).find((l) => l.startsWith("FIRSTRUNPROBE "));
+    const line = res.stdout.split(/\r?\n/).find((l) => l.startsWith("FIRSTRUNPROBE "));
     if (line) probe = JSON.parse(line.slice("FIRSTRUNPROBE ".length)) as Probe;
-    else why = `no FIRSTRUNPROBE line in ${JSON.stringify(stdout.slice(-300))}`;
+    else {
+      why = `${res.timedOut ? "the probe did not exit within 120 s" : `the probe exited ${res.code}`}; no FIRSTRUNPROBE line in ${JSON.stringify(res.stdout.slice(-300))}; stderr ${JSON.stringify(res.stderr.slice(-600))}`;
+    }
   } catch (err) {
     why = err instanceof Error ? err.message : String(err);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    const holders = await holdersOf(root);
+    if (holders.length) {
+      left = `still running in the probe's folder: ${describeHolders(holders)}`;
+      console.error(`[smoke] T03: ${left}`);
+      for (const h of holders) await endTree(h.pid);
+    }
+    const rmError = await removeDir(root);
+    if (rmError) console.error(`[smoke] T03: the probe's folder was not removed: ${rmError}`);
   }
-  const seen = probe ? `${probe.timeline} (frames ${probe.frames})` : why;
+  const seen = (probe ? `${probe.timeline} (frames ${probe.frames})` : why) + (left ? `; ${left}` : "");
   check(
     "T03: a fresh launch paints the wizard first — the chat window is never on screen before it",
     !!probe && probe.fresh === true && probe.open === true && probe.frames > 0

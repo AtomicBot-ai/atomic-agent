@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { engineFailureIn, engineFailureOf, CORE_RETRY } = require("../out/main/engine-failure.js");
+const { engineFailureIn, engineFailureOf, cpuFallbackIn, cpuFallbackOf, CORE_RETRY, CPU_FALLBACK_LINE } = require("../out/main/engine-failure.js");
 const HINT = `${CORE_RETRY} (TUI: press R in Models).`;
 
 test("no hint and no Atomic Core: not a Core failure", () => {
@@ -153,4 +153,50 @@ test("a launch start's failure is read through its stderr tail (daemonError) too
     daemonError: "note: checking the engine\n[==========          ] 50%  0.35 GB / 0.70 GB  Atomic Chat engine\n",
   });
   assert.equal(f.reason, "incomplete");
+});
+
+// ATO-374: a model Core could not load, and a start moved to the CPU build.
+test("a model Core could not load reads as its own sentence and offers no Download again", () => {
+  // Core's own code, with or without the engine named.
+  const coded = engineFailureIn("MODEL_LOAD_FAILED: llama-server exited before the model was ready");
+  assert.equal(coded.reason, "load");
+  assert.equal(coded.stage, "start");
+  assert.equal(coded.retryable, false);
+  assert.match(coded.why, /couldn't load/);
+  assert.doesNotMatch(coded.why, /try again|download|llama/i);
+  // The model server's wording counts once the app knows Core is the engine.
+  const said = engineFailureOf({ ok: false, stdout: "", stderr: "llama_model_load: error loading model: unable to allocate CUDA0 buffer\n", error: "models start exited with code 1" }, { core: true });
+  assert.equal(said.reason, "load");
+  assert.equal(said.retryable, false);
+  // Under llama.cpp the same words are not this card's (the supervisor's).
+  assert.equal(engineFailureIn("llama-server: failed to load model"), null);
+  assert.equal(engineFailureIn("llama-server: failed to load model", { core: false }), null);
+  // A Core failure that is not about the model keeps its own reading.
+  assert.equal(engineFailureIn(`Atomic Core did not become ready. ${HINT}`, { core: true }).retryable, true);
+  // The OS blocking the engine still reads as blocked.
+  assert.equal(engineFailureIn("Atomic Core: failed to load model: EACCES", { core: true }).stage, "blocked");
+});
+
+test("the agent's CPU switch is recognised, failed or served", () => {
+  assert.equal(CPU_FALLBACK_LINE, "The model couldn't load on your graphics card. Switched to the CPU build, it will be slower.");
+  assert.doesNotMatch(CPU_FALLBACK_LINE, /\u2014/);
+  // The managed llama.cpp start's own lines (src/cli/models-handlers.ts).
+  const served = {
+    ok: true,
+    stdout: "chat: started pid 42, healthy on port 8080\n",
+    stderr: "the GPU llama.cpp build failed to serve on this machine \u2014 falling back to the CPU build\u2026\nretrying start on the CPU build\u2026\n",
+    daemon: "started",
+  };
+  assert.equal(cpuFallbackOf(served), true);
+  assert.equal(engineFailureOf(served), null);
+  // The plainer wording a Core fallback (ATO-344) is expected to print.
+  assert.equal(cpuFallbackIn("Atomic Core switched to the CPU build"), true);
+  // An ordinary start says nothing of the kind.
+  assert.equal(cpuFallbackOf({ ok: true, stdout: "chat: started pid 42", stderr: "" }), false);
+  assert.equal(cpuFallbackOf(null), false);
+  // Moved to the CPU build and still failed: the card carries the flag for its line.
+  const failed = engineFailureOf({ ok: false, stdout: "", stderr: "retrying start on the CPU build\nAtomic Core: failed to load model\n", error: "models start exited with code 1" }, { core: true });
+  assert.equal(failed.cpuFallback, true);
+  assert.equal(failed.retryable, false);
+  assert.equal(engineFailureIn(`Atomic Core did not become ready. ${HINT}`).cpuFallback, undefined);
 });

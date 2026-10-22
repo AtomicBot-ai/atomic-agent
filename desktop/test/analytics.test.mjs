@@ -33,6 +33,8 @@ test("the renderer may only send UI-owned events", () => {
 test("enum values outside the list become `other`, or the prop's fallback, or are dropped", () => {
   assert.deepEqual(V.validateEvent("message_action", { action: "nope" }, "ui").props, {});
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "weird" }, "main").props, { trigger: "other" });
+  // ATO-767: the automatic restart after an unexpected exit keeps its own trigger.
+  assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "auto" }, "main").props, { trigger: "auto" });
   assert.deepEqual(V.validateEvent("slash_command_used", { command: "/rm -rf" }, "ui").props, { command: "unknown" });
   assert.deepEqual(V.validateEvent("provider_setup_started", { provider_preset: "my-own-proxy" }, "ui").props, { provider_preset: "custom" });
 });
@@ -174,6 +176,36 @@ test("classifiers map to the catalogue's enums", () => {
   assert.deepEqual(C.switchOutcome({ ok: false, needsKey: true, keyInvalid: true }), { result: "refused", refusal: "key_invalid" });
   assert.equal(C.presetOf("openrouter"), "openrouter");
   assert.equal(C.presetOf("my-corp-gateway"), "custom");
+});
+
+test("ATO-773: the engine watchdog's log line becomes a fault code, never text", () => {
+  assert.equal(C.engineFault("ggml_backend_cuda_buffer_type_alloc_buffer: allocating 9000 MiB on device 0: cudaMalloc failed: out of memory"), "oom");
+  assert.equal(C.engineFault("couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 19091"), "port_in_use");
+  assert.equal(C.engineFault("llama_model_load: error loading model: tensor 'blk.0' data is not within the file bounds"), "load_failed");
+  assert.equal(C.engineFault("dyld: Library not loaded: @rpath/libggml-metal.dylib"), "missing_lib");
+  assert.equal(C.engineFault("Segmentation fault: 11"), "crash");
+  assert.equal(C.engineFault("something nobody has seen before"), "unknown");
+  assert.equal(C.engineFault(null), null);
+  assert.equal(C.engineFault("   "), null);
+});
+
+test("ATO-773: local_backend_supervised carries kind, counts and a fault code only", () => {
+  assert.deepEqual(C.supervisedProps({ kind: "restarting", reason: "the agent could not reach the local model server", quickDeaths: 1 }, 1),
+    { kind: "restarting", quick_deaths: 1, after_ms: null, fault: null });
+  assert.deepEqual(C.supervisedProps({ kind: "restarted", afterMs: 4200 }, 1),
+    { kind: "restarted", quick_deaths: 1, after_ms: 4200, fault: null });
+  const failed = C.supervisedProps({ kind: "restart_failed", error: "spawn /Users/someone/llama-server ENOENT", fault: "out of memory" }, 2);
+  assert.deepEqual(failed, { kind: "restart_failed", quick_deaths: 2, after_ms: null, fault: "oom" });
+  assert.ok(!JSON.stringify(failed).includes("/Users"));
+  assert.deepEqual(C.supervisedProps({ kind: "gave_up", deaths: 3, fault: null }, 3),
+    { kind: "gave_up", quick_deaths: 3, after_ms: null, fault: null });
+  // `clear` closes an incident and is not news; ATO-244's CPU word shares the channel and is not this event.
+  assert.equal(C.supervisedProps({ kind: "clear" }, 0), null);
+  assert.equal(C.supervisedProps({ kind: "cpu_only", cpuOnly: true, seq: 1, modelId: null }, 0), null);
+  const v = V.validateEvent("local_backend_supervised", { kind: "restarted", quick_deaths: 1, after_ms: 4200, engine: "atomic-core", fault: null, reason: "text" }, "main");
+  assert.deepEqual(v.props, { kind: "restarted", quick_deaths: 1, after_ms: 4200, engine: "atomic-core", fault: null });
+  assert.equal(V.validateEvent("local_backend_supervised", { kind: "gave_up", fault: "the log line itself" }, "main").props.fault, undefined);
+  assert.equal(V.validateEvent("local_backend_supervised", { kind: "restarting" }, "ui"), null);
 });
 
 /* ---- chat turns ---- */

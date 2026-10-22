@@ -44,9 +44,9 @@ describe("turn recovery decisions and shared state", () => {
     vi.spyOn(Date, "now").mockImplementation(() => { throw new Error("clock read"); });
     const first = createTurnLoopState();
     const second = createTurnLoopState();
-    first.truncationRetry = { stepIndex: 1, original: new Error("cut") };
+    first.truncationRetry = { stepIndex: 1, attempts: 1, original: new Error("cut") };
     first.reason = "cancelled";
-    expect(Object.keys(second)).toHaveLength(17);
+    expect(Object.keys(second)).toHaveLength(18);
     expect(second.truncationRetry).toBeNull();
     expect(second.reason).toBe("max_steps");
     expect(second.lastBoundaryIndex).toBe(-1);
@@ -82,10 +82,21 @@ describe("turn recovery decisions and shared state", () => {
     const events: AgentLoopEvent[] = [];
     const result = recoverTurnStep(error, context({ finalizationStep: true, options: { maxSteps: 4, signal: controller.signal } }), { onEvent: (event) => events.push(event) }, turn);
     expect(result).toEqual({ kind: "failure", cancelled: true, category: "cancelled", runError: error, creditRefused: false });
-    expect(events).toEqual([{ type: "loop_failed", error, category: "cancelled" }]);
+    expect(events).toEqual([{ type: "loop_failed", error, category: "cancelled", outage: { waitedMs: 0, attempts: 0 } }]);
     expect(turn.stepsTaken).toBe(0);
     expect(turn.parseRecoveries).toBe(0);
     expect(turn.outageAttempts).toBe(0);
+  });
+
+  it("a turn that fails after parking reports the outage it waited out on loop_failed", async () => {
+    const turn = createTurnLoopState();
+    turn.outageWaitedMs = 12_000;
+    turn.outageAttempts = 3;
+    const events: AgentLoopEvent[] = [];
+    const error = new TransportError("fetch failed", null, "http://127.0.0.1:8080/v1");
+    const result = recoverTurnStep(error, context(), { onEvent: (event) => events.push(event) }, turn);
+    expect(result).toMatchObject({ kind: "failure", category: "transport" });
+    expect(events).toEqual([{ type: "loop_failed", error, category: "transport", outage: { waitedMs: 12_000, attempts: 3 } }]);
   });
 
   it("does not relabel an unclassified programming error as cancelled", async () => {
@@ -135,10 +146,55 @@ describe("turn recovery decisions and shared state", () => {
     const error = truncated();
     expect(recoverTurnStep(error, context({ finalizationStep: true }), {}, turn)).toEqual({ kind: "retry_same" });
     expect(turn.truncationRetry?.original).toBe(error);
-    expect(turn.truncationRetry?.maxTokens).toBe(32_768);
+    // Local (no mode given): the cap goes up two-fold, once.
+    expect(turn.truncationRetry?.maxTokens).toBe(16_384);
+    expect(turn.truncationRetry?.raised).toBe(true);
     expect(turn.stepsTaken).toBe(0);
-    const rejected = recoverTurnStep(providerRefusal(400, "max_tokens is too large: 32768"), context(), {}, turn);
+    const rejected = recoverTurnStep(providerRefusal(400, "max_tokens is too large: 16384"), context(), {}, turn);
     expect(rejected).toEqual({ kind: "failure", cancelled: false, category: "model", runError: error, creditRefused: false });
+  });
+
+  it("a cloud step is retried twice under the same cap, then the third cut fails the turn", async () => {
+    const turn = createTurnLoopState();
+    const events: AgentLoopEvent[] = [];
+    const deps: TurnRecoveryDependencies = { onEvent: (event) => events.push(event) };
+    const first = truncated();
+    expect(recoverTurnStep(first, context({ modelMode: "cloud" }), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(turn.truncationRetry).toMatchObject({ stepIndex: 0, attempts: 1, maxTokens: 8_192 });
+    expect(turn.pendingNotice).toContain("existing notice");
+    expect(turn.pendingNotice).toContain("write it in parts");
+    expect(recoverTurnStep(truncated(), context({ modelMode: "cloud" }), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(turn.truncationRetry).toMatchObject({ attempts: 2, original: first });
+    const third = recoverTurnStep(truncated(), context({ modelMode: "cloud" }), deps, turn);
+    expect(third.kind).toBe("failure");
+    expect(events.filter((event) => event.type === "completion_truncated")).toEqual([
+      expect.objectContaining({ retry: { kind: "same_cap", maxTokens: 8_192 } }),
+      expect.objectContaining({ retry: { kind: "same_cap", maxTokens: 8_192 } }),
+    ]);
+    // The next step starts its own count.
+    expect(recoverTurnStep(truncated(), context({ modelMode: "cloud", stepIndex: 1 }), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(turn.truncationRetry).toMatchObject({ stepIndex: 1, attempts: 1 });
+    expect(turn.truncationRetries).toBe(3);
+  });
+
+  it("stops retrying cuts once the turn's budget is spent", async () => {
+    const turn = createTurnLoopState();
+    turn.truncationRetries = 6;
+    const error = truncated();
+    const result = recoverTurnStep(error, context({ modelMode: "cloud", stepIndex: 5 }), {}, turn);
+    expect(result).toEqual({ kind: "failure", cancelled: false, category: "model", runError: error, creditRefused: false });
+  });
+
+  it("a held-cap retry refused for the window repacks the prompt instead of blaming the cap", async () => {
+    const turn = createTurnLoopState();
+    const learned: number[] = [];
+    const deps: TurnRecoveryDependencies = { onContextWindowObserved: (window) => learned.push(window) };
+    expect(recoverTurnStep(truncated(), context({ modelMode: "cloud" }), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(turn.truncationRetry?.raised).toBeUndefined();
+    turn.lastPromptTokens = 9_000;
+    const refusal = providerRefusal(400, "maximum context length is 8192 tokens, requested 9000 tokens");
+    expect(recoverTurnStep(refusal, context({ modelMode: "cloud" }), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(learned).toEqual([8_192]);
   });
 
   it("window learning happens before live event lookup, then a repeated size refusal fails unchanged", async () => {

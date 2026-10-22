@@ -86,7 +86,9 @@ export function resolveLogFilePath(dataDir: string): string {
 /**
  * The bearer key both managed daemons are launched with (passed via the
  * `LLAMA_API_KEY` env, see `managed-api-key.ts`), next to the pid file so every process that
- * attaches to the daemon finds the same key. Mode 0600.
+ * attaches to the daemon finds the same key. Mode 0600. Legacy
+ * `llama-server` engine (and External on a managed port) only: Atomic Core
+ * issues its own per-session key (`coreKeyForUrl` in `core/core-state.ts`).
  */
 export function resolveApiKeyFilePath(dataDir: string): string {
   return join(dataDir, "llama-server.key");

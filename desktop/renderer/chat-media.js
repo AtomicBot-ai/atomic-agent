@@ -41,11 +41,29 @@ function videoModelName(id) {
     .map((w) => /^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
-/** The card's words for video.generate: "Generated a video · 4 s · Veo 3.1 Fast" (toolTense makes it "Generating"). */
-function videoToolLine(args) {
+/** ATO-815: the model the call really ran on, as the tool says it: its result
+    ("…video made with google/veo-3.1-fast on OpenRouter:"), or while it runs
+    its progress label ("sent to google/veo-3.1-fast on OpenRouter", "making
+    the video with google/veo-3.1-fast · about 40% · …"). '' when neither
+    names one (an older agent, a failed call, nothing heard yet). */
+function videoModelRan(out, label) {
+  const done = /video made with (\S+) on OpenRouter/.exec(String(out || ''));
+  if (done) return done[1];
+  const live = /^(?:sent to|making the video with) (\S+?)(?: on OpenRouter| ·|$)/.exec(String(label || ''));
+  return live ? live[1] : '';
+}
+
+/** The card's words for video.generate: "Generated a video · 4 s · Veo 3.1 Fast" (toolTense makes it "Generating").
+    `ran` = {out, label}: the card's result and progress label. The model comes
+    from them when they name it (ATO-815); the call's own `model` and then the
+    tool's default are only the fallback, since the args may be missing or
+    clipped. */
+function videoToolLine(args, ran) {
   const a = args && typeof args === 'object' ? args : {};
   const secs = Number.isInteger(a.duration) && a.duration > 0 ? a.duration : VIDEO_DEFAULT_SECS;
-  const model = typeof a.model === 'string' && a.model.trim() && a.model.trim().toLowerCase() !== 'local' ? a.model.trim() : VIDEO_DEFAULT_MODEL;
+  const r = ran && typeof ran === 'object' ? ran : {};
+  const asked = typeof a.model === 'string' && a.model.trim() && a.model.trim().toLowerCase() !== 'local' ? a.model.trim() : '';
+  const model = videoModelRan(r.out, r.label) || asked || VIDEO_DEFAULT_MODEL;
   return 'Generated a video · ' + secs + ' s · ' + videoModelName(model);
 }
 
@@ -158,6 +176,15 @@ function chatVideoHydrate(root) {
     if (node === st.node && st.playing && node.paused) node.play().catch(() => { st.playing = false; });
   });
 }
+/** Stop every reply clip when its chat leaves the screen (another chat, Studio). Leaving takes the
+    element out of the document while it plays, which chatVideoHydrate reads as a repaint and starts
+    again on the way back (ATO-811); this drops `playing`, so the clip is back paused. */
+function pauseChatMedia(root) {
+  CHAT_VID.forEach((st) => { st.playing = false; if (st.node && !st.node.paused) st.node.pause(); });
+  const scope = root || (typeof document !== 'undefined' ? document : null);
+  // A second copy (chatVideoHydrate's clone) is not in CHAT_VID.
+  if (scope) scope.querySelectorAll('[data-chat-vid] video').forEach((v) => { if (!v.paused) v.pause(); });
+}
 if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
   // Not deferred to a frame: the element must be back before the browser settles the removal.
   new MutationObserver(() => { if (CHAT_VID.size) chatVideoHydrate(); })
@@ -165,6 +192,6 @@ if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {chatMediaKind, videoModelName, videoToolLine, toolUpdateTarget, toolUpdateApply, toolProgressText,
-    toolProgressHTML, VIDEO_PAID_WHY, VIDEO_DEFAULT_MODEL};
+  module.exports = {chatMediaKind, videoModelName, videoModelRan, videoToolLine, toolUpdateTarget, toolUpdateApply, toolProgressText,
+    toolProgressHTML, VIDEO_PAID_WHY, VIDEO_DEFAULT_MODEL, chatVideo, chatVideoHydrate, pauseChatMedia};
 }

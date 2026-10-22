@@ -257,4 +257,35 @@ describe("LlamaEmbeddingClient", () => {
     await c.embed({ text: "b" });
     expect(seen).toEqual([null, "Bearer daemon-key"]);
   });
+
+  it("on a 401 re-reads the key once and replays with a different one (ATO-837)", async () => {
+    const seen: Array<string | null> = [];
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const auth = ((init?.headers ?? {}) as Record<string, string>).authorization ?? null;
+      seen.push(auth);
+      if (auth !== "Bearer fresh-key") return new Response("Invalid API Key", { status: 401 });
+      return new Response(JSON.stringify({ embedding: [0.1, 0.2, 0.3] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    let asks = 0;
+    let fresh: string | null = "fresh-key";
+    const c = new LlamaEmbeddingClient({
+      url: "http://127.0.0.1:9999",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+      getApiKey: () => "stale-key",
+      refreshApiKey: async () => { asks += 1; return fresh; },
+    });
+    await expect(c.embed({ text: "a" })).resolves.toMatchObject({ model: "m" });
+    expect(seen).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+    // Nothing better known: one request, the 401 stands.
+    seen.length = 0;
+    fresh = null;
+    await expect(c.embed({ text: "b" })).rejects.toThrow(/HTTP 401/);
+    expect(seen).toEqual(["Bearer stale-key"]);
+    expect(asks).toBe(2);
+  });
 });

@@ -5,42 +5,48 @@ import type { TruncationDetail } from "../../llm/index.js";
  * How the agent loop recovers from a reply the server cut short.
  *
  * A truncated completion is not a verdict on the step, but replaying the
- * same request is pointless — the same prompt under the same cap hits the
- * same wall. What helps depends on which wall it was
- * (`classifyTruncation`), and the two want opposite things:
+ * same request unchanged is pointless: the same prompt under the same
+ * cap hits the same wall. Every retry carries a `### notice` saying the
+ * reply was cut, so even a same-cap retry is a different request. What
+ * else changes depends on the wall (`classifyTruncation`) and on the
+ * model mode, `local` or `cloud` (decided 22.10, ATO-789):
  *
- *  - `reply_cap`: the model spent the whole `max_tokens` — typically a
- *    reasoning model thinking past the cap before it emits the tool
- *    call. The retry raises the cap for this one step.
- *  - `context_window`: the reply stopped short of the cap because the
- *    server ran out of context. Raising the cap cannot help; the retry
- *    reports the window the server just demonstrated so the next prompt
- *    is packed to fit, and runs under the same cap.
- *  - `output_limit`: the provider clamps this model's output below our
- *    cap. A bigger cap is refused or clamped again, a smaller prompt
- *    changes nothing — no retry; the message names the limit.
- *  - `provider_limit`: the request carried no cap and the provider
- *    stopped at its own limit. The retry sends one — the fallback cap
- *    raised like a spent cap — which bounds the attempt and, with the
- *    notice, asks for a shorter reply. Seen live: a no-cap cut at 33,678
- *    tokens retried under 32,768 and succeeded in 12 s.
- *  - `unknown`: no usage came back. Treated as the cap — one wasted
- *    generation if it was the window, and the second cut ends the turn
- *    with a message that says so.
+ *  - `context_window`: the server ran out of context. The retry reports
+ *    the window the server just demonstrated so the next prompt is
+ *    packed to fit, under the same cap. Once per step, either mode.
+ *  - `output_limit` (and `provider_limit` on cloud): the provider cut
+ *    the reply at its own limit. The retry runs capped at what it
+ *    delivered (`same_cap`), and the notice asks for less.
+ *  - `reply_cap` / `unknown` on cloud: the cap is the provider's, often
+ *    already its maximum, so it stays (`same_cap`) and the notice says
+ *    think less, write a large file in parts. Up to
+ *    `TRUNCATION_RETRY_STEP_BUDGET` retries per step.
+ *  - `reply_cap` / `unknown` / `provider_limit` on local: one retry per
+ *    step. The cap goes up `TRUNCATION_RETRY_CAP_MULTIPLIER`-fold
+ *    (`raise_cap`), unless the cut reply was a loop (`repetitive`): a
+ *    bigger cap on a looping small model is minutes of more loop, so it
+ *    stays. A cap already at the ceiling also stays.
  *
- * One retry per step index. The model also reads a `### notice` saying
- * its reply was cut, so the retry is a different request in prompt as
- * well as in cap.
+ * `TRUNCATION_RETRY_TURN_BUDGET` bounds the retries of back-to-back cut
+ * steps, so a model that is cut on every step still ends the turn; a
+ * step that completes without a cut resets it (`AgentLoop`), so a long
+ * task with a cut here and there is never failed for its total.
  */
 
-/** Multiplier on the cap a truncated reply spent. */
-export const TRUNCATION_RETRY_CAP_MULTIPLIER = 4;
+/** Multiplier on the cap a truncated local reply spent (raised once per step). */
+export const TRUNCATION_RETRY_CAP_MULTIPLIER = 2;
 
 /**
  * Ceiling on the raised cap. 32k covers a long think block plus a whole
  * file write; a reply that needs more is the problem, not the cap.
  */
 export const TRUNCATION_RETRY_CAP_CEILING = 32_768;
+
+/** Retries one step may take on a cloud model; a local step gets one. */
+export const TRUNCATION_RETRY_STEP_BUDGET = 2;
+
+/** Retries back-to-back cut steps may take before the next cut fails the turn. */
+export const TRUNCATION_RETRY_TURN_BUDGET = 6;
 
 /**
  * Headroom kept between a raised cap and a known window, for the drift
@@ -50,6 +56,7 @@ const WINDOW_HEADROOM_TOKENS = 512;
 
 export type TruncationRetry =
   | { kind: "raise_cap"; maxTokens: number }
+  | { kind: "same_cap"; maxTokens: number }
   | { kind: "fit_window"; contextWindow: number };
 
 export interface TruncationRetryPlan {
@@ -60,8 +67,12 @@ export interface TruncationRetryPlan {
 export interface PlanTruncationRetryInput {
   /** The failure the step threw. Anything but a truncated `ModelError` plans nothing. */
   error: unknown;
-  /** The step was already retried once; a second cut ends the turn. */
-  alreadyRetried: boolean;
+  /** Truncation retries this step index already took. */
+  stepAttempts: number;
+  /** Truncation retries taken since the last step that completed without a cut. */
+  turnAttempts: number;
+  /** The model mode serving the step; legacy wiring without one reads as `local`. */
+  modelMode: "local" | "cloud";
   /** The window the runtime believes in, when it knows one. */
   contextWindow: number | null;
   /** The cap the step ran under when the error does not say. */
@@ -77,36 +88,64 @@ export function planTruncationRetry(
   if (!(error instanceof ModelError) || error.reason !== "truncated")
     return null;
   const detail = error.truncation;
-  if (detail === undefined || input.alreadyRetried) return null;
-  if (detail.cause === "output_limit") return null;
+  if (detail === undefined) return null;
+  if (input.turnAttempts >= TRUNCATION_RETRY_TURN_BUDGET) return null;
+  const cloud = input.modelMode === "cloud";
+  const stepBudget = cloud ? TRUNCATION_RETRY_STEP_BUDGET : 1;
+  if (input.stepAttempts >= stepBudget) return null;
   if (detail.cause === "context_window") {
-    if (!input.canFitWindow) return null;
+    if (!input.canFitWindow || input.stepAttempts > 0) return null;
     const contextWindow = detail.promptTokens + detail.completionTokens;
     if (contextWindow <= 0) return null;
     return { detail, retry: { kind: "fit_window", contextWindow } };
   }
   const sent = detail.requestedMaxTokens ?? 0;
   const requested = sent > 0 ? sent : input.fallbackMaxTokens;
+  if (
+    detail.cause === "output_limit" ||
+    (cloud && detail.cause === "provider_limit")
+  ) {
+    // The provider's own limit is what it just delivered.
+    const limit =
+      detail.completionTokens > 0 ? detail.completionTokens : requested;
+    if (limit <= 0) return null;
+    return { detail, retry: { kind: "same_cap", maxTokens: limit } };
+  }
   if (requested <= 0) return null;
-  let raised = Math.min(
-    TRUNCATION_RETRY_CAP_CEILING,
-    requested * TRUNCATION_RETRY_CAP_MULTIPLIER,
-  );
+  if (cloud) {
+    return { detail, retry: { kind: "same_cap", maxTokens: requested } };
+  }
   // A cap the window cannot hold is a 400 waiting to happen on a strict
   // provider, and a silent clamp on llama.cpp. Stay under what is known.
-  if (
+  const room =
     input.contextWindow !== null &&
     input.contextWindow > 0 &&
     detail.promptTokens > 0
-  ) {
-    raised = Math.min(
-      raised,
-      input.contextWindow - detail.promptTokens - WINDOW_HEADROOM_TOKENS,
-    );
+      ? input.contextWindow - detail.promptTokens - WINDOW_HEADROOM_TOKENS
+      : Number.POSITIVE_INFINITY;
+  const raised = Math.min(
+    TRUNCATION_RETRY_CAP_CEILING,
+    requested * TRUNCATION_RETRY_CAP_MULTIPLIER,
+    room,
+  );
+  if (detail.repetitive !== true && raised > requested) {
+    return { detail, retry: { kind: "raise_cap", maxTokens: raised } };
   }
-  if (raised <= requested) return null;
-  return { detail, retry: { kind: "raise_cap", maxTokens: raised } };
+  const kept = Math.min(requested, room);
+  if (kept <= 0) return null;
+  return { detail, retry: { kind: "same_cap", maxTokens: kept } };
 }
+
+/** The cap a retry sends, when it changes the cap at all. */
+export function truncationRetryMaxTokens(
+  retry: TruncationRetry,
+): number | undefined {
+  return retry.kind === "fit_window" ? undefined : retry.maxTokens;
+}
+
+/** Asked of every cap-bound retry: the way out of a long reply. */
+const WRITE_IN_PARTS =
+  'If you are writing a large file, write it in parts: create it with the first part, then add the rest with os.fs.write mode "append" in the next steps.';
 
 /**
  * The `### notice` the retried step carries. Imperative and short: the
@@ -124,7 +163,17 @@ export function formatTruncationNotice(
   if (retry.kind === "raise_cap") {
     return (
       `${cut} The reply limit is ${retry.maxTokens} tokens for this attempt. ` +
-      "Keep your reasoning brief and emit the tool call now; if the output is long, split it across several steps."
+      `Keep your reasoning brief and emit the tool call now. ${WRITE_IN_PARTS}`
+    );
+  }
+  if (retry.kind === "same_cap") {
+    const loop =
+      detail.repetitive === true
+        ? " It was repeating the same text over and over; do not repeat it."
+        : "";
+    return (
+      `${cut}${loop} The reply limit stays at ${retry.maxTokens} tokens. ` +
+      `Think less: keep your reasoning brief and emit the tool call now. ${WRITE_IN_PARTS}`
     );
   }
   return (

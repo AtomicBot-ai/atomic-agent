@@ -7,14 +7,14 @@ import { createCompactionDefaults, parseCompactionConfig, type CompactionConfig 
 import { createEmptySessionState, recordTurn, type SessionState } from "../session/session-state.js";
 import { assistantReplyTurn, assistantToolCallTurn, toolResultTurn, userTurn, steeredUserTurn } from "../session/conversation-turn.js";
 import { normalizeSessionState } from "../session/normalize-session-state.js";
-import { compactionBoundaryHash, projectSessionConversation, safeCompactionCuts, validSessionCompaction } from "../session/session-compaction.js";
+import { compactionBoundaryHash, finishedTurnCompactionCuts, projectSessionConversation, safeCompactionCuts, validSessionCompaction } from "../session/session-compaction.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { NO_PREFIX_REUSE_TARGET_RATIO, planCompaction } from "../prompt/plan-compaction.js";
+import { decideCompaction, NO_PREFIX_REUSE_TARGET_RATIO, planCompaction } from "../prompt/plan-compaction.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { buildNativeMessages } from "../llm/provider/openai/openai-native-messages.js";
-import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
+import { createContextCompaction, logCompactionOutcome, SKIP_MESSAGES } from "./context-compaction.js";
 import { TurnController } from "./turn-controller.js";
 import type { CompactionEvent } from "../agent/compaction-control.js";
 import { estimateTokens } from "../prompt/token-budget.js";
@@ -130,6 +130,72 @@ describe("compaction configuration and projection", () => {
     expect(await f.compactSession(state.id)).toMatchObject({ status: "compacted" });
     expect(f.stored().compaction!.tokensAfter).toBeLessThanOrEqual(none.targetTokens);
     expect(f.stored().compaction!.coveredThrough).toBe(none.through);
+  });
+});
+
+describe("compaction cut and skip decisions", () => {
+  const LONG_SUMMARY = "Completed reads of the recorded files. ".repeat(20).trim();
+  /** Several finished turns with long requests and short answers. */
+  function chat(turns = 12) {
+    let state = createEmptySessionState({ id: "chat", workingDir: dir });
+    for (let i = 0; i < turns; i++) {
+      state = recordTurn(state, userTurn(`request ${i}: ${"please check this detail ".repeat(60)}`));
+      state = recordTurn(state, assistantReplyTurn(`checked ${i}`));
+    }
+    return state;
+  }
+  function compacted(state: SessionState, through: number, summary = LONG_SUMMARY): SessionState {
+    return { ...state, compaction: { version: 1, summary, coveredThrough: through, boundaryHash: compactionBoundaryHash(state.turns[through - 1]!),
+      createdAt: 1, reason: "manual", model: "m", tokensBefore: 1000, tokensAfter: 300 } };
+  }
+
+  it("cuts after the answer, not between a request and its answer", () => {
+    const state = chat();
+    const plan = planCompaction(state, buildPrompt(input(state)), createCompactionDefaults(), "manual")!;
+    expect(plan).not.toBeNull();
+    expect(state.turns[plan.through - 1]!.kind).toBe("assistant_reply");
+    expect(state.turns[plan.through]!.kind).toBe("user");
+    expect(finishedTurnCompactionCuts(state.turns)).toContain(plan.through);
+  });
+
+  it("still cuts inside one long tool turn when no turn has finished", () => {
+    const state = history();
+    expect(finishedTurnCompactionCuts(state.turns)).toEqual([]);
+    const plan = planCompaction(state, buildPrompt(input(state)), { ...createCompactionDefaults(), summaryMaxTokens: 250 }, "manual")!;
+    expect(safeCompactionCuts(state.turns)).toContain(plan.through);
+  });
+
+  it("skips a window too small for a useful summary without calling the model", async () => {
+    const state = history();
+    const prompt = buildPrompt(input(state));
+    const small = { ...prompt, compactionBudget: { ...prompt.compactionBudget!, cap: 500 } };
+    expect(decideCompaction(state, small, createCompactionDefaults(), "manual")).toEqual({ plan: null, skip: "window_too_small" });
+    expect(decideCompaction(state, prompt, createCompactionDefaults(), "manual").plan).not.toBeNull();
+    // Automatic and overflow compaction keep their extractive fallback on a small window.
+    expect(decideCompaction(state, small, createCompactionDefaults(), "overflow").skip).not.toBe("window_too_small");
+    expect(decideCompaction(state, small, createCompactionDefaults()).skip).not.toBe("window_too_small");
+    const f = fixture(state, (session) => ({ ...input(session), conversationMaxTokens: 500 }));
+    expect(await f.compactSession(state.id)).toEqual({ status: "noop", reason: "manual", message: SKIP_MESSAGES.window_too_small });
+    expect(f.complete).not.toHaveBeenCalled();
+    expect(f.persist).not.toHaveBeenCalled();
+  });
+
+  it("answers a repeated manual compaction with nothing to compact, without a model call", async () => {
+    let state = recordTurn(createEmptySessionState({ id: "chat", workingDir: dir }), userTurn("ORIGINAL: keep the green button"));
+    for (let i = 0; i < 10; i++) {
+      state = recordTurn(state, assistantToolCallTurn({ tool: "os.fs.read", args: { path: `/f-${i}` } }));
+      state = recordTurn(state, toolResultTurn({ tool: "os.fs.read", status: "ok", summary: `result ${i}` }));
+    }
+    const repeated = compacted(state, state.turns.length - 4);
+    const config = { ...createCompactionDefaults(), summaryMaxTokens: 250 };
+    expect(decideCompaction(repeated, buildPrompt(input(repeated)), config, "manual")).toEqual({ plan: null, skip: "already_compact" });
+    const f = fixture(repeated);
+    expect(await f.compactSession(repeated.id)).toEqual({ status: "noop", reason: "manual", message: SKIP_MESSAGES.already_compact });
+    expect(f.complete).not.toHaveBeenCalled();
+    // Plenty of new history after the same checkpoint is still compacted.
+    let grown = compacted(history(), 3);
+    for (const turn of history().turns.slice(1)) grown = recordTurn(grown, turn);
+    expect(decideCompaction(grown, buildPrompt(input(grown)), config, "manual").plan).not.toBeNull();
   });
 });
 

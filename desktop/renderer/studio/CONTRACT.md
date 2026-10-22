@@ -36,7 +36,8 @@ Every call resolves (never rejects) to
 | `CORE_START_FAILED`, `CORE_UNREACHABLE`, `CORE_TIMEOUT`, `CORE_BUSY`, `CORE_MISMATCH`, `CORE_INVALID`, `CORE_LOCK_STALE` | Atomic Core could not be used; offer Retry |
 | `JOB_BUSY` | 4 cloud jobs already running (Core `MAX_REMOTE_JOBS`), or a local one |
 | `GPU_BUSY`, `MODEL_NOT_LOADED`, `OUT_OF_MEMORY`, `DISK_FULL`, `QUEUE_FULL` | Core's diffusion codes (`src/contracts/errors.ts`) |
-| `REMOTE_AUTH_FAILED`, `REMOTE_QUOTA`, `REMOTE_RATE_LIMITED`, `REMOTE_CONTENT_BLOCKED`, `REMOTE_REJECTED`, `REMOTE_UNSUPPORTED`, `REMOTE_UNAVAILABLE`, `REMOTE_TIMEOUT`, `REMOTE_NOT_CONFIGURED`, `UNSUPPORTED_WORKFLOW` | provider refusals, already worded |
+| `REMOTE_RATE_LIMITED` | OpenRouter's upstream for the model answered 429 (a job that failed after it started may carry only Core's words, "openrouter is rate-limiting requests"; those words count only on a code that does not already name the failure, and never on a local job): the Images card names the model, says OpenRouter does not charge for a request it turned away, and offers Retry and another cloud model that runs the mode, GPT Image first (ATO-830) |
+| `REMOTE_AUTH_FAILED`, `REMOTE_QUOTA`, `REMOTE_CONTENT_BLOCKED`, `REMOTE_REJECTED`, `REMOTE_UNSUPPORTED`, `REMOTE_UNAVAILABLE`, `REMOTE_TIMEOUT`, `REMOTE_NOT_CONFIGURED`, `UNSUPPORTED_WORKFLOW` | provider refusals, already worded |
 | `JOB_NOT_FOUND` | Core lost the job (restart); only on `onJob` |
 | `DISK_SPACE` | `localDownload` refused before any byte moved; message is ATO-507's "Needs 19.7 GB, 12.1 GB free on this disk." |
 | `UNKNOWN_MODEL` | a local id that is not in the catalog |
@@ -85,6 +86,11 @@ Every call resolves (never rejects) to
 | `onGpuShare(cb)` | subscribe; returns unsubscribe. `cb(state: GpuShareState)` on every change |
 
 `gallery`, `pin`, `galleryDelete` ids: image `<jobId>-<NN>`, video the job id.
+Core's listing has no pinned filter (`?offset&limit&includeArchived` only), so
+the Images page's Pinned tab reads the pages it has not loaded yet with
+`gallery` (200 a page, at most 10 pages) and keeps the pinned items it finds
+beside the loaded ones; past the cap it says older pinned images may be
+missing.
 
 ### Paths
 
@@ -253,9 +259,11 @@ Downloads (`localDownload`):
   part files; the next Download resumes them (HTTP Range).
 - Side files shared by several models are fetched once and kept while any
   installed model needs them.
-- Gated repos (`gated: true`) need `HF_TOKEN` in the app's own environment
-  (not the agent's `.env`); without it the download fails with code `GATED` in
-  `LocalDownload.error`.
+- Gated repos (`gated: true`) need `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`),
+  read as the agent reads it: the app's environment, else the agent's
+  `<stateDir>/.env` (`main/hf-token.ts`, ATO-813). Without it the download
+  fails with code `GATED` in `LocalDownload.error`. The token only goes into
+  the request's Authorization header; it is never logged.
 
 ```ts
 interface LocalDownload {
@@ -453,6 +461,12 @@ then `setPoster`. The tile then shows the poster through `preview`. Any failure
 (no decoder, a tainted canvas, Core refuses) is silent: the tile keeps its play
 icon. A clip that just finished gets one the same way.
 
+A clip opened "From chat" (`STUDIO.openFile`, not a gallery item) has no
+gallery id, so Core cannot keep a poster for it. The page draws the same frame
+as a PNG data URL and keeps it in memory for the session (the last 24 such
+clips), set as the player's `poster`; nothing is sent to Core or written to
+disk. Same once-per-session rule and the same silent failure.
+
 ## Price
 
 ```ts
@@ -481,6 +495,5 @@ Not bridge calls; the pages use them instead of reaching into renderer.js.
 
 ## Not in this foundation
 
-- Video posters for clips from a chat (they are not gallery items).
 - Stopping an engine install, or a load, half-way.
 - Local image-to-video (Core refuses it).

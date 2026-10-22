@@ -2906,14 +2906,6 @@
       "path": "src/agent/step-executor.test.ts",
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
-      "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 229,
-      "count": 1
-    },
-    {
-      "path": "src/agent/step-executor.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if ( ev.type === \"tool_call_parsed\" || ev.type === \"tool_call_executed\" ) { events.push({ type: ev.type, batchIndex: ev.batchIndex, batchSize: ev.batchSize, }); } }, }",
       "line": 1331,
       "count": 1
@@ -6128,22 +6120,6 @@
     },
     {
       "path": "src/tui/telegram/tui-telegram-orchestrator.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to parameter of type 'TuiEventBus & { emit(action: unknown): void; }'.   Type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to type 'TuiEventBus'.     Types of property 'subscribe' are incompatible.       Type '(l: (action: unknown) => void) => () => void' is not assignable to type '(listener: (action: TuiAction) => void) => () => void'.         Types of parameters 'l' and 'listener' are incompatible.           Types of parameters 'action' and 'action' are incompatible.             Type 'unknown' is not assignable to type 'TuiAction'.",
-      "anchor": "bus",
-      "line": 92,
-      "count": 24
-    },
-    {
-      "path": "src/tui/telegram/tui-telegram-orchestrator.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to parameter of type 'TuiEventBus & { emit(action: unknown): void; }'.   Type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to type 'TuiEventBus'.     Types of property 'subscribe' are incompatible.       Type '(l: (action: unknown) => void) => () => void' is not assignable to type '(listener: (action: TuiAction) => void) => () => void'.         Types of parameters 'l' and 'listener' are incompatible.           Types of parameters 'action' and 'action' are incompatible.             Type 'unknown' is not assignable to type 'TuiAction'.",
-      "anchor": "makeBus()",
-      "line": 130,
-      "count": 2
-    },
-    {
-      "path": "src/tui/telegram/tui-telegram-orchestrator.test.ts",
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveClaim",
@@ -6189,14 +6165,6 @@
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), onUninstallConfirmed, }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
       "line": 75,
       "count": 1
-    },
-    {
-      "path": "src/tui/uninstall/uninstall-keys.test.ts",
-      "code": 2561,
-      "message": "Object literal may only specify known properties, but 'typed' does not exist in type '{ type: string; }'. Did you mean to write 'type'?",
-      "anchor": "typed",
-      "line": 145,
-      "count": 3
     },
     {
       "path": "src/uninstall/windows-user-path.test.ts",

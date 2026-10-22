@@ -2,8 +2,15 @@ import { createInterface } from "node:readline/promises";
 
 import { getConfig } from "../config/index.js";
 import {
+  DESKTOP_DATA_QUESTION,
+  DESKTOP_SHARED_WARNING,
+  desktopDataKeptNotice,
+  desktopWarningApplies,
   formatBytes,
+  keepDesktopData,
+  legacyDesktopDirNotice,
   pathEntryToRemove,
+  plansToDeleteDesktopData,
   resolveUninstallPlan,
   runUninstall,
   type ResolvedUninstallPlan,
@@ -39,6 +46,13 @@ const HELP =
     "to your shell rc file (on Windows, the install dir install.ps1 added to your",
     "user PATH).",
     "",
+    "The Atomic Agent desktop app (0.0.3 and later) uses the same state directory,",
+    "so deleting it deletes the desktop's chats, memory, settings, API keys and",
+    "models too. When the desktop app is found, an interactive run asks about that",
+    "separately, after the typed confirmation; answering no keeps the folder and",
+    "removes only the terminal program. A --yes run keeps the folder and says why,",
+    "unless --include-desktop-data is also passed.",
+    "",
     "This cannot be undone. There is no backup. Nothing is uploaded anywhere, and",
     "nothing is kept — after this the only trace of atomic-agent on the machine is",
     "whatever you copied out yourself.",
@@ -51,6 +65,9 @@ const HELP =
     "  --keep-data          Keep the state directory; remove only the program",
     "  --keep-binary        Keep the binary; remove only the data",
     "  --keep-path          Leave the installer's PATH entry (rc file / user PATH)",
+    "  --include-desktop-data",
+    "                       Also delete the state directory when the desktop app",
+    "                       uses it, without the separate question (for scripts)",
     "  -y, --yes            Skip the typed confirmation (for scripts)",
     "  -h, --help           Show this help",
     "",
@@ -70,6 +87,7 @@ interface UninstallFlags {
   keepData: boolean;
   keepBinary: boolean;
   keepPath: boolean;
+  includeDesktopData: boolean;
   yes: boolean;
   help: boolean;
 }
@@ -82,6 +100,7 @@ function parseArgs(
     keepData: false,
     keepBinary: false,
     keepPath: false,
+    includeDesktopData: false,
     yes: false,
     help: false,
   };
@@ -103,6 +122,9 @@ function parseArgs(
       case "--keep-path":
         flags.keepPath = true;
         break;
+      case "--include-desktop-data":
+        flags.includeDesktopData = true;
+        break;
       case "-y":
       case "--yes":
         flags.yes = true;
@@ -115,6 +137,12 @@ function parseArgs(
     return {
       ok: false,
       error: "--keep-data and --keep-binary together would remove nothing",
+    };
+  }
+  if (flags.keepData && flags.includeDesktopData) {
+    return {
+      ok: false,
+      error: "--keep-data and --include-desktop-data contradict each other",
     };
   }
   return { ok: true, flags };
@@ -178,9 +206,27 @@ export async function uninstallCommand(
     return 1;
   }
 
-  write(renderPlan(plan, flags));
+  // An unattended run cannot answer the desktop question, so it takes
+  // the answer that loses nothing: keep the shared folder, remove only
+  // the terminal program, and say why. The plan is cut before it is
+  // printed so the list shown is the list removed.
+  let keptForDesktop = false;
+  if (
+    flags.yes &&
+    !flags.includeDesktopData &&
+    plansToDeleteDesktopData(plan)
+  ) {
+    keptForDesktop = true;
+    plan = keepDesktopData(plan);
+  }
+  write(renderPlan(plan, flags, keptForDesktop));
+  if (keptForDesktop) write(`${keptDesktopDataLine(plan)}\n`);
 
   if (plan.measured.targets.length === 0) {
+    if (keptForDesktop) {
+      write("nothing was removed\n");
+      return 0;
+    }
     write("nothing to remove — atomic-agent is not installed here\n");
     return 0;
   }
@@ -200,6 +246,20 @@ export async function uninstallCommand(
     if (answer.trim().toLowerCase() !== CONFIRM_WORD) {
       write("cancelled — nothing was removed\n");
       return 0;
+    }
+    // A second, separate question: the typed word agreed to removing
+    // atomic-agent, not to wiping a folder another app still runs on.
+    // Anything but an explicit yes keeps it.
+    if (!flags.includeDesktopData && plansToDeleteDesktopData(plan)) {
+      const desktopAnswer = await ask(`${DESKTOP_DATA_QUESTION} [y/N] `);
+      if (!/^y(es)?$/i.test(desktopAnswer.trim())) {
+        write(`${keptDesktopDataLine(plan)}\n`);
+        plan = keepDesktopData(plan);
+        if (plan.targets.length === 0) {
+          write("nothing was removed\n");
+          return 0;
+        }
+      }
     }
   }
 
@@ -237,6 +297,7 @@ export async function uninstallCommand(
 function renderPlan(
   plan: ResolvedUninstallPlan,
   flags: UninstallFlags,
+  keptForDesktop: boolean,
 ): string {
   const lines: string[] = ["", "atomic-agent uninstall will remove:", ""];
   for (const target of plan.measured.targets) {
@@ -244,9 +305,20 @@ function renderPlan(
       `  ${target.path}  (${formatBytes(target.bytes)})`,
       `      ${target.label}`,
     );
+    // Under --keep-data the state dir is not in the plan, so this never
+    // fires there: nothing of the desktop's would be deleted.
+    if (desktopWarningApplies(plan.desktop, target.path)) {
+      lines.push(`      ${DESKTOP_SHARED_WARNING}`);
+      if (!flags.yes && !flags.includeDesktopData) {
+        lines.push("      You will be asked separately before this folder is deleted.");
+      }
+    }
   }
   if (plan.measured.targets.length > 0) {
     lines.push("", `  total: ${formatBytes(plan.measured.totalBytes)}`);
+  }
+  if (plan.desktop.legacyDir) {
+    lines.push("", `  ${legacyDesktopDirNotice(plan.desktop.legacyDir)}`);
   }
   if (plan.devCheckout) {
     lines.push(
@@ -263,7 +335,7 @@ function renderPlan(
         : "the PATH line install.sh added to your shell rc file will also be removed.",
     );
   }
-  if (!flags.keepData) {
+  if (!flags.keepData && !keptForDesktop) {
     lines.push(
       "",
       "THIS CANNOT BE UNDONE. There is no backup and no undo: your memory fabric,",
@@ -272,6 +344,11 @@ function renderPlan(
   }
   lines.push("");
   return `${lines.join("\n")}\n`;
+}
+
+/** Why the state directory stays, plus the flag that overrides it. */
+function keptDesktopDataLine(plan: ResolvedUninstallPlan): string {
+  return `${desktopDataKeptNotice(plan.desktop.stateDir)} Pass --include-desktop-data to delete it as well.`;
 }
 
 function message(err: unknown): string {

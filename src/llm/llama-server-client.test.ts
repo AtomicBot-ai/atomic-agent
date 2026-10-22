@@ -11,6 +11,7 @@ import {
 } from "./llama-server-client.js";
 import type { CompletionResult } from "./llama-server-client.js";
 import { resetConfigCache } from "../config/config-cache.js";
+import { scrubError } from "../error-reporting/error-scrubber.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -573,6 +574,41 @@ describe("LlamaServerClient.complete", () => {
       message:
         "llama-server returned http 400: the request exceeds the available context size, try increasing it",
     });
+  });
+
+  it("keeps the body's reason code for error reporting, never the server's message (ATO-736)", async () => {
+    const reply = (type: string) =>
+      new LlamaServerClient({
+        baseUrl: "http://127.0.0.1:9999",
+        fetchImpl: createMockFetch(
+          async () =>
+            new Response(
+              JSON.stringify({ error: { code: 400, type, message: "request (5369 tokens) exceeds the context, user text here" } }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            ),
+        ),
+        completionRetries: 1,
+      });
+    const err = await reply("exceed_context_size_error").complete({ prompt: "hi" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect((err as LlamaServerError).body).toEqual({ type: "exceed_context_size_error" });
+    const event = scrubError(err as Error, { source: "test" });
+    expect(event.upstreamErrorType).toBe("exceed_context_size_error");
+    expect(JSON.stringify(event)).not.toContain("user text here");
+
+    // A sentence in `type` fails the reporter's strict pattern and is dropped.
+    const sentence = await reply("The user asked about their medical records").complete({ prompt: "hi" }).catch((e: unknown) => e);
+    expect(scrubError(sentence as Error, { source: "test" }).upstreamErrorType).toBeUndefined();
+  });
+
+  it("leaves body unset for a plain-text error answer", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => new Response("bad grammar", { status: 400 })),
+      completionRetries: 1,
+    });
+    const err = await client.complete({ prompt: "hi" }).catch((e: unknown) => e);
+    expect((err as LlamaServerError).body).toBeUndefined();
   });
 
   it("exhausts the retry budget and throws when all attempts fail", async () => {
@@ -2344,5 +2380,85 @@ describe("LlamaServerClient auth header (#582)", () => {
     const auth: Array<string | null> = [];
     await clientCapturing(auth, "fixed-key").complete({ prompt: "p" });
     expect(auth).toEqual(["Bearer fixed-key"]);
+  });
+});
+
+describe("LlamaServerClient on a 401 re-reads the key once (ATO-837)", () => {
+  function clientAccepting(
+    goodKey: string,
+    auth: Array<string | null>,
+    refreshApiKey: (url: string) => Promise<string | null>,
+  ): LlamaServerClient {
+    return new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      apiKey: "stale-key",
+      completionRetries: 1,
+      progressWatch: false,
+      refreshApiKey,
+      fetchImpl: createMockFetch(async (_url, init) => {
+        const headers = (init.headers ?? {}) as Record<string, string>;
+        const header = headers.authorization ?? null;
+        auth.push(header);
+        if (header !== `Bearer ${goodKey}`) {
+          return new Response(JSON.stringify({ error: { code: 401, message: "Invalid API Key" } }), { status: 401 });
+        }
+        if (headers.accept === "text/event-stream") {
+          return new Response('data: {"content":"x","stop":true}\n\n', {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return new Response(JSON.stringify({ content: "x", stop: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    });
+  }
+
+  it("replays the completion with the key Core reports now", async () => {
+    const auth: Array<string | null> = [];
+    const asked: string[] = [];
+    const client = clientAccepting("fresh-key", auth, async (url) => { asked.push(url); return "fresh-key"; });
+    await expect(client.complete({ prompt: "p" })).resolves.toMatchObject({ content: "x" });
+    expect(auth).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+    expect(asked).toEqual(["http://127.0.0.1:9999/completion"]);
+  });
+
+  it("does the same for the stream's opening request", async () => {
+    const auth: Array<string | null> = [];
+    const client = clientAccepting("fresh-key", auth, async () => "fresh-key");
+    const stream = client.completeStream({ prompt: "p" });
+    let final: CompletionResult | null = null;
+    for (;;) {
+      const next = await stream.next();
+      if (next.done) { final = next.value; break; }
+    }
+    expect(final?.content).toBe("x");
+    expect(auth).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+  });
+
+  it("asks once and says what to do when the key is still refused", async () => {
+    const auth: Array<string | null> = [];
+    let asks = 0;
+    const client = clientAccepting("never", auth, async () => { asks += 1; return "fresh-key"; });
+    const err = await client.complete({ prompt: "p" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect((err as LlamaServerError).status).toBe(401);
+    expect((err as LlamaServerError).message).toContain("refused the agent's key");
+    expect((err as LlamaServerError).message).toContain("atomic-agent models start");
+    expect(asks).toBe(1);
+    expect(auth).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+  });
+
+  it("does not replay when there is no other key", async () => {
+    const auth: Array<string | null> = [];
+    for (const answer of [null, "stale-key"]) {
+      auth.length = 0;
+      const client = clientAccepting("fresh-key", auth, async () => answer);
+      const err = await client.complete({ prompt: "p" }).catch((e: unknown) => e);
+      expect((err as LlamaServerError).status).toBe(401);
+      expect(auth).toEqual(["Bearer stale-key"]);
+    }
   });
 });

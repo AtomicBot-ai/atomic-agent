@@ -138,4 +138,70 @@ describe("uninstall reducer", () => {
     expect(state.uninstall?.step).toBe("failed");
     expect(state.uninstall?.errors).toEqual(["EACCES"]);
   });
+
+  describe("desktop question", () => {
+    const SHARED_PREVIEW: UninstallPreview = {
+      ...PREVIEW,
+      desktopSharedDir: "/Users/op/.atomic-agent",
+    };
+    const typedOut = (preview: UninstallPreview): TuiState =>
+      run(
+        base(),
+        { type: "uninstall_opened" },
+        { type: "uninstall_plan_loaded", preview },
+        { type: "uninstall_review_accepted" },
+        { type: "uninstall_typed_set", typed: "uninstall" },
+      );
+
+    it("will not skip the desktop question when the desktop shares the folder", () => {
+      const state = run(typedOut(SHARED_PREVIEW), { type: "uninstall_started" });
+      expect(state.uninstall?.step).toBe("confirm");
+    });
+
+    it("asks it after the word, with the cursor on keep", () => {
+      const state = run(typedOut(SHARED_PREVIEW), {
+        type: "uninstall_desktop_asked",
+      });
+      expect(state.uninstall?.step).toBe("desktop");
+      expect(state.uninstall?.desktopCursor).toBe("keep");
+    });
+
+    it("does not ask it before the word is typed out", () => {
+      const state = run(
+        base(),
+        { type: "uninstall_opened" },
+        { type: "uninstall_plan_loaded", preview: SHARED_PREVIEW },
+        { type: "uninstall_review_accepted" },
+        { type: "uninstall_typed_set", typed: "uninst" },
+        { type: "uninstall_desktop_asked" },
+      );
+      expect(state.uninstall?.step).toBe("confirm");
+    });
+
+    it("does not ask it when the desktop app is not found", () => {
+      const state = run(typedOut(PREVIEW), { type: "uninstall_desktop_asked" });
+      expect(state.uninstall?.step).toBe("confirm");
+    });
+
+    it("starts from the desktop step whichever way it was answered", () => {
+      for (const cursor of ["keep", "delete"] as const) {
+        const state = run(
+          typedOut(SHARED_PREVIEW),
+          { type: "uninstall_desktop_asked" },
+          { type: "uninstall_desktop_cursor_set", cursor },
+          { type: "uninstall_started" },
+        );
+        expect(state.uninstall?.step).toBe("closing");
+        expect(state.uninstall?.desktopCursor).toBe(cursor);
+      }
+    });
+
+    it("ignores the desktop cursor outside the desktop step", () => {
+      const state = run(typedOut(SHARED_PREVIEW), {
+        type: "uninstall_desktop_cursor_set",
+        cursor: "delete",
+      });
+      expect(state.uninstall?.desktopCursor).toBe("keep");
+    });
+  });
 });

@@ -76,6 +76,8 @@ export function buildEnvelope(
   if (ev.upstreamErrorType) {
     tags.upstream_error_type = ev.upstreamErrorType;
   }
+  // Context tags never re-group issues: they stay out of the fingerprint.
+  if (ev.llmFailureTags) Object.assign(tags, ev.llmFailureTags);
 
   // `frames[0]` is the innermost frame (V8 lists the throw site first),
   // i.e. where the failure actually originated. `.at(-1)` would instead

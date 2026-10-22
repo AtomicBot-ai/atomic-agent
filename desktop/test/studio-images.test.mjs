@@ -50,6 +50,33 @@ test('a mode no model in the catalog runs says the chosen model cannot do it', (
   assert.equal(edit.why, 'Z-Image Turbo cannot do this');
 });
 
+test('the hint line also names the modes the chosen model cannot do (ATO-832)', () => {
+  const cat = catalog([cloudModel({name: 'Nano Banana 2.1'})], [localModel({modes: ['create', 'transform']})]);
+  const m = model(cat, 'google/nano-banana');
+  const tabs = L.simgModeTabs(m, cat);
+  assert.equal(L.simgModeNote(tabs, m), 'Transform needs a model on this Mac. Nano Banana 2.1 cannot inpaint, extend or upscale.');
+  assert.equal(L.simgModeNote(L.simgModeTabs(model(catalog(), 'google/nano-banana'), catalog()), m), 'Transform, Inpaint, Extend and Upscale need a model on this Mac.');
+});
+
+test('a click on a greyed mode gets its own reason, and a link only when another model can (ATO-832)', () => {
+  const cat = catalog([cloudModel({name: 'Nano Banana 2.1'})], [localModel({modes: ['create', 'transform']})]);
+  const m = model(cat, 'google/nano-banana');
+  const by = Object.fromEntries(L.simgModeTabs(m, cat).map((t) => [t.id, t]));
+  assert.equal(L.simgModeWhy(by.inpaint, m), 'Nano Banana 2.1 cannot inpaint.');
+  assert.equal(L.simgModeWhy(by.transform, m), 'Transform needs a model on this Mac.');
+  assert.equal(L.simgModeWhy(by.create, m), '');
+  assert.equal(L.simgOtherCan(cat, m, ['inpaint']), false);
+  assert.equal(L.simgOtherCan(cat, m, ['transform']), true);
+  assert.equal(L.simgOtherCan(catalog(), m, ['inpaint']), true);
+});
+
+test('a greyed mode chip still acts (to show why) and says so in the hint line (ATO-832)', () => {
+  const view = readFileSync(new URL('../renderer/studio/images-view.js', import.meta.url), 'utf8');
+  assert.match(view, /'modewhy:'/);
+  const js = readFileSync(new URL('../renderer/studio/images.js', import.meta.url), 'utf8');
+  assert.match(js, /case 'modewhy': IM\.modeWhy = a;/);
+});
+
 test('with no model only Create is open', () => {
   const tabs = L.simgModeTabs(null, null);
   assert.deepEqual(tabs.filter((t) => t.ok).map((t) => t.id), ['create']);
@@ -194,8 +221,75 @@ test('non-commercial and 18+ models are labelled, never dropped', () => {
   assert.equal(L.simgModels(cat).length, 2);
 });
 
+test('the model row names the maker as the maker writes it (ATO-831)', () => {
+  assert.equal(L.simgModelMeta(cloudModel({id: 'openai/gpt-image-1', group: 'cloud'})), 'OpenAI · via OpenRouter');
+  assert.equal(L.simgModelMeta(cloudModel({id: 'black-forest-labs/flux-1.1-pro', group: 'cloud'})), 'Black Forest Labs · via OpenRouter');
+  assert.equal(L.simgMaker('bytedance'), 'ByteDance');
+  assert.equal(L.simgMaker('google'), 'Google');
+  assert.equal(L.simgMaker('some-new-lab'), 'Some New Lab');
+});
+
+test('each shape tile is drawn from its ratio; "auto" gets no box (ATO-831)', () => {
+  const key = (r) => L.simgRatioBox(r).join('x');
+  for (const [a, b] of [['1:4', '1:8'], ['2:3', '3:4'], ['3:2', '5:4'], ['16:9', '21:9']]) assert.notEqual(key(a), key(b), a + ' vs ' + b);
+  assert.deepEqual(L.simgRatioBox('1:1'), [22, 22]);
+  assert.equal(Math.max(...L.simgRatioBox('9:16')), 22);
+  assert.equal(L.simgRatioBox('auto'), null);
+});
+
+test('the hint line link is styled as a link inside the Studio page (ATO-831)', () => {
+  const css = readFileSync(new URL('../renderer/css/studio.css', import.meta.url), 'utf8');
+  assert.match(css, /\.studio \.st-link\{color:var\(--accent\)/);
+});
+
 test('gallery ids group by job', () => {
   assert.equal(simgJobOf('abc-def-01'), 'abc-def');
+});
+
+/* ---------- Pinned tab (Core lists by page only) ---------- */
+
+const galleryOf = (n, pinnedAt) => Array.from({length: n}, (_, i) => ({id: 'job' + i + '-01', createdAtMs: 10_000 - i, pinned: pinnedAt.includes(i)}));
+const pager = (all, calls) => async (offset, limit) => {
+  calls.push([offset, limit]);
+  const items = all.slice(offset, offset + limit);
+  return {ok: true, data: {items, hasMore: offset + items.length < all.length, total: all.length}};
+};
+
+test('the Pinned tab finds pinned images in pages the window has not loaded', async () => {
+  const all = galleryOf(450, [3, 120, 449]);
+  const calls = [];
+  const r = await L.simgFindPinned(pager(all, calls), 50);
+  assert.deepEqual(r.items.map((x) => x.id), ['job120-01', 'job449-01']);
+  assert.equal(r.complete, true);
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls, [[50, 200], [250, 200]]);
+});
+
+test('reading pinned images stops at the cap and says the list may be partial', async () => {
+  const all = galleryOf(100, [5, 95]);
+  const calls = [];
+  const r = await L.simgFindPinned(pager(all, calls), 0, {pageSize: 10, maxPages: 3});
+  assert.deepEqual(r.items.map((x) => x.id), ['job5-01']);
+  assert.equal(r.complete, false);
+  assert.equal(calls.length, 3);
+});
+
+test('a failed page keeps the pinned images found before it', async () => {
+  const all = galleryOf(30, [2, 25]);
+  let n = 0;
+  const r = await L.simgFindPinned(async (offset, limit) => (n++ ? {ok: false, error: {code: 'CORE', message: 'x'}} : pager(all, [])(offset, limit)), 0, {pageSize: 10});
+  assert.deepEqual(r.items.map((x) => x.id), ['job2-01']);
+  assert.equal(r.ok, false);
+  assert.equal(r.complete, false);
+  const thrown = await L.simgFindPinned(async () => { throw new Error('gone'); }, 0);
+  assert.deepEqual(thrown, {items: [], complete: false, ok: false});
+});
+
+test('the Pinned list joins loaded and found items, newest first, each once, only pinned ones', () => {
+  const loaded = [{id: 'a', createdAtMs: 5, pinned: true}, {id: 'b', createdAtMs: 4, pinned: false}];
+  const more = [{id: 'c', createdAtMs: 1, pinned: true}, {id: 'a', createdAtMs: 5, pinned: true}, {id: 'd', createdAtMs: 3, pinned: false}];
+  assert.deepEqual(L.simgPinnedList(loaded, more).map((x) => x.id), ['a', 'c']);
+  assert.deepEqual(L.simgPinnedList(loaded, undefined).map((x) => x.id), ['a']);
 });
 
 test('index.html loads the Studio shell and pages before renderer.js, and lets video play', () => {

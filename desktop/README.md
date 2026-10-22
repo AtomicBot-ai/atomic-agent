@@ -26,6 +26,13 @@ with `cwd` set to the chosen workspace, waits for `/health`, and speaks HTTP to
 it. The port is ephemeral, the bind is loopback-only, and the bearer token is
 generated per launch, so nothing outside this app can reach the agent.
 
+Choosing another workspace restarts the agent in it, so it never happens
+under a running turn: the window keeps the picker shut while one of its chats
+is answering, and main checks again once the picker closes (a turn may have
+begun meanwhile in another chat, a scheduled task or a Telegram reply,
+`main/workspace-busy.ts`, ATO-733). Then the folder stays as it was and the
+window shows "Not while a turn is running".
+
 | Surface | Route |
 |---|---|
 | Liveness, llama-server reachability | `GET /health` |
@@ -131,10 +138,27 @@ start two task schedulers against the same cron jobs.
   renderer cannot reach the network at all; every byte arrives over IPC.
   `style-src` allows inline styles because the renderer composes HTML strings;
   all interpolated values go through `esc()`.
+- An agent that exits on its own while running is started again
+  (`main/agent-auto-restart.ts`, ATO-767): up to three attempts within five
+  minutes, after 1 s, 5 s and 20 s, each through `AgentClient.start()`, which
+  reaps a previous run's orphan first and never spawns beside a live child.
+  The count is forgotten after ten minutes of normal running. A deliberate
+  stop (quit, folder change, model switch, Restart Agent Runtime) cancels a
+  waiting attempt. A restart that brought it back adds "The agent stopped
+  unexpectedly and was restarted." to the chat; after the third failure the
+  chat offers a Restart agent button. Analytics `agent_restarted` with
+  `trigger: auto`; the next exit report carries `auto_restart_attempt`. Off in
+  a smoke run; `--smoke --smoke-task=767` arms it and kills the agent four times.
 - `will-navigate` is cancelled and window-open requests are handed to the
   system browser.
 - `before-quit` stops the child and waits for it, escalating to `SIGKILL`,
   so quitting never leaves an orphan holding the port.
+- A window whose page crashes (`render-process-gone`, not a clean exit) is
+  reloaded by main (`main/render-recovery.ts`, ATO-765): the agent and its
+  turns live in main, and the reloaded page takes them back itself
+  (`agent:liveTurns`, `agent:replayApprovals`). At most two reloads a minute
+  per window; a third crash in that minute asks instead ("The window keeps
+  crashing": Reload or Quit). Smoke task 765 crashes the page on purpose.
 
 ## What is real and what is not
 
@@ -303,6 +327,14 @@ Real, driven by the running agent:
   restart would abort it). Picking a cloud model applies and closes before
   the write confirms; picking a local model keeps the popup open until the
   daemon has answered.
+  On the local and cloud routes (not Fusion, not the custom server) the model
+  pane is grouped (ATO-730): the current route's group first with its rows as
+  before, then `On this computer` (downloaded local models) and one group per
+  cloud provider with a working key. Each cloud group loads its catalogue when
+  the list opens and shows its own `loading…` or `could not load` line, so one
+  slow or refused provider never holds up the others; the search filters every
+  group. A cloud row is written to its own provider (`row.provider`), never to
+  the active one.
 - the TUI's pre-turn gate for the managed local route: with no local model
   selected, or one that is not on disk, the turn is refused with the TUI's
   text and the message goes back into the editor (`… (message returned to
@@ -437,8 +469,15 @@ Honestly degraded, and labelled as such in the UI:
   desktop caches per connection and falls back to the trace projection.
 - **Session grants.** The HTTP API implements `allow-once` and `deny` only, so
   the card offers exactly those.
-- **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are not in the
-  desktop wizard: their config shape is not one this client writes.
+- **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are in Add
+  provider with the TUI's labels. They have no key screen: the step says the
+  signed-in CLI runs on the user's plan, warns when `ANTHROPIC_API_KEY` /
+  `OPENAI_API_KEY` is set (the CLI may then bill per token), and saves the
+  entry the TUI writes (`kind: "subscription-cli"`, `subscriptionCli.cli`,
+  Claude's default `sonnet`, no model for Codex). Their model list never goes
+  to the network: main answers it from `main/subscription-cli-models.ts`, a
+  copy of the agent's Claude list. Whether the CLI is installed and signed in
+  is not checked here yet.
 - **Settings is the TUI menu.** The bottom-left gear (and ⌘ , and Escape with
   nothing else on screen) opens the menu tree from
   `src/tui/menu/menu-registry.ts` with the Manage tabs on the right — minus the
@@ -572,10 +611,11 @@ Honestly degraded, and labelled as such in the UI:
   files and drops the config entry, so the pane's `d` is the whole undo. The
   first-run wizard's step 2 carries the TUI's own pinned row,
   `Add a model from Hugging Face…`, which opens this same branch in
-  Settings — one implementation, not two. Gated repos: a 401/403 listing adds
-  one line when `HF_TOKEN` is *named* in `<stateDir>/.env` (never its value),
-  because `atag models pull` reads that file and this window does not, so a
-  gated repo can fail to list here and download fine.
+  Settings — one implementation, not two. Gated repos: the listing and the
+  projector download send `HF_TOKEN` (then `HUGGING_FACE_HUB_TOKEN`) the way
+  the agent reads it, from this app's environment or else `<stateDir>/.env`
+  (main/hf-token.ts, ATO-853), so a repo that downloads with `atag models
+  pull` also lists here.
 - **Ollama is a provider here, never a download source.** atomic-agent has
   no Ollama download path of any kind — no registry client, nothing reading
   `~/.ollama`, no converter; the only Ollama code in the agent is two
@@ -1597,6 +1637,19 @@ newly opened selector or overwrite the selected target. Interactive local starts
 use `models start --interactive` to avoid waiting for the optional throughput
 benchmark after health is ready.
 
+### When the local model is not running
+
+A turn on the managed local model that fails because its engine is not
+running (it never started, or it died) says "The local model isn't running."
+with one button, **Start model**, the same start as Settings › Models
+(`cli:modelsStart`). It is known from `code: "local_engine_down"` on the
+turn's failure frame, which arrives after the step's raw `fetch failed` error
+frame and replaces it as the turn's reason, or, with an agent that sends no
+such code, from a refused connection on the local route only. While the app's own supervisor
+(`main/daemon-supervisor.ts`) is bringing the server back, the row says so and
+offers no second start; once the model is up, the row's Try again resends the
+message. Words and rules: [dead-engine.js](renderer/dead-engine.js).
+
 ## Atomic Chat Core, the default local engine
 
 Atomic Chat Core is the default local engine. The agent's config migration writes `localModels.managed.engine: "atomic-core"` for everyone, and a config with no engine named runs Core too; the desktop reads it the same way (`managedEngineOf` in `main/agent-cli.ts`, `composerEngineId` in `renderer/composer-engines.js`). Only an explicit `"llama-server"` is llama.cpp. The engine is not a choice in the normal UI: the Local route draws only the backend and model controls, and a Fusion seat lists one neutral local row, **This computer** ("Local model · runs on this machine"), which keeps whichever engine is configured. llama.cpp is never shown in the app, failure states included: it is a support-only fallback reached with `atomic-agent models engine llama-server`. There is no experimental flag any more.
@@ -1604,6 +1657,10 @@ Atomic Chat Core is the default local engine. The agent's config migration write
 Settings → Models → Advanced → Engine shows the running engine's install and update rows. Its **Engine choice** row appears only on llama.cpp (reachable only through that CLI command), with **Use Atomic Chat engine** as the quiet way back to Core; stop local models before switching. Model files are shared across engines. Core installation and model ownership are delegated to the agent's `models` commands; the desktop uses the same session credentials for native health/context probes and never force-kills Core-owned model processes. On Core, Update now runs the streamed `models update` (Core when it is missing, then the llama.cpp build Core picks) and draws it as a progress bar in the download banner. The first-run setup's runtime phase is the same `models update`, so it installs whichever engine the config names.
 
 **When Core is not ready.** With Core selected, a failed Core download, verification or start leaves no local engine: the agent has no automatic fallback and ends every such failure with `Retry with: atomic-agent models update`. `main/engine-failure.ts` reads that hint (older agents' llama.cpp hints are still accepted), the agent's stage sentences ("The Atomic Chat engine could not be downloaded" / "did not pass verification" / "could not install its inference backend" / "could not start") or a line naming Atomic Core in every start, install and switch answer and turns it into one plain sentence (download, verify, backend, blocked or start). Main keeps it, sends it to the window (`engine:failure`) and clears it on the next success. The window shows a toast once, a strip over the composer while the route needs the local engine, and a card in Settings → Models (and in the setup's runtime row on first run), each titled "The local engine isn't ready" with one action, **Download again** (the engine install, or the setup's own retry). There is no llama.cpp button. The setup's runtime row is labelled **Local engine** whichever engine it installs.
+
+**After a failed launch install.** When the launch installs Core's backend before starting the model and that install fails, nothing is started on top of it. The next engine install that succeeds (the download card's Retry, Settings' install, Download again) starts the model as the launch would have, once, when the route still needs it and the model is still on disk (`startAfterEngineInstall`, via `update`, so the window hears how it went). Every failed engine install, and how a background model start ended, is written to `agent.log` as well as the terminal and the console drawer (`sayDesktop`).
+
+**A model Core could not load, and the CPU build (ATO-374).** With Core as the managed engine, a start whose model did not load (Core's `MODEL_LOAD_FAILED`, or the model server's "failed to load model" / "error loading model") reads as its own sentence, "The model couldn't load on this computer. Try a smaller model, or use a cloud model.", with `reason: load` and `retryable: false`: the engine is fine, so **Download again** is not offered. When the agent moves a start to the CPU build because the GPU build could not load the model (today the managed llama.cpp start's "falling back to the CPU build" / "retrying start on the CPU build"; Core's own fallback is ATO-344), main sends `engine:cpuFallback` and the window says once on the app line, and keeps as one amber line in Settings → Models until a later start runs without the switch: "The model couldn't load on your graphics card. Switched to the CPU build, it will be slower." A failure card that follows such a switch carries the same line.
 
 Core release checks run after startup and every six hours, like app checks. Check for updates also runs on demand. A check never downloads or stops a model, and a machine with no Core installed yet gets no update toast (Core comes with the first model start or from the installer). An unsupported newer Core is described as needing a newer Agent build. Update now refuses while local models run. The existing app updater remains responsible for the desktop app itself.
 

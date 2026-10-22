@@ -11,6 +11,9 @@
 .st-mode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-card);font-weight:600}
 .st-mode.off{color:color-mix(in srgb,var(--ink-3) 60%,transparent);cursor:not-allowed}
 .st-mode.off:hover{background:transparent}
+/* A greyed mode says why in the hint line when clicked; no ring that reads as a selection. */
+.st-mode.off:focus{outline:none}
+.st-mode.off:focus-visible{outline:1px dashed var(--ink-3);outline-offset:-3px}
 
 .st-aspects{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
 .st-asp{height:58px;border-radius:var(--r-well);background:var(--well);border:1px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;color:var(--ink-2);cursor:pointer}

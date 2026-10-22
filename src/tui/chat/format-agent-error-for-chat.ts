@@ -1,5 +1,5 @@
 import { formatLlamaUnreachableHint } from "../../llm/llama-server-health.js";
-import { looksLikeMidStreamDrop } from "../../llm/reliability/index.js";
+import { LOCAL_ENGINE_DOWN_MESSAGE, LOCAL_ENGINE_START_HINT, looksLikeMidStreamDrop } from "../../llm/reliability/index.js";
 
 const MAX_CHARS = 480;
 
@@ -181,6 +181,16 @@ export function formatAgentErrorForChat(
     }
   }
   return base;
+}
+
+/**
+ * A turn that ended because the managed local model's process is gone
+ * (`LocalEngineDownError`, ATO-772): the sentence every surface uses, and
+ * under it the command that starts the model. Keeps the `Turn failed`
+ * prefix the other failure lines carry.
+ */
+export function formatLocalEngineDownForChat(): string {
+  return `Turn failed. ${LOCAL_ENGINE_DOWN_MESSAGE}\n  ${LOCAL_ENGINE_START_HINT}`;
 }
 
 /**

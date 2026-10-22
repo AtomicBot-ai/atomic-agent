@@ -27,6 +27,9 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
+/** See `AgentLoopDependencies.localEngineState`. */
+export type LocalEngineState = "alive" | "dead" | "unknown";
+
 export interface AgentLoopDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../session/workspace-context.js").WorkspacePrepareOptions) => import("../session/workspace-context.js").SessionWorkspace;
   /** Save model-visible cloud messages before inference, under the turn owner. */
@@ -114,6 +117,18 @@ export interface AgentLoopDependencies {
    * the server just disproved.
    */
   onContextWindowExceeded?: (tokens: number) => void;
+  /**
+   * The managed local engine's process state behind the link that just
+   * failed (ATO-772), asked by the outage wait before it parks a turn.
+   * `dead`: that link is the managed local model and its process is
+   * certainly gone (pid dead or none recorded, no start or load under way),
+   * so the turn ends with `LocalEngineDownError` after a short restart
+   * grace (`LOCAL_ENGINE_RESTART_GRACE_MS`) instead of waiting out the
+   * whole budget. `alive` and `unknown` keep the wait. `providerId` is the
+   * failing link (`readFailingLink`), `undefined` when the error does not
+   * say. Absent (embedders, tests) means `unknown` for every link.
+   */
+  localEngineState?: (providerId: string | undefined) => LocalEngineState;
   /** Defaults to `grammar` when omitted (test / legacy wiring). */
   toolTransport?: ToolCallTransport;
   toolCallAdapter?: ToolCallAdapter | null;
@@ -599,10 +614,12 @@ export type AgentLoopEvent =
   | {
       /**
        * The completion for step `stepIndex` came back cut off, and the
-       * same step is being retried with a different request: a larger
-       * reply cap, or a prompt re-packed to the context window the
-       * server just revealed. Fired once per retry; a second cut on the
-       * same step fails the turn with the cause in the message.
+       * same step is being retried with a different request: a notice
+       * asking for a shorter reply plus a larger reply cap, a held cap,
+       * or a prompt re-packed to the context window the server just
+       * revealed. Fired once per retry; once the step's or the turn's
+       * retries are spent (`planTruncationRetry`), the next cut fails
+       * the turn with the cause in the message.
        */
       type: "completion_truncated";
       stepIndex: number;
@@ -790,8 +807,15 @@ export type AgentLoopEvent =
    * Terminal failure for the turn. `category` follows the canonical
    * LLM-failure taxonomy (see `src/llm/reliability/`); downstream
    * consumers never need to classify the error themselves.
+   * `outage` is the provider-outage wait the turn had spent when it
+   * failed (zero when it never parked); error reporting tags it.
    */
-  | { type: "loop_failed"; error: Error; category: LlmFailureCategory }
+  | {
+      type: "loop_failed";
+      error: Error;
+      category: LlmFailureCategory;
+      outage?: { waitedMs: number; attempts: number };
+    }
   /**
    * The provider fallback chain changed the active provider for this
    * turn. `direction: "away"` = the primary was unreachable and we
@@ -842,4 +866,11 @@ export interface RunTurnResult {
    * on every ordinary turn.
    */
   undelivered?: readonly string[];
+  /**
+   * Tokens the turn's LLM calls reported, summed by the runtime's turn
+   * usage meter. Set by `runtime.runTurn` on a person's turn when the
+   * provider reported usage; absent on scheduler and fusion turns and
+   * when no call reported any, so a missing figure never reads as zero.
+   */
+  usage?: { promptTokens: number; completionTokens: number };
 }

@@ -7,9 +7,10 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKT
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
+import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
-import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
+import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir, totalmem } from "node:os";
@@ -24,6 +25,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";   // item 2 
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 
+import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
@@ -94,6 +96,7 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
+import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";   // #680: the chosen folder survives a relaunch
 import {
   activateProvider,
   agentStarting,
@@ -189,8 +192,6 @@ import {
   envPresent,
   // Settings › Connections › Composio: composio.userId / sessionId / mcpUrl in one write
   configSetPaths,
-  // Item 7A — the HF_TOKEN asymmetry note on a gated listing (names only)
-  stateDirPath,
   type ImportRunInput,
   // r5 item 7 (setup wizard): the streamed runtime phase, the custom-endpoint
   // whole-file write, and the four import sources the flow's last step offers.
@@ -226,6 +227,7 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
+import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
@@ -656,6 +658,10 @@ function engineInstallStream(
     const res = held.hold ? await afterUpdate(ended, held.hold, { keptBackend: ended.keptBackend }) : ended;
     A.runtimeUpdated(via, updateStartedAt, res, own.signal.aborted);
     if (!own.signal.aborted) noteEngine(res, { clears: true, via });
+    // ATO-821: why the engine did not go in, in agent.log too, not only in the window.
+    if (!res.ok && !own.signal.aborted) sayDesktop(`[desktop] local-llm: the local engine install did not finish (${via}): ${res.error ?? "unknown error"}`);
+    // ATO-821: the launch's install had failed, so its start never ran; this one went in.
+    if (res.ok && !own.signal.aborted && via !== "launch") void startAfterEngineInstall();
     send("cli:pull", {
       id,
       done: true,
@@ -763,8 +769,26 @@ function send(channel: string, payload?: unknown): void {
 let engineFailure: (EngineFailure & { at: number }) | null = null;
 /** What put the recovery card up, for `engine_recovery_shown.via` (analytics/catalog-values.ts ENGINE_RECOVERY_VIA). */
 type EngineVia = "launch" | "swap" | "update" | "start" | "switch" | "setup" | "settings" | "other";
+/* ATO-374: a start the agent moved to the CPU build because the GPU build
+   could not load the model. It served, so there is no failure card; the
+   window says it once and keeps one line in Settings › Models until a later
+   start runs without the switch. A window opened later asks (engine:cpuFallback). */
+let engineCpuFallback: { at: number } | null = null;
+function noteCpuFallback(answer: unknown): void {
+  const a = answer as { ok?: unknown; daemon?: unknown } | null;
+  if (cpuFallbackOf(answer)) {
+    engineCpuFallback = { at: Date.now() };
+    console.warn("[desktop] local-llm: the agent moved the model to the CPU build after the GPU build could not load it; replies will be slower");
+    send("engine:cpuFallback", engineCpuFallback);
+  } else if (engineCpuFallback && a && a.ok === true && (a.daemon === "started" || a.daemon === "restarted")) {
+    engineCpuFallback = null;
+    send("engine:cpuFallback", null);
+  }
+}
 function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia } = {}): void {
-  const failed = engineFailureOf(answer);
+  noteCpuFallback(answer);
+  // Core in play: a model it could not load is read as that, not left as a raw start error.
+  const failed = engineFailureOf(answer, { core: managedEngineNow() === "atomic-core" });
   if (failed) {
     engineFailure = { ...failed, at: Date.now() };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
@@ -866,7 +890,33 @@ function createWindow(): BrowserWindow {
     },
   });
   if (freshHere) FRESH_WINDOW.id = window.webContents.id;
-  wireWindowErrorReporting(window);
+  /* ATO-765: a crashed page is loaded again (render-recovery.ts). Registered
+     before the error reporting so its report can say whether it recovered. */
+  const recovery = new RenderRecovery();
+  let recovered: boolean | null = null;
+  window.webContents.on("render-process-gone", (_e, details) => {
+    if (details.reason === "clean-exit") return;
+    recovered = recovery.onGone() === "reload";
+    if (recovered) {
+      setImmediate(() => { if (!window.isDestroyed()) window.webContents.reload(); });
+      return;
+    }
+    void dialog.showMessageBox(window, {
+      type: "error",
+      message: KEEPS_CRASHING.message,
+      detail: KEEPS_CRASHING.detail,
+      buttons: [...KEEPS_CRASHING.buttons],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    }).then(({ response }) => {
+      if (window.isDestroyed()) return;
+      if (response === 1) { app.quit(); return; }
+      recovery.reset();
+      window.webContents.reload();
+    }).catch(() => undefined);
+  });
+  wireWindowErrorReporting(window, () => recovered);
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
@@ -1002,28 +1052,6 @@ function hfMirrorSources(): HfMirrorSources {
   return { config, env: process.env.HF_ENDPOINT, dotenv };
 }
 
-/**
- * The one honest thing this window can add to a gated-repo refusal.
- *
- * `atag models pull` reads HF_TOKEN out of <stateDir>/.env — load-config
- * applies the NAMES into process.env on every CLI run — while this
- * process sees only its own environment, so a gated repo can fail to LIST
- * here and download fine. Names only: the value is never read.
- *
- * Extracted from the cli:hfResolve handler so the sentence can be
- * asserted without a gated repo and a token on disk (review fix: it was
- * the one string in this feature the desktop authored on top of the port,
- * and nothing checked it).
- */
-function hfGatedTokenHint(message: string, dir: string): string {
-  if (!/Hugging Face returned 40[13]/.test(message)) return message;
-  const names = dotenvKeys(dir).keys.filter((k) => k === "HF_TOKEN" || k === "HUGGING_FACE_HUB_TOKEN");
-  if (names.length === 0 || envPresent(names).length > 0) return message;
-  return message
-    + ` (${names.join(" / ")} is named in ${dir}/.env, which \`atag models pull\` reads and this window does not`
-    + " — start the app with it exported and the listing will see it too.)";
-}
-
 /* N3 — the agent's output, on disk.
    Everything `atag serve` said lived in the console drawer's 300-line ring,
    in memory, and went with the window: quitting the app destroyed the
@@ -1049,7 +1077,27 @@ function appendAgentLog(line: string): void {
   }
 }
 
+/**
+ * ATO-821: a line of the desktop's own about the local engine or model server,
+ * where daemon-watch's lines go: the terminal the app was started from, the
+ * console drawer, and agent.log (tagged by what it says, ATO-121). A line
+ * only on stderr was gone with the window, and the log could not say why the
+ * engine never came up.
+ */
+function sayDesktop(line: string): void {
+  console.error(line);
+  const level = lineLevel(line);
+  send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+  appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
+}
+
 const AGENT_SAID: string[] = [];
+/** ATO-763: when each AGENT_SAID line came (same order), so an exit is judged on its last words, not a warning from hours before. */
+const AGENT_SAID_AT: number[] = [];
+/** ATO-763: how far back before an exit the agent's lines still count as its last words. */
+const LAST_WORDS_MS = 30_000;
+/** ATO-763: how many AGENT_SAID lines the current agent wrote (reset as one starts), so an exit is judged on its own lines only. */
+let agentSaidSinceStart = 0;
 
 /**
  * Item 11: the route left the managed daemon behind (Settings or the wizard
@@ -1444,10 +1492,26 @@ function wireIpc(client: AgentClient): void {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
+    /* ATO-733: a turn may have begun while the picker was open; the restart
+       below would cut it. The window says so and the folder stays as it was
+       (workspace-busy.ts); the folder and its analytics change only when the
+       change really happens. */
+    const busy = await workspaceChangeBusy({
+      windowTurns: () => client.turnsInFlight,
+      agentTurns: async () => {
+        if (client.status.state !== "connected") return null;
+        const h = (await client.turnsHealth()) as { busyTurns?: unknown } | null;
+        return typeof h?.busyTurns === "number" && Number.isFinite(h.busyTurns) ? h.busyTurns : null;
+      },
+      timeoutMs: SWITCH_BUSY_CHECK_MS,
+    });
+    if (busy) return busy;
     A.workspaceChosen(dir);
     // Telling the user to restart while the child keeps its old cwd is a lie;
     // move it here instead.
     client.status.workingDir = dir;
+    // #680: and the next launch starts here too, not back in the home folder.
+    writeWorkspace(app.getPath("userData"), dir);
     await client.stop();
     void client.start();
     return dir;
@@ -1565,7 +1629,9 @@ function wireIpc(client: AgentClient): void {
       if (controller.signal.aborted) return { ok: false, cancelled: true, error: "cancelled" };
       const message = err instanceof Error ? err.message : String(err);
       A.hfLookupDone({ error: message });   // reduced to an enum there; the message never leaves
-      return { ok: false, error: hfGatedTokenHint(message, stateDirPath()) };
+      /* ATO-853: no extra line about HF_TOKEN in <stateDir>/.env any more: the
+         listing reads that file too (huggingface.ts huggingFaceToken). */
+      return { ok: false, error: message };
     }
   });
   /* The Hugging Face mirror (hf-mirror.ts): what the field shows, and its
@@ -1774,6 +1840,7 @@ function wireIpc(client: AgentClient): void {
      `models start` for a daemon that is already up (alreadyRunning). */
   ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true, via: "start" }), res)));
   ipcMain.handle("engine:failure", () => engineFailure);
+  ipcMain.handle("engine:cpuFallback", () => engineCpuFallback);
   ipcMain.handle("engine:launchInstall", () => ({ running: launchInstall }));
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
@@ -2616,9 +2683,7 @@ function wireIpc(client: AgentClient): void {
     const line = r.daemon === "start-failed"
       ? `[desktop] could not start the local model daemon (${r.modelId}): ${r.error ?? "unknown error"}`
       : `[desktop] started the local model daemon (${r.modelId})`;
-    console.error(line);
-    const level = lineLevel(line);   // ATO-121
-    send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+    sayDesktop(line);   // ATO-121 level; ATO-821: in agent.log too, as this comment always said
     // The launch start was only ever a log line; a ⇄'s also tells the window, and so does the start after a llama.cpp update (ATO-123).
     if (r.via !== "launch") send("cli:daemon", r);
     // A Core that would not start at launch is told too: the window offers the way out, not a log line.
@@ -2815,6 +2880,19 @@ function wireIpc(client: AgentClient): void {
   );
 
   client.on("status", (status) => send("agent:status", status));
+  /* ATO-767: an agent that exits on its own while running is started again,
+     up to three times within five minutes; then the window offers Restart
+     agent. Off in a smoke run (its checks end agents on purpose; T767 arms it). */
+  wireAgentAutoRestart(client, {
+    send,
+    say: (line) => {
+      console.error(line);
+      const level = lineLevel(line);
+      send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+      appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
+    },
+    armed: !SMOKE,
+  });
   client.on("chat", (event) => send("agent:chat", event));
   client.on("chat", (event) => turnNotifier.observe(event));
   /* ATO-123: a turn waiting on the managed model server because it refuses
@@ -2833,7 +2911,11 @@ function wireIpc(client: AgentClient): void {
     void gpuShare.chatTurn().then((h) => h?.drop()).catch(() => undefined);
   });
   hostDaemonWatch({
-    notify: (notice) => send("app:daemonWatch", notice),
+    notify: (notice) => {
+      // ATO-773: what the watchdog did, as codes and counts (analytics/setup localBackendSupervised).
+      A.localBackendSupervised(notice, daemonWatch.state().quickDeaths);
+      send("app:daemonWatch", notice);
+    },
     say: (line, said) => {
       console.error(line);
       // ATO-121: "the app is stopping the model server…" is INFO, a failed restart ERROR (agent-output lineLevel).
@@ -2853,9 +2935,23 @@ function wireIpc(client: AgentClient): void {
   client.on("status", (status: { state?: string }) => A.agentStatus(status));
   client.on("start-failed", (detail) => A.agentStartFailed(detail));
   client.on("orphan-reaped", () => A.noteOrphanReaped());
-  client.on("unexpected-exit", (d: { exitCode: number | null; signal: string | null; phase: string }) => {
+  client.on("unexpected-exit", (d: { exitCode: number | null; signal: string | null; phase: string; uptimeMs: number | null; sentinelAlive: boolean | null }) => {
     if (d.phase === "starting") A.agentStartFailed({ reason: "exited", exitCode: d.exitCode, signal: d.signal });
-    reportAgentExit(d);
+    /* ATO-763: the report waits a moment for the agent's last stderr lines
+       (the pipe can close after the exit), then sends only their category. */
+    const exitedAt = Date.now();
+    setTimeout(() => {
+      const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
+      const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
+      const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS));
+    }, 300).unref?.();
+  });
+  let agentStateWas: string | undefined;
+  client.on("status", (status: { state?: string }) => {
+    // A start begins (not every status while it boots): the lines from here on are the new agent's.
+    if (status?.state === "starting" && agentStateWas !== "starting") agentSaidSinceStart = 0;
+    agentStateWas = status?.state;
   });
   client.on("log", (event) => send("agent:log", event));
   /* The agent's own last words, kept for the smoke fixture. `atag serve`
@@ -2872,7 +2968,9 @@ function wireIpc(client: AgentClient): void {
        console drawer but out of the ring, which is for what went wrong. */
     if (worthQuoting(event.level)) {
       AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${line.slice(0, 300)}`);
-      if (AGENT_SAID.length > 40) AGENT_SAID.shift();
+      AGENT_SAID_AT.push(Date.now());
+      if (AGENT_SAID.length > 40) { AGENT_SAID.shift(); AGENT_SAID_AT.shift(); }
+      agentSaidSinceStart += 1;
     }
     appendAgentLog(`${new Date().toISOString()} ${agentLogTag(event.stream, event.level)} ${line}`);
   });
@@ -3990,7 +4088,10 @@ async function smokeTest(): Promise<void> {
     // leave the route changed.
     // Run mode — Fusion: resolver, rows, writes through the planners, frames. No restart.
     await fusionSmokeTest(js, check);
-    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS, smokeDownloads);
+    /* ATO-765: task 765 crashes and reloads the page, and everything below
+       still reads what earlier checks left in it (window.__swxTimes()), so
+       765 runs at the very end of the full pass instead. */
+    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS.filter((t) => t !== "765"), smokeDownloads);
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".
@@ -4069,6 +4170,8 @@ async function smokeTest(): Promise<void> {
         ? ".env identical; sessions/memory/tasks unchanged in size"
         : sensitive.map((k) => `${k}: ${tuiSnapshot[k]} → ${tuiAfter[k]}`).join("; "),
     );
+    // ATO-765 last: it crashes the page on purpose, and the reloaded page has forgotten the run so far.
+    await releaseFixesSmokeTest(js, check, ["765"], smokeDownloads);
   }
 
   if (MODELS_TEST) await modelsTest(js, check);
@@ -6298,43 +6401,6 @@ async function hfAndDeltaTest(
     bad.error === badWanted && bad.repoId === null && badBody.includes(badWanted)
       && ds.error === "hf://datasets/… points at a dataset, not a model repo",
     `${JSON.stringify(bad.error)} / ${JSON.stringify(ds.error)}`,
-  );
-
-  /* Review fix: the desktop's own added sentence on that 401 — the only
-     string this feature authored on top of the port, and the only place
-     `dotenvKeys`/`envPresent` are consulted from the HF path. Driven over
-     a throwaway directory so it needs neither a gated repo nor a token in
-     the operator's own .env — and so "names only, never values" is
-     demonstrable: the file below holds a value the message must not show. */
-  const hintDir = join(app.getPath("temp"), `atag-hf-hint-${process.pid}`);
-  const base401 = "Hugging Face returned 401: either no such repo, or it is gated.";
-  const base403 = "Hugging Face returned 403: either no such repo, or it is gated.";
-  const base404 = "Hugging Face returned 404: no repo or revision by that name.";
-  let hintWith = "";
-  let hintWithout = "";
-  let hintOther = "";
-  try {
-    mkdirSync(hintDir, { recursive: true });
-    writeFileSync(join(hintDir, ".env"), "HF_TOKEN=hf_not-a-real-token\n");
-    hintWith = hfGatedTokenHint(base401, hintDir);
-    hintOther = hfGatedTokenHint(base404, hintDir);
-    rmSync(join(hintDir, ".env"), { force: true });
-    hintWithout = hfGatedTokenHint(base403, hintDir);
-  } finally {
-    rmSync(hintDir, { recursive: true, force: true });
-  }
-  // Exported in this process, the hint would be a lie — `models pull` and
-  // this window would both already see it — so it is correctly withheld.
-  const tokenExported = envPresent(["HF_TOKEN"]).length > 0;
-  const hintWanted = tokenExported
-    ? base401
-    : base401 + ` (HF_TOKEN is named in ${hintDir}/.env, which \`atag models pull\` reads and this window does not`
-      + " — start the app with it exported and the listing will see it too.)";
-  check(
-    "hf: a 401 with a token named in <stateDir>/.env says where `models pull` reads it, and never its value",
-    hintWith === hintWanted && !hintWith.includes("hf_not-a-real-token")
-      && hintWithout === base403 && hintOther === base404,
-    `${JSON.stringify(hintWith)}${tokenExported ? " (HF_TOKEN is exported here, so the hint is withheld)" : ""}`,
   );
 
   // ---- every paste form parses (network-gated) ----
@@ -9412,15 +9478,15 @@ let launchInstall = false;
 async function installEngineAtLaunch(): Promise<boolean> {
   const r = engineInstallStream("launch");
   if (!r.ok) {
-    console.error(`[desktop] local-llm: the local engine is not installed yet, and its install could not begin now (${r.error}); the model's start installs it`);
+    sayDesktop(`[desktop] local-llm: the local engine is not installed yet, and its install could not begin now (${r.error}); the model's start installs it`);
     return r.error !== SMOKE_OFFLINE;
   }
   launchInstall = true;
   console.error("[desktop] local-llm: installing the local engine before the model starts");
   send("engine:launchInstall", { running: true });
   try {
+    // A failure is said by engineInstallStream itself, in agent.log as well (ATO-821).
     const res = await r.done;
-    if (!res.ok) console.error(`[desktop] local-llm: the local engine install did not finish: ${res.error ?? "unknown error"}`);
     return res.ok;
   } finally {
     launchInstall = false;
@@ -9442,45 +9508,84 @@ async function installEngineAtLaunch(): Promise<boolean> {
 async function startLocalDaemonAtBoot(): Promise<void> {
   let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
   try {
-    const read = await readWholeConfig();
-    if (!read.ok || !read.config) return;
-    const cfg = read.config;
-    if (cfg.localModels?.mode !== "managed") return;
-    // No `llm` block means the agent synthesizes `local-llama`, the local route.
-    const active = cfg.llm ? cfg.llm.activeTextProvider : "local-llama";
-    const entry = cfg.llm?.providers?.find((p) => p.id === active);
-    const localRoute = !cfg.llm || (!!entry && entry.kind === "llama-server");
-    /* Fusion with a local seat needs the daemon as much as the local route:
-       its active provider is the cloud orchestrator, so the check above let
-       it through to nothing, and the only thing that used to start it was a
-       ⇄ swap, as a side effect that made the swap stick (item 11). */
-    const fusionLocalSeat = runModeWantsDaemon(resolveRunMode(cfg as RunModeConfig), cfg.localModels ?? {});
-    if (!localRoute && !fusionLocalSeat) return;
+    const target = await launchStartTarget();
+    if (!target.wants) return;
     backendUp = false;
-    const st = await modelsStatus();
-    if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
+    if (!target.modelId) return;
     /* Atomic Core with its backend not on disk yet (a fresh machine, a 0.0.1
        desktop the config migration moved to Core, a backend removed): the
        start would download it silently first, hundreds of MB, under a spinner.
        It is installed first, with its bar (engineInstallStream, as the setup
        and Settings do), and the model starts after it. A failure is the
-       recovery card (noteEngine), and nothing is started on top of it. */
+       recovery card (noteEngine), and nothing is started on top of it until
+       an install succeeds (ATO-821, startAfterEngineInstall). */
     if (managedEngineNow() === "atomic-core" && !backendInstalled()) {
       const installed = await installEngineAtLaunch();
-      if (!installed) return;
+      if (!installed) { launchStartAfterInstall = true; launchStartOwedMark = stopsMark(); return; }
     }
     /* Item 11: as the background bring-up — a ⇄ or a start made while the
        model loads queues behind it rather than starting a second daemon, and
        a stop (a cloud switch, Settings › Stop) ends it at once instead of
        waiting out the load. It says how it went through onBackgroundBringUp. */
     const bringUpAt = Date.now();
-    const up = await bringUpAtLaunch(st.status.activeModel);
-    A.localBackendStarted("launch", up.daemon, st.status.activeModel, Date.now() - bringUpAt);
+    const up = await bringUpAtLaunch(target.modelId);
+    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt);
     backendUp = up.daemon === "started" || up.daemon === "untouched" || up.daemon === "restarted";
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     A.launchBackendSettled(backendUp);
+  }
+}
+
+/**
+ * What the launch start brings up, read now: whether the route needs the
+ * managed daemon (`wants`), and the active model when it is on disk
+ * (`modelId`, null when there is none to start).
+ */
+async function launchStartTarget(): Promise<{ wants: boolean; modelId: string | null }> {
+  const none = { wants: false, modelId: null };
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return none;
+  const cfg = read.config;
+  if (cfg.localModels?.mode !== "managed") return none;
+  // No `llm` block means the agent synthesizes `local-llama`, the local route.
+  const active = cfg.llm ? cfg.llm.activeTextProvider : "local-llama";
+  const entry = cfg.llm?.providers?.find((p) => p.id === active);
+  const localRoute = !cfg.llm || (!!entry && entry.kind === "llama-server");
+  /* Fusion with a local seat needs the daemon as much as the local route:
+     its active provider is the cloud orchestrator, so the check above let
+     it through to nothing, and the only thing that used to start it was a
+     ⇄ swap, as a side effect that made the swap stick (item 11). */
+  const fusionLocalSeat = runModeWantsDaemon(resolveRunMode(cfg as RunModeConfig), cfg.localModels ?? {});
+  if (!localRoute && !fusionLocalSeat) return none;
+  const st = await modelsStatus();
+  if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return { wants: true, modelId: null };
+  return { wants: true, modelId: st.status.activeModel };
+}
+
+/* ATO-821: the launch's engine install failed, so the launch start never ran.
+   The next install that succeeds (the download card's Retry, Settings'
+   install, the recovery card's Download again) starts the model as the launch
+   would have, when the route still needs it and the model is still on disk.
+   Once: a later install finds the flag down. Via "update", the start after an
+   engine install: the window hears how it went (onBackgroundBringUp). A stop,
+   a switch or a model change since the failed install (stopsMark moved) is
+   the person's last word, as afterUpdate treats it: the owed start is dropped,
+   so Settings › Stop is not undone by a later engine update. */
+let launchStartAfterInstall = false;
+let launchStartOwedMark = 0;
+async function startAfterEngineInstall(): Promise<void> {
+  if (!launchStartAfterInstall) return;
+  launchStartAfterInstall = false;
+  if (stopsMark() !== launchStartOwedMark) return;
+  try {
+    const target = await launchStartTarget();
+    if (!target.modelId) return;
+    sayDesktop(`[desktop] local-llm: the local engine is installed now; starting ${target.modelId}, as the launch would have`);
+    await bringUpAtLaunch(target.modelId, "update");
+  } catch (err) {
+    console.error(`[desktop] local daemon start after the engine install failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -9575,8 +9680,13 @@ async function claimDesktopPorts(): Promise<void> {
  * without being touched, and when.
  */
 async function firstRunProbe(): Promise<void> {
-  const js = <T,>(code: string): Promise<T> =>
-    (win?.webContents.executeJavaScript(code) as Promise<T>) ?? Promise.resolve(null as unknown as T);
+  /* Each read is bounded: a page that never answers (still loading, or busy)
+     must not keep the probe from reporting and exiting. The loops below
+     retry on the throw, and their deadlines then end them. */
+  const js = <T,>(code: string): Promise<T> => {
+    const read = (win?.webContents.executeJavaScript(code) as Promise<T>) ?? Promise.resolve(null as unknown as T);
+    return Promise.race([read, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("no answer in 5 s")), 5_000))]);
+  };
   type FirstRun = { fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null;
   let fr: FirstRun = null;
   let title = "";
@@ -9707,7 +9817,14 @@ void app.whenReady().then(async () => {
   // Windows attributes notifications to the AppUserModelID; without one set a
   // dev or unpackaged run shows none. Same id as the bundle id on macOS.
   if (process.platform === "win32") app.setAppUserModelId("io.atomicagent.desktop");
-  const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
+  /* #680: the folder picked in an earlier run (workspace-pref.ts). The
+     environment still wins, and a smoke run never reads the saved one, so
+     its harness keeps the cwd it set or the home folder. */
+  const workspace = startupWorkspace(
+    process.env.ATOMIC_AGENT_WORKSPACE,
+    SMOKE ? null : readWorkspace(app.getPath("userData")),
+    homedir(),
+  );
   agent = new AgentClient(workspace);
   win = createWindow();
   // Item 2 (voice input): the third teardown path — this window going away

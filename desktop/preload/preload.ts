@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld("atomic", {
   restart: () => ipcRenderer.invoke("agent:restart"),
   onStatus: (cb: (payload: unknown) => void) => on("agent:status", cb),
   onLog: (cb: (payload: unknown) => void) => on("agent:log", cb),
+  /** ATO-767: the automatic restarts after an unexpected exit (agent-auto-restart.ts). */
+  onAutoRestart: (cb: (payload: unknown) => void) => on("agent:autoRestart", cb),
 
   /** Read-only resources, each `{ok, data}` or `{ok:false, error}`. */
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),
@@ -294,6 +296,10 @@ contextBridge.exposeInMainWorld("atomic", {
   onEngineFailure: (cb: (payload: unknown) => void) => on("engine:failure", cb),
   /** The engine failure main keeps, for a window opened after it happened. */
   engineFailure: () => ipcRenderer.invoke("engine:failure"),
+  /** ATO-374: the agent moved the local model to the CPU build because the GPU build could not load it: {at}, or null once a start runs without the switch. */
+  onEngineCpuFallback: (cb: (payload: unknown) => void) => on("engine:cpuFallback", cb),
+  /** The CPU switch main keeps, for a window opened after it happened. */
+  engineCpuFallback: () => ipcRenderer.invoke("engine:cpuFallback"),
   /** The launch installing Atomic Core's backend before the model starts: {running}. Its progress comes as `cli:pull` frames (kind runtime). */
   onEngineLaunchInstall: (cb: (payload: unknown) => void) => on("engine:launchInstall", cb),
   engineLaunchInstall: () => ipcRenderer.invoke("engine:launchInstall"),

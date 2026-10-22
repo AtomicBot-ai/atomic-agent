@@ -475,5 +475,8 @@ function formatDaemon(state: TuiState): string {
   if (panel.daemon.healthy) {
     return `running pid ${panel.daemon.pid} on 127.0.0.1:${panel.daemon.port}`;
   }
+  if (panel.daemon.authMismatch) {
+    return `pid ${panel.daemon.pid} key rejected: restart the model`;
+  }
   return `pid ${panel.daemon.pid} health unreachable`;
 }

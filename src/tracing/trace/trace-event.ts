@@ -163,7 +163,9 @@ export interface TraceLlmCompletion extends TraceEventBase {
   /**
    * Reasoning the completion carried, in `localModels.reasoningBudgetTokens`
    * units (four characters per token — an estimate from the text, not
-   * the server's count). A step cut by the budget shows `>= budget`.
+   * the server's count). A step cut by the budget shows about the
+   * effective budget (at most 499, the llama.cpp grammar cap), not the
+   * configured one.
    * Absent on traces recorded before F49.
    */
   reasoningTokens?: number;
@@ -342,7 +344,8 @@ export interface TraceProviderRecovered extends TraceEventBase {
 /**
  * A reply the server cut short is being retried with a different
  * request. `retry` says which: `raise_cap` with the new cap in
- * `retryValue`, or `fit_window` with the learned context window.
+ * `retryValue`, `same_cap` with the cap held for the retry, or
+ * `fit_window` with the learned context window.
  */
 export interface TraceCompletionTruncated extends TraceEventBase {
   type: "completion_truncated";
@@ -358,7 +361,7 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   promptTokens: number;
   /** The cap the cut request carried; absent when it carried none. */
   requestedMaxTokens?: number;
-  retry: "raise_cap" | "fit_window";
+  retry: "raise_cap" | "same_cap" | "fit_window";
   retryValue: number;
 }
 

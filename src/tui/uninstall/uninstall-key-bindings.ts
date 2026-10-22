@@ -1,6 +1,6 @@
 import type { Key } from "ink";
 import type { AppKeyContext } from "../app-key-bindings.js";
-import { isUninstallConfirmed } from "./uninstall-state.js";
+import { isUninstallConfirmed, type UninstallChoice } from "./uninstall-state.js";
 
 type UninstallKeyContext = Pick<AppKeyContext, "state" | "dispatch" | "callbacks">;
 
@@ -19,7 +19,7 @@ export function handleUninstallKey(
   key: Key,
   ctx: UninstallKeyContext,
 ): boolean {
-  const { state, dispatch, callbacks } = ctx;
+  const { state, dispatch } = ctx;
   const flow = state.uninstall;
   if (!flow) return false;
   const close = (): void => dispatch({ type: "uninstall_closed" });
@@ -41,6 +41,19 @@ export function handleUninstallKey(
   if (key.ctrl || key.meta) return false;
 
   if (flow.step === "loading" || flow.step === "failed") return true;
+
+  if (flow.step === "desktop") {
+    if (key.leftArrow || key.rightArrow || key.tab) {
+      dispatch({
+        type: "uninstall_desktop_cursor_set",
+        cursor: flow.desktopCursor === "keep" ? "delete" : "keep",
+      });
+      return true;
+    }
+    if (key.return) answerDesktopQuestion(flow.desktopCursor, ctx);
+    // `y`, `n` and every other key are not answers here either.
+    return true;
+  }
 
   if (flow.step === "review") {
     if (key.leftArrow || key.rightArrow || key.tab) {
@@ -65,11 +78,16 @@ export function handleUninstallKey(
   // `confirm`: a text field with one accepted value.
   if (key.return) {
     if (!isUninstallConfirmed(flow.typed)) return true;
-    dispatch({ type: "uninstall_started" });
-    // The callback only flags the post-exit uninstall handoff;
-    // `quit_requested` is what unmounts Ink so the handoff is reached.
-    callbacks.onUninstallConfirmed?.();
-    dispatch({ type: "quit_requested" });
+    // The word agreed to removing atomic-agent. Wiping a folder the
+    // desktop app still runs on is a separate question.
+    if (flow.preview?.desktopSharedDir) {
+      dispatch({ type: "uninstall_desktop_asked" });
+      return true;
+    }
+    // Nobody was asked about desktop data, so nobody agreed to delete
+    // it. The removal re-resolves the plan after the unmount; if a
+    // desktop app shows up in that fresh plan, its folder stays.
+    startRemoval({ keepDesktopData: true }, ctx);
     return true;
   }
   if (key.backspace || key.delete) {
@@ -91,4 +109,27 @@ export function handleUninstallKey(
     return true;
   }
   return true;
+}
+
+/**
+ * Answer the `desktop` step: keep the shared folder (remove only the
+ * terminal program) or delete it too. Enter and a click on either
+ * button both land here, so the two routes cannot diverge.
+ */
+export function answerDesktopQuestion(
+  answer: "keep" | "delete",
+  ctx: UninstallKeyContext,
+): void {
+  const flow = ctx.state.uninstall;
+  if (!flow || flow.step !== "desktop") return;
+  ctx.dispatch({ type: "uninstall_desktop_cursor_set", cursor: answer });
+  startRemoval({ keepDesktopData: answer === "keep" }, ctx);
+}
+
+function startRemoval(choice: UninstallChoice, ctx: UninstallKeyContext): void {
+  ctx.dispatch({ type: "uninstall_started" });
+  // The callback only flags the post-exit uninstall handoff;
+  // `quit_requested` is what unmounts Ink so the handoff is reached.
+  ctx.callbacks.onUninstallConfirmed?.(choice);
+  ctx.dispatch({ type: "quit_requested" });
 }

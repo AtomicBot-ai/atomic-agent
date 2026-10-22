@@ -52,27 +52,55 @@ function simgDefaultModel(catalog) {
     || all[0] || null;
 }
 
-/** The mode tabs for a model: each enabled or greyed with the reason. */
+/** A mode as the end of "<model> cannot ...". */
+const SIMG_MODE_VERB = {
+  create: 'create pictures', edit: 'edit', reference: 'use references', transform: 'transform',
+  inpaint: 'inpaint', extend: 'extend', upscale: 'upscale',
+};
+
+/** The mode tabs for a model: each enabled or greyed with the reason.
+    `need` says why a greyed one is off: 'local' (only a model on this Mac runs it),
+    'model' (this model cannot), 'pick' (no model chosen). */
 function simgModeTabs(model, catalog) {
   const locals = simgModels(catalog).filter((m) => m.group === 'local');
   return SIMG_MODES.map(([id, label]) => {
-    if (!model) return {id, label, ok: id === 'create', why: id === 'create' ? '' : 'Pick a model first'};
+    if (!model) return {id, label, ok: id === 'create', why: id === 'create' ? '' : 'Pick a model first', need: id === 'create' ? '' : 'pick'};
     const ok = (model.modes || []).includes(id);
-    let why = '';
+    let why = '', need = '';
     if (!ok) {
       const localCan = locals.some((m) => (m.modes || []).includes(id));
-      why = model.group === 'cloud' && localCan ? 'Needs a model on this Mac' : model.name + ' cannot do this';
+      need = model.group === 'cloud' && localCan ? 'local' : 'model';
+      why = need === 'local' ? 'Needs a model on this Mac' : model.name + ' cannot do this';
     }
-    return {id, label, ok, why};
+    return {id, label, ok, why, need};
   });
 }
 
-/** One hint line for the greyed modes of a cloud model that local models can run. */
-function simgModeNote(tabs) {
+const simgList = (xs, conj) => (xs.length === 1 ? xs[0] : xs.slice(0, -1).join(', ') + ' ' + conj + ' ' + xs[xs.length - 1]);
+
+/** One hint line for the greyed modes: the ones a model on this Mac runs, then the
+    ones the chosen model cannot do ("Nano Banana cannot inpaint, extend or upscale."). */
+function simgModeNote(tabs, model) {
+  const out = [];
   const off = tabs.filter((t) => !t.ok && t.why === 'Needs a model on this Mac').map((t) => t.label);
-  if (!off.length) return '';
-  const list = off.length === 1 ? off[0] : off.slice(0, -1).join(', ') + ' and ' + off[off.length - 1];
-  return list + (off.length === 1 ? ' needs' : ' need') + ' a model on this Mac.';
+  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on this Mac.');
+  const cannot = model ? tabs.filter((t) => !t.ok && t.need === 'model').map((t) => SIMG_MODE_VERB[t.id]) : [];
+  if (cannot.length) out.push(model.name + ' cannot ' + simgList(cannot, 'or') + '.');
+  return out.join(' ');
+}
+
+/** The hint line's words after a click on one greyed mode. */
+function simgModeWhy(tab, model) {
+  if (!tab || tab.ok) return '';
+  if (tab.need === 'local') return tab.label + ' needs a model on this Mac.';
+  if (tab.need === 'model' && model) return model.name + ' cannot ' + SIMG_MODE_VERB[tab.id] + '.';
+  return 'Pick a model first.';
+}
+
+/** Whether another model in the catalog runs one of these modes (the hint's "Pick one" link). */
+function simgOtherCan(catalog, model, modes) {
+  return simgModels(catalog).some((m) => !(model && m.id === model.id && m.provider === model.provider)
+    && modes.some((id) => (m.modes || []).includes(id)));
 }
 
 /** The ratios offered as shape tiles: the model's own, or a short list for range sizes. */
@@ -83,12 +111,14 @@ function simgRatios(model) {
   return [];
 }
 
-/** A tile's little frame, its longer side 20px. */
+/** A tile's little frame drawn from the ratio, its longer side 22px (a thin side
+    never under 4px); null for a value that is not a ratio ("auto"), which gets an icon. */
 function simgRatioBox(ratio) {
-  const r = SIMG_RATIO[ratio] || String(ratio).split(':').map(Number);
-  const w = Number(r[0]) || 1, h = Number(r[1]) || 1;
-  const k = 20 / Math.max(w, h);
-  return [Math.max(8, Math.round(w * k)), Math.max(8, Math.round(h * k))];
+  const m = SIMG_RATIO[ratio] || (String(ratio).match(/^(\d+(?:\.\d+)?)\s*[:x]\s*(\d+(?:\.\d+)?)$/) || []).slice(1).map(Number);
+  const w = Number(m[0]), h = Number(m[1]);
+  if (!(w > 0 && h > 0)) return null;
+  const k = 22 / Math.max(w, h);
+  return [Math.max(4, Math.round(w * k)), Math.max(4, Math.round(h * k))];
 }
 
 /** Width and height for a range-size model at a ratio, about the model's default area, on its multiple. */
@@ -284,8 +314,19 @@ function simgModelMeta(model) {
     const dev = model.local && model.local.developer;
     return (dev ? dev + ' · ' : '') + 'On this Mac';
   }
-  const maker = String(model.id || '').split('/')[0];
-  return (maker ? maker.charAt(0).toUpperCase() + maker.slice(1) + ' · ' : '') + 'via OpenRouter';
+  const maker = simgMaker(String(model.id || '').split('/')[0]);
+  return (maker ? maker + ' · ' : '') + 'via OpenRouter';
+}
+
+/** OpenRouter's maker slug as the maker's own name; other slugs word by word. */
+const SIMG_MAKERS = {
+  openai: 'OpenAI', google: 'Google', 'black-forest-labs': 'Black Forest Labs', bytedance: 'ByteDance',
+  'bytedance-seed': 'ByteDance', 'x-ai': 'xAI', stabilityai: 'Stability AI', 'stability-ai': 'Stability AI',
+  recraft: 'Recraft', ideogram: 'Ideogram', qwen: 'Qwen', 'z-ai': 'Z.ai', minimax: 'MiniMax', 'meta-llama': 'Meta',
+};
+function simgMaker(slug) {
+  if (!slug) return '';
+  return SIMG_MAKERS[slug] || slug.split(/[-_]/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
 /** The labels a model carries: Non-commercial and 18+ are shown, never hidden. */
@@ -317,9 +358,45 @@ function simgModesLine(model) {
   return names.join(' · ');
 }
 
+/* Core lists the gallery only by page (offset, limit; no pinned filter), so the
+   Pinned tab reads the pages the window has not loaded yet, up to a cap. */
+const SIMG_PINNED_PAGE = 200;      // Core's largest page
+const SIMG_PINNED_MAX_PAGES = 10;  // so at most 2,000 more items are read
+
+/**
+ * Pinned items in the pages after `from`: `fetchPage(offset, limit)` answers
+ * like BR.studio.gallery. Resolves `{items, complete, ok}`: `complete` false
+ * when the cap was reached first, `ok` false when a page failed (the pinned
+ * ones found before it are kept).
+ */
+async function simgFindPinned(fetchPage, from, opts) {
+  const o = opts || {};
+  const size = o.pageSize || SIMG_PINNED_PAGE, max = o.maxPages || SIMG_PINNED_MAX_PAGES;
+  const items = [], seen = new Set();
+  let offset = Math.max(0, from | 0);
+  for (let n = 0; n < max; n++) {
+    let r;
+    try { r = await fetchPage(offset, size); } catch (e) { r = null; }
+    if (!r || !r.ok || !r.data) return {items, complete: false, ok: false};
+    const got = Array.isArray(r.data.items) ? r.data.items : [];
+    for (const x of got) if (x && x.pinned && !seen.has(x.id)) { seen.add(x.id); items.push(x); }
+    offset += got.length;
+    if (!r.data.hasMore || !got.length) return {items, complete: true, ok: true};
+  }
+  return {items, complete: false, ok: true};
+}
+
+/** The Pinned tab: pinned items of the loaded pages plus those found beyond them, newest first, each once. */
+function simgPinnedList(items, more) {
+  const out = (items || []).filter((x) => x.pinned);
+  const ids = new Set((items || []).map((x) => x.id));
+  for (const x of more || []) if (x.pinned && !ids.has(x.id)) { ids.add(x.id); out.push(x); }
+  return out.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote,
+  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
-    simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgModelTags,
-    simgLocalChips, simgModesLine, SIMG_PHASE_ORDER};
+    simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
+    simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};
 }

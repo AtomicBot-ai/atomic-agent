@@ -203,6 +203,8 @@ export {
   stopDaemon,
   getDaemonStatus,
   readRunningPid,
+  readChatDaemonPidState,
+  type ChatDaemonPidState,
   classifyPidLiveness,
   DaemonHealthError,
   ForeignDaemonError,
@@ -234,6 +236,10 @@ export {
   type ThroughputRecord,
   type ThroughputSample,
 } from "./server/daemon-lifecycle.js";
+export {
+  readManagedEngineLiveness,
+  type ManagedEngineLiveness,
+} from "./server/engine-liveness.js";
 export {
   classifyPrefixReuse,
   countSlidingWindowLayers,

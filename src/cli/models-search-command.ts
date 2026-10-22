@@ -11,11 +11,11 @@ import { fetchOpenAiCompatModels } from "../llm/provider/openai/fetch-openai-com
 import { fetchGeminiModels } from "../llm/provider/gemini/fetch-gemini-models.js";
 import {
   listAimlapiChatPicks,
-  refreshAimlapiChatCatalogFromApi,
+  refreshAimlapiChatCatalog,
 } from "../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import {
   listOpenRouterChatPicks,
-  refreshOpenRouterChatCatalogFromApi,
+  refreshOpenRouterChatCatalog,
 } from "../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import type { LlmProviderConfigEntry } from "../llm/provider/registry/provider-types.js";
@@ -127,18 +127,29 @@ export async function collectHits(
 
 /**
  * A live refresh writes into each fetcher's module cache, which is what
- * `catalogForProvider` reads through for curated kinds. Failures are
- * silent on purpose: the bundled snapshot is still a useful answer, and
- * a search should not fail because a vendor endpoint is down.
+ * `catalogForProvider` reads through for curated kinds. A failure does
+ * not fail the search: the bundled snapshot is still a useful answer, and
+ * a search should not fail because a vendor endpoint is down. It is not
+ * silent either: one stderr warning names the provider, the reason
+ * (network error, timeout, HTTP status, a body that is not JSON) and how
+ * long the attempt took, so a stale list can be traced to its cause.
  */
 async function refreshCatalog(entry: LlmProviderConfigEntry): Promise<void> {
-  try {
-    if (entry.kind === "openrouter")
-      await refreshOpenRouterChatCatalogFromApi();
-    else if (entry.kind === "aimlapi") await refreshAimlapiChatCatalogFromApi();
-  } catch {
-    /* keep the bundled snapshot */
-  }
+  const refresh =
+    entry.kind === "openrouter"
+      ? refreshOpenRouterChatCatalog
+      : entry.kind === "aimlapi"
+        ? refreshAimlapiChatCatalog
+        : null;
+  if (!refresh) return;
+  const startedAt = Date.now();
+  const result = await refresh();
+  if (result.ok) return;
+  const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+  process.stderr.write(
+    `warning: live model list from ${JSON.stringify(entry.id)} did not load ` +
+      `(${result.reason}, after ${seconds} s); using the bundled list\n`,
+  );
 }
 
 function livePicks(

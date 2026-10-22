@@ -171,12 +171,23 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
      model meanwhile" — rather than from the composer's own panes, so its
      Cancel closes the popover instead of falling back to the backend list. */
   alone:false };
-/* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
-   kinds, whose config shape the desktop does not write. */
+/* Kind rows in the TUI's KIND_ROW_ORDER. ATO-844: the two subscription-CLI
+   rows come after the three one-key services rather than first, as the TUI
+   has them, so the rows the app and its smoke address by position keep their
+   place. They save the entry the TUI's wizard writes
+   (providers-wizard-build-entry.ts): the same id, `kind:'subscription-cli'`,
+   the CLI's name in `subscriptionCli`, and Claude's default model (Codex picks
+   its own, so it has none). `word` is the provider's name on its own;
+   `billingEnv` is the variable that makes the CLI bill per token instead of
+   the plan (providers-orchestrator.ts). Labels are the TUI's (#710). */
 const KIND_ROWS = [
   {id:'openrouter', kind:'openrouter', label:'OpenRouter (cloud chat + optional cloud embed)', env:'OPENROUTER_API_KEY', defaultModel:'openrouter/auto'},
   {id:'aimlapi', kind:'aimlapi', label:'AI/ML API (1000+ models, OpenAI-compatible)', env:'AIMLAPI_API_KEY'},
   {id:'gemini', kind:'gemini', label:'Gemini (Google AI)', env:'GEMINI_API_KEY', defaultModel:'gemini-2.5-flash'},
+  {id:'claude-cli', kind:'subscription-cli', subscriptionCli:'claude', word:'Claude Code', billingEnv:'ANTHROPIC_API_KEY', defaultModel:'sonnet',
+   label:'Claude Code subscription: the agent runs on your plan (signed-in `claude`)'},
+  {id:'codex-cli', kind:'subscription-cli', subscriptionCli:'codex', word:'Codex', billingEnv:'OPENAI_API_KEY', defaultModel:'',
+   label:'OpenAI Codex subscription: the agent runs on your plan (signed-in `codex`)'},
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
@@ -313,7 +324,7 @@ function savedKeyInvalid(p) {
 }
 function savedKeyLine(id) { return 'The key saved for ' + providerWord(id) + ' has a character keys don’t have; paste it again.'; }
 /* ATO-161: the add-provider step's request for a key, and whether WIZ.error is that request rather than a failure. */
-function wizService(row) { return String((row && row.label) || '').split(' (')[0] || 'this provider'; }
+function wizService(row) { return String((row && (row.word || row.label)) || '').split(' (')[0] || 'this provider'; }
 function keyAskLine(row) { const svc = wizService(row); return 'Paste your ' + svc + (/\bAPI$/.test(svc) ? ' key' : ' API key') + ' to continue.'; }
 function wizErrSoft() { return !!WIZ.error && WIZ.error === WIZ.softError; }
 /* B04: the line is about the provider's address, not the key — the key field stays unlit. */
@@ -557,7 +568,10 @@ const OB_COPY = {
   urlChatTitle: 'Base URL of your chat llama-server ',
   urlEmbeddingTitle: 'Base URL of your embedding llama-server ',
   urlEmbeddingNote: 'Optional — leave it empty to continue without hybrid embedding recall.',
-  urlChatPlaceholder: 'http://127.0.0.1:8080',
+  urlChatPlaceholder: 'http://127.0.0.1:9931',
+  /* ATO-834: llama-server moved its default port from 8080 to 9931
+     (llama.cpp v0.7.0); older builds and the Docker images still use 8080. */
+  urlChatPortNote: 'A current llama-server listens on port 9931 by default. Older builds and the Docker images use 8080.',
   urlEmbeddingPlaceholder: 'http://127.0.0.1:19092',
   urlProbing: 'probing /health…',
   // onboarding-download-step.tsx:18-38
@@ -908,6 +922,10 @@ const CPUW = {on: false, seq: 0, modelId: null, said: 0, dismissed: 0};
 /* The local engine (Atomic Chat Core, the default) did not download or start: main's
    engine:failure, {stage, why, detail, at}, or null once a start or an install worked. */
 const ENGF = {f: null, said: 0, dismissed: 0, fresh: false};
+/* ATO-374: main's word that the agent moved the local model to the CPU build
+   because the GPU build could not load it ({at}, or null). Said once on the app
+   line, and kept as one line in Settings › Models. */
+const CPUFB = {on: null, said: 0};
 
 let BUILD = null;
 /* Provider ids whose key was saved without ever being checked. Read from
@@ -1371,12 +1389,18 @@ const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', 
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 /* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
    server's log shown there — open or not, its last read, the poll's timer. */
-const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
+/* ATO-720..722: `check` is the provider row's last live check ({id, busy, res, at}); `provErr` the last
+   error a turn met on each provider ({text, at}), dropped once a turn on it completes or a check passes. */
+const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{} };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
   anthropic:'https://console.anthropic.com/settings/keys', groq:'https://console.groq.com/keys', deepseek:'https://platform.deepseek.com/api_keys',
-  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.ai/settings/projects/~current/api-keys', xai:'https://console.x.ai'};
+  mistral:'https://console.mistral.ai/api-keys', together:'https://api.together.ai/settings/projects/~current/api-keys', xai:'https://console.x.ai',
+  // ATO-819: the rest of the cloud presets; Moonshot and DashScope point at the international consoles their base URLs use.
+  cerebras:'https://cloud.cerebras.ai', fireworks:'https://fireworks.ai/account/api-keys', moonshot:'https://platform.moonshot.ai/console/api-keys',
+  perplexity:'https://www.perplexity.ai/settings/api', dashscope:'https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key',
+  nous:'https://portal.nousresearch.com', novita:'https://novita.ai/settings/key-management'};
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
 // ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
@@ -1902,7 +1926,7 @@ const S = {
   consoleOpen:false, consoleTab:'agent',
   settings:null, settingsPane:'general',
   overlay:null, menuOpen:null, alert:null,
-  q:'', cur:0, scope:null,
+  q:'', cur:0, scope:null, palMoreFor:null,
   slash:false, slashCur:0,
   draft:'',
   localModel:'qwen3-8b-instruct', cloudModel:'claude-opus-5', modelQuery:'',
@@ -2074,7 +2098,7 @@ function providerWord(id) {
   const s = String(id || '');
   if (s === 'no provider') return 'No provider';
   const p = PRESETS.find((x) => x.id === s) || KIND_ROWS.find((x) => x.id === s && !x.custom);
-  return p ? p.label.split(' (')[0] : TUI_ONLY_PRESET_WORDS[s] || s;
+  return p ? p.word || p.label.split(' (')[0] : TUI_ONLY_PRESET_WORDS[s] || s;
 }
 /** A model id → the local catalogue's `name` without the file-format tail
     ("Gemma 4 E4B QAT GGUF" → "Gemma 4 E4B"); otherwise the id as before. */
@@ -2497,8 +2521,12 @@ function chatStatusWord(s) {
 }
 
 /* ---------------- content ---------------- */
+let CHAT_MEDIA_VIEW = '';
 function renderContent() {
   const c = $('#content');
+  // ATO-811: a reply's clip stops when its chat leaves the screen (another chat, Studio), before the old DOM goes.
+  const mediaView = S.room + ':' + S.sessionId;
+  if (mediaView !== CHAT_MEDIA_VIEW) { CHAT_MEDIA_VIEW = mediaView; if (typeof pauseChatMedia === 'function') pauseChatMedia(); }
   // Studio: the shell keeps its page's DOM between renders and only mounts it when the room changes.
   if (S.room === 'studio') { if (window.STUDIO) STUDIO.mount(c); return; }
   if (window.STUDIO) STUDIO.leave();
@@ -2635,11 +2663,22 @@ function item(m) {
 /** ATO-467: "Thought for 12 s" once this window timed the row, from its first
     reasoning frame to the turn's next frame of another kind (REASON_ENDS).
     A row still thinking, one under a second, and a reopened chat's rows (the
-    store keeps no times for reasoning) say "Reasoning", as before. */
+    store keeps no times for reasoning) say "Reasoning", as before.
+    ATO-820: a model that thinks again in the same row after its reply began
+    adds that span to `thoughtMs` (see reasonReopen), so the label is the sum
+    of every span and not only the first. */
 const REASON_ENDS = new Set(['delta', 'tool_progress', 'progress_note', 'reply_attachments', 'finish', 'done', 'aborted', 'error']);
 function reasonLabel(m) {
-  const ms = m.startedAt && m.endedAt ? m.endedAt - m.startedAt : 0;
+  if (!m.startedAt || !m.endedAt) return 'Reasoning';
+  const ms = (m.thoughtMs || 0) + (m.endedAt - m.startedAt);
   return ms >= 1000 ? 'Thought for ' + dur(ms) : 'Reasoning';
+}
+/** ATO-820: a closed reasoning row that gets more thinking banks its span and restarts the clock. */
+function reasonReopen(block, at) {
+  if (!block.startedAt || !block.endedAt) return;
+  block.thoughtMs = (block.thoughtMs || 0) + (block.endedAt - block.startedAt);
+  block.startedAt = at;
+  block.endedAt = null;
 }
 
 /* ============================================================
@@ -3047,7 +3086,8 @@ function toolLine(m) {
     return 'Generated ' + plural(k, 'image') + (a.prompt ? ' · ' + quote(a.prompt) : '');
   }
   // "Generated a video · 4 s · Veo 3.1 Fast": the length and the model, the money's two levers (chat-media.js).
-  if (n === 'video.generate') return esc(videoToolLine(a));
+  // ATO-815: the model as the result (or the running card's progress) names it, not guessed from the args.
+  if (n === 'video.generate') return esc(videoToolLine(a, {out, label: m.progress ? m.progress.label : ''}));
   if (n === 'fusion.delegate') {
     /* ATO-235: only whole args are counted. A live card's are clipped to 120
        characters, so its tasks come from the approval request (fzTasks, set
@@ -4188,14 +4228,20 @@ function paintStream() {
 /** The transcript column alone, rebuilt the way chatView() builds it, with
     the scroll kept the way afterChat keeps it: at the bottom while stuck
     there, and otherwise where it was — the scroller itself stays. False when
-    the chat is on screen without a column to rebuild. */
+    the chat is on screen without a column to rebuild. ATO-824: the column's
+    nodes are kept where the markup did not change (dom-morph.js). */
 function repaintTranscript() {
   if (S.room !== 'chat') return true;   // not on screen; the room switch renders it
   const sc = $('#scroller');
   const col = sc && S.log.length ? sc.querySelector(':scope > .col720') : null;
   if (!col) return false;
   const exaHeld = exaKeyHold();   // ATO-328: a stream frame does not wipe the Exa key being pasted
-  col.innerHTML = renderItems();
+  /* ATO-824: morphed, not replaced, so a node whose markup did not change
+     (a finished code block's Copy button above all) is the same node next
+     frame: its hover holds and a press on it still ends in a click. */
+  const next = document.createElement('template');
+  next.innerHTML = renderItems();
+  morphChildren(col, next.content);
   exaKeyRestore(exaHeld);
   if (S.stick) sc.scrollTop = sc.scrollHeight;
   return true;
@@ -4390,6 +4436,8 @@ const SCOPES = {
   // Item 7: the prototype's Task scope is gone — nothing targeted scope:task, and the Tasks tab is the one surface.
 };
 
+/* ATO-824: the chats a search shows before its "N more chats" row. */
+const PAL_CHATS_SHOWN = 5;
 function palRows() {
   if (S.scope) return SCOPES[S.scope].rows.map((r) => ({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}));
   const q = S.q.trim().toLowerCase();
@@ -4409,11 +4457,20 @@ function palRows() {
   };
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
   // cross-entity. ATO-453: chats used to stop at three title matches, so with many
-  // similar chats the one you wanted never showed. Now up to 20 (the list scrolls),
-  // ranked like the commands above; ties keep the agent's order, most recent first.
-  SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
-    .sort((a, b) => a.k - b.k || a.i - b.i).slice(0, 20).map((x) => x.s)
+  // similar chats the one you wanted never showed. They are ranked like the commands
+  // above; ties keep the agent's order, most recent first.
+  // ATO-824 (owner, 22.10): the first PAL_CHATS_SHOWN, then one "N more chats" row,
+  // then tasks and skills, which up to 20 chats pushed out of sight. The row shows
+  // every matching chat for this query in place (palMoreChats).
+  const chats = SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
+    .sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.s);
+  const allChats = S.palMoreFor === q || chats.length <= PAL_CHATS_SHOWN + 1;
+  (allChats ? chats : chats.slice(0, PAL_CHATS_SHOWN))
     .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
+  if (!allChats) {
+    const more = chats.length - PAL_CHATS_SHOWN;
+    hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
+  }
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
@@ -5306,6 +5363,8 @@ async function refreshHealth() {
   if (!(res && res.ok && res.data)) return;
   const next = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
                 llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null,
+                // ATO-720: the agent's own probe of the model server, for Diagnostics' Model row.
+                llamaReachable: res.data.llama && typeof res.data.llama.reachable === 'boolean' ? res.data.llama.reachable : null,
                 // 0.6.6, loopback only: the serve process and how many turns it is running (any client's).
                 pid: typeof res.data.pid === 'number' ? res.data.pid : null,
                 busyTurns: typeof res.data.busyTurns === 'number' ? res.data.busyTurns : null};
@@ -5380,6 +5439,8 @@ function settingsPaneEntered(opened) {
   else if (pane === 'telegram') telegramTabEntered();
   else if (pane === 'composio') composioTabEntered();
   else if (pane === 'import') importTabEntered();
+  // ATO-720: the Model row reads `models status`; ask once on entry when the route uses a local model server.
+  else if (pane === 'diagnostics' && BR && (engfRouteLocal() || selBackend() === 'custom')) llmRefreshStatus(true).then(diagRepaint);
   // ATO-328: General's Exa key row says whether a key is saved; read the names on every entry.
   if (pane === 'general') exaKeyRefresh();
 }
@@ -5512,6 +5573,7 @@ function diagnosticsPane() {
   diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
     + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
+    + diagHealthHTML(diagHealthRows())
     + '<div class="tk-list set-setlist set-diaglist">'
       + rows.map(([k, v, full, , x], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
         + '<div class="set-diagv' + (x && x.tone ? ' set-diagv--' + x.tone : ' mono') + '" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
@@ -5548,6 +5610,151 @@ function diagAgentRows() {
   const v = 'Running · ' + (n === 0 ? 'idle' : n + (n === 1 ? ' task' : ' tasks'));
   return [['Agent process', v, 'Process id ' + h.pid + '. Tasks running in the agent right now, from any chat, task or bot', '',
     {tone:'ok', copy:v + ' · pid ' + h.pid}]];
+}
+/* ATO-720, ATO-721, ATO-722 (U-96, owner's option B trimmed): three health
+   rows over the support rows, each with a mark and at most one way out.
+   Engine: the local engine installed and its model server not stuck in a
+   restart loop (ENGF, DWATCH). Model: the model server answering, from
+   `models status` and /health's llama probe. Provider: the active cloud
+   provider's saved key and the last error a turn met on it, with Check, a
+   one-token request on the saved key, only when pressed (it costs a request).
+   A row the route does not use is grey, and while the agent is not up a row
+   says it is checking rather than going red. Tones: ok, bad, warn, wait, off. */
+const DIAG_NOT_USED_CLOUD = 'Not used: chats go to a cloud provider';
+function diagHealthRows() {
+  const st = S.live.state;
+  if (st !== 'connected') {
+    // Starting: checking. Stopped or missing: the Agent process row below says why, and these wait on it.
+    const r = st === 'starting' || st === 'waiting' ? {tone:'wait', value:'Checking…'} : {tone:'off', value:'Needs the agent running'};
+    return [['engine', 'Engine'], ['model', 'Model'], ['provider', 'Provider']].map(([key, label]) => Object.assign({key, label}, r));
+  }
+  const backend = selBackend();
+  return [diagEngineRow(backend), diagModelRow(backend), diagProviderRow()];
+}
+function diagEngineRow(backend) {
+  const row = {key:'engine', label:'Engine'};
+  if (!engfRouteLocal()) {
+    return Object.assign(row, {tone:'off', value: backend === 'custom' ? 'Not used: you run your own model server' : DIAG_NOT_USED_CLOUD});
+  }
+  if (ENGF.f) {
+    return Object.assign(row, {tone:'bad', value:ENGF.f.why, title:ENGF.f.detail || ENGF.f.why,
+      fix: ENGF.f.retryable === false ? null : {act:'engf:retry', label:'Download again'}});
+  }
+  if (DWATCH && DWATCH.kind === 'gave_up') {
+    return Object.assign(row, {tone:'bad', value:'The local model server keeps stopping', fix:{act:'diag:startModel', label:'Start model'}});
+  }
+  if (DWATCH && (DWATCH.kind === 'restarting' || DWATCH.kind === 'restart_failed')) {
+    return Object.assign(row, {tone:'wait', value:'Restarting the local model server…'});
+  }
+  return Object.assign(row, {tone:'ok', value:'Ready'});
+}
+function diagModelRow(backend) {
+  const row = {key:'model', label:'Model'};
+  const external = backend === 'custom';
+  if (!external && !engfRouteLocal()) return Object.assign(row, {tone:'off', value:DIAG_NOT_USED_CLOUD});
+  const st = LLMP.status;
+  const health = st ? String(st.health || '').trim().toLowerCase() : '';
+  const reach = SET.health && typeof SET.health.llamaReachable === 'boolean' ? SET.health.llamaReachable : null;
+  const name = (st && st.activeModel) || (backend === 'local' ? activeModel() : '');
+  const fix = external ? {act:'settings:llm', label:'Open Models settings'} : {act:'diag:startModel', label:'Start model'};
+  if (LLMP.daemonPhase === 'starting') return Object.assign(row, {tone:'wait', value:'Starting…'});
+  // ATO-852 (agent with #721): the server answers but refuses the model's key; Settings › Models restarts it.
+  if (st && st.daemonRunning && (st.keyRejected === true || /^key rejected\b/.test(health))) {
+    return Object.assign(row, {tone:'bad', value:'The model server refuses the model’s key', fix:{act:'settings:llm', label:'Open Models settings'}});
+  }
+  if ((st && st.daemonRunning && health === 'ok') || reach === true) {
+    return Object.assign(row, {tone:'ok', value: name ? modelWord(name) + ' · loaded' : 'Loaded'});
+  }
+  if (st && st.daemonRunning && /loading/.test(health)) return Object.assign(row, {tone:'wait', value:'Loading the model…'});
+  if (st && st.daemonRunning && llmJustSpawned()) return Object.assign(row, {tone:'wait', value:'Starting…'});
+  // `models status` on its way (asked on entry): no verdict from /health alone yet.
+  if (!st && (reach === null || LLMP.statusBusy)) return Object.assign(row, {tone:'wait', value:'Checking…'});
+  return Object.assign(row, {tone:'bad', value:'The model server is not answering', fix});
+}
+function diagProviderRow() {
+  const row = {key:'provider', label:'Provider'};
+  const p = activeProvider();
+  if (!p || p.kind === 'llama-server') return Object.assign(row, {tone:'off', value:'Not used: chats run on a local model'});
+  const name = providerWord(p.id);
+  const model = p.defaultChatModel || p.model || '';
+  const settings = {act:'settings:llm', label:'Open provider settings'};
+  const chk = DIAG.check && DIAG.check.id === p.id ? DIAG.check : null;
+  const err = DIAG.provErr[p.id] || null;
+  row.check = {disabled: !model || !!(chk && chk.busy), title: model ? 'Send one short request to ' + name + ' with the saved key' : 'Pick a model for ' + name + ' first'};
+  if (chk && chk.busy) return Object.assign(row, {tone:'wait', value:name + ' · checking…'});
+  const res = chk && (!err || chk.at >= err.at) ? chk.res : null;
+  if (res) {
+    if (res.ok && res.noFunds) return Object.assign(row, {tone:'warn', value:name + ' · ' + (res.error || NO_FUNDS_KEY_LINE), fix:settings});
+    if (res.ok) return Object.assign(row, {tone:'ok', value:name + ' · answering'});
+    if (res.checked) {
+      const said = res.keyChars ? KEY_CHAR_ERROR : name + ' did not accept the key' + (res.status ? ' (' + res.status + ')' : '');
+      return Object.assign(row, {tone:'bad', value:said, title:res.error ? diagScrub(res.error) : said, fix:settings});
+    }
+    return Object.assign(row, {tone:'warn', value:'Could not check ' + name + ': ' + (res.error ? diagScrub(res.error) : 'no answer'), fix:settings});
+  }
+  if (savedKeyInvalid(p)) return Object.assign(row, {tone:'bad', value:savedKeyLine(p.id), fix:settings});
+  if (err) return Object.assign(row, {tone:'bad', value:name + ' · last error: ' + err.text, title:err.text, fix:settings});
+  if (UNVERIFIED.includes(p.id)) return Object.assign(row, {tone:'warn', value:name + ' · key not checked yet'});
+  return Object.assign(row, {tone:'ok', value:name + ' · no errors'});
+}
+const DIAG_DOT = {ok:'tk-dot--green', bad:'tk-dot--red', warn:'tk-dot--amber', wait:'tk-dot--brand tk-dot--pulse', off:'tk-dot--hollow'};
+function diagHealthHTML(rows) {
+  return '<div class="tk-list set-setlist set-diaglist set-diaghealth" role="list" aria-label="Health">'
+    + rows.map((r) => '<div class="tk-setrow set-diaghrow" role="listitem" data-health="' + r.key + '" data-tone="' + r.tone + '">'
+      + '<div class="t"><span class="tk-dot ' + DIAG_DOT[r.tone] + '" aria-hidden="true"></span>' + esc(r.label) + '</div>'
+      + '<div class="set-diagv set-diagv--' + r.tone + '" title="' + esc(r.title || r.value) + '">' + esc(r.value) + '</div>'
+      + (r.check ? '<button class="btn btn-s xs" data-act="diag:check"' + (r.check.disabled ? ' disabled' : '') + ' title="' + esc(r.check.title) + '">Check</button>' : '')
+      + (r.fix ? '<button class="btn btn-s xs set-diagfix" data-act="' + r.fix.act + '">' + esc(r.fix.label) + '</button>' : '')
+      + '</div>').join('')
+    + '</div>';
+}
+/* ATO-722: Check, the provider row's live test: verifyProviderKey with no key
+   typed checks the saved entry as saved (main's checkProviderKey). A pass also
+   retires the "not checked yet" badge, as the add-provider step's pass does. */
+async function diagCheckProvider() {
+  const p = activeProvider();
+  if (!BR || !BR.verifyProviderKey || !p || p.kind === 'llama-server') return;
+  const model = p.defaultChatModel || p.model || '';
+  if (!model || (DIAG.check && DIAG.check.busy)) return;
+  DIAG.check = {id:p.id, busy:true, res:null, at:Date.now()};
+  diagRepaint();
+  let res;
+  try { res = await BR.verifyProviderKey({id:p.id, kind:p.kind}, model); }
+  catch (e) { res = {ok:false, checked:false, error:String((e && e.message) || e)}; }
+  DIAG.check = {id:p.id, busy:false, res:res || {ok:false, checked:false}, at:Date.now()};
+  if (res && res.ok && res.checked !== false) {
+    delete DIAG.provErr[p.id];
+    if (UNVERIFIED.includes(p.id)) {
+      UNVERIFIED = UNVERIFIED.filter((x) => x !== p.id);
+      if (BR.unverifiedSet) BR.unverifiedSet(p.id, false).catch(() => {});
+    }
+  }
+  diagRepaint();
+}
+/* ATO-720: Start model from the Model row (or the Engine row after the
+   supervisor gave up): Settings › Models' own start, then /health again. */
+async function diagStartModel() {
+  await llmDaemon('start');
+  await refreshHealth();
+  diagRepaint();
+}
+/* ATO-721: the last error a turn met on a provider: the wait's cause in words
+   (waitCauseWords), else the agent's own sentence for a turn the provider
+   failed. Kept per provider until a turn on it completes (diagProviderOk). */
+function diagNoteProviderError(providerId, text) {
+  if (!providerId || !text) return;
+  DIAG.provErr[providerId] = {text:diagScrub(text), at:Date.now()};
+}
+/* A provider's error can quote the key back, and Copy details puts these rows on
+   the clipboard for us: key-shaped strings and bearer values go, as the support
+   report's scrubText does (main/report-redact.ts, the token shapes there). */
+const DIAG_KEY_SHAPES = [/\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g, /\bAIza[0-9A-Za-z_-]{35}/g, /\bhf_[A-Za-z0-9]{30,}/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g, /\bAKIA[0-9A-Z]{16}\b/g, /(\bbearer[ \t]+)[A-Za-z0-9+\/=._~-]{8,}/gi];
+function diagScrub(text) {
+  return DIAG_KEY_SHAPES.reduce((s, re) => s.replace(re, (m, head) => (typeof head === 'string' ? head : '') + '<key hidden>'), String(text || ''));
+}
+function diagProviderOk(providerId) {
+  if (providerId && DIAG.provErr[providerId]) delete DIAG.provErr[providerId];
 }
 /* Д58: the model server's log, read the way Models › LLM logs read it (the
    tail of llama-server.log in the data dir `models status` names), on a 2 s
@@ -5661,6 +5868,8 @@ function diagAct(what) {
     return;
   }
   if (what === 'agentlog') { diagOpen(DIAG.agentLog, 'the agent log'); return; }
+  if (what === 'check') { diagCheckProvider(); return; }
+  if (what === 'startModel') { diagStartModel(); return; }
   if (what === 'openlog') { if (DIAG.log && DIAG.log.path && !DIAG.log.external) diagOpen(DIAG.log.path, 'the model server log'); return; }
   // A repaint of the pane, not of the window: the focus stays on the toggle.
   if (what === 'log') { DIAG.logOpen = !DIAG.logOpen; DIAG.statusAsked = false; if (!DIAG.logOpen) diagLogStop(); diagRepaint(); return; }
@@ -5672,7 +5881,9 @@ function diagAct(what) {
   }
   if (what === 'copyall') {
     const rows = (DIAG.copy || []).map((r) => r.label + ': ' + (r.value || '—'));
-    copyText(rows.concat(diagLine()).join('\n'), 'Details copied');
+    // ATO-720..722: the health rows go first, as on screen.
+    const health = diagHealthRows().map((r) => r.label + ': ' + r.value);
+    copyText(health.concat(rows, diagLine()).join('\n'), 'Details copied');
     return;
   }
   if (what.startsWith('copy:')) {
@@ -5967,6 +6178,27 @@ function copyText(text, okTitle, okSub) {
 /* ============================================================
    behaviour
    ============================================================ */
+/** Help › Report an issue (the menu, the palette, /report): a prefilled issue in the browser and a
+    support report saved beside it. ATO-279: the native menu reaches it through `help.report` too, so
+    it is counted, and it works over first-run setup (which lets this act through). */
+function helpReport() {
+  const b2 = BUILD || {};
+  const body = [
+    'What happened:', '', '', 'What I expected:', '', '',
+    '---', 'Atomic Agent ' + (b2.version || '?') + (b2.build ? ' (' + b2.build + ')' : '') + ' · ' + (b2.platform || '?') + ' ' + (b2.arch || '?'),
+    'Agent: ' + (S.live.binary || 'not started'),
+  ].join('\n');
+  const url = 'https://github.com/AtomicBot-ai/atomic-agent/issues/new'
+    + '?title=' + encodeURIComponent('[desktop] ')
+    + '&body=' + encodeURIComponent(body);
+  if (BR && BR.debugBundle) {
+    BR.debugBundle('report').then((res) => {
+      if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
+    }).catch(() => {});
+  }
+  if (BR && BR.openExternal) BR.openExternal(url);
+}
+
 function act(a) {
   if (!a) return;
   /* Item 7 lane fix, found by the suite rather than by a spec: `split(':')`
@@ -5981,7 +6213,7 @@ function act(a) {
   const colon = a.indexOf(':');
   const k = colon < 0 ? a : a.slice(0, colon);
   const v = colon < 0 ? undefined : a.slice(colon + 1);
-  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
+  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.palMoreFor = null; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
   /* ATO-165: the chat row's menu is a pick-one menu — whatever verb runs next
      (one of its own items, or anything else) takes it down first. */
   /* Its layer is repainted on the spot: a pick whose own branch repaints only
@@ -6016,25 +6248,7 @@ function act(a) {
      about how the provider is saved and activated differs; only whether we
      were allowed to claim the key works. */
   if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
-  if (a === 'help.report' || a === 'report') {
-    close(); render();
-    const b2 = BUILD || {};
-    const body = [
-      'What happened:', '', '', 'What I expected:', '', '',
-      '---', 'Atomic Agent ' + (b2.version || '?') + (b2.build ? ' (' + b2.build + ')' : '') + ' · ' + (b2.platform || '?') + ' ' + (b2.arch || '?'),
-      'Agent: ' + (S.live.binary || 'not started'),
-    ].join('\n');
-    const url = 'https://github.com/AtomicBot-ai/atomic-agent/issues/new'
-      + '?title=' + encodeURIComponent('[desktop] ')
-      + '&body=' + encodeURIComponent(body);
-    if (BR && BR.debugBundle) {
-      BR.debugBundle('report').then((res) => {
-        if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
-      }).catch(() => {});
-    }
-    if (BR && BR.openExternal) BR.openExternal(url);
-    return;
-  }
+  if (a === 'help.report' || a === 'report') { close(); render(); helpReport(); return; }
   /* Run mode — every route to it lands here or in fzSlash: the native menu's
      Run › Where it runs…, the Settings › LLM cards and worker count, the
      composer's ⇄, and the palette row. One switch path per verb, shared with
@@ -7046,6 +7260,7 @@ document.addEventListener('click', (e) => {
   // this handler competes for them.
   const cp = t.closest('[data-copy]'); if (cp) { e.preventDefault(); copyMessage(cp.dataset.copy); return; }
   const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
+  const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
@@ -7129,6 +7344,10 @@ document.addEventListener('paste', (e) => {
   el.dispatchEvent(new Event('input', {bubbles: true}));
 });
 
+document.addEventListener('compositionend', (e) => {
+  if (e.target.id === 'palq' || e.target.id === 'sesq') e.target.dispatchEvent(new Event('input', {bubbles: true}));
+});
+
 document.addEventListener('input', (e) => {
   // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
@@ -7145,6 +7364,11 @@ document.addEventListener('input', (e) => {
     else refreshSend();
     return;
   }
+  /* ATO-822: both repaints rebuild the field, which ended an IME composition
+     mid-word, so the next Enter reached the list with isComposing false and
+     opened a row. Nothing repaints while composing; compositionend below
+     repaints. */
+  if ((e.target.id === 'palq' || e.target.id === 'sesq') && e.isComposing) return;
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
   if (e.target.id === 'sesq') { S.sesQ = e.target.value; renderOverlays(); return; }
   // Item 7: Tasks tab inputs edit state in place; only the preview block repaints.
@@ -7787,6 +8011,26 @@ function cpuNoticeHTML() {
    llama.cpp is never offered here (support-only CLI). Never a spinner left
    turning. */
 const ENGF_TITLE = 'The local engine isn\u2019t ready';
+/** Nadya's wording (ATO-374), the same in Settings › Models and in the error card. */
+const CPUFB_LINE = 'The model couldn\u2019t load on your graphics card. Switched to the CPU build, it will be slower.';
+function cpufbApply(n) {
+  CPUFB.on = n && typeof n === 'object' && Number(n.at) > 0 ? {at: Number(n.at)} : null;
+  if (CPUFB.on && CPUFB.said !== CPUFB.on.at) {
+    CPUFB.said = CPUFB.on.at;
+    appSay(CPUFB_LINE, 'caution');
+  }
+  if (llmVisible()) llmRepaint();
+}
+/** Settings › Models: the CPU switch, one line. Left out while the failure card is up: that card carries it. */
+function cpufbCardHTML() {
+  if (!CPUFB.on || ENGF.f) return '';
+  return '<div class="tk-notice tk-notice--amber llm-cpufb" role="status">' + ic('cpu')
+    + '<span class="grow"><span class="llm-note">' + esc(CPUFB_LINE) + '</span></span></div>';
+}
+/** The failure card's CPU line: the agent had moved this start to the CPU build before it failed. */
+function engfCpuLineHTML(f) {
+  return f && f.cpuFallback ? '<span class="llm-note llm-engfail-cpu">' + esc(CPUFB_LINE) + '</span>' : '';
+}
 function engfApply(f) {
   ENGF.f = f && typeof f === 'object' && typeof f.why === 'string' ? f : null;
   if (ENGF.f && ENGF.said !== ENGF.f.at) {
@@ -7819,7 +8063,7 @@ function engfNoticeHTML() {
   const f = ENGF.f;
   return '<div class="statusstrip engfail" role="alert">'
     + '<span class="ss-ic err">' + ic('alert') + '</span>'
-    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(ENGF_TITLE) + '</b>' + esc(f.why) + '</span>'
+    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(ENGF_TITLE) + '</b>' + esc(f.why) + (f.cpuFallback ? ' ' + esc(CPUFB_LINE) : '') + '</span>'
     + engfActsHTML('xs')
     + '<button class="iconbtn sm" data-act="engf:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
 }
@@ -7829,6 +8073,7 @@ function engfCardHTML() {
   if (!f) return '';
   return '<div class="tk-notice tk-notice--red llm-engfail" role="alert">' + ic('alert')
     + '<span class="grow"><b>' + esc(ENGF_TITLE) + '</b><span class="llm-note">' + esc(f.why) + '</span>'
+    + engfCpuLineHTML(f)
     + (f.detail ? '<span class="llm-note llm-engfail-detail">' + esc(f.detail) + '</span>' : '') + '</span>'
     + '<span class="llm-engfail-acts">' + engfActsHTML('sm') + '</span></div>';
 }
@@ -8018,9 +8263,17 @@ function flatPalRows() {
 function activatePal(i) {
   const rows = flatPalRows();
   const r = rows[i]; if (!r) return;
+  if (r.more) { palMoreChats(); return; }
   ANX.via('palette');
   if (r.act && r.act.startsWith('scope:')) { act(r.act); return; }
   act(r.act);
+}
+/* ATO-824: "N more chats" opens the rest of this query's chats in place. The
+   palette stays open and the highlight stays on the row it was on, now the
+   sixth chat; a different query starts folded again. */
+function palMoreChats() {
+  S.palMoreFor = S.q.trim().toLowerCase();
+  refreshPalette();
 }
 function acceptSlash(name) {
   S.draft = '/' + name + ' ';
@@ -8031,7 +8284,11 @@ function acceptSlash(name) {
 
 /* ---------------- keyboard ---------------- */
 document.addEventListener('keydown', (e) => {
-  if (e.isComposing) return;
+  /* ATO-822: a key that belongs to an IME (Chinese, Japanese) is the IME's,
+     every branch below included: Enter commits the text, the arrows pick a
+     candidate, Escape drops it. keyCode 229 is the same key on an engine
+     that reports it with isComposing already false. */
+  if (e.isComposing || e.keyCode === 229) return;
   const k = e.key;
   /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
      physical key on a non-Latin layout (shortcutKey). `k` stays the typed
@@ -8342,6 +8599,21 @@ function applyStatus(st) {
   if (S.live.state === 'missing-binary' || S.live.state === 'error') {
     S.log.push({id:nid(), k:'system', text: esc(S.live.error || 'the agent stopped')});
   }
+  render();
+}
+
+/* ATO-767: main starts the agent again when it exits on its own while running
+   (main/agent-auto-restart.ts: three attempts within five minutes, after 1 s,
+   5 s and 20 s). The words are main's AGENT_RESTARTED_LINE / AGENT_GAVE_UP_LINE. */
+const AGENT_RESTARTED_LINE = 'The agent stopped unexpectedly and was restarted.';
+const AGENT_GAVE_UP_LINE = 'The agent keeps stopping unexpectedly, so the app stopped restarting it.';
+function autoRestartApply(n) {
+  if (!n || typeof n !== 'object') return;
+  if (n.kind === 'restarted') {
+    S.log.push({id:nid(), k:'system', text: esc(AGENT_RESTARTED_LINE)});
+  } else if (n.kind === 'gave_up') {
+    S.log.push({id:nid(), k:'system', tone:'red', icon:'refresh', act:'restart-agent', text: esc(AGENT_GAVE_UP_LINE)});
+  } else return;
   render();
 }
 
@@ -8974,7 +9246,7 @@ function liveFailureRows(rec, ev, wait) {
   try {
     return (wait ? [tpWaitGaveUpEntry(wait)] : []).concat([{id:nid(), k:'system', sev:'err',
       ...turnFailure(ev), tried: tpFallbackFailures(ev.payload), open: false,
-      act: providerFailure(ev) ? 'switch-provider' : null}]);
+      act: providerFailure(ev) ? 'switch-provider' : null, ...deadEngineRow(ev)}]);
   } finally {
     S.turnStartedAt = keep;
   }
@@ -9148,6 +9420,42 @@ function turnFailure(ev) {
   const cat = String((ev && ev.category) || '');
   return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
     detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
+}
+
+/** ATO-771/772: a turn that failed because the managed local model is not
+    running reads as that, with Start model in place of Switch provider
+    (dead-engine.js). {} for any other failure, so the row is as before. Like
+    "not answering", the row is the reason: a refused connection's raw words
+    go to the Agent log, not under Details. */
+function deadEngineRow(ev) {
+  const id = selActiveProviderId();
+  const local = (LIVE_CONFIG && !LIVE_CONFIG.llm) || (!!id && waitIsLocalServer(id));
+  const why = engineDownOf(ev, {local, replied: providerReplied(ev)});
+  if (!why) return {};
+  return {text: esc(DEAD_ENGINE_LINE), detail: '', act: 'start-model', deadEngine: why};
+}
+/** The dead-engine row's own action: Start model, a wait on the app's own restart, or nothing once it is back. */
+function deadEngineActHTML(m) {
+  const offer = deadEngineOffer(m, DWATCH ? DWATCH.kind : null);
+  if (offer.kind === 'wait') return ' <span class="sys-note">' + esc(DEAD_ENGINE_WAIT) + '</span>';
+  if (offer.kind === 'back') return ' <span class="sys-note">' + esc(DEAD_ENGINE_BACK) + '</span>';
+  return ' <button class="btn xs btn-s sysact" data-engine-start="' + esc(m.id) + '"' + (offer.kind === 'starting' ? ' disabled' : '') + '>'
+    + (offer.kind === 'starting' ? 'Starting…' : 'Start model') + '</button>';
+}
+/** Start model on a dead-engine row: the same start as Settings › Models (cli:modelsStart). */
+async function deadEngineStart(rowId) {
+  const m = S.log.find((x) => x.id === rowId);
+  if (!m || m.starting || !BR || !BR.modelsStart) return;
+  // The supervisor is already bringing it back: a second start would race it.
+  if (deadEngineOffer(m, DWATCH ? DWATCH.kind : null).kind === 'wait') { render(); return; }
+  m.starting = true; render();
+  let res;
+  try { res = await BR.modelsStart(); } catch (err) { res = {ok: false, error: String((err && err.message) || err)}; }
+  m.starting = false;
+  if (res && res.ok !== false) m.started = true;
+  else toast("Couldn't start the local model", String((res && (res.error || res.stderr)) || 'the start gave no reason').trim().split('\n').pop(), 'bad');
+  render();
+  if (llmVisible()) llmRefreshStatus();
 }
 
 /** ATO-380: Details under the phrase (own flag `detOpen`). Folded, the text is
@@ -9339,7 +9647,9 @@ function onChatEvent(ev) {
     const held = STREAM_ERR.get(ev.turnId);
     // The first failure names what went wrong, unless the turn recovered
     // from it and failed again later — then the later one is the story.
-    if (!held || held.after) STREAM_ERR.set(ev.turnId, {ev, after:false});
+    // ATO-772: the turn's own failure frame with `code: local_engine_down`
+    // follows the step's raw `fetch failed`, and it is the reason.
+    if (!held || held.after || (engineDownReasonIn(ev) && !engineDownReasonIn(held.ev))) STREAM_ERR.set(ev.turnId, {ev, after:false});
     return;
   }
   // Backlog 24: whose turn this frame is, read before the bookkeeping below forgets it.
@@ -9472,6 +9782,8 @@ function onChatEvent(ev) {
       fallbackFailures: tpFallbackFailures(p),
       until: Date.now() + (Number(p.next_retry_ms) || 0),
     };
+    // ATO-721: Diagnostics' Provider row keeps the cause as the provider's last error.
+    if (!LIVE_REPLAY && WAIT.providerId && WAIT.cause) diagNoteProviderError(WAIT.providerId, waitCauseWords(WAIT.cause, WAIT.providerId));
     if (!WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
     if (firstWait && item) tpOnProviderWaiting(WAIT);   // tui-parity.js: one line in the transcript per wait
     render();
@@ -9540,7 +9852,7 @@ function onChatEvent(ev) {
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
       streamPaint('chat');   // a new row in the transcript
-    }
+    } else reasonReopen(block, ev.at || Date.now());
     block.text += text;
     // 13/14: one paint per frame for however many chunks arrive in it, and
     // only what the text reaches — see streamPaint.
@@ -9722,10 +10034,14 @@ function onChatEvent(ev) {
     if (ev.kind === 'error' && item && WAIT) S.log.push(tpWaitGaveUpEntry(WAIT));
     if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
     else if (item) tpDropRecoveredNote(item.id);   // ATO-204: failed or stopped, it did not "continue" (tui-parity.js)
+    // ATO-721: a turn the provider failed (or refused the key on) is that provider's last error, in the agent's words.
+    if (ev.kind === 'error' && item && !LIVE_REPLAY && (providerFailure(ev) || /can't use its API key|rejected the API key/i.test(String(ev.error || '')))) {
+      diagNoteProviderError(selActiveProviderId(), WAIT && WAIT.cause ? waitCauseWords(WAIT.cause, WAIT.providerId) || String(ev.error || '') : String(ev.error || ''));
+    }
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       ...turnFailure(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
-      act: providerFailure(ev) ? 'switch-provider' : null});
+      act: providerFailure(ev) ? 'switch-provider' : null, ...deadEngineRow(ev)});
     // A turn ended: the steer watermark belongs to the turn that is over
     // (chat-orchestrator.ts resets steeredAhead with the queue). The
     // sent-and-not-yet-echoed list goes with it — a `steer_applied` for this
@@ -9738,6 +10054,7 @@ function onChatEvent(ev) {
        abort proves nothing either way, so the badge stays. */
     if (ev.kind !== 'error' && ev.kind !== 'aborted') {
       const on = selActiveProviderId();
+      diagProviderOk(on);   // ATO-721: a completed turn is the proof the last error is over
       if (on && UNVERIFIED.indexOf(on) >= 0) {
         UNVERIFIED = UNVERIFIED.filter((x) => x !== on);
         if (BR && BR.unverifiedSet) BR.unverifiedSet(on, false).catch(() => {});
@@ -10498,6 +10815,7 @@ if (BR) {
   S.sessionId = '';
   loadPrefs();
   BR.onStatus(applyStatus);
+  if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);
   BR.onApproval(onApprovalEvent);
   /* B01 QA, ATO-198: the turns main is streaming are this page's from here
@@ -10546,6 +10864,9 @@ if (BR) {
   if (BR.onEngineFailure) BR.onEngineFailure(engfApply);
   // A window opened after the failure (a relaunch, the dock) hears it too.
   if (BR.engineFailure) BR.engineFailure().then((f) => { if (f) engfApply(f); }).catch(() => {});
+  // ATO-374: the agent moved the local model to the CPU build; a window opened later hears it too.
+  if (BR.onEngineCpuFallback) BR.onEngineCpuFallback(cpufbApply);
+  if (BR.engineCpuFallback) BR.engineCpuFallback().then((n) => { if (n) cpufbApply(n); }).catch(() => {});
   // The launch installing Core's backend before the model starts: its bar, and a word that it is happening.
   if (BR.onEngineLaunchInstall) BR.onEngineLaunchInstall(engfLaunchInstall);
   if (BR.engineLaunchInstall) BR.engineLaunchInstall().then((st) => { if (st && st.running) engfLaunchInstall(st); }).catch(() => {});
@@ -10606,6 +10927,12 @@ if (BR) {
    workspace must start a new chat rather than relabel that conversation. */
 function applyWorkspaceChoice(dir) {
   if (!dir) return;
+  /* ATO-733: a turn began while the picker was open, and main left the folder
+     and the agent as they were rather than cut it. */
+  if (typeof dir === 'object') {
+    if (dir.busy) restartRefusedToast(restartStopsTurn() || {here:false, title:'', elsewhere: dir.elsewhere ? 1 : 0});
+    return;
+  }
   const cloud = !!SK.workingDir;
   WORKSPACE = dir;
   if (cloud) act('session:new');
@@ -12951,7 +13278,7 @@ function obUrlHTML(kind) {
       + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '>'
       + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + '</div>'
     + obInlineErrHTML()
-    + (chat ? '' : '<div class="ob-explain ob-help">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
+    + '<div class="ob-explain ob-help">' + esc(chat ? OB_COPY.urlChatPortNote : OB_COPY.urlEmbeddingNote) + '</div>'
     + (OB.busy ? '<div class="ob-explain ob-help">' + esc(OB_COPY.urlProbing) + '</div>' : '');
 }
 
@@ -13361,6 +13688,19 @@ function obWizardHTML() {
      screen. The desktop's add-provider wizard has neither phase, so those
      two titles have nowhere honest to go and are NOT rendered. */
   if (WIZ.phase === 'pick_model') return wizModelStepHTML(true);
+  if (k.subscriptionCli) {
+    return '<div class="ob-wiz">'
+      + '<div class="ob-kicker">Subscription</div>'
+      + '<div class="ob-h">' + providerMark(k.id) + esc(wizService(k)) + '</div>'
+      + wizSubscriptionLines(k).map((l) => '<div class="ob-help' + (l.warn ? ' is-warn' : '') + '">' + esc(l.text) + '</div>').join('')
+      + (WIZ.error ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(WIZ.error) + '</span></div>'
+          + (wizErrDetail() ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '') : '')
+      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
+        + ic('chevL') + 'Back</button><span class="grow"></span>'
+        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+        + (verifying ? 'Adding…' : 'Add' + ic('arrowR')) + '</button></div>'
+      + '</div>';
+  }
   /* B.4 — one label, not three: "API key" once as the kicker, the provider
      (with its mark) as the title, and naming the field is the placeholder's
      job. The .env sentence is the copy contract's, verbatim, under the field.
@@ -13383,7 +13723,7 @@ function obWizardHTML() {
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
-      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.env && (!WIZ.keyPresent || WIZ.keyPresent.includes(k.env)) ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
@@ -13524,7 +13864,7 @@ function obFootHTML() {
       break;
     case 'finished':
       if (!OB.settleSlow) return '';
-      right = obBtn('nav:back', 'Open the app now', 'btn-p', false, '', 'arrowR');
+      right = obBtn('open:now', 'Open the app now', 'btn-p', false, '', 'arrowR');
       break;
     default:
       return '';
@@ -13956,6 +14296,21 @@ function obOpenCloudWizard() {
   OB_ATOMIC_CHAT.running = null;   // re-asked on this visit to the list
   WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
   WIZ.cur = 0; WIZ.q = null;
+  wizKeyPresenceRead();
+}
+/* ATO-819: the key variables set in the app's environment or the state dir's
+   .env (names only), so the key step offers "leave blank" only when blank
+   would work. null until read: the hint shows, as it did before. */
+function wizKeyPresenceRead() {
+  WIZ.keyPresent = null;
+  const stateDir = memStateDir();
+  if (!BR || !BR.envPresent || !BR.dotenvKeys || !stateDir) return;
+  const names = [...new Set(KIND_ROWS.map((r) => r.env).filter(Boolean))];
+  Promise.all([BR.envPresent(names), BR.dotenvKeys(stateDir)]).then(([env, dot]) => {
+    if (!Array.isArray(env) || !dot || !dot.ok) return;
+    WIZ.keyPresent = env.concat(dot.keys || []);
+    render();
+  }).catch(() => {});
 }
 
 /* Analytics: model_picked, from the row the pick names (a Hugging Face add is not in the list → custom). */
@@ -14820,9 +15175,12 @@ async function obReadiness() {
  * operator already declined.  Nothing routes around the import screen:
  * its own skip row is the only way past it.
  */
-/* ATO-440: after 20 s the closing screen offers "Open the app now" (and Escape),
-   closing the overlay as obSettle does. Cost: a settle still out may stamp nothing
-   (setup opens again next launch) and this does not restart the agent; one that lands later still does both. */
+/* ATO-440: after 20 s the closing screen offers "Open the app now" (and Escape).
+   ATO-820: leaving there only closes the overlay. The settle still out (or a
+   new one, when none is) goes on behind it as `leftEarly`: it raises no more
+   offers, and still writes the closing stamp and restarts the agent, so setup
+   does not open again next launch. The way out is the `onboarding:openNow`
+   act, so analytics counts it as a ui_action. */
 function obSettleSlowClear() { clearTimeout(OB_SETTLE_SLOW_TIMER); OB_SETTLE_SLOW_TIMER = null; OB.settleSlow = false; }
 function obSettleSlowArm() {
   obSettleSlowClear();
@@ -14833,8 +15191,18 @@ function obSettleSlowArm() {
 }
 function obFinishedKey(input, key) {
   if (!key.escape || !OB.settleSlow) return false;
-  obSettleSlowClear(); OB.open = false; OB.settling = false; obSkyStop(); render();
+  ANX.via('key');
+  act('onboarding:openNow');
   return true;
+}
+function obOpenNow() {
+  if (!OB.open || OB.step !== 'finished' || !OB.settleSlow) return;
+  obSettleSlowClear();
+  OB.leftEarly = true;
+  OB.open = false;
+  obSkyStop();
+  render();
+  if (!OB.settling) obSettle();
 }
 
 async function obSettle() {
@@ -14850,7 +15218,7 @@ async function obSettle() {
   const outcome = OB.outcome || 'skipped';
   const state = await obReadiness();
   if (stale()) return;
-  if (!OB.open) { OB.settling = false; return; }
+  if (!OB.open && !OB.leftEarly) { OB.settling = false; return; }
   /* r8: `handOver` is the operator saying "put me in the agent now", from
      one of the two rows that promised exactly that. Neither remaining offer
      is raised on it — not the second backend (both rows sit under a cloud
@@ -14865,7 +15233,7 @@ async function obSettle() {
      this screen"), and it is on purpose: those two rows name the agent, and
      the operator filed the bug that they did not deliver it. Every other
      way out of the flow still goes through the import step exactly once. */
-  const offer = OB.skipSecondOffer || OB.handOver ? null : obDecideSecondBackend({
+  const offer = OB.skipSecondOffer || OB.handOver || OB.leftEarly ? null : obDecideSecondBackend({
     outcome,
     cloudReady: state.cloudReady,
     localReady: state.localReady,
@@ -14881,10 +15249,10 @@ async function obSettle() {
     obStampOnce('proposedSecondBackendAt');
     return;
   }
-  if (!OB.handOver && !state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
+  if (!OB.handOver && !OB.leftEarly && !state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
     const agents = await obDetectAgents();
     if (stale()) return;
-    if (!OB.open) { OB.settling = false; return; }
+    if (!OB.open && !OB.leftEarly) { OB.settling = false; return; }
     if (agents.length > 0) {
       OB.settling = false;
       obDispatch({type:'onboarding_import_opened', agents});
@@ -14938,6 +15306,8 @@ async function obSettle() {
   if (res && res.ok === false) {
     OB.settling = false;
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
+    // ATO-820: nobody is on the closing screen to read it.
+    if (OB.leftEarly) toast('Setup was not saved', 'It opens again next launch.');
     return;
   }
   obSettleSlowClear();
@@ -15011,7 +15381,7 @@ async function openOnboarding(at) {
     open: true, step: first, offer: null, resumeAfterCloud: null, localModelId: null,
     outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
-    introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
+    introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false, leftEarly: false,
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
@@ -15398,6 +15768,7 @@ function obControlClick(spec) {
     return;
   }
   if (spec === 'nav:back') { obPress('esc'); return; }
+  if (spec === 'open:now') { act('onboarding:openNow'); return; }
   if (spec === 'nav:go') { obPress('enter'); return; }
   if (spec === 'url:skip') {
     // "empty enter skips embeddings" (obFooter), as a control that says so.
@@ -15448,6 +15819,7 @@ if (BR) {
     if (a === 'onboarding') { openOnboarding(); return; }
     // Calm (S6): the composer's "Set up a model" chip — straight to the choice, no title card.
     if (a === 'onboarding:choose') { openOnboarding('choose'); return; }
+    if (a === 'onboarding:openNow') { obOpenNow(); return; }
     if (a === 'dl:cancel') { dlCancel(); return; }
     /* r6 — three lanes found this one independently, and the operator
        named it himself: "when I click on next, nothing happens. But when I
@@ -15496,6 +15868,10 @@ if (BR) {
        the download strip when this was written (item 7), uncovering the
        toolbar; it covers the whole window again since backlog 18, and this
        guard stays as the rule rather than the geometry. */
+    /* ATO-279: Help › Report an Issue… still opens over setup, as it did when
+       the menu went straight to the browser; without close(), which would
+       drop a provider wizard in progress. */
+    if (OB.open && a === 'help.report') { helpReport(); return; }
     if (OB.open) return;
     return prevAct(a);
   };
@@ -16415,7 +16791,9 @@ async function selLoadModels(providerId) {
 
 function selEnterModelPane() {
   const id = composerModelProvider();
-  if (selBackend() === 'local' || selBackend() === 'custom' || id === 'local-llama') { if (!SEL.local.length) selLoadLocal(); return; }
+  // ATO-730: the grouped list (local and cloud routes) loads the other groups too.
+  if (SEL.kind === 'model' && (selBackend() === 'local' || selBackend() === 'cloud')) selLoadGroups();
+  if (selBackend() === 'local' || selBackend() === 'custom' || id === 'local-llama') { if (!SEL.local.length && !SEL.localBusy) selLoadLocal(); return; }
   if (id && SEL.modelsFor !== id && selProviders().some((p) => p.id === id)) selLoadModels(id);
 }
 
@@ -16459,6 +16837,7 @@ function customServerUrl() {
 }
 /** Rows for the current pane, as objects the delegate can act on by index. */
 function selRows() {
+  SEL.groups = null;
   if (SEL.kind === 'backend') {
     // Lane B — backend switch: composer-switch-rows.ts backendRows, in
     // its order (cloud, local, custom) with its details. Review fix: the
@@ -16537,40 +16916,117 @@ function selRows() {
        row at all: selOutOfReach draws it under "Needs more memory than this
        Mac has", with no download one click away. One already on disk stays
        a row (it is the operator's to use), with its caution. */
-    const ram = hostRamGb();
-    const rows = onDiskFirst(orderModelsByFit(selLocalMatches(), ram))
-      .filter((m) => m.downloaded || m.active || fitFor(m, ram).v !== 'over')
-      .map((m) => {
-        const note = modelPickNote(m, ram);
-        // ATO-507: a download with no room for it on this disk has no Download chip, and says why.
-        const disk = modelDiskFit(m);
-        return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
-          detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
-            .filter(Boolean).join(' · '),
-          note, noRoom: disk.ok ? null : disk.text};
-      });
+    const rows = selLocalRows(custom);
     // The TUI's deep-link row (model:local:download-more), outside the filter —
     // the `local` branch only, exactly as modelRows has it. ATO-167: FIRST, not
     // last: under a long list it was the row nobody found (Danya: "the download
     // button should be higher").
     if (!custom) rows.unshift({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens Settings › Models', active:false});
-    return rows;
+    // ATO-730: the local route's list is the first group of all of them.
+    return custom ? rows : selGroupedRows('local-llama', rows);
   }
   // A local orchestrator has no cloud catalogue: the TUI's modelRows lists nothing there.
   if (selBackend() === 'fusion' && !selProviders().some((p) => p.id === selActiveProviderId())) return [];
-  const entry = selProviders().find((p) => p.id === selActiveProviderId());
-  const chosen = entry && entry.defaultChatModel;
+  const pid = selActiveProviderId();
+  const entry = selProviders().find((p) => p.id === pid);
+  const rows = selCloudRows(pid, SEL.models, entry && entry.defaultChatModel);
+  return selBackend() === 'cloud' ? selGroupedRows(pid, rows) : rows;
+}
+
+/* The local model rows, ordered for this Mac (selRows' local branch). */
+function selLocalRows(custom) {
+  const ram = hostRamGb();
+  return onDiskFirst(orderModelsByFit(selLocalMatches(), ram))
+    .filter((m) => m.downloaded || m.active || fitFor(m, ram).v !== 'over')
+    .map((m) => {
+      const note = modelPickNote(m, ram);
+      // ATO-507: a download with no room for it on this disk has no Download chip, and says why.
+      const disk = modelDiskFit(m);
+      return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
+        detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
+          .filter(Boolean).join(' · '),
+        note, noRoom: disk.ok ? null : disk.text};
+    });
+}
+
+/* One cloud provider's catalogue as rows, through the search box. `provider`
+   is whose model it is: a row from another provider's group must never be
+   written onto the active one (selActivate). */
+function selCloudRows(provider, models, chosen) {
   const f = SEL.filter.toLowerCase();
-  return SEL.models
+  return (models || [])
     .filter((m) => {
       if (!f) return true;
       const tags = (m.supportsVision ? 'vision ' : '') + (m.supportsTools && m.supportsTools !== 'none' ? 'tools ' : '');
       return modelMatches(m.id, tags, f);
     })
-    .map((m) => ({type:'cloudModel', id:m.id, label:m.id, active:m.id === chosen,
+    .map((m) => ({type:'cloudModel', id:m.id, label:m.id, provider, active:!!chosen && m.id === chosen,
       detail: (m.contextWindow ? fmtContextWindow(m.contextWindow) + ' context' : '')
         + (m.supportsTools && m.supportsTools !== 'none' ? ' · tools' : '')
         + (m.supportsVision ? ' · vision' : '')}));
+}
+
+/* ATO-730 (U-55, variant A) — the model chip lists every model it can, in
+   groups: "On this computer" (the downloaded local models) and one group per
+   cloud provider with a working key. The current route's group is first and
+   keeps its own rows exactly as before (its current model marked, the local
+   route's Download row and catalogue); the other groups are what can be
+   picked without a download. Each cloud group loads its own catalogue when
+   the list opens, with its own loading or error line, and one slow or
+   refused provider never holds up the others. The search box filters every
+   group at once. Fusion's seat lists and the custom route are not grouped.
+   SEL.groups is the order and status selectorHTML draws; null when the pane
+   is not grouped. */
+const SEL_GROUPS = new Map();
+const LOCAL_GROUP = 'local-llama';
+function selModelGroups(current) {
+  const ids = [current];
+  if (current !== LOCAL_GROUP) ids.push(LOCAL_GROUP);
+  for (const p of selProviders()) if (BSW.readyIds.includes(p.id) && ids.indexOf(p.id) < 0) ids.push(p.id);
+  return ids.map((id) => {
+    const own = SEL_GROUPS.get(id) || {};
+    const status = id === current ? (id === LOCAL_GROUP ? {busy: SEL.localBusy, err: null} : {busy: SEL.modelsBusy, err: SEL.modelsErr})
+      : id === LOCAL_GROUP ? {busy: SEL.localBusy, err: null}
+      : {busy: !!own.busy || !SEL_GROUPS.has(id), err: own.err || null};
+    return {id, title: id === LOCAL_GROUP ? 'On this computer' : providerWord(id), busy: status.busy, err: status.err};
+  });
+}
+function selGroupedRows(current, currentRows) {
+  const groups = selModelGroups(current);
+  const out = [];
+  for (const g of groups) {
+    const rows = g.id === current ? currentRows
+      // Another route's local models: only the downloaded ones, none of them current.
+      : g.id === LOCAL_GROUP ? selLocalRows(false).filter((r) => r.downloaded).map((r) => Object.assign(r, {active: false}))
+      : selCloudRows(g.id, (SEL_GROUPS.get(g.id) || {}).models, null);
+    for (const r of rows) { r.group = g.id; out.push(r); }
+  }
+  SEL.groups = groups;
+  // A provider whose key turned good after the list opened has not been asked yet.
+  if (groups.some((g) => g.id !== current && g.id !== LOCAL_GROUP && !SEL_GROUPS.has(g.id))) queueMicrotask(selLoadGroups);
+  return out;
+}
+/* Every other group's catalogue, each on its own. A list already in hand is
+   kept for the session (a live one from selLoadModels first); a group that
+   failed asks again the next time the list opens. */
+function selLoadGroups() {
+  const current = selBackend() === 'local' ? LOCAL_GROUP : selActiveProviderId();
+  if (current !== LOCAL_GROUP && !SEL.local.length && !SEL.localBusy) selLoadLocal();
+  for (const p of selProviders()) {
+    if (p.id === current || !BSW.readyIds.includes(p.id)) continue;
+    const had = SEL_GROUPS.get(p.id);
+    if (had && (had.busy || had.models)) continue;
+    const live = SEL_LIVE_MODELS.get(p.id);
+    if (live) { SEL_GROUPS.set(p.id, {models: live}); continue; }
+    SEL_GROUPS.set(p.id, {busy: true});
+    Promise.resolve(BR.providerModels(p.id, p.kind || ''))
+      .then((res) => {
+        SEL_GROUPS.set(p.id, res && res.ok ? {models: res.models || []}
+          : {err: modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not load its models'});
+      })
+      .catch((e) => SEL_GROUPS.set(p.id, {err: String((e && e.message) || e || 'could not load its models')}))
+      .then(() => { if (SEL.open && SEL.kind === 'model') render(); });
+  }
 }
 
 async function selActivate(row) {
@@ -16666,7 +17122,8 @@ async function selActivate(row) {
        being true when the row started awaiting swxRun. The popup still
        closes first, but nothing confirms in the background: the composer
        is locked until the switch is live. */
-    const pid = selActiveProviderId();
+    // ATO-730: a row from another provider's group is that provider's model.
+    const pid = row.provider || selActiveProviderId();
     /* r5 item 10. This row was ALREADY optimistic — and wrongly so: it
        mutated the live provider entry in place (`entry.defaultChatModel =
        row.id`) and never awaited, so the operator could send a message at
@@ -16679,6 +17136,9 @@ async function selActivate(row) {
     const res = await swxRun('switching…', {providerId: pid, model: row.id},
       () => SWXBR.selectCloudModel(pid, row.id));
     if (res && res.superseded) return;
+    // ATO-732: a model from another provider's group whose key is missing or
+    // refused opens that provider's key window, as picking the provider does.
+    if (res && res.needsKey) { bswOpenKey(pid, res.keyInvalid); return; }
     if (!res || !res.ok) toast('Could not select the model', (res && res.error) || '');
     else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
     return;
@@ -16791,7 +17251,7 @@ function selectorHTML() {
   // provider" last / "Download more models…" first, ATO-167), so, as in the TUI, an empty
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
-  if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !((SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter)) {
+  if (!rows.length && !SEL.groups && !SEL.modelsBusy && !SEL.localBusy && !((SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter)) {
     return selShell(title, '<div class="selbody"><p class="selnote cap">Nothing to show.</p></div>', '');
   }
 
@@ -16815,10 +17275,10 @@ function selectorHTML() {
       + '<span class="nm">' + selHilite(llmModelName(m), SEL.filter) + '</span>'
       + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This (Mac|computer) has.*$/, '')) + '</span></div>').join('')
     : '';
-  const list = '<div class="sellist">'
-    + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
-    + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
-    + rows.map((r, i) => {
+  const groups = SEL.groups;
+  // Review: set the out-of-reach block off when the list above it is only the Download row.
+  const outSep = (n) => (outHTML && n === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '');
+  const rowHTML = (r, i) => {
         const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
         /* Chat review (Д21): the row's own way out. A span, not a button: it
            sits inside the row's <button>, and the click delegate takes its
@@ -16844,10 +17304,32 @@ function selectorHTML() {
           + '</button>'
           // ATO-167: a leading action row (Download more models…) is set off from the models under it.
           + (r.type === 'action' && i === 0 && rows.length > 1 ? '<div class="tk-sep selsep"></div>' : '');
-      }).join('')
-    // Review: set the out-of-reach block off when the list above it is only the Download row.
-    + (outHTML && rows.length === 1 && rows[0].type === 'action' ? '<div class="tk-sep selsep"></div>' : '')
-    + outHTML
+      };
+  /* ATO-730: grouped, each group carries its own heading and its own loading
+     or error line; ungrouped, the one list keeps its lines on top. */
+  /* The current route's group (first) keeps the list's own lines, the ones
+     the drivers read; the other groups' lines are their own. */
+  const groupsHTML = groups ? groups.map((g, gi) => {
+    const own = [];
+    rows.forEach((r, i) => { if (r.group === g.id) own.push(rowHTML(r, i)); });
+    const bare = gi > 0 && !own.length && !g.busy && !g.err;
+    // A search hides another group with nothing that matches; unsearched, an empty group says so.
+    if (bare && SEL.filter) return '';
+    return '<div class="selgrp" data-group="' + esc(g.id) + '">' + esc(g.title) + '</div>'
+      + (bare ? '<div class="selnote cap">' + (g.id === LOCAL_GROUP ? 'No models downloaded yet' : 'No models listed') + '</div>' : '')
+      + (g.busy ? '<div class="selnote cap"><span class="tk-spin"></span>' + (gi === 0 ? 'Loading models\u2026' : 'loading\u2026') + '</div>' : '')
+      + (g.err ? (gi === 0 ? '<div class="cap selerr" style="color:var(--danger)">' : '<div class="cap selgrperr">')
+        + ic('alert') + '<span>' + esc(gi === 0 ? g.err : 'could not load: ' + g.err) + '</span></div>' : '')
+      + own.join('')
+      // The local models this Mac cannot run close the local group, not whichever group is last.
+      + (g.id === LOCAL_GROUP ? outSep(own.length) + outHTML : '');
+  }).join('') : '';
+  const list = '<div class="sellist">'
+    + (groups ? groupsHTML
+      : (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
+        + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
+        + rows.map(rowHTML).join(''))
+    + (groups ? '' : outSep(rows.length) + outHTML)
     + (!real.length && !out.length && (SEL.kind === 'model' || SEL.kind === 'workers') && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
@@ -18982,7 +19464,7 @@ function wizardHTML() {
         '<button class="modelrow' + (taken.has(k.id) ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
         + providerMark(k.custom ? '' : k.id, 'sm')
         + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
-        + '<span class="cap">' + (k.custom ? esc('you supply the URL') : '<span class="mono">' + esc(k.baseUrl || k.kind) + '</span>')
+        + '<span class="cap">' + (k.custom ? esc('you supply the URL') : k.subscriptionCli ? esc('no API key') : '<span class="mono">' + esc(k.baseUrl || k.kind) + '</span>')
         + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
       + '</div></div>',
       '<button class="btn btn-g xs" data-act="wiz:cancel">Cancel</button>');
@@ -19020,6 +19502,16 @@ function wizardHTML() {
   if (WIZ.phase === 'pick_model') {
     return selShell(WIZ.savedLabel || 'Choose a model',
       '<div class="selbody">' + wizModelStepHTML(false) + '</div>', wizModelStepFoot(), lead);
+  }
+  if (k.subscriptionCli) {
+    return selShell(wizService(k),
+      '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => '<p class="ob-help' + (l.warn ? ' tk-help--warn' : '') + '">' + esc(l.text) + '</p>').join('')
+      + (WIZ.error ? '<div class="ob-err"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
+      + '</div>',
+      '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
+        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : 'Add') + '</button>',
+      lead);
   }
   /* This is the SECOND place the app asks for an API key — the wizard's own
      screen is the other — and the two had drifted: this one wrote the error
@@ -19110,6 +19602,55 @@ async function wizRemoveIfIncomplete(id) {
   } catch (e) { /* the boot-time prune is the net under this */ }
 }
 
+/* ATO-844 — the subscription rows (Claude Code, Codex). No key screen: the
+   CLI signs in on its own, so the step says what will run and saves the
+   entry the TUI writes. Whether the billing variable is set (the environment,
+   then the state directory's .env) is asked once per variable and only yes or
+   no comes back; set, the CLI may bill the API per token instead of the plan,
+   and the step says so, as the TUI's providers-orchestrator.ts does. */
+const WIZ_BILLING = new Map();
+function wizBillingSet(env) {
+  if (!env) return false;
+  if (WIZ_BILLING.has(env)) return WIZ_BILLING.get(env) === true;
+  WIZ_BILLING.set(env, 'asking');
+  if (!BR || !BR.providerKeyPresent) return false;
+  Promise.resolve(BR.providerKeyPresent({kind:'subscription-cli', apiKeyEnvVar: env}))
+    .then((r) => { WIZ_BILLING.set(env, !!(r && r.ok && r.present)); if (WIZ.row && WIZ.row.billingEnv === env) render(); })
+    .catch(() => WIZ_BILLING.set(env, false));
+  return false;
+}
+/** What the subscription step says, in order: what runs, then the billing warning when it applies. */
+function wizSubscriptionLines(k) {
+  const lines = [{text: 'No API key needed. The agent runs your signed-in ' + k.subscriptionCli
+    + ' CLI on your ' + wizService(k) + ' plan, so it must be installed and signed in on ' + THIS_MACHINE + '.'}];
+  if (wizBillingSet(k.billingEnv)) {
+    lines.push({warn: true, text: k.billingEnv + ' is set on ' + THIS_MACHINE + ', so the ' + k.subscriptionCli
+      + ' CLI may bill your API account per token instead of your plan. Unset it to use only your subscription.'});
+  }
+  return lines;
+}
+/** The entry the TUI's wizard writes for this row (buildProviderEntryFromWizard). */
+function wizSubscriptionEntry(k) {
+  return {id: k.id, kind: k.kind, subscriptionCli: {cli: k.subscriptionCli}, ...(k.defaultModel ? {defaultChatModel: k.defaultModel} : {})};
+}
+async function wizSubscriptionStep(k) {
+  const id = k.id;
+  /* The model step's second pass: the entry is saved, the choice is made. */
+  if (WIZ.modelChosen) return wizActivate(k, id, WIZ.modelPick || '', null);
+  WIZ.phase = 'verifying'; WIZ.error = null; WIZ.errorDetail = null; WIZ.noFundsNote = null; render();
+  const res = await BR.upsertProvider(wizSubscriptionEntry(k));
+  if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
+  /* Main answers this from the built-in list (subscription-cli-models.ts), never the network. */
+  const listed = BR.providerModels ? await BR.providerModels(id, k.kind).catch(() => null) : null;
+  const models = listed && listed.ok && Array.isArray(listed.models) ? listed.models : [];
+  if (!models.length) return wizActivate(k, id, '', null);
+  const model = models.some((m) => m.id === k.defaultModel) ? k.defaultModel : models[0].id;
+  WIZ.phase = 'pick_model';
+  WIZ.models = models; WIZ.modelPick = model; WIZ.defaultModel = model;
+  WIZ.savedId = id; WIZ.savedLabel = wizService(k); WIZ.unverifiedNote = null;
+  render();
+}
+
 async function wizNext() {
   WIZ.stepping = true;
   try {
@@ -19126,6 +19667,7 @@ async function wizNext() {
 
 async function wizNextStep() {
   const k = WIZ.row; if (!k) return;
+  if (k.subscriptionCli) return wizSubscriptionStep(k);
   /* Read the fields only when they are ON SCREEN. wizNext runs a second time
      for the model step — the choice is made and the save is re-entered — and
      by then the key and URL inputs are gone, so an unconditional read set
@@ -19407,12 +19949,19 @@ async function wizNextStep() {
     render();
     return;
   }
+  return wizActivate(k, id, model, unverified);
+}
+
+/* The model is chosen and the provider saved: activate it, then close the
+   wizard. Shared by the key path above and the subscription path (ATO-844),
+   whose Codex row has no model to name, so it activates the provider alone. */
+async function wizActivate(k, id, model, unverified) {
   WIZ.modelChosen = false;
   // Lane B — backend switch: one write for the model + the activation, then
   // the restart main does for it. Not while a turn runs, in any chat (Backlog 28).
   if (restartStopsTurn()) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
   const sel = await swxRun('switching…', {providerId: id, model},
-    () => SWXBR.selectCloudModel(id, model),
+    () => model ? SWXBR.selectCloudModel(id, model) : SWXBR.activateProvider(id),
     () => { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); });
   if (sel && sel.superseded) return;
   if (sel && sel.cancelled) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, not activated: the switch was cancelled'; render(); refreshLiveConfig(); return; }
@@ -19424,7 +19973,7 @@ async function wizNextStep() {
       : 'saved, but could not activate it' + (sel && sel.error ? ': ' + sel.error : '');
     render(); refreshLiveConfig(); return;
   }
-  bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
+  bswReport(sel, model ? 'Selected chat model ' + id + '/' + model + '.' : 'Selected provider ' + id + '.');
   WIZ.unfinishedId = null;   // U29: finished, so it stays
   WIZ.phase = null;
   WIZ.forId = null;
@@ -19433,7 +19982,7 @@ async function wizNextStep() {
      step, where `closeSelector()` would close a popup that is not open
      and drop the flow on a blank screen. The reducer's own
      `providers_wizard_succeeded` branch decides where it goes next. */
-  const added = k.label.split(' (')[0] + ' \u00b7 ' + model + (unverified ? ' \u00b7 not verified: ' + unverified : '')
+  const added = wizService(k) + (model ? ' \u00b7 ' + model : '') + (unverified ? ' \u00b7 not verified: ' + unverified : '')
     + (WIZ.noFundsNote ? ' \u00b7 the account has no funds' : '');   // Backlog 40
   if (OB.open && OB.step === 'cloud') {
     OB.restarted = !!(sel && sel.restart);
@@ -19630,11 +20179,18 @@ function sysRetryHTML(m) {
   return '';
 }
 function sysRowHTML(m, times) {
+  const engine = m.act === 'start-model' ? deadEngineOffer(m, DWATCH ? DWATCH.kind : null).kind : '';
   const acts = (m.act === 'switch-provider'
-    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' && !m.noRetry ? sysRetryHTML(m) : '');
+    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '')
+    + (m.act === 'start-model' ? deadEngineActHTML(m) : '')
+    // ATO-772: no Try again while the model is down or coming back; it would only wait on it.
+    + (m.sev === 'err' && !m.noRetry && (!engine || engine === 'back') ? sysRetryHTML(m) : '');
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
-    + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts + '</span></div></div>';
+    + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts
+    // ATO-767: the automatic restarts ran out; a full-size button, the same restart as the menu's.
+    + (m.act === 'restart-agent' ? ' <button class="btn btn-p sysact agent-restart-btn" data-act="agent:restart">Restart agent</button>' : '')
+    + '</span></div></div>';
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
   return '<div class="sysrow' + (m.sev ? ' ' + m.sev : '') + '">' + sysGlyph(m)
@@ -23505,7 +24061,15 @@ function llmFormatDaemon() {
   const health = String(st.health || '').toLowerCase();
   if (/loading/.test(health)) return 'loading pid ' + st.daemonPid;
   if (health === 'ok') return 'running pid ' + st.daemonPid + ' on 127.0.0.1:' + llmDaemonPort();
+  if (llmKeyRejected(st)) return 'pid ' + st.daemonPid + ' key rejected';
   return 'pid ' + st.daemonPid + ' health unreachable';
+}
+/* ATO-852: `health: key rejected` (agent with #721): a server answers on the
+   port but refuses the running model's key, so every request fails. Not
+   "unreachable": it answers, and a restart (stop, then start) is the fix.
+   An older agent never says it, and reads as before. */
+function llmKeyRejected(st) {
+  return !!(st && st.daemonRunning && (st.keyRejected === true || /^key rejected\b/.test(String(st.health || '').trim().toLowerCase())));
 }
 /* A llama-server that was just spawned has no port open yet, and `models
    status` calls that `down`, the same word it uses for a hung one; right
@@ -24089,7 +24653,7 @@ function llmRunModeHTML(status, tone) {
           + '</span></button>';
       }).join('')
     + '</div>'
-    + llmNowHTML() + engfCardHTML() + tpLlmFaultHTML()
+    + llmNowHTML() + engfCardHTML() + cpufbCardHTML() + tpLlmFaultHTML()
     + (fusionShown ? '<p class="llm-rm-status">' + esc(rmSettingsLine(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
@@ -24186,6 +24750,7 @@ function llmNowHTML() {
     : /^running/.test(d) || servedIds ? (tpLlmFault() ? 'Not working' : stray ? 'Running' : 'Ready')
     : stray ? 'Running'
     : d === 'stopped' ? 'Stopped'
+    : /key rejected$/.test(d) ? 'Key rejected'
     : /unreachable$/.test(d) ? (llmJustSpawned() ? 'Starting' : 'Not answering') : '';
   const dot = word === 'Ready' || word === 'Running' ? 'tk-dot--green' : word === 'Starting' ? 'tk-dot--brand tk-dot--pulse' : word ? 'tk-dot--amber' : '';
   const phase = LLMP.daemonPhase;
@@ -24193,7 +24758,10 @@ function llmNowHTML() {
     + ' title="' + esc(title) + '">' + ic(icon) + esc(label) + '</button>';
   // ATO-125: the server runs another model than the one picked (a pick that left it be, the CLI).
   const stale = managed && !!runs && !!picked && runs !== picked;
+  const keyRejected = managed && word === 'Key rejected';
   const control = stale ? button('llm:usePicked', 'refresh', 'Restart on ' + modelWord(picked), 'Restart the local model server on the model picked')
+    : keyRejected ? button('llm:restartModel', 'refresh', phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : 'Restart model',
+        'The model server on this port refuses the model\'s key, so every request fails. Stop it and start it again.')
     : (managed && !!serverModel && !missing) || stray
       ? button('llm:daemon', up ? 'stop' : 'play', phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : up ? 'Stop' : 'Start',
           up ? 'Stop the local model server' : 'Start the local model server')
@@ -24203,7 +24771,9 @@ function llmNowHTML() {
     + (stray ? esc(' · the local model server' + (runs ? ' (' + modelWord(runs) + ')' : '') + ' is still up') : '')
     + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '')
     + (stale ? '<span class="llm-nowst llm-nowpick">' + esc(modelWord(picked) + ' is picked') + '</span>' : '')
-    + control + '</p>';
+    + control
+    + (keyRejected ? '<span class="tk-help llm-keyrej">' + esc('The model server refuses the model\'s key, so chats on it fail. Restart the model to fix it.') + '</span>' : '')
+    + '</p>';
 }
 /* What the count means depends on the worker leg (agent v0.6.3,
    fusion-delegate.ts): an unpinned LOCAL leg runs one worker per job —
@@ -24605,14 +25175,25 @@ function llmExternalHTML() {
    (Д33). Leaf `config set` writes; `atag serve` read the file at boot, so
    each change carries the restart line. Copy condensed from the schema's own
    comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
-const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
-/* A budget choice in plain words, for its tooltip (about 0.75 words a token).
-   ATO-498: no fixed number for the llama.cpp grammar cap here; today it is
-   499 tokens (MAX_REASONING_BUDGET_TOKENS, #600), and ATO-607 may lift it. */
+/* ATO-795: only choices llama.cpp can hold. Its grammar caps the bound at
+   499 tokens (MAX_REASONING_BUDGET_TOKENS, #600), so 1500/4000/8000 all ran as
+   499 and cut thinking off mid-thought. No limit (0) is the agent default
+   since config v78. */
+const LLM_TUNE_BUDGET_MAX = 499;
+const LLM_TUNE_BUDGETS = [0, LLM_TUNE_BUDGET_MAX];
+/* A budget choice in plain words, for its tooltip (about 0.75 words a token). */
 function llmTuneBudgetHint(n) {
   if (n === 0) return 'No limit: the model thinks as long as it wants';
   const words = Math.round(n * 0.75 / 25) * 25;
   return 'About ' + words.toLocaleString('en-US') + ' words of thinking';
+}
+/* The budget the knob lights for a stored value: the bound the model really
+   gets. A value above the cap runs as 499, so it lights 499, not No limit
+   (an agent before config v78 still enforces its 1500 default as 499, and a
+   kept 500, 4000 or 8000 is 499 on every agent). Missing or 0 is No limit.
+   The file itself is left alone; picking a choice is what writes it. */
+function llmTuneBudgetShown(raw) {
+  return Number.isInteger(raw) && raw > 0 ? Math.min(raw, LLM_TUNE_BUDGET_MAX) : 0;
 }
 /* One knob: a title and one help line each, the choice on the right. */
 function llmTuneRowHTML(title, help, control) {
@@ -24642,7 +25223,7 @@ function llmTemplateRowHTML() {
 function llmTuneHTML() {
   const lm = llmLocalModels();
   const thinking = lm.thinking === 'on' || lm.thinking === 'off' ? lm.thinking : 'auto';
-  const budget = Number.isInteger(lm.reasoningBudgetTokens) ? lm.reasoningBudgetTokens : 1500;
+  const budget = llmTuneBudgetShown(lm.reasoningBudgetTokens);
   const T = LLMP.tune;
   const budgets = LLM_TUNE_BUDGETS.includes(budget) ? LLM_TUNE_BUDGETS : LLM_TUNE_BUDGETS.concat([budget]).sort((a, b) => a - b);
   return '<section class="llm-section llm-tune"><div class="tk-sh llm-sh"><span class="llm-sh-t">Reasoning</span>'
@@ -24652,7 +25233,7 @@ function llmTuneHTML() {
         llmTuneSegHTML('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
     // Д33: the default is the choice lit when nothing is set; the help line no longer spells it out.
     // ATO-498: plain words first, tokens second; one setting for Local models and Custom server.
-    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (500 tokens is about 375 words). llama.cpp can stop it sooner than the number you pick. One setting for Local models and Custom server. This limit never cuts the final answer.',
+    + llmTuneRowHTML('Thinking budget', 'How long a reasoning model may think before it calls a tool, in tokens (499 tokens is about 375 words). llama.cpp cannot hold a larger limit. One setting for Local models and Custom server. This limit never cuts the final answer.',
         llmTuneSegHTML('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n), llmTuneBudgetHint(n)]), 'Thinking budget in tokens'))
     + '</div>'
     + (T.where !== 'adv' ? llmTuneNoteHTML() : '')
@@ -24763,9 +25344,9 @@ function llmModalHTML() {
   if (LLMP.externalDraft !== null) {
     return '<div class="tk-modal llm-modal" role="dialog">'
       + '<label class="tk-field"><span class="tk-lbl">External llama.cpp base URL</span>'
-      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="e.g. http://127.0.0.1:8080">'
+      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="e.g. http://127.0.0.1:9931">'
       + (LLMP.externalInvalid ? '<span class="tk-help tk-help--err">invalid URL</span>' : '')
-      + '<span class="tk-help">' + esc('The address of your own llama.cpp server. It is checked first, and chats move to it only when it answers.') + '</span></label>'
+      + '<span class="tk-help">' + esc('The address of your own llama.cpp server. It is checked first, and chats move to it only when it answers. ' + OB_COPY.urlChatPortNote) + '</span></label>'
       + '<div class="acts"><button class="btn btn-g sm" data-act="llm:external:cancel">Cancel</button>'
       + '<button class="btn btn-p sm" data-act="llm:external:save">Save</button></div></div>';
   }
@@ -25241,6 +25822,28 @@ async function llmDaemon(which) {
   else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
 }
+/* ATO-852: Restart model for a server that rejects its model's key: what
+   `models status` advises, `models stop` then `models start`, in one press.
+   The stop refuses while a turn is running on the server, as Stop does. */
+async function llmRestartModel() {
+  if (!BR || LLMP.daemonPhase) return;
+  const held = await llmTurnsRunning();
+  if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return; }
+  LLMP.daemonPhase = 'stopping'; llmRepaint();
+  const stop = await BR.modelsStop();
+  if (!stop || stop.ok === false) {
+    LLMP.daemonPhase = null;
+    LLMP.statusErr = llmFail('models stop failed', stop);
+    await llmRefreshStatus();
+    return;
+  }
+  LLMP.daemonPhase = 'starting'; llmRepaint();
+  const res = await BR.modelsStart();
+  LLMP.daemonPhase = null;
+  if (!res || res.ok === false) LLMP.statusErr = llmFail('models start failed', res);
+  else LLMP.msg = {text:'local-llm: model restarted' + (res.stdout && res.stdout.trim() ? ': ' + res.stdout.trim().split('\n').pop() : '')};
+  await llmRefreshStatus();
+}
 async function llmEmbToggle() {
   if (!BR) return;
   const enabled = llmEmbCfg().enabled === true;
@@ -25702,6 +26305,7 @@ function llmAct(what) {
   if (verb === 'embToggle') { llmEmbToggle(); return; }
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
   if (verb === 'daemon') { llmDaemon(llmServerUp() ? 'stop' : 'start'); return; }
+  if (verb === 'restartModel') { llmRestartModel(); return; }
   // ATO-125: the server runs another model than the one picked — restart it on the picked one.
   if (verb === 'usePicked') { const id = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId; if (id) llmUseLocalModel(id); return; }
   if (verb === 'hf') {

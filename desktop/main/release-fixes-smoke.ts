@@ -33,6 +33,7 @@ import { checks38 } from "./smoke-tasks/t38.js";
 import { checks40 } from "./smoke-tasks/t40.js";
 import { checks41 } from "./smoke-tasks/t41.js";
 import { checks43 } from "./smoke-tasks/t43.js";
+import { checks767 } from "./smoke-tasks/t767.js";
 import { checks46 } from "./smoke-tasks/t46.js";
 import { checks44 } from "./smoke-tasks/t44.js";
 import { checks37 } from "./smoke-tasks/t37.js";
@@ -69,6 +70,7 @@ import { checks115 } from "./smoke-tasks/t115.js";
 import { checks116 } from "./smoke-tasks/t116.js";
 import { checks165 } from "./smoke-tasks/t165.js";
 import { checks416 } from "./smoke-tasks/t416.js";
+import { checks765 } from "./smoke-tasks/t765.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -105,7 +107,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "165", "416"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "165", "416", "765"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -549,6 +551,9 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("41")) await guarded("41", check, () => checks41(js, check));
   // 43 — ATO-123: the local model server brought back when it dies under the app that started it.
   if (want.has("43")) await guarded("43", check, () => checks43(js, check));
+  // 767 (ATO-767): an agent that exits on its own is started again, three times, then Restart agent is offered.
+  // Only with --smoke-task=767 (not in RELEASE_FIX_TASKS): it kills the app's agent four times.
+  if (want.has("767")) await guarded("767", check, () => checks767(js, check));
   // 44 (ATO-132) — the key field promised .env with mode 0600, and the key was saved in config.json, mode 0644.
   if (want.has("44")) await guarded("44", check, () => checks44(js, check));
 
@@ -804,6 +809,10 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // 47 — Danya's Settings items (Д25–Д28): Done, one status line, toasts inside Settings, no On / Off words.
   if (want.has("47")) await guarded("47", check, () => checks47(js, check));
+
+  // 765 (ATO-765) — a crashed window page is loaded again instead of left blank; the agent is not restarted.
+  // Last: the reloaded page has forgotten whatever an earlier check left open in it.
+  if (want.has("765")) await guarded("765", check, () => checks765(js, check));
 
   await wait(100);
 }

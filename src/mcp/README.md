@@ -14,7 +14,7 @@ This area owns mcp client and tool catalog. Read [AGENTS.md](AGENTS.md) before c
 
 ## Ownership and dependencies
 
-McpManager owns configured connections, discovery catalogs and dynamic tool registration; McpClient owns SDK transports and sampling integration. Resource classification maps server trust into dispatch policy. [TUI MCP feature](../tui/mcp/README.md) renders manager state and calls [shared config commands](../config/mcp-server-commands.ts); runtime owns the manager lifetime. Stdio processes currently inherit the agent environment; see docs/client.md.
+McpManager owns configured connections, discovery catalogs and dynamic tool registration; McpClient owns SDK transports and sampling integration. Resource classification maps server trust into dispatch policy. [TUI MCP feature](../tui/mcp/README.md) renders manager state and calls [shared config commands](../config/mcp-server-commands.ts); runtime owns the manager lifetime. Stdio processes get only allowlisted service variables plus their configured `env`; see docs/client.md.
 
 Cloud tool, resource and prompt text projections bypass presentation character caps. Tool responses retain structured content plus additional text and embedded resource text, suppressing only an exact JSON mirror. Binary blocks keep their existing textual markers. Local projection precedence and caps are unchanged; trust and approval gates apply in either mode. [Adapter tests](mcp-tool-adapter.test.ts) cover both projections.
 

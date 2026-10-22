@@ -46,6 +46,18 @@ export function baseTags(): Record<string, string> {
   return tags;
 }
 
+/**
+ * Tags every later report from one source carries until they are set again
+ * (null drops them). ATO-767: `auto_restart_attempt` on `agent-exit`, so an
+ * exit says whether the agent that ended was started by an automatic restart.
+ */
+const standing = new Map<string, Record<string, unknown>>();
+
+export function setSourceTags(source: string, tags: Record<string, unknown> | null): void {
+  if (tags) standing.set(source, { ...tags });
+  else standing.delete(source);
+}
+
 /** Fire and forget. Never throws. */
 export function reportError(input: ErrorInput): void {
   try {
@@ -57,7 +69,7 @@ export function reportError(input: ErrorInput): void {
     const tags = baseTags();
     const source = safeTag(input.source);
     if (source) tags.source = source;
-    for (const [k, v] of Object.entries(input.tags ?? {})) {
+    for (const [k, v] of Object.entries({ ...standing.get(input.source), ...input.tags })) {
       const t = safeTag(v);
       if (t && /^[a-z_]{1,32}$/.test(k)) tags[k] = t;
     }

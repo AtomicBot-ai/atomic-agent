@@ -37,3 +37,21 @@ export {
   type UserPathStore,
   type RemovePathEntryResult,
 } from "./windows-user-path.js";
+export {
+  detectDesktopSharing,
+  noDesktopSharing,
+  type DesktopSharing,
+  type DesktopSignal,
+  type DetectDesktopSharingInput,
+} from "./detect-desktop-sharing.js";
+export {
+  DESKTOP_SHARED_WARNING,
+  DESKTOP_DATA_QUESTION,
+  desktopDataKeptNotice,
+  legacyDesktopDirNotice,
+  desktopWarningApplies,
+} from "./desktop-notices.js";
+export {
+  plansToDeleteDesktopData,
+  keepDesktopData,
+} from "./desktop-data-policy.js";

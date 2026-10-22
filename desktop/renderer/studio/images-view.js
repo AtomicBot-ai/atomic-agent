@@ -146,17 +146,21 @@ function simgvForm(IM) {
   const model = IM.model;
   const f = IM.form;
   const tabs = simgModeTabs(model, IM.catalog);
-  const note = simgModeNote(tabs);
+  // A click on a greyed mode (IM.modeWhy) puts its reason in the hint line; else the mode's hint and what is greyed.
+  const whyTab = tabs.find((t) => t.id === IM.modeWhy && !t.ok);
+  const offIds = whyTab ? [whyTab.id] : tabs.filter((t) => !t.ok && t.need !== 'pick').map((t) => t.id);
+  const note = whyTab ? simgModeWhy(whyTab, model) : simgModeNote(tabs, model);
+  const pick = note && model && simgOtherCan(IM.catalog, model, offIds)
+    ? ' <button class="st-link" ' + SIMGV_A('pop:model') + '>' + (whyTab ? 'Pick a model that can' : 'Pick one') + '</button>.' : '';
   const parts = [];
   parts.push('<div><label class="st-lbl" for="sti-prompt">Prompt' + (f.mode === 'upscale' ? ' <span class="r">optional</span>' : '') + '</label>'
     + '<textarea class="st-ta" id="sti-prompt" rows="4" placeholder="Describe the picture. Subject, place, light, style.">' + esc(f.prompt || '') + '</textarea></div>');
   parts.push('<div><div class="st-lbl">Mode</div><div class="st-modes" role="tablist">'
-    + tabs.map((t) => '<button class="st-mode' + (f.mode === t.id ? ' on' : '') + (t.ok ? '' : ' off') + '" role="tab" aria-selected="' + (f.mode === t.id) + '"'
-      + (t.ok ? ' ' + SIMGV_A('mode:' + t.id) : ' aria-disabled="true"') + (t.why ? ' title="' + esc(t.why) + '"' : '') + '>' + esc(t.label) + '</button>').join('')
+    + tabs.map((t) => '<button class="st-mode' + (f.mode === t.id ? ' on' : '') + (t.ok ? '' : ' off') + '" role="tab" aria-selected="' + (f.mode === t.id) + '" '
+      + SIMGV_A((t.ok ? 'mode:' : 'modewhy:') + t.id) + (t.ok ? '' : ' aria-disabled="true"') + (t.why ? ' title="' + esc(t.why) + '"' : '') + '>' + esc(t.label) + '</button>').join('')
     + '</div>'
-    + '<div class="st-hint">' + ic('info') + '<span>' + esc(SIMG_MODE_HINT[f.mode] || '')
-      + (note ? ' ' + esc(note) + (simgModels(IM.catalog).some((m) => m.group === 'local') ? ' <button class="st-link" ' + SIMGV_A('pop:model') + '>Pick one</button>' : '') : '')
-    + '</span></div></div>');
+    + '<div class="st-hint" role="status">' + ic('info') + '<span>' + (whyTab ? '' : esc(SIMG_MODE_HINT[f.mode] || '') + (note ? ' ' : ''))
+      + esc(note) + pick + '</span></div></div>');
   if (f.mode !== 'create') {
     parts.push('<div><div class="st-lbl">' + (f.mode === 'reference' ? 'Main reference' : 'Source image') + ' <span class="r">drop or paste</span></div>'
       + simgvSource(IM, 'source', 'Add a picture', 'PNG, JPEG or WebP') + '</div>');
@@ -250,8 +254,43 @@ function simgPhaseRows(at) {
   }).join('');
 }
 
+/* ATO-830: OpenRouter's upstream for a model (often Google's, for Nano Banana)
+   answers 429 when it is out of quota. Core passes it on as
+   REMOTE_RATE_LIMITED, or as its own words ("openrouter is rate-limiting
+   requests") on a job that failed after it started. */
+const SIMG_NOT_RATE = /^(NO_KEY|JOB_BUSY|GPU_BUSY|MODEL_|SIDE_FILE_|OUT_OF_MEMORY|QUEUE_FULL|DISK_|CORE_|INVALID_|UNKNOWN_MODEL|ENGINE_|DOWNLOAD_FAILED|CANCELLED|OUTSIDE|UNSUPPORTED_WORKFLOW|REMOTE_(?!RATE_LIMITED$|UNAVAILABLE$))/;
+function simgRateLimited(e) {
+  if (!e) return false;
+  if (e.code === 'REMOTE_RATE_LIMITED') return true;
+  /* The words only on a code that does not already say what went wrong: a
+     size of 429 or a quota message is not a rate limit. A bare 429 counts
+     only beside the words that make it a status. */
+  if (SIMG_NOT_RATE.test(String(e.code || ''))) return false;
+  const msg = String(e.message || '');
+  return /rate[ -]?limit|too many requests/i.test(msg) || (/\b429\b/.test(msg) && /http|status|upstream|answered|returned/i.test(msg));
+}
+
+/* Another cloud model to offer when one is rate limited: never the one that
+   failed, one that runs the current mode, a GPT Image model first (it has a
+   different upstream), else the catalog's next. `models` is simgModels(). */
+function simgAltModel(models, failed, mode) {
+  const f = failed || {};
+  const ok = (models || []).filter((m) => m.group === 'cloud' && !(m.id === f.id && (!f.provider || m.provider === f.provider))
+    && (!mode || (m.modes || []).includes(mode)));
+  return ok.find((m) => /gpt[ -]?image/i.test(m.id + ' ' + (m.name || ''))) || ok[0] || null;
+}
+
+/* The rate-limit card's words: which model's provider is busy, and that a
+   turned-away request is not billed. Not "nothing was charged": a job of
+   several images can be refused after some of them were made. */
+function simgRateLimitLine(name) {
+  return 'OpenRouter\u2019s provider for ' + (name || 'this model') + ' is busy right now. OpenRouter does not charge for a request it turned away. Try again in a moment, or use another model.';
+}
+
 function simgvError(IM) {
   const e = IM.jobErr || {};
+  // A local job never went to OpenRouter, whatever its words say.
+  if (simgRateLimited(e) && (IM.lastReq || {}).provider !== 'local') return simgvRateLimited(IM);
   const key = e.code === 'NO_KEY';
   const core = /^CORE_/.test(e.code || '');
   return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
@@ -259,6 +298,20 @@ function simgvError(IM) {
     + '<div class="st-prog-f"><span class="st-sp"></span>'
     + (key ? '<button class="btn" ' + SIMGV_A('settings') + '>' + ic('key') + 'Open Settings</button>' : '')
     + (core ? '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Try again</button>' : '')
+    + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
+}
+
+function simgvRateLimited(IM) {
+  const req = IM.lastReq || {};
+  const failed = {id: req.model || (IM.job && IM.job.model), provider: req.provider};
+  const models = simgModels(IM.catalog);
+  const was = models.find((m) => m.id === failed.id) || {name: failed.id};
+  const alt = simgAltModel(models, failed, IM.form && IM.form.mode);
+  return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
+    + '<div><div class="t">' + esc((was.name || 'This model') + ' is busy') + '</div><div class="s">' + esc(simgRateLimitLine(was.name)) + '</div></div></div>'
+    + '<div class="st-prog-f"><span class="st-sp"></span>'
+    + '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Retry</button>'
+    + (alt ? '<button class="btn" ' + SIMGV_A('trymodel:' + alt.provider + '|' + alt.id) + '>Try ' + esc(alt.name || alt.id) + '</button>' : '')
     + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
 }
 
@@ -325,7 +378,7 @@ function simgJobOf(id) { return String(id || '').replace(/-\d+$/, ''); }
 
 function simgvStage(IM) {
   const live = IM.job && (IM.job.state === 'queued' || IM.job.state === 'generating');
-  const item = IM.sel ? IM.items.find((x) => x.id === IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null) : null;
+  const item = IM.sel ? IM.items.find((x) => x.id === IM.sel) || (IM.pinnedMore || []).find((x) => x.id === IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null) : null;
   if (live) return '<div class="st-viewer grid">' + (IM.form.source ? '<div class="st-blurbg" data-pic="' + esc(IM.form.source.key) + '"></div>' : '') + simgvProgress(IM) + '</div>';
   if (IM.jobErr) return '<div class="st-viewer grid">' + simgvError(IM) + '</div>';
   if (item) return '<div class="st-viewer well">' + simgvResult(IM, item) + '</div>';
@@ -333,7 +386,7 @@ function simgvStage(IM) {
 }
 
 function simgvGallery(IM) {
-  const pinned = IM.items.filter((x) => x.pinned);
+  const pinned = simgPinnedList(IM.items, IM.pinnedMore);
   const list = IM.filter === 'pinned' ? pinned : IM.items;
   const live = IM.job && (IM.job.state === 'queued' || IM.job.state === 'generating');
   const ghosts = live && IM.filter !== 'pinned' ? Math.min(IM.jobCount || 1, 8) : 0;
@@ -344,7 +397,7 @@ function simgvGallery(IM) {
     + '<button class="' + (IM.filter === 'pinned' ? 'on' : '') + '" ' + SIMGV_A('filter:pinned') + '>Pinned' + (pinned.length ? ' · ' + pinned.length : '') + '</button></div></div>';
   if (!list.length && !ghosts) {
     return head + '<div class="st-galempty">' + ic(IM.filter === 'pinned' ? 'pin' : 'image')
-      + esc(IM.galErr ? IM.galErr.message : IM.filter === 'pinned' ? 'Nothing pinned yet.' : 'Nothing yet. Images you make here and in chats land in one place.') + '</div>';
+      + esc(IM.galErr ? IM.galErr.message : IM.filter === 'pinned' ? (IM.pinnedLoading ? 'Looking for pinned images…' : IM.pinnedPartial ? 'Nothing pinned among the newest images. Load more under All to find older ones.' : 'Nothing pinned yet.') : 'Nothing yet. Images you make here and in chats land in one place.') + '</div>';
   }
   return head + '<div class="st-thumbs' + (IM.picking ? ' picking' : '') + '">'
     + Array.from({length: ghosts}, () => '<div class="st-th ghost shim"></div>').join('')
@@ -352,7 +405,8 @@ function simgvGallery(IM) {
       + ' data-pic="' + esc(x.thumbnailPath || x.path) + '" data-id="' + esc(x.id) + '">'
       + (x.pinned ? '<span class="st-pin">' + ic('pin') + '</span>' : '') + '</button>').join('')
     + '</div>'
-    + (IM.hasMore && IM.filter === 'all' ? '<button class="loadmore" ' + SIMGV_A('more') + '>Load more</button>' : '');
+    + (IM.hasMore && IM.filter === 'all' ? '<button class="loadmore" ' + SIMGV_A('more') + '>Load more</button>' : '')
+    + (IM.filter === 'pinned' && IM.pinnedPartial && !IM.pinnedLoading ? '<div class="st-galempty">' + esc('Older pinned images may be missing here. Load more under All to find them.') + '</div>' : '');
 }
 
 function simgvPage(IM) {
@@ -365,4 +419,4 @@ function simgvPage(IM) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {simgJobOf};
+if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine};

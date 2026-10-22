@@ -1,11 +1,11 @@
 /**
  * Provider and backend events: `provider_key_checked`, `model_configured`
  * (once per desktop state dir), `backend_switched`, `fusion_configured`,
- * `local_backend_started`.
+ * `local_backend_started`, `local_backend_supervised`.
  */
 
 import { curatedMeta } from "../model-catalog.js";
-import { daemonEffect, keyCheckResult, presetOf, switchOutcome } from "./classify.js";
+import { daemonEffect, keyCheckResult, presetOf, supervisedProps, switchOutcome } from "./classify.js";
 import { localEngineOf, readConfigFile } from "./environment.js";
 import { analyticsEnabled, currentRunMode, flagsStore, refreshRunMode, track } from "./core.js";
 
@@ -124,6 +124,22 @@ export function localBackendStarted(via: "launch" | "swap", daemon: unknown, mod
     const effect = daemonEffect(daemon);
     if (!effect) return;
     track("local_backend_started", { via, result: effect, model_id: modelIdProp(modelId), ms, engine: localEngineOf(readConfigFile(stateDir)) });
+  } catch {
+    /* never */
+  }
+}
+
+/**
+ * ATO-773: the engine watchdog told the window something (main.ts
+ * hostDaemonWatch): a restart beginning, done, failed, or given up. Codes and
+ * counts only (classify.ts supervisedProps); `clear` and the CPU word are not sent.
+ */
+export function localBackendSupervised(notice: unknown, quickDeaths: number | null): void {
+  try {
+    if (!analyticsEnabled()) return;
+    const props = supervisedProps(notice, quickDeaths);
+    if (!props) return;
+    track("local_backend_supervised", { ...props, engine: localEngineOf(readConfigFile(stateDir)) });
   } catch {
     /* never */
   }

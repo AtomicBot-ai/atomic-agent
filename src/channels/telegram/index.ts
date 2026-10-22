@@ -1,9 +1,13 @@
 export { TelegramChannel, scrubErrorMessage } from "./telegram-channel.js";
+export { OwnerAlreadyPairedError } from "./telegram-channel.js";
 export type {
   BotFactory,
   BotInstance,
   ChannelLock,
+  OpenedPairingWindow,
+  PairingOutcome,
   PairingStateSnapshot,
+  StartPairingOptions,
   TaskReportDelivery,
   TelegramChannelDeps,
 } from "./telegram-channel.js";
@@ -36,12 +40,21 @@ export {
 export {
   DefaultPairingMode,
   DEFAULT_PAIRING_TIMEOUT_MS,
+  PAIRING_CODE_DIGITS,
+  generatePairingCode,
+  pairingCodeIn,
 } from "./pairing-mode.js";
 export type {
   ClaimedPairing,
+  PairingClaimResult,
   PairingMode,
   PairingModeOptions,
 } from "./pairing-mode.js";
+export {
+  pairingInstruction,
+  pairedOwnerLine,
+  replaceOwnerPrompt,
+} from "./pairing-copy.js";
 export {
   TELEGRAM_BOT_TOKEN_KEY,
   readTelegramSettings,

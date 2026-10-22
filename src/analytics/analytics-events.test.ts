@@ -10,9 +10,13 @@ import {
 } from "./analytics-events.js";
 import type { AnalyticsStateStore } from "./analytics-state-store.js";
 
-function fakeClient() {
-  return { capture: vi.fn() } as unknown as AnalyticsClient & {
+function fakeClient(delivered = true) {
+  return {
+    capture: vi.fn(),
+    captureConfirmed: vi.fn(async () => delivered),
+  } as unknown as AnalyticsClient & {
     capture: ReturnType<typeof vi.fn>;
+    captureConfirmed: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -43,27 +47,54 @@ function fakeStore(overrides: Partial<Record<string, boolean>> = {}) {
 }
 
 describe("captureAppInstalled", () => {
-  it("fires once and marks the flag", () => {
+  it("sends with confirmation and marks the flag once delivered", async () => {
     const client = fakeClient();
     const store = fakeStore();
-    captureAppInstalled(client, store);
-    expect(client.capture).toHaveBeenCalledWith(
+    await captureAppInstalled(client, store);
+    expect(client.captureConfirmed).toHaveBeenCalledWith(
       ANALYTICS_EVENTS.appInstalled,
       {},
     );
     expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
   });
 
-  it("no-ops when already sent", () => {
+  // ATO-717: a first launch without network must not burn the event.
+  it("leaves the flag unset when delivery fails, so the next launch retries", async () => {
+    const store = fakeStore();
+    await captureAppInstalled(fakeClient(false), store);
+    expect(store.markAppInstalledSent).not.toHaveBeenCalled();
+
+    const online = fakeClient(true);
+    await captureAppInstalled(online, store);
+    expect(online.captureConfirmed).toHaveBeenCalledTimes(1);
+    expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark the flag before delivery is confirmed", async () => {
+    let confirm!: (ok: boolean) => void;
+    const client = fakeClient();
+    client.captureConfirmed.mockImplementation(
+      () => new Promise<boolean>((resolve) => { confirm = resolve; }),
+    );
+    const store = fakeStore();
+    const pending = captureAppInstalled(client, store);
+    expect(store.markAppInstalledSent).not.toHaveBeenCalled();
+    confirm(true);
+    await pending;
+    expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-ops when already sent", async () => {
     const client = fakeClient();
     const store = fakeStore({ appInstalled: true });
-    captureAppInstalled(client, store);
+    await captureAppInstalled(client, store);
+    expect(client.captureConfirmed).not.toHaveBeenCalled();
     expect(client.capture).not.toHaveBeenCalled();
   });
 
-  it("no-ops when analytics is disabled (null client)", () => {
+  it("no-ops when analytics is disabled (null client)", async () => {
     const store = fakeStore();
-    expect(() => captureAppInstalled(null, store)).not.toThrow();
+    await expect(captureAppInstalled(null, store)).resolves.toBeUndefined();
     expect(store.markAppInstalledSent).not.toHaveBeenCalled();
   });
 });
@@ -203,6 +234,36 @@ describe("captureMessageSent", () => {
     });
     const payload = client.capture.mock.calls[0][1];
     expect(payload).toHaveProperty("cost_usd", 0);
+  });
+
+  // ATO-277: cached_tokens was counted by the meter but never sent.
+  it("attaches cached_tokens and fallback_calls to message_sent when provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      ...ctx,
+      promptTokens: 100,
+      completionTokens: 50,
+      cachedTokens: 80,
+      fallbackCalls: 1,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "openrouter",
+      model: "gpt",
+      prompt_tokens: 100,
+      completion_tokens: 50,
+      cached_tokens: 80,
+      fallback_calls: 1,
+    });
+  });
+
+  it("omits cached_tokens and fallback_calls when not provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, ctx);
+    const payload = client.capture.mock.calls[0]?.[1];
+    expect(payload).not.toHaveProperty("cached_tokens");
+    expect(payload).not.toHaveProperty("fallback_calls");
   });
 
   it("no-ops when analytics is disabled (null client)", () => {

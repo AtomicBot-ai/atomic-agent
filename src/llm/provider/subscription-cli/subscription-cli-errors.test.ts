@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { TransportError } from "../../reliability/llm-failures.js";
 import { claudeCliAdapter } from "./claude-cli-adapter.js";
 import {
+  cliReportedError,
   isEnoent,
   isSubscriptionCliSetupError,
   isSpawnEinval,
@@ -82,6 +83,10 @@ describe("looksLikeAuthFailure", () => {
       "Invalid API key",
       "401 Unauthorized",
       "credentials expired",
+      // Claude Code's expired-login envelope (ATO-755).
+      "authentication_failed",
+      "Failed to authenticate: OAuth session expired and could not be refreshed",
+      "OAuth token has expired",
     ]) {
       expect(looksLikeAuthFailure(text)).toBe(true);
     }
@@ -94,6 +99,8 @@ describe("looksLikeAuthFailure", () => {
       "network error: ECONNRESET",
       "model not found",
       "Overloaded",
+      "OAuth is not configured for this MCP server",
+      "session expired, starting a new one",
     ]) {
       expect(looksLikeAuthFailure(text)).toBe(false);
     }
@@ -132,6 +139,103 @@ describe("mapCliFailure", () => {
     expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
     expect(err.message).toMatch(/exited with code 2/);
     expect(err.message).toMatch(/weekly limit reached, resets Monday/);
+  });
+
+  it("reads an expired login out of Claude Code's result envelope", () => {
+    // ATO-755: stderr is empty and the only explanation is this line.
+    const err = mapCliFailure({
+      ...base,
+      stdout: [
+        '{"type":"system","subtype":"init"}',
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          error: "authentication_failed",
+          result:
+            "Failed to authenticate: OAuth session expired and could not be refreshed",
+        }),
+      ].join("\n"),
+    });
+    expect(err).toBeInstanceOf(SubscriptionCliAuthError);
+    expect(err.message).toBe(
+      '"claude" is not signed in. Run `claude` and complete /login. (Failed to authenticate: OAuth session expired and could not be refreshed (authentication_failed))',
+    );
+  });
+
+  it("passes a non-auth envelope failure through as text, not JSON", () => {
+    const err = mapCliFailure({
+      ...base,
+      stdout: '{"type":"result","is_error":true,"result":"5-hour limit reached; resets at 14:00"}',
+    });
+    expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
+    expect(err.message).toBe(
+      '"claude" exited with code 1: 5-hour limit reached; resets at 14:00',
+    );
+  });
+
+  it("does not read the model's own words in the stream as an auth problem", () => {
+    // A delta that mentions "unauthorized" is not the CLI failing auth
+    // once the envelope says what actually went wrong.
+    const err = mapCliFailure({
+      ...base,
+      stdout: [
+        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"401 Unauthorized"}}}',
+        '{"type":"result","subtype":"error_max_turns","is_error":true}',
+      ].join("\n"),
+    });
+    expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
+    expect(err.message).toMatch(/exited with code 1: error_max_turns$/);
+  });
+
+  it("keeps the model's stream text out of a failure with no envelope", () => {
+    // Killed or crashed before the result envelope: what is left on
+    // stdout is the stream, and a delta saying "401 Unauthorized" is the
+    // model talking, not a signed-out CLI.
+    const err = mapCliFailure({
+      ...base,
+      stdout: [
+        '{"type":"system","subtype":"init"}',
+        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"401 Unauthorized"}}}',
+        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_d',
+      ].join("\n"),
+    });
+    expect(err).not.toBeInstanceOf(SubscriptionCliAuthError);
+    expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
+    expect(err.message).toBe('"claude" exited with code 1: no output');
+    expect(err.message).not.toContain("{");
+  });
+
+  it("keeps a plain-text line from stdout when there is no envelope", () => {
+    const err = mapCliFailure({
+      ...base,
+      stdout: [
+        '{"type":"system","subtype":"init"}',
+        "Error: unknown option '--bogus'",
+      ].join("\n"),
+    });
+    expect(err.message).toBe(
+      "\"claude\" exited with code 1: Error: unknown option '--bogus'",
+    );
+  });
+
+  it("adds stderr to the envelope's explanation when it says something else", () => {
+    const err = mapCliFailure({
+      ...base,
+      stdout: '{"type":"result","is_error":true,"result":"5-hour limit reached"}',
+      stderr: "warning: proxy settings ignored",
+    });
+    expect(err.message).toBe(
+      '"claude" exited with code 1: 5-hour limit reached; warning: proxy settings ignored',
+    );
+    const duplicate = mapCliFailure({
+      ...base,
+      stdout: '{"type":"result","is_error":true,"result":"5-hour limit reached"}',
+      stderr: "5-hour limit reached",
+    });
+    expect(duplicate.message).toBe(
+      '"claude" exited with code 1: 5-hour limit reached',
+    );
   });
 
   it("truncates a huge stderr instead of pasting megabytes into the message", () => {
@@ -185,5 +289,27 @@ describe("isSubscriptionCliSetupError", () => {
       false,
     );
     expect(isSubscriptionCliSetupError(null)).toBe(false);
+  });
+});
+
+describe("cliReportedError", () => {
+  it("finds Codex's failure events and drops the duplicate", () => {
+    expect(
+      cliReportedError(
+        [
+          '{"type":"thread.started"}',
+          '{"type":"error","message":"Your access token could not be refreshed"}',
+          '{"type":"turn.failed","error":{"message":"Your access token could not be refreshed"}}',
+        ].join("\n"),
+      ),
+    ).toBe("Your access token could not be refreshed");
+  });
+
+  it("is null when nothing in the output reports a failure", () => {
+    expect(cliReportedError("")).toBeNull();
+    expect(cliReportedError("plain text\nnot json {")).toBeNull();
+    expect(
+      cliReportedError('{"type":"result","subtype":"success","result":"ok"}'),
+    ).toBeNull();
   });
 });
