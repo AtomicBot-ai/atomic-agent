@@ -125,6 +125,8 @@ export interface EmbeddingDaemonInfo {
   running: boolean;
   healthy: boolean;
   loading: boolean;
+  /** The server on the port rejects the session's key (`DaemonStatus.authMismatch`). */
+  authMismatch?: boolean;
   pid: number | null;
   port: number;
   /** `null` when no embedding model is configured. */
@@ -147,6 +149,12 @@ export interface LocalModelsDaemonInfo {
   running: boolean;
   healthy: boolean;
   loading: boolean;
+  /**
+   * `/health` answers but the key-guarded endpoint rejects the session's
+   * key (`DaemonStatus.authMismatch`): a stale or another server holds
+   * the port, so restarting the model is the fix, not waiting.
+   */
+  authMismatch?: boolean;
   pid: number | null;
   port: number;
 }

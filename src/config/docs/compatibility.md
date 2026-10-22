@@ -5,11 +5,11 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 77; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 78; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
-Current checked examples: localModels mode=external, thinking=auto, reasoningBudgetTokens=1500, completionMaxTokens=16384; agent tokenBudget=3000 and maxSteps=25, with task-wide maxSteps=1000/maxDurationMs=7200000 and autoContinue=true. These are different budgets, not a promise that every task ends after 25 steps.
+Current checked examples: localModels mode=external, thinking=auto, reasoningBudgetTokens=0 (no bound), completionMaxTokens=16384; agent tokenBudget=3000 and maxSteps=25, with task-wide maxSteps=1000/maxDurationMs=7200000 and autoContinue=true. These are different budgets, not a promise that every task ends after 25 steps.
 
 Memory embeddings are off by default; query rewriting, links, evolution, lessons/procedures/consolidation/voting are enabled. Typed notes, reflection segmentation and anySpeaker are disabled. Retention is disabled by default. Environment overrides and migrations can make an existing install differ.
 
@@ -22,6 +22,10 @@ For input versions below 75, validated providers without `modelMode` receive `cl
 ## Atomic Core default engine migration
 
 Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before it the Atomic Core choice sat behind an opt-in environment variable, so a stored `llama-server` was the written default rather than a decision: for input versions below 77 a missing or `llama-server` engine becomes `atomic-core`. Nothing else in the file changes, including external mode and every other managed field. From version 77 an explicit `llama-server` is honoured, so switching back with `models engine llama-server` survives later loads. Unknown engine values still fail validation. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
+
+## Reasoning budget default migration
+
+Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound, as it was before version 68. llama.cpp clamps a grammar repetition to 1,999 characters, so the old default of 1500 tokens was really 499 and cut thinking models off mid-thought. Every file since version 68 carries the value the schema wrote, so for input versions below 78 a stored value of exactly `1500` is read as that default and becomes `0`. Any other value, including a lower positive bound, is kept, and a missing field takes the new default. From version 78 an explicit `1500` is honoured. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
 ## Scalar validation
 
@@ -85,11 +89,15 @@ Discord's present owner list wins over the legacy scalar regardless of file vers
 
 ## Writes and credentials
 
-Preserve validation of provider/model pins and run mode. Writes that change user config must reset the cache as required by the existing API. Credential storage uses owner-only files and platform-specific ACL handling; missing optional credentials and required credentials have different behavior.
+Preserve validation of provider/model pins and run mode. Writes that change user config must reset the cache as required by the existing API. Credential storage uses owner-only files and platform-specific ACL handling: `.env` and `config.json` are 0600 on POSIX, and on Windows both get a current-user-only ACL through [windows-acl.ts](../windows-acl.ts) (best effort; a failure leaves the inherited ACL and never fails the write). Missing optional credentials and required credentials have different behavior.
+
+## Keys from a newer build
+
+The desktop app and the terminal agent share one `config.json`, so an older build often saves a file a newer build wrote. The parse keeps unknown top-level blocks and drops unknown keys inside known blocks; `writeUserConfigFileSync` then reads the file on disk and puts back the keys it does not know inside fixed blocks, while known keys always come from the data being written, even when absent. Dictionaries (`webhooks`, `mcp.servers`, `llm.providers`), arrays and everything inside list entries are whole values from that data, so a removed server or provider stays removed. [config-shape.ts](../config-shape.ts) lists which blocks are fixed and which are dictionaries, plus known keys outside the defaults (`llm` and the retired `telemetry`, `agent.approvalRequired` and `discord.ownerUserId`); its test fails when a new block in the defaults is in neither list. The `llm` block is not descended, so nested keys there follow the parse.
 
 ## Sources and tests
 
-- [Defaults/parser](../config-schema.ts), [precedence](../load-config.ts), [file writes](../config-file.ts), [cache](../config-cache.ts), [owner-only files](../owner-only-file.ts).
+- [Defaults/parser](../config-schema.ts), [precedence](../load-config.ts), [file writes](../config-file.ts), [unknown-key carry](../carry-unknown-config-keys.ts), [cache](../config-cache.ts), [owner-only files](../owner-only-file.ts).
 - [Schema tests](../config-schema.test.ts), [LLM config](../llm-config.test.ts), [run-mode config](../llm-run-mode-config.test.ts).
 
 ## Execution and resource policies

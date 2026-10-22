@@ -3,9 +3,31 @@
 # only needs one call. A solo step is the model emitting [{...}].
 # Up to 16 calls per completion (runtime also clamps via config).
 root ::= tool-call-array
-tool-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
+# `reply` has its own branch (#681). Its `text` is prose, and prose
+# quotes things: `stored in memory: "foo"`. Tokenizers merge ` "` and
+# `:"` into one token, and under the generic string rule that token is a
+# legal string close, so the reply ended at `memory:`, `}}]` followed,
+# the stop came with stop:true and the truncated reply parsed as valid.
+# `reply-text` refuses to close right after a "soft" character (space,
+# `:`, `(`, `[`, `{`, `=`, `,`): the merged token is no longer a way out
+# and the sampler has to escape the quote instead. The args are strict
+# (`text`, then optional `attachments`) so the generic object cannot
+# carry a reply around the rule; `tool-name` does not list "reply".
+tool-call ::= reply-call | other-call
+reply-call ::= "{" ws "\"tool\"" ws ":" ws "\"reply\"" ws "," ws "\"args\"" ws ":" ws reply-args ws "}"
+other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
+reply-args ::= "{" ws "\"text\"" ws ":" ws reply-text ( ws "," ws "\"attachments\"" ws ":" ws value )? ws "}"
+reply-text ::= "\"" reply-pending "\""
+# Right recursion over the last character: `reply-chars` may end (the
+# string may close) only after a hard character; `reply-pending` must
+# continue. The text starts in `reply-pending`, so it cannot be empty
+# either: a reply that opens on a quote cannot close on it.
+reply-chars ::= ( reply-hard reply-chars | reply-soft reply-pending )?
+reply-pending ::= reply-hard reply-chars | reply-soft reply-pending
+reply-hard ::= [^"\\\x00-\x1f :(\[{=,] | "\\" escape
+reply-soft ::= [ :(\[{=,]
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
-tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | mcp-native-tool | mcp-server-tool | "\"reply\"" | "\"finish\""
+tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | mcp-native-tool | mcp-server-tool | "\"finish\""
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
 os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.move" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
 discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""

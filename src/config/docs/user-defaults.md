@@ -3,11 +3,11 @@
 Status: current
 Owner: src/config/
 
-Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 77. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
+Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
 
 ## version
 
-- `version` (default `77`).
+- `version` (default `78`).
 
 ## localModels
 
@@ -16,7 +16,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 77.
 - `localModels.completionMaxTokens` (default `16384`).
 - `localModels.useServerTemplate` (default `"auto"`).
 - `localModels.thinking` (default `"auto"`).
-- `localModels.reasoningBudgetTokens` (default `1500`; llama.cpp enforces at most 499, see #600).
+- `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced up to 499 by llama.cpp, see #600).
 - `localModels.managed.engine` (default `"atomic-core"`).
 - `localModels.managed.modelId` (default `null`).
 - `localModels.managed.port` (default `19091`).

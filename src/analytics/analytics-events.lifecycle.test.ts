@@ -13,8 +13,12 @@ import {
 import { AnalyticsStateStore } from "./analytics-state-store.js";
 
 function fakeClient() {
-  return { capture: vi.fn() } as unknown as AnalyticsClient & {
+  return {
+    capture: vi.fn(),
+    captureConfirmed: vi.fn(async () => true),
+  } as unknown as AnalyticsClient & {
     capture: ReturnType<typeof vi.fn>;
+    captureConfirmed: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -31,13 +35,13 @@ describe("app_installed / analytics_disabled", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("app_installed carries install_channel and other_surface_installed", () => {
+  it("app_installed carries install_channel and other_surface_installed", async () => {
     const client = fakeClient();
-    captureAppInstalled(client, store, {
+    await captureAppInstalled(client, store, {
       installChannel: "curl_sh",
       otherSurfaceInstalled: true,
     });
-    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.appInstalled, {
+    expect(client.captureConfirmed).toHaveBeenCalledWith(ANALYTICS_EVENTS.appInstalled, {
       install_channel: "curl_sh",
       other_surface_installed: true,
     });

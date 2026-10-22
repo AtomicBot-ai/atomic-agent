@@ -1,10 +1,15 @@
 import type { ModelCatalogEntry } from "../model-resolver.js";
 import {
+  describeCatalogFetchError,
+  type CatalogRefreshResult,
+} from "../catalog-refresh-result.js";
+import {
   AIMLAPI_CHAT_MODEL_ORDER,
   AIMLAPI_MODELS_CATALOG,
 } from "./aimlapi-models-catalog.js";
 
 const MODELS_URL = "https://api.aimlapi.com/v1/models";
+const FETCH_TIMEOUT_MS = 20_000;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 type AimlapiApiModel = {
@@ -209,6 +214,14 @@ export function listAimlapiChatPicks(): readonly AimlapiChatPick[] {
  * fetch would only race two writers over the same module cache.
  */
 export function refreshAimlapiChatCatalogFromApi(): Promise<boolean> {
+  return refreshAimlapiChatCatalog().then((result) => result.ok);
+}
+
+/**
+ * Same refresh, with the reason when it falls back to the static catalog,
+ * for a caller that logs why the live list did not load.
+ */
+export function refreshAimlapiChatCatalog(): Promise<CatalogRefreshResult> {
   if (inFlight) return inFlight;
   const request = fetchAndCacheCatalog().finally(() => {
     inFlight = null;
@@ -217,14 +230,14 @@ export function refreshAimlapiChatCatalogFromApi(): Promise<boolean> {
   return request;
 }
 
-let inFlight: Promise<boolean> | null = null;
+let inFlight: Promise<CatalogRefreshResult> | null = null;
 
-async function fetchAndCacheCatalog(): Promise<boolean> {
+async function fetchAndCacheCatalog(): Promise<CatalogRefreshResult> {
   try {
     const res = await fetch(MODELS_URL, {
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) return false;
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
     const json = (await res.json()) as { data?: AimlapiApiModel[] };
     const rows = json.data ?? [];
 
@@ -267,7 +280,9 @@ async function fetchAndCacheCatalog(): Promise<boolean> {
       seen.add(id);
     }
 
-    if (picks.length === 0) return false;
+    if (picks.length === 0) {
+      return { ok: false, reason: `no usable chat models in ${rows.length} rows` };
+    }
     const stated = new Map<string, boolean>();
     for (const [id, live] of liveById) {
       if (live.features !== undefined && live.features.length > 0) {
@@ -276,8 +291,8 @@ async function fetchAndCacheCatalog(): Promise<boolean> {
     }
     advertisedVision = stated;
     cached = { fetchedAt: Date.now(), picks };
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: describeCatalogFetchError(err, FETCH_TIMEOUT_MS) };
   }
 }

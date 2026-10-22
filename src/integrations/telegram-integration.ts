@@ -40,7 +40,7 @@ export const telegramIntegration: IntegrationDescriptor = {
     "Send /newbot, then a display name, then a username ending in `bot`.",
     "BotFather replies with a token like 1234567:AA… — copy the whole line.",
     "Press e on Bot token below, paste it, press enter. The channel starts by itself.",
-    "Press p, then send your bot any message within 60s — that claims you as the owner.",
+    "Press p, then send your bot /start and the 6-digit code shown here within 5 minutes. That claims you as the owner.",
   ],
   fields: [
     {
@@ -86,7 +86,7 @@ export const telegramIntegration: IntegrationDescriptor = {
       key: "p",
       id: "pair",
       label: "pair",
-      // Pairing opens a window that claims the next DM. Without a token
+      // Pairing opens a window that claims a DM `/start <code>`. Without a token
       // there is no bot to DM, so the window could only ever time out.
       available: (ctx) => ctx.presentFields.has(TOKEN_FIELD),
     },

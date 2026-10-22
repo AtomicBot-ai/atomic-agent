@@ -69,6 +69,6 @@ export type {
   RuntimeTelemetry,
   RuntimeTelemetryFactories,
 } from "./toggle-runtime-telemetry.js";
-export { TurnUsageMeter } from "./turn-usage-meter.js";
+export { TurnUsageMeter, completionUsageForTurn } from "./turn-usage-meter.js";
 export type { TurnUsageSnapshot } from "./turn-usage-meter.js";
 export { sanitizeModelAlias } from "./sanitize-model-alias.js";

@@ -73,6 +73,16 @@ describe("extractive summary", () => {
     expect(tiny.trim()).not.toBe("");
     expect(estimateTokens(tiny)).toBeLessThanOrEqual(10);
   });
+
+  it("says when the newest covered request is still being handled after the cut", () => {
+    const turns = [userTurn("FIRST"), assistantReplyTurn("first done"), userTurn("SECOND"),
+      assistantToolCallTurn({ tool: "os.fs.read", args: { path: "/a.ts" } }), toolResultTurn({ tool: "os.fs.read", status: "ok", summary: "a" }),
+      assistantReplyTurn("second done")];
+    expect(buildExtractiveSummary(turns, 0, 3, { maxTokens: 400 })).toContain("Request [2] is still being handled after record 2");
+    expect(buildExtractiveSummary(turns, 0, 5, { maxTokens: 400 })).toContain("Request [2] is still being handled after record 4");
+    expect(buildExtractiveSummary(turns, 0, 2, { maxTokens: 400 })).not.toContain("still being handled");
+    expect(estimateTokens(buildExtractiveSummary(turns, 0, 3, { maxTokens: 60 }))).toBeLessThanOrEqual(60);
+  });
 });
 
 describe("tool step lines", () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, openSync, closeSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { coreRoot } from "./core-state.js";
@@ -50,6 +50,18 @@ function acquire(dataDir: string): () => void {
     writeFileSync(fd, String(process.pid));
   } finally { closeSync(gateFd); unlinkSync(gate); }
   return () => { closeSync(fd); unlinkSync(path); };
+}
+
+/**
+ * A live process holds the engine operation lock right now: a model start or
+ * load, a stop, an engine switch or a Core/llama.cpp install is under way, so
+ * a model process that is missing at this moment may be about to appear.
+ * Read only: it never acquires, waits on or reclaims the lock. A lock whose
+ * owner is gone (ESRCH) is not an operation in progress.
+ */
+export function coreOperationInProgress(dataDir: string): boolean {
+  const path = join(coreRoot(dataDir), "operation.lock");
+  return existsSync(path) && !ownerIsDead(path);
 }
 
 /**

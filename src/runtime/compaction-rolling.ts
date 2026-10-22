@@ -1,7 +1,7 @@
 import type { CompactionPlan } from "../prompt/plan-compaction.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 import { renderTurnForPrompt, type ConversationTurn } from "../session/conversation-turn.js";
-import { safeCompactionCuts, validRollingSummary, type RollingCompactionSummary } from "../session/session-compaction.js";
+import { finishedTurnCompactionCuts, safeCompactionCuts, validRollingSummary, type RollingCompactionSummary } from "../session/session-compaction.js";
 import type { SessionState } from "../session/session-state.js";
 import { buildExtractiveSummary, clipMiddle } from "./compaction-extractive.js";
 
@@ -43,14 +43,25 @@ function clipToTokens(text: string, maxTokens: number): string {
 
 /**
  * The records one background job summarizes: from `from` up to the latest
- * safe cut at or before `limit` whose rendering fits `maxTokens`. Records are
+ * safe cut at or before `limit` whose rendering fits `maxTokens`. The
+ * watermark stops at the end of a finished turn (a request together with its
+ * answer) when one fits; a cut inside a turn is used only when no finished
+ * turn ends in range or the first one alone is over the cap. Records are
  * rendered as history (the prompt's own capped renderer), never as raw JSON.
  * When even the first complete call/result group is larger, it is taken
  * alone and cut in the middle to the cap, so a job's input stays bounded.
  * Null when no safe cut lies in `(from, limit]`.
  */
 export function renderRollingSource(turns: readonly ConversationTurn[], from: number, limit: number, maxTokens: number): { text: string; through: number } | null {
-  const cuts = safeCompactionCuts(turns).filter((cut) => cut > from && cut <= limit);
+  const inRange = (cut: number) => cut > from && cut <= limit;
+  const finished = collectRollingRecords(turns, from, finishedTurnCompactionCuts(turns).filter(inRange), maxTokens);
+  const source = finished && !finished.overCap ? finished : collectRollingRecords(turns, from, safeCompactionCuts(turns).filter(inRange), maxTokens);
+  if (!source) return null;
+  return { text: clipToTokens(source.lines.join("\n"), maxTokens), through: source.through };
+}
+
+/** Whole records up to the latest of `cuts` that fits; `overCap` when only the first group was taken, larger than the cap. */
+function collectRollingRecords(turns: readonly ConversationTurn[], from: number, cuts: readonly number[], maxTokens: number): { lines: string[]; through: number; overCap: boolean } | null {
   const lines: string[] = [];
   let used = 0;
   let through = 0;
@@ -68,8 +79,7 @@ export function renderRollingSource(turns: readonly ConversationTurn[], from: nu
     through = cut;
     if (used >= maxTokens) break;
   }
-  if (!through) return null;
-  return { text: clipToTokens(lines.join("\n"), maxTokens), through };
+  return through ? { lines, through, overCap: used > maxTokens } : null;
 }
 
 export interface RollingCheckpoint {
@@ -88,12 +98,16 @@ export interface RollingCheckpoint {
  *
  * A watermark past the planned cut moves the cut to it: the planner picks the
  * earliest cut that fits, so a later one keeps a smaller fresh tail and still
- * fits. It must leave at least one record uncovered.
+ * fits. It must leave at least one record uncovered. When the planned cut
+ * ends a finished turn and the watermark does not, the cut moves on to the
+ * next finished turn's end instead, so the move never separates a request
+ * from its answer; with no such cut left, null.
  */
 export function compactFromRolling(state: SessionState, plan: CompactionPlan): RollingCheckpoint | null {
   const rolling = validRollingSummary(state);
   if (!rolling || rolling.from !== plan.from || rolling.coveredThrough >= state.turns.length) return null;
-  const through = Math.max(plan.through, rolling.coveredThrough);
+  const through = rollingCut(state.turns, plan.through, rolling.coveredThrough);
+  if (through === null) return null;
   if (renderedTokens(state.turns, rolling.coveredThrough, through) > renderedTokens(state.turns, plan.from, through) * ROLLING_MAX_UNCOVERED_SHARE) return null;
   const used = estimateTokens(rolling.summary);
   if (used > plan.summaryMaxTokens) return null;
@@ -104,4 +118,11 @@ export function compactFromRolling(state: SessionState, plan: CompactionPlan): R
   const summary = `${rolling.summary}\n\n${tail}`;
   if (estimateTokens(summary) > plan.summaryMaxTokens) return null;
   return { summary, through, rolling };
+}
+
+function rollingCut(turns: readonly ConversationTurn[], planned: number, watermark: number): number | null {
+  if (watermark <= planned) return planned;
+  const finished = finishedTurnCompactionCuts(turns);
+  if (!finished.includes(planned) || finished.includes(watermark)) return watermark;
+  return finished.find((cut) => cut > watermark && cut < turns.length) ?? null;
 }

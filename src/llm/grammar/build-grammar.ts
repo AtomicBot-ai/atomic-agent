@@ -115,26 +115,88 @@ const CHARS_RULE_RE = /^chars ::= char\*$/m;
  * still refuses whatever arrives another way (an escaped `<|`, a
  * provider without grammars).
  *
- * A three-state automaton over the last character — neutral, after
- * `<`, after `|` — rather than the tempting `"<" [^|] | "|" [^>]`
- * alternatives: those let `<<|` and `||>` through (the first `<` pairs
- * with the second, freeing the `|`). Every alternative is decided by
- * one character, so the sampler carries one stack per string, and the
- * right recursion is the same shape llama.cpp expands `char*` into.
- * Only the reasoning profiles get it; the plain profile's grammar stays
+ * One exception (ATO-800): `|>` after whitespace (a space, or an escaped
+ * `\n`, `\r` or `\t`). Every close marker has a name character right
+ * before its `|>` (`channel|>`, `turn|>`, `im_end|>`), while the pipe
+ * operator in code (`x |> f` in Elixir, F#, OCaml, R, Hack) is written
+ * with a space or at the start of an indented line. Without it a
+ * thinking model rewrote the pipe as `| >` or `||`. `<|` stays excluded
+ * everywhere.
+ *
+ * A four-state automaton over the last character — neutral, after
+ * whitespace, after `<`, after `|` — rather than the tempting
+ * `"<" [^|] | "|" [^>]` alternatives: those let `<<|` and `||>` through
+ * (the first `<` pairs with the second, freeing the `|`). A `|` after
+ * whitespace lands in neutral, where `>` is plain; a second `|` is back
+ * in after-`|`, so ` ||>` stays refused. Whitespace escapes are split
+ * from the other escapes so every alternative is still decided by one
+ * character: the sampler carries one stack per string, and the right
+ * recursion is the same shape llama.cpp expands `char*` into. Only the
+ * reasoning profiles get it; the plain profile's grammar stays
  * byte-identical to `grammars/tool-call.gbnf`.
  */
 const HARDENED_STRING_RULES = [
   "chars ::= str-neutral",
-  'str-neutral ::= ( str-plain str-neutral | "<" str-after-lt | "|" str-after-bar )?',
-  'str-after-lt ::= ( str-plain str-neutral | "<" str-after-lt )?',
-  'str-after-bar ::= ( str-plain-not-gt str-neutral | "<" str-after-lt | "|" str-after-bar )?',
-  'str-plain ::= [^"\\\\\\x00-\\x1f<|] | "\\\\" escape',
-  'str-plain-not-gt ::= [^"\\\\\\x00-\\x1f<|>] | "\\\\" escape',
+  'str-neutral ::= ( str-step | "|" str-after-bar )?',
+  'str-after-ws ::= ( str-step | "|" str-neutral )?',
+  "str-after-lt ::= str-step?",
+  'str-after-bar ::= ( str-plain-not-gt str-neutral | str-ws str-after-ws | "<" str-after-lt | "|" str-after-bar )?',
+  'str-step ::= str-plain str-neutral | str-ws str-after-ws | "<" str-after-lt',
+  String.raw`str-plain ::= [^"\\\x00-\x1f<| ] | str-escape`,
+  String.raw`str-plain-not-gt ::= [^"\\\x00-\x1f<|> ] | str-escape`,
+  String.raw`str-ws ::= " " | "\\" [nrt]`,
+  String.raw`str-escape ::= "\\" ( ["\\/bf] | "u" hex hex hex hex )`,
 ].join("\n");
 
+/**
+ * The same F37 exclusion for the reply body (#681). `reply-text` is its
+ * own automaton (the string may not close right after a soft character,
+ * see `grammars/tool-call.gbnf`), so it does not go through `chars` and
+ * needs the `<|` / `|>` states folded into it. The states multiply: the
+ * plain pair (`reply-chars` may close, `reply-pending` may not) gains
+ * after-`<` and after-`|`, and `<` / `|` count as hard characters (the
+ * string may close after them), so a soft character still leads to
+ * `reply-pending` from any state.
+ *
+ * The ATO-800 whitespace exception splits whitespace out of both
+ * classes: a space is soft (`reply-pending-ws`, may not close), an
+ * escaped `\n` / `\r` / `\t` is hard (`reply-chars-ws`, may close),
+ * and from either a `|` lands in `reply-chars`, where `>` is a plain
+ * hard character.
+ */
+const HARDENED_REPLY_RULES: ReadonlyArray<[RegExp, string]> = [
+  [
+    /^reply-chars ::= .*$/m,
+    [
+      'reply-chars ::= ( reply-step | "|" reply-after-bar )?',
+      'reply-chars-ws ::= ( reply-step | "|" reply-chars )?',
+      'reply-pending-ws ::= reply-step | "|" reply-chars',
+      "reply-after-lt ::= reply-step?",
+      'reply-after-bar ::= ( reply-hard-not-gt reply-chars | reply-soft reply-pending | " " reply-pending-ws | reply-ws-escape reply-chars-ws | "<" reply-after-lt | "|" reply-after-bar )?',
+      'reply-step ::= reply-hard reply-chars | reply-soft reply-pending | " " reply-pending-ws | reply-ws-escape reply-chars-ws | "<" reply-after-lt',
+    ].join("\n"),
+  ],
+  [
+    /^reply-pending ::= .*$/m,
+    'reply-pending ::= reply-step | "|" reply-after-bar',
+  ],
+  [
+    /^reply-hard ::= .*$/m,
+    [
+      String.raw`reply-hard ::= [^"\\\x00-\x1f<| :(\[{=,] | str-escape`,
+      String.raw`reply-hard-not-gt ::= [^"\\\x00-\x1f<|> :(\[{=,] | str-escape`,
+      String.raw`reply-ws-escape ::= "\\" [nrt]`,
+    ].join("\n"),
+  ],
+  [/^reply-soft ::= .*$/m, String.raw`reply-soft ::= [:(\[{=,]`],
+];
+
 function hardenStringRule(grammar: string): string {
-  return grammar.replace(CHARS_RULE_RE, HARDENED_STRING_RULES);
+  let hardened = grammar.replace(CHARS_RULE_RE, HARDENED_STRING_RULES);
+  for (const [re, rules] of HARDENED_REPLY_RULES) {
+    hardened = hardened.replace(re, rules);
+  }
+  return hardened;
 }
 
 /** The one rule a per-request grammar rewrites. */
@@ -142,6 +204,18 @@ const TOOL_NAME_RULE_RE = /^tool-name ::= .*$/m;
 
 /** Terminal verb every restricted grammar keeps: a step must be able to exit. */
 const GRAMMAR_EXIT_TOOL = "reply";
+
+/**
+ * The split `tool-call` rule of a grammar whose `reply` has its own branch
+ * (#681): `reply-call` carries reply with the guarded text rule, and
+ * `tool-name` (the generic branch) does not list it. An older grammar
+ * without the split keeps `reply` in `tool-name`.
+ */
+const SPLIT_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call \| other-call$/m;
+
+/** `tool-call` when `reply` is the only name a request admits. */
+const REPLY_ONLY_TOOL_CALL_RULE = "tool-call ::= reply-call";
+const REPLY_ONLY_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call$/m;
 
 /**
  * Bound on cached per-request grammars per base grammar. The name sets a
@@ -162,7 +236,7 @@ const perRequestGrammarCache = new Map<string, Map<string, string>>();
 /**
  * The grammar for ONE request: `baseGrammar` (a `buildGrammar` product —
  * root, reasoning prelude, MCP rule and all) with its `tool-name` rule
- * replaced by a flat alternation over exactly `names`. Everything else is
+ * replaced by a flat alternation over `names`. Everything else is
  * byte-identical to the base, so the reasoning prelude and the JSON body
  * rules the profile invariants pin are untouched.
  *
@@ -175,7 +249,9 @@ const perRequestGrammarCache = new Map<string, Map<string, string>>();
  * step (`reply` / `finish` only) and a worker or role-restricted turn.
  *
  * `reply` is always present: a grammar with no exit would trap the step in
- * the only thing it can still emit. The rewritten rule is sorted and
+ * the only thing it can still emit. It lives on its own `reply-call`
+ * branch (#681), so `tool-name` gets the other names; when there are none,
+ * `tool-call` is cut down to that branch. The rewritten rule is sorted and
  * deduplicated, and the result is cached by the sorted name list, so the
  * same set costs one string build per base grammar.
  */
@@ -196,12 +272,9 @@ export function buildGrammarForTools(
   }
   const cached = perBase.get(key);
   if (cached !== undefined) return cached;
-  const rule = `tool-name ::= ${sorted.map(quoteToolNameLiteral).join(" | ")}`;
-  const built = TOOL_NAME_RULE_RE.test(baseGrammar)
-    ? baseGrammar.replace(TOOL_NAME_RULE_RE, rule)
-    : // A base without the rule (an older grammar file): a later
-      // definition wins in GBNF, so appending still restricts.
-      `${baseGrammar.trimEnd()}\n${rule}\n`;
+  const built = SPLIT_TOOL_CALL_RULE_RE.test(baseGrammar)
+    ? narrowSplitGrammar(baseGrammar, sorted)
+    : replaceToolNameRule(baseGrammar, sorted);
   if (perBase.size >= GRAMMAR_CACHE_PER_BASE) {
     const oldest = perBase.keys().next();
     if (!oldest.done) perBase.delete(oldest.value);
@@ -210,13 +283,39 @@ export function buildGrammarForTools(
   return built;
 }
 
+function replaceToolNameRule(grammar: string, names: string[]): string {
+  const rule = `tool-name ::= ${names.map(quoteToolNameLiteral).join(" | ")}`;
+  return TOOL_NAME_RULE_RE.test(grammar)
+    ? grammar.replace(TOOL_NAME_RULE_RE, rule)
+    : // A base without the rule (an older grammar file): a later
+      // definition wins in GBNF, so appending still restricts.
+      `${grammar.trimEnd()}\n${rule}\n`;
+}
+
 /**
- * The tool names a grammar's `tool-name` rule admits when that rule is a
- * flat alternation of literals (the shape `buildGrammarForTools` writes).
- * `null` for the static base grammar, whose rule is composed of sub-rules.
- * A test helper more than a runtime one.
+ * The per-request rewrite of a split grammar: `reply` stays on its own
+ * branch, `tool-name` lists the other names. With no other name the
+ * generic branch is dropped from `tool-call` instead (an empty
+ * alternation is not valid GBNF); `tool-name` is left as it was, an
+ * unreferenced rule llama.cpp still parses.
+ */
+function narrowSplitGrammar(grammar: string, names: string[]): string {
+  const others = names.filter((name) => name !== GRAMMAR_EXIT_TOOL);
+  if (others.length === 0) {
+    return grammar.replace(SPLIT_TOOL_CALL_RULE_RE, REPLY_ONLY_TOOL_CALL_RULE);
+  }
+  return replaceToolNameRule(grammar, others);
+}
+
+/**
+ * The tool names a grammar admits when its `tool-name` rule is a flat
+ * alternation of literals (the shape `buildGrammarForTools` writes),
+ * sorted, with `reply` included when the grammar carries it on its own
+ * `reply-call` branch. `null` for the static base grammar, whose rule is
+ * composed of sub-rules. A test helper more than a runtime one.
  */
 export function grammarToolNames(grammar: string): string[] | null {
+  if (REPLY_ONLY_TOOL_CALL_RULE_RE.test(grammar)) return [GRAMMAR_EXIT_TOOL];
   const match = grammar.match(TOOL_NAME_RULE_RE);
   if (!match) return null;
   const body = match[0].slice("tool-name ::= ".length);
@@ -226,7 +325,8 @@ export function grammarToolNames(grammar: string): string[] | null {
     if (!literal) return null;
     names.push(literal[1]!);
   }
-  return names;
+  if (SPLIT_TOOL_CALL_RULE_RE.test(grammar)) names.push(GRAMMAR_EXIT_TOOL);
+  return Array.from(new Set(names)).sort();
 }
 
 /** `os.fs.read` → `"\"os.fs.read\""` — a JSON string literal inside a GBNF one. */

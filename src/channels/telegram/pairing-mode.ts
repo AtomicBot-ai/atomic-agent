@@ -1,20 +1,68 @@
+import { randomInt } from "node:crypto";
+
 import type { InboundTextUpdate } from "./inbound-handler.js";
 
-/** Default pairing window. Long enough to read the prompt and DM the bot, short enough to bound exposure. */
-export const DEFAULT_PAIRING_TIMEOUT_MS = 60_000;
+/**
+ * Default pairing window (ATO-718): long enough to open Telegram, find
+ * the bot and type the code, short enough that a code read off a screen
+ * goes stale quickly.
+ */
+export const DEFAULT_PAIRING_TIMEOUT_MS = 5 * 60_000;
+
+/** Digits in the one-time pairing code. */
+export const PAIRING_CODE_DIGITS = 6;
+
+/**
+ * The only message that claims a pairing window: `/start 123456`
+ * (`/start@your_bot 123456` too, which is what Telegram sends from a
+ * deep link or a group-style command). Anything else in a DM is not a
+ * claim, so a stranger who finds the bot first cannot become its owner
+ * just by writing to it.
+ */
+const START_WITH_CODE = new RegExp(
+  `^/start(?:@[A-Za-z0-9_]+)?\\s+(\\d{${PAIRING_CODE_DIGITS}})$`,
+);
+
+/** A fresh one-time code: uniform over all 6-digit strings, from the CSPRNG. */
+export function generatePairingCode(): string {
+  return String(randomInt(0, 10 ** PAIRING_CODE_DIGITS)).padStart(
+    PAIRING_CODE_DIGITS,
+    "0",
+  );
+}
+
+/** The code in a `/start <code>` message, or `null` when the text is not one. */
+export function pairingCodeIn(text: string): string | null {
+  return START_WITH_CODE.exec(text.trim())?.[1] ?? null;
+}
 
 export interface ClaimedPairing {
   /** Telegram numeric user id of the claimer — written to `telegram.ownerUserId`. */
   userId: number;
   /** DM chat id used to ack the new owner. */
   chatId: number;
+  /**
+   * The claimer's Telegram @username (without `@`), shown to the
+   * operator after pairing so they can see who became the owner.
+   * `null` when the account has none.
+   */
+  username: string | null;
 }
+
+/**
+ * What `tryClaim` did with an update: `claimed` (the right code, the
+ * window is closed), `wrong_code` (a `/start <digits>` that did not
+ * match: swallowed, the window stays open), `ignored` (no window, or
+ * not a pairing message at all).
+ */
+export type PairingClaimResult = "claimed" | "wrong_code" | "ignored";
 
 export interface PairingMode {
   /**
-   * Open a pairing window. The returned promise resolves with the
-   * claimer's `{ userId, chatId }` when the next eligible DM arrives,
-   * or `null` when the window times out or is cancelled. Calling
+   * Open a pairing window with a fresh one-time code (`currentCode()`).
+   * The returned promise resolves with the claimer when a private DM
+   * `/start <code>` arrives, or `null` when the window times out or is
+   * cancelled. Calling
    * `start()` twice without first cancelling the previous window
    * cancels the old window and starts a fresh one — convenient for
    * "restart pairing" hotkeys, deliberately not an error.
@@ -27,12 +75,17 @@ export interface PairingMode {
   /** Epoch ms when the active window expires, or `null` when inactive. */
   expiresAt(): number | null;
   /**
-   * Hook for the inbound handler. Returns `true` when the update was
-   * consumed by pairing (and must not be dispatched to the agent loop)
-   * and `false` when pairing is inactive or the update is ineligible.
-   * Eligibility: private chat, `from.id` present, non-empty text.
+   * The active window's one-time code, for the operator's screen only.
+   * `null` when inactive. Never log it.
    */
-  tryClaim(update: InboundTextUpdate): boolean;
+  currentCode(): string | null;
+  /**
+   * Hook for the inbound handler. `claimed` and `wrong_code` both mean
+   * the update was consumed by pairing and must not be dispatched to
+   * the agent loop. Eligibility: private chat, `from.id` present, text
+   * exactly `/start <code>`.
+   */
+  tryClaim(update: InboundTextUpdate): PairingClaimResult;
 }
 
 export interface PairingModeOptions {
@@ -45,11 +98,14 @@ export interface PairingModeOptions {
   scheduleTimeout?: (cb: () => void, ms: number) => () => void;
   /** Test seam — overrides `Date.now()` for the `expiresAt()` accessor. */
   now?: () => number;
+  /** Test seam — overrides the one-time code generator. */
+  generateCode?: () => string;
 }
 
 interface ActiveSession {
   resolve: (result: ClaimedPairing | null) => void;
   expiresAt: number;
+  code: string;
   cancelTimer: () => void;
 }
 
@@ -57,10 +113,11 @@ interface ActiveSession {
  * Pairing-mode state machine for the Telegram channel.
  *
  * The channel calls `start()` on operator request (TUI button, CLI
- * `pair` command). The first DM that arrives within the window is
- * captured as the new owner; ineligible updates (group chats, bot
- * messages without `from`) are ignored so a stray channel hit does
- * not silently misclaim ownership.
+ * `pair` command). Each window gets a fresh 6-digit one-time code that
+ * the operator sees on their own screen; the first private DM within
+ * the window that says exactly `/start <code>` is captured as the new
+ * owner. Anything else (another DM, a group message, a wrong code) is
+ * not a claim (ATO-718: before this, the first DM of any kind won).
  *
  * Concurrency contract:
  *  - Exactly one active window at a time. `start()` while active
@@ -80,10 +137,12 @@ export class DefaultPairingMode implements PairingMode {
   private active: ActiveSession | null = null;
   private readonly scheduleTimeout: (cb: () => void, ms: number) => () => void;
   private readonly now: () => number;
+  private readonly generateCode: () => string;
 
   constructor(opts: PairingModeOptions = {}) {
     this.scheduleTimeout = opts.scheduleTimeout ?? defaultScheduleTimeout;
     this.now = opts.now ?? Date.now;
+    this.generateCode = opts.generateCode ?? generatePairingCode;
   }
 
   start(
@@ -108,7 +167,7 @@ export class DefaultPairingMode implements PairingMode {
           resolve(null);
         }
       }, timeoutMs);
-      this.active = { resolve, expiresAt, cancelTimer };
+      this.active = { resolve, expiresAt, code: this.generateCode(), cancelTimer };
     });
   }
 
@@ -132,23 +191,33 @@ export class DefaultPairingMode implements PairingMode {
     return this.active?.expiresAt ?? null;
   }
 
-  tryClaim(update: InboundTextUpdate): boolean {
+  currentCode(): string | null {
+    return this.active?.code ?? null;
+  }
+
+  tryClaim(update: InboundTextUpdate): PairingClaimResult {
     const session = this.active;
-    if (!session) return false;
-    if (update.chat.type !== "private") return false;
+    if (!session) return "ignored";
+    if (update.chat.type !== "private") return "ignored";
     const userId = update.from?.id;
-    if (typeof userId !== "number") return false;
-    if (typeof update.text !== "string" || update.text.trim().length === 0) {
-      return false;
-    }
+    if (typeof userId !== "number") return "ignored";
+    if (typeof update.text !== "string") return "ignored";
+    const code = pairingCodeIn(update.text);
+    if (code === null) return "ignored";
+    if (code !== session.code) return "wrong_code";
     this.active = null;
     try {
       session.cancelTimer();
     } catch {
       // ignore
     }
-    session.resolve({ userId, chatId: update.chat.id });
-    return true;
+    const username = update.from?.username?.trim();
+    session.resolve({
+      userId,
+      chatId: update.chat.id,
+      username: username ? username : null,
+    });
+    return "claimed";
   }
 }
 

@@ -2,7 +2,7 @@ import type { CompactionEvent, ContextCompactionControl, CompactionStepOptions }
 import type { CompactionConfig } from "../config/agent/compaction-config.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { planCompaction } from "../prompt/plan-compaction.js";
+import { decideCompaction, type CompactionSkip } from "../prompt/plan-compaction.js";
 import { validSessionCompaction, type CompactionResult } from "../session/session-compaction.js";
 import type { SessionState } from "../session/session-state.js";
 import type { SessionStore } from "../session/session-store.js";
@@ -59,6 +59,13 @@ export function logCompactionOutcome(logger: Pick<StructuredLogger, "info" | "wa
   }
 }
 
+/** What a `noop` result says, without a model call, when no checkpoint is planned. */
+export const SKIP_MESSAGES: Record<CompactionSkip, string> = {
+  window_too_small: "The model's context window is too small to compact this conversation.",
+  already_compact: "Nothing to compact: the conversation is already compacted and little has been added since.",
+  no_reduction: "No safe, useful reduction is available.",
+};
+
 /** A control inbox, separate from user messages and from the FIFO's occupied lock. */
 export function createContextCompaction(deps: ContextCompactionDependencies) {
   const accepting = new Map<string, AbortSignal>();
@@ -105,9 +112,9 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     if (prompt.cloudContext) input = { ...input, session: { ...input.session, cloudContext: prompt.cloudContext } };
     // The same profile the step's own prompt budget follows (`buildPrompt`'s low water).
     const prefixReuse = input.profileWindowApplies === false ? undefined : input.profile?.prefixReuse;
-    const plan = planCompaction(input.session, prompt, config, request ? "manual" : options.requested,
+    const { plan, skip } = decideCompaction(input.session, prompt, config, request ? "manual" : options.requested,
       prefixReuse ? { prefixReuse } : {});
-    if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: "No safe, useful reduction is available." }); return undefined; }
+    if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: SKIP_MESSAGES[skip ?? "no_reduction"] }); return undefined; }
     const controller = request?.controller ?? new AbortController();
     active.set(input.session.id, controller);
     if (request) request.running = true;

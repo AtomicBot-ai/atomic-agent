@@ -6,8 +6,9 @@ import { resolveUserPath } from "../os/expand-home.js";
  * replace.
  *
  * Layer 1 of the same fix refuses an `os.fs.write` over a file the
- * request names, with `overwrite: true` as the way past it. A worker is
- * the wrong party to decide that: it sees the request only as context,
+ * request names, lifted only by the user's own words (since ATO-851
+ * `overwrite: true` no longer lifts it either). A worker is the wrong
+ * party to read those words: it sees the request only as context,
  * and the orchestrator is the one that read the whole job. So the
  * orchestrator declares the inputs once, the block every worker reads
  * lists them under "read and edit in place, never replace", and a

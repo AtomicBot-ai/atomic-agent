@@ -20,6 +20,7 @@ import {
 } from "./config-file.js";
 import {
   ConfigValidationError,
+  parseUserConfigFile,
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
 } from "./config-schema.js";
@@ -731,6 +732,138 @@ describe("user config file IO", () => {
     expect(warn).not.toHaveBeenCalled();
     expect(statSync(path).mtimeMs).toBe(before);
     warn.mockRestore();
+  });
+
+  // ATO-766: the desktop and the terminal share one config.json, so an
+  // older build regularly saves a file a newer build wrote. The parse
+  // drops nested keys it does not know; the write puts them back.
+  describe("keys from a newer build inside known blocks", () => {
+    const writeDisk = (path: string, tree: unknown) =>
+      writeFileSync(path, JSON.stringify(tree, null, 2) + "\n", "utf8");
+    const readDisk = (path: string) =>
+      JSON.parse(readFileSync(path, "utf8"));
+
+    it("survive a parse and write-back", () => {
+      const path = getUserConfigPath(dir);
+      const disk = {
+        ...USER_CONFIG_DEFAULTS,
+        memory: { ...USER_CONFIG_DEFAULTS.memory, futureKey: 1 },
+        tui: {
+          ...USER_CONFIG_DEFAULTS.tui,
+          onboarding: {
+            ...USER_CONFIG_DEFAULTS.tui.onboarding,
+            futureStamp: "x",
+          },
+        },
+      };
+      writeDisk(path, disk);
+
+      const parsed = parseUserConfigFile(disk);
+      // Precondition: this build's parse really does drop them.
+      expect("futureKey" in parsed.memory).toBe(false);
+      writeUserConfigFileSync(path, parsed);
+
+      const onDisk = readDisk(path);
+      expect(onDisk.memory.futureKey).toBe(1);
+      expect(onDisk.tui.onboarding.futureStamp).toBe("x");
+      // The rest of the block is still this build's data.
+      expect(onDisk.memory.profile).toEqual(USER_CONFIG_DEFAULTS.memory.profile);
+    });
+
+    it("do not resurrect an MCP server the caller removed", () => {
+      const path = getUserConfigPath(dir);
+      writeDisk(path, {
+        ...USER_CONFIG_DEFAULTS,
+        mcp: {
+          servers: [
+            {
+              name: "old",
+              transport: { kind: "stdio", command: "npx", args: ["-y", "mcp"] },
+            },
+          ],
+        },
+      });
+      writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+      expect(readDisk(path).mcp.servers).toEqual([]);
+    });
+
+    it("do not resurrect a provider the caller removed", () => {
+      const path = getUserConfigPath(dir);
+      const llm = {
+        activeTextProvider: "local-llama",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+        ],
+      };
+      writeDisk(path, {
+        ...USER_CONFIG_DEFAULTS,
+        llm: {
+          ...llm,
+          providers: [
+            ...llm.providers,
+            { id: "gone", kind: "aimlapi", defaultChatModel: "m" },
+          ],
+        },
+      });
+      writeUserConfigFileSync(
+        path,
+        parseUserConfigFile({ version: USER_CONFIG_VERSION, llm }),
+      );
+      const ids = (readDisk(path).llm.providers as { id: string }[]).map(
+        (p) => p.id,
+      );
+      expect(ids).toEqual(["local-llama"]);
+    });
+
+    it("never bring back the old value of a key this build knows", () => {
+      const path = getUserConfigPath(dir);
+      writeDisk(path, {
+        ...USER_CONFIG_DEFAULTS,
+        analytics: { enabled: true, futureFlag: "keep" },
+      });
+      writeUserConfigFileSync(path, {
+        ...USER_CONFIG_DEFAULTS,
+        analytics: { enabled: false },
+      });
+      const onDisk = readDisk(path);
+      expect(onDisk.analytics.enabled).toBe(false);
+      expect(onDisk.analytics.futureFlag).toBe("keep");
+    });
+
+    it("do not carry retired keys forward", () => {
+      const path = getUserConfigPath(dir);
+      writeDisk(path, {
+        ...USER_CONFIG_DEFAULTS,
+        agent: { ...USER_CONFIG_DEFAULTS.agent, approvalRequired: false },
+        telemetry: { trace: { enabled: true } },
+      });
+      writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+      const onDisk = readDisk(path);
+      expect("approvalRequired" in onDisk.agent).toBe(false);
+      expect("telemetry" in onDisk).toBe(false);
+    });
+
+    it("never copy prototype-reaching keys", () => {
+      const path = getUserConfigPath(dir);
+      writeFileSync(
+        path,
+        `{"version":${USER_CONFIG_VERSION},"memory":{"__proto__":{"polluted":1},"futureKey":2}}`,
+        "utf8",
+      );
+      writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+      const text = readFileSync(path, "utf8");
+      expect(text).not.toContain("__proto__");
+      expect(readDisk(path).memory.futureKey).toBe(2);
+      expect(Object.prototype).not.toHaveProperty("polluted");
+    });
+
+    it("leave a first write without a file on disk as before", () => {
+      const path = getUserConfigPath(dir);
+      writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+      expect(readDisk(path)).toEqual(
+        JSON.parse(JSON.stringify(USER_CONFIG_DEFAULTS)),
+      );
+    });
   });
 });
 

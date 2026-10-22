@@ -260,7 +260,7 @@ export async function startCoreEmbedding(dataDir: string, opts: CoreEmbeddingSta
         if (opts.signal?.aborted) throw err;
         throw describeCoreEmbeddingError(err, opts.modelId);
       }
-    }, opts.signal);
+    }, opts.signal, { retireSessions: true });
   });
 }
 

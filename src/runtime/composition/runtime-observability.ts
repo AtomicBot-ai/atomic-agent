@@ -78,7 +78,9 @@ export function createRuntimeObservability(
       logger,
     });
   let { analytics, errorReporter } = buildTelemetry(config.analytics.enabled);
-  captureAppInstalled(analytics, analyticsStateStore, appInstalledContext());
+  // Not awaited: delivery is confirmed in the background, and only then
+  // is the install marked as sent (see `captureAppInstalled`).
+  void captureAppInstalled(analytics, analyticsStateStore, appInstalledContext());
   // Every interactive launch, not just the first: `app_installed` alone
   // cannot tell a download that never ran from one that ran and stalled.
   // Gated on the entry point opting in, so a cron task or a `serve`
@@ -107,12 +109,13 @@ export function createRuntimeObservability(
       rebuild: () => buildTelemetry(true),
       // Fire the one-time `app_installed` event if it never went out
       // while analytics was disabled (guarded by the state store).
-      onEnabled: () =>
-        captureAppInstalled(
+      onEnabled: () => {
+        void captureAppInstalled(
           analytics,
           analyticsStateStore,
           appInstalledContext(),
-        ),
+        );
+      },
     });
     const setAnalyticsEnabled = async (
       enabled: boolean,

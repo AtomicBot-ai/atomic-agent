@@ -8,5 +8,6 @@ export {
 } from "./openrouter-models-catalog.js";
 export {
   listOpenRouterChatPicks,
+  refreshOpenRouterChatCatalog,
   refreshOpenRouterChatCatalogFromApi,
 } from "./fetch-openrouter-chat-catalog.js";

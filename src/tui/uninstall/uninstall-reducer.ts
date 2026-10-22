@@ -47,11 +47,30 @@ function reduceFlow(
     case "uninstall_typed_set":
       if (flow.step !== "confirm") return flow;
       return { ...flow, typed: action.typed };
+    case "uninstall_desktop_asked":
+      if (
+        flow.step !== "confirm" ||
+        !isUninstallConfirmed(flow.typed) ||
+        !flow.preview?.desktopSharedDir
+      ) {
+        return flow;
+      }
+      // The cursor resets on every entry, like the typed word.
+      return { ...flow, step: "desktop", desktopCursor: "keep" };
+    case "uninstall_desktop_cursor_set":
+      if (flow.step !== "desktop") return flow;
+      return { ...flow, desktopCursor: action.cursor };
     case "uninstall_started":
       // Guarded here rather than at the key layer so that no other
       // caller — a mouse click, a future automation — can start the
-      // removal from a screen where the word was never typed.
-      if (flow.step !== "confirm" || !isUninstallConfirmed(flow.typed)) {
+      // removal from a screen where the word was never typed, or skip
+      // the desktop question when the desktop shares the folder.
+      if (flow.step === "desktop") return { ...flow, step: "closing" };
+      if (
+        flow.step !== "confirm" ||
+        !isUninstallConfirmed(flow.typed) ||
+        flow.preview?.desktopSharedDir
+      ) {
         return flow;
       }
       return { ...flow, step: "closing" };
