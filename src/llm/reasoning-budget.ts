@@ -74,8 +74,8 @@ export function effectiveReasoningBudgetTokens(budgetTokens: number): number {
 /**
  * Note once, at boot, that the configured budget is above what llama.cpp
  * can enforce, so the config value is not mistaken for the real bound.
- * `info`, not `warn`: this is a fact about the engine, not a fault in
- * the config. The shipped default (`0`, no bound) never logs it. Logged
+ * `info`, not `warn`: the shipped default (1,500) is above the cap too,
+ * and this is a fact about the engine, not a fault in the config. Logged
  * through the runtime logger because stdout belongs to the TUI.
  */
 export function logReasoningBudgetCap(
