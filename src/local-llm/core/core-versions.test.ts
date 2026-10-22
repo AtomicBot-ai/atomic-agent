@@ -80,11 +80,26 @@ describe("an older Core that still holds the agent's own model (ATO-841)", () =>
   }
   const connectOnly = (client: CoreControlClient) => async (_dir: string, version: string) => (version === "0.16.0" ? client : null);
 
+  it("leaves the session loaded when the new pin's Core starts for anything but a model start (image generation), and a later chat start still unloads it", async () => {
+    const dir = fixture();
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
+    const { client, call } = olderCore([session]);
+    // What ensureCore does for withImageCore and backend install: no retireSessions.
+    await retireOlderCores(dir, connectOnly(client));
+    expect(call.mock.calls.some(([path]) => String(path).endsWith("/unload"))).toBe(false);
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(true);
+    expect(call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
+    // The once-per-process idle retirement must not use up the session retirement.
+    await retireOlderCores(dir, connectOnly(client), { retireSessions: true });
+    expect(call).toHaveBeenCalledWith("/models/llamacpp/chat-model/unload", {}, { timeoutMs: 30_000 });
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
+  });
+
   it("unloads the recorded session through the old Core, drops the record, then shuts that Core down", async () => {
     const dir = fixture();
     writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
     const { client, call } = olderCore([session]);
-    await retireOlderCores(dir, connectOnly(client));
+    await retireOlderCores(dir, connectOnly(client), { retireSessions: true });
     expect(call).toHaveBeenCalledWith("/models/llamacpp/chat-model/unload", {}, { timeoutMs: 30_000 });
     expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
     expect(call).toHaveBeenCalledWith("/shutdown", { client_id: "me" });
@@ -94,7 +109,7 @@ describe("an older Core that still holds the agent's own model (ATO-841)", () =>
     const dir = fixture();
     writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
     const { client, call } = olderCore([session, { ...session, pid: 5151, port: 19095, model_id: "someone-else", model_path: "/models/other.gguf" }]);
-    await retireOlderCores(dir, connectOnly(client));
+    await retireOlderCores(dir, connectOnly(client), { retireSessions: true });
     const unloads = call.mock.calls.map(([path]) => String(path)).filter(path => path.endsWith("/unload"));
     expect(unloads).toEqual(["/models/llamacpp/chat-model/unload"]);
     expect(call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
@@ -104,7 +119,7 @@ describe("an older Core that still holds the agent's own model (ATO-841)", () =>
     const dir = fixture();
     writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
     const { client, call } = olderCore([{ ...session, pid: 9999 }]);
-    await retireOlderCores(dir, connectOnly(client));
+    await retireOlderCores(dir, connectOnly(client), { retireSessions: true });
     expect(call.mock.calls.some(([path]) => String(path).endsWith("/unload"))).toBe(false);
     expect(existsSync(coreSessionPath(dir, "chat"))).toBe(true);
   });
@@ -114,7 +129,7 @@ describe("an older Core that still holds the agent's own model (ATO-841)", () =>
     writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.16.0" });
     writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
     const { client, call } = olderCore([session]);
-    await retireOlderCores(dir, connectOnly(client));
+    await retireOlderCores(dir, connectOnly(client), { retireSessions: true });
     expect(call.mock.calls.some(([path]) => String(path).endsWith("/unload"))).toBe(false);
     expect(existsSync(coreSessionPath(dir, "chat"))).toBe(true);
     expect(call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);

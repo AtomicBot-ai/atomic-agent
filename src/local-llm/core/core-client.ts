@@ -124,12 +124,20 @@ export async function connectCore(dataDir: string, version: string, signal?: Abo
   return client;
 }
 
+/**
+ * `retireSessions`: this call starts a chat or embedding model, so the
+ * agent's own sessions left on an older, inactive Core are unloaded first
+ * (`retireOlderCores`). Off for every other caller (image generation,
+ * backend install, orphan reaping): those never take a model away.
+ */
+export interface EnsureCoreOptions { retireSessions?: boolean }
+
 /** The CLI-scoped daemon survives one-shot model commands; Core owns its lock and child journal. */
-export async function ensureCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient> {
+export async function ensureCore(dataDir: string, version: string, signal?: AbortSignal, opts: EnsureCoreOptions = {}): Promise<CoreControlClient> {
   let client: CoreControlClient;
   try { client = await startCore(dataDir, version, signal); }
   catch (err) { throw toCoreUnavailable(err, "start", signal); }
-  if (version === CORE_VERSION) await retireOlderCores(dataDir);
+  if (version === CORE_VERSION) await retireOlderCores(dataDir, connectCore, { retireSessions: opts.retireSessions === true });
   await applyPendingEmbeddingDisable(dataDir, version, client);
   return client;
 }
@@ -151,25 +159,33 @@ export async function applyPendingEmbeddingDisable(dataDir: string, version: str
 }
 
 const retiredDataDirs = new Set<string>();
+const sessionsRetiredDataDirs = new Set<string>();
 
 /**
- * Once per process and data folder, after this build's Core is up: unload
- * the model sessions the agent itself recorded on an older pinned version
- * that is no longer active (its llama-server would keep holding the port),
- * then ask that daemon to shut down if it became idle, so an upgrade does
- * not leave the previous Core running beside it. Best effort; one that
- * still serves another client's model or another client keeps running.
- * Callers hold the engine operation lock (every ensureCore caller does).
+ * After this build's Core is up: ask an idle daemon of an older pinned
+ * version to shut down, so an upgrade does not leave the previous Core
+ * running beside it (once per process and data folder). With
+ * `retireSessions` (only a chat or embedding start passes it), first
+ * unload the model sessions the agent itself recorded on an older pinned
+ * version that is no longer active, since their llama-server would keep
+ * holding the port (also once per process; an earlier call without it
+ * does not use that up). Image generation and backend install never
+ * unload a model: an older desktop build may be chatting on that Core.
+ * Best effort; one that still serves another client's model or another
+ * client keeps running. Callers hold the engine operation lock (every
+ * ensureCore caller does).
  */
-export async function retireOlderCores(dataDir: string, connect: typeof connectCore = connectCore): Promise<void> {
-  if (retiredDataDirs.has(dataDir)) return;
+export async function retireOlderCores(dataDir: string, connect: typeof connectCore = connectCore, opts: { retireSessions?: boolean } = {}): Promise<void> {
+  const retireSessions = opts.retireSessions === true && !sessionsRetiredDataDirs.has(dataDir);
+  if (retiredDataDirs.has(dataDir) && !retireSessions) return;
   retiredDataDirs.add(dataDir);
+  if (retireSessions) sessionsRetiredDataDirs.add(dataDir);
   for (const version of CORE_VERSIONS) {
     if (version === CORE_VERSION) continue;
     try {
       const client = await connect(dataDir, version);
       if (!client) continue;
-      await unloadRetiredCoreSessions(dataDir, client).catch(() => {});
+      if (retireSessions) await unloadRetiredCoreSessions(dataDir, client).catch(() => {});
       await shutdownIdleCoreClient(client);
     } catch { /* best effort: an older Core that will not answer is left alone */ }
   }
@@ -206,8 +222,8 @@ async function startCore(dataDir: string, version: string, signal?: AbortSignal)
 }
 
 /** Every operation keeps a lease until it settles, including long downloads and model loads. */
-export async function withCoreClient<T>(dataDir: string, version: string, fn: (client: CoreControlClient, clientId: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
-  return withCoreLease(await ensureCore(dataDir, version, signal), fn);
+export async function withCoreClient<T>(dataDir: string, version: string, fn: (client: CoreControlClient, clientId: string) => Promise<T>, signal?: AbortSignal, opts: EnsureCoreOptions = {}): Promise<T> {
+  return withCoreLease(await ensureCore(dataDir, version, signal, opts), fn);
 }
 
 /** A client lease kept alive by heartbeats until `release`. */

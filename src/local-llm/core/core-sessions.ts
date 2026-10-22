@@ -81,7 +81,7 @@ export async function loadCoreSession(dataDir: string, options: {
       }
       throw err;
     } finally { options.signal?.removeEventListener("abort", cancel); }
-  }, options.signal);
+  }, options.signal, { retireSessions: true });
   });
 }
 

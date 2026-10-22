@@ -8,7 +8,9 @@ import { loadCoreSession, recoverOrphanedCoreSessions, retireIdleCore, stopCoreS
 import { connectCore, ensureCore } from "./core-client.js";
 
 const fake = vi.hoisted(() => ({ call: vi.fn(), snapshot: vi.fn(), instanceId: "owned" }));
-vi.mock("./core-client.js", () => ({ withCoreClient: async (_d: string, _v: string, fn: (client: typeof fake) => Promise<unknown>) => fn(fake), connectCore: vi.fn(), ensureCore: vi.fn() }));
+/** The options each `withCoreClient` call passed on to `ensureCore`. */
+const clientOptions = vi.hoisted(() => [] as unknown[]);
+vi.mock("./core-client.js", () => ({ withCoreClient: async (_d: string, _v: string, fn: (client: typeof fake) => Promise<unknown>, _signal?: AbortSignal, opts?: unknown) => { clientOptions.push(opts); return fn(fake); }, connectCore: vi.fn(), ensureCore: vi.fn() }));
 let dir: string;
 const session = { pid: process.pid, port: 19091, model_id: "test", model_path: "/test.gguf", is_embedding: false, api_key: "test-key", provider: "llamacpp", generation: "new" };
 beforeEach(() => {
@@ -46,6 +48,14 @@ it("never unloads a session another caller already had", async () => {
   fake.call.mockRejectedValue(new Error("response lost"));
   await expect(loadCoreSession(dir, { role: "chat", modelId: "test", modelPath: "/test.gguf", port: 19091, args: [] })).rejects.toThrow("response lost");
   expect(fake.call.mock.calls.some(([path]) => path.endsWith("/unload"))).toBe(false);
+});
+
+it("a model start asks ensureCore to retire the agent's sessions on an older Core (ATO-841)", async () => {
+  clientOptions.length = 0;
+  fake.snapshot.mockResolvedValue({ sessions: [] });
+  fake.call.mockResolvedValue({ session, created: true });
+  await loadCoreSession(dir, { role: "chat", modelId: "test", modelPath: "/test.gguf", port: 19091, args: [] });
+  expect(clientOptions).toEqual([{ retireSessions: true }]);
 });
 
 function idleCore(sessions: unknown[], shutdown: () => unknown = () => ({ ok: true, stopping: true }), embedding?: { enabled: boolean }) {

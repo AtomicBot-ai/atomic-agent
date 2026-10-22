@@ -33,6 +33,14 @@ describe("withImageCore", () => {
     expect(shutdownIdleCoreClient).toHaveBeenCalledWith(client);
   });
 
+  it("starts the new pin's Core without retiring an older Core's model sessions (ATO-841)", async () => {
+    vi.mocked(connectCore).mockResolvedValue(null);
+    await withImageCore("/d", async () => "ok");
+    expect(ensureCore).toHaveBeenCalledTimes(1);
+    const opts = vi.mocked(ensureCore).mock.calls[0]![3];
+    expect(opts?.retireSessions).not.toBe(true);
+  });
+
   it("leaves a Core that was already running for a model", async () => {
     vi.mocked(connectCore).mockResolvedValue(client);
     await withImageCore("/d", async () => "ok");
