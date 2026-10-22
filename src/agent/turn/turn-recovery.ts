@@ -2,7 +2,7 @@ import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
-import { CancelledError, LlamaServerError, LlmFailure, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
+import { CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
 import type { LlmFailureCategory, TruncationDetail } from "../../llm/index.js";
 import { readFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../../llm/fallback/failed-links.js";
@@ -19,7 +19,7 @@ import type { TurnLoopState } from "./turn-state.js";
 
 export type TurnRecoveryDependencies = Pick<
   AgentLoopDependencies,
-  "contextWindow" | "onContextWindowObserved" | "onEvent" | "logger" | "metrics"
+  "contextWindow" | "onContextWindowObserved" | "onEvent" | "logger" | "metrics" | "localEngineState"
 >;
 
 export interface TurnRecoveryContext {
@@ -455,10 +455,59 @@ export function recoverTurnStep(
   // buys a second helping of the same silence — see
   // `isOwnLlamaDeadlineExpiry`.
   const retryHint = verdict?.kind === "retry_after" ? verdict : null;
+  // Before parking: is the thing we would wait for coming back at all?
+  // A refused connection to the managed local model whose process is
+  // certainly gone (pid dead, or none recorded, and no start, load or
+  // engine install under way) is not an outage that ends by itself: the
+  // operator would watch the whole wait budget run out before being told
+  // (ATO-772). Such a turn ends with the reason as data once a short
+  // grace has passed with the process still gone. The grace is for the
+  // restart watchers (the TUI's and the desktop's daemon supervisor,
+  // `localModels.managed.autoRestart`): they bring back a model that
+  // crashed under them, the desktop one as soon as it sees the turn's
+  // `provider_waiting`, and once their restart is under way the engine
+  // reads alive (or unknown, under Core's engine lock) and the turn waits
+  // for it as before. While the process is gone the retries come every
+  // couple of seconds, so the end, or the recovery, is seen at once.
+  // An engine that is alive or whose state is unknown keeps the wait
+  // below, unchanged; so does every other link, an external server
+  // included, because the runtime answers `unknown` for them.
+  let localEngineGone = false;
+  let localEngineDown = false;
   if (
     category === "transport" &&
     !cancelled &&
     !creditRefused &&
+    retryHint === null &&
+    deps.localEngineState !== undefined &&
+    noAnswerAtAll(err) &&
+    isWaitableOutage(err)
+  ) {
+    const failingLink = readFailingLink(err);
+    localEngineGone = deps.localEngineState(failingLink) === "dead";
+    const graceSpent =
+      !providerWaitCfg.enabled ||
+      turn.outageWaitedMs >=
+        Math.min(LOCAL_ENGINE_RESTART_GRACE_MS, providerWaitCfg.maxWaitMs);
+    if (localEngineGone && graceSpent) {
+      localEngineDown = true;
+      const causeCode = readErrnoCode(err);
+      deps.logger?.warn("local model is not running; ending the turn instead of waiting", {
+        sessionId: state.id,
+        stepIndex: i,
+        waitedMs: turn.outageWaitedMs,
+        error: runError.message,
+        ...(causeCode !== undefined ? { causeCode } : {}),
+        ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+      });
+      runError = new LocalEngineDownError(failingLink ?? "local-llama", err);
+    }
+  }
+  if (
+    category === "transport" &&
+    !cancelled &&
+    !creditRefused &&
+    !localEngineDown &&
     providerWaitCfg.enabled &&
     (isWaitableOutage(err) || retryHint !== null) &&
     turn.outageWaitedMs < providerWaitCfg.maxWaitMs
@@ -473,6 +522,9 @@ export function recoverTurnStep(
       // Never sleep past the budget: the last wait ends exactly at
       // it, so the operator's configured ceiling is the truth.
       Math.max(1, providerWaitCfg.maxWaitMs - turn.outageWaitedMs),
+      // A local model whose process is gone is looked at again soon:
+      // either a restart brings it back or the grace above runs out.
+      localEngineGone ? LOCAL_ENGINE_GONE_RETRY_MS : Number.POSITIVE_INFINITY,
     );
     turn.outageAttempts += 1;
     turn.awaitingRecovery = true;
@@ -600,6 +652,15 @@ function isWaitableOutage(err: unknown): boolean {
 }
 
 /**
+ * No HTTP response came back at all (a refused or reset connection, an
+ * untyped socket failure). Only that is evidence the model process may
+ * be gone: a status means some server answered.
+ */
+function noAnswerAtAll(err: unknown): boolean {
+  return !(err instanceof TransportError) || err.status === null;
+}
+
+/**
  * Did one of OUR OWN request deadlines fire, rather than the link
  * failing?
  *
@@ -689,6 +750,17 @@ function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
   }
   return false;
 }
+
+/**
+ * How long a turn keeps waiting on a managed local model whose process is
+ * gone before it ends with `LocalEngineDownError` (ATO-772). Long enough
+ * for a restart watcher to begin bringing a crashed model back: the TUI's
+ * supervisor restarts after two dead looks three seconds apart, the
+ * desktop's on the turn's first `provider_waiting`.
+ */
+export const LOCAL_ENGINE_RESTART_GRACE_MS = 8_000;
+/** The retry interval while that process is gone. */
+const LOCAL_ENGINE_GONE_RETRY_MS = 2_000;
 
 /** First backoff after the provider stops answering. */
 const PROVIDER_WAIT_BASE_MS = 2_000;

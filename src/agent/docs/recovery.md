@@ -9,6 +9,8 @@ Completion parse/validation recovery, transport retry, request-size repair and p
 
 A turn uses bounded continuation legs and task-wide limits, not an unlimited inference loop. Progress policy includes repeated calls, result-aware no-progress, read coverage, repeated test commands, wandering and review stalls. Its warnings/refusals are dispatch behavior, not merely prompt suggestions. Graceful no-progress closure is distinct from infrastructure failure. User cancellation records a stopped-turn marker without emitting a second assistant reply; the next request and memory extraction treat the withdrawn task as closed. Ephemeral worker turns do not retain this marker. Subscription CLI installation/sign-in errors are setup failures, rather than waitable provider outages.
 
+A refused connection to the managed local model (`local-llama`, managed mode) whose process is certainly gone is not waited out either (ATO-772). The runtime reads the engine state from disk and hands it to recovery as `localEngineState`; recovery reads no files itself. While the process is gone the turn retries every 2 seconds for a short restart grace, so the TUI or desktop supervisor can bring back a model that crashed; then it ends with `LocalEngineDownError` ("The local model isn't running.", reason code `local_engine_down`). A live engine, a start or install under way, an external server and cloud links keep the ordinary wait.
+
 Evidence checks prevent unverified check claims, unsourced links and fabricated transcripts from becoming a closing answer. Keep actual observations as the basis for evidence. Read-scope and declared-input guards must survive both solo and batch paths.
 
 ## Ownership and asynchronous boundaries

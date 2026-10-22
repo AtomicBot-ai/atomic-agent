@@ -11,6 +11,7 @@ import {
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
+import { LOCAL_ENGINE_START_HINT, isLocalEngineDown } from "../llm/reliability/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -248,6 +249,9 @@ export function formatAgentEvent(
       return null;
     case "loop_failed": {
       const base = `» loop failed [${event.category}]: ${event.error.message}`;
+      // ATO-772: the managed local model's process is gone; the turn ended
+      // without waiting, and the fix is one command.
+      if (isLocalEngineDown(event.error)) return `${base}\n    ${LOCAL_ENGINE_START_HINT}`;
       return withLlamaHint(base, event.category, event.error.message, ctx);
     }
     default:

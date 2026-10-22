@@ -52,6 +52,7 @@ import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
+import { readLocalEngineState } from "./local-engine-state.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
@@ -463,6 +464,11 @@ export async function createAgentRuntime(
     liveWorkerSlots: () => slotManager.observedPoolSize(),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: raiseContextWindowTo,
+    // A refused connection to a managed local model whose process is gone
+    // ends the turn at once instead of parking it (ATO-772). Read live, so
+    // a mode switch or a model start between turns is seen.
+    localEngineState: (providerId: string | undefined) =>
+      readLocalEngineState(providerId, getConfig()),
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.

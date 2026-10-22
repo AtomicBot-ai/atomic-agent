@@ -8,6 +8,7 @@ import {
 import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { classifyFailure } from "../llm/reliability/index.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
+import { LocalEngineDownError } from "../llm/reliability/local-engine-down.js";
 import { buildStreamEventHook } from "./openai-chat-completions.js";
 
 /**
@@ -81,6 +82,43 @@ describe("loop_failed over SSE", () => {
 
     expect(sse.written).toEqual([
       { name: "error", payload: { error: "fetch failed", category: "transport" } },
+    ]);
+  });
+
+  it("marks a turn that ended because the local model is not running with code local_engine_down (ATO-772)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const down = new LocalEngineDownError("local-llama", new TypeError("fetch failed"));
+
+    hook({ type: "loop_failed", error: down, category: classifyFailure(down) } as never);
+
+    expect(sse.written).toEqual([
+      {
+        name: "error",
+        payload: { error: "The local model isn't running.", category: "transport", code: "local_engine_down" },
+      },
+    ]);
+  });
+
+  it("puts local_engine_down in the envelope's code for an OpenAI-compatible client", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(false));
+    const down = new LocalEngineDownError("local-llama");
+
+    hook({ type: "loop_failed", error: down, category: classifyFailure(down) } as never);
+
+    expect(sse.written).toEqual([
+      {
+        name: null,
+        payload: {
+          error: {
+            message: "The local model isn't running.",
+            type: "agent.transport",
+            param: null,
+            code: "local_engine_down",
+          },
+        },
+      },
     ]);
   });
 

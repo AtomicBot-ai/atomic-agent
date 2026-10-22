@@ -27,6 +27,9 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
+/** See `AgentLoopDependencies.localEngineState`. */
+export type LocalEngineState = "alive" | "dead" | "unknown";
+
 export interface AgentLoopDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../session/workspace-context.js").WorkspacePrepareOptions) => import("../session/workspace-context.js").SessionWorkspace;
   /** Save model-visible cloud messages before inference, under the turn owner. */
@@ -114,6 +117,18 @@ export interface AgentLoopDependencies {
    * the server just disproved.
    */
   onContextWindowExceeded?: (tokens: number) => void;
+  /**
+   * The managed local engine's process state behind the link that just
+   * failed (ATO-772), asked by the outage wait before it parks a turn.
+   * `dead`: that link is the managed local model and its process is
+   * certainly gone (pid dead or none recorded, no start or load under way),
+   * so the turn ends with `LocalEngineDownError` after a short restart
+   * grace (`LOCAL_ENGINE_RESTART_GRACE_MS`) instead of waiting out the
+   * whole budget. `alive` and `unknown` keep the wait. `providerId` is the
+   * failing link (`readFailingLink`), `undefined` when the error does not
+   * say. Absent (embedders, tests) means `unknown` for every link.
+   */
+  localEngineState?: (providerId: string | undefined) => LocalEngineState;
   /** Defaults to `grammar` when omitted (test / legacy wiring). */
   toolTransport?: ToolCallTransport;
   toolCallAdapter?: ToolCallAdapter | null;
