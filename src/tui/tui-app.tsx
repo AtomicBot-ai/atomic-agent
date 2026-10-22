@@ -675,7 +675,7 @@ export interface TuiAppCallbacks {
   onTelegramTokenSubmitted?(buffer: string): void | Promise<void>;
   /** Telegram tab: clear the persisted token (back to `down`). */
   onTelegramClearTokenRequested?(): void | Promise<void>;
-  /** Telegram tab: arm a 60s pairing window that captures the next DM. */
+  /** Telegram tab: open a 5-minute pairing window claimed by a DM `/start <code>`. */
   onTelegramStartPairingRequested?(): void | Promise<void>;
   /** Telegram tab: cancel an active pairing window. */
   onTelegramCancelPairingRequested?(): void;

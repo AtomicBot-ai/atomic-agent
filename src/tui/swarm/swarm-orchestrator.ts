@@ -1,4 +1,10 @@
 import type { SwarmUnitView } from "../../channels/swarm/index.js";
+import {
+  DEFAULT_PAIRING_TIMEOUT_MS,
+  pairedOwnerLine,
+  pairingInstruction,
+  replaceOwnerPrompt,
+} from "../../channels/telegram/index.js";
 import { getConfig } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
@@ -10,6 +16,8 @@ import type {
 
 /** Countdown refresh while a Telegram pairing window is open. */
 const PAIRING_TICK_MS = 1_000;
+/** How long a second `p` counts as confirming the replacement of a paired owner. */
+export const REPLACE_OWNER_CONFIRM_MS = 15_000;
 
 export interface SwarmAddInput {
   kind: SwarmKind;
@@ -32,6 +40,8 @@ export interface SwarmAddInput {
 export class SwarmOrchestrator {
   private unsubscribe: (() => void) | null = null;
   private pairingTimer: ReturnType<typeof setInterval> | null = null;
+  /** Unit id -> when `p` was first pressed on a bot that already has an owner. */
+  private readonly replaceArmedAt = new Map<string, number>();
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -206,16 +216,52 @@ export class SwarmOrchestrator {
       );
       return;
     }
+    // A bot that already has an owner is re-paired only on a second
+    // `p` within the confirm window (ATO-718): the first press says who
+    // would be replaced.
+    const label = unit.config.label;
+    const owner = unit.config.ownerUserId ?? null;
+    let replaceOwner = false;
+    if (owner !== null) {
+      const armedAt = this.replaceArmedAt.get(id);
+      const now = this.now();
+      if (armedAt === undefined || now - armedAt > REPLACE_OWNER_CONFIRM_MS) {
+        this.replaceArmedAt.set(id, now);
+        this.settle(
+          `${label}: ${replaceOwnerPrompt({
+            ownerUserId: Number(owner),
+            confirmSeconds: REPLACE_OWNER_CONFIRM_MS / 1000,
+            again: "Press p again",
+          })}`,
+        );
+        return;
+      }
+      replaceOwner = true;
+    }
+    this.replaceArmedAt.delete(id);
     this.bus.emit({ type: "swarm_action_started" });
     try {
       // Returns once the window closes: claimed, timed out, or cancelled.
-      this.settle(`pairing ${unit.config.label} — DM the bot within 60s`);
+      this.settle(`pairing ${label}: opening a pairing window`);
       this.refresh();
-      const outcome = await swarm.startPairing(id);
+      const outcome = await swarm.startPairing(id, DEFAULT_PAIRING_TIMEOUT_MS, {
+        replaceOwner,
+        // The code goes to this panel's own status line, nowhere else.
+        onOpened: ({ code }) =>
+          this.settle(
+            `${label}: ${pairingInstruction({
+              code,
+              botUsername:
+                swarm.views().find((view) => view.id === id)?.botUsername ??
+                null,
+              timeoutMs: DEFAULT_PAIRING_TIMEOUT_MS,
+            })}`,
+          ),
+      });
       this.settle(
         outcome
-          ? `${unit.config.label} paired with user ${outcome.claim.userId}`
-          : `${unit.config.label}: pairing window closed without a claim`,
+          ? `${label}: ${pairedOwnerLine(outcome.claim)}`
+          : `${label}: pairing window closed without a claim`,
       );
     } catch (err) {
       this.settle(undefined, describe(err));

@@ -171,13 +171,14 @@ describe("reduceTelegramAction", () => {
       })!;
       state = reduceTelegramAction(state, {
         type: "telegram_pairing_resolved",
-        result: { userId: 7, chatId: 42, welcomeDelivered: true },
+        result: { userId: 7, chatId: 42, username: "owner", welcomeDelivered: true },
       })!;
       expect(state.telegramPanel.mode).toBe("pairingResult");
       expect(state.telegramPanel.pairing).toBeNull();
       expect(state.telegramPanel.pairingResult).toEqual({
         userId: 7,
         chatId: 42,
+        username: "owner",
         welcomeDelivered: true,
       });
       expect(state.telegramPanel.ownerUserId).toBe(7);
@@ -192,11 +193,12 @@ describe("reduceTelegramAction", () => {
       })!;
       state = reduceTelegramAction(state, {
         type: "telegram_pairing_resolved",
-        result: { userId: 7, chatId: 42, welcomeDelivered: false },
+        result: { userId: 7, chatId: 42, username: null, welcomeDelivered: false },
       })!;
       expect(state.telegramPanel.pairingResult).toEqual({
         userId: 7,
         chatId: 42,
+        username: null,
         welcomeDelivered: false,
       });
     });
@@ -223,7 +225,7 @@ describe("reduceTelegramAction", () => {
       let state = createInitialTuiState(SESSION);
       state = reduceTelegramAction(state, {
         type: "telegram_pairing_resolved",
-        result: { userId: 9, chatId: 99, welcomeDelivered: true },
+        result: { userId: 9, chatId: 99, username: null, welcomeDelivered: true },
       })!;
       state = reduceTelegramAction(state, {
         type: "telegram_pairing_modal_dismissed",

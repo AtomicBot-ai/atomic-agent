@@ -161,10 +161,13 @@ export interface InboundContext {
   releaseApprovalSession?: (sessionId: string) => void;
   /**
    * Pairing-mode hook. Provided by `TelegramChannel` so a pairing
-   * window can capture the next eligible DM as the new owner before
-   * the owner check fires. Returns `true` when the update was
-   * consumed by pairing (and must not be dispatched further). Absent
-   * in slice 1-style tests that pre-configure the owner directly.
+   * window can capture a DM `/start <code>` with the operator's
+   * one-time code as the new owner before the owner check fires.
+   * Returns `true` when the update was consumed by pairing (the right
+   * code, or a `/start <digits>` with a wrong one) and must not be
+   * dispatched further. Any other DM returns `false` and meets the
+   * usual owner check. Absent in slice 1-style tests that
+   * pre-configure the owner directly.
    */
   tryClaimForPairing?: (update: InboundTextUpdate) => boolean;
   /** Called whenever the handler successfully delivered a reply chunk. */
@@ -295,21 +298,15 @@ export async function handleInboundText(
     ? { text: update.text }
     : addressedText(update, ctx.botIdentity ?? null);
   if (addressed === null) return;
-  // Pairing wins over the owner check: the whole point of a pairing
-  // window is to accept the *first* eligible DM as the new owner,
-  // even when `ownerUserId` is currently null or set to someone else.
-  // The channel persists the new owner and restarts; the original
-  // (claiming) message is consumed silently here so the operator
-  // never sees their pairing trigger echoed back through the agent.
-  // Only private chats can pair — a group member must not be able to
-  // claim the bot by being first to speak.
-  if (isPrivate && ctx.tryClaimForPairing?.(update)) {
-    ctx.logger.info("telegram: pairing claimed by inbound DM", {
-      fromId,
-      chatId: update.chat.id,
-    });
-    return;
-  }
+  // Pairing wins over the owner check: a DM `/start <code>` with the
+  // operator's one-time code becomes the new owner even when
+  // `ownerUserId` is currently null or set to someone else (replacing
+  // one is confirmed by the operator before the window opens). The
+  // channel persists the new owner and restarts; the claiming message
+  // (or a wrong-code attempt) is consumed silently here so it is never
+  // echoed back through the agent. Only private chats can pair. The
+  // channel logs the outcome, never the code.
+  if (isPrivate && ctx.tryClaimForPairing?.(update)) return;
   if (ctx.ownerUserId === null || fromId !== ctx.ownerUserId) {
     ctx.logger.warn("telegram: dropping non-owner message", {
       fromId,
@@ -484,9 +481,9 @@ export async function handleInboundFile(
   if (update.chat.type !== "private") return;
   const fromId = update.from?.id;
   if (typeof fromId !== "number") return;
-  // A file DM is as valid a pairing claim as a text one — the operator
-  // was told to "send the bot any message". Project it onto the text
-  // shape the pairing state machine understands.
+  // Projected onto the text shape the pairing state machine reads, so
+  // a caption is held to the same rule as a text DM: only `/start
+  // <code>` claims, and a bare file never does.
   const claimText = update.caption?.trim() || `[${update.file.kind}]`;
   if (
     ctx.tryClaimForPairing?.({
@@ -496,10 +493,6 @@ export async function handleInboundFile(
       message_id: update.message_id,
     })
   ) {
-    ctx.logger.info("telegram: pairing claimed by inbound file DM", {
-      fromId,
-      chatId: update.chat.id,
-    });
     return;
   }
   if (ctx.ownerUserId === null || fromId !== ctx.ownerUserId) {

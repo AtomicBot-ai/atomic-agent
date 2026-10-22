@@ -6,6 +6,15 @@ import {
 import { AtomicMailService } from "../../atomic-mail/index.js";
 import { getConfig } from "../../config/index.js";
 import {
+  pairedOwnerLine,
+  pairingInstruction,
+  replaceOwnerPrompt,
+} from "../../channels/telegram/index.js";
+import {
+  REPLACE_OWNER_CONFIRM_MS,
+  type PairingRequest,
+} from "../telegram/tui-telegram-orchestrator.js";
+import {
   applyAtomicMailField,
   runAtomicMailAction,
 } from "./integrations-orchestrator-atomic-mail.js";
@@ -29,7 +38,8 @@ import type {
 
 /** The slice of `TuiTelegramOrchestrator` the hub drives. */
 export interface TelegramActions {
-  startPairing(timeoutMs?: number): Promise<void>;
+  /** Open a pairing window and hand back its one-time code (ATO-718). */
+  requestPairing(timeoutMs?: number): PairingRequest;
   restart(): Promise<void>;
   setEnabled(enabled: boolean): Promise<void>;
   /** Push a token the hub has just written into the live channel. */
@@ -212,12 +222,29 @@ export class IntegrationsOrchestrator {
         // in front of a channel that never came up is how an operator
         // ends up messaging a bot nothing is listening to.
         await this.telegram.ensureUpForPairing();
-        // Fire-and-forget from here: the window runs for its full
-        // timeout and the outcome lands through the channel's own
-        // status stream, so awaiting it would freeze the pane for a
-        // minute.
-        void this.telegram.startPairing();
-        return "Pairing — DM your bot now; the next sender becomes the owner.";
+        const request = this.telegram.requestPairing();
+        if (request.kind === "unavailable") throw new Error(request.reason);
+        if (request.kind === "confirm_replace") {
+          return replaceOwnerPrompt({
+            ownerUserId: request.ownerUserId,
+            confirmSeconds: REPLACE_OWNER_CONFIRM_MS / 1000,
+            again: "Press p again",
+          });
+        }
+        // Not awaited: the window runs for up to five minutes, and
+        // awaiting it would freeze the pane. Who claimed it lands as
+        // its own message when it closes.
+        void request.outcome.then((claim) => {
+          this.bus.emit({
+            type: "integrations_action_settled",
+            message: claim
+              ? pairedOwnerLine(claim)
+              : "Pairing window closed without a claim.",
+          });
+          this.refresh();
+        });
+        // The code is shown here, on the operator's screen, only.
+        return pairingInstruction(request);
       }
       if (actionId === "restart") {
         await this.telegram.restart();
