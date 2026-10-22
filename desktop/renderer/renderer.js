@@ -23505,7 +23505,15 @@ function llmFormatDaemon() {
   const health = String(st.health || '').toLowerCase();
   if (/loading/.test(health)) return 'loading pid ' + st.daemonPid;
   if (health === 'ok') return 'running pid ' + st.daemonPid + ' on 127.0.0.1:' + llmDaemonPort();
+  if (llmKeyRejected(st)) return 'pid ' + st.daemonPid + ' key rejected';
   return 'pid ' + st.daemonPid + ' health unreachable';
+}
+/* ATO-852: `health: key rejected` (agent with #721): a server answers on the
+   port but refuses the running model's key, so every request fails. Not
+   "unreachable": it answers, and a restart (stop, then start) is the fix.
+   An older agent never says it, and reads as before. */
+function llmKeyRejected(st) {
+  return !!(st && st.daemonRunning && (st.keyRejected === true || /^key rejected\b/.test(String(st.health || '').trim().toLowerCase())));
 }
 /* A llama-server that was just spawned has no port open yet, and `models
    status` calls that `down`, the same word it uses for a hung one; right
@@ -24186,6 +24194,7 @@ function llmNowHTML() {
     : /^running/.test(d) || servedIds ? (tpLlmFault() ? 'Not working' : stray ? 'Running' : 'Ready')
     : stray ? 'Running'
     : d === 'stopped' ? 'Stopped'
+    : /key rejected$/.test(d) ? 'Key rejected'
     : /unreachable$/.test(d) ? (llmJustSpawned() ? 'Starting' : 'Not answering') : '';
   const dot = word === 'Ready' || word === 'Running' ? 'tk-dot--green' : word === 'Starting' ? 'tk-dot--brand tk-dot--pulse' : word ? 'tk-dot--amber' : '';
   const phase = LLMP.daemonPhase;
@@ -24193,7 +24202,10 @@ function llmNowHTML() {
     + ' title="' + esc(title) + '">' + ic(icon) + esc(label) + '</button>';
   // ATO-125: the server runs another model than the one picked (a pick that left it be, the CLI).
   const stale = managed && !!runs && !!picked && runs !== picked;
+  const keyRejected = managed && word === 'Key rejected';
   const control = stale ? button('llm:usePicked', 'refresh', 'Restart on ' + modelWord(picked), 'Restart the local model server on the model picked')
+    : keyRejected ? button('llm:restartModel', 'refresh', phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : 'Restart model',
+        'The model server on this port refuses the model\'s key, so every request fails. Stop it and start it again.')
     : (managed && !!serverModel && !missing) || stray
       ? button('llm:daemon', up ? 'stop' : 'play', phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : up ? 'Stop' : 'Start',
           up ? 'Stop the local model server' : 'Start the local model server')
@@ -24203,7 +24215,9 @@ function llmNowHTML() {
     + (stray ? esc(' · the local model server' + (runs ? ' (' + modelWord(runs) + ')' : '') + ' is still up') : '')
     + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '')
     + (stale ? '<span class="llm-nowst llm-nowpick">' + esc(modelWord(picked) + ' is picked') + '</span>' : '')
-    + control + '</p>';
+    + control
+    + (keyRejected ? '<span class="tk-help llm-keyrej">' + esc('The model server refuses the model\'s key, so chats on it fail. Restart the model to fix it.') + '</span>' : '')
+    + '</p>';
 }
 /* What the count means depends on the worker leg (agent v0.6.3,
    fusion-delegate.ts): an unpinned LOCAL leg runs one worker per job —
@@ -25241,6 +25255,28 @@ async function llmDaemon(which) {
   else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
 }
+/* ATO-852: Restart model for a server that rejects its model's key: what
+   `models status` advises, `models stop` then `models start`, in one press.
+   The stop refuses while a turn is running on the server, as Stop does. */
+async function llmRestartModel() {
+  if (!BR || LLMP.daemonPhase) return;
+  const held = await llmTurnsRunning();
+  if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return; }
+  LLMP.daemonPhase = 'stopping'; llmRepaint();
+  const stop = await BR.modelsStop();
+  if (!stop || stop.ok === false) {
+    LLMP.daemonPhase = null;
+    LLMP.statusErr = llmFail('models stop failed', stop);
+    await llmRefreshStatus();
+    return;
+  }
+  LLMP.daemonPhase = 'starting'; llmRepaint();
+  const res = await BR.modelsStart();
+  LLMP.daemonPhase = null;
+  if (!res || res.ok === false) LLMP.statusErr = llmFail('models start failed', res);
+  else LLMP.msg = {text:'local-llm: model restarted' + (res.stdout && res.stdout.trim() ? ': ' + res.stdout.trim().split('\n').pop() : '')};
+  await llmRefreshStatus();
+}
 async function llmEmbToggle() {
   if (!BR) return;
   const enabled = llmEmbCfg().enabled === true;
@@ -25702,6 +25738,7 @@ function llmAct(what) {
   if (verb === 'embToggle') { llmEmbToggle(); return; }
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
   if (verb === 'daemon') { llmDaemon(llmServerUp() ? 'stop' : 'start'); return; }
+  if (verb === 'restartModel') { llmRestartModel(); return; }
   // ATO-125: the server runs another model than the one picked — restart it on the picked one.
   if (verb === 'usePicked') { const id = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId; if (id) llmUseLocalModel(id); return; }
   if (verb === 'hf') {

@@ -163,6 +163,8 @@
 /* ATO-125: the server runs another model than the one picked. */
 .llm-pane .llm-nowpick{color:var(--amber-text)}
 .llm-pane .llm-nowbtn{height:26px;margin-left:6px;padding:0 10px}
+/* ATO-852: the server refuses the model's key: why, on its own line under the Restart model button. */
+.llm-pane .llm-keyrej{flex-basis:100%;color:var(--amber-text)}
 .llm-pane .llm-nowbtn svg{width:13px;height:13px}
 .llm-pane .llm-workers{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:2px 0 0}
 .llm-pane .llm-workers .tk-help{flex:1;min-width:220px}
