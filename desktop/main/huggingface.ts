@@ -306,6 +306,8 @@ export interface HuggingFaceFile {
  * `<stateDir>/.env` (load-config.ts applies the NAMES into process.env on
  * every CLI run), while this window sees only its own environment. That
  * is why a gated repo can fail to LIST here and still download fine.
+ * Studio's local model downloads read the agent's way instead
+ * (hf-token.ts agentHuggingFaceToken, ATO-813).
  */
 export function huggingFaceToken(): string | null {
   const raw = (process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || "").trim();
