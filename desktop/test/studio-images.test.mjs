@@ -50,6 +50,33 @@ test('a mode no model in the catalog runs says the chosen model cannot do it', (
   assert.equal(edit.why, 'Z-Image Turbo cannot do this');
 });
 
+test('the hint line also names the modes the chosen model cannot do (ATO-832)', () => {
+  const cat = catalog([cloudModel({name: 'Nano Banana 2.1'})], [localModel({modes: ['create', 'transform']})]);
+  const m = model(cat, 'google/nano-banana');
+  const tabs = L.simgModeTabs(m, cat);
+  assert.equal(L.simgModeNote(tabs, m), 'Transform needs a model on this Mac. Nano Banana 2.1 cannot inpaint, extend or upscale.');
+  assert.equal(L.simgModeNote(L.simgModeTabs(model(catalog(), 'google/nano-banana'), catalog()), m), 'Transform, Inpaint, Extend and Upscale need a model on this Mac.');
+});
+
+test('a click on a greyed mode gets its own reason, and a link only when another model can (ATO-832)', () => {
+  const cat = catalog([cloudModel({name: 'Nano Banana 2.1'})], [localModel({modes: ['create', 'transform']})]);
+  const m = model(cat, 'google/nano-banana');
+  const by = Object.fromEntries(L.simgModeTabs(m, cat).map((t) => [t.id, t]));
+  assert.equal(L.simgModeWhy(by.inpaint, m), 'Nano Banana 2.1 cannot inpaint.');
+  assert.equal(L.simgModeWhy(by.transform, m), 'Transform needs a model on this Mac.');
+  assert.equal(L.simgModeWhy(by.create, m), '');
+  assert.equal(L.simgOtherCan(cat, m, ['inpaint']), false);
+  assert.equal(L.simgOtherCan(cat, m, ['transform']), true);
+  assert.equal(L.simgOtherCan(catalog(), m, ['inpaint']), true);
+});
+
+test('a greyed mode chip still acts (to show why) and says so in the hint line (ATO-832)', () => {
+  const view = readFileSync(new URL('../renderer/studio/images-view.js', import.meta.url), 'utf8');
+  assert.match(view, /'modewhy:'/);
+  const js = readFileSync(new URL('../renderer/studio/images.js', import.meta.url), 'utf8');
+  assert.match(js, /case 'modewhy': IM\.modeWhy = a;/);
+});
+
 test('with no model only Create is open', () => {
   const tabs = L.simgModeTabs(null, null);
   assert.deepEqual(tabs.filter((t) => t.ok).map((t) => t.id), ['create']);

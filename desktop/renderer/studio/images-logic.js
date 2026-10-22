@@ -52,27 +52,55 @@ function simgDefaultModel(catalog) {
     || all[0] || null;
 }
 
-/** The mode tabs for a model: each enabled or greyed with the reason. */
+/** A mode as the end of "<model> cannot ...". */
+const SIMG_MODE_VERB = {
+  create: 'create pictures', edit: 'edit', reference: 'use references', transform: 'transform',
+  inpaint: 'inpaint', extend: 'extend', upscale: 'upscale',
+};
+
+/** The mode tabs for a model: each enabled or greyed with the reason.
+    `need` says why a greyed one is off: 'local' (only a model on this Mac runs it),
+    'model' (this model cannot), 'pick' (no model chosen). */
 function simgModeTabs(model, catalog) {
   const locals = simgModels(catalog).filter((m) => m.group === 'local');
   return SIMG_MODES.map(([id, label]) => {
-    if (!model) return {id, label, ok: id === 'create', why: id === 'create' ? '' : 'Pick a model first'};
+    if (!model) return {id, label, ok: id === 'create', why: id === 'create' ? '' : 'Pick a model first', need: id === 'create' ? '' : 'pick'};
     const ok = (model.modes || []).includes(id);
-    let why = '';
+    let why = '', need = '';
     if (!ok) {
       const localCan = locals.some((m) => (m.modes || []).includes(id));
-      why = model.group === 'cloud' && localCan ? 'Needs a model on this Mac' : model.name + ' cannot do this';
+      need = model.group === 'cloud' && localCan ? 'local' : 'model';
+      why = need === 'local' ? 'Needs a model on this Mac' : model.name + ' cannot do this';
     }
-    return {id, label, ok, why};
+    return {id, label, ok, why, need};
   });
 }
 
-/** One hint line for the greyed modes of a cloud model that local models can run. */
-function simgModeNote(tabs) {
+const simgList = (xs, conj) => (xs.length === 1 ? xs[0] : xs.slice(0, -1).join(', ') + ' ' + conj + ' ' + xs[xs.length - 1]);
+
+/** One hint line for the greyed modes: the ones a model on this Mac runs, then the
+    ones the chosen model cannot do ("Nano Banana cannot inpaint, extend or upscale."). */
+function simgModeNote(tabs, model) {
+  const out = [];
   const off = tabs.filter((t) => !t.ok && t.why === 'Needs a model on this Mac').map((t) => t.label);
-  if (!off.length) return '';
-  const list = off.length === 1 ? off[0] : off.slice(0, -1).join(', ') + ' and ' + off[off.length - 1];
-  return list + (off.length === 1 ? ' needs' : ' need') + ' a model on this Mac.';
+  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on this Mac.');
+  const cannot = model ? tabs.filter((t) => !t.ok && t.need === 'model').map((t) => SIMG_MODE_VERB[t.id]) : [];
+  if (cannot.length) out.push(model.name + ' cannot ' + simgList(cannot, 'or') + '.');
+  return out.join(' ');
+}
+
+/** The hint line's words after a click on one greyed mode. */
+function simgModeWhy(tab, model) {
+  if (!tab || tab.ok) return '';
+  if (tab.need === 'local') return tab.label + ' needs a model on this Mac.';
+  if (tab.need === 'model' && model) return model.name + ' cannot ' + SIMG_MODE_VERB[tab.id] + '.';
+  return 'Pick a model first.';
+}
+
+/** Whether another model in the catalog runs one of these modes (the hint's "Pick one" link). */
+function simgOtherCan(catalog, model, modes) {
+  return simgModels(catalog).some((m) => !(model && m.id === model.id && m.provider === model.provider)
+    && modes.some((id) => (m.modes || []).includes(id)));
 }
 
 /** The ratios offered as shape tiles: the model's own, or a short list for range sizes. */
@@ -318,7 +346,7 @@ function simgModesLine(model) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote,
+  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER};
