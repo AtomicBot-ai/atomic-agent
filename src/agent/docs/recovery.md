@@ -17,10 +17,10 @@ Evidence checks prevent unverified check claims, unsourced links and fabricated 
 
 [Turn recovery](../turn/turn-recovery.ts) returns synchronous decisions; the loop performs the existing provider-outage wait explicitly. [Preparation](../turn/turn-preparation.ts) surrounds the original memory/profile awaits. [Finalization](../turn/turn-finalization.ts) keeps completion events and steering drain order. A turn that closes `max_steps` never got the model's summary (the reserved final step overran its deadline or was refused), so its stop reply carries a [digest](../turn/pause-digest.ts) built from the turn's own records, with no model call. Adding an unconditional async wrapper would allow queued event callbacks to run before dispatch or turn closure, even when no recovery wait is needed.
 
-Step parsing and repair preparation/finish are synchronous; the actual repair completion await remains in [step-executor.ts](../step-executor.ts). Stream consumption still owns iterator cleanup. [Progress helpers](../progress/README.md) are independent of the tracker state; [policies](../policies/README.md) do not own resources.
+Step parsing and repair preparation/finish are synchronous; the actual repair completion await remains in [step-executor.ts](../step-executor.ts). The one-shot repair runs under `repairReplyCap` ([step parsing](../step/step-parsing.ts)): 1024 tokens on a grammar link as an anti-loop guard, plus the enforced reasoning budget for a thinking profile (the step's cap when the budget is unbounded), and the step's cap on native tools. Stream consumption still owns iterator cleanup. [Progress helpers](../progress/README.md) are independent of the tracker state; [policies](../policies/README.md) do not own resources.
 
 ## Sources and tests
 
 - [Loop](../agent-loop.ts), [detector](../loop-detector.ts), [parse recovery](../turn/parse-failure-recovery.ts), [empty recovery](../turn/empty-completion-recovery.ts), [size repair](../turn/size-rejection-recovery.ts), [truncation repair](../turn/truncation-recovery.ts).
 - [Claims](../policies/claim-evidence.ts), [links](../policies/link-evidence.ts), [read coverage](../progress/read-coverage.ts), [review stall](../review-stall.ts).
-- [Loop tests](../agent-loop.test.ts), [detector tests](../loop-detector.test.ts), [step tests](../step-executor.test.ts).
+- [Loop tests](../agent-loop.test.ts), [detector tests](../loop-detector.test.ts), [step tests](../step-executor.test.ts), [repair cap tests](../step/step-parsing.test.ts).

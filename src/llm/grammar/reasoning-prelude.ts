@@ -26,7 +26,7 @@ export const LLAMA_SERVER_GBNF_MAX_REPETITION = 1999;
  * one under `MAX_REPETITION_THRESHOLD`) so the GBNF parser never rejects
  * the grammar (#600). The clamp is silent here: this module builds
  * strings and owns no logger. The runtime logs the effective bound once
- * at boot (`logReasoningBudgetCap`).
+ * at boot for a model that thinks (`logReasoningBudgetCap`).
  */
 
 /** `think-body ::= think-char{0,N}` — the line the bounded base grammar carries. */
