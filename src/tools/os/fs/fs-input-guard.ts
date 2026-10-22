@@ -3,7 +3,10 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../../../compressor/result-compressor.js";
-import { quotedRequestText } from "../../../prompt/request-section.js";
+import {
+  quotedRequestText,
+  REQUEST_FOLLOW_UP_MARKER,
+} from "../../../prompt/request-section.js";
 import {
   countLines,
   formatBytes,
@@ -15,7 +18,8 @@ import type { FileRestoreStore } from "./fs-restore-store.js";
 
 /**
  * The one refusal in front of `os.fs.write` (F51): a file the request
- * names as an input is not replaced without `overwrite: true`.
+ * names as an input is not replaced by a write. The call's `overwrite`
+ * flag does not lift it (ATO-851).
  *
  * F36 made a replacement announced and reversible. Live, five first
  * attempts across two local models still failed the same way: the model
@@ -33,12 +37,24 @@ import type { FileRestoreStore } from "./fs-restore-store.js";
  * next step and replaced the user's input on the very next call, so the
  * refusal itself was the bypass.
  *
- * The request's own words lift the rule: a basename within
+ * Nor does `overwrite: true` (ATO-851). After #712 the persona line and
+ * the write descriptor still taught the flag, and at approval levels
+ * 2-5 a workspace write approves itself, so the bypass was still one
+ * model step. Input files are now treated the way a fan-out's declared
+ * inputs always were: the flag is not read. Only the user's words lift
+ * the rule.
+ *
+ * The request's own words lift it: a basename within
  * `REPLACE_VERB_WINDOW_WORDS` words after "rewrite", "replace",
  * "regenerate", "overwrite", "recreate" or "reset" (any inflection,
  * case-insensitive, up to the end of that sentence) is a file the user
  * asked to have replaced — unless the verb is negated ("do not overwrite
- * sales.csv"). Every other pre-existing file keeps F36's warn-and-save
+ * sales.csv"). So does the user's next message when it is a short
+ * follow-up (`pickOriginalRequest` appends it after
+ * `REQUEST_FOLLOW_UP_MARKER`): "replace numbers.txt", or, answering the
+ * question the refusal told the model to ask, "yes, replace it". A
+ * longer next message is the whole request on its own and is read the
+ * same way. Every other pre-existing file keeps F36's warn-and-save
  * path. Decided before the approval prompt, so the operator is never
  * asked to approve a write that will not run.
  */
@@ -87,10 +103,14 @@ export interface InputGuardInput {
   /**
    * Absolute paths the fan-out's contract declared as inputs for this
    * session (`fs-declared-inputs.ts`, workers only). Refused whatever
-   * `overwrite` says: the orchestrator declared them, and it can
+   * the request says: the orchestrator declared them, and it can
    * redeclare.
    */
   declaredInputs?: readonly string[];
+  /**
+   * The call's flag. Never lifts the refusal (ATO-851); carried only
+   * so the refusal's details record that it was passed.
+   */
   overwrite: boolean;
 }
 
@@ -138,12 +158,54 @@ function isWholeName(text: string, start: number, end: number): boolean {
  * sentence, the verb not negated?
  */
 export function requestAsksToReplace(request: string, name: string): boolean {
-  const words = request.split(/\s+/).filter((word) => word.length > 0);
+  return replaceVerbReaches(request, (word) => requestNamesFile(word, name));
+}
+
+/** "replace it", "overwrite that file": what a reply to the model's question points with. */
+const FOLLOW_UP_POINTERS: ReadonlySet<string> = new Set([
+  "it",
+  "that",
+  "this",
+  "them",
+  "these",
+  "those",
+  "file",
+  "files",
+]);
+
+/**
+ * Does the user's short follow-up (the text after
+ * `REQUEST_FOLLOW_UP_MARKER`) agree to a replacement by pointing at it:
+ * "yes, replace it", "go ahead and overwrite the file"? Same verb,
+ * window, sentence and negation rules as `requestAsksToReplace`; a
+ * follow-up that names the file is already caught there. False when the
+ * request has no follow-up: a pronoun in the request itself points at
+ * nothing the model asked about.
+ */
+export function followUpAsksToReplace(request: string): boolean {
+  const at = request.lastIndexOf(REQUEST_FOLLOW_UP_MARKER);
+  if (at === -1) return false;
+  const latest = request.slice(at + REQUEST_FOLLOW_UP_MARKER.length);
+  return replaceVerbReaches(latest, (word) =>
+    FOLLOW_UP_POINTERS.has(bareWord(word).replace(/[^a-z']+$/, "")),
+  );
+}
+
+/**
+ * Is there an un-negated replace verb with a word `matches` accepts
+ * within `REPLACE_VERB_WINDOW_WORDS` words after it, in the same
+ * sentence?
+ */
+function replaceVerbReaches(
+  text: string,
+  matches: (word: string) => boolean,
+): boolean {
+  const words = text.split(/\s+/).filter((word) => word.length > 0);
   for (let i = 0; i < words.length; i += 1) {
     if (!isReplaceVerb(words[i]!) || isNegated(words, i)) continue;
     const window = words.slice(i + 1, i + 1 + REPLACE_VERB_WINDOW_WORDS);
     for (const word of window) {
-      if (requestNamesFile(word, name)) return true;
+      if (matches(word)) return true;
       if (SENTENCE_END.test(word)) break;
     }
   }
@@ -183,7 +245,8 @@ export async function checkInputReplacement(
   if (input.declaredInputs?.includes(input.absolute)) {
     return refusal("contract", input);
   }
-  if (input.overwrite) return null;
+  // `input.overwrite` is deliberately not read (ATO-851): only the
+  // user's words below lift the refusal.
   const request = input.request?.trim() ?? "";
   if (
     request.length === 0 ||
@@ -194,7 +257,11 @@ export async function checkInputReplacement(
   }
   const name = basename(input.absolute);
   const words = quotedRequestText(request);
-  if (!requestNamesFile(words, name) || requestAsksToReplace(words, name)) {
+  if (
+    !requestNamesFile(words, name) ||
+    requestAsksToReplace(words, name) ||
+    followUpAsksToReplace(words)
+  ) {
     return null;
   }
   if (await input.store.wasCreated(input.sessionId, input.absolute)) {
