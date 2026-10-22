@@ -1354,7 +1354,10 @@ function unknownTopLevelKeys(
  * Missing sub-keys are filled with defaults — this lets us add new
  * fields without breaking existing installations. Unknown top-level
  * keys are carried through verbatim (forward compat); unknown keys
- * *inside* a known block are still dropped.
+ * *inside* a known block are dropped from the result, and
+ * `writeUserConfigFileSync` puts them back from the file on disk when it
+ * writes (see `carryUnknownConfigKeys`), so a write from an older build
+ * keeps them.
  */
 
 
