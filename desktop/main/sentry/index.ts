@@ -1,6 +1,6 @@
 /** Desktop error reporting (desktop/ANALYTICS.md "Error reports"): envelope client, scrubber, handlers. No minidumps. */
 
-export { baseTags, reportError, type ErrorInput } from "./client.js";
+export { baseTags, reportError, setSourceTags, type ErrorInput } from "./client.js";
 export {
   reportAgentExit,
   reportRendererError,

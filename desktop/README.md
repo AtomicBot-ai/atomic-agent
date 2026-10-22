@@ -131,6 +131,17 @@ start two task schedulers against the same cron jobs.
   renderer cannot reach the network at all; every byte arrives over IPC.
   `style-src` allows inline styles because the renderer composes HTML strings;
   all interpolated values go through `esc()`.
+- An agent that exits on its own while running is started again
+  (`main/agent-auto-restart.ts`, ATO-767): up to three attempts within five
+  minutes, after 1 s, 5 s and 20 s, each through `AgentClient.start()`, which
+  reaps a previous run's orphan first and never spawns beside a live child.
+  The count is forgotten after ten minutes of normal running. A deliberate
+  stop (quit, folder change, model switch, Restart Agent Runtime) cancels a
+  waiting attempt. A restart that brought it back adds "The agent stopped
+  unexpectedly and was restarted." to the chat; after the third failure the
+  chat offers a Restart agent button. Analytics `agent_restarted` with
+  `trigger: auto`; the next exit report carries `auto_restart_attempt`. Off in
+  a smoke run; `--smoke --smoke-task=767` arms it and kills the agent four times.
 - `will-navigate` is cancelled and window-open requests are handed to the
   system browser.
 - `before-quit` stops the child and waits for it, escalating to `SIGKILL`,

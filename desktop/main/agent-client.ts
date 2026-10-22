@@ -1439,6 +1439,8 @@ export class AgentClient extends EventEmitter {
    */
   stop(): Promise<boolean> {
     this.stopRequests++;
+    // ATO-767: a deliberate stop drops an automatic restart that is waiting (agent-auto-restart.ts).
+    this.emit("stop-requested");
     if (this.stopInFlight) return this.stopInFlight;
     const run = this.stopNow().finally(() => {
       if (this.stopInFlight === run) this.stopInFlight = null;

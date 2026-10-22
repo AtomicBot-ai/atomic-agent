@@ -25,7 +25,7 @@ const L = {
   readySent: false,
   turns: 0,
   lastAgentStart: null as number | null,
-  restartTrigger: null as "manual" | "switch" | "other" | null,
+  restartTrigger: null as "manual" | "switch" | "auto" | "other" | null,
   connectedOnce: false,
   closedSent: false,
 };
@@ -82,8 +82,8 @@ function maybeReady(): void {
   });
 }
 
-/** `agent:restart` (manual) or a switch's restart, said just before the stop+start. */
-export function agentRestarting(trigger: "manual" | "switch" | "other"): void {
+/** `agent:restart` (manual), a switch's restart, or an automatic one after a crash (ATO-767), said just before the start. */
+export function agentRestarting(trigger: "manual" | "switch" | "auto" | "other"): void {
   L.restartTrigger = trigger;
 }
 
