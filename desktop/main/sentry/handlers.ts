@@ -34,17 +34,22 @@ export function wireProcessErrorReporting(): void {
   });
 }
 
-/** One window's renderer: gone, unresponsive, failed load, a preload that threw. */
-export function wireWindowErrorReporting(win: BrowserWindow): void {
+/**
+ * One window's renderer: gone, unresponsive, failed load, a preload that threw.
+ * `recovered` (ATO-765): whether main is reloading the page that just went
+ * (main.ts registers that listener first), sent as the `recovered` tag.
+ */
+export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => boolean | null = () => null): void {
   const wc = win.webContents;
   wc.on("render-process-gone", (_e, details) => {
     if (details.reason === "clean-exit") return;
     windowCrashed("gone", details.reason, typeof details.exitCode === "number" ? details.exitCode : null);
+    const r = recovered();
     reportError({
       source: "render-process-gone",
       name: "RenderProcessGone",
       level: "warning",
-      tags: { kind: "gone", reason: details.reason, exit_code: details.exitCode },
+      tags: { kind: "gone", reason: details.reason, exit_code: details.exitCode, ...(r === null ? {} : { recovered: r ? "yes" : "no" }) },
     });
   });
   win.on("unresponsive", () => {

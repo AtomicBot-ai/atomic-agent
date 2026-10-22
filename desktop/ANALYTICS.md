@@ -151,7 +151,9 @@ no agent is running).
 - Every event: `platform: node`, `sdk.settings.infer_ip: never`,
   `user: {id: <install id>, ip_address: null}`, tags `surface`, `component`,
   `desktop_version`, `install_channel`, `run_mode`, `platform`, `arch`, plus
-  `kind` / `reason` / `exit_code` enums. At most 30 reports per session,
+  `kind` / `reason` / `exit_code` enums. `RenderProcessGone` also carries
+  `recovered` (`yes`: main reloaded the page; `no`: it crashed more than
+  twice in a minute and the person was asked instead, ATO-765). At most 30 reports per session,
   3 per signature.
 - DSN: `ATOMIC_DESKTOP_SENTRY_DSN`, else the agent's. Same switch as
   analytics.

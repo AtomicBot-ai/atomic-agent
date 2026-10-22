@@ -135,6 +135,12 @@ start two task schedulers against the same cron jobs.
   system browser.
 - `before-quit` stops the child and waits for it, escalating to `SIGKILL`,
   so quitting never leaves an orphan holding the port.
+- A window whose page crashes (`render-process-gone`, not a clean exit) is
+  reloaded by main (`main/render-recovery.ts`, ATO-765): the agent and its
+  turns live in main, and the reloaded page takes them back itself
+  (`agent:liveTurns`, `agent:replayApprovals`). At most two reloads a minute
+  per window; a third crash in that minute asks instead ("The window keeps
+  crashing": Reload or Quit). Smoke task 765 crashes the page on purpose.
 
 ## What is real and what is not
 
