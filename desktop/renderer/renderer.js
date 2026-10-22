@@ -4188,14 +4188,20 @@ function paintStream() {
 /** The transcript column alone, rebuilt the way chatView() builds it, with
     the scroll kept the way afterChat keeps it: at the bottom while stuck
     there, and otherwise where it was — the scroller itself stays. False when
-    the chat is on screen without a column to rebuild. */
+    the chat is on screen without a column to rebuild. ATO-824: the column's
+    nodes are kept where the markup did not change (dom-morph.js). */
 function repaintTranscript() {
   if (S.room !== 'chat') return true;   // not on screen; the room switch renders it
   const sc = $('#scroller');
   const col = sc && S.log.length ? sc.querySelector(':scope > .col720') : null;
   if (!col) return false;
   const exaHeld = exaKeyHold();   // ATO-328: a stream frame does not wipe the Exa key being pasted
-  col.innerHTML = renderItems();
+  /* ATO-824: morphed, not replaced, so a node whose markup did not change
+     (a finished code block's Copy button above all) is the same node next
+     frame: its hover holds and a press on it still ends in a click. */
+  const next = document.createElement('template');
+  next.innerHTML = renderItems();
+  morphChildren(col, next.content);
   exaKeyRestore(exaHeld);
   if (S.stick) sc.scrollTop = sc.scrollHeight;
   return true;
