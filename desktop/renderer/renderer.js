@@ -5633,9 +5633,9 @@ function diagProviderRow() {
     if (res.ok) return Object.assign(row, {tone:'ok', value:name + ' · answering'});
     if (res.checked) {
       const said = res.keyChars ? KEY_CHAR_ERROR : name + ' did not accept the key' + (res.status ? ' (' + res.status + ')' : '');
-      return Object.assign(row, {tone:'bad', value:said, title:res.error || said, fix:settings});
+      return Object.assign(row, {tone:'bad', value:said, title:res.error ? diagScrub(res.error) : said, fix:settings});
     }
-    return Object.assign(row, {tone:'warn', value:'Could not check ' + name + ': ' + (res.error || 'no answer'), fix:settings});
+    return Object.assign(row, {tone:'warn', value:'Could not check ' + name + ': ' + (res.error ? diagScrub(res.error) : 'no answer'), fix:settings});
   }
   if (savedKeyInvalid(p)) return Object.assign(row, {tone:'bad', value:savedKeyLine(p.id), fix:settings});
   if (err) return Object.assign(row, {tone:'bad', value:name + ' · last error: ' + err.text, title:err.text, fix:settings});
@@ -5688,7 +5688,15 @@ async function diagStartModel() {
    failed. Kept per provider until a turn on it completes (diagProviderOk). */
 function diagNoteProviderError(providerId, text) {
   if (!providerId || !text) return;
-  DIAG.provErr[providerId] = {text:String(text), at:Date.now()};
+  DIAG.provErr[providerId] = {text:diagScrub(text), at:Date.now()};
+}
+/* A provider's error can quote the key back, and Copy details puts these rows on
+   the clipboard for us: key-shaped strings and bearer values go, as the support
+   report's scrubText does (main/report-redact.ts, the token shapes there). */
+const DIAG_KEY_SHAPES = [/\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g, /\bAIza[0-9A-Za-z_-]{35}/g, /\bhf_[A-Za-z0-9]{30,}/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g, /\bAKIA[0-9A-Z]{16}\b/g, /(\bbearer[ \t]+)[A-Za-z0-9+\/=._~-]{8,}/gi];
+function diagScrub(text) {
+  return DIAG_KEY_SHAPES.reduce((s, re) => s.replace(re, (m, head) => (typeof head === 'string' ? head : '') + '<key hidden>'), String(text || ''));
 }
 function diagProviderOk(providerId) {
   if (providerId && DIAG.provErr[providerId]) delete DIAG.provErr[providerId];

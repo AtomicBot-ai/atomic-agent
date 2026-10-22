@@ -13,7 +13,9 @@ const functions = new Map(ast.statements.filter(ts.isFunctionDeclaration).map((n
 const consts = new Map(ast.statements.filter(ts.isVariableStatement)
   .flatMap((n) => n.declarationList.declarations.map((d) => [d.name.getText(ast), n.getText(ast)])));
 
-const NAMES = ['diagHealthRows', 'diagEngineRow', 'diagModelRow', 'diagProviderRow', 'diagHealthHTML',
+// Values made inside the vm context have its own prototypes, which deepStrictEqual tells apart.
+const eq = (actual, expected) => assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected);
+const NAMES = ['diagScrub', 'diagHealthRows', 'diagEngineRow', 'diagModelRow', 'diagProviderRow', 'diagHealthHTML',
   'diagCheckProvider', 'diagNoteProviderError', 'diagProviderOk'];
 
 function fixture(over = {}) {
@@ -46,7 +48,7 @@ function fixture(over = {}) {
     },
     String, Object, Date, Promise,
   });
-  for (const k of ['DIAG_NOT_USED_CLOUD', 'DIAG_DOT']) vm.runInContext(consts.get(k), c);
+  for (const k of ['DIAG_NOT_USED_CLOUD', 'DIAG_DOT', 'DIAG_KEY_SHAPES']) vm.runInContext(consts.get(k), c);
   for (const n of NAMES) vm.runInContext(functions.get(n), c);
   // `UNVERIFIED = …` inside diagCheckProvider reassigns the context's binding.
   return {c, g, verified, unverifiedSet, rows: () => Object.fromEntries(c.diagHealthRows().map((r) => [r.key, r]))};
@@ -63,15 +65,15 @@ test('a running local model: Engine and Model green, Provider grey', () => {
 
 test('while the agent starts every row is checking, never red', () => {
   const r = fixture({S: {live: {state: 'starting'}}}).rows();
-  assert.deepEqual([r.engine.tone, r.model.tone, r.provider.tone], ['wait', 'wait', 'wait']);
+  eq([r.engine.tone, r.model.tone, r.provider.tone], ['wait', 'wait', 'wait']);
   const stopped = fixture({S: {live: {state: 'error'}}}).rows();
-  assert.deepEqual([stopped.engine.tone, stopped.model.tone], ['off', 'off']);
+  eq([stopped.engine.tone, stopped.model.tone], ['off', 'off']);
 });
 
 test('the engine that did not install is red with Download again, unless it cannot help', () => {
   let r = fixture({ENGF: {f: {why: 'The download was interrupted.', at: 1}}}).rows();
   assert.equal(r.engine.tone, 'bad'); assert.equal(r.engine.value, 'The download was interrupted.');
-  assert.deepEqual(r.engine.fix, {act: 'engf:retry', label: 'Download again'});
+  eq(r.engine.fix, {act: 'engf:retry', label: 'Download again'});
   r = fixture({ENGF: {f: {why: 'This Mac is too old for the engine.', at: 1, retryable: false}}}).rows();
   assert.equal(r.engine.tone, 'bad'); assert.equal(r.engine.fix, null);
   r = fixture({DWATCH: {kind: 'gave_up'}}).rows();
@@ -83,7 +85,7 @@ test('a stopped model is red with Start model; an external server sends to Model
   const down = {LLMP: {status: {daemonRunning: false, health: 'down'}, daemonPhase: null}, SET: {health: {llamaReachable: false}}};
   let r = fixture(down).rows();
   assert.equal(r.model.tone, 'bad'); assert.equal(r.model.value, 'The model server is not answering');
-  assert.deepEqual(r.model.fix, {act: 'diag:startModel', label: 'Start model'});
+  eq(r.model.fix, {act: 'diag:startModel', label: 'Start model'});
   r = fixture({...down, backend: 'custom', routeLocal: false}).rows();
   assert.equal(r.model.tone, 'bad'); assert.equal(r.model.fix.act, 'settings:llm');
   assert.equal(r.engine.tone, 'off');
@@ -109,7 +111,7 @@ test('on a cloud provider Engine and Model are grey and the Provider row reads i
   f.c.diagNoteProviderError('openrouter', 'API key rejected');
   r = f.rows();
   assert.equal(r.provider.tone, 'bad'); assert.equal(r.provider.value, 'OpenRouter · last error: API key rejected');
-  assert.deepEqual(r.provider.fix, {act: 'settings:llm', label: 'Open provider settings'});
+  eq(r.provider.fix, {act: 'settings:llm', label: 'Open provider settings'});
   f.c.diagProviderOk('openrouter');
   assert.equal(f.rows().provider.tone, 'ok');
   f = fixture({...cloud, provider: {...cloud.provider, badChars: true}});
@@ -123,10 +125,10 @@ test('Check asks for the saved key on the active model, and a pass clears the er
   f.c.diagNoteProviderError('openrouter', 'API key rejected');
   await new Promise((res) => setTimeout(res, 2));
   await f.c.diagCheckProvider();
-  assert.deepEqual(f.verified, [{entry: {id: 'openrouter', kind: 'openrouter'}, model: 'qwen/qwen3.8-27b'}]);
+  eq(f.verified, [{entry: {id: 'openrouter', kind: 'openrouter'}, model: 'qwen/qwen3.8-27b'}]);
   const r = f.rows();
   assert.equal(r.provider.tone, 'ok'); assert.equal(r.provider.value, 'OpenRouter · answering');
-  assert.deepEqual(f.unverifiedSet, [['openrouter', false]]);
+  eq(f.unverifiedSet, [['openrouter', false]]);
   assert.equal(vm.runInContext('UNVERIFIED.length', f.c), 0);
 });
 
@@ -136,7 +138,7 @@ test('a rejected key reads with its status; an unchecked one says why; a later t
   let r = f.rows();
   assert.equal(r.provider.tone, 'bad'); assert.equal(r.provider.value, 'OpenRouter did not accept the key (401)');
   assert.equal(r.provider.fix.act, 'settings:llm');
-  assert.deepEqual(f.unverifiedSet, []);
+  eq(f.unverifiedSet, []);
   f = fixture({...cloud, verify: async () => ({ok: false, checked: false, error: 'no connection'})});
   await f.c.diagCheckProvider();
   assert.equal(f.rows().provider.tone, 'warn');
@@ -157,4 +159,13 @@ test('each row draws its mark, its words, Check on the provider and one fix butt
   assert.match(html, /data-act="diag:check"/);
   assert.equal((html.match(/set-diagfix/g) || []).length, 1);
   assert.doesNotMatch(html, /set-diagrow/);   // the support rows' Copy contract (T49) stays theirs
+});
+
+test('a provider error that quotes the key back loses the key before it is kept or shown', () => {
+  const f = fixture(cloud);
+  f.c.diagNoteProviderError('openrouter', 'Incorrect API key sk-or-v1-abcdefghijklmnopqrstuvwxyz0123 (Bearer abcdefgh12345678)');
+  const r = f.rows();
+  assert.equal(r.provider.tone, 'bad');
+  assert.doesNotMatch(r.provider.value, /abcdefghijklmnop|abcdefgh12345678/);
+  assert.match(r.provider.value, /Incorrect API key <key hidden> \(Bearer <key hidden>\)/);
 });
