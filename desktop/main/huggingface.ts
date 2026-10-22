@@ -48,6 +48,9 @@ import * as fs from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
+import { agentHuggingFaceToken } from "./hf-token.js";
+import { DESKTOP_STATE_DIR } from "./state-dir.js";
+
 /* ------------------------------------------------------------------ *
  * src/local-llm/catalog/huggingface-ref.ts
  * ------------------------------------------------------------------ */
@@ -301,17 +304,18 @@ export interface HuggingFaceFile {
 }
 
 /**
- * Read only, never written and never shown. Note the asymmetry the
- * desktop cannot close: `atag models pull` also picks this up out of
- * `<stateDir>/.env` (load-config.ts applies the NAMES into process.env on
- * every CLI run), while this window sees only its own environment. That
- * is why a gated repo can fail to LIST here and still download fine.
- * Studio's local model downloads read the agent's way instead
- * (hf-token.ts agentHuggingFaceToken, ATO-813).
+ * Read only, never written and never shown. ATO-853: read the way the
+ * agent reads it (hf-token.ts agentHuggingFaceToken): this app's
+ * environment, else `<stateDir>/.env`, which `atag models pull` also reads.
+ * It used to be the environment only, so a gated repo with the token kept
+ * in `.env` failed to LIST here and still downloaded fine; the listing,
+ * the projector download and Studio now all send the same token.
  */
-export function huggingFaceToken(): string | null {
-  const raw = (process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || "").trim();
-  return raw.length > 0 ? raw : null;
+export function huggingFaceToken(
+  stateDir: string = DESKTOP_STATE_DIR,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  return agentHuggingFaceToken(stateDir, env);
 }
 
 async function fetchHfJson(

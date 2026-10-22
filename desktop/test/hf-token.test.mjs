@@ -50,3 +50,21 @@ test("Studio's downloads use it, and the token is never logged", () => {
   const mod = readFileSync(new URL("../main/hf-token.ts", import.meta.url), "utf8");
   assert.doesNotMatch(mod, /console\.|send\(/);
 });
+
+// ATO-853: "Add a model from Hugging Face" (the listing and the projector
+// download, huggingface.ts) sends the same token, so a gated repo whose token
+// is only in `<stateDir>/.env` lists here as it downloads with `models pull`.
+test("the Hugging Face listing's token comes from the agent's .env too", () => {
+  const { huggingFaceToken } = require("../out/main/huggingface.js");
+  assert.equal(huggingFaceToken(stateDir("HF_TOKEN=hf_from_dotenv\n"), {}), "hf_from_dotenv");
+  assert.equal(huggingFaceToken(stateDir("HF_TOKEN=hf_from_dotenv\n"), { HF_TOKEN: "hf_from_env" }), "hf_from_env");
+  assert.equal(huggingFaceToken(stateDir(null), {}), null);
+});
+
+test("the listing no longer adds the old 'this window does not read .env' line", () => {
+  const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(main, /hfGatedTokenHint/);
+  assert.doesNotMatch(main, /which `atag models pull` reads and this window does not/);
+  const hf = readFileSync(new URL("../main/huggingface.ts", import.meta.url), "utf8");
+  assert.match(hf, /return agentHuggingFaceToken\(stateDir, env\);/);
+});
