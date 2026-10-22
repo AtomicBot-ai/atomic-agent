@@ -498,6 +498,8 @@
       case 'generate': generate(); return;
       case 'stop': stop(); return;
       case 'retry': IM.jobErr = null; generate(); return;
+      // ATO-830: the rate-limit card's other model: switch to it and send the same form again.
+      case 'trymodel': { const bar = a.indexOf('|'); const m = simgFindModel(IM.catalog, a.slice(bar + 1), a.slice(0, bar)); IM.jobErr = null; if (m) { chooseModel(m); save(); paintForm(); refreshPrice(); generate(); } else paintStage(); return; }
       case 'dismiss': IM.jobErr = null; paintStage(); return;
       case 'settings': STUDIO.openSettings('openrouter'); return;
       case 'mode': switchMode(a); save(); paintForm(); refreshPrice(); return;

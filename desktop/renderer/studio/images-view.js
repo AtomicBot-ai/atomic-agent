@@ -250,8 +250,33 @@ function simgPhaseRows(at) {
   }).join('');
 }
 
+/* ATO-830: OpenRouter's upstream for a model (often Google's, for Nano Banana)
+   answers 429 when it is out of quota. Core passes it on as
+   REMOTE_RATE_LIMITED, or as its own words ("openrouter is rate-limiting
+   requests") on a job that failed after it started. */
+function simgRateLimited(e) {
+  return !!e && (e.code === 'REMOTE_RATE_LIMITED' || /rate[ -]?limit|\b429\b/i.test(String(e.message || '')));
+}
+
+/* Another cloud model to offer when one is rate limited: never the one that
+   failed, one that runs the current mode, a GPT Image model first (it has a
+   different upstream), else the catalog's next. `models` is simgModels(). */
+function simgAltModel(models, failed, mode) {
+  const f = failed || {};
+  const ok = (models || []).filter((m) => m.group === 'cloud' && !(m.id === f.id && (!f.provider || m.provider === f.provider))
+    && (!mode || (m.modes || []).includes(mode)));
+  return ok.find((m) => /gpt[ -]?image/i.test(m.id + ' ' + (m.name || ''))) || ok[0] || null;
+}
+
+/* The rate-limit card's words: which model's provider is busy, and that a
+   429 costs nothing, so Retry and another model are both safe. */
+function simgRateLimitLine(name) {
+  return 'OpenRouter\u2019s provider for ' + (name || 'this model') + ' is busy right now. Nothing was charged. Try again in a moment, or use another model.';
+}
+
 function simgvError(IM) {
   const e = IM.jobErr || {};
+  if (simgRateLimited(e)) return simgvRateLimited(IM);
   const key = e.code === 'NO_KEY';
   const core = /^CORE_/.test(e.code || '');
   return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
@@ -259,6 +284,20 @@ function simgvError(IM) {
     + '<div class="st-prog-f"><span class="st-sp"></span>'
     + (key ? '<button class="btn" ' + SIMGV_A('settings') + '>' + ic('key') + 'Open Settings</button>' : '')
     + (core ? '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Try again</button>' : '')
+    + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
+}
+
+function simgvRateLimited(IM) {
+  const req = IM.lastReq || {};
+  const failed = {id: req.model || (IM.job && IM.job.model), provider: req.provider};
+  const models = simgModels(IM.catalog);
+  const was = models.find((m) => m.id === failed.id) || {name: failed.id};
+  const alt = simgAltModel(models, failed, IM.form && IM.form.mode);
+  return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
+    + '<div><div class="t">' + esc((was.name || 'This model') + ' is busy') + '</div><div class="s">' + esc(simgRateLimitLine(was.name)) + '</div></div></div>'
+    + '<div class="st-prog-f"><span class="st-sp"></span>'
+    + '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Retry</button>'
+    + (alt ? '<button class="btn" ' + SIMGV_A('trymodel:' + alt.provider + '|' + alt.id) + '>Try ' + esc(alt.name || alt.id) + '</button>' : '')
     + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
 }
 
@@ -365,4 +404,4 @@ function simgvPage(IM) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {simgJobOf};
+if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine};
