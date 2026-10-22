@@ -7,7 +7,10 @@ import {
   ApprovalGate,
   type ApprovalRequest,
 } from "../../../approval/approval-gate.js";
-import { quotedRequestText } from "../../../prompt/request-section.js";
+import {
+  quotedRequestText,
+  REQUEST_FOLLOW_UP_MARKER,
+} from "../../../prompt/request-section.js";
 import { findUnknownArguments } from "../../unknown-argument-guard.js";
 import { renderWorkerBrief } from "../../fusion/worker-prompt.js";
 import type { ToolContext } from "../../tool-registry.js";
@@ -15,12 +18,14 @@ import { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 import { buildOsFsEditTool } from "./fs-edit.js";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import {
+  followUpAsksToReplace,
   REPLACE_VERB_WINDOW_WORDS,
   requestAsksToReplace,
   requestNamesFile,
 } from "./fs-input-guard.js";
 import { FileRestoreStore, RESTORE_MAX_BYTES } from "./fs-restore-store.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
+import { OS_FS_WRITE_CONTRACT } from "./fs-write-contract.js";
 
 /**
  * F51. Live, five first attempts across two local models failed by
@@ -28,8 +33,9 @@ import { buildOsFsWriteTool } from "./fs-write.js";
  * `sales.csv`) from memory; F36 warned and saved, and the write landed.
  * The rule pinned here: `os.fs.write` refuses to replace a pre-existing
  * file the agent did not create when the pinned request names it —
- * unless the call carries `overwrite: true` or the request itself asks
- * for the file to be replaced. Edits and patches are never refused.
+ * unless the request itself, or the user's short follow-up, asks for the
+ * file to be replaced. The call's `overwrite: true` does not lift it
+ * (ATO-851). Edits and patches are never refused.
  */
 describe("input guard rules (F51)", () => {
   it("names a file as a whole name, case-insensitively, with or without a path", () => {
@@ -65,6 +71,22 @@ describe("input guard rules (F51)", () => {
     expect(requestAsksToReplace("Clean sales.csv and save clean.csv", "sales.csv")).toBe(false);
   });
 
+  it("lifts the rule for a short follow-up that points at the replacement (ATO-851)", () => {
+    const followUp = (latest: string): string =>
+      `Clean sales.csv and save clean.csv\n\n${REQUEST_FOLLOW_UP_MARKER}\n${latest}`;
+    expect(followUpAsksToReplace(followUp("yes, replace it"))).toBe(true);
+    expect(followUpAsksToReplace(followUp("Go ahead and overwrite the file."))).toBe(true);
+    expect(followUpAsksToReplace(followUp("ok rewrite that"))).toBe(true);
+    // Negated, or no replace verb: the follow-up did not agree.
+    expect(followUpAsksToReplace(followUp("no, do not replace it"))).toBe(false);
+    expect(followUpAsksToReplace(followUp("yes"))).toBe(false);
+    expect(followUpAsksToReplace(followUp("write it to a new file"))).toBe(false);
+    // A pronoun in the request itself points at nothing the model asked.
+    expect(followUpAsksToReplace("Replace it with something better")).toBe(false);
+    // The follow-up naming the file is the request rule's job.
+    expect(requestAsksToReplace(followUp("please replace sales.csv"), "sales.csv")).toBe(true);
+  });
+
   it("reads only the ORIGINAL REQUEST block of a worker's brief", () => {
     const brief = renderWorkerBrief(
       { id: "t1", title: "T", instructions: "Rewrite notes.md", files: ["notes.md"] },
@@ -74,7 +96,16 @@ describe("input guard rules (F51)", () => {
     expect(quotedRequestText("Summarise sales.csv")).toBe("Summarise sales.csv");
   });
 
-  it("declares `overwrite` to the unknown-key guard (F40)", () => {
+  it("no longer teaches overwrite in the write descriptor (ATO-851)", () => {
+    // In every prompt; naming the flag here was the one-step bypass.
+    expect(OS_FS_WRITE_CONTRACT.descriptor.summary).not.toContain("overwrite");
+    expect(OS_FS_WRITE_CONTRACT.descriptor.argsSchema).not.toContain("overwrite");
+    expect(OS_FS_WRITE_CONTRACT.descriptor.summary).toContain(
+      "A file the request names as an input is refused",
+    );
+  });
+
+  it("still accepts `overwrite` on the wire for the unknown-key guard (F40)", () => {
     expect(
       findUnknownArguments("os.fs.write", { path: "a", content: "b", overwrite: true }),
     ).toBeNull();
@@ -167,20 +198,44 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
     expect(await store.listCopies(dir)).toEqual([]);
   });
 
-  it("lands with overwrite: true, through the approval and the F36 note", async () => {
+  it("ignores overwrite: true on an input the request names (ATO-851)", async () => {
+    const before = csv(2401);
+    await writeFile(join(dir, "sales.csv"), before, "utf8");
+    const result = await tools().write.run(
+      { path: "sales.csv", content: csv(9, "sku,qty"), overwrite: true },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toBe(REFUSAL);
+    expect(result.details).toMatchObject({ refused: "input", overwrite: true });
+    expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(before);
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("lands once the user's next message asks for it, through the approval and the F36 note", async () => {
+    request = `${request}\n\n${REQUEST_FOLLOW_UP_MARKER}\nyes, replace it`;
     await writeFile(join(dir, "sales.csv"), csv(2401), "utf8");
     const after = csv(9, "sku,qty");
     const result = await tools().write.run(
-      { path: "sales.csv", content: after, overwrite: true },
+      { path: "sales.csv", content: after },
       ctx(),
     );
     expect(result.status).toBe("ok");
     expect(result.summary.split("\n")[0]).toBe(
       '⚠ replaced the user\'s file `sales.csv` (2,402 lines → 10, header changed); the previous content is saved — `os.fs.restore {"path":"sales.csv"}` brings it back',
     );
-    expect(result.details.overwrite).toBe(true);
     expect(prompts).toHaveLength(1);
     expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(after);
+  });
+
+  it("still records overwrite: true on a write the guard does not cover", async () => {
+    await writeFile(join(dir, "notes.txt"), "old\n", "utf8");
+    const result = await tools().write.run(
+      { path: "notes.txt", content: "new\n", overwrite: true },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.overwrite).toBe(true);
   });
 
   it("is lifted when the request itself asks for the file to be replaced", async () => {
