@@ -94,6 +94,7 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
+import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";   // #680: the chosen folder survives a relaunch
 import {
   activateProvider,
   agentStarting,
@@ -1448,6 +1449,8 @@ function wireIpc(client: AgentClient): void {
     // Telling the user to restart while the child keeps its old cwd is a lie;
     // move it here instead.
     client.status.workingDir = dir;
+    // #680: and the next launch starts here too, not back in the home folder.
+    writeWorkspace(app.getPath("userData"), dir);
     await client.stop();
     void client.start();
     return dir;
@@ -9712,7 +9715,14 @@ void app.whenReady().then(async () => {
   // Windows attributes notifications to the AppUserModelID; without one set a
   // dev or unpackaged run shows none. Same id as the bundle id on macOS.
   if (process.platform === "win32") app.setAppUserModelId("io.atomicagent.desktop");
-  const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
+  /* #680: the folder picked in an earlier run (workspace-pref.ts). The
+     environment still wins, and a smoke run never reads the saved one, so
+     its harness keeps the cwd it set or the home folder. */
+  const workspace = startupWorkspace(
+    process.env.ATOMIC_AGENT_WORKSPACE,
+    SMOKE ? null : readWorkspace(app.getPath("userData")),
+    homedir(),
+  );
   agent = new AgentClient(workspace);
   win = createWindow();
   // Item 2 (voice input): the third teardown path — this window going away
