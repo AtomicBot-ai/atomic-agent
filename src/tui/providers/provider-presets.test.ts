@@ -83,6 +83,7 @@ describe("PROVIDER_PRESETS", () => {
     // See the admission bar in `provider-presets.ts`.
     const expected: Record<string, string> = {
       anthropic: "https://api.anthropic.com",
+      cheaperinference: "https://api.cheaperinference.com",
       dashscope: "https://dashscope-intl.aliyuncs.com/compatible-mode",
       hyperbolic: "https://api.hyperbolic.xyz",
       moonshot: "https://api.moonshot.ai",
