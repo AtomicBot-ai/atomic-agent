@@ -82,10 +82,21 @@ describe("turn recovery decisions and shared state", () => {
     const events: AgentLoopEvent[] = [];
     const result = recoverTurnStep(error, context({ finalizationStep: true, options: { maxSteps: 4, signal: controller.signal } }), { onEvent: (event) => events.push(event) }, turn);
     expect(result).toEqual({ kind: "failure", cancelled: true, category: "cancelled", runError: error, creditRefused: false });
-    expect(events).toEqual([{ type: "loop_failed", error, category: "cancelled" }]);
+    expect(events).toEqual([{ type: "loop_failed", error, category: "cancelled", outage: { waitedMs: 0, attempts: 0 } }]);
     expect(turn.stepsTaken).toBe(0);
     expect(turn.parseRecoveries).toBe(0);
     expect(turn.outageAttempts).toBe(0);
+  });
+
+  it("a turn that fails after parking reports the outage it waited out on loop_failed", async () => {
+    const turn = createTurnLoopState();
+    turn.outageWaitedMs = 12_000;
+    turn.outageAttempts = 3;
+    const events: AgentLoopEvent[] = [];
+    const error = new TransportError("fetch failed", null, "http://127.0.0.1:8080/v1");
+    const result = recoverTurnStep(error, context(), { onEvent: (event) => events.push(event) }, turn);
+    expect(result).toMatchObject({ kind: "failure", category: "transport" });
+    expect(events).toEqual([{ type: "loop_failed", error, category: "transport", outage: { waitedMs: 12_000, attempts: 3 } }]);
   });
 
   it("does not relabel an unclassified programming error as cancelled", async () => {

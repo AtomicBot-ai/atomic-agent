@@ -551,6 +551,7 @@ export function recoverTurnStep(
     type: "loop_failed",
     error: runError,
     category,
+    outage: { waitedMs: turn.outageWaitedMs, attempts: turn.outageAttempts },
   });
   deps.metrics?.recordLlmFailure({
     sessionId: state.id,

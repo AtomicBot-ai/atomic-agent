@@ -867,6 +867,37 @@ export function readRunningPid(
   return pid;
 }
 
+/** Liveness of the managed chat engine's recorded process. */
+export type ChatDaemonPidState = "alive" | "dead" | "no_pid";
+
+/**
+ * Whether the managed chat engine's recorded process is alive, for
+ * diagnostics: the Core session record's pid when there is one, else the
+ * pid file. A live process owned by another user counts as `alive`. Unlike
+ * `readRunningPid` this never deletes a stale record, so a failure report
+ * reading it cannot change engine state.
+ */
+export function readChatDaemonPidState(dataDir: string): ChatDaemonPidState {
+  const pid = readRecordedChatPid(dataDir);
+  if (pid === null) return "no_pid";
+  return classifyPidLiveness(pid) === "dead" ? "dead" : "alive";
+}
+
+function readRecordedChatPid(dataDir: string): number | null {
+  try {
+    const record = JSON.parse(readFileSync(coreSessionPath(dataDir, "chat"), "utf-8")) as { pid?: unknown };
+    if (Number.isInteger(record.pid) && (record.pid as number) > 0) return record.pid as number;
+  } catch {
+    /* no Core session record: fall back to the pid file */
+  }
+  try {
+    const pid = Number(readFileSync(resolvePidFilePath(dataDir), "utf-8").trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Thrown when a spawned llama-server never reached a healthy `/health`
  * within the deadline — the process crashed on startup or could not

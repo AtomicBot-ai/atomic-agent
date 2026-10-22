@@ -790,8 +790,15 @@ export type AgentLoopEvent =
    * Terminal failure for the turn. `category` follows the canonical
    * LLM-failure taxonomy (see `src/llm/reliability/`); downstream
    * consumers never need to classify the error themselves.
+   * `outage` is the provider-outage wait the turn had spent when it
+   * failed (zero when it never parked); error reporting tags it.
    */
-  | { type: "loop_failed"; error: Error; category: LlmFailureCategory }
+  | {
+      type: "loop_failed";
+      error: Error;
+      category: LlmFailureCategory;
+      outage?: { waitedMs: number; attempts: number };
+    }
   /**
    * The provider fallback chain changed the active provider for this
    * turn. `direction: "away"` = the primary was unreachable and we

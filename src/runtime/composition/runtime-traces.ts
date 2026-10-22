@@ -18,6 +18,7 @@ import {
   type TraceSink,
 } from "../../tracing/trace/index.js";
 import { captureError, type SentryClient } from "../../error-reporting/index.js";
+import { describeLlmFailure } from "./llm-failure-context.js";
 
 export function createRuntimeTraces(
   config: AtomicAgentConfig,
@@ -233,9 +234,12 @@ export function createRuntimeTraces(
         }
       }
       if (event.type === "loop_failed") {
-        captureError(getErrorReporter(), event.error, {
+        const reporter = getErrorReporter();
+        captureError(reporter, event.error, {
           source: "llm_failure",
           category: event.category,
+          // Only with reporting on: the engine probe reads state files.
+          ...(reporter ? { llmFailure: describeLlmFailure(event) } : {}),
         });
       }
       options.handlers?.onAgentEvent?.(event, ctx?.sessionId);
