@@ -26,6 +26,13 @@ with `cwd` set to the chosen workspace, waits for `/health`, and speaks HTTP to
 it. The port is ephemeral, the bind is loopback-only, and the bearer token is
 generated per launch, so nothing outside this app can reach the agent.
 
+Choosing another workspace restarts the agent in it, so it never happens
+under a running turn: the window keeps the picker shut while one of its chats
+is answering, and main checks again once the picker closes (a turn may have
+begun meanwhile in another chat, a scheduled task or a Telegram reply,
+`main/workspace-busy.ts`, ATO-733). Then the folder stays as it was and the
+window shows "Not while a turn is running".
+
 | Surface | Route |
 |---|---|
 | Liveness, llama-server reachability | `GET /health` |

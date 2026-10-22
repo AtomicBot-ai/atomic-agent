@@ -10606,6 +10606,12 @@ if (BR) {
    workspace must start a new chat rather than relabel that conversation. */
 function applyWorkspaceChoice(dir) {
   if (!dir) return;
+  /* ATO-733: a turn began while the picker was open, and main left the folder
+     and the agent as they were rather than cut it. */
+  if (typeof dir === 'object') {
+    if (dir.busy) restartRefusedToast(restartStopsTurn() || {here:false, title:'', elsewhere: dir.elsewhere ? 1 : 0});
+    return;
+  }
   const cloud = !!SK.workingDir;
   WORKSPACE = dir;
   if (cloud) act('session:new');
