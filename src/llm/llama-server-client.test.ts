@@ -11,6 +11,7 @@ import {
 } from "./llama-server-client.js";
 import type { CompletionResult } from "./llama-server-client.js";
 import { resetConfigCache } from "../config/config-cache.js";
+import { scrubError } from "../error-reporting/error-scrubber.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -573,6 +574,41 @@ describe("LlamaServerClient.complete", () => {
       message:
         "llama-server returned http 400: the request exceeds the available context size, try increasing it",
     });
+  });
+
+  it("keeps the body's reason code for error reporting, never the server's message (ATO-736)", async () => {
+    const reply = (type: string) =>
+      new LlamaServerClient({
+        baseUrl: "http://127.0.0.1:9999",
+        fetchImpl: createMockFetch(
+          async () =>
+            new Response(
+              JSON.stringify({ error: { code: 400, type, message: "request (5369 tokens) exceeds the context, user text here" } }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            ),
+        ),
+        completionRetries: 1,
+      });
+    const err = await reply("exceed_context_size_error").complete({ prompt: "hi" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect((err as LlamaServerError).body).toEqual({ type: "exceed_context_size_error" });
+    const event = scrubError(err as Error, { source: "test" });
+    expect(event.upstreamErrorType).toBe("exceed_context_size_error");
+    expect(JSON.stringify(event)).not.toContain("user text here");
+
+    // A sentence in `type` fails the reporter's strict pattern and is dropped.
+    const sentence = await reply("The user asked about their medical records").complete({ prompt: "hi" }).catch((e: unknown) => e);
+    expect(scrubError(sentence as Error, { source: "test" }).upstreamErrorType).toBeUndefined();
+  });
+
+  it("leaves body unset for a plain-text error answer", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => new Response("bad grammar", { status: 400 })),
+      completionRetries: 1,
+    });
+    const err = await client.complete({ prompt: "hi" }).catch((e: unknown) => e);
+    expect((err as LlamaServerError).body).toBeUndefined();
   });
 
   it("exhausts the retry budget and throws when all attempts fail", async () => {

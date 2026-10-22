@@ -332,9 +332,10 @@ export function extractSafeTransportHost(err: unknown): string | undefined {
  *
  * The walk takes the outermost link that has a `.body` at all rather than
  * looking for an `OpenAiHttpError` specifically — `extractSafeTransportHost`
- * reads `.url` the same duck-typed way. `OpenAiHttpError` is the only
- * class in this project that carries a `.body`, so there is nothing else
- * to shadow it today; a second one would have to be checked here.
+ * reads `.url` the same duck-typed way. `OpenAiHttpError` and
+ * `LlamaServerError` (which keeps only `{ type }` of a llama-server error
+ * body) are the classes in this project that carry a `.body`; a third one
+ * would have to be checked here.
  */
 export function extractSafeUpstreamErrorType(
   err: unknown,
