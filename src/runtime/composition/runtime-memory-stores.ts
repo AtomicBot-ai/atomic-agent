@@ -175,6 +175,9 @@ export async function attachConfiguredEmbeddings(args: {
   if (connection.state === "reachable") {
     try {
       const created = connection.createClient();
+      // Assigned before the attach, as the boot always did: a failed
+      // attach still hands the built client to the rewriter gate.
+      client = created;
       const embStore = new EmbeddingStore({
         db: notesStore.getDatabaseHandleForEmbeddings(),
       });
@@ -193,7 +196,6 @@ export async function attachConfiguredEmbeddings(args: {
         bruteForceCeiling: config.memory.embeddings.bruteForceCeiling,
         ...(connection.minCosine !== undefined ? { minCosine: connection.minCosine } : {}),
       });
-      client = created;
       health = "ok";
       if (config.memory.embeddings.backfill) {
         backfill = startEmbeddingBackfill({
