@@ -1287,7 +1287,7 @@ export async function runLocalModelsListEmbeddings(): Promise<number> {
   const st = await getEmbeddingDaemonStatus(dataDir, embPort);
   process.stdout.write(
     `\nembedding daemon: ${st.running ? `running (pid ${st.pid})` : "stopped"} on port ${st.port}, health: ${
-      st.healthy ? "ok" : st.loading ? "loading" : "down"
+      st.healthy ? "ok" : st.authMismatch ? "key rejected" : st.loading ? "loading" : "down"
     }\n`,
   );
   return 0;
