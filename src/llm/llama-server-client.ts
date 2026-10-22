@@ -1856,7 +1856,8 @@ function keyRefusedError(err: LlamaServerError): LlamaServerError {
     err.url,
     false,
     err.code,
-    { cause: err },
+    // Keep the server's reason code for the upstream_error_type tag.
+    { cause: err, ...(err.body !== undefined ? { body: err.body } : {}) },
   );
 }
 
