@@ -2635,11 +2635,22 @@ function item(m) {
 /** ATO-467: "Thought for 12 s" once this window timed the row, from its first
     reasoning frame to the turn's next frame of another kind (REASON_ENDS).
     A row still thinking, one under a second, and a reopened chat's rows (the
-    store keeps no times for reasoning) say "Reasoning", as before. */
+    store keeps no times for reasoning) say "Reasoning", as before.
+    ATO-820: a model that thinks again in the same row after its reply began
+    adds that span to `thoughtMs` (see reasonReopen), so the label is the sum
+    of every span and not only the first. */
 const REASON_ENDS = new Set(['delta', 'tool_progress', 'progress_note', 'reply_attachments', 'finish', 'done', 'aborted', 'error']);
 function reasonLabel(m) {
-  const ms = m.startedAt && m.endedAt ? m.endedAt - m.startedAt : 0;
+  if (!m.startedAt || !m.endedAt) return 'Reasoning';
+  const ms = (m.thoughtMs || 0) + (m.endedAt - m.startedAt);
   return ms >= 1000 ? 'Thought for ' + dur(ms) : 'Reasoning';
+}
+/** ATO-820: a closed reasoning row that gets more thinking banks its span and restarts the clock. */
+function reasonReopen(block, at) {
+  if (!block.startedAt || !block.endedAt) return;
+  block.thoughtMs = (block.thoughtMs || 0) + (block.endedAt - block.startedAt);
+  block.startedAt = at;
+  block.endedAt = null;
 }
 
 /* ============================================================
@@ -9540,7 +9551,7 @@ function onChatEvent(ev) {
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
       streamPaint('chat');   // a new row in the transcript
-    }
+    } else reasonReopen(block, ev.at || Date.now());
     block.text += text;
     // 13/14: one paint per frame for however many chunks arrive in it, and
     // only what the text reaches — see streamPaint.
