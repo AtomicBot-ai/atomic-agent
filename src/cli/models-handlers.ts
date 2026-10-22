@@ -492,7 +492,7 @@ export async function runLocalModelsStatus(): Promise<number> {
     modelLine = `${mid}  ${ok ? "✓ downloaded" : "✗ not downloaded"}`;
   }
   const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-  const health = st.healthy ? "ok" : st.loading ? "loading" : "down";
+  const health = st.healthy ? "ok" : st.authMismatch ? "key rejected" : st.loading ? "loading" : "down";
   process.stdout.write(`mode:           managed\n`);
   process.stdout.write(`data dir:       ${dataDir}\n`);
   process.stdout.write(
@@ -506,6 +506,11 @@ export async function runLocalModelsStatus(): Promise<number> {
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
   process.stdout.write(`health:         ${health}\n`);
+  if (st.authMismatch) {
+    process.stdout.write(
+      "note:           a model server answers on this port but rejects the running model's key, so every request would fail. Run 'atomic-agent models stop', then 'models start'.\n",
+    );
+  }
   if (st.coreOrphaned) {
     process.stdout.write(
       "note:           Atomic Chat's engine stopped unexpectedly; this model is still running without it. 'atomic-agent models stop' or 'models start' restarts the engine and cleans it up.\n",

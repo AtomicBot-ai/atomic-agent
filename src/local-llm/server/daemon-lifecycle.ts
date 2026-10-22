@@ -8,6 +8,7 @@ import {
   stopCoreEmbedding,
 } from "../core/core-embedding.js";
 import type { DownloadFileOptions } from "../downloads/download-file.js";
+import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
@@ -771,6 +772,13 @@ export interface DaemonStatus {
    * It still serves; the next start or stop restarts Core to reap it.
    */
   coreOrphaned?: boolean;
+  /**
+   * A server answers `/health` on the session's port but rejects the
+   * session's key (401/403 on the key-guarded `/props`): a stale or
+   * another llama-server holds the port. Never `healthy`; real requests
+   * would fail with 401. Only checked for Atomic Core sessions.
+   */
+  authMismatch?: boolean;
 }
 
 export async function probeLlamaHealth(
@@ -790,6 +798,31 @@ export async function probeLlamaHealth(
   } catch {
     return "down";
   }
+}
+
+/**
+ * `/health` answers without a key, so a stale or foreign llama-server on
+ * an Atomic Core session's port used to read healthy while every real
+ * request failed with 401. After a passing `/health`, ask the key-guarded
+ * `/props` with the session's own key (llama.cpp exempts `/v1/models`
+ * from `--api-key`, so that would prove nothing). Only an explicit
+ * 401/403 turns the verdict; any other answer keeps `/health`'s.
+ */
+async function probeCoreSessionHealth(
+  port: number,
+  apiKey: string,
+): Promise<Pick<DaemonStatus, "healthy" | "loading" | "authMismatch">> {
+  const health = await probeLlamaHealth(port);
+  if (health !== "ok") return { healthy: false, loading: health === "loading" };
+  const verdict = await verifyGuardedEndpoint(
+    { reachable: true, status: 200, kind: "llama-server", error: null, latencyMs: 0 },
+    `http://127.0.0.1:${port}`,
+    2000,
+    apiKey,
+  );
+  return verdict.kind === "llama-auth"
+    ? { healthy: false, loading: false, authMismatch: true }
+    : { healthy: true, loading: false };
 }
 
 /**
@@ -1303,13 +1336,11 @@ export async function getDaemonStatus(
   if (existsSync(coreSessionPath(dataDir, "chat"))) {
     const orphan = orphanedCoreSession(dataDir, "chat");
     if (orphan) {
-      const health = await probeLlamaHealth(orphan.port);
-      return { running: true, pid: orphan.pid, port: orphan.port, healthy: health === "ok", loading: health === "loading", coreOrphaned: true };
+      return { running: true, pid: orphan.pid, port: orphan.port, ...(await probeCoreSessionHealth(orphan.port, orphan.api_key)), coreOrphaned: true };
     }
     const session = await coreSessionStatus(dataDir, "chat");
-    const health = session ? await probeLlamaHealth(session.port) : "down";
-    return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,
-      healthy: session !== null && health === "ok", loading: session !== null && health === "loading" };
+    if (!session) return { running: false, pid: null, port, healthy: false, loading: false };
+    return { running: true, pid: session.pid, port: session.port, ...(await probeCoreSessionHealth(session.port, session.api_key)) };
   }
   const pid = readRunningPid(dataDir);
   const h = await probeLlamaHealth(port);
@@ -1659,13 +1690,11 @@ export async function getEmbeddingDaemonStatus(
   if (existsSync(coreSessionPath(dataDir, "embedding"))) {
     const orphan = orphanedCoreSession(dataDir, "embedding");
     if (orphan) {
-      const health = await probeLlamaHealth(orphan.port);
-      return { running: true, pid: orphan.pid, port: orphan.port, healthy: health === "ok", loading: health === "loading", coreOrphaned: true };
+      return { running: true, pid: orphan.pid, port: orphan.port, ...(await probeCoreSessionHealth(orphan.port, orphan.api_key)), coreOrphaned: true };
     }
     const session = await coreSessionStatus(dataDir, "embedding");
-    const health = session ? await probeLlamaHealth(session.port) : "down";
-    return { running: session !== null, pid: session?.pid ?? null, port: session?.port ?? port,
-      healthy: session !== null && health === "ok", loading: session !== null && health === "loading" };
+    if (!session) return { running: false, pid: null, port, healthy: false, loading: false };
+    return { running: true, pid: session.pid, port: session.port, ...(await probeCoreSessionHealth(session.port, session.api_key)) };
   }
   const pid = readRunningPid(dataDir, "embedding");
   const h = await probeLlamaHealth(port);
