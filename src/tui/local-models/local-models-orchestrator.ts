@@ -174,6 +174,13 @@ export interface LocalModelsOrchestratorHooks {
   /** Fired after a successful chat daemon (re)start for the active model. */
   onManagedDaemonRestarted?: () => void;
   /**
+   * Fired after the operator changed which embedding model memory should
+   * use (picked, pulled, removed, turned on or off) and the daemon side
+   * has settled. The runtime reattaches memory to the configured model
+   * here instead of at the next restart (ATO-351).
+   */
+  onEmbeddingModelChanged?: () => void;
+  /**
    * The managed chat port moved because another process holds the
    * configured one (already persisted): rebuild the route's provider and
    * point the health poller at `url`.
@@ -2733,6 +2740,7 @@ export class LocalModelsOrchestrator {
         line: `local-llm: embedding model ${def.name} ready`,
       });
       await this.startEmbeddingDaemonAfterPull(def);
+      this.hooks?.onEmbeddingModelChanged?.();
       removeDownloadJob(dataDir, downloadJobId("embedding", id));
     } catch (e) {
       if (isAbortError(e)) return;
@@ -2768,6 +2776,9 @@ export class LocalModelsOrchestrator {
         line: `local-llm: embedding ${def.name} selected (Enter to pull)`,
       });
       await this.refresh();
+      // Embeddings are off until the pull: memory stops writing vectors
+      // for the previous model now.
+      this.hooks?.onEmbeddingModelChanged?.();
       return;
     }
     persistEmbeddingHybridRecall({ enabled: true, modelId: id });
@@ -2777,6 +2788,9 @@ export class LocalModelsOrchestrator {
     });
     await this.refresh();
     await this.startEmbeddingPairing();
+    // After the hot swap, so the runtime probes the daemon that now
+    // serves the new model, not the one being replaced.
+    this.hooks?.onEmbeddingModelChanged?.();
   }
 
   /**
@@ -2856,6 +2870,7 @@ export class LocalModelsOrchestrator {
       await this.ensureEmbeddingPaired();
       await this.refresh();
     }
+    this.hooks?.onEmbeddingModelChanged?.();
   }
 
   async disableEmbedding(): Promise<void> {
@@ -2879,6 +2894,7 @@ export class LocalModelsOrchestrator {
     });
     await this.ensureEmbeddingPaired();
     await this.refresh();
+    this.hooks?.onEmbeddingModelChanged?.();
   }
 
   /**
@@ -2942,6 +2958,7 @@ export class LocalModelsOrchestrator {
       });
     } finally {
       await this.refresh();
+      this.hooks?.onEmbeddingModelChanged?.();
     }
   }
 
