@@ -1902,7 +1902,7 @@ const S = {
   consoleOpen:false, consoleTab:'agent',
   settings:null, settingsPane:'general',
   overlay:null, menuOpen:null, alert:null,
-  q:'', cur:0, scope:null,
+  q:'', cur:0, scope:null, palMoreFor:null,
   slash:false, slashCur:0,
   draft:'',
   localModel:'qwen3-8b-instruct', cloudModel:'claude-opus-5', modelQuery:'',
@@ -4390,6 +4390,8 @@ const SCOPES = {
   // Item 7: the prototype's Task scope is gone — nothing targeted scope:task, and the Tasks tab is the one surface.
 };
 
+/* ATO-824: the chats a search shows before its "N more chats" row. */
+const PAL_CHATS_SHOWN = 5;
 function palRows() {
   if (S.scope) return SCOPES[S.scope].rows.map((r) => ({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}));
   const q = S.q.trim().toLowerCase();
@@ -4409,11 +4411,20 @@ function palRows() {
   };
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
   // cross-entity. ATO-453: chats used to stop at three title matches, so with many
-  // similar chats the one you wanted never showed. Now up to 20 (the list scrolls),
-  // ranked like the commands above; ties keep the agent's order, most recent first.
-  SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
-    .sort((a, b) => a.k - b.k || a.i - b.i).slice(0, 20).map((x) => x.s)
+  // similar chats the one you wanted never showed. They are ranked like the commands
+  // above; ties keep the agent's order, most recent first.
+  // ATO-824 (owner, 22.10): the first PAL_CHATS_SHOWN, then one "N more chats" row,
+  // then tasks and skills, which up to 20 chats pushed out of sight. The row shows
+  // every matching chat for this query in place (palMoreChats).
+  const chats = SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
+    .sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.s);
+  const allChats = S.palMoreFor === q || chats.length <= PAL_CHATS_SHOWN + 1;
+  (allChats ? chats : chats.slice(0, PAL_CHATS_SHOWN))
     .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
+  if (!allChats) {
+    const more = chats.length - PAL_CHATS_SHOWN;
+    hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
+  }
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
@@ -5981,7 +5992,7 @@ function act(a) {
   const colon = a.indexOf(':');
   const k = colon < 0 ? a : a.slice(0, colon);
   const v = colon < 0 ? undefined : a.slice(colon + 1);
-  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
+  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.palMoreFor = null; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
   /* ATO-165: the chat row's menu is a pick-one menu — whatever verb runs next
      (one of its own items, or anything else) takes it down first. */
   /* Its layer is repainted on the spot: a pick whose own branch repaints only
@@ -8018,9 +8029,17 @@ function flatPalRows() {
 function activatePal(i) {
   const rows = flatPalRows();
   const r = rows[i]; if (!r) return;
+  if (r.more) { palMoreChats(); return; }
   ANX.via('palette');
   if (r.act && r.act.startsWith('scope:')) { act(r.act); return; }
   act(r.act);
+}
+/* ATO-824: "N more chats" opens the rest of this query's chats in place. The
+   palette stays open and the highlight stays on the row it was on, now the
+   sixth chat; a different query starts folded again. */
+function palMoreChats() {
+  S.palMoreFor = S.q.trim().toLowerCase();
+  refreshPalette();
 }
 function acceptSlash(name) {
   S.draft = '/' + name + ' ';
