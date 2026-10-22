@@ -174,6 +174,17 @@ export interface CreateAgentRuntimeOptions {
 }
 
 
+/** Where memory's embedding attachment stands after `reconnectMemoryEmbeddings`. */
+export interface MemoryEmbeddingReconnect {
+  health: "ok" | "unreachable" | "disabled";
+  /** The configured catalog model, `null` when embeddings are off. */
+  modelId: string | null;
+  /** Why the model is not attached, when `health` is `unreachable`. */
+  why?: string;
+  /** `false` when memory already used this model and nothing was reattached. */
+  changed?: boolean;
+}
+
 export interface AgentRuntime {
   readonly config: AtomicAgentConfig;
   readonly loop: AgentLoop;
@@ -495,6 +506,17 @@ export interface AgentRuntime {
    * Never throws; a failed probe keeps the prior profile.
    */
   refreshLocalModelProfile(): Promise<void>;
+  /**
+   * Reattach memory to the embedding model the config names now (ATO-351).
+   * The TUI calls it after the operator picks, pulls or toggles an
+   * embedding model, and after a managed daemon restart. A no-op when
+   * memory already embeds with that model. Otherwise it stops the
+   * backfill, detaches, probes the new model and attaches it (with a
+   * backfill for notes it has no vector for), or stays on keyword recall
+   * when it does not answer. Never throws. Optional so test doubles and
+   * older hosts need not implement it.
+   */
+  reconnectMemoryEmbeddings?(): Promise<MemoryEmbeddingReconnect>;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to

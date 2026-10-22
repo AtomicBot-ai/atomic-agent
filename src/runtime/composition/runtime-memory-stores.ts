@@ -79,61 +79,18 @@ export async function createRuntimeMemoryStores(args: {
   // the model, and probes it with a short timeout (`memory reindex`
   // reaches the model the same way). Daemon down ⇒ FTS5-only (logged +
   // counted, not a failure — runtime keeps booting). We never throw.
-  let embeddingHealth: "ok" | "unreachable" | "disabled" = "disabled";
-  let embeddingClient: EmbeddingClient | null = null;
-  let embeddingBackfill: EmbeddingBackfillHandle | null = null;
-  const connection = await connectMemoryEmbeddings(config);
-  if (connection.state === "reachable") {
-    try {
-      const client = connection.createClient();
-      embeddingClient = client;
-      const embStore = new EmbeddingStore({
-        db: notesStore.getDatabaseHandleForEmbeddings(),
-      });
-      const writer = new EmbeddingWriter({
-        client,
-        store: embStore,
-        metrics,
-      });
-      notesStore.attachEmbeddings({
-        writer,
-        store: embStore,
-        // Parsed from config but, before ATO-366, never passed on: recall
-        // ran with the store's built-in weights and ceiling.
-        fts5Weight: config.memory.embeddings.fts5Weight,
-        vectorWeight: config.memory.embeddings.vectorWeight,
-        bruteForceCeiling: config.memory.embeddings.bruteForceCeiling,
-        ...(connection.minCosine !== undefined ? { minCosine: connection.minCosine } : {}),
-      });
-      embeddingHealth = "ok";
-      if (config.memory.embeddings.backfill) {
-        embeddingBackfill = startEmbeddingBackfill({
-          db: notesStore.getDatabaseHandleForEmbeddings(),
-          writer,
-          ...(logger ? { logger } : {}),
-        });
-      }
-    } catch (e) {
-      // Construction errors here are pure programmer error
-      // (constructor validation): log + degrade, never throw.
-      process.stderr.write(
-        `memory-v2 phase 1B: failed to wire embedding client: ${
-          e instanceof Error ? e.message : String(e)
-        }\n`,
-      );
-      embeddingHealth = "unreachable";
-    }
-  } else if (connection.state === "unreachable") {
-    embeddingHealth = "unreachable";
+  const attached = await attachConfiguredEmbeddings({ notesStore, config, metrics, ...(logger ? { logger } : {}) });
+  if (attached.failure?.kind === "wire") {
+    // Construction errors here are pure programmer error
+    // (constructor validation): log + degrade, never throw.
+    process.stderr.write(`memory-v2 phase 1B: failed to wire embedding client: ${attached.failure.message}\n`);
+  } else if (attached.failure?.kind === "unreachable") {
     process.stderr.write(
-      `memory-v2 phase 1B: ${connection.why}; ` +
+      `memory-v2 phase 1B: ${attached.failure.message}; ` +
         `hybrid recall disabled, FTS5-only path active.\n`,
     );
   }
-  metrics.recordMemoryEmbeddingsDaemonHealth({
-    outcome: embeddingHealth,
-    model: connection.state === "disabled" ? null : connection.modelId,
-  });
+  const { health: embeddingHealth, client: embeddingClient, backfill: embeddingBackfill } = attached;
 
   // Memory-v2 phase 2. The link graph store rides the same memory.sqlite
   // handle as `notesStore` — `MemoryStore` already enabled
@@ -182,6 +139,82 @@ export async function createRuntimeMemoryStores(args: {
       })
     : null;
   return { profileStore, notesStore, embeddingHealth, embeddingClient, linkStore, lessonStore, procedureStore, voteStore, embeddingBackfill };
+}
+
+/** What `attachConfiguredEmbeddings` wired, or why it did not. */
+export interface AttachedMemoryEmbeddings {
+  health: "ok" | "unreachable" | "disabled";
+  /** The configured catalog model, `null` when embeddings are off. */
+  modelId: string | null;
+  client: EmbeddingClient | null;
+  backfill: EmbeddingBackfillHandle | null;
+  /** `wire`: the client could not be built; `unreachable`: the model did not answer the probe. */
+  failure: { kind: "wire" | "unreachable"; message: string } | null;
+}
+
+/**
+ * Connect `notesStore` to the embedding model `config` names: probe it,
+ * build the client, attach writer and store, and start the background
+ * backfill of notes that model has no vector for. The boot and a live
+ * model switch (`createMemoryEmbeddingSwitch`) both come through here.
+ * Never throws and writes nothing to stderr; the caller reports
+ * `failure` in its own medium.
+ */
+export async function attachConfiguredEmbeddings(args: {
+  notesStore: Pick<MemoryStore, "attachEmbeddings" | "getDatabaseHandleForEmbeddings">;
+  config: Pick<AtomicAgentConfig, "paths" | "memory" | "localModels">;
+  metrics: AgentMetrics;
+  logger?: Pick<StructuredLogger, "info">;
+}): Promise<AttachedMemoryEmbeddings> {
+  const { notesStore, config, metrics, logger } = args;
+  let health: AttachedMemoryEmbeddings["health"] = "disabled";
+  let client: EmbeddingClient | null = null;
+  let backfill: EmbeddingBackfillHandle | null = null;
+  let failure: AttachedMemoryEmbeddings["failure"] = null;
+  const connection = await connectMemoryEmbeddings(config);
+  if (connection.state === "reachable") {
+    try {
+      const created = connection.createClient();
+      // Assigned before the attach, as the boot always did: a failed
+      // attach still hands the built client to the rewriter gate.
+      client = created;
+      const embStore = new EmbeddingStore({
+        db: notesStore.getDatabaseHandleForEmbeddings(),
+      });
+      const writer = new EmbeddingWriter({
+        client: created,
+        store: embStore,
+        metrics,
+      });
+      notesStore.attachEmbeddings({
+        writer,
+        store: embStore,
+        // Parsed from config but, before ATO-366, never passed on: recall
+        // ran with the store's built-in weights and ceiling.
+        fts5Weight: config.memory.embeddings.fts5Weight,
+        vectorWeight: config.memory.embeddings.vectorWeight,
+        bruteForceCeiling: config.memory.embeddings.bruteForceCeiling,
+        ...(connection.minCosine !== undefined ? { minCosine: connection.minCosine } : {}),
+      });
+      health = "ok";
+      if (config.memory.embeddings.backfill) {
+        backfill = startEmbeddingBackfill({
+          db: notesStore.getDatabaseHandleForEmbeddings(),
+          writer,
+          ...(logger ? { logger } : {}),
+        });
+      }
+    } catch (e) {
+      failure = { kind: "wire", message: e instanceof Error ? e.message : String(e) };
+      health = "unreachable";
+    }
+  } else if (connection.state === "unreachable") {
+    health = "unreachable";
+    failure = { kind: "unreachable", message: connection.why };
+  }
+  const modelId = connection.state === "disabled" ? null : connection.modelId;
+  metrics.recordMemoryEmbeddingsDaemonHealth({ outcome: health, model: modelId });
+  return { health, modelId, client, backfill, failure };
 }
 
 export interface EmbeddingBackfillHandle {
