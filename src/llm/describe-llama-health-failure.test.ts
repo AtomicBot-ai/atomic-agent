@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeLlamaHealthFailure,
   looksLikeOllamaUrl,
+  managedPortsOf,
 } from "./describe-llama-health-failure.js";
 import type { HealthResult } from "./llama-server-health.js";
 
@@ -93,6 +94,38 @@ describe("describeLlamaHealthFailure", () => {
     expect(line).toContain("ATOMIC_AGENT_LLAMA_API_KEY");
     expect(line).toContain("llama-server.key");
     expect(line).toContain("http 401");
+  });
+
+  it("tells a 401 from our own engine to use Local models, not to set a key", () => {
+    const auth = result({
+      kind: "llama-auth",
+      status: 401,
+      error: "http 401 — the server requires an API key (--api-key)",
+    });
+    const line = describeLlamaHealthFailure(auth, "http://127.0.0.1:19091", [19091, 19092]);
+    expect(line).toContain("http 401");
+    expect(line).toContain("Local models");
+    expect(line).toContain("restart the app");
+    expect(line).not.toContain("llama-server.key");
+    expect(line).not.toContain("ATOMIC_AGENT_LLAMA_API_KEY");
+    expect(line).not.toContain("--api-key");
+    expect(line).not.toContain("—");
+  });
+
+  it("keeps the key advice for a server on another port or host", () => {
+    const auth = result({ kind: "llama-auth", status: 401, error: "http 401" });
+    for (const url of ["http://127.0.0.1:8080", "http://192.168.1.5:19091"]) {
+      const line = describeLlamaHealthFailure(auth, url, [19091]);
+      expect(line).toContain("ATOMIC_AGENT_LLAMA_API_KEY");
+      expect(line).toContain("llama-server.key");
+    }
+  });
+
+  it("reads the managed ports off localModels", () => {
+    expect(managedPortsOf({ managed: { port: 19091 }, embeddings: { port: 19092 } })).toEqual([
+      19091, 19092,
+    ]);
+    expect(managedPortsOf({})).toEqual([]);
   });
 
   it("falls back to the raw error with the probed URL", () => {

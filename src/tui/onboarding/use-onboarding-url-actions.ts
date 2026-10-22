@@ -1,5 +1,9 @@
 import { useCallback } from "react";
-import { describeLlamaHealthFailure } from "../../llm/describe-llama-health-failure.js";
+import { getConfig } from "../../config/index.js";
+import {
+  describeLlamaHealthFailure,
+  managedPortsOf,
+} from "../../llm/describe-llama-health-failure.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import type {
   OnboardingOutcome,
@@ -51,7 +55,7 @@ export function useOnboardingUrlActions(args: {
         if (!health.reachable) {
           dispatch({
             type: "onboarding_error_set",
-            error: describeLlamaHealthFailure(health, base),
+            error: describeLlamaHealthFailure(health, base, managedPortsOf(getConfig().localModels)),
           });
           return;
         }
@@ -96,7 +100,7 @@ export function useOnboardingUrlActions(args: {
         if (!health.reachable) {
           dispatch({
             type: "onboarding_error_set",
-            error: describeLlamaHealthFailure(health, embeddingUrl),
+            error: describeLlamaHealthFailure(health, embeddingUrl, managedPortsOf(getConfig().localModels)),
           });
           return;
         }

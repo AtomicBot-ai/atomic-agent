@@ -10,7 +10,10 @@ import {
   type WhileBusySubmitMode,
 } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
-import { describeLlamaHealthFailure } from "../llm/describe-llama-health-failure.js";
+import {
+  describeLlamaHealthFailure,
+  managedPortsOf,
+} from "../llm/describe-llama-health-failure.js";
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import { getAppVersion } from "../version.js";
 import type { TuiAction } from "./tui-action.js";
@@ -1112,7 +1115,13 @@ function persistLlamaUrl(
         verifyAuth: true,
       });
       if (!health.reachable) {
-        report(describeLlamaHealthFailure(health, nextUrl));
+        report(
+          describeLlamaHealthFailure(
+            health,
+            nextUrl,
+            managedPortsOf(getConfig().localModels),
+          ),
+        );
         // An openai-compat verdict has a real path forward — the same
         // server saved as a cloud provider — so beyond naming it, open
         // the steer prompt: `y` there deep-links into the provider
