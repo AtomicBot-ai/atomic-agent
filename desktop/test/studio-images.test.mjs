@@ -221,6 +221,27 @@ test('non-commercial and 18+ models are labelled, never dropped', () => {
   assert.equal(L.simgModels(cat).length, 2);
 });
 
+test('the model row names the maker as the maker writes it (ATO-831)', () => {
+  assert.equal(L.simgModelMeta(cloudModel({id: 'openai/gpt-image-1', group: 'cloud'})), 'OpenAI · via OpenRouter');
+  assert.equal(L.simgModelMeta(cloudModel({id: 'black-forest-labs/flux-1.1-pro', group: 'cloud'})), 'Black Forest Labs · via OpenRouter');
+  assert.equal(L.simgMaker('bytedance'), 'ByteDance');
+  assert.equal(L.simgMaker('google'), 'Google');
+  assert.equal(L.simgMaker('some-new-lab'), 'Some New Lab');
+});
+
+test('each shape tile is drawn from its ratio; "auto" gets no box (ATO-831)', () => {
+  const key = (r) => L.simgRatioBox(r).join('x');
+  for (const [a, b] of [['1:4', '1:8'], ['2:3', '3:4'], ['3:2', '5:4'], ['16:9', '21:9']]) assert.notEqual(key(a), key(b), a + ' vs ' + b);
+  assert.deepEqual(L.simgRatioBox('1:1'), [22, 22]);
+  assert.equal(Math.max(...L.simgRatioBox('9:16')), 22);
+  assert.equal(L.simgRatioBox('auto'), null);
+});
+
+test('the hint line link is styled as a link inside the Studio page (ATO-831)', () => {
+  const css = readFileSync(new URL('../renderer/css/studio.css', import.meta.url), 'utf8');
+  assert.match(css, /\.studio \.st-link\{color:var\(--accent\)/);
+});
+
 test('gallery ids group by job', () => {
   assert.equal(simgJobOf('abc-def-01'), 'abc-def');
 });

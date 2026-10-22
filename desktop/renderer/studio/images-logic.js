@@ -111,12 +111,14 @@ function simgRatios(model) {
   return [];
 }
 
-/** A tile's little frame, its longer side 20px. */
+/** A tile's little frame drawn from the ratio, its longer side 22px (a thin side
+    never under 4px); null for a value that is not a ratio ("auto"), which gets an icon. */
 function simgRatioBox(ratio) {
-  const r = SIMG_RATIO[ratio] || String(ratio).split(':').map(Number);
-  const w = Number(r[0]) || 1, h = Number(r[1]) || 1;
-  const k = 20 / Math.max(w, h);
-  return [Math.max(8, Math.round(w * k)), Math.max(8, Math.round(h * k))];
+  const m = SIMG_RATIO[ratio] || (String(ratio).match(/^(\d+(?:\.\d+)?)\s*[:x]\s*(\d+(?:\.\d+)?)$/) || []).slice(1).map(Number);
+  const w = Number(m[0]), h = Number(m[1]);
+  if (!(w > 0 && h > 0)) return null;
+  const k = 22 / Math.max(w, h);
+  return [Math.max(4, Math.round(w * k)), Math.max(4, Math.round(h * k))];
 }
 
 /** Width and height for a range-size model at a ratio, about the model's default area, on its multiple. */
@@ -312,8 +314,19 @@ function simgModelMeta(model) {
     const dev = model.local && model.local.developer;
     return (dev ? dev + ' · ' : '') + 'On this Mac';
   }
-  const maker = String(model.id || '').split('/')[0];
-  return (maker ? maker.charAt(0).toUpperCase() + maker.slice(1) + ' · ' : '') + 'via OpenRouter';
+  const maker = simgMaker(String(model.id || '').split('/')[0]);
+  return (maker ? maker + ' · ' : '') + 'via OpenRouter';
+}
+
+/** OpenRouter's maker slug as the maker's own name; other slugs word by word. */
+const SIMG_MAKERS = {
+  openai: 'OpenAI', google: 'Google', 'black-forest-labs': 'Black Forest Labs', bytedance: 'ByteDance',
+  'bytedance-seed': 'ByteDance', 'x-ai': 'xAI', stabilityai: 'Stability AI', 'stability-ai': 'Stability AI',
+  recraft: 'Recraft', ideogram: 'Ideogram', qwen: 'Qwen', 'z-ai': 'Z.ai', minimax: 'MiniMax', 'meta-llama': 'Meta',
+};
+function simgMaker(slug) {
+  if (!slug) return '';
+  return SIMG_MAKERS[slug] || slug.split(/[-_]/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
 /** The labels a model carries: Non-commercial and 18+ are shown, never hidden. */
@@ -348,6 +361,6 @@ function simgModesLine(model) {
 if (typeof module !== 'undefined') {
   module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
-    simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgModelTags,
+    simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER};
 }

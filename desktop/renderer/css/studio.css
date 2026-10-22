@@ -58,8 +58,9 @@
 .st-ta:focus,.st-inp:focus{border-color:color-mix(in srgb,var(--brand) 55%,transparent);box-shadow:var(--focus-ring)}
 .st-hint{font-size:12px;color:var(--ink-3);margin-top:7px;display:flex;gap:6px;align-items:flex-start}
 .st-hint svg{width:14px;height:14px;margin-top:1px}
-.st-link{color:var(--accent);background:none;border:0;padding:0;font-size:12px;cursor:pointer}
-.st-link:hover{text-decoration:underline}
+/* `.studio .st-link`: `.studio button{color:inherit}` above outranks a bare class and made the link grey body text. */
+.studio .st-link{color:var(--accent);background:none;border:0;padding:0;font-size:12px;font-weight:500;cursor:pointer;text-decoration:underline;text-underline-offset:2px;text-decoration-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.studio .st-link:hover{text-decoration-color:currentColor}
 .st-seg{display:flex;gap:2px;padding:3px;border-radius:var(--r-pill);background:var(--well)}
 .st-seg button{flex:1;height:30px;padding:0 12px;border:0;border-radius:var(--r-pill);background:transparent;font-size:12.5px;color:var(--ink-2);white-space:nowrap;cursor:pointer}
 .st-seg button.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-card);font-weight:600}
