@@ -421,6 +421,11 @@ describe("POST /v1/chat/completions (streaming)", () => {
       expect(last.usage.prompt_tokens).toBeGreaterThan(0);
       expect(last.usage.completion_tokens).toBeGreaterThan(0);
       expect(last.usage.total_tokens).toBe(last.usage.prompt_tokens + last.usage.completion_tokens);
+      // As OpenAI does: every chunk before the usage chunk carries `usage: null`.
+      const earlier = frames.slice(0, -2).map((frame) => JSON.parse(frame) as { object?: string; usage?: unknown })
+        .filter((frame) => frame.object === "chat.completion.chunk");
+      expect(earlier.length).toBeGreaterThan(0);
+      for (const frame of earlier) expect(frame.usage).toBeNull();
     } finally {
       await harness.cleanup();
     }

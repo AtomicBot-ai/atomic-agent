@@ -108,6 +108,14 @@ export function createChatCompletionsHandler(): HttpHandler {
   };
 }
 
+/**
+ * With `stream_options.include_usage`, OpenAI puts `usage: null` on every
+ * chunk before the final usage chunk; without it, chunks carry no field.
+ */
+function nullUsage(env: TurnEnv): { usage?: null } {
+  return env.request.includeUsage ? { usage: null } : {};
+}
+
 interface TurnEnv {
   request: ParsedRequest;
   completionId: string;
@@ -234,6 +242,7 @@ async function handleStream(
       created: env.created,
       model: env.request.model,
       delta: { role: "assistant" },
+      ...nullUsage(env),
     }),
   );
   if (env.request.extensionsEnabled) {
@@ -285,6 +294,7 @@ async function handleStream(
         created: env.created,
         model: env.request.model,
         finishReason: "stop",
+        ...nullUsage(env),
       }),
     );
     sse.writeRaw("data: [DONE]\n\n");
@@ -325,6 +335,7 @@ async function handleStream(
       created: env.created,
       model: env.request.model,
       finishReason: final.finish_reason === "length" ? "length" : "stop",
+      ...nullUsage(env),
     }),
   );
   if (env.request.includeUsage) {
@@ -396,6 +407,7 @@ export function buildStreamEventHook(
         created: env.created,
         model: env.request.model,
         delta: { content },
+        ...nullUsage(env),
       }),
     );
   };

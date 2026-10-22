@@ -29,7 +29,11 @@ export interface StreamChunkInput {
   model: string;
   delta?: ChatChoiceDelta;
   finishReason?: "stop" | "length" | "cancelled" | null;
-  usage?: UsagePayload;
+  /**
+   * `null` when the request set `stream_options.include_usage`: OpenAI
+   * then sends `usage: null` on every chunk before the usage chunk.
+   */
+  usage?: UsagePayload | null;
   extra?: Record<string, unknown>;
 }
 
@@ -43,7 +47,7 @@ export interface StreamChunk {
     delta: ChatChoiceDelta;
     finish_reason: "stop" | "length" | "cancelled" | null;
   }>;
-  usage?: UsagePayload;
+  usage?: UsagePayload | null;
   [key: string]: unknown;
 }
 
@@ -67,7 +71,7 @@ export function buildStreamChunk(input: StreamChunkInput): StreamChunk {
       },
     ],
   };
-  if (input.usage) chunk.usage = input.usage;
+  if (input.usage !== undefined) chunk.usage = input.usage;
   if (input.extra) Object.assign(chunk, input.extra);
   return chunk;
 }
