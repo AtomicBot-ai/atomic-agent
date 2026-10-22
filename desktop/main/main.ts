@@ -9575,8 +9575,13 @@ async function claimDesktopPorts(): Promise<void> {
  * without being touched, and when.
  */
 async function firstRunProbe(): Promise<void> {
-  const js = <T,>(code: string): Promise<T> =>
-    (win?.webContents.executeJavaScript(code) as Promise<T>) ?? Promise.resolve(null as unknown as T);
+  /* Each read is bounded: a page that never answers (still loading, or busy)
+     must not keep the probe from reporting and exiting. The loops below
+     retry on the throw, and their deadlines then end them. */
+  const js = <T,>(code: string): Promise<T> => {
+    const read = (win?.webContents.executeJavaScript(code) as Promise<T>) ?? Promise.resolve(null as unknown as T);
+    return Promise.race([read, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("no answer in 5 s")), 5_000))]);
+  };
   type FirstRun = { fresh: boolean; stateDir: string; tuiStateDir: string; tuiSetupFound: boolean } | null;
   let fr: FirstRun = null;
   let title = "";
