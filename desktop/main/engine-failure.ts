@@ -103,13 +103,13 @@ const WHY: Record<EngineFailureStage, string> = {
    NOT_RETRYABLE; core-install.ts, core-backend.ts, platform-assets.ts). An
    agent from after this change prints these without the retry hint; an
    older one prints the hint anyway, so the wording decides, not the hint. */
-const NOT_RETRYABLE: ReadonlyArray<[RegExp, Exclude<EngineFailureReason, "incomplete">]> = [
+const NOT_RETRYABLE: ReadonlyArray<[RegExp, Exclude<EngineFailureReason, "incomplete" | "load">]> = [
   [/\bENOSPC\b|\bEDQUOT\b|\bEROFS\b|no space left|not enough (?:free )?(?:disk )?space|disk (?:is )?full|read-only file system/i, "disk"],
   [/Atomic Core does not support \S+|Local models are not available yet for Windows on ARM/i, "unsupported"],
   [/does not match its release version|is not supported by this Agent build/i, "version"],
   [/found no compatible inference backend/i, "no_backend"],
 ];
-const WHY_NOT_RETRYABLE: Record<Exclude<EngineFailureReason, "incomplete">, string> = {
+const WHY_NOT_RETRYABLE: Record<Exclude<EngineFailureReason, "incomplete" | "load">, string> = {
   disk: "There is not enough free disk space for the local engine. Free some space, then start the model again.",
   unsupported: "The local engine does not run on this computer yet. Cloud models still work.",
   version: "The local engine does not match this version of the app. Update the app to fix it.",
