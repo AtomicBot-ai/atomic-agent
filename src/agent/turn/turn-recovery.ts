@@ -162,6 +162,12 @@ export function recoverTurnStep(
           ? turn.truncationRetry.original
           : runError,
       ...(retryCap !== undefined ? { maxTokens: retryCap } : {}),
+      // A held cap is one the provider already accepted: a size refusal
+      // of the retry is about the prompt, and the repack below may run.
+      ...(retry.kind === "raise_cap" ||
+      (retryCap !== undefined && detail.requestedMaxTokens === undefined)
+        ? { raised: true as const }
+        : {}),
     };
     turn.truncationRetries += 1;
     if (retry.kind === "fit_window") {
@@ -382,7 +388,7 @@ export function recoverTurnStep(
         alreadyRetried: turn.sizeRepackRetry?.stepIndex === i,
         raisedCapRefused:
           turn.truncationRetry?.stepIndex === i &&
-          turn.truncationRetry.maxTokens !== undefined,
+          turn.truncationRetry.raised === true,
         transport: effectiveTransport,
         promptTokens: turn.lastPromptTokens,
         contextWindow: deps.contextWindow?.() ?? null,
@@ -532,6 +538,7 @@ export function recoverTurnStep(
   // with the truncation that started it, which names the knob.
   if (
     turn.truncationRetry?.stepIndex === i &&
+    turn.truncationRetry.raised === true &&
     turn.truncationRetry.maxTokens !== undefined &&
     isRequestSizeRejection(err)
   ) {

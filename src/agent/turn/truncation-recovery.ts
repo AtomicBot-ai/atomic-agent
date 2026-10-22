@@ -27,8 +27,10 @@ import type { TruncationDetail } from "../../llm/index.js";
  *    bigger cap on a looping small model is minutes of more loop, so it
  *    stays. A cap already at the ceiling also stays.
  *
- * `TRUNCATION_RETRY_TURN_BUDGET` bounds the retries of a whole turn, so
- * a model that is cut on every step still ends the turn.
+ * `TRUNCATION_RETRY_TURN_BUDGET` bounds the retries of back-to-back cut
+ * steps, so a model that is cut on every step still ends the turn; a
+ * step that completes without a cut resets it (`AgentLoop`), so a long
+ * task with a cut here and there is never failed for its total.
  */
 
 /** Multiplier on the cap a truncated local reply spent (raised once per step). */
@@ -43,7 +45,7 @@ export const TRUNCATION_RETRY_CAP_CEILING = 32_768;
 /** Retries one step may take on a cloud model; a local step gets one. */
 export const TRUNCATION_RETRY_STEP_BUDGET = 2;
 
-/** Retries one turn may take across all its steps. */
+/** Retries back-to-back cut steps may take before the next cut fails the turn. */
 export const TRUNCATION_RETRY_TURN_BUDGET = 6;
 
 /**
@@ -67,7 +69,7 @@ export interface PlanTruncationRetryInput {
   error: unknown;
   /** Truncation retries this step index already took. */
   stepAttempts: number;
-  /** Truncation retries the whole turn already took. */
+  /** Truncation retries taken since the last step that completed without a cut. */
   turnAttempts: number;
   /** The model mode serving the step; legacy wiring without one reads as `local`. */
   modelMode: "local" | "cloud";

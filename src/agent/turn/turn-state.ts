@@ -41,10 +41,18 @@ export interface TurnLoopState {
     /** Retries this step index has taken; a new step index starts at 1. */
     attempts: number;
     maxTokens?: number;
+    /**
+     * The retry sends a cap above the one the cut request carried (or a
+     * cap where it carried none), so a size refusal of it is the cap's.
+     */
+    raised?: true;
     /** The truncation that started the retry, for the message if the retry is refused. */
     original: Error;
   } | null;
-  /** Truncation retries this turn has taken, across steps. */
+  /**
+   * Truncation retries taken by back-to-back steps that each needed one;
+   * a step that completes without a cut resets it.
+   */
   truncationRetries: number;
   /** The step index already retried after a request-size refusal. */
   sizeRepackRetry: { stepIndex: number } | null;

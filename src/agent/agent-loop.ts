@@ -593,6 +593,10 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         turn.stepsTaken += 1;
+        // A step that came back whole ends a run of cut steps: the turn's
+        // truncation budget bounds a model cut on every step, not a long
+        // task with a cut here and there.
+        if (turn.truncationRetry?.stepIndex !== i) turn.truncationRetries = 0;
         // A completed step is what the review-stall count observes: a
         // fan-out resets it, a step of reading (or of refusals) adds
         // one. The mutation predicate is the orchestrator gate's own.

@@ -1311,6 +1311,64 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       expect(calls).toBe(3);
     });
 
+    it("does not fail a long task for its seventh cut when clean steps come between", async () => {
+      // The turn budget bounds back-to-back cut steps. Seven files, each
+      // cut once and written on the retry, with a clean step after each.
+      // Each step reads something new, as a real task does, so the
+      // progress checks see work being done.
+      const registry = buildDefaultToolRegistry();
+      let noopRuns = 0;
+      registry.register({
+        name: "noop",
+        description: "no-op",
+        readonly: true,
+        async run() {
+          noopRuns += 1;
+          return {
+            tool: "noop",
+            status: "ok" as const,
+            summary: `noop ${noopRuns}`,
+            details: { run: noopRuns },
+            truncated: false,
+          };
+        },
+      });
+      let calls = 0;
+      const loop = new AgentLoop({
+        registry,
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        llmComplete: async () => {
+          calls += 1;
+          if (calls > 21) {
+            return makeCompletion(
+              JSON.stringify({ tool: "reply", args: { text: "all written" } }),
+            );
+          }
+          if (calls % 3 === 1) return cutAt(64_000);
+          return makeCompletion(
+            JSON.stringify({ tool: "noop", args: { n: calls } }),
+          );
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+      });
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-trunc-cloud-long", workingDir }),
+        {
+          userMessage: "write the seven files",
+          maxSteps: 30,
+          taskMaxSteps: 30,
+          modelModePolicy: CLOUD_POLICY,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.reason).toBe("reply");
+      expect(calls).toBe(22);
+      expect(noopRuns).toBe(14);
+    });
+
     it("fails, rather than hangs, when every reply is cut", async () => {
       const failures: string[] = [];
       let calls = 0;

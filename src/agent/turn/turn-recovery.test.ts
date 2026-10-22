@@ -137,6 +137,7 @@ describe("turn recovery decisions and shared state", () => {
     expect(turn.truncationRetry?.original).toBe(error);
     // Local (no mode given): the cap goes up two-fold, once.
     expect(turn.truncationRetry?.maxTokens).toBe(16_384);
+    expect(turn.truncationRetry?.raised).toBe(true);
     expect(turn.stepsTaken).toBe(0);
     const rejected = recoverTurnStep(providerRefusal(400, "max_tokens is too large: 16384"), context(), {}, turn);
     expect(rejected).toEqual({ kind: "failure", cancelled: false, category: "model", runError: error, creditRefused: false });
@@ -171,6 +172,18 @@ describe("turn recovery decisions and shared state", () => {
     const error = truncated();
     const result = recoverTurnStep(error, context({ modelMode: "cloud", stepIndex: 5 }), {}, turn);
     expect(result).toEqual({ kind: "failure", cancelled: false, category: "model", runError: error, creditRefused: false });
+  });
+
+  it("a held-cap retry refused for the window repacks the prompt instead of blaming the cap", async () => {
+    const turn = createTurnLoopState();
+    const learned: number[] = [];
+    const deps: TurnRecoveryDependencies = { onContextWindowObserved: (window) => learned.push(window) };
+    expect(recoverTurnStep(truncated(), context({ modelMode: "cloud" }), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(turn.truncationRetry?.raised).toBeUndefined();
+    turn.lastPromptTokens = 9_000;
+    const refusal = providerRefusal(400, "maximum context length is 8192 tokens, requested 9000 tokens");
+    expect(recoverTurnStep(refusal, context({ modelMode: "cloud" }), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(learned).toEqual([8_192]);
   });
 
   it("window learning happens before live event lookup, then a repeated size refusal fails unchanged", async () => {
