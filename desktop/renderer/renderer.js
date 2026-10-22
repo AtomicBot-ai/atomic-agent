@@ -557,7 +557,10 @@ const OB_COPY = {
   urlChatTitle: 'Base URL of your chat llama-server ',
   urlEmbeddingTitle: 'Base URL of your embedding llama-server ',
   urlEmbeddingNote: 'Optional — leave it empty to continue without hybrid embedding recall.',
-  urlChatPlaceholder: 'http://127.0.0.1:8080',
+  urlChatPlaceholder: 'http://127.0.0.1:9931',
+  /* ATO-834: llama-server moved its default port from 8080 to 9931
+     (llama.cpp v0.7.0); older builds and the Docker images still use 8080. */
+  urlChatPortNote: 'A current llama-server listens on port 9931 by default. Older builds and the Docker images use 8080.',
   urlEmbeddingPlaceholder: 'http://127.0.0.1:19092',
   urlProbing: 'probing /health…',
   // onboarding-download-step.tsx:18-38
@@ -12951,7 +12954,7 @@ function obUrlHTML(kind) {
       + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '>'
       + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + '</div>'
     + obInlineErrHTML()
-    + (chat ? '' : '<div class="ob-explain ob-help">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
+    + '<div class="ob-explain ob-help">' + esc(chat ? OB_COPY.urlChatPortNote : OB_COPY.urlEmbeddingNote) + '</div>'
     + (OB.busy ? '<div class="ob-explain ob-help">' + esc(OB_COPY.urlProbing) + '</div>' : '');
 }
 
@@ -24763,9 +24766,9 @@ function llmModalHTML() {
   if (LLMP.externalDraft !== null) {
     return '<div class="tk-modal llm-modal" role="dialog">'
       + '<label class="tk-field"><span class="tk-lbl">External llama.cpp base URL</span>'
-      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="e.g. http://127.0.0.1:8080">'
+      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="e.g. http://127.0.0.1:9931">'
       + (LLMP.externalInvalid ? '<span class="tk-help tk-help--err">invalid URL</span>' : '')
-      + '<span class="tk-help">' + esc('The address of your own llama.cpp server. It is checked first, and chats move to it only when it answers.') + '</span></label>'
+      + '<span class="tk-help">' + esc('The address of your own llama.cpp server. It is checked first, and chats move to it only when it answers. ' + OB_COPY.urlChatPortNote) + '</span></label>'
       + '<div class="acts"><button class="btn btn-g sm" data-act="llm:external:cancel">Cancel</button>'
       + '<button class="btn btn-p sm" data-act="llm:external:save">Save</button></div></div>';
   }
