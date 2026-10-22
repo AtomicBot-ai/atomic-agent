@@ -52,7 +52,9 @@ export interface AppInstalledContext {
  *  - `promptTokens` / `completionTokens`
  *                  — tokens the turn consumed, summed across every LLM
  *                    call it made. Reported by the provider's `usage`
- *                    block; omitted when the provider reports none.
+ *                    block; a local llama-server, which sends none,
+ *                    counts by its timings (never priced). Omitted when
+ *                    no call reported any.
  *  - `costUsd`     — estimated spend for the turn, from the same token
  *                    counts times per-model pricing. Omitted when the
  *                    model carries no pricing, which is the normal case
