@@ -6120,22 +6120,6 @@
     },
     {
       "path": "src/tui/telegram/tui-telegram-orchestrator.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to parameter of type 'TuiEventBus & { emit(action: unknown): void; }'.   Type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to type 'TuiEventBus'.     Types of property 'subscribe' are incompatible.       Type '(l: (action: unknown) => void) => () => void' is not assignable to type '(listener: (action: TuiAction) => void) => () => void'.         Types of parameters 'l' and 'listener' are incompatible.           Types of parameters 'action' and 'action' are incompatible.             Type 'unknown' is not assignable to type 'TuiAction'.",
-      "anchor": "bus",
-      "line": 92,
-      "count": 24
-    },
-    {
-      "path": "src/tui/telegram/tui-telegram-orchestrator.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to parameter of type 'TuiEventBus & { emit(action: unknown): void; }'.   Type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to type 'TuiEventBus'.     Types of property 'subscribe' are incompatible.       Type '(l: (action: unknown) => void) => () => void' is not assignable to type '(listener: (action: TuiAction) => void) => () => void'.         Types of parameters 'l' and 'listener' are incompatible.           Types of parameters 'action' and 'action' are incompatible.             Type 'unknown' is not assignable to type 'TuiAction'.",
-      "anchor": "makeBus()",
-      "line": 130,
-      "count": 2
-    },
-    {
-      "path": "src/tui/telegram/tui-telegram-orchestrator.test.ts",
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveClaim",

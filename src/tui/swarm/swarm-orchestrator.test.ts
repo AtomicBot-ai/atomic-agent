@@ -21,6 +21,14 @@ function fakeBus() {
   };
 }
 
+interface FakeUnitConfig {
+  id: string;
+  kind: string;
+  label: string;
+  enabled: boolean;
+  ownerUserId?: string | null;
+}
+
 function fakeRuntime(over: Partial<Record<string, unknown>> = {}) {
   const views = [
     {
@@ -40,7 +48,7 @@ function fakeRuntime(over: Partial<Record<string, unknown>> = {}) {
   const listeners = new Set<() => void>();
   const swarm = {
     views: vi.fn(() => views),
-    get: vi.fn((id: string) =>
+    get: vi.fn((id: string): { config: FakeUnitConfig } | undefined =>
       id === "ops"
         ? { config: { id, kind: "telegram", label: "Ops", enabled: true } }
         : undefined,

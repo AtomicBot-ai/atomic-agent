@@ -11,6 +11,7 @@ import type {
   PairingOutcome,
   StartPairingOptions,
 } from "../../channels/telegram/telegram-channel.js";
+import type { TuiAction } from "../tui-action.js";
 
 import { TuiTelegramOrchestrator } from "./tui-telegram-orchestrator.js";
 
@@ -55,7 +56,7 @@ function makeFakeChannel(overrides: Partial<FakeChannel> = {}): FakeChannel {
 
 function makeBus(): {
   emit: (action: unknown) => void;
-  subscribe: (l: (action: unknown) => void) => () => void;
+  subscribe: (l: (action: TuiAction) => void) => () => void;
   actions: Array<{ type: string } & Record<string, unknown>>;
 } {
   const actions: Array<{ type: string } & Record<string, unknown>> = [];
