@@ -235,6 +235,10 @@ export {
   type ThroughputSample,
 } from "./server/daemon-lifecycle.js";
 export {
+  readManagedEngineLiveness,
+  type ManagedEngineLiveness,
+} from "./server/engine-liveness.js";
+export {
   classifyPrefixReuse,
   countSlidingWindowLayers,
   GgufFormatError,

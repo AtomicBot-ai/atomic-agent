@@ -1,6 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { describeFailedAttempts } from "../llm/fallback/index.js";
+import { isLocalEngineDown } from "../llm/reliability/index.js";
 import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
@@ -9,7 +10,7 @@ import {
   formatBackgroundApprovalNotice,
   formatBackgroundProviderWaitNotice,
 } from "./detached-turns.js";
-import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
+import { formatAgentErrorForChat, formatLocalEngineDownForChat } from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import {
   formatProviderGaveUpLine,
@@ -691,7 +692,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         );
       }
       const lastRunStatus = `failed [${event.category}]: ${event.error.message}`;
-      const chatError = formatAgentErrorForChat(
+      // ATO-772: the managed local model's process is gone and the turn
+      // ended without the outage wait: say so, and the command that fixes it.
+      const engineDown = isLocalEngineDown(event.error);
+      const chatError = engineDown ? formatLocalEngineDownForChat() : formatAgentErrorForChat(
         event.category,
         event.error.message,
         {
@@ -712,6 +716,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // The turn died parked: the chat said it was waiting, so the
       // failure says the wait is over before it says why.
       const diedWaiting =
+        !engineDown &&
         event.category === "transport" &&
         state.providerOutage !== null &&
         !state.providerOutage.givenUp;

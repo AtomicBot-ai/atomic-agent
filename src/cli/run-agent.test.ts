@@ -16,6 +16,7 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
+import { LocalEngineDownError } from "../llm/reliability/index.js";
 import {
   formatAgentEvent,
   formatCliApprovalPrompt,
@@ -147,6 +148,20 @@ describe("formatAgentEvent llama hint", () => {
     );
     expect(line).toContain("» loop failed [transport]: fetch failed");
     expect(line).toContain("llama-server is not reachable");
+  });
+
+  it("a turn ended because the local model is not running says so and names the start command (ATO-772)", () => {
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new LocalEngineDownError("local-llama"),
+        category: "transport" as never,
+      },
+      { llamaHint: HINT, hintShown: { value: false } },
+    );
+    expect(line).toBe(
+      "» loop failed [transport]: The local model isn't running.\n    Start it with: atomic-agent models start",
+    );
   });
 });
 

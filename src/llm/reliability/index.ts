@@ -15,6 +15,13 @@ export {
 } from "./llm-failures.js";
 export type { LlmFailureOptions, ModelErrorOptions } from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
+export {
+  LOCAL_ENGINE_DOWN_CODE,
+  LOCAL_ENGINE_DOWN_MESSAGE,
+  LOCAL_ENGINE_START_HINT,
+  LocalEngineDownError,
+  isLocalEngineDown,
+} from "./local-engine-down.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
 export {
   readProviderErrorVerdict,

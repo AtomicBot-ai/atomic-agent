@@ -13,6 +13,8 @@ A turn uses bounded continuation legs and task-wide limits, not an unlimited inf
 
 Loop gates key on the exact call: the repeat, no-progress and veto-streak counters belong to one `(tool, args)` signature, so a call failing over and over never blocks a different call that succeeds beside it (the composite batch observation only warns). The `tool executed` log line names, for an os.fs call, the path it acted on and, for a failure, the first line of its error, never file contents; other tools log only the error name, since a shell error echoes its command line and output ([fields](../tool-log-fields.ts)).
 
+A refused connection to the managed local model (`local-llama`, managed mode, the active text provider) whose process is certainly gone is not waited out either (ATO-772). The runtime reads the engine state from disk and hands it to recovery as `localEngineState`; recovery reads no files itself. While the process is gone the turn retries every 2 seconds for a short restart grace, so the TUI or desktop supervisor can bring back a model that crashed; then it ends with `LocalEngineDownError` ("The local model isn't running.", reason code `local_engine_down`). A live engine, a start or install under way, an external server, cloud links and `local-llama` as a fallback behind a cloud provider keep the ordinary wait.
+
 Evidence checks prevent unverified check claims, unsourced links and fabricated transcripts from becoming a closing answer. Keep actual observations as the basis for evidence. Read-scope and declared-input guards must survive both solo and batch paths.
 
 ## Ownership and asynchronous boundaries

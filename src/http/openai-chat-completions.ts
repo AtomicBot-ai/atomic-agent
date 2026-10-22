@@ -9,7 +9,7 @@ import {
   type ProviderWaitCause,
   type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
-import { classifyFailure } from "../llm/reliability/index.js";
+import { LOCAL_ENGINE_DOWN_CODE, classifyFailure, isLocalEngineDown } from "../llm/reliability/index.js";
 import { readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
@@ -694,6 +694,9 @@ export function buildStreamEventHook(
           : event.error.message;
         emitStreamError(sse, env, message, classifyFailure(primary), {
           ...billingCauseFrame(primary),
+          // The chain fell over to the managed local link and its model
+          // process is gone: the host still needs the code to offer a start.
+          ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
           fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
         });
         return;
@@ -701,6 +704,10 @@ export function buildStreamEventHook(
       const failedBefore = event.category === "cancelled" ? [] : describeFailedLinks(event.error);
       emitStreamError(sse, env, event.error.message, event.category, {
         ...ended,
+        /* ATO-772: the managed local model's process is gone, so the turn
+           ended without the outage wait. `code` lets a host offer to start
+           it (the desktop's "Start model") instead of reading the words. */
+        ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
         ...(failedBefore.length > 0
           ? { fallback_failures: failedLinksFrame(failedBefore) }
           : {}),
@@ -851,9 +858,13 @@ function emitStreamError(
   // `type` field in their error envelope is already a loose string —
   // surface the category there so structured clients can still branch on
   // it without breaking schema-strict ones.
+  // A string `code` the frame carries (`local_engine_down`) is the
+  // envelope's own `code` field for these clients.
+  const rawCode = extra?.["code"];
+  const code = typeof rawCode === "string" ? rawCode : null;
   sse.writeEvent(
     null,
-    openaiError(message, category ? `agent.${category}` : "server_error"),
+    openaiError(message, category ? `agent.${category}` : "server_error", null, code),
   );
 }
 
