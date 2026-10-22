@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CompletionUsage } from "../llm/provider/completion-types.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
-import { TurnUsageMeter } from "./turn-usage-meter.js";
+import { TurnUsageMeter, completionUsageForTurn } from "./turn-usage-meter.js";
 
 const S = "session-a";
 
@@ -241,5 +241,67 @@ describe("TurnUsageMeter — cached prompt tokens", () => {
     meter.begin(S);
     meter.record({ sessionId: S, usage: usage(10, 5), model: pricedModel(3, 15) });
     expect(meter.snapshot(S)).not.toHaveProperty("cachedTokens");
+  });
+});
+
+describe("completionUsageForTurn (ATO-276)", () => {
+  const timing = { promptMs: 1, predictedMs: 1, promptTokens: 300, predictedTokens: 20 };
+
+  it("prefers the provider's own usage block", () => {
+    const own = usage(10, 5);
+    expect(completionUsageForTurn({ usage: own, timing, cacheHitTokens: 0 })).toBe(own);
+  });
+
+  it("counts a local llama-server's timings when it sent no usage block", () => {
+    expect(completionUsageForTurn({ timing, cacheHitTokens: 100 })).toEqual({
+      promptTokens: 300, completionTokens: 20, totalTokens: 320, cachedTokens: 100,
+    });
+    expect(completionUsageForTurn({ timing, cacheHitTokens: 0 })).toEqual({
+      promptTokens: 300, completionTokens: 20, totalTokens: 320,
+    });
+  });
+
+  it("keeps absent data absent: no usage and zero timings contribute nothing", () => {
+    expect(completionUsageForTurn({ timing: { promptMs: 0, predictedMs: 0, promptTokens: 0, predictedTokens: 0 } })).toBeUndefined();
+    expect(completionUsageForTurn({})).toBeUndefined();
+  });
+});
+
+// ATO-277: message_sent names the provider that actually served the turn.
+describe("TurnUsageMeter — served provider", () => {
+  it("reports the link that served the last completion and counts fallbacks", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S, "cloud");
+    meter.recordServed(S, "cloud");
+    meter.record({ sessionId: S, usage: usage(10, 5) });
+    meter.recordServed(S, "local-llama");
+    meter.record({ sessionId: S, usage: usage(20, 5) });
+    expect(meter.snapshot(S)).toEqual({
+      promptTokens: 30,
+      completionTokens: 10,
+      servedProviderId: "local-llama",
+      fallbackCalls: 1,
+    });
+  });
+
+  it("reports the served link even when no call reported usage", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S, "cloud");
+    meter.recordServed(S, "cloud");
+    expect(meter.snapshot(S)).toEqual({ servedProviderId: "cloud", fallbackCalls: 0 });
+  });
+
+  it("omits fallbackCalls when the intended provider is unknown", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.recordServed(S, "cloud");
+    expect(meter.snapshot(S)).toEqual({ servedProviderId: "cloud" });
+  });
+
+  it("drops a served link for a session with no open turn", () => {
+    const meter = new TurnUsageMeter();
+    meter.recordServed(S, "cloud");
+    meter.begin(S, "cloud");
+    expect(meter.snapshot(S)).toEqual({});
   });
 });

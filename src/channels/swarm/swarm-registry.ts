@@ -30,6 +30,7 @@ import { DiscordLockfile } from "../discord/discord-lockfile.js";
 import type {
   PairingOutcome,
   PairingStateSnapshot,
+  StartPairingOptions,
 } from "../telegram/telegram-channel.js";
 import {
   TelegramChannel,
@@ -286,10 +287,15 @@ export class SwarmRegistry {
     this.emit();
   }
 
-  /** Telegram only: open a pairing window on the unit's bot. */
+  /**
+   * Telegram only: open a pairing window on the unit's bot. `options`
+   * carries the one-time code callback and the operator's confirmation
+   * to replace a paired owner (`TelegramChannel.startPairing`).
+   */
   async startPairing(
     id: string,
     timeoutMs?: number,
+    options: StartPairingOptions = {},
   ): Promise<PairingOutcome | null> {
     const unit = this.require(id);
     if (!(unit.channel instanceof TelegramChannel)) {
@@ -306,7 +312,7 @@ export class SwarmRegistry {
         throw new Error(unit.channel.lastError() ?? "channel is not up");
       }
     }
-    const outcome = await unit.channel.startPairing(timeoutMs);
+    const outcome = await unit.channel.startPairing(timeoutMs, options);
     this.emit();
     return outcome;
   }

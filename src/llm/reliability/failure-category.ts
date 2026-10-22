@@ -74,6 +74,12 @@ export interface TruncationDetail {
    * only assumed.
    */
   requestedMaxTokens?: number;
+  /**
+   * The cut reply ended in a loop: one block of text repeated back to
+   * back (`hasRepetitiveTail`). A bigger cap only buys a longer loop, so
+   * the retry keeps the cap. Absent when the tail did not repeat.
+   */
+  repetitive?: true;
 }
 
 /**

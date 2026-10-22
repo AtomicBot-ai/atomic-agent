@@ -246,6 +246,28 @@ describe("formatTraceChronology completion_truncated without a cap", () => {
       "step=1 cause=provider_limit reply=33678 prompt=21000 cap=none retry=raise_cap:32768",
     );
   });
+
+  it("prints a held cap as same_cap", () => {
+    const out = render([
+      {
+        type: "completion_truncated",
+        seq: 5,
+        sessionId: "s-1",
+        ts: Date.parse("2026-09-01T10:00:00.000Z"),
+        turnIndex: 0,
+        stepIndex: 2,
+        cause: "reply_cap",
+        completionTokens: 64_000,
+        promptTokens: 40_000,
+        requestedMaxTokens: 64_000,
+        retry: "same_cap",
+        retryValue: 64_000,
+      },
+    ]);
+    expect(out).toContain(
+      "step=2 cause=reply_cap reply=64000 prompt=40000 cap=64000 retry=same_cap:64000",
+    );
+  });
 });
 
 describe("formatTraceChronology loop_detected", () => {

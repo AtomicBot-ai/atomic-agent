@@ -133,15 +133,25 @@ export function orphanedCoreSession(dataDir: string, role: "chat" | "embedding")
   if (!record || liveCoreOwner(dataDir, record.coreVersion)) return null;
   return pidAlive(record.pid) ? record : null;
 }
-/** Session secrets never follow a configured URL to a remote host. */
-export function coreKeyForUrl(dataDir: string, url: string): string | null {
+/**
+ * The port of `url` when it is plain http on loopback, else `null`. The
+ * one gate every Core session key passes: a key never follows a
+ * configured URL to another host.
+ */
+export function coreLoopbackPort(url: string): string | null {
   let parsed: URL;
   try { parsed = new URL(url); } catch { return null; }
   if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) return null;
+  return parsed.port;
+}
+/** Session secrets never follow a configured URL to a remote host. */
+export function coreKeyForUrl(dataDir: string, url: string): string | null {
+  const port = coreLoopbackPort(url);
+  if (port === null) return null;
   for (const role of ["chat", "embedding"] as const) {
     // An orphaned session still checks its own key until it is recovered.
     const record = readCoreSession(dataDir, role) ?? orphanedCoreSession(dataDir, role);
-    if (record && String(record.port) === parsed.port) return record.api_key;
+    if (record && String(record.port) === port) return record.api_key;
   }
   return null;
 }

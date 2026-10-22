@@ -341,6 +341,9 @@ export class AgentLoop {
           : durationCeilingMs - elapsedMs,
       );
       let compactionInput: BuildPromptInput | undefined;
+      // Read by the truncation retry in the catch below: a cloud cap
+      // is held, a local one raised (`planTruncationRetry`).
+      let stepModelMode: "local" | "cloud" | undefined;
       try {
         // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
@@ -416,6 +419,7 @@ export class AgentLoop {
         const contextProviderId = options.providerId ?? this.deps.contextProviderId?.(state.id);
         const initialMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, options.providerId) : undefined;
         const modelMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, contextProviderId) : undefined;
+        stepModelMode = modelMode?.mode;
         // Cloud transitions must use the sticky link before planning maintenance,
         // not only at send time. All-local preparation retains its existing path.
         const contextSlice = contextProviderId && (initialMode?.mode === "cloud" || modelMode?.mode === "cloud")
@@ -589,6 +593,10 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         turn.stepsTaken += 1;
+        // A step that came back whole ends a run of cut steps: the turn's
+        // truncation budget bounds a model cut on every step, not a long
+        // task with a cut here and there.
+        if (turn.truncationRetry?.stepIndex !== i) turn.truncationRetries = 0;
         // A completed step is what the review-stall count observes: a
         // fan-out resets it, a step of reading (or of refusals) adds
         // one. The mutation predicate is the orchestrator gate's own.
@@ -913,6 +921,7 @@ export class AgentLoop {
           state, options, stepIndex: i, finalizationStep, noticeForThisStep,
           effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
           durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
+          ...(stepModelMode !== undefined ? { modelMode: stepModelMode } : {}),
         }, this.deps, turn);
         if (decision.kind === "wait") {
           const nextRetryMs = decision.nextRetryMs;

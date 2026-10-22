@@ -43,11 +43,12 @@ export interface McpServerConfig {
    */
   trust?: McpTrustLevel;
   /**
-   * Optional environment variables overlaid on top of the inherited
-   * `process.env` when the transport is `stdio`. The default
-   * `process.env` (already loaded from `<stateDir>/.env`) is the
-   * baseline; per-server entries win on key collision. Ignored for
-   * HTTP / SSE transports.
+   * Optional environment variables for a `stdio` server, overlaid on
+   * the allowlisted service variables (PATH, HOME, ...) taken from the
+   * agent's environment; per-server entries win on key collision. This
+   * is the only way a server receives a key: provider keys loaded from
+   * `<stateDir>/.env` are not forwarded (see `buildMcpStdioEnv`).
+   * Ignored for HTTP / SSE transports.
    */
   env?: Record<string, string>;
 }

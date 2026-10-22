@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { carryUnknownConfigKeys } from "./carry-unknown-config-keys.js";
 import {
   ConfigValidationError,
   ENV_DEFAULTS,
@@ -69,13 +70,19 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
  * explicit `memory.*` opt-out, `version < 25` rewrites
  * `http.approvalMode`. Downgrading the label silently reverts choices
  * the user made.
+ *
+ * For the same reason, keys this build does not know inside fixed blocks
+ * of the file on disk (`memory.futureKey` from a newer build) are carried
+ * into the payload; known keys and dictionaries such as `mcp.servers`
+ * still come from `data` alone. See `carryUnknownConfigKeys` (ATO-417).
  */
 export function writeUserConfigFileSync(
   path: string,
   data: UserConfigFile,
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  const onDisk = readVersionFieldFromFileSync(path);
+  const diskTree = readJsonObjectFromFileSync(path);
+  const onDisk = readVersionField(diskTree);
   const raised = onDisk !== null && onDisk > data.version;
   const version = raised ? (onDisk as number) : data.version;
   if (raised) {
@@ -83,9 +90,10 @@ export function writeUserConfigFileSync(
       `[atomic-agent] kept config version ${onDisk} (this build writes v${data.version}) at ${path}\n`,
     );
   }
+  const carried = diskTree ? carryUnknownConfigKeys(data, diskTree) : data;
   const payload =
     JSON.stringify(
-      version === data.version ? data : { ...data, version },
+      version === carried.version ? carried : { ...carried, version },
       null,
       2,
     ) + "\n";
@@ -292,9 +300,21 @@ export function readUserConfigVersionOnDiskSync(path: string): number | null {
 }
 
 function readVersionFieldFromFileSync(path: string): number | null {
+  return readVersionField(readJsonObjectFromFileSync(path));
+}
+
+/**
+ * The file on disk as a JSON object, or `null` when it is absent,
+ * unreadable, not JSON, or not an object. Total for the same reason as
+ * the version read: a malformed file must not block replacing it.
+ */
+function readJsonObjectFromFileSync(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return null;
   try {
-    return readVersionField(JSON.parse(readFileSync(path, "utf8")));
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }

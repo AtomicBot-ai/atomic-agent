@@ -1,6 +1,6 @@
 import type { SessionState } from "../session/session-state.js";
 import type { CompactionConfig } from "../config/agent/compaction-config.js";
-import { compactionPins, projectSessionConversation, renderCompactionContext, safeCompactionCuts, type CompactionReason } from "../session/session-compaction.js";
+import { compactionPins, preferredCompactionCuts, projectSessionConversation, renderCompactionContext, type CompactionReason } from "../session/session-compaction.js";
 import { findCurrentMacroTurnStart, macroTurnBoundaries, renderTurnForPrompt } from "../session/conversation-turn.js";
 import { renderPackedConversation } from "./build-prompt-world-conversation.js";
 import type { BuiltPrompt } from "./build-prompt-types.js";
@@ -25,26 +25,67 @@ export interface CompactionPlan {
   tokensBefore: number;
 }
 
+/**
+ * Smallest summary reserve the history allowance can give before a manual
+ * compaction is pointless. On a small window (a 16k local model leaves about 100 tokens)
+ * a model summary cannot fit and every attempt failed after a model call.
+ */
+export const MIN_USEFUL_SUMMARY_TOKENS = 128;
+
+/**
+ * A manual request is skipped when the summary reserve is bound by the small
+ * current history (not by the window or the configured maximum) and the saved
+ * checkpoint summary already takes this share of it. A repeated `/compact`
+ * with little added since targets a share of an already compacted history,
+ * so the new summary would have to be about as large as the one it replaces
+ * and the model call could only fail.
+ */
+export const ALREADY_COMPACT_SUMMARY_SHARE = 0.75;
+
+/**
+ * Why no plan was made when compaction was due or requested:
+ * `window_too_small` (no useful summary fits the model's history allowance),
+ * `already_compact` (a repeated manual request with nothing worth
+ * summarizing again), `no_reduction` (no safe cut keeps a fresh tail within
+ * the target).
+ */
+export type CompactionSkip = "window_too_small" | "already_compact" | "no_reduction";
+
+/** A plan, or no plan with the reason when compaction was due or requested. */
+export type CompactionDecision = { plan: CompactionPlan; skip?: undefined } | { plan: null; skip?: CompactionSkip };
+
 export function planCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: { prefixReuse?: PrefixReuse } = {}): CompactionPlan | null {
+  return decideCompaction(state, prompt, config, requested, model).plan;
+}
+
+export function decideCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: { prefixReuse?: PrefixReuse } = {}): CompactionDecision {
   const budget = prompt.compactionBudget;
-  if (!budget || state.turns.length < 2) return null;
+  if (!budget || state.turns.length < 2) return { plan: null };
   const reason = requested ?? (budget.activePairs > prompt.conversationPairsCap ? "pairs" : "threshold");
-  if (!requested && (!config.auto || (reason !== "pairs" && budget.activeTokens < budget.cap * config.triggerRatio))) return null;
+  if (!requested && (!config.auto || (reason !== "pairs" && budget.activeTokens < budget.cap * config.triggerRatio))) return { plan: null };
   const projection = projectSessionConversation(state);
   const targetRatio = model.prefixReuse === "none" ? Math.min(config.targetRatio, NO_PREFIX_REUSE_TARGET_RATIO) : config.targetRatio;
   const targetTokens = Math.floor(targetRatio * (requested === "manual" ? Math.min(budget.cap, budget.activeTokens) : budget.cap));
   const summaryMaxTokens = Math.min(config.summaryMaxTokens, Math.floor(budget.cap * 0.2), Math.floor(targetTokens * 0.5));
-  if (summaryMaxTokens < 64) return null;
+  // Manual only: automatic and overflow compaction keep their extractive
+  // fallback, which needs no model call and can still free room on a small window.
+  // The window's own room, independent of the configured maximum and of how much history there is now.
+  if (requested === "manual" && Math.min(Math.floor(budget.cap * 0.2), Math.floor(targetRatio * budget.cap * 0.5)) < MIN_USEFUL_SUMMARY_TOKENS) return { plan: null, skip: "window_too_small" };
+  if (requested === "manual" && projection.checkpoint && Math.floor(targetTokens * 0.5) < Math.min(config.summaryMaxTokens, Math.floor(budget.cap * 0.2)) &&
+      estimateTokens(projection.checkpoint.summary) >= summaryMaxTokens * ALREADY_COMPACT_SUMMARY_SHARE) return { plan: null, skip: "already_compact" };
+  if (summaryMaxTokens < 64) return { plan: null, skip: "no_reduction" };
+  // Finished-turn cuts first, so a request stays with its answer; then cuts inside a turn.
+  const cuts = preferredCompactionCuts(state.turns);
   if (prompt.cloudContext) {
-    for (const through of safeCompactionCuts(state.turns)) {
+    for (const through of cuts) {
       if (through <= projection.offset || through >= state.turns.length) continue;
       const entries = cloudContextEntries(prompt.cloudContext, through);
       const tokens = estimateTokens(entries.map((entry) => renderCloudTurn(entry.turn)).join("\n")) + entries.length * 12;
       const pins = estimateTokens(renderCompactionContext("", compactionPins(state, through)));
       if (tokens + pins + summaryMaxTokens + 12 > targetTokens) continue;
-      return { reason, from: projection.offset, through, summaryMaxTokens, targetTokens, tokensBefore: budget.activeTokens };
+      return { plan: { reason, from: projection.offset, through, summaryMaxTokens, targetTokens, tokensBefore: budget.activeTokens } };
     }
-    return null;
+    return { plan: null, skip: "no_reduction" };
   }
   const boundaries = macroTurnBoundaries(state.turns, state.macroTurnStarts);
   const pairsTarget = Math.max(1, Math.floor(prompt.conversationPairsCap * targetRatio));
@@ -56,8 +97,8 @@ export function planCompaction(state: SessionState, prompt: BuiltPrompt, config:
   for (let i = state.turns.length - 1; i >= projection.offset; i--) {
     suffixCosts[i] = suffixCosts[i + 1]! + estimateTokens(renderTurnForPrompt(state.turns[i]!, { inCurrentMacroTurn: i >= currentStart })) + 1;
   }
-  // Earliest conservatively fitting safe cut, keeping the newest complete unit.
-  for (const through of safeCompactionCuts(state.turns)) {
+  // Earliest conservatively fitting cut of each kind, keeping the newest complete unit.
+  for (const through of cuts) {
     if (through <= projection.offset || through >= state.turns.length) continue;
     if (suffixCosts[through]! + summaryMaxTokens > targetTokens) continue;
     const tail = state.turns.slice(through);
@@ -66,7 +107,7 @@ export function planCompaction(state: SessionState, prompt: BuiltPrompt, config:
     const pairs = 1 + boundaries.filter((i) => i > through).length;
     if (reason === "pairs" && pairs > pairsTarget) continue;
     if (tailTokens + overhead + summaryMaxTokens > targetTokens) continue;
-    return { reason, from: projection.offset, through, summaryMaxTokens, targetTokens, tokensBefore: budget.activeTokens };
+    return { plan: { reason, from: projection.offset, through, summaryMaxTokens, targetTokens, tokensBefore: budget.activeTokens } };
   }
-  return null;
+  return { plan: null, skip: "no_reduction" };
 }

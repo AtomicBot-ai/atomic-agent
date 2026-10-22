@@ -300,7 +300,7 @@ export interface UserLocalModelsConfig {
    * cut. Range `0` or [64, 32768], but llama.cpp caps a grammar
    * repetition at 1,999 characters, so the bound a model really gets
    * is at most 499 tokens (`MAX_REASONING_BUDGET_TOKENS`, #600).
-   * Added in config v68.
+   * Added in config v68; default `0` since v78 (was 1500).
    */
   reasoningBudgetTokens: number;
   managed: UserManagedLocalLlmConfig;

@@ -305,7 +305,8 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
     };
   }
   if (prompt.contextBudget) assertContextCapacity(prompt.text + JSON.stringify(llmParams.tools ?? []), prompt.contextBudget);
-  return { prompt, slot, replyCap, stepDescriptors, stepToolDescriptors, grammarPrompt, promptCarriesPrefill, thinkingOff, llmParams };
+  return { prompt, slot, replyCap, stepDescriptors, stepToolDescriptors, grammarPrompt, promptCarriesPrefill, thinkingOff, llmParams,
+    reasoningBudgetTokens: getConfig().localModels.reasoningBudgetTokens };
 }
 
 export type PreparedStepInference = ReturnType<typeof prepareStepInference>;
@@ -344,8 +345,9 @@ export async function runInitialCompletion(
     : await deps.llmComplete(llmParams);
   const durationMs = Date.now() - startedAt;
   // How much of the completion was thinking, in the budget's units, so
-  // a trace shows a step that hit `localModels.reasoningBudgetTokens`
-  // (`reasoningTokens >= budget`). Same extraction the reasoning event
+  // a trace shows a step that hit the reasoning bound (`reasoningTokens`
+  // at about the effective budget, `effectiveReasoningBudgetTokens`, not
+  // the configured one). Same extraction the reasoning event
   // below uses, keyed off the link that served the completion.
   const reasoningTokens = estimateReasoningTokens(
     resolveReasoning(

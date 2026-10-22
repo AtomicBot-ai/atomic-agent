@@ -74,6 +74,41 @@ describe("detectModelFailure", () => {
     expect(result?.message).toContain("8192");
   });
 
+  it("marks a cut reply that ended in a loop as repetitive", () => {
+    const usage = {
+      promptTokens: 6_000,
+      completionTokens: 16_384,
+      totalTokens: 22_384,
+    };
+    const looped = detectModelFailure(
+      makeCompletion({
+        content: `{"tool":"os.fs.write","args":{"content":"${'}]"}]'.repeat(300)}`,
+        truncated: true,
+        usage,
+      }),
+      { requestedMaxTokens: 16_384 },
+    );
+    expect(looped?.truncation).toMatchObject({
+      cause: "reply_cap",
+      repetitive: true,
+    });
+    // A loop inside the think block counts when no body came out.
+    const thoughtLoop = detectModelFailure(
+      makeCompletion({
+        reasoningContent: "wait, let me check again. ".repeat(40),
+        truncated: true,
+        usage,
+      }),
+      { requestedMaxTokens: 16_384 },
+    );
+    expect(thoughtLoop?.truncation?.repetitive).toBe(true);
+    const plain = detectModelFailure(
+      makeCompletion({ content: "short and varied", truncated: true, usage }),
+      { requestedMaxTokens: 16_384 },
+    );
+    expect(plain?.truncation).not.toHaveProperty("repetitive");
+  });
+
   it("treats a reply within a few tokens of the cap as having spent it", () => {
     // llama.cpp stops one short of `n_predict` after the stop-token test.
     const completion = makeCompletion({

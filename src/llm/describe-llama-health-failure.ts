@@ -3,6 +3,22 @@ import type { HealthResult } from "./llama-server-health.js";
 // loopback host spellings, shared here so the steer text and the
 // provider wizard agree on what "local" means.
 import { isLocalProviderUrl } from "./provider/presets/is-local-provider-url.js";
+import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
+
+/**
+ * The loopback ports the agent's own engine (Atomic Core) listens on:
+ * `localModels.managed.port` and `localModels.embeddings.port`. Callers
+ * pass these so the `llama-auth` line can tell our engine from a server
+ * the operator started themselves.
+ */
+export function managedPortsOf(localModels: {
+  managed?: { port: number };
+  embeddings?: { port: number };
+}): number[] {
+  return [localModels.managed?.port, localModels.embeddings?.port].filter(
+    (port): port is number => typeof port === "number",
+  );
+}
 
 /**
  * True when `url` points at Ollama's default port. Ollama is the server
@@ -43,6 +59,7 @@ export function looksLikeAtomicChatUrl(url: string): boolean {
 export function describeLlamaHealthFailure(
   health: HealthResult,
   url: string,
+  managedPorts: readonly number[] = [],
 ): string {
   switch (health.kind) {
     case "openai-compat":
@@ -91,6 +108,22 @@ export function describeLlamaHealthFailure(
       // UI field for it. A daemon started by atomic-agent (managed mode,
       // `models start`) keeps its key in the models dir (#582), which is
       // where an operator pointing another client at it finds the value.
+      // A loopback URL on localModels.managed.port / embeddings.port is
+      // the engine the agent runs itself (Atomic Core). Core makes and
+      // rotates that key, so the env var and the key file below are the
+      // wrong advice. These callers save an External URL, where
+      // `models start` refuses ("external mode"), so point at Local
+      // models instead and at restarting the app that owns the engine.
+      // health.error is left out: it tells the operator to pass --api-key.
+      if (isLoopbackUrlOnPort(url, managedPorts)) {
+        return (
+          `${url} turned down the API key (http 401). This port belongs to ` +
+          `the engine Atomic Agent runs itself (Atomic Core), which makes ` +
+          `and changes its own key, so setting a key by hand does not help. ` +
+          `Choose Local models instead of an External URL for it. If the ` +
+          `desktop app runs this engine, restart the app.`
+        );
+      }
       return (
         `${url}: ${health.error ?? "http 401 — API key required"}. ` +
         `Set ATOMIC_AGENT_LLAMA_API_KEY in the state dir's .env and retry. ` +

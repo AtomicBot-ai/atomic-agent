@@ -670,9 +670,9 @@ export function createTraceRecorder(
               : {}),
             retry: event.retry.kind,
             retryValue:
-              event.retry.kind === "raise_cap"
-                ? event.retry.maxTokens
-                : event.retry.contextWindow,
+              event.retry.kind === "fit_window"
+                ? event.retry.contextWindow
+                : event.retry.maxTokens,
           });
           return;
         case "prompt_repacked":

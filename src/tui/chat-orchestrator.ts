@@ -6,6 +6,7 @@ import { nameGroundingMarker } from "../memory/profile-name-keys.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
+import { describeMemoryEmbeddingReconnect } from "./local-models/describe-memory-embedding-reconnect.js";
 import {
   isFailedSessionStatus,
   type SessionState,
@@ -316,6 +317,18 @@ export class ChatOrchestrator {
         void this.llmHealth.refreshModelLabel();
         void runtime.refreshLocalModelProfile?.();
         void this.resumeModelQueue();
+        // The embedding daemon starts with chat: a memory that booted
+        // before it, or lost it, attaches now. A no-op when memory
+        // already uses the configured model, so it stays silent.
+        void runtime.reconnectMemoryEmbeddings?.();
+      },
+      // The operator picked, pulled, removed or toggled an embedding
+      // model: memory follows now instead of after a restart (ATO-351).
+      onEmbeddingModelChanged: () => {
+        void runtime.reconnectMemoryEmbeddings?.().then((result) => {
+          const line = describeMemoryEmbeddingReconnect(result);
+          if (line) bus.emit({ type: "runtime_info", line });
+        });
       },
       onManagedPortMoved: async (url) => {
         // Same three steps as saving a URL by hand: the provider's base

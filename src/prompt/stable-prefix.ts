@@ -146,12 +146,13 @@ const SYSTEM_PERSONA_TERMINALS_LINE =
  * Right after the bias-toward-action line in both personas (F51). Live,
  * five first attempts across two local models rewrote the file the
  * request named as the input from memory; `os.fs.write` now refuses that
- * without `overwrite: true` (`fs-input-guard.ts`), and this is the model
- * told the rule before it reaches for the tool. Pinned by
- * `stable-prefix.test.ts`.
+ * (`fs-input-guard.ts`), and this is the model told the rule before it
+ * reaches for the tool. Since ATO-851 it no longer names `overwrite:
+ * true`: the flag stopped lifting the refusal, and teaching it here was
+ * the one-step bypass. Pinned by `stable-prefix.test.ts`.
  */
 export const SYSTEM_PERSONA_INPUTS_LINE =
-  "Files that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. If the user asked for a rewrite, say so and pass overwrite: true.";
+  "Files that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. To replace one the request did not ask to replace, ask the user first.";
 
 /** Byte-identical to the pre-#285 line (KV-cache safe). */
 const REPLY_DISCIPLINE_LINE_GRAMMAR =

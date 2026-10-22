@@ -380,6 +380,35 @@ describe("runModelsSearch", () => {
     });
   });
 
+  it("--refresh logs why the live catalog did not load and still answers from the bundled one", async () => {
+    writeConfig();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("unavailable", { status: 503 })),
+    );
+    expect(await runModelsSearch(["qwen", "--refresh"])).toBe(0);
+    expect(out.join("")).toMatch(/^or\s+qwen\//m);
+    expect(err.join("")).toMatch(
+      /^warning: live model list from "or" did not load \(HTTP 503, after \d+\.\d s\); using the bundled list$/m,
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it("--refresh names a timeout as the reason", async () => {
+    writeConfig();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }),
+    );
+    expect(await runModelsSearch(["qwen", "--refresh"])).toBe(0);
+    expect(err.join("")).toContain(
+      'live model list from "or" did not load (timed out after 20 s,',
+    );
+    vi.unstubAllGlobals();
+  });
+
   // Last in the file on purpose: a live refresh writes the fetcher's
   // module-global pick cache, which outlives this test.
   it("--refresh searches the live catalog, not just the bundled snapshot", async () => {

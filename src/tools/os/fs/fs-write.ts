@@ -47,8 +47,8 @@ export function buildOsFsWriteTool(
       const { path, content, mode, overwrite } = parseWriteArgs(rawArgs);
       const absolute = resolveUserPath(path, ctx.workingDir);
 
-      // A file the request names as an input is not replaced without
-      // `overwrite: true` (F51, `fs-input-guard.ts`). Decided on the
+      // A file the request names as an input is not replaced, whatever
+      // `overwrite` says (F51, ATO-851, `fs-input-guard.ts`). Decided on the
       // model's own target before the operator is asked, so no prompt is
       // raised for a write that will not run; a target the operator
       // moves the write to from the prompt is their choice.

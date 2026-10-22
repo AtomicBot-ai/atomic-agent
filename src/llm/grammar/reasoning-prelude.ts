@@ -4,8 +4,8 @@
  * `llama-grammar.cpp` defines `MAX_REPETITION_THRESHOLD = 2000`. Builds
  * before September 2025 reject exactly 2,000, and current master silently
  * treats anything above 2,000 as unbounded. 1,999 parses everywhere and
- * keeps a real bound. The default budget (1,500 tokens × 4 = 6,000 chars)
- * exceeds it. See: https://github.com/AtomicBot-ai/atomic-agent/issues/600.
+ * keeps a real bound. The pre-v78 default budget (1,500 tokens × 4 =
+ * 6,000 chars) exceeded it; the default is now `0`, no bound. See: https://github.com/AtomicBot-ai/atomic-agent/issues/600.
  */
 export const LLAMA_SERVER_GBNF_MAX_REPETITION = 1999;
 
@@ -26,7 +26,7 @@ export const LLAMA_SERVER_GBNF_MAX_REPETITION = 1999;
  * one under `MAX_REPETITION_THRESHOLD`) so the GBNF parser never rejects
  * the grammar (#600). The clamp is silent here: this module builds
  * strings and owns no logger. The runtime logs the effective bound once
- * at boot (`logReasoningBudgetCap`).
+ * at boot for a model that thinks (`logReasoningBudgetCap`).
  */
 
 /** `think-body ::= think-char{0,N}` — the line the bounded base grammar carries. */

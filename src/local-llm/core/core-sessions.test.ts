@@ -4,11 +4,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CORE_VERSION, coreSessionPath, coreVersionDir, writeCoreJson } from "./core-state.js";
-import { loadCoreSession, recoverOrphanedCoreSessions, retireIdleCore, stopCoreSession, stopIdleCore } from "./core-sessions.js";
+import { loadCoreSession, recoverOrphanedCoreSessions, refreshCoreKeyForUrl, retireIdleCore, stopCoreSession, stopIdleCore } from "./core-sessions.js";
 import { connectCore, ensureCore } from "./core-client.js";
 
 const fake = vi.hoisted(() => ({ call: vi.fn(), snapshot: vi.fn(), instanceId: "owned" }));
-vi.mock("./core-client.js", () => ({ withCoreClient: async (_d: string, _v: string, fn: (client: typeof fake) => Promise<unknown>) => fn(fake), connectCore: vi.fn(), ensureCore: vi.fn() }));
+/** The options each `withCoreClient` call passed on to `ensureCore`. */
+const clientOptions = vi.hoisted(() => [] as unknown[]);
+vi.mock("./core-client.js", () => ({ withCoreClient: async (_d: string, _v: string, fn: (client: typeof fake) => Promise<unknown>, _signal?: AbortSignal, opts?: unknown) => { clientOptions.push(opts); return fn(fake); }, connectCore: vi.fn(), ensureCore: vi.fn() }));
 let dir: string;
 const session = { pid: process.pid, port: 19091, model_id: "test", model_path: "/test.gguf", is_embedding: false, api_key: "test-key", provider: "llamacpp", generation: "new" };
 beforeEach(() => {
@@ -46,6 +48,14 @@ it("never unloads a session another caller already had", async () => {
   fake.call.mockRejectedValue(new Error("response lost"));
   await expect(loadCoreSession(dir, { role: "chat", modelId: "test", modelPath: "/test.gguf", port: 19091, args: [] })).rejects.toThrow("response lost");
   expect(fake.call.mock.calls.some(([path]) => path.endsWith("/unload"))).toBe(false);
+});
+
+it("a model start asks ensureCore to retire the agent's sessions on an older Core (ATO-841)", async () => {
+  clientOptions.length = 0;
+  fake.snapshot.mockResolvedValue({ sessions: [] });
+  fake.call.mockResolvedValue({ session, created: true });
+  await loadCoreSession(dir, { role: "chat", modelId: "test", modelPath: "/test.gguf", port: 19091, args: [] });
+  expect(clientOptions).toEqual([{ retireSessions: true }]);
 });
 
 function idleCore(sessions: unknown[], shutdown: () => unknown = () => ({ ok: true, stopping: true }), embedding?: { enabled: boolean }) {
@@ -164,5 +174,48 @@ describe("a Core that crashed while its model kept running", () => {
   it("does nothing when there is no orphan", async () => {
     await expect(recoverOrphanedCoreSessions(dir)).resolves.toBe(false);
     expect(ensureCore).not.toHaveBeenCalled();
+  });
+});
+
+describe("re-reading a session key after a 401 (ATO-837)", () => {
+  function staleRecord(role: "chat" | "embedding" = "chat"): void {
+    writeCoreJson(coreSessionPath(dir, role), { ...session, api_key: "stale-key", coreVersion: CORE_VERSION, instanceId: "owned" });
+  }
+  function liveCore(sessions: unknown[]): void {
+    Object.assign(fake, { version: CORE_VERSION });
+    vi.mocked(connectCore).mockResolvedValue(fake as never);
+    fake.snapshot.mockResolvedValue({ sessions });
+  }
+
+  it("returns the session's current key and writes it to the record", async () => {
+    staleRecord();
+    liveCore([session]);
+    await expect(refreshCoreKeyForUrl(dir, "http://127.0.0.1:19091/completion")).resolves.toBe("test-key");
+    expect(JSON.parse(readFileSync(coreSessionPath(dir, "chat"), "utf8")).api_key).toBe("test-key");
+  });
+
+  it("finds the embedding session on its own port", async () => {
+    staleRecord("embedding");
+    liveCore([{ ...session, is_embedding: true }]);
+    await expect(refreshCoreKeyForUrl(dir, "http://localhost:19091")).resolves.toBe("test-key");
+    expect(JSON.parse(readFileSync(coreSessionPath(dir, "embedding"), "utf8")).api_key).toBe("test-key");
+  });
+
+  it("never asks Core for a URL that is not loopback http", async () => {
+    staleRecord();
+    liveCore([session]);
+    await expect(refreshCoreKeyForUrl(dir, "http://192.168.1.5:19091/completion")).resolves.toBeNull();
+    await expect(refreshCoreKeyForUrl(dir, "https://127.0.0.1:19091/completion")).resolves.toBeNull();
+    expect(connectCore).not.toHaveBeenCalled();
+  });
+
+  it("knows nothing better when no Core session is on that port or Core is down", async () => {
+    staleRecord();
+    liveCore([session]);
+    await expect(refreshCoreKeyForUrl(dir, "http://127.0.0.1:19999/completion")).resolves.toBeNull();
+    expect(connectCore).not.toHaveBeenCalled();
+    vi.mocked(connectCore).mockResolvedValue(null);
+    await expect(refreshCoreKeyForUrl(dir, "http://127.0.0.1:19091/completion")).resolves.toBeNull();
+    expect(JSON.parse(readFileSync(coreSessionPath(dir, "chat"), "utf8")).api_key).toBe("stale-key");
   });
 });

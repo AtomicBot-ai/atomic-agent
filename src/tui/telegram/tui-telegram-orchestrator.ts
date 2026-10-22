@@ -1,13 +1,49 @@
 import { getConfig } from "../../config/index.js";
-import { TELEGRAM_BOT_TOKEN_KEY } from "../../channels/telegram/index.js";
+import {
+  DEFAULT_PAIRING_TIMEOUT_MS,
+  pairedOwnerLine,
+  pairingInstruction,
+  replaceOwnerPrompt,
+  TELEGRAM_BOT_TOKEN_KEY,
+  type OpenedPairingWindow,
+} from "../../channels/telegram/index.js";
 import type { ChannelStatus } from "../../runtime/channel-status.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import { decideConnectAction } from "./setup-flow.js";
 
-const PAIRING_DEFAULT_TIMEOUT_MS = 60_000;
 const PAIRING_TICK_MS = 1_000;
 const PAIRING_RESULT_DISMISS_MS = 4_000;
+/** How long asking to pair again counts as confirming the replacement of a paired owner. */
+export const REPLACE_OWNER_CONFIRM_MS = 15_000;
+
+/** What a pairing claim looks like to the TUI. */
+export interface PairingClaimSummary {
+  userId: number;
+  chatId: number;
+  username: string | null;
+  welcomeDelivered: boolean;
+}
+
+/**
+ * The answer to "open a pairing window" (ATO-718):
+ *  - `opened`: the window is open; show `code` to the operator.
+ *    `outcome` settles when it closes, with the claim or `null`.
+ *  - `confirm_replace`: an owner is paired; nothing was opened. Asking
+ *    again within `REPLACE_OWNER_CONFIRM_MS` replaces them.
+ *  - `unavailable`: no window could open; `reason` says why.
+ */
+export type PairingRequest =
+  | {
+      kind: "opened";
+      code: string;
+      expiresAt: number;
+      timeoutMs: number;
+      botUsername: string | null;
+      outcome: Promise<PairingClaimSummary | null>;
+    }
+  | { kind: "confirm_replace"; ownerUserId: number }
+  | { kind: "unavailable"; reason: string };
 
 /**
  * Only TUI module that touches `runtime.telegramChannel`; mirrors
@@ -17,6 +53,8 @@ const PAIRING_RESULT_DISMISS_MS = 4_000;
 export class TuiTelegramOrchestrator {
   private pairingTimer: NodeJS.Timeout | null = null;
   private dismissTimer: NodeJS.Timeout | null = null;
+  /** When pairing was first asked for while an owner was paired. */
+  private replaceArmedAt: number | null = null;
   private statusUnsubscribe: (() => void) | null = null;
   /** Mutex on `advanceConnect` / `submitToken`; inner recursion uses `_runConnectChain` to bypass it. */
   private advancing = false;
@@ -170,7 +208,7 @@ export class TuiTelegramOrchestrator {
       return;
     }
     // Start the channel, but deliberately NOT the connect chain: that
-    // chain ends in a 60-second pairing window, and the hub offers
+    // chain ends in a pairing window, and the hub offers
     // pairing as its own `p` action. Saving a token means "run this
     // bot", not "claim an owner right now".
     await this.setEnabled(true);
@@ -255,52 +293,146 @@ export class TuiTelegramOrchestrator {
     );
   }
 
-  async startPairing(
-    timeoutMs: number = PAIRING_DEFAULT_TIMEOUT_MS,
-  ): Promise<void> {
+  /**
+   * Open a pairing window, or say why not. Returns as soon as the
+   * window is open (the code is known then); `outcome` settles when it
+   * closes. While an owner is paired the first call only arms the
+   * confirmation, and a second call within `REPLACE_OWNER_CONFIRM_MS`
+   * opens a window that may replace them. The code goes only to the
+   * caller, for the operator's screen; it is not put in panel state
+   * or logged.
+   */
+  requestPairing(timeoutMs: number = DEFAULT_PAIRING_TIMEOUT_MS): PairingRequest {
     const channel = this.runtime.telegramChannel;
     if (!channel) {
-      this.emitInfo("telegram channel unavailable; cannot pair");
-      return;
+      return { kind: "unavailable", reason: "telegram channel unavailable; cannot pair" };
     }
     if (channel.state() !== "up") {
-      this.emitInfo(
-        "pairing requires the channel to be `up` — enable telegram and start it first",
-      );
-      return;
+      return {
+        kind: "unavailable",
+        reason: "pairing requires the channel to be `up`: enable telegram and start it first",
+      };
     }
-    this.clearPairingTimer();
-    const expiresAt = Date.now() + timeoutMs;
-    this.bus.emit({
-      type: "telegram_pairing_started",
-      expiresAt,
-      nowMs: Date.now(),
+    const owner = channel.getOwnerUserId();
+    let replaceOwner = false;
+    if (owner !== null) {
+      const now = Date.now();
+      if (
+        this.replaceArmedAt === null ||
+        now - this.replaceArmedAt > REPLACE_OWNER_CONFIRM_MS
+      ) {
+        this.replaceArmedAt = now;
+        return { kind: "confirm_replace", ownerUserId: owner };
+      }
+      replaceOwner = true;
+    }
+    this.replaceArmedAt = null;
+    let opened: OpenedPairingWindow | null = null;
+    const outcome = this.runPairing(channel, timeoutMs, replaceOwner, (pairingWindow) => {
+      opened = pairingWindow;
     });
-    this.pairingTimer = setInterval(() => {
-      this.bus.emit({ type: "telegram_pairing_tick", nowMs: Date.now() });
-    }, PAIRING_TICK_MS);
+    // `onOpened` runs synchronously inside `channel.startPairing`, so
+    // the window is known here or it never opened.
+    const openedWindow = opened as OpenedPairingWindow | null;
+    if (openedWindow === null) {
+      return { kind: "unavailable", reason: "the pairing window did not open" };
+    }
+    return {
+      kind: "opened",
+      code: openedWindow.code,
+      expiresAt: openedWindow.expiresAt,
+      timeoutMs,
+      botUsername: channel.getBotIdentity()?.username ?? null,
+      outcome,
+    };
+  }
+
+  /**
+   * `/telegram pair` and the connect flow: open a window and narrate it
+   * on the Integrations status line (the code, then who became the
+   * owner); the runtime feed gets the same lines minus the code.
+   */
+  async startPairing(
+    timeoutMs: number = DEFAULT_PAIRING_TIMEOUT_MS,
+  ): Promise<void> {
+    const request = this.requestPairing(timeoutMs);
+    switch (request.kind) {
+      case "unavailable":
+        this.emitInfo(request.reason);
+        return;
+      case "confirm_replace":
+        this.emitPairingLine(
+          replaceOwnerPrompt({
+            ownerUserId: request.ownerUserId,
+            confirmSeconds: REPLACE_OWNER_CONFIRM_MS / 1000,
+            again: "Run /telegram pair again",
+          }),
+        );
+        return;
+      case "opened": {
+        // The code goes to the Integrations status line only, the tab
+        // `/telegram pair` switches to. The runtime feed lands in issue
+        // reports, so it gets a line without the code.
+        this.bus.emit({
+          type: "integrations_action_settled",
+          message: pairingInstruction(request),
+        });
+        this.emitInfo(
+          "telegram: pairing window open; the code is on the Integrations tab",
+        );
+        const claim = await request.outcome;
+        this.emitPairingLine(
+          claim ? pairedOwnerLine(claim) : "Pairing window closed without a claim.",
+        );
+        return;
+      }
+    }
+  }
+
+  /** The window itself: countdown, channel call, resolution actions. */
+  private async runPairing(
+    channel: NonNullable<AgentRuntime["telegramChannel"]>,
+    timeoutMs: number,
+    replaceOwner: boolean,
+    onOpened: (pairingWindow: OpenedPairingWindow) => void,
+  ): Promise<PairingClaimSummary | null> {
+    this.clearPairingTimer();
     try {
-      const outcome = await channel.startPairing(timeoutMs);
-      this.bus.emit({
-        type: "telegram_pairing_resolved",
-        result: outcome
-          ? {
-              userId: outcome.claim.userId,
-              chatId: outcome.claim.chatId,
-              welcomeDelivered: outcome.welcomeDelivered,
-            }
-          : null,
+      const outcome = await channel.startPairing(timeoutMs, {
+        replaceOwner,
+        onOpened: (opened) => {
+          onOpened(opened);
+          this.bus.emit({
+            type: "telegram_pairing_started",
+            expiresAt: opened.expiresAt,
+            nowMs: Date.now(),
+          });
+          this.pairingTimer = setInterval(() => {
+            this.bus.emit({ type: "telegram_pairing_tick", nowMs: Date.now() });
+          }, PAIRING_TICK_MS);
+        },
       });
-      if (outcome) {
+      const result: PairingClaimSummary | null = outcome
+        ? {
+            userId: outcome.claim.userId,
+            chatId: outcome.claim.chatId,
+            username: outcome.claim.username,
+            welcomeDelivered: outcome.welcomeDelivered,
+          }
+        : null;
+      this.bus.emit({ type: "telegram_pairing_resolved", result });
+      if (result) {
         this.refreshSettings();
         this.scheduleResultDismiss();
       }
+      return result;
     } catch (err) {
       this.bus.emit({
         type: "telegram_pairing_resolved",
         result: null,
       });
       this.emitInfo(`pairing failed: ${errMsg(err)}`);
+      return null;
     } finally {
       this.clearPairingTimer();
     }
@@ -345,6 +477,16 @@ export class TuiTelegramOrchestrator {
 
   private emitInfo(line: string): void {
     this.bus.emit({ type: "runtime_info", line });
+  }
+
+  /**
+   * A `/telegram pair` line the operator must see: the Integrations
+   * status line (where the command lands) and the runtime feed. Never
+   * called with the code (see `startPairing`).
+   */
+  private emitPairingLine(line: string): void {
+    this.bus.emit({ type: "integrations_action_settled", message: line });
+    this.emitInfo(line);
   }
 
   /** Press → call channel → emit started/settled with shared busy + error surface. */

@@ -52,7 +52,12 @@ export interface AppInstalledContext {
  *  - `promptTokens` / `completionTokens`
  *                  — tokens the turn consumed, summed across every LLM
  *                    call it made. Reported by the provider's `usage`
- *                    block; omitted when the provider reports none.
+ *                    block; a local llama-server, which sends none,
+ *                    counts by its timings (never priced). Omitted when
+ *                    no call reported any.
+ *  - `cachedTokens` — of those prompt tokens, how many the services
+ *                    served from a prompt cache. Omitted when no call
+ *                    reported the figure.
  *  - `costUsd`     — estimated spend for the turn, from the same token
  *                    counts times per-model pricing. Omitted when the
  *                    model carries no pricing, which is the normal case
@@ -60,6 +65,12 @@ export interface AppInstalledContext {
  *                    rather than a zero one.
  *  - `localEngine` — for a local turn only, which engine served it
  *                    (`LocalEngine`). Omitted for cloud turns.
+ *  - `fallbackCalls` — how many of the turn's completions were served
+ *                    by a fallback link rather than the provider the
+ *                    turn was meant for. Omitted when unknown.
+ *
+ * `provider` and `model` name the link that actually served the turn
+ * (its last completion), so after a fallover they are the fallback's.
  */
 export interface MessageEventContext {
   provider: string;
@@ -69,23 +80,33 @@ export interface MessageEventContext {
   outcome?: string;
   promptTokens?: number;
   completionTokens?: number;
+  cachedTokens?: number;
   costUsd?: number;
   localEngine?: LocalEngine;
+  fallbackCalls?: number;
 }
 
 /**
  * Emit the one-time `app_installed` event. No-ops when analytics is
  * disabled (`client` is null) or the event was already sent for this
  * install.
+ *
+ * The "sent" flag is set only after PostHog confirmed delivery
+ * (`captureConfirmed`). Setting it right after queueing lost the install
+ * for good on a first launch without network: posthog-node keeps its
+ * queue in memory only, so the event died with the process while the
+ * flag said it had gone (ATO-717). An undelivered event is now simply
+ * tried again on the next launch. Never rejects; callers need not await
+ * it.
  */
-export function captureAppInstalled(
+export async function captureAppInstalled(
   client: AnalyticsClient | null,
   store: AnalyticsStateStore,
   context: AppInstalledContext = {},
-): void {
+): Promise<void> {
   if (!client) return;
   if (store.isAppInstalledSent()) return;
-  client.capture(ANALYTICS_EVENTS.appInstalled, {
+  const delivered = await client.captureConfirmed(ANALYTICS_EVENTS.appInstalled, {
     ...(context.installChannel !== undefined
       ? { install_channel: context.installChannel }
       : {}),
@@ -93,7 +114,7 @@ export function captureAppInstalled(
       ? { other_surface_installed: context.otherSurfaceInstalled }
       : {}),
   });
-  store.markAppInstalledSent();
+  if (delivered) store.markAppInstalledSent();
 }
 
 /**
@@ -222,9 +243,15 @@ export function captureMessageSent(
     ...(context.completionTokens !== undefined
       ? { completion_tokens: context.completionTokens }
       : {}),
+    ...(context.cachedTokens !== undefined
+      ? { cached_tokens: context.cachedTokens }
+      : {}),
     ...(context.costUsd !== undefined ? { cost_usd: context.costUsd } : {}),
     ...(context.localEngine !== undefined
       ? { local_engine: context.localEngine }
+      : {}),
+    ...(context.fallbackCalls !== undefined
+      ? { fallback_calls: context.fallbackCalls }
       : {}),
   });
 }

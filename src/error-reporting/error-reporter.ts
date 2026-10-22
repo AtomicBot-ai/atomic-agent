@@ -1,5 +1,6 @@
 import { isBrokenPipeError } from "./broken-pipe.js";
 import { scrubError } from "./error-scrubber.js";
+import type { LlmFailureContext } from "./llm-failure-tags.js";
 import type { SentryClient } from "./sentry-client.js";
 
 let globalHandlersInstalled = false;
@@ -37,7 +38,7 @@ export interface GlobalErrorHandlerOptions {
 export function captureError(
   client: SentryClient | null,
   err: unknown,
-  opts: { source: string; category?: string },
+  opts: { source: string; category?: string; llmFailure?: LlmFailureContext },
 ): void {
   if (!client) return;
   if (opts.category === "cancelled") return;

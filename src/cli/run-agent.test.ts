@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -9,9 +16,11 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
+import { LocalEngineDownError } from "../llm/reliability/index.js";
 import {
   formatAgentEvent,
   formatCliApprovalPrompt,
+  isApprovalAnswer,
   formatSkillsBannerValue,
 } from "./run-agent.js";
 
@@ -27,6 +36,20 @@ function transportError(message: string) {
     },
   };
 }
+
+describe("isApprovalAnswer", () => {
+  it("takes the offered keys, yes/no and an empty line, in any case", () => {
+    for (const line of ["y", "Y", "yes", " YES ", "n", "no", "N", "s", "a", "", "  "]) {
+      expect(isApprovalAnswer(line), JSON.stringify(line)).toBe(true);
+    }
+  });
+
+  it("treats anything else as a message, not an answer", () => {
+    for (const line of ["continue", "now say hi", "yes please", "nope", "always", "y n"]) {
+      expect(isApprovalAnswer(line), line).toBe(false);
+    }
+  });
+});
 
 describe("formatCliApprovalPrompt", () => {
   const request = (category: ApprovalRequest["category"]): ApprovalRequest => ({
@@ -126,6 +149,20 @@ describe("formatAgentEvent llama hint", () => {
     expect(line).toContain("» loop failed [transport]: fetch failed");
     expect(line).toContain("llama-server is not reachable");
   });
+
+  it("a turn ended because the local model is not running says so and names the start command (ATO-772)", () => {
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new LocalEngineDownError("local-llama"),
+        category: "transport" as never,
+      },
+      { llamaHint: HINT, hintShown: { value: false } },
+    );
+    expect(line).toBe(
+      "» loop failed [transport]: The local model isn't running.\n    Start it with: atomic-agent models start",
+    );
+  });
 });
 
 describe("formatLlamaUnreachableHint", () => {
@@ -137,11 +174,20 @@ describe("formatLlamaUnreachableHint", () => {
   });
 });
 
-/** Raw model output the stubbed llama-server replays on every step. */
-const model = vi.hoisted(() => ({ emits: "" }));
+/**
+ * Raw model output the stubbed llama-server replays on every step, after
+ * the one-shot `script` entries (one per step, in order) run out.
+ */
+const model = vi.hoisted(() => ({ emits: "", script: [] as string[] }));
 
 /** The options `runAgentCommand` handed `runtime.runTurn`, per turn. */
 const turnOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+
+/** The user message of each turn, in the order the turns ran. */
+const turnMessages = vi.hoisted(() => [] as string[]);
+
+/** When set, every turn waits on it before it starts running. */
+const turnGate = vi.hoisted(() => ({ wait: null as Promise<void> | null }));
 
 // `runAgentCommand` boots the real runtime and takes no injection seam of
 // its own, so the bootstrap module is wrapped to supply the same
@@ -176,7 +222,7 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
     // not a tool call; feeding it the step payload would have it parse
     // the fixture as notes.
     if (params.sessionId.startsWith("reflection:")) return completion("");
-    return completion(model.emits);
+    return completion(model.script.shift() ?? model.emits);
   };
   return {
     ...actual,
@@ -197,8 +243,10 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
       // runs on the production path.
       const runTurn = runtime.runTurn;
       return Object.assign(runtime, {
-        runTurn: (...args: Parameters<typeof runTurn>) => {
+        runTurn: async (...args: Parameters<typeof runTurn>) => {
           turnOptions.push({ ...(args[2] ?? {}) });
+          turnMessages.push(args[1]);
+          if (turnGate.wait) await turnGate.wait;
           return runTurn(...args);
         },
       });
@@ -223,6 +271,7 @@ describe("runAgentCommand exit codes", () => {
     process.env.ATOMIC_AGENT_GRAMMARS_DIR = join(process.cwd(), "grammars");
     resetConfigCache();
     model.emits = "";
+    model.script = [];
     stderr = "";
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
@@ -334,6 +383,125 @@ describe("runAgentCommand exit codes", () => {
     expect(turnOptions).toHaveLength(1);
     expect(turnOptions[0]!.maxSteps).toBe(7);
   }, 60_000);
+
+  it("runs every stdin line in order, even lines that arrive mid-turn (ATO-781)", async () => {
+    // A driver writes the task and its follow-ups up front. The first
+    // turn is held until stdin has hit EOF, so the follow-ups arrive
+    // while it runs and EOF lands before it ends.
+    turnOptions.length = 0;
+    turnMessages.length = 0;
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "ok" } });
+    const stdin = Readable.from(["the task\n", "continue\n", "and wrap up\n"]);
+    Object.defineProperty(process, "stdin", {
+      value: stdin,
+      configurable: true,
+    });
+    turnGate.wait = new Promise<void>((resolveGate) => {
+      stdin.once("end", () => resolveGate());
+    });
+    try {
+      const code = await runAgentCommand([
+        "--cwd",
+        workingDir,
+        "--no-approval",
+      ]);
+      expect(code).toBe(0);
+    } finally {
+      turnGate.wait = null;
+    }
+    expect(turnMessages).toEqual(["the task", "continue", "and wrap up"]);
+    expect(stderr).toContain('"turnCount": 3');
+  }, 60_000);
+
+  describe("approval answers come from the same stdin queue (ATO-802)", () => {
+    const WRITE = JSON.stringify({
+      tool: "os.fs.write",
+      args: { path: "out.txt", content: "written" },
+    });
+    const REPLY = (text: string): string =>
+      JSON.stringify({ tool: "reply", args: { text } });
+
+    it("takes a piped y for the approval and keeps the next message for the next turn", async () => {
+      // Default approval level 1 asks before a workspace write. The task,
+      // the answer and the next message arrive in one chunk, all read
+      // before the approval opens.
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("wrote it")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\ny\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(stderr).toContain("approval required for tool: os.fs.write");
+      expect(readFileSync(join(workingDir, "out.txt"), "utf8")).toBe("written");
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+
+    it("denies without eating a queued message that is not an answer", async () => {
+      // The driver pipes two messages and no answer: the approval must
+      // not swallow "now say hi" as its (deny) answer.
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(stderr).toContain("approval required for tool: os.fs.write");
+      expect(stderr).toContain("not an answer, kept as the next message");
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+
+    it("takes a piped n as the answer: denied, and it is not a turn", async () => {
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\nn\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+
+    it("denies at EOF before an answer", async () => {
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file"]);
+    }, 60_000);
+
+    it("denies when the approval prompt fails, and later stdin lines still run", async () => {
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      // The prompt's own stderr write throws once: the prompt fails
+      // before it reads an answer.
+      let failed = false;
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+        const text = typeof chunk === "string" ? chunk : String(chunk);
+        if (!failed && text.includes("approval required for tool")) {
+          failed = true;
+          throw new Error("stderr is gone");
+        }
+        stderr += text;
+        return true;
+      });
+      feedStdin(["write the file\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(failed).toBe(true);
+      expect(stderr).toContain("approval prompt failed (stderr is gone); denied");
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+  });
 });
 
 /**

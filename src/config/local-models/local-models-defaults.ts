@@ -9,7 +9,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
     completionMaxTokens: 16384,
     useServerTemplate: "auto",
     thinking: "auto",
-    reasoningBudgetTokens: 1500,
+    reasoningBudgetTokens: 0,
     managed: {
       engine: "atomic-core",
       modelId: null,

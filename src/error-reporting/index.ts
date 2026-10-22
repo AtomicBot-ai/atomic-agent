@@ -15,6 +15,8 @@ export {
   STATIC_MESSAGE_ERRORS,
 } from "./error-scrubber.js";
 export type { ScrubbedErrorEvent, SentryStackFrame } from "./error-scrubber.js";
+export { sanitizeLlmFailureTags } from "./llm-failure-tags.js";
+export type { LlmFailureContext } from "./llm-failure-tags.js";
 export { buildEnvelope, buildSentryAuthHeader } from "./sentry-envelope.js";
 export type {
   EnvelopeMeta,

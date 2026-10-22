@@ -105,6 +105,38 @@ export interface PairingOutcome {
   welcomeDelivered: boolean;
 }
 
+/** The window `startPairing` opened, for the operator's screen. */
+export interface OpenedPairingWindow {
+  /** The one-time code the owner sends as `/start <code>`. Never log it. */
+  code: string;
+  /** Epoch ms when the window, and the code, expire. */
+  expiresAt: number;
+}
+
+export interface StartPairingOptions {
+  /**
+   * The operator explicitly confirmed replacing the owner already
+   * paired with this bot. Without it `startPairing` refuses while an
+   * owner is configured (ATO-718).
+   */
+  replaceOwner?: boolean;
+  /**
+   * Called synchronously once the window is open, with the code to
+   * show the operator. Not called when no window opens.
+   */
+  onOpened?: (window: OpenedPairingWindow) => void;
+}
+
+/** `startPairing` while an owner is paired and replacing them was not confirmed. */
+export class OwnerAlreadyPairedError extends Error {
+  constructor() {
+    super(
+      "this bot already has an owner; confirm replacing them before pairing again",
+    );
+    this.name = "OwnerAlreadyPairedError";
+  }
+}
+
 /**
  * Lifecycle orchestrator for the Telegram remote-control channel.
  * Owns: polling lifecycle, status transitions, approval-bridge wiring,
@@ -811,17 +843,25 @@ export class TelegramChannel {
   }
 
   /**
-   * Open a pairing window. The next eligible private DM (any
-   * `from.id`) within `timeoutMs` is captured as the new owner:
-   * `ownerUserId` is persisted, the channel restarts, and the
-   * returned promise resolves with the claim. Resolves to `null` on
-   * timeout or `cancelPairing()`.
+   * Open a pairing window with a fresh 6-digit one-time code, handed
+   * to `options.onOpened` for the operator's screen. The first private
+   * DM `/start <code>` within `timeoutMs` (5 minutes by default) is
+   * captured as the new owner: `ownerUserId` is persisted, the channel
+   * restarts, and the returned promise resolves with the claim. Any
+   * other DM claims nothing. Resolves to `null` on timeout or
+   * `cancelPairing()`.
    *
    * Pairing requires the channel to be `up` so updates can arrive.
    * Calling it while down resolves to `null` immediately and emits
-   * a warn log — the TUI is expected to enable + start first.
+   * a warn log — the TUI is expected to enable + start first. While an
+   * owner is configured it rejects with `OwnerAlreadyPairedError`
+   * unless `options.replaceOwner` carries the operator's confirmation.
+   * The code is never logged.
    */
-  async startPairing(timeoutMs?: number): Promise<PairingOutcome | null> {
+  async startPairing(
+    timeoutMs?: number,
+    options: StartPairingOptions = {},
+  ): Promise<PairingOutcome | null> {
     if (this.currentState !== "up") {
       this.deps.logger.warn(
         "telegram: pairing requested while channel not up",
@@ -829,7 +869,19 @@ export class TelegramChannel {
       );
       return null;
     }
-    const claim = await this.pairing.start(timeoutMs);
+    if (this.currentOwnerUserId !== null && options.replaceOwner !== true) {
+      this.deps.logger.warn(
+        "telegram: pairing refused, an owner is paired and replacing them was not confirmed",
+      );
+      throw new OwnerAlreadyPairedError();
+    }
+    const pending = this.pairing.start(timeoutMs);
+    const code = this.pairing.currentCode();
+    const expiresAt = this.pairing.expiresAt();
+    if (code !== null && expiresAt !== null) {
+      options.onOpened?.({ code, expiresAt });
+    }
+    const claim = await pending;
     if (!claim) return null;
     // Persist first; only after the new owner is durably stored do
     // we attempt the user-visible Telegram confirmation. The welcome
@@ -990,8 +1042,21 @@ export class TelegramChannel {
     }
   }
 
+  /** Logs who claimed or tried, never the code they sent. */
   private handlePairingClaim(update: InboundTextUpdate): boolean {
-    return this.pairing.tryClaim(update);
+    const result = this.pairing.tryClaim(update);
+    if (result === "claimed") {
+      this.deps.logger.info("telegram: pairing claimed with the one-time code", {
+        fromId: update.from?.id,
+        chatId: update.chat.id,
+      });
+    } else if (result === "wrong_code") {
+      this.deps.logger.warn("telegram: pairing attempt with a wrong code ignored", {
+        fromId: update.from?.id,
+        chatId: update.chat.id,
+      });
+    }
+    return result !== "ignored";
   }
 
   /**
