@@ -254,8 +254,43 @@ function simgPhaseRows(at) {
   }).join('');
 }
 
+/* ATO-830: OpenRouter's upstream for a model (often Google's, for Nano Banana)
+   answers 429 when it is out of quota. Core passes it on as
+   REMOTE_RATE_LIMITED, or as its own words ("openrouter is rate-limiting
+   requests") on a job that failed after it started. */
+const SIMG_NOT_RATE = /^(NO_KEY|JOB_BUSY|GPU_BUSY|MODEL_|SIDE_FILE_|OUT_OF_MEMORY|QUEUE_FULL|DISK_|CORE_|INVALID_|UNKNOWN_MODEL|ENGINE_|DOWNLOAD_FAILED|CANCELLED|OUTSIDE|UNSUPPORTED_WORKFLOW|REMOTE_(?!RATE_LIMITED$|UNAVAILABLE$))/;
+function simgRateLimited(e) {
+  if (!e) return false;
+  if (e.code === 'REMOTE_RATE_LIMITED') return true;
+  /* The words only on a code that does not already say what went wrong: a
+     size of 429 or a quota message is not a rate limit. A bare 429 counts
+     only beside the words that make it a status. */
+  if (SIMG_NOT_RATE.test(String(e.code || ''))) return false;
+  const msg = String(e.message || '');
+  return /rate[ -]?limit|too many requests/i.test(msg) || (/\b429\b/.test(msg) && /http|status|upstream|answered|returned/i.test(msg));
+}
+
+/* Another cloud model to offer when one is rate limited: never the one that
+   failed, one that runs the current mode, a GPT Image model first (it has a
+   different upstream), else the catalog's next. `models` is simgModels(). */
+function simgAltModel(models, failed, mode) {
+  const f = failed || {};
+  const ok = (models || []).filter((m) => m.group === 'cloud' && !(m.id === f.id && (!f.provider || m.provider === f.provider))
+    && (!mode || (m.modes || []).includes(mode)));
+  return ok.find((m) => /gpt[ -]?image/i.test(m.id + ' ' + (m.name || ''))) || ok[0] || null;
+}
+
+/* The rate-limit card's words: which model's provider is busy, and that a
+   turned-away request is not billed. Not "nothing was charged": a job of
+   several images can be refused after some of them were made. */
+function simgRateLimitLine(name) {
+  return 'OpenRouter\u2019s provider for ' + (name || 'this model') + ' is busy right now. OpenRouter does not charge for a request it turned away. Try again in a moment, or use another model.';
+}
+
 function simgvError(IM) {
   const e = IM.jobErr || {};
+  // A local job never went to OpenRouter, whatever its words say.
+  if (simgRateLimited(e) && (IM.lastReq || {}).provider !== 'local') return simgvRateLimited(IM);
   const key = e.code === 'NO_KEY';
   const core = /^CORE_/.test(e.code || '');
   return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
@@ -263,6 +298,20 @@ function simgvError(IM) {
     + '<div class="st-prog-f"><span class="st-sp"></span>'
     + (key ? '<button class="btn" ' + SIMGV_A('settings') + '>' + ic('key') + 'Open Settings</button>' : '')
     + (core ? '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Try again</button>' : '')
+    + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
+}
+
+function simgvRateLimited(IM) {
+  const req = IM.lastReq || {};
+  const failed = {id: req.model || (IM.job && IM.job.model), provider: req.provider};
+  const models = simgModels(IM.catalog);
+  const was = models.find((m) => m.id === failed.id) || {name: failed.id};
+  const alt = simgAltModel(models, failed, IM.form && IM.form.mode);
+  return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
+    + '<div><div class="t">' + esc((was.name || 'This model') + ' is busy') + '</div><div class="s">' + esc(simgRateLimitLine(was.name)) + '</div></div></div>'
+    + '<div class="st-prog-f"><span class="st-sp"></span>'
+    + '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Retry</button>'
+    + (alt ? '<button class="btn" ' + SIMGV_A('trymodel:' + alt.provider + '|' + alt.id) + '>Try ' + esc(alt.name || alt.id) + '</button>' : '')
     + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
 }
 
@@ -369,4 +418,4 @@ function simgvPage(IM) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {simgJobOf};
+if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine};
