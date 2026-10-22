@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { coreDaemonEnv } from "./core-env.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
+import { unloadRetiredCoreSessions } from "./core-retire-sessions.js";
 import { CoreUnavailableError, toCoreUnavailable } from "./core-errors.js";
 import { CORE_PROTOCOL, CORE_VERSION, CORE_VERSIONS, coreBinary, coreDataDir, coreEmbeddingRecordPath, coreVersionDir, readCoreEmbeddingRecord, readCoreJson, type CoreSession } from "./core-state.js";
 
@@ -152,11 +153,13 @@ export async function applyPendingEmbeddingDisable(dataDir: string, version: str
 const retiredDataDirs = new Set<string>();
 
 /**
- * Once per process and data folder, after this build's Core is up: ask an
- * idle daemon of an older pinned version to shut down, so an upgrade does
+ * Once per process and data folder, after this build's Core is up: unload
+ * the model sessions the agent itself recorded on an older pinned version
+ * that is no longer active (its llama-server would keep holding the port),
+ * then ask that daemon to shut down if it became idle, so an upgrade does
  * not leave the previous Core running beside it. Best effort; one that
- * still serves a model or another client keeps running. Callers hold the
- * engine operation lock (every ensureCore caller does).
+ * still serves another client's model or another client keeps running.
+ * Callers hold the engine operation lock (every ensureCore caller does).
  */
 export async function retireOlderCores(dataDir: string, connect: typeof connectCore = connectCore): Promise<void> {
   if (retiredDataDirs.has(dataDir)) return;
@@ -165,7 +168,9 @@ export async function retireOlderCores(dataDir: string, connect: typeof connectC
     if (version === CORE_VERSION) continue;
     try {
       const client = await connect(dataDir, version);
-      if (client) await shutdownIdleCoreClient(client);
+      if (!client) continue;
+      await unloadRetiredCoreSessions(dataDir, client).catch(() => {});
+      await shutdownIdleCoreClient(client);
     } catch { /* best effort: an older Core that will not answer is left alone */ }
   }
 }

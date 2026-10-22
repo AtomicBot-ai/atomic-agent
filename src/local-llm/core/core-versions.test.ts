@@ -1,8 +1,8 @@
-import { afterEach, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CORE_VERSION, CORE_VERSIONS, activeCoreVersion, coreBinary, coreRoot, coreVersionDir, readCoreBackend, writeCoreJson } from "./core-state.js";
+import { CORE_VERSION, CORE_VERSIONS, activeCoreVersion, coreBinary, coreRoot, coreSessionPath, coreVersionDir, readCoreBackend, writeCoreJson } from "./core-state.js";
 import { isCoreInstalled } from "./core-install.js";
 import { isCoreBackendInstalled } from "./core-backend.js";
 import { retireOlderCores, type CoreControlClient } from "./core-client.js";
@@ -63,4 +63,58 @@ it("leaves an older Core that still serves a model, and survives one that does n
   await retireOlderCores(busy, async () => client);
   expect(call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
   await expect(retireOlderCores(fixture(), async () => { throw new Error("unreachable"); })).resolves.toBeUndefined();
+});
+
+describe("an older Core that still holds the agent's own model (ATO-841)", () => {
+  const session = { pid: 4242, port: 19091, model_id: "chat-model", model_path: "/models/chat.gguf", api_key: "k", is_embedding: false, provider: "llamacpp", generation: "g1" };
+  function olderCore(sessions: Array<Record<string, unknown>>) {
+    let live = sessions;
+    const call = vi.fn(async (path: string) => {
+      if (path === "/clients") return { client: { id: "me" } };
+      if (path.endsWith("/unload")) { live = []; return { success: true }; }
+      if (path === "/embedding/status") return { enabled: false };
+      return { ok: true };
+    });
+    const client = { version: "0.16.0", instanceId: "old-instance", call, snapshot: vi.fn(async () => ({ sessions: live })) } as unknown as CoreControlClient;
+    return { client, call };
+  }
+  const connectOnly = (client: CoreControlClient) => async (_dir: string, version: string) => (version === "0.16.0" ? client : null);
+
+  it("unloads the recorded session through the old Core, drops the record, then shuts that Core down", async () => {
+    const dir = fixture();
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
+    const { client, call } = olderCore([session]);
+    await retireOlderCores(dir, connectOnly(client));
+    expect(call).toHaveBeenCalledWith("/models/llamacpp/chat-model/unload", {}, { timeoutMs: 30_000 });
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
+    expect(call).toHaveBeenCalledWith("/shutdown", { client_id: "me" });
+  });
+
+  it("leaves another client's session on the old Core alone", async () => {
+    const dir = fixture();
+    const { client, call } = olderCore([{ ...session, model_id: "someone-else" }]);
+    await retireOlderCores(dir, connectOnly(client));
+    expect(call.mock.calls.some(([path]) => String(path).endsWith("/unload"))).toBe(false);
+    expect(call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
+  });
+
+  it("does not unload a recorded session that changed owner or process", async () => {
+    const dir = fixture();
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
+    const { client, call } = olderCore([{ ...session, pid: 9999 }]);
+    await retireOlderCores(dir, connectOnly(client));
+    expect(call.mock.calls.some(([path]) => String(path).endsWith("/unload"))).toBe(false);
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(true);
+  });
+
+  it("keeps the session while that older version is still the active one", async () => {
+    const dir = fixture();
+    writeCoreJson(join(coreRoot(dir), "active.json"), { version: "0.16.0" });
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
+    const { client, call } = olderCore([session]);
+    await retireOlderCores(dir, connectOnly(client));
+    expect(call.mock.calls.some(([path]) => String(path).endsWith("/unload"))).toBe(false);
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(true);
+    expect(call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
+  });
 });
