@@ -1,8 +1,8 @@
 // ATO-498: the Thinking budget knob reads in plain words, says it is one
-// setting for Local models and Custom server, and says llama.cpp can stop it
-// sooner than the number picked (agent MAX_REASONING_BUDGET_TOKENS, #600).
+// setting for Local models and Custom server, and says llama.cpp can hold
+// no larger limit (agent MAX_REASONING_BUDGET_TOKENS, #600).
 // ATO-795: only No limit and choices up to that cap (499) are offered, and a
-// stored value above it shows as No limit.
+// stored value above it shows as 499, the bound the model really gets.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -47,21 +47,27 @@ test('offers No limit and choices up to the 499-token llama.cpp cap only', () =>
   assert.ok(budgets.every((n) => n <= 499), String(budgets));
 });
 
-test('a stored budget above the cap, or none, shows as No limit; one within it shows as is', () => {
+test('a stored budget shows the bound the model really gets: above the cap is 499, none is No limit', () => {
   const { shown } = knob();
   assert.equal(shown(undefined), 0);
   assert.equal(shown(null), 0);
   assert.equal(shown(0), 0);
-  assert.equal(shown(1500), 0);
-  assert.equal(shown(500), 0);
-  assert.equal(shown(8000), 0);
+  // Above the cap the grammar enforces 499, so the knob must not say No limit.
+  assert.equal(shown(1500), 499);
+  assert.equal(shown(500), 499);
+  assert.equal(shown(8000), 499);
   assert.equal(shown(499), 499);
   assert.equal(shown(64), 64);
   assert.equal(shown(2.5), 0);
+  assert.equal(shown(-5), 0);
+  assert.equal(shown('1500'), 0);
 });
 
 test('the knob lights the shown value, never a raw stored one above the cap', () => {
   const tune = slice('function llmTuneHTML()', 'async function llmTuneSet');
   assert.match(tune, /llmTuneBudgetShown\(lm\.reasoningBudgetTokens\)/);
   assert.doesNotMatch(tune, /: 1500/);
+  // A stored 1500 lights 499, which is already a choice, so no extra 1500 button appears.
+  const { shown, budgets } = knob();
+  assert.ok(Array.from(budgets).includes(shown(1500)));
 });

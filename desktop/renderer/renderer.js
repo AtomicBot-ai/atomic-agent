@@ -24617,11 +24617,13 @@ function llmTuneBudgetHint(n) {
   const words = Math.round(n * 0.75 / 25) * 25;
   return 'About ' + words.toLocaleString('en-US') + ' words of thinking';
 }
-/* The budget the knob lights for a stored value: missing or above the cap
-   reads as No limit (0) rather than a choice that does not work; the file
-   itself is left alone (the agent migrates the old 1500 default to 0). */
+/* The budget the knob lights for a stored value: the bound the model really
+   gets. A value above the cap runs as 499, so it lights 499, not No limit
+   (an agent before config v78 still enforces its 1500 default as 499, and a
+   kept 500, 4000 or 8000 is 499 on every agent). Missing or 0 is No limit.
+   The file itself is left alone; picking a choice is what writes it. */
 function llmTuneBudgetShown(raw) {
-  return Number.isInteger(raw) && raw > 0 && raw <= LLM_TUNE_BUDGET_MAX ? raw : 0;
+  return Number.isInteger(raw) && raw > 0 ? Math.min(raw, LLM_TUNE_BUDGET_MAX) : 0;
 }
 /* One knob: a title and one help line each, the choice on the right. */
 function llmTuneRowHTML(title, help, control) {
