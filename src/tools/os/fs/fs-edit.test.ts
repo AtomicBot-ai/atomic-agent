@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type { ToolContext } from "../../tool-registry.js";
-import { buildOsFsEditTool } from "./fs-edit.js";
+import { LOOSE_MATCH_NOTE, buildOsFsEditTool } from "./fs-edit.js";
 
 function makeCtx(workingDir: string): ToolContext {
   return {
@@ -106,6 +106,74 @@ describe("os.fs.edit", () => {
         makeCtx(dir),
       ),
     ).rejects.toThrow(/not found/);
+  });
+
+  it("applies a unique match that only lacks a blank line, and says so (ATO-785)", async () => {
+    const file = join(dir, "main.py");
+    await writeFile(
+      file,
+      "from users import get_user_name\n\nfor uid in [1, 2]:\n    print(get_user_name(uid))\n",
+      "utf8",
+    );
+    const tool = buildOsFsEditTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
+    const result = await tool.run(
+      {
+        path: "main.py",
+        oldString: "from users import get_user_name\nfor uid in [1, 2]:\n    print(get_user_name(uid))",
+        newString: "from users import fetch_user_name\nfor uid in [1, 2]:\n    print(fetch_user_name(uid))",
+      },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary.split("\n")[0]).toBe(LOOSE_MATCH_NOTE);
+    expect(result.details).toMatchObject({
+      matchedBy: "whitespace",
+      replacedOccurrences: 1,
+    });
+    expect(await readFile(file, "utf8")).toBe(
+      "from users import fetch_user_name\nfor uid in [1, 2]:\n    print(fetch_user_name(uid))\n",
+    );
+  });
+
+  it("never applies a whitespace-tolerant match that fits more than one place", async () => {
+    const file = join(dir, "twice.py");
+    const before = "x = 1\n\ny = 2\nx = 1\n\ny = 2\n";
+    await writeFile(file, before, "utf8");
+    const tool = buildOsFsEditTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
+    for (const replaceAll of [false, true]) {
+      await expect(
+        tool.run(
+          { path: "twice.py", oldString: "x = 1\ny = 2", newString: "z = 3", replaceAll },
+          makeCtx(dir),
+        ),
+      ).rejects.toThrow(/matches 2 places, so nothing was changed/);
+    }
+    expect(await readFile(file, "utf8")).toBe(before);
+  });
+
+  it("names the nearest fragment as JSON when nothing matches, so the retry can differ", async () => {
+    const file = join(dir, "near.py");
+    const before = "import os\n\ndef main():\n    return 1\n";
+    await writeFile(file, before, "utf8");
+    const tool = buildOsFsEditTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
+    const run = tool.run(
+      { path: "near.py", oldString: "def main():\n    return 2", newString: "x" },
+      makeCtx(dir),
+    );
+    await expect(run).rejects.toThrow(/not found/);
+    await expect(run).rejects.toThrow(
+      `Nearest text in the file, as JSON: ${JSON.stringify("def main():\n    return 1")}`,
+    );
+    expect(await readFile(file, "utf8")).toBe(before);
   });
 
   it("rejects when oldString equals newString", async () => {
