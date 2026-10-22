@@ -317,9 +317,45 @@ function simgModesLine(model) {
   return names.join(' · ');
 }
 
+/* Core lists the gallery only by page (offset, limit; no pinned filter), so the
+   Pinned tab reads the pages the window has not loaded yet, up to a cap. */
+const SIMG_PINNED_PAGE = 200;      // Core's largest page
+const SIMG_PINNED_MAX_PAGES = 10;  // so at most 2,000 more items are read
+
+/**
+ * Pinned items in the pages after `from`: `fetchPage(offset, limit)` answers
+ * like BR.studio.gallery. Resolves `{items, complete, ok}`: `complete` false
+ * when the cap was reached first, `ok` false when a page failed (the pinned
+ * ones found before it are kept).
+ */
+async function simgFindPinned(fetchPage, from, opts) {
+  const o = opts || {};
+  const size = o.pageSize || SIMG_PINNED_PAGE, max = o.maxPages || SIMG_PINNED_MAX_PAGES;
+  const items = [], seen = new Set();
+  let offset = Math.max(0, from | 0);
+  for (let n = 0; n < max; n++) {
+    let r;
+    try { r = await fetchPage(offset, size); } catch (e) { r = null; }
+    if (!r || !r.ok || !r.data) return {items, complete: false, ok: false};
+    const got = Array.isArray(r.data.items) ? r.data.items : [];
+    for (const x of got) if (x && x.pinned && !seen.has(x.id)) { seen.add(x.id); items.push(x); }
+    offset += got.length;
+    if (!r.data.hasMore || !got.length) return {items, complete: true, ok: true};
+  }
+  return {items, complete: false, ok: true};
+}
+
+/** The Pinned tab: pinned items of the loaded pages plus those found beyond them, newest first, each once. */
+function simgPinnedList(items, more) {
+  const out = (items || []).filter((x) => x.pinned);
+  const ids = new Set((items || []).map((x) => x.id));
+  for (const x of more || []) if (x.pinned && !ids.has(x.id)) { ids.add(x.id); out.push(x); }
+  return out.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgModelTags,
-    simgLocalChips, simgModesLine, SIMG_PHASE_ORDER};
+    simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};
 }

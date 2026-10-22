@@ -17,6 +17,7 @@
     form: blankForm(), saved: loadSaved(),
     job: null, jobCount: 1, jobErr: null, lastReq: null, starting: false, formMsg: '',
     items: [], total: 0, hasMore: false, filter: 'all', galLoading: false, galErr: null,
+    pinnedMore: [], pinnedLoading: false, pinnedPartial: false, pinnedReady: false,   // pinned items beyond the loaded pages (Pinned tab)
     sel: null, recipe: false, delArmed: null, picking: null,
     price: null, priceKey: '', pop: null, modelQ: '', adv: false,
     dir: '', focusPath: null,
@@ -220,9 +221,28 @@
       IM.items = more ? IM.items.concat(got.filter((x) => !IM.items.some((y) => y.id === x.id))) : mergeFresh(got);
       IM.total = r.data.total || IM.items.length;
       IM.hasMore = !!r.data.hasMore;
+      if (more) IM.pinnedMore = IM.pinnedMore.filter((x) => !IM.items.some((y) => y.id === x.id));
+      else { pinnedSeq++; IM.pinnedMore = []; IM.pinnedPartial = false; IM.pinnedReady = false; IM.pinnedLoading = false; if (IM.filter === 'pinned') loadPinned(); }
       if (IM.focusPath) focusFile(IM.focusPath);
       paintGallery();
     }, () => { IM.galLoading = false; paintGallery(); });
+  }
+  /* The Pinned tab: Core has no pinned filter, so read the pages not loaded yet (simgFindPinned, capped). */
+  let pinnedSeq = 0;
+  function loadPinned() {
+    const s = br();
+    if (!s || !s.gallery || !IM.hasMore) { IM.pinnedLoading = false; IM.pinnedReady = true; return; }
+    const seq = ++pinnedSeq;
+    IM.pinnedLoading = true;
+    paintGallery();
+    simgFindPinned((offset, limit) => s.gallery('image', {offset, limit}), IM.items.length).then((r) => {
+      if (seq !== pinnedSeq) return;
+      IM.pinnedLoading = false;
+      IM.pinnedMore = r.items.filter((x) => !IM.items.some((y) => y.id === x.id));
+      IM.pinnedPartial = !r.complete;
+      IM.pinnedReady = r.ok;   // a failed page is tried again on the next visit to the tab
+      paintGallery();
+    }, () => { if (seq === pinnedSeq) { IM.pinnedLoading = false; paintGallery(); } });
   }
   /* A first page keeps outputs that landed while it was being read. */
   function mergeFresh(got) {
@@ -383,7 +403,8 @@
 
   /* ---------- result actions ---------- */
 
-  const selItem = () => IM.items.find((x) => x.id === IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null);
+  const findItem = (id) => IM.items.find((x) => x.id === id) || IM.pinnedMore.find((x) => x.id === id);
+  const selItem = () => findItem(IM.sel) || (IM.chatItem && IM.chatItem.id === IM.sel ? IM.chatItem : null);
 
   async function fullDataUrl(item) {
     if (item.fromChat) {
@@ -519,10 +540,10 @@
       case 'unref': IM.form.refs = IM.form.refs.filter((_, n) => n !== Number(a)); paintForm(); return;
       case 'pick': pickFiles(a); return;
       case 'fromlib': IM.picking = a || null; paintForm(); paintGallery(); return;
-      case 'filter': IM.filter = a === 'pinned' ? 'pinned' : 'all'; paintGallery(); return;
+      case 'filter': IM.filter = a === 'pinned' ? 'pinned' : 'all'; if (IM.filter === 'pinned' && !IM.pinnedReady && !IM.pinnedLoading) loadPinned(); paintGallery(); return;
       case 'more': loadGallery(true); return;
       case 'sel': {
-        const x = IM.items.find((y) => y.id === a);
+        const x = findItem(a);
         if (!x) return;
         if (IM.picking) { setSlot(IM.picking, sourceFromItem(x)); return; }
         IM.sel = a; IM.delArmed = null; if (!isLive(IM.job)) IM.jobErr = null;
@@ -574,6 +595,7 @@
           if (!r || !r.ok) { toast('Could not delete it', (r && r.error && r.error.message) || '', 'bad'); return; }
           const at = IM.items.indexOf(item);
           IM.items = IM.items.filter((x) => x !== item);
+          IM.pinnedMore = IM.pinnedMore.filter((x) => x !== item);
           IM.total = Math.max(0, IM.total - 1);
           const next = IM.items[Math.min(at, IM.items.length - 1)];
           IM.sel = next ? next.id : null;
