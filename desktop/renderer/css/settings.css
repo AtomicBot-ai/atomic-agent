@@ -308,6 +308,13 @@ button.set-search:hover{border-color:var(--bd)}
 .set-diagv--ok{color:var(--success);font-weight:500}
 .set-diagv--bad{color:var(--critical);font-weight:500;white-space:normal}
 .set-diagrow .set-diagrestart{flex:none}
+/* ATO-720..722: the health rows over the support rows, a mark before each name and at most Check and one fix. */
+.set-diaghealth{margin-bottom:12px}
+.set-diaghrow .t{flex:none;width:150px;font-weight:500;font-size:13px;display:flex;align-items:center;gap:8px}
+.set-diaghrow .set-diagv{white-space:normal}
+.set-diaghrow .btn{flex:none}
+.set-diagv--warn{color:var(--amber);font-weight:500}
+.set-diagv--wait,.set-diagv--off{color:var(--ink-3)}
 .set-diagacts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 /* Д55/Д57: what the screen is for, and what the report holds. */
 .set-diagintro{max-width:62ch}

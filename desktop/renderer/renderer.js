@@ -1385,7 +1385,9 @@ const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', 
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 /* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
    server's log shown there — open or not, its last read, the poll's timer. */
-const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false };
+/* ATO-720..722: `check` is the provider row's last live check ({id, busy, res, at}); `provErr` the last
+   error a turn met on each provider ({text, at}), dropped once a turn on it completes or a check passes. */
+const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{} };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
@@ -5346,6 +5348,8 @@ async function refreshHealth() {
   if (!(res && res.ok && res.data)) return;
   const next = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
                 llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null,
+                // ATO-720: the agent's own probe of the model server, for Diagnostics' Model row.
+                llamaReachable: res.data.llama && typeof res.data.llama.reachable === 'boolean' ? res.data.llama.reachable : null,
                 // 0.6.6, loopback only: the serve process and how many turns it is running (any client's).
                 pid: typeof res.data.pid === 'number' ? res.data.pid : null,
                 busyTurns: typeof res.data.busyTurns === 'number' ? res.data.busyTurns : null};
@@ -5420,6 +5424,8 @@ function settingsPaneEntered(opened) {
   else if (pane === 'telegram') telegramTabEntered();
   else if (pane === 'composio') composioTabEntered();
   else if (pane === 'import') importTabEntered();
+  // ATO-720: the Model row reads `models status`; ask once on entry when the route uses a local model server.
+  else if (pane === 'diagnostics' && BR && (engfRouteLocal() || selBackend() === 'custom')) llmRefreshStatus(true).then(diagRepaint);
   // ATO-328: General's Exa key row says whether a key is saved; read the names on every entry.
   if (pane === 'general') exaKeyRefresh();
 }
@@ -5552,6 +5558,7 @@ function diagnosticsPane() {
   diagEnsureLogPoll();
   return '<div class="set-pane set-diag">'
     + '<p class="set-desc set-diagintro">If something breaks, save a report and send it to us so we can fix it.</p>'
+    + diagHealthHTML(diagHealthRows())
     + '<div class="tk-list set-setlist set-diaglist">'
       + rows.map(([k, v, full, , x], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
         + '<div class="set-diagv' + (x && x.tone ? ' set-diagv--' + x.tone : ' mono') + '" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
@@ -5588,6 +5595,151 @@ function diagAgentRows() {
   const v = 'Running · ' + (n === 0 ? 'idle' : n + (n === 1 ? ' task' : ' tasks'));
   return [['Agent process', v, 'Process id ' + h.pid + '. Tasks running in the agent right now, from any chat, task or bot', '',
     {tone:'ok', copy:v + ' · pid ' + h.pid}]];
+}
+/* ATO-720, ATO-721, ATO-722 (U-96, owner's option B trimmed): three health
+   rows over the support rows, each with a mark and at most one way out.
+   Engine: the local engine installed and its model server not stuck in a
+   restart loop (ENGF, DWATCH). Model: the model server answering, from
+   `models status` and /health's llama probe. Provider: the active cloud
+   provider's saved key and the last error a turn met on it, with Check, a
+   one-token request on the saved key, only when pressed (it costs a request).
+   A row the route does not use is grey, and while the agent is not up a row
+   says it is checking rather than going red. Tones: ok, bad, warn, wait, off. */
+const DIAG_NOT_USED_CLOUD = 'Not used: chats go to a cloud provider';
+function diagHealthRows() {
+  const st = S.live.state;
+  if (st !== 'connected') {
+    // Starting: checking. Stopped or missing: the Agent process row below says why, and these wait on it.
+    const r = st === 'starting' || st === 'waiting' ? {tone:'wait', value:'Checking…'} : {tone:'off', value:'Needs the agent running'};
+    return [['engine', 'Engine'], ['model', 'Model'], ['provider', 'Provider']].map(([key, label]) => Object.assign({key, label}, r));
+  }
+  const backend = selBackend();
+  return [diagEngineRow(backend), diagModelRow(backend), diagProviderRow()];
+}
+function diagEngineRow(backend) {
+  const row = {key:'engine', label:'Engine'};
+  if (!engfRouteLocal()) {
+    return Object.assign(row, {tone:'off', value: backend === 'custom' ? 'Not used: you run your own model server' : DIAG_NOT_USED_CLOUD});
+  }
+  if (ENGF.f) {
+    return Object.assign(row, {tone:'bad', value:ENGF.f.why, title:ENGF.f.detail || ENGF.f.why,
+      fix: ENGF.f.retryable === false ? null : {act:'engf:retry', label:'Download again'}});
+  }
+  if (DWATCH && DWATCH.kind === 'gave_up') {
+    return Object.assign(row, {tone:'bad', value:'The local model server keeps stopping', fix:{act:'diag:startModel', label:'Start model'}});
+  }
+  if (DWATCH && (DWATCH.kind === 'restarting' || DWATCH.kind === 'restart_failed')) {
+    return Object.assign(row, {tone:'wait', value:'Restarting the local model server…'});
+  }
+  return Object.assign(row, {tone:'ok', value:'Ready'});
+}
+function diagModelRow(backend) {
+  const row = {key:'model', label:'Model'};
+  const external = backend === 'custom';
+  if (!external && !engfRouteLocal()) return Object.assign(row, {tone:'off', value:DIAG_NOT_USED_CLOUD});
+  const st = LLMP.status;
+  const health = st ? String(st.health || '').trim().toLowerCase() : '';
+  const reach = SET.health && typeof SET.health.llamaReachable === 'boolean' ? SET.health.llamaReachable : null;
+  const name = (st && st.activeModel) || (backend === 'local' ? activeModel() : '');
+  const fix = external ? {act:'settings:llm', label:'Open Models settings'} : {act:'diag:startModel', label:'Start model'};
+  if (LLMP.daemonPhase === 'starting') return Object.assign(row, {tone:'wait', value:'Starting…'});
+  // ATO-852 (agent with #721): the server answers but refuses the model's key; Settings › Models restarts it.
+  if (st && st.daemonRunning && (st.keyRejected === true || /^key rejected\b/.test(health))) {
+    return Object.assign(row, {tone:'bad', value:'The model server refuses the model’s key', fix:{act:'settings:llm', label:'Open Models settings'}});
+  }
+  if ((st && st.daemonRunning && health === 'ok') || reach === true) {
+    return Object.assign(row, {tone:'ok', value: name ? modelWord(name) + ' · loaded' : 'Loaded'});
+  }
+  if (st && st.daemonRunning && /loading/.test(health)) return Object.assign(row, {tone:'wait', value:'Loading the model…'});
+  if (st && st.daemonRunning && llmJustSpawned()) return Object.assign(row, {tone:'wait', value:'Starting…'});
+  // `models status` on its way (asked on entry): no verdict from /health alone yet.
+  if (!st && (reach === null || LLMP.statusBusy)) return Object.assign(row, {tone:'wait', value:'Checking…'});
+  return Object.assign(row, {tone:'bad', value:'The model server is not answering', fix});
+}
+function diagProviderRow() {
+  const row = {key:'provider', label:'Provider'};
+  const p = activeProvider();
+  if (!p || p.kind === 'llama-server') return Object.assign(row, {tone:'off', value:'Not used: chats run on a local model'});
+  const name = providerWord(p.id);
+  const model = p.defaultChatModel || p.model || '';
+  const settings = {act:'settings:llm', label:'Open provider settings'};
+  const chk = DIAG.check && DIAG.check.id === p.id ? DIAG.check : null;
+  const err = DIAG.provErr[p.id] || null;
+  row.check = {disabled: !model || !!(chk && chk.busy), title: model ? 'Send one short request to ' + name + ' with the saved key' : 'Pick a model for ' + name + ' first'};
+  if (chk && chk.busy) return Object.assign(row, {tone:'wait', value:name + ' · checking…'});
+  const res = chk && (!err || chk.at >= err.at) ? chk.res : null;
+  if (res) {
+    if (res.ok && res.noFunds) return Object.assign(row, {tone:'warn', value:name + ' · ' + (res.error || NO_FUNDS_KEY_LINE), fix:settings});
+    if (res.ok) return Object.assign(row, {tone:'ok', value:name + ' · answering'});
+    if (res.checked) {
+      const said = res.keyChars ? KEY_CHAR_ERROR : name + ' did not accept the key' + (res.status ? ' (' + res.status + ')' : '');
+      return Object.assign(row, {tone:'bad', value:said, title:res.error ? diagScrub(res.error) : said, fix:settings});
+    }
+    return Object.assign(row, {tone:'warn', value:'Could not check ' + name + ': ' + (res.error ? diagScrub(res.error) : 'no answer'), fix:settings});
+  }
+  if (savedKeyInvalid(p)) return Object.assign(row, {tone:'bad', value:savedKeyLine(p.id), fix:settings});
+  if (err) return Object.assign(row, {tone:'bad', value:name + ' · last error: ' + err.text, title:err.text, fix:settings});
+  if (UNVERIFIED.includes(p.id)) return Object.assign(row, {tone:'warn', value:name + ' · key not checked yet'});
+  return Object.assign(row, {tone:'ok', value:name + ' · no errors'});
+}
+const DIAG_DOT = {ok:'tk-dot--green', bad:'tk-dot--red', warn:'tk-dot--amber', wait:'tk-dot--brand tk-dot--pulse', off:'tk-dot--hollow'};
+function diagHealthHTML(rows) {
+  return '<div class="tk-list set-setlist set-diaglist set-diaghealth" role="list" aria-label="Health">'
+    + rows.map((r) => '<div class="tk-setrow set-diaghrow" role="listitem" data-health="' + r.key + '" data-tone="' + r.tone + '">'
+      + '<div class="t"><span class="tk-dot ' + DIAG_DOT[r.tone] + '" aria-hidden="true"></span>' + esc(r.label) + '</div>'
+      + '<div class="set-diagv set-diagv--' + r.tone + '" title="' + esc(r.title || r.value) + '">' + esc(r.value) + '</div>'
+      + (r.check ? '<button class="btn btn-s xs" data-act="diag:check"' + (r.check.disabled ? ' disabled' : '') + ' title="' + esc(r.check.title) + '">Check</button>' : '')
+      + (r.fix ? '<button class="btn btn-s xs set-diagfix" data-act="' + r.fix.act + '">' + esc(r.fix.label) + '</button>' : '')
+      + '</div>').join('')
+    + '</div>';
+}
+/* ATO-722: Check, the provider row's live test: verifyProviderKey with no key
+   typed checks the saved entry as saved (main's checkProviderKey). A pass also
+   retires the "not checked yet" badge, as the add-provider step's pass does. */
+async function diagCheckProvider() {
+  const p = activeProvider();
+  if (!BR || !BR.verifyProviderKey || !p || p.kind === 'llama-server') return;
+  const model = p.defaultChatModel || p.model || '';
+  if (!model || (DIAG.check && DIAG.check.busy)) return;
+  DIAG.check = {id:p.id, busy:true, res:null, at:Date.now()};
+  diagRepaint();
+  let res;
+  try { res = await BR.verifyProviderKey({id:p.id, kind:p.kind}, model); }
+  catch (e) { res = {ok:false, checked:false, error:String((e && e.message) || e)}; }
+  DIAG.check = {id:p.id, busy:false, res:res || {ok:false, checked:false}, at:Date.now()};
+  if (res && res.ok && res.checked !== false) {
+    delete DIAG.provErr[p.id];
+    if (UNVERIFIED.includes(p.id)) {
+      UNVERIFIED = UNVERIFIED.filter((x) => x !== p.id);
+      if (BR.unverifiedSet) BR.unverifiedSet(p.id, false).catch(() => {});
+    }
+  }
+  diagRepaint();
+}
+/* ATO-720: Start model from the Model row (or the Engine row after the
+   supervisor gave up): Settings › Models' own start, then /health again. */
+async function diagStartModel() {
+  await llmDaemon('start');
+  await refreshHealth();
+  diagRepaint();
+}
+/* ATO-721: the last error a turn met on a provider: the wait's cause in words
+   (waitCauseWords), else the agent's own sentence for a turn the provider
+   failed. Kept per provider until a turn on it completes (diagProviderOk). */
+function diagNoteProviderError(providerId, text) {
+  if (!providerId || !text) return;
+  DIAG.provErr[providerId] = {text:diagScrub(text), at:Date.now()};
+}
+/* A provider's error can quote the key back, and Copy details puts these rows on
+   the clipboard for us: key-shaped strings and bearer values go, as the support
+   report's scrubText does (main/report-redact.ts, the token shapes there). */
+const DIAG_KEY_SHAPES = [/\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g, /\bAIza[0-9A-Za-z_-]{35}/g, /\bhf_[A-Za-z0-9]{30,}/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g, /\bAKIA[0-9A-Z]{16}\b/g, /(\bbearer[ \t]+)[A-Za-z0-9+\/=._~-]{8,}/gi];
+function diagScrub(text) {
+  return DIAG_KEY_SHAPES.reduce((s, re) => s.replace(re, (m, head) => (typeof head === 'string' ? head : '') + '<key hidden>'), String(text || ''));
+}
+function diagProviderOk(providerId) {
+  if (providerId && DIAG.provErr[providerId]) delete DIAG.provErr[providerId];
 }
 /* Д58: the model server's log, read the way Models › LLM logs read it (the
    tail of llama-server.log in the data dir `models status` names), on a 2 s
@@ -5701,6 +5853,8 @@ function diagAct(what) {
     return;
   }
   if (what === 'agentlog') { diagOpen(DIAG.agentLog, 'the agent log'); return; }
+  if (what === 'check') { diagCheckProvider(); return; }
+  if (what === 'startModel') { diagStartModel(); return; }
   if (what === 'openlog') { if (DIAG.log && DIAG.log.path && !DIAG.log.external) diagOpen(DIAG.log.path, 'the model server log'); return; }
   // A repaint of the pane, not of the window: the focus stays on the toggle.
   if (what === 'log') { DIAG.logOpen = !DIAG.logOpen; DIAG.statusAsked = false; if (!DIAG.logOpen) diagLogStop(); diagRepaint(); return; }
@@ -5712,7 +5866,9 @@ function diagAct(what) {
   }
   if (what === 'copyall') {
     const rows = (DIAG.copy || []).map((r) => r.label + ': ' + (r.value || '—'));
-    copyText(rows.concat(diagLine()).join('\n'), 'Details copied');
+    // ATO-720..722: the health rows go first, as on screen.
+    const health = diagHealthRows().map((r) => r.label + ': ' + r.value);
+    copyText(health.concat(rows, diagLine()).join('\n'), 'Details copied');
     return;
   }
   if (what.startsWith('copy:')) {
@@ -9528,6 +9684,8 @@ function onChatEvent(ev) {
       fallbackFailures: tpFallbackFailures(p),
       until: Date.now() + (Number(p.next_retry_ms) || 0),
     };
+    // ATO-721: Diagnostics' Provider row keeps the cause as the provider's last error.
+    if (!LIVE_REPLAY && WAIT.providerId && WAIT.cause) diagNoteProviderError(WAIT.providerId, waitCauseWords(WAIT.cause, WAIT.providerId));
     if (!WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
     if (firstWait && item) tpOnProviderWaiting(WAIT);   // tui-parity.js: one line in the transcript per wait
     render();
@@ -9778,6 +9936,10 @@ function onChatEvent(ev) {
     if (ev.kind === 'error' && item && WAIT) S.log.push(tpWaitGaveUpEntry(WAIT));
     if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
     else if (item) tpDropRecoveredNote(item.id);   // ATO-204: failed or stopped, it did not "continue" (tui-parity.js)
+    // ATO-721: a turn the provider failed (or refused the key on) is that provider's last error, in the agent's words.
+    if (ev.kind === 'error' && item && !LIVE_REPLAY && (providerFailure(ev) || /can't use its API key|rejected the API key/i.test(String(ev.error || '')))) {
+      diagNoteProviderError(selActiveProviderId(), WAIT && WAIT.cause ? waitCauseWords(WAIT.cause, WAIT.providerId) || String(ev.error || '') : String(ev.error || ''));
+    }
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       ...turnFailure(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
@@ -9794,6 +9956,7 @@ function onChatEvent(ev) {
        abort proves nothing either way, so the badge stays. */
     if (ev.kind !== 'error' && ev.kind !== 'aborted') {
       const on = selActiveProviderId();
+      diagProviderOk(on);   // ATO-721: a completed turn is the proof the last error is over
       if (on && UNVERIFIED.indexOf(on) >= 0) {
         UNVERIFIED = UNVERIFIED.filter((x) => x !== on);
         if (BR && BR.unverifiedSet) BR.unverifiedSet(on, false).catch(() => {});
