@@ -71,7 +71,7 @@ describe("an older Core that still holds the agent's own model (ATO-841)", () =>
     let live = sessions;
     const call = vi.fn(async (path: string) => {
       if (path === "/clients") return { client: { id: "me" } };
-      if (path.endsWith("/unload")) { live = []; return { success: true }; }
+      if (path.endsWith("/unload")) { live = live.filter(s => !path.includes(`/${String(s.model_id)}/`)); return { success: true }; }
       if (path === "/embedding/status") return { enabled: false };
       return { ok: true };
     });
@@ -92,9 +92,11 @@ describe("an older Core that still holds the agent's own model (ATO-841)", () =>
 
   it("leaves another client's session on the old Core alone", async () => {
     const dir = fixture();
-    const { client, call } = olderCore([{ ...session, model_id: "someone-else" }]);
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "0.16.0", instanceId: "old-instance" });
+    const { client, call } = olderCore([session, { ...session, pid: 5151, port: 19095, model_id: "someone-else", model_path: "/models/other.gguf" }]);
     await retireOlderCores(dir, connectOnly(client));
-    expect(call.mock.calls.some(([path]) => String(path).endsWith("/unload"))).toBe(false);
+    const unloads = call.mock.calls.map(([path]) => String(path)).filter(path => path.endsWith("/unload"));
+    expect(unloads).toEqual(["/models/llamacpp/chat-model/unload"]);
     expect(call.mock.calls.some(([path]) => path === "/shutdown")).toBe(false);
   });
 
