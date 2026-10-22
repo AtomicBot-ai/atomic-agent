@@ -10,9 +10,13 @@ import {
 } from "./analytics-events.js";
 import type { AnalyticsStateStore } from "./analytics-state-store.js";
 
-function fakeClient() {
-  return { capture: vi.fn() } as unknown as AnalyticsClient & {
+function fakeClient(delivered = true) {
+  return {
+    capture: vi.fn(),
+    captureConfirmed: vi.fn(async () => delivered),
+  } as unknown as AnalyticsClient & {
     capture: ReturnType<typeof vi.fn>;
+    captureConfirmed: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -43,27 +47,54 @@ function fakeStore(overrides: Partial<Record<string, boolean>> = {}) {
 }
 
 describe("captureAppInstalled", () => {
-  it("fires once and marks the flag", () => {
+  it("sends with confirmation and marks the flag once delivered", async () => {
     const client = fakeClient();
     const store = fakeStore();
-    captureAppInstalled(client, store);
-    expect(client.capture).toHaveBeenCalledWith(
+    await captureAppInstalled(client, store);
+    expect(client.captureConfirmed).toHaveBeenCalledWith(
       ANALYTICS_EVENTS.appInstalled,
       {},
     );
     expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
   });
 
-  it("no-ops when already sent", () => {
+  // ATO-717: a first launch without network must not burn the event.
+  it("leaves the flag unset when delivery fails, so the next launch retries", async () => {
+    const store = fakeStore();
+    await captureAppInstalled(fakeClient(false), store);
+    expect(store.markAppInstalledSent).not.toHaveBeenCalled();
+
+    const online = fakeClient(true);
+    await captureAppInstalled(online, store);
+    expect(online.captureConfirmed).toHaveBeenCalledTimes(1);
+    expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark the flag before delivery is confirmed", async () => {
+    let confirm!: (ok: boolean) => void;
+    const client = fakeClient();
+    client.captureConfirmed.mockImplementation(
+      () => new Promise<boolean>((resolve) => { confirm = resolve; }),
+    );
+    const store = fakeStore();
+    const pending = captureAppInstalled(client, store);
+    expect(store.markAppInstalledSent).not.toHaveBeenCalled();
+    confirm(true);
+    await pending;
+    expect(store.markAppInstalledSent).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-ops when already sent", async () => {
     const client = fakeClient();
     const store = fakeStore({ appInstalled: true });
-    captureAppInstalled(client, store);
+    await captureAppInstalled(client, store);
+    expect(client.captureConfirmed).not.toHaveBeenCalled();
     expect(client.capture).not.toHaveBeenCalled();
   });
 
-  it("no-ops when analytics is disabled (null client)", () => {
+  it("no-ops when analytics is disabled (null client)", async () => {
     const store = fakeStore();
-    expect(() => captureAppInstalled(null, store)).not.toThrow();
+    await expect(captureAppInstalled(null, store)).resolves.toBeUndefined();
     expect(store.markAppInstalledSent).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,14 @@ export interface AnalyticsLogger {
   warn(message: string, context?: Record<string, unknown>): void;
 }
 
+/**
+ * The slice of `PostHog` the client uses. `captureImmediate` and `on` are
+ * optional so test fakes can stay minimal: without them,
+ * {@link AnalyticsClient.captureConfirmed} falls back to a queued capture.
+ */
+export type PostHogLike = Pick<PostHog, "capture" | "shutdown"> &
+  Partial<Pick<PostHog, "captureImmediate" | "on">>;
+
 export interface AnalyticsClientOptions {
   /** Anonymous, stable-per-install identifier used as the distinctId. */
   installId: string;
@@ -35,7 +43,7 @@ export interface AnalyticsClientOptions {
   dimensions?: AnalyticsDimensions;
   logger?: AnalyticsLogger;
   /** Test seam — inject a fake PostHog implementation. */
-  posthog?: Pick<PostHog, "capture" | "shutdown">;
+  posthog?: PostHogLike;
 }
 
 /**
@@ -56,7 +64,7 @@ export interface AnalyticsClientOptions {
  * analytics outage never disturbs the agent runtime.
  */
 export class AnalyticsClient {
-  private readonly posthog: Pick<PostHog, "capture" | "shutdown">;
+  private readonly posthog: PostHogLike;
   private readonly installId: string;
   private readonly platform: string;
   private readonly version: string;
@@ -82,32 +90,79 @@ export class AnalyticsClient {
 
   capture(event: string, properties: Record<string, unknown> = {}): void {
     try {
-      this.posthog.capture({
-        distinctId: this.installId,
-        event,
-        properties: {
-          ...properties,
-          // Surface / arch / install channel / desktop version. After the
-          // caller's props so an event can never override them.
-          ...this.globals,
-          // OS platform dimension, stamped on every event.
-          platform: this.platform,
-          // App version dimension, stamped on every event.
-          app_version: this.version,
-          // Overrides PostHog's server-side IP capture with a placeholder so
-          // the machine's real public IP is never stored. PostHog only honors
-          // a truthy `$ip` override — a `null`/falsy value is ignored and the
-          // request IP is used instead, so the sentinel MUST be a real string.
-          $ip: IP_PLACEHOLDER,
-        },
-        disableGeoip: true,
-      });
+      this.posthog.capture(this.message(event, properties));
     } catch (err) {
       this.logger?.warn("analytics: capture failed", {
         event,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * Send one event right away and resolve `true` only once PostHog has
+   * accepted it, `false` when it could not be delivered (offline, HTTP
+   * error). Never rejects.
+   *
+   * For the one-time events whose "already sent" flag must not be set
+   * before the event really left (`app_installed`, ATO-717): `capture`
+   * only queues in memory, and posthog-node's queue is lost when the
+   * process exits, so a first launch without network used to drop the
+   * install for good. `captureImmediate` swallows its own failures and
+   * reports them on the `error` channel, so delivery is judged by
+   * whether an error arrived while it ran. An error from an unrelated
+   * event in that window reads as a failure, which only means the event
+   * is tried again on the next launch.
+   */
+  async captureConfirmed(
+    event: string,
+    properties: Record<string, unknown> = {},
+  ): Promise<boolean> {
+    const posthog = this.posthog;
+    if (!posthog.captureImmediate || !posthog.on) {
+      this.capture(event, properties);
+      return true;
+    }
+    let failed = false;
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = posthog.on("error", () => {
+        failed = true;
+      });
+      await posthog.captureImmediate(this.message(event, properties));
+    } catch (err) {
+      failed = true;
+      this.logger?.warn("analytics: capture failed", {
+        event,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      unsubscribe?.();
+    }
+    return !failed;
+  }
+
+  private message(event: string, properties: Record<string, unknown>) {
+    return {
+      distinctId: this.installId,
+      event,
+      properties: {
+        ...properties,
+        // Surface / arch / install channel / desktop version. After the
+        // caller's props so an event can never override them.
+        ...this.globals,
+        // OS platform dimension, stamped on every event.
+        platform: this.platform,
+        // App version dimension, stamped on every event.
+        app_version: this.version,
+        // Overrides PostHog's server-side IP capture with a placeholder so
+        // the machine's real public IP is never stored. PostHog only honors
+        // a truthy `$ip` override — a `null`/falsy value is ignored and the
+        // request IP is used instead, so the sentinel MUST be a real string.
+        $ip: IP_PLACEHOLDER,
+      },
+      disableGeoip: true,
+    };
   }
 
   async shutdown(): Promise<void> {
@@ -135,7 +190,7 @@ export function createAnalyticsClient(options: {
   version: string;
   dimensions?: AnalyticsDimensions;
   logger?: AnalyticsLogger;
-  posthog?: Pick<PostHog, "capture" | "shutdown">;
+  posthog?: PostHogLike;
   /** Test seam for the kill-switch env (defaults to `process.env`). */
   env?: NodeJS.ProcessEnv;
 }): AnalyticsClient | null {
