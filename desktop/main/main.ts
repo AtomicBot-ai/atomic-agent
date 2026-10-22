@@ -7,6 +7,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKT
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
+import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
 import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
@@ -1478,6 +1479,20 @@ function wireIpc(client: AgentClient): void {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
+    /* ATO-733: a turn may have begun while the picker was open; the restart
+       below would cut it. The window says so and the folder stays as it was
+       (workspace-busy.ts); the folder and its analytics change only when the
+       change really happens. */
+    const busy = await workspaceChangeBusy({
+      windowTurns: () => client.turnsInFlight,
+      agentTurns: async () => {
+        if (client.status.state !== "connected") return null;
+        const h = (await client.turnsHealth()) as { busyTurns?: unknown } | null;
+        return typeof h?.busyTurns === "number" && Number.isFinite(h.busyTurns) ? h.busyTurns : null;
+      },
+      timeoutMs: SWITCH_BUSY_CHECK_MS,
+    });
+    if (busy) return busy;
     A.workspaceChosen(dir);
     // Telling the user to restart while the child keeps its old cwd is a lie;
     // move it here instead.

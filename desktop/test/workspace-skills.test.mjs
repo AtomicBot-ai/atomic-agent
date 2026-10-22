@@ -116,3 +116,19 @@ for (const cloud of [true,false]) test(`choosing another folder ${cloud ? 'start
   assert.deepEqual(calls, cloud ? ['session:new'] : []);
   assert.equal(state.agentSession, cloud ? null : 'session-A');
 });
+
+test('ATO-733: a folder change main refused for a running turn keeps the folder, the chat and the log, and says why', () => {
+  const calls=[], toasts=[], state={sessionId:'session-A',agentSession:'session-A',log:[]};
+  const context=createContext({WORKSPACE:'/A', SK:{workingDir:'/A'}, S:state,
+    act:name=>{calls.push(name);}, nid:()=> 'notice', esc:text=>text, render:()=>{},
+    restartStopsTurn:()=>null, restartRefusedToast:held=>{toasts.push(held);},
+  });
+  runInContext(actionSource('function applyWorkspaceChoice(dir)', '/* Hooks used by `electron . --smoke`'),context);
+  context.applyWorkspaceChoice({busy:true, elsewhere:true});
+  assert.equal(context.WORKSPACE,'/A');
+  assert.deepEqual(calls,[]);
+  assert.equal(state.log.length,0);   // no "the agent is restarting there"
+  assert.equal(toasts.length,1); assert.equal(toasts[0].elsewhere,1);
+  context.applyWorkspaceChoice({busy:true, elsewhere:false});
+  assert.equal(toasts[1].elsewhere,0);
+});
