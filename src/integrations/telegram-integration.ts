@@ -40,7 +40,7 @@ export const telegramIntegration: IntegrationDescriptor = {
     "Send /newbot, then a display name, then a username ending in `bot`.",
     "BotFather replies with a token like 1234567:AA… — copy the whole line.",
     "Press e on Bot token below, paste it, press enter. The channel starts by itself.",
-    "Press p, then send your bot /start and the 6-digit code shown here within 5 minutes. That claims you as the owner.",
+    "Press p, then send your bot /start and the 6-digit code shown here within 5 minutes.",
   ],
   fields: [
     {

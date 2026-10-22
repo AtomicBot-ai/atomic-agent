@@ -382,9 +382,10 @@ describe("buildGrammar", () => {
     expect(grammar).toContain(
       'think-prelude ::= think-body "</think>" prelude-trail-ws',
     );
-    // Single-width units under the reasoning budget (F49): one character
-    // per repetition, so `{0,N}` on the body is a bound in characters.
-    expect(grammar).toContain('think-char ::= [^<] | "<" [^/]');
+    // The default budget is 0 (config v78), so the body is the unbounded
+    // greedy fragment; the bounded `think-char` form is pinned in the
+    // reasoning budget block below.
+    expect(grammar).toContain('think-fragment ::= [^<]+ | "<" [^/]');
   });
 
   it("builds a gemma 4 grammar with a channel prelude that forces the model-emitted open tag", async () => {
@@ -395,7 +396,7 @@ describe("buildGrammar", () => {
     expect(grammar).toContain(
       'channel-prelude ::= "<|channel>thought\\n" channel-body "<channel|>" prelude-trail-ws',
     );
-    expect(grammar).toContain('channel-char ::= [^<] | "<" [^c]');
+    expect(grammar).toContain('channel-fragment ::= [^<]+ | "<" [^c]');
   });
 
   it("bounds the whitespace between the reasoning-close sentinel and the tool-call array", async () => {
