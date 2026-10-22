@@ -9471,7 +9471,7 @@ async function startLocalDaemonAtBoot(): Promise<void> {
        an install succeeds (ATO-821, startAfterEngineInstall). */
     if (managedEngineNow() === "atomic-core" && !backendInstalled()) {
       const installed = await installEngineAtLaunch();
-      if (!installed) { launchStartAfterInstall = true; return; }
+      if (!installed) { launchStartAfterInstall = true; launchStartOwedMark = stopsMark(); return; }
     }
     /* Item 11: as the background bring-up — a ⇄ or a start made while the
        model loads queues behind it rather than starting a second daemon, and
@@ -9519,11 +9519,16 @@ async function launchStartTarget(): Promise<{ wants: boolean; modelId: string | 
    install, the recovery card's Download again) starts the model as the launch
    would have, when the route still needs it and the model is still on disk.
    Once: a later install finds the flag down. Via "update", the start after an
-   engine install: the window hears how it went (onBackgroundBringUp). */
+   engine install: the window hears how it went (onBackgroundBringUp). A stop,
+   a switch or a model change since the failed install (stopsMark moved) is
+   the person's last word, as afterUpdate treats it: the owed start is dropped,
+   so Settings › Stop is not undone by a later engine update. */
 let launchStartAfterInstall = false;
+let launchStartOwedMark = 0;
 async function startAfterEngineInstall(): Promise<void> {
   if (!launchStartAfterInstall) return;
   launchStartAfterInstall = false;
+  if (stopsMark() !== launchStartOwedMark) return;
   try {
     const target = await launchStartTarget();
     if (!target.modelId) return;

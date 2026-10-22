@@ -22,7 +22,7 @@ function slice(start, end) {
 }
 
 function load({ installs = [false], downloaded = true, route = "local-llama" } = {}) {
-  const calls = { bringUp: [], said: [], installs: 0 };
+  const calls = { bringUp: [], said: [], installs: 0, mark: 0 };
   const code = ts.transpileModule(
     slice("async function startLocalDaemonAtBoot(): Promise<void> {", "/**\n * U29: before")
       + "\nthis.boot = startLocalDaemonAtBoot; this.after = startAfterEngineInstall; this.pending = () => launchStartAfterInstall;",
@@ -40,6 +40,7 @@ function load({ installs = [false], downloaded = true, route = "local-llama" } =
     installEngineAtLaunch: async () => { calls.installs++; return installs.shift() ?? true; },
     bringUpAtLaunch: async (id, via) => { calls.bringUp.push([id, via ?? "launch"]); return { daemon: "started" }; },
     sayDesktop: (line) => calls.said.push(line),
+    stopsMark: () => calls.mark,
     A: { localBackendStarted() {}, launchBackendSettled() {} },
   });
   vm.runInContext(code, ctx);
@@ -77,6 +78,15 @@ test("nothing is started after an install when no launch install had failed, or 
   assert.equal(moved.ctx.pending(), false, "a cloud route never owed a start");
   await moved.ctx.after();
   assert.deepEqual(moved.calls.bringUp, []);
+});
+
+test("a stop, switch or model change since the failed install drops the owed start", async () => {
+  const { ctx, calls } = load({ installs: [false] });
+  await ctx.boot();
+  calls.mark++;   // Settings › Stop, a ⇄, a model change
+  await ctx.after();
+  assert.deepEqual(calls.bringUp, []);
+  assert.equal(ctx.pending(), false);
 });
 
 test("the install stream says a failure in agent.log and owes the start only for a later install", () => {
