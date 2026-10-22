@@ -39,7 +39,8 @@ import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import { reviewStallToolSet } from "./review-stall.js";
-import { resetConfigCache } from "../config/index.js";
+import { getConfig, resetConfigCache } from "../config/index.js";
+import { effectiveReasoningBudgetTokens } from "../llm/reasoning-budget.js";
 import { ApprovalGate, requireApproval } from "../approval/index.js";
 import type { ApprovalRequest } from "../approval/index.js";
 import {
@@ -1071,7 +1072,7 @@ describe("executeStep batch handling", () => {
 
   it(
     "for thinking profiles strips and re-appends the <think> open tag, " +
-      "and caps the repair completion at REPAIR_MAX_TOKENS",
+      "and caps the repair completion at REPAIR_MAX_TOKENS plus the reasoning budget",
     async () => {
       const registry = makeRegistry();
       const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
@@ -1147,7 +1148,7 @@ describe("executeStep batch handling", () => {
       // the repair instructions would land INSIDE the open think-block
       // and the model would loop on self-deliberation), then re-appended
       // at the very end so the model continues in its normal think →
-      // `</think>` → JSON flow (bounded by `REPAIR_MAX_TOKENS`).
+      // `</think>` → JSON flow (bounded by `repairReplyCap`).
       const repairPrompt = prompts[1]!;
       expect(repairPrompt).toContain("### tool-call-repair");
       expect(repairPrompt.trimEnd().endsWith("<think>")).toBe(true);
@@ -1159,9 +1160,13 @@ describe("executeStep batch handling", () => {
       expect(repairPrompt).not.toContain("</think>");
 
       // Hard cap on the repair completion (defends against runaway
-      // reasoning loops on the structured-repair path).
+      // reasoning loops on the structured-repair path), raised by the
+      // reasoning budget the grammar enforces so thinking cannot eat it.
       expect(maxTokensSeen[0]).toBeUndefined();
-      expect(maxTokensSeen[1]).toBe(REPAIR_MAX_TOKENS);
+      expect(maxTokensSeen[1]).toBe(
+        REPAIR_MAX_TOKENS + effectiveReasoningBudgetTokens(getConfig().localModels.reasoningBudgetTokens),
+      );
+      expect(maxTokensSeen[1]).toBeGreaterThan(REPAIR_MAX_TOKENS);
       expect(REPAIR_MAX_TOKENS).toBeLessThanOrEqual(1024);
     },
   );
