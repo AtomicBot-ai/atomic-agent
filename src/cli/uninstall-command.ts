@@ -2,7 +2,10 @@ import { createInterface } from "node:readline/promises";
 
 import { getConfig } from "../config/index.js";
 import {
+  DESKTOP_SHARED_WARNING,
+  desktopWarningApplies,
   formatBytes,
+  legacyDesktopDirNotice,
   pathEntryToRemove,
   resolveUninstallPlan,
   runUninstall,
@@ -38,6 +41,10 @@ const HELP =
     "directories the installer put beside them, and the PATH line install.sh added",
     "to your shell rc file (on Windows, the install dir install.ps1 added to your",
     "user PATH).",
+    "",
+    "The Atomic Agent desktop app (0.0.3 and later) uses the same state directory,",
+    "so its chats, memory, settings, API keys and models are deleted too. The plan",
+    "says so when it finds the desktop app.",
     "",
     "This cannot be undone. There is no backup. Nothing is uploaded anywhere, and",
     "nothing is kept — after this the only trace of atomic-agent on the machine is",
@@ -244,9 +251,17 @@ function renderPlan(
       `  ${target.path}  (${formatBytes(target.bytes)})`,
       `      ${target.label}`,
     );
+    // Under --keep-data the state dir is not in the plan, so this never
+    // fires there: nothing of the desktop's would be deleted.
+    if (desktopWarningApplies(plan.desktop, target.path)) {
+      lines.push(`      ${DESKTOP_SHARED_WARNING}`);
+    }
   }
   if (plan.measured.targets.length > 0) {
     lines.push("", `  total: ${formatBytes(plan.measured.totalBytes)}`);
+  }
+  if (plan.desktop.legacyDir) {
+    lines.push("", `  ${legacyDesktopDirNotice(plan.desktop.legacyDir)}`);
   }
   if (plan.devCheckout) {
     lines.push(

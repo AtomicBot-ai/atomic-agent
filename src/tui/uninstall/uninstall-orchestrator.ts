@@ -1,5 +1,8 @@
 import {
+  DESKTOP_SHARED_WARNING,
+  desktopWarningApplies,
   formatBytes,
+  legacyDesktopDirNotice,
   pathEntryToRemove,
   resolveUninstallPlan,
   runUninstall,
@@ -9,15 +12,20 @@ import type { UninstallPreview } from "./uninstall-state.js";
 
 /** Turn a resolved plan into the strings the modal renders. */
 export function toPreview(plan: ResolvedUninstallPlan): UninstallPreview {
+  const legacyDir = plan.desktop.legacyDir;
   return {
     rows: plan.measured.targets.map((target) => ({
       path: target.path,
       label: target.label,
       size: formatBytes(target.bytes),
       group: target.group,
+      ...(desktopWarningApplies(plan.desktop, target.path)
+        ? { warning: DESKTOP_SHARED_WARNING }
+        : {}),
     })),
     total: formatBytes(plan.measured.totalBytes),
     devCheckout: plan.devCheckout,
+    leftInPlace: legacyDir ? [legacyDesktopDirNotice(legacyDir)] : [],
   };
 }
 
