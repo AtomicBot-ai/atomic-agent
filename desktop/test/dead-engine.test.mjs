@@ -39,9 +39,11 @@ test("the agent's local_engine_down reason is read wherever the frame carries it
   assert.equal(D.engineDownReasonIn(null), false);
 });
 
-test("today's agent: a refused connection or 'not answering' on the local route", () => {
+test("today's agent: a refused connection on the local route", () => {
   assert.equal(D.engineDownOf({ error: "fetch failed: connect ECONNREFUSED 127.0.0.1:8080", category: "transport" }, LOCAL), "refused");
-  assert.equal(D.engineDownOf({ error: "local-llama is not answering at 127.0.0.1:8080" }, LOCAL), "refused");
+  // A wait that ran out is not proof the process is gone: an engine stuck or slow is still running.
+  assert.equal(D.engineDownOf({ error: "local-llama is not answering at 127.0.0.1:8080" }, LOCAL), null);
+  assert.equal(D.engineDownOf({ error: "the request timed out", category: "transport" }, LOCAL), null);
   // The agent's sentence without its code (a host that drops unknown fields) still reads right on the local route.
   assert.equal(D.engineDownOf({ error: "The local model isn't running." }, LOCAL), "refused");
 });
