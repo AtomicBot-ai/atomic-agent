@@ -7140,6 +7140,10 @@ document.addEventListener('paste', (e) => {
   el.dispatchEvent(new Event('input', {bubbles: true}));
 });
 
+document.addEventListener('compositionend', (e) => {
+  if (e.target.id === 'palq' || e.target.id === 'sesq') e.target.dispatchEvent(new Event('input', {bubbles: true}));
+});
+
 document.addEventListener('input', (e) => {
   // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
@@ -7156,6 +7160,11 @@ document.addEventListener('input', (e) => {
     else refreshSend();
     return;
   }
+  /* ATO-822: both repaints rebuild the field, which ended an IME composition
+     mid-word, so the next Enter reached the list with isComposing false and
+     opened a row. Nothing repaints while composing; compositionend below
+     repaints. */
+  if ((e.target.id === 'palq' || e.target.id === 'sesq') && e.isComposing) return;
   if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
   if (e.target.id === 'sesq') { S.sesQ = e.target.value; renderOverlays(); return; }
   // Item 7: Tasks tab inputs edit state in place; only the preview block repaints.
@@ -8042,7 +8051,11 @@ function acceptSlash(name) {
 
 /* ---------------- keyboard ---------------- */
 document.addEventListener('keydown', (e) => {
-  if (e.isComposing) return;
+  /* ATO-822: a key that belongs to an IME (Chinese, Japanese) is the IME's,
+     every branch below included: Enter commits the text, the arrows pick a
+     candidate, Escape drops it. keyCode 229 is the same key on an engine
+     that reports it with isComposing already false. */
+  if (e.isComposing || e.keyCode === 229) return;
   const k = e.key;
   /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
      physical key on a non-Latin layout (shortcutKey). `k` stays the typed
