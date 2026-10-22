@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld("atomic", {
   restart: () => ipcRenderer.invoke("agent:restart"),
   onStatus: (cb: (payload: unknown) => void) => on("agent:status", cb),
   onLog: (cb: (payload: unknown) => void) => on("agent:log", cb),
+  /** ATO-767: the automatic restarts after an unexpected exit (agent-auto-restart.ts). */
+  onAutoRestart: (cb: (payload: unknown) => void) => on("agent:autoRestart", cb),
 
   /** Read-only resources, each `{ok, data}` or `{ok:false, error}`. */
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),

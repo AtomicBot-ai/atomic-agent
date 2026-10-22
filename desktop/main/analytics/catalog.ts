@@ -90,7 +90,7 @@ export const EVENTS: Record<string, EventSpec> = {
       ms,
     },
   },
-  agent_restarted: { owner: "main", props: { trigger: en(["manual", "switch", "other"]) } },
+  agent_restarted: { owner: "main", props: { trigger: en(["manual", "switch", "auto", "other"]) } },
   window_crashed: {
     owner: "main",
     props: {

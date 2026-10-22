@@ -8576,6 +8576,21 @@ function applyStatus(st) {
   render();
 }
 
+/* ATO-767: main starts the agent again when it exits on its own while running
+   (main/agent-auto-restart.ts: three attempts within five minutes, after 1 s,
+   5 s and 20 s). The words are main's AGENT_RESTARTED_LINE / AGENT_GAVE_UP_LINE. */
+const AGENT_RESTARTED_LINE = 'The agent stopped unexpectedly and was restarted.';
+const AGENT_GAVE_UP_LINE = 'The agent keeps stopping unexpectedly, so the app stopped restarting it.';
+function autoRestartApply(n) {
+  if (!n || typeof n !== 'object') return;
+  if (n.kind === 'restarted') {
+    S.log.push({id:nid(), k:'system', text: esc(AGENT_RESTARTED_LINE)});
+  } else if (n.kind === 'gave_up') {
+    S.log.push({id:nid(), k:'system', tone:'red', icon:'refresh', act:'restart-agent', text: esc(AGENT_GAVE_UP_LINE)});
+  } else return;
+  render();
+}
+
 async function loadResources() {
   if (!BR) return;
   loadCodingMode();
@@ -10736,6 +10751,7 @@ if (BR) {
   S.sessionId = '';
   loadPrefs();
   BR.onStatus(applyStatus);
+  if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);
   BR.onApproval(onApprovalEvent);
   /* B01 QA, ATO-198: the turns main is streaming are this page's from here
@@ -20100,7 +20116,10 @@ function sysRowHTML(m, times) {
     ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '') + (m.sev === 'err' && !m.noRetry ? sysRetryHTML(m) : '');
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
-    + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts + '</span></div></div>';
+    + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts
+    // ATO-767: the automatic restarts ran out; a full-size button, the same restart as the menu's.
+    + (m.act === 'restart-agent' ? ' <button class="btn btn-p sysact agent-restart-btn" data-act="agent:restart">Restart agent</button>' : '')
+    + '</span></div></div>';
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
   return '<div class="sysrow' + (m.sev ? ' ' + m.sev : '') + '">' + sysGlyph(m)

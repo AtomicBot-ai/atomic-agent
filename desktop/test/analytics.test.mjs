@@ -33,6 +33,8 @@ test("the renderer may only send UI-owned events", () => {
 test("enum values outside the list become `other`, or the prop's fallback, or are dropped", () => {
   assert.deepEqual(V.validateEvent("message_action", { action: "nope" }, "ui").props, {});
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "weird" }, "main").props, { trigger: "other" });
+  // ATO-767: the automatic restart after an unexpected exit keeps its own trigger.
+  assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "auto" }, "main").props, { trigger: "auto" });
   assert.deepEqual(V.validateEvent("slash_command_used", { command: "/rm -rf" }, "ui").props, { command: "unknown" });
   assert.deepEqual(V.validateEvent("provider_setup_started", { provider_preset: "my-own-proxy" }, "ui").props, { provider_preset: "custom" });
 });

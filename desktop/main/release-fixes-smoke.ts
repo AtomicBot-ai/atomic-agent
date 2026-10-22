@@ -33,6 +33,7 @@ import { checks38 } from "./smoke-tasks/t38.js";
 import { checks40 } from "./smoke-tasks/t40.js";
 import { checks41 } from "./smoke-tasks/t41.js";
 import { checks43 } from "./smoke-tasks/t43.js";
+import { checks767 } from "./smoke-tasks/t767.js";
 import { checks46 } from "./smoke-tasks/t46.js";
 import { checks44 } from "./smoke-tasks/t44.js";
 import { checks37 } from "./smoke-tasks/t37.js";
@@ -550,6 +551,9 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("41")) await guarded("41", check, () => checks41(js, check));
   // 43 — ATO-123: the local model server brought back when it dies under the app that started it.
   if (want.has("43")) await guarded("43", check, () => checks43(js, check));
+  // 767 (ATO-767): an agent that exits on its own is started again, three times, then Restart agent is offered.
+  // Only with --smoke-task=767 (not in RELEASE_FIX_TASKS): it kills the app's agent four times.
+  if (want.has("767")) await guarded("767", check, () => checks767(js, check));
   // 44 (ATO-132) — the key field promised .env with mode 0600, and the key was saved in config.json, mode 0644.
   if (want.has("44")) await guarded("44", check, () => checks44(js, check));
 

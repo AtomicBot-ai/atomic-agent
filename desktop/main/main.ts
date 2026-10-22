@@ -25,6 +25,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";   // item 2 
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 
+import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
@@ -2860,6 +2861,19 @@ function wireIpc(client: AgentClient): void {
   );
 
   client.on("status", (status) => send("agent:status", status));
+  /* ATO-767: an agent that exits on its own while running is started again,
+     up to three times within five minutes; then the window offers Restart
+     agent. Off in a smoke run (its checks end agents on purpose; T767 arms it). */
+  wireAgentAutoRestart(client, {
+    send,
+    say: (line) => {
+      console.error(line);
+      const level = lineLevel(line);
+      send("agent:log", { stream: "stderr", line, ...(level ? { level } : {}) });
+      appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
+    },
+    armed: !SMOKE,
+  });
   client.on("chat", (event) => send("agent:chat", event));
   client.on("chat", (event) => turnNotifier.observe(event));
   /* ATO-123: a turn waiting on the managed model server because it refuses
