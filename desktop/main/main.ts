@@ -10,7 +10,7 @@ import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.j
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
-import { engineFailureOf, type EngineFailure } from "./engine-failure.js";
+import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir, totalmem } from "node:os";
@@ -769,8 +769,26 @@ function send(channel: string, payload?: unknown): void {
 let engineFailure: (EngineFailure & { at: number }) | null = null;
 /** What put the recovery card up, for `engine_recovery_shown.via` (analytics/catalog-values.ts ENGINE_RECOVERY_VIA). */
 type EngineVia = "launch" | "swap" | "update" | "start" | "switch" | "setup" | "settings" | "other";
+/* ATO-374: a start the agent moved to the CPU build because the GPU build
+   could not load the model. It served, so there is no failure card; the
+   window says it once and keeps one line in Settings › Models until a later
+   start runs without the switch. A window opened later asks (engine:cpuFallback). */
+let engineCpuFallback: { at: number } | null = null;
+function noteCpuFallback(answer: unknown): void {
+  const a = answer as { ok?: unknown; daemon?: unknown } | null;
+  if (cpuFallbackOf(answer)) {
+    engineCpuFallback = { at: Date.now() };
+    console.warn("[desktop] local-llm: the agent moved the model to the CPU build after the GPU build could not load it; replies will be slower");
+    send("engine:cpuFallback", engineCpuFallback);
+  } else if (engineCpuFallback && a && a.ok === true && (a.daemon === "started" || a.daemon === "restarted")) {
+    engineCpuFallback = null;
+    send("engine:cpuFallback", null);
+  }
+}
 function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia } = {}): void {
-  const failed = engineFailureOf(answer);
+  noteCpuFallback(answer);
+  // Core in play: a model it could not load is read as that, not left as a raw start error.
+  const failed = engineFailureOf(answer, { core: managedEngineNow() === "atomic-core" });
   if (failed) {
     engineFailure = { ...failed, at: Date.now() };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
@@ -1822,6 +1840,7 @@ function wireIpc(client: AgentClient): void {
      `models start` for a daemon that is already up (alreadyRunning). */
   ipcMain.handle("cli:modelsStart", () => startDaemonNow().then((res) => (noteEngine(res, { clears: true, via: "start" }), res)));
   ipcMain.handle("engine:failure", () => engineFailure);
+  ipcMain.handle("engine:cpuFallback", () => engineCpuFallback);
   ipcMain.handle("engine:launchInstall", () => ({ running: launchInstall }));
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };

@@ -922,6 +922,10 @@ const CPUW = {on: false, seq: 0, modelId: null, said: 0, dismissed: 0};
 /* The local engine (Atomic Chat Core, the default) did not download or start: main's
    engine:failure, {stage, why, detail, at}, or null once a start or an install worked. */
 const ENGF = {f: null, said: 0, dismissed: 0, fresh: false};
+/* ATO-374: main's word that the agent moved the local model to the CPU build
+   because the GPU build could not load it ({at}, or null). Said once on the app
+   line, and kept as one line in Settings › Models. */
+const CPUFB = {on: null, said: 0};
 
 let BUILD = null;
 /* Provider ids whose key was saved without ever being checked. Read from
@@ -8006,6 +8010,26 @@ function cpuNoticeHTML() {
    llama.cpp is never offered here (support-only CLI). Never a spinner left
    turning. */
 const ENGF_TITLE = 'The local engine isn\u2019t ready';
+/** Nadya's wording (ATO-374), the same in Settings › Models and in the error card. */
+const CPUFB_LINE = 'The model couldn\u2019t load on your graphics card. Switched to the CPU build, it will be slower.';
+function cpufbApply(n) {
+  CPUFB.on = n && typeof n === 'object' && Number(n.at) > 0 ? {at: Number(n.at)} : null;
+  if (CPUFB.on && CPUFB.said !== CPUFB.on.at) {
+    CPUFB.said = CPUFB.on.at;
+    appSay(CPUFB_LINE, 'caution');
+  }
+  if (llmVisible()) llmRepaint();
+}
+/** Settings › Models: the CPU switch, one line. Left out while the failure card is up: that card carries it. */
+function cpufbCardHTML() {
+  if (!CPUFB.on || ENGF.f) return '';
+  return '<div class="tk-notice tk-notice--amber llm-cpufb" role="status">' + ic('cpu')
+    + '<span class="grow"><span class="llm-note">' + esc(CPUFB_LINE) + '</span></span></div>';
+}
+/** The failure card's CPU line: the agent had moved this start to the CPU build before it failed. */
+function engfCpuLineHTML(f) {
+  return f && f.cpuFallback ? '<span class="llm-note llm-engfail-cpu">' + esc(CPUFB_LINE) + '</span>' : '';
+}
 function engfApply(f) {
   ENGF.f = f && typeof f === 'object' && typeof f.why === 'string' ? f : null;
   if (ENGF.f && ENGF.said !== ENGF.f.at) {
@@ -8038,7 +8062,7 @@ function engfNoticeHTML() {
   const f = ENGF.f;
   return '<div class="statusstrip engfail" role="alert">'
     + '<span class="ss-ic err">' + ic('alert') + '</span>'
-    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(ENGF_TITLE) + '</b>' + esc(f.why) + '</span>'
+    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(ENGF_TITLE) + '</b>' + esc(f.why) + (f.cpuFallback ? ' ' + esc(CPUFB_LINE) : '') + '</span>'
     + engfActsHTML('xs')
     + '<button class="iconbtn sm" data-act="engf:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
 }
@@ -8048,6 +8072,7 @@ function engfCardHTML() {
   if (!f) return '';
   return '<div class="tk-notice tk-notice--red llm-engfail" role="alert">' + ic('alert')
     + '<span class="grow"><b>' + esc(ENGF_TITLE) + '</b><span class="llm-note">' + esc(f.why) + '</span>'
+    + engfCpuLineHTML(f)
     + (f.detail ? '<span class="llm-note llm-engfail-detail">' + esc(f.detail) + '</span>' : '') + '</span>'
     + '<span class="llm-engfail-acts">' + engfActsHTML('sm') + '</span></div>';
 }
@@ -10800,6 +10825,9 @@ if (BR) {
   if (BR.onEngineFailure) BR.onEngineFailure(engfApply);
   // A window opened after the failure (a relaunch, the dock) hears it too.
   if (BR.engineFailure) BR.engineFailure().then((f) => { if (f) engfApply(f); }).catch(() => {});
+  // ATO-374: the agent moved the local model to the CPU build; a window opened later hears it too.
+  if (BR.onEngineCpuFallback) BR.onEngineCpuFallback(cpufbApply);
+  if (BR.engineCpuFallback) BR.engineCpuFallback().then((n) => { if (n) cpufbApply(n); }).catch(() => {});
   // The launch installing Core's backend before the model starts: its bar, and a word that it is happening.
   if (BR.onEngineLaunchInstall) BR.onEngineLaunchInstall(engfLaunchInstall);
   if (BR.engineLaunchInstall) BR.engineLaunchInstall().then((st) => { if (st && st.running) engfLaunchInstall(st); }).catch(() => {});
@@ -24582,7 +24610,7 @@ function llmRunModeHTML(status, tone) {
           + '</span></button>';
       }).join('')
     + '</div>'
-    + llmNowHTML() + engfCardHTML() + tpLlmFaultHTML()
+    + llmNowHTML() + engfCardHTML() + cpufbCardHTML() + tpLlmFaultHTML()
     + (fusionShown ? '<p class="llm-rm-status">' + esc(rmSettingsLine(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
