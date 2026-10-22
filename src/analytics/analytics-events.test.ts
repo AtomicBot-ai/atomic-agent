@@ -205,6 +205,36 @@ describe("captureMessageSent", () => {
     expect(payload).toHaveProperty("cost_usd", 0);
   });
 
+  // ATO-277: cached_tokens was counted by the meter but never sent.
+  it("attaches cached_tokens and fallback_calls to message_sent when provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      ...ctx,
+      promptTokens: 100,
+      completionTokens: 50,
+      cachedTokens: 80,
+      fallbackCalls: 1,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "openrouter",
+      model: "gpt",
+      prompt_tokens: 100,
+      completion_tokens: 50,
+      cached_tokens: 80,
+      fallback_calls: 1,
+    });
+  });
+
+  it("omits cached_tokens and fallback_calls when not provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, ctx);
+    const payload = client.capture.mock.calls[0]?.[1];
+    expect(payload).not.toHaveProperty("cached_tokens");
+    expect(payload).not.toHaveProperty("fallback_calls");
+  });
+
   it("no-ops when analytics is disabled (null client)", () => {
     const store = fakeStore();
     expect(() => captureMessageSent(null, store, ctx)).not.toThrow();

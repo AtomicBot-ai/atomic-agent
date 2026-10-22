@@ -266,6 +266,9 @@ export function connectRuntimeFallback(
     result: CompletionResult,
     servedProviderId: string,
   ): void => {
+    if (params.sessionId) {
+      turnUsageMeter.recordServed(params.sessionId, servedProviderId);
+    }
     // A local llama-server sends no usage block; its timings still count
     // toward the turn's tokens (the meter only), but are never priced.
     const metered = completionUsageForTurn(result);
@@ -292,6 +295,7 @@ export function connectRuntimeFallback(
     result: CompletionResult,
     servedProviderId: string,
   ): void => {
+    if (sessionId) turnUsageMeter.recordServed(sessionId, servedProviderId);
     const metered = completionUsageForTurn(result);
     if (!metered || !sessionId) return;
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;

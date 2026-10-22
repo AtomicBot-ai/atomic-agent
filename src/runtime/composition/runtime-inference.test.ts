@@ -11,6 +11,7 @@ import { DEFAULT_FALLBACK_TIMING, ProviderFallbackChain } from "../../llm/fallba
 import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import { TurnUsageMeter } from "../../analytics/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
+import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
 import { connectRuntimeFallback, connectRuntimeProviders, createRuntimeModelContext, createRuntimeProviderReloads, type RuntimeProviders } from "./runtime-inference.js";
 
 function completion(modelId = "priced-model"): CompletionResult {
@@ -136,6 +137,26 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(pick).not.toHaveBeenCalled();
     expect(fixture.turnUsageMeter.snapshot("turn")).toMatchObject({ promptTokens: 10, completionTokens: 5, costUsd: 0.00002 });
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.00002);
+  });
+
+  // ATO-277: message_sent reads the served link from the meter.
+  it("a fallover records the link that actually served, and counts it as a fallback", async () => {
+    const fixture = fallback();
+    fixture.turnUsageMeter.begin("turn", "cloud");
+    const cloud = providers.providerRegistry.getProvider("cloud");
+    const served = providers.providerRegistry.getProvider("served");
+    if (!cloud || !served) throw new Error("provider fixtures missing");
+    vi.spyOn(cloud, "complete").mockRejectedValue(
+      new OpenAiHttpError("unavailable", 503, "http://cloud.invalid", false, null, "cloud"),
+    );
+    vi.spyOn(served, "complete").mockResolvedValue(completion());
+    const wired = connectRuntimeFallback({}, fixture.deps);
+    await wired.llmComplete(params);
+    expect(fixture.turnUsageMeter.snapshot("turn")).toMatchObject({
+      servedProviderId: "served",
+      fallbackCalls: 1,
+      promptTokens: 10,
+    });
   });
 
   it("stream usage reaches the turn meter without double recording the unary cost accumulator", async () => {

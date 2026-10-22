@@ -249,6 +249,48 @@ describe("runtime turn ownership recipes", () => {
     expect(silent.usage).toBeUndefined();
   });
 
+  // ATO-277: after a fallover, message_sent names the provider and model
+  // that answered, not the configured active ones.
+  it("telemetry reports the provider that served the turn and its fallbacks", async () => {
+    const registry = fixture.providers.providerRegistry;
+    const active = registry.activeText;
+    const backup = { ...active, id: "backup", name: "backup-service" } as typeof active;
+    const getProvider = registry.getProvider.bind(registry);
+    vi.spyOn(registry, "getProvider").mockImplementation((id) => (id === "backup" ? backup : getProvider(id)));
+    const meter = fixture.deps.telemetry.turnUsageMeter;
+    fixture.loop.runTurn.mockImplementationOnce(async (value, options) => {
+      meter.recordServed(value.id, "backup");
+      meter.record({ sessionId: value.id, usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, cachedTokens: 4 } });
+      return result(value, options);
+    });
+    const service = createRuntimeTurnService(fixture.config, {
+      ...fixture.deps,
+      inference: {
+        ...fixture.deps.inference,
+        resolveActiveModelName: (providerId?: string) => (providerId === "backup" ? "backup-model" : "active-model"),
+      },
+    });
+    const capture = vi.spyOn(analytics, "captureMessageSent");
+    await service.runTurn(session("served"), "request");
+    expect(capture).toHaveBeenCalledWith(null, fixture.deps.telemetry.analyticsStateStore, expect.objectContaining({
+      provider: "backup-service",
+      model: "backup-model",
+      fallbackCalls: 1,
+      cachedTokens: 4,
+    }));
+    const context = capture.mock.calls[0]![2];
+    expect(context).not.toHaveProperty("servedProviderId");
+  });
+
+  it("telemetry falls back to the intended provider when nothing was served", async () => {
+    const capture = vi.spyOn(analytics, "captureMessageSent");
+    await fixture.service.runTurn(session("quiet"), "request");
+    expect(capture).toHaveBeenCalledWith(null, fixture.deps.telemetry.analyticsStateStore, expect.objectContaining({
+      provider: fixture.providers.providerRegistry.activeText.name,
+    }));
+    expect(capture.mock.calls[0]![2]).not.toHaveProperty("fallbackCalls");
+  });
+
   it("late naming rereads stored state and respects an operator's first title", async () => {
     vi.useFakeTimers(); fixture.config.agent.nameSessions = true;
     const gate = deferred<CompletionResult>();
