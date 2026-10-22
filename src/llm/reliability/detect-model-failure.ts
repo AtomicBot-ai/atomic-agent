@@ -5,6 +5,7 @@ import type {
   TruncationCause,
   TruncationDetail,
 } from "./failure-category.js";
+import { hasRepetitiveTail } from "./repetitive-tail.js";
 
 export interface DetectedModelFailure {
   reason: ModelFailureReason;
@@ -73,12 +74,21 @@ export function detectModelFailure(
   options: DetectModelFailureOptions = {},
 ): DetectedModelFailure | null {
   if (completion.truncated) {
-    const truncation = classifyTruncation(
+    const classified = classifyTruncation(
       completion,
       options.requestedMaxTokens,
       options.contextWindow ?? null,
       options.defaultReplyCap,
     );
+    // A model that thought in circles loops in its reasoning; one that
+    // wrote in circles loops in the body. The body is the later text.
+    const truncation: TruncationDetail = hasRepetitiveTail(
+      completion.content.length > 0
+        ? completion.content
+        : completion.reasoningContent,
+    )
+      ? { ...classified, repetitive: true }
+      : classified;
     return {
       reason: "truncated",
       message: formatTruncatedMessage(truncation, options.stage),
