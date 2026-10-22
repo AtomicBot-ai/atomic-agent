@@ -80,3 +80,48 @@ test('the running card says how far it got; nothing once it is done', () => {
   assert.equal(M.toolProgressHTML({ ok: true, progress: running.progress }), '');
   assert.equal(M.toolProgressHTML({ ok: null }), '');
 });
+
+// ATO-811: a clip playing in a reply stops when its chat leaves the screen and is back paused.
+test('leaving the chat pauses a reply clip, and coming back does not start it again', () => {
+  const fakeVideo = () => {
+    const on = {};
+    return {
+      paused: true, isConnected: false, parent: null, plays: 0,
+      addEventListener(t, f) { (on[t] = on[t] || []).push(f); },
+      fire(t) { (on[t] || []).forEach((f) => f()); },
+      play() { this.plays++; this.paused = false; this.fire('playing'); return Promise.resolve(); },
+      pause() { this.paused = true; this.fire('pause'); },
+      cloneNode() { return fakeVideo(); },
+    };
+  };
+  const slot = (path) => ({
+    dataset: { chatVid: path },
+    appendChild(n) { n.isConnected = true; n.parent = this; },
+    contains(n) { return n.parent === this; },
+  });
+  const root = (slots) => ({
+    querySelectorAll(sel) { return sel === '[data-chat-vid]:not([data-hyd])' ? slots.filter((s) => !s.dataset.hyd) : []; },
+  });
+  const had = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { STUDIO: { mediaUrl: (p) => 'file://' + p } };
+  globalThis.document = { createElement: () => fakeVideo() };
+  try {
+    const path = '/w/ato-811.mp4';
+    const st = M.chatVideo(path);
+    M.chatVideoHydrate(root([slot(path)]));
+    const v = st.node;
+    v.play();                                   // the person starts the clip
+    assert.equal(st.playing, true);
+    M.pauseChatMedia(root([]));                 // another chat or Studio is opened
+    assert.equal(v.paused, true, 'the clip stops when its chat leaves the screen');
+    assert.equal(st.playing, false);
+    v.isConnected = false; v.parent = null;     // the old transcript goes
+    v.fire('pause');                            // the browser's own pause for the removal
+    M.chatVideoHydrate(root([slot(path)]));     // the chat is back
+    assert.equal(v.isConnected, true);
+    assert.equal(v.plays, 1, 'the clip does not start by itself on the way back');
+    assert.equal(v.paused, true);
+  } finally {
+    globalThis.window = had.window; globalThis.document = had.document;
+  }
+});

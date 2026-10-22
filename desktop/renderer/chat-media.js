@@ -158,6 +158,15 @@ function chatVideoHydrate(root) {
     if (node === st.node && st.playing && node.paused) node.play().catch(() => { st.playing = false; });
   });
 }
+/** Stop every reply clip when its chat leaves the screen (another chat, Studio). Leaving takes the
+    element out of the document while it plays, which chatVideoHydrate reads as a repaint and starts
+    again on the way back (ATO-811); this drops `playing`, so the clip is back paused. */
+function pauseChatMedia(root) {
+  CHAT_VID.forEach((st) => { st.playing = false; if (st.node && !st.node.paused) st.node.pause(); });
+  const scope = root || (typeof document !== 'undefined' ? document : null);
+  // A second copy (chatVideoHydrate's clone) is not in CHAT_VID.
+  if (scope) scope.querySelectorAll('[data-chat-vid] video').forEach((v) => { if (!v.paused) v.pause(); });
+}
 if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
   // Not deferred to a frame: the element must be back before the browser settles the removal.
   new MutationObserver(() => { if (CHAT_VID.size) chatVideoHydrate(); })
@@ -166,5 +175,5 @@ if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {chatMediaKind, videoModelName, videoToolLine, toolUpdateTarget, toolUpdateApply, toolProgressText,
-    toolProgressHTML, VIDEO_PAID_WHY, VIDEO_DEFAULT_MODEL};
+    toolProgressHTML, VIDEO_PAID_WHY, VIDEO_DEFAULT_MODEL, chatVideo, chatVideoHydrate, pauseChatMedia};
 }
