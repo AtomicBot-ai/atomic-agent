@@ -266,6 +266,9 @@ export function connectRuntimeFallback(
     result: CompletionResult,
     servedProviderId: string,
   ): void => {
+    if (params.sessionId) {
+      turnUsageMeter.recordServed(params.sessionId, servedProviderId);
+    }
     if (!result.usage) return;
     const model = resolveModelPricing(result.modelId, servedProviderId);
     if (costAccumulator) {
@@ -289,6 +292,7 @@ export function connectRuntimeFallback(
     result: CompletionResult,
     servedProviderId: string,
   ): void => {
+    if (sessionId) turnUsageMeter.recordServed(sessionId, servedProviderId);
     if (!result.usage || !sessionId) return;
     const model = resolveModelPricing(result.modelId, servedProviderId);
     turnUsageMeter.record({

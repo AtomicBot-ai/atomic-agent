@@ -53,6 +53,9 @@ export interface AppInstalledContext {
  *                  — tokens the turn consumed, summed across every LLM
  *                    call it made. Reported by the provider's `usage`
  *                    block; omitted when the provider reports none.
+ *  - `cachedTokens` — of those prompt tokens, how many the services
+ *                    served from a prompt cache. Omitted when no call
+ *                    reported the figure.
  *  - `costUsd`     — estimated spend for the turn, from the same token
  *                    counts times per-model pricing. Omitted when the
  *                    model carries no pricing, which is the normal case
@@ -60,6 +63,12 @@ export interface AppInstalledContext {
  *                    rather than a zero one.
  *  - `localEngine` — for a local turn only, which engine served it
  *                    (`LocalEngine`). Omitted for cloud turns.
+ *  - `fallbackCalls` — how many of the turn's completions were served
+ *                    by a fallback link rather than the provider the
+ *                    turn was meant for. Omitted when unknown.
+ *
+ * `provider` and `model` name the link that actually served the turn
+ * (its last completion), so after a fallover they are the fallback's.
  */
 export interface MessageEventContext {
   provider: string;
@@ -69,8 +78,10 @@ export interface MessageEventContext {
   outcome?: string;
   promptTokens?: number;
   completionTokens?: number;
+  cachedTokens?: number;
   costUsd?: number;
   localEngine?: LocalEngine;
+  fallbackCalls?: number;
 }
 
 /**
@@ -222,9 +233,15 @@ export function captureMessageSent(
     ...(context.completionTokens !== undefined
       ? { completion_tokens: context.completionTokens }
       : {}),
+    ...(context.cachedTokens !== undefined
+      ? { cached_tokens: context.cachedTokens }
+      : {}),
     ...(context.costUsd !== undefined ? { cost_usd: context.costUsd } : {}),
     ...(context.localEngine !== undefined
       ? { local_engine: context.localEngine }
+      : {}),
+    ...(context.fallbackCalls !== undefined
+      ? { fallback_calls: context.fallbackCalls }
       : {}),
   });
 }

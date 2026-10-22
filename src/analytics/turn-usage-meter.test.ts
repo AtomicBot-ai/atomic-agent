@@ -243,3 +243,42 @@ describe("TurnUsageMeter — cached prompt tokens", () => {
     expect(meter.snapshot(S)).not.toHaveProperty("cachedTokens");
   });
 });
+
+// ATO-277: message_sent names the provider that actually served the turn.
+describe("TurnUsageMeter — served provider", () => {
+  it("reports the link that served the last completion and counts fallbacks", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S, "cloud");
+    meter.recordServed(S, "cloud");
+    meter.record({ sessionId: S, usage: usage(10, 5) });
+    meter.recordServed(S, "local-llama");
+    meter.record({ sessionId: S, usage: usage(20, 5) });
+    expect(meter.snapshot(S)).toEqual({
+      promptTokens: 30,
+      completionTokens: 10,
+      servedProviderId: "local-llama",
+      fallbackCalls: 1,
+    });
+  });
+
+  it("reports the served link even when no call reported usage", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S, "cloud");
+    meter.recordServed(S, "cloud");
+    expect(meter.snapshot(S)).toEqual({ servedProviderId: "cloud", fallbackCalls: 0 });
+  });
+
+  it("omits fallbackCalls when the intended provider is unknown", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.recordServed(S, "cloud");
+    expect(meter.snapshot(S)).toEqual({ servedProviderId: "cloud" });
+  });
+
+  it("drops a served link for a session with no open turn", () => {
+    const meter = new TurnUsageMeter();
+    meter.recordServed(S, "cloud");
+    meter.begin(S, "cloud");
+    expect(meter.snapshot(S)).toEqual({});
+  });
+});

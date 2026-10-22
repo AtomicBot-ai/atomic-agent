@@ -571,29 +571,41 @@ export function createRuntimeTurnService(
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();
-    turnUsageMeter.begin(session.id);
-    const localEngine = resolveTurnLocalEngine(getConfig(), providerRegistry.activeText.id);
-    const engineTag = localEngine ? { localEngine } : {};
+    // The provider the turn is meant for: its pin, else the active one.
+    // Completions served by another link (a fallover) are counted.
+    const intendedProviderId = runOptions.providerId ?? providerRegistry.activeText.id;
+    turnUsageMeter.begin(session.id, intendedProviderId);
+    // ATO-277: provider, model and engine name the link that actually
+    // served the turn, read from the meter at settlement. Read at the end
+    // rather than the start, because a fallback only shows up once a
+    // completion has landed; a turn that served nothing reports the
+    // provider it was meant for.
+    const servedContext = () => {
+      const { servedProviderId, ...usage } = turnUsageMeter.snapshot(session.id);
+      const providerId = servedProviderId ?? intendedProviderId;
+      const provider = providerRegistry.getProvider(providerId) ?? providerRegistry.activeText;
+      const localEngine = resolveTurnLocalEngine(getConfig(), provider.id);
+      return {
+        provider: provider.name,
+        model: resolveActiveModelName(provider.id),
+        ...(localEngine ? { localEngine } : {}),
+        ...usage,
+      };
+    };
     try {
       const result = await turnController.enqueue(submission);
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
-        provider: providerRegistry.activeText.name,
-        model: resolveActiveModelName(),
-        ...engineTag,
+        ...servedContext(),
         latencyMs: Date.now() - startedAt,
         stepCount: result.stepCount,
         outcome: result.reason,
-        ...turnUsageMeter.snapshot(session.id),
       });
       return result;
     } catch (error) {
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
-        provider: providerRegistry.activeText.name,
-        model: resolveActiveModelName(),
-        ...engineTag,
+        ...servedContext(),
         latencyMs: Date.now() - startedAt,
         outcome: "failed",
-        ...turnUsageMeter.snapshot(session.id),
       });
       throw error;
     }

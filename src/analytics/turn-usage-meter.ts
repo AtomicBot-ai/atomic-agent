@@ -27,6 +27,18 @@ export interface TurnUsageSnapshot {
    */
   cachedTokens?: number;
   costUsd?: number;
+  /**
+   * The provider link that served the turn's last completion: after a
+   * cross-provider fallover this is the fallback, not the configured
+   * active provider (ATO-277). Absent when no completion was served.
+   */
+  servedProviderId?: string;
+  /**
+   * How many of the turn's completions were served by a link other than
+   * the one the turn was meant for (`begin`'s `intendedProviderId`).
+   * Present only when that provider was given and a completion landed.
+   */
+  fallbackCalls?: number;
 }
 
 interface TurnBucket {
@@ -37,6 +49,9 @@ interface TurnBucket {
   sawUsage: boolean;
   sawCachedUsage: boolean;
   sawPricedUsage: boolean;
+  intendedProviderId: string | undefined;
+  servedProviderId: string | undefined;
+  fallbackCalls: number;
 }
 
 /**
@@ -62,8 +77,11 @@ export class TurnUsageMeter {
   /**
    * Open a fresh bucket for `sessionId`, discarding any half-finished
    * one left behind by a turn that never reached `snapshot()`.
+   * `intendedProviderId` is the provider the turn should run on (its
+   * pin, else the active one); completions served elsewhere count as
+   * fallbacks.
    */
-  begin(sessionId: string): void {
+  begin(sessionId: string, intendedProviderId?: string): void {
     this.buckets.set(sessionId, {
       promptTokens: 0,
       completionTokens: 0,
@@ -72,7 +90,27 @@ export class TurnUsageMeter {
       sawUsage: false,
       sawCachedUsage: false,
       sawPricedUsage: false,
+      intendedProviderId,
+      servedProviderId: undefined,
+      fallbackCalls: 0,
     });
+  }
+
+  /**
+   * Note which provider link served one completion of the open turn for
+   * `sessionId`, whether or not it reported usage. No-ops when that
+   * session has no turn open.
+   */
+  recordServed(sessionId: string, providerId: string): void {
+    const bucket = this.buckets.get(sessionId);
+    if (!bucket) return;
+    bucket.servedProviderId = providerId;
+    if (
+      bucket.intendedProviderId !== undefined &&
+      providerId !== bucket.intendedProviderId
+    ) {
+      bucket.fallbackCalls += 1;
+    }
   }
 
   /**
@@ -117,12 +155,23 @@ export class TurnUsageMeter {
   snapshot(sessionId: string): TurnUsageSnapshot {
     const bucket = this.buckets.get(sessionId);
     this.buckets.delete(sessionId);
-    if (!bucket || !bucket.sawUsage) return {};
+    if (!bucket) return {};
+    const served: TurnUsageSnapshot =
+      bucket.servedProviderId === undefined
+        ? {}
+        : {
+            servedProviderId: bucket.servedProviderId,
+            ...(bucket.intendedProviderId !== undefined
+              ? { fallbackCalls: bucket.fallbackCalls }
+              : {}),
+          };
+    if (!bucket.sawUsage) return served;
     return {
       promptTokens: bucket.promptTokens,
       completionTokens: bucket.completionTokens,
       ...(bucket.sawCachedUsage ? { cachedTokens: bucket.cachedTokens } : {}),
       ...(bucket.sawPricedUsage ? { costUsd: bucket.costUsd } : {}),
+      ...served,
     };
   }
 }
