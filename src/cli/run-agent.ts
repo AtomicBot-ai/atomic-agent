@@ -146,10 +146,21 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
 }
 
 /**
+ * Whether a stdin line answers an approval prompt: one of the offered
+ * keys (`y`, `s`, `a`, `n`), `yes` / `no`, or an empty line (Enter, the
+ * default `N`), in any case. Anything else is a message for the agent,
+ * not an answer.
+ */
+export function isApprovalAnswer(line: string): boolean {
+  return /^(y|yes|n|no|s|a|)$/.test(line.trim().toLowerCase());
+}
+
+/**
  * Interactive approval over stdin. We ask the operator to confirm each
  * dangerous action; `y`/`yes` approves this call, `s` also grants the
  * category for the session, `a` grants this shell command shape.
- * Anything else is a refusal. The grant options mirror the TUI prompt;
+ * Any other answer (`n`, `no`, Enter, a grant key this request does not
+ * offer) is a refusal. The grant options mirror the TUI prompt;
  * they are offered here too because a CLI operator has the same physical
  * access to the machine. A category that is never grantable
  * (`isGrantableCategory`: trust config, e-mail, fusion fan-out) only
@@ -158,7 +169,10 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
  * The answer is the next line of the same stdin queue the chat loop
  * reads (ATO-802), so a piped "y" written together with the next
  * message answers this prompt and the message stays queued for the
- * next turn. EOF before an answer is a refusal.
+ * next turn. Only a line shaped like an answer (`isApprovalAnswer`) is
+ * taken: any other line is a refusal and stays queued as the next
+ * message, so a driver that pipes "task\ncontinue" without answering
+ * loses nothing to the prompt. EOF before an answer is a refusal.
  */
 async function promptApproval(
   request: ApprovalRequest,
@@ -167,7 +181,16 @@ async function promptApproval(
   const grantCategory = canGrantCategory(request);
   const grantShape = canGrantShape(request);
   process.stderr.write(formatCliApprovalPrompt(request));
-  const answer = ((await lines.next()) ?? "").trim().toLowerCase();
+  const head = await lines.peek();
+  if (head === null) return { approved: false };
+  if (!isApprovalAnswer(head)) {
+    process.stderr.write(
+      "\n  denied: the next input line is not an answer, kept as the next message\n",
+    );
+    return { approved: false };
+  }
+  await lines.next();
+  const answer = head.trim().toLowerCase();
   if (answer === "s" && grantCategory) {
     process.stderr.write(
       `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,

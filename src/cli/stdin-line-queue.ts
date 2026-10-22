@@ -19,6 +19,12 @@ export interface StdinLineQueue {
    */
   next(prompt?: string): Promise<string | null>;
   /**
+   * The line `next` would return, without taking it: it stays at the
+   * head of the queue. Waits like `next` when nothing is queued; `null`
+   * once input has ended and the queue is empty.
+   */
+  peek(prompt?: string): Promise<string | null>;
+  /**
    * Stop reading; pending and later `next` calls resolve `null`. Safe to
    * call more than once.
    */
@@ -36,27 +42,43 @@ export function createStdinLineQueue(
 ): StdinLineQueue {
   const rl = createInterface(options);
   const lines: string[] = [];
-  const waiters: Array<(line: string | null) => void> = [];
+  // A waiter that takes the line (`next`) or only looks at it (`peek`).
+  // Peekers ahead of the first taker all see the line, which then stays
+  // queued; the first taker in line gets it.
+  const waiters: Array<{
+    take: boolean;
+    resolve: (line: string | null) => void;
+  }> = [];
   let ended = false;
   rl.on("line", (line) => {
-    const waiter = waiters.shift();
-    if (waiter) waiter(line);
+    while (waiters.length > 0 && !waiters[0]!.take) {
+      waiters.shift()!.resolve(line);
+    }
+    const taker = waiters.shift();
+    if (taker) taker.resolve(line);
     else lines.push(line);
   });
   rl.once("close", () => {
     ended = true;
-    for (const waiter of waiters.splice(0)) waiter(null);
+    for (const waiter of waiters.splice(0)) waiter.resolve(null);
   });
+  const wait = (take: boolean, prompt?: string): Promise<string | null> => {
+    if (lines.length > 0) {
+      return Promise.resolve(take ? lines.shift()! : lines[0]!);
+    }
+    if (ended) return Promise.resolve(null);
+    if (prompt !== undefined) {
+      rl.setPrompt(prompt);
+      rl.prompt();
+    }
+    return new Promise((resolve) => waiters.push({ take, resolve }));
+  };
   return {
     next(prompt) {
-      const line = lines.shift();
-      if (line !== undefined) return Promise.resolve(line);
-      if (ended) return Promise.resolve(null);
-      if (prompt !== undefined) {
-        rl.setPrompt(prompt);
-        rl.prompt();
-      }
-      return new Promise((resolveLine) => waiters.push(resolveLine));
+      return wait(true, prompt);
+    },
+    peek(prompt) {
+      return wait(false, prompt);
     },
     close() {
       if (!ended) rl.close();

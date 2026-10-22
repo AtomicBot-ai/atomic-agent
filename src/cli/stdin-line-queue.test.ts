@@ -50,4 +50,16 @@ describe("createStdinLineQueue", () => {
     queue.close();
     expect(await pending).toBeNull();
   });
+
+  it("peek shows the head line without taking it, and waits for one when empty", async () => {
+    const input = new PassThrough();
+    const queue = queueOver(input);
+    const peeked = queue.peek();
+    input.write("answer\n");
+    expect(await peeked).toBe("answer");
+    expect(await queue.peek()).toBe("answer");
+    expect(await queue.next()).toBe("answer");
+    input.end();
+    expect(await queue.peek()).toBeNull();
+  });
 });

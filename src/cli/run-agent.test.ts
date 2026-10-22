@@ -19,6 +19,7 @@ import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
 import {
   formatAgentEvent,
   formatCliApprovalPrompt,
+  isApprovalAnswer,
   formatSkillsBannerValue,
 } from "./run-agent.js";
 
@@ -34,6 +35,20 @@ function transportError(message: string) {
     },
   };
 }
+
+describe("isApprovalAnswer", () => {
+  it("takes the offered keys, yes/no and an empty line, in any case", () => {
+    for (const line of ["y", "Y", "yes", " YES ", "n", "no", "N", "s", "a", "", "  "]) {
+      expect(isApprovalAnswer(line), JSON.stringify(line)).toBe(true);
+    }
+  });
+
+  it("treats anything else as a message, not an answer", () => {
+    for (const line of ["continue", "now say hi", "yes please", "nope", "always", "y n"]) {
+      expect(isApprovalAnswer(line), line).toBe(false);
+    }
+  });
+});
 
 describe("formatCliApprovalPrompt", () => {
   const request = (category: ApprovalRequest["category"]): ApprovalRequest => ({
@@ -405,6 +420,45 @@ describe("runAgentCommand exit codes", () => {
       expect(readFileSync(join(workingDir, "out.txt"), "utf8")).toBe("written");
       expect(turnMessages).toEqual(["write the file", "now say hi"]);
       expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+
+    it("denies without eating a queued message that is not an answer", async () => {
+      // The driver pipes two messages and no answer: the approval must
+      // not swallow "now say hi" as its (deny) answer.
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(stderr).toContain("approval required for tool: os.fs.write");
+      expect(stderr).toContain("not an answer, kept as the next message");
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+
+    it("takes a piped n as the answer: denied, and it is not a turn", async () => {
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\nn\nnow say hi\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file", "now say hi"]);
+      expect(stderr).toContain('"turnCount": 2');
+    }, 60_000);
+
+    it("denies at EOF before an answer", async () => {
+      turnMessages.length = 0;
+      model.script = [WRITE, REPLY("could not write")];
+      model.emits = REPLY("ok");
+      feedStdin(["write the file\n"]);
+      const code = await runAgentCommand(["--cwd", workingDir]);
+      expect(code).toBe(0);
+      expect(existsSync(join(workingDir, "out.txt"))).toBe(false);
+      expect(turnMessages).toEqual(["write the file"]);
     }, 60_000);
 
     it("denies when the approval prompt fails, and later stdin lines still run", async () => {
