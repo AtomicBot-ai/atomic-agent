@@ -8,6 +8,7 @@
  */
 
 import { classifyTransportHost } from "./classify-transport-host.js";
+import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-tags.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -86,6 +87,13 @@ export interface ScrubbedErrorEvent {
    * of the user's own prompt in that field, and none of that may travel.
    */
   upstreamErrorType?: string;
+  /**
+   * `llm_failure` turn context as ready-made tags (`provider_id`,
+   * `local_engine`, `outage_waited_ms`, `outage_attempts`,
+   * `daemon_state`), already reduced to fixed words and numbers by
+   * `sanitizeLlmFailureTags`.
+   */
+  llmFailureTags?: Record<string, string>;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -406,7 +414,7 @@ function readCauseError(err: Error): Error | undefined {
  */
 export function scrubError(
   err: Error,
-  opts: { source: string; category?: string },
+  opts: { source: string; category?: string; llmFailure?: LlmFailureContext },
 ): ScrubbedErrorEvent {
   const errorType = err.name || err.constructor?.name || "Error";
   const category =
@@ -444,5 +452,7 @@ export function scrubError(
   if (upstreamErrorType !== undefined) {
     event.upstreamErrorType = upstreamErrorType;
   }
+  const llmFailureTags = sanitizeLlmFailureTags(opts.llmFailure);
+  if (llmFailureTags !== undefined) event.llmFailureTags = llmFailureTags;
   return event;
 }

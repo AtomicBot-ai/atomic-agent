@@ -203,6 +203,8 @@ export {
   stopDaemon,
   getDaemonStatus,
   readRunningPid,
+  readChatDaemonPidState,
+  type ChatDaemonPidState,
   classifyPidLiveness,
   DaemonHealthError,
   ForeignDaemonError,
