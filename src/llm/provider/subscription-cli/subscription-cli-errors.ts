@@ -91,6 +91,12 @@ const AUTH_PATTERNS = [
   /\binvalid api key\b/i,
   /\bunauthorized\b/i,
   /\bcredentials (?:are )?(?:missing|expired|invalid)\b/i,
+  // Claude Code's envelope for an expired login (ATO-755): `"error":
+  // "authentication_failed"` with `"result": "Failed to authenticate:
+  // OAuth session expired and could not be refreshed"`.
+  /\bauthentication_failed\b/i,
+  /\bfailed to authenticate\b/i,
+  /\boauth (?:session|token) (?:has )?expired\b/i,
 ];
 
 export function looksLikeAuthFailure(text: string): boolean {
@@ -183,13 +189,23 @@ export function mapCliFailure(input: CliFailureInput): Error {
       input.exitCode,
     );
   }
-  const combined = `${input.stderr}\n${input.stdout}`;
+  // When the CLI wrote its failure into its own JSON output, that text
+  // is the explanation. Every other JSON line on stdout is the stream
+  // itself, mostly the model's own text deltas: never read as an auth
+  // problem (a reply that says "401 Unauthorized" is not a signed-out
+  // CLI) and never pasted into the message. Only plain-text lines,
+  // which is where a CLI writes a crash or a usage error, are kept.
+  const reported = cliReportedError(input.stdout);
+  const stdout = reported ?? plainTextLines(input.stdout);
+  const stderr = input.stderr.trim();
+  const detail = reported
+    ? stderr && !reported.includes(stderr)
+      ? `${tail(reported)}; ${tail(stderr)}`
+      : tail(reported)
+    : tail(stderr || stdout);
+  const combined = `${input.stderr}\n${stdout}`;
   if (looksLikeAuthFailure(combined)) {
-    return new SubscriptionCliAuthError(
-      input.binary,
-      input.authHint,
-      tail(input.stderr || input.stdout),
-    );
+    return new SubscriptionCliAuthError(input.binary, input.authHint, detail);
   }
   // Checked after the auth patterns: a signed-out CLI is what usually
   // drops the pipe, and "run /login" is the more actionable message.
@@ -197,16 +213,86 @@ export function mapCliFailure(input: CliFailureInput): Error {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" stopped reading the prompt before it was fully written (exit ${
         input.exitCode ?? "null"
-      }): ${tail(input.stderr || input.stdout) || "no output"}`,
+      }): ${detail || "no output"}`,
       input.exitCode,
     );
   }
   return new SubscriptionCliInvocationError(
     `"${input.binary}" exited with code ${input.exitCode ?? "null"}: ${
-      tail(input.stderr || input.stdout) || "no output"
+      detail || "no output"
     }`,
     input.exitCode,
   );
+}
+
+/**
+ * The failure a CLI reported inside its own JSON output, if it did:
+ * Claude Code's final `result` envelope with `is_error`, Codex's
+ * `turn.failed` and `error` events. `null` when there is none, so the
+ * caller falls back to the raw text.
+ */
+export function cliReportedError(stdout: string): string | null {
+  const messages = new Set<string>();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const message = reportedErrorOf(event);
+    if (message) messages.add(message);
+  }
+  return messages.size > 0 ? [...messages].join("\n") : null;
+}
+
+function reportedErrorOf(event: unknown): string | null {
+  if (typeof event !== "object" || event === null) return null;
+  const e = event as Record<string, unknown>;
+  const text = (value: unknown): string =>
+    typeof value === "string" ? value.trim() : "";
+  if (e.type === "result") {
+    const subtype = text(e.subtype);
+    if (e.is_error !== true && (subtype === "" || subtype === "success")) {
+      return null;
+    }
+    const result = text(e.result);
+    const code = text(e.error);
+    if (result && code) return `${result} (${code})`;
+    return result || code || subtype || null;
+  }
+  if (e.type === "turn.failed") {
+    const error = e.error as { message?: unknown } | undefined;
+    return text(error?.message) || null;
+  }
+  if (e.type === "error") return text(e.message) || null;
+  return null;
+}
+
+/**
+ * The lines of `stdout` that are not part of a JSON stream: drops each
+ * line that parses as a JSON object, and every line that opens like an
+ * NDJSON event (`{"`), which also covers one cut off mid-object when
+ * the child was killed mid-write.
+ */
+function plainTextLines(stdout: string): string {
+  return stdout
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) return false;
+      if (trimmed.startsWith('{"')) return false;
+      if (!trimmed.startsWith("{")) return true;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        return typeof parsed !== "object" || parsed === null;
+      } catch {
+        return true;
+      }
+    })
+    .join("\n");
 }
 
 function tail(text: string): string {

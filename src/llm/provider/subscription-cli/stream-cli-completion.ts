@@ -17,6 +17,15 @@ import { resolveWindowsCliInvocation } from "./windows-cli-shim.js";
 const SIGKILL_DELAY_MS = 2_000;
 /** A single NDJSON line larger than this means the stream went wrong. */
 const MAX_LINE_BYTES = 4 * 1024 * 1024;
+/**
+ * How much of what was already yielded is kept for a failure message.
+ * A CLI that exits non-zero often explains why only on stdout — Claude
+ * Code's final `result` envelope for an expired login, with stderr
+ * empty — so dropping it left "no output" (ATO-755). Whole lines, so
+ * that envelope still parses; the newest line is always kept.
+ */
+const STDOUT_TAIL_LINES = 16;
+const STDOUT_TAIL_CHARS = 64 * 1024;
 
 export type CliStreamRunner = (
   options: CliRunOptions,
@@ -170,6 +179,19 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
 
   child.stdout.setEncoding("utf8");
   let buffer = "";
+  const stdoutTail: string[] = [];
+  let stdoutTailChars = 0;
+  const remember = (line: string) => {
+    if (line.trim().length === 0) return;
+    stdoutTail.push(line);
+    stdoutTailChars += line.length;
+    while (
+      stdoutTail.length > STDOUT_TAIL_LINES ||
+      (stdoutTail.length > 1 && stdoutTailChars > STDOUT_TAIL_CHARS)
+    ) {
+      stdoutTailChars -= stdoutTail.shift()?.length ?? 0;
+    }
+  };
   try {
     for await (const chunk of child.stdout as AsyncIterable<string>) {
       buffer += chunk;
@@ -182,12 +204,16 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
       while (newline !== -1) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        remember(line);
         yield line;
         newline = buffer.indexOf("\n");
       }
     }
     // A stream that ends without a trailing newline still has a line.
-    if (buffer.length > 0) yield buffer;
+    if (buffer.length > 0) {
+      remember(buffer);
+      yield buffer;
+    }
 
     const { code } = await exited;
     // A stdin failure that is not a broken pipe is a local fault, not
@@ -199,7 +225,10 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
         installHint: options.installHint,
         authHint: options.authHint,
         exitCode: code,
-        stdout: "",
+        // A caller's abort kills the child before it can write a result
+        // envelope, so the tail is only the stream it was cut off in.
+        stdout:
+          options.signal?.aborted && !timedOut ? "" : stdoutTail.join("\n"),
         stderr,
         timedOut,
         truncated: false,
