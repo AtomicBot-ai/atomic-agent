@@ -69,6 +69,7 @@ import { checks115 } from "./smoke-tasks/t115.js";
 import { checks116 } from "./smoke-tasks/t116.js";
 import { checks165 } from "./smoke-tasks/t165.js";
 import { checks416 } from "./smoke-tasks/t416.js";
+import { checks765 } from "./smoke-tasks/t765.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -105,7 +106,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "165", "416"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57", "60", "61", "62", "63", "64", "65", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "165", "416", "765"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -804,6 +805,10 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // 47 — Danya's Settings items (Д25–Д28): Done, one status line, toasts inside Settings, no On / Off words.
   if (want.has("47")) await guarded("47", check, () => checks47(js, check));
+
+  // 765 (ATO-765) — a crashed window page is loaded again instead of left blank; the agent is not restarted.
+  // Last: the reloaded page has forgotten whatever an earlier check left open in it.
+  if (want.has("765")) await guarded("765", check, () => checks765(js, check));
 
   await wait(100);
 }

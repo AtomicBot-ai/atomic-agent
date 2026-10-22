@@ -226,6 +226,7 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
+import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
@@ -866,7 +867,33 @@ function createWindow(): BrowserWindow {
     },
   });
   if (freshHere) FRESH_WINDOW.id = window.webContents.id;
-  wireWindowErrorReporting(window);
+  /* ATO-765: a crashed page is loaded again (render-recovery.ts). Registered
+     before the error reporting so its report can say whether it recovered. */
+  const recovery = new RenderRecovery();
+  let recovered: boolean | null = null;
+  window.webContents.on("render-process-gone", (_e, details) => {
+    if (details.reason === "clean-exit") return;
+    recovered = recovery.onGone() === "reload";
+    if (recovered) {
+      setImmediate(() => { if (!window.isDestroyed()) window.webContents.reload(); });
+      return;
+    }
+    void dialog.showMessageBox(window, {
+      type: "error",
+      message: KEEPS_CRASHING.message,
+      detail: KEEPS_CRASHING.detail,
+      buttons: [...KEEPS_CRASHING.buttons],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    }).then(({ response }) => {
+      if (window.isDestroyed()) return;
+      if (response === 1) { app.quit(); return; }
+      recovery.reset();
+      window.webContents.reload();
+    }).catch(() => undefined);
+  });
+  wireWindowErrorReporting(window, () => recovered);
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
