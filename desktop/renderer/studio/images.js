@@ -18,7 +18,7 @@
     job: null, jobCount: 1, jobErr: null, lastReq: null, starting: false, formMsg: '',
     items: [], total: 0, hasMore: false, filter: 'all', galLoading: false, galErr: null,
     sel: null, recipe: false, delArmed: null, picking: null,
-    price: null, priceKey: '', pop: null, modelQ: '', adv: false,
+    price: null, priceKey: '', pop: null, modelQ: '', adv: false, modeWhy: null,
     dir: '', focusPath: null,
     chatItem: null,   // a picture opened from a chat that Studio did not make ("From chat")
   };
@@ -500,7 +500,8 @@
       case 'retry': IM.jobErr = null; generate(); return;
       case 'dismiss': IM.jobErr = null; paintStage(); return;
       case 'settings': STUDIO.openSettings('openrouter'); return;
-      case 'mode': switchMode(a); save(); paintForm(); refreshPrice(); return;
+      case 'mode': IM.modeWhy = null; switchMode(a); save(); paintForm(); refreshPrice(); return;
+      case 'modewhy': IM.modeWhy = a; paintForm(); return;
       case 'aspect': IM.form.aspect = a; save(); paintForm(); return;
       case 'count': IM.form.count = Math.min(Math.max(1, IM.form.count + Number(a)), Math.max(1, (IM.model && IM.model.maxCount) || 1)); save(); paintForm(); refreshPrice(); return;
       case 'adv': IM.adv = !IM.adv; paintForm(); return;
@@ -511,7 +512,7 @@
         const bar = a.indexOf('|');
         const m = simgFindModel(IM.catalog, a.slice(bar + 1), a.slice(0, bar));
         if (m) chooseModel(m);
-        IM.pop = null; save(); paintForm(); paintPop(); refreshPrice();
+        IM.modeWhy = null; IM.pop = null; save(); paintForm(); paintPop(); refreshPrice();
         return;
       }
       case 'idea': IM.form.prompt = a; paintForm(); { const t = document.getElementById('sti-prompt'); if (t) t.focus(); } save(); return;

@@ -146,17 +146,21 @@ function simgvForm(IM) {
   const model = IM.model;
   const f = IM.form;
   const tabs = simgModeTabs(model, IM.catalog);
-  const note = simgModeNote(tabs);
+  // A click on a greyed mode (IM.modeWhy) puts its reason in the hint line; else the mode's hint and what is greyed.
+  const whyTab = tabs.find((t) => t.id === IM.modeWhy && !t.ok);
+  const offIds = whyTab ? [whyTab.id] : tabs.filter((t) => !t.ok && t.need !== 'pick').map((t) => t.id);
+  const note = whyTab ? simgModeWhy(whyTab, model) : simgModeNote(tabs, model);
+  const pick = note && model && simgOtherCan(IM.catalog, model, offIds)
+    ? ' <button class="st-link" ' + SIMGV_A('pop:model') + '>' + (whyTab ? 'Pick a model that can' : 'Pick one') + '</button>.' : '';
   const parts = [];
   parts.push('<div><label class="st-lbl" for="sti-prompt">Prompt' + (f.mode === 'upscale' ? ' <span class="r">optional</span>' : '') + '</label>'
     + '<textarea class="st-ta" id="sti-prompt" rows="4" placeholder="Describe the picture. Subject, place, light, style.">' + esc(f.prompt || '') + '</textarea></div>');
   parts.push('<div><div class="st-lbl">Mode</div><div class="st-modes" role="tablist">'
-    + tabs.map((t) => '<button class="st-mode' + (f.mode === t.id ? ' on' : '') + (t.ok ? '' : ' off') + '" role="tab" aria-selected="' + (f.mode === t.id) + '"'
-      + (t.ok ? ' ' + SIMGV_A('mode:' + t.id) : ' aria-disabled="true"') + (t.why ? ' title="' + esc(t.why) + '"' : '') + '>' + esc(t.label) + '</button>').join('')
+    + tabs.map((t) => '<button class="st-mode' + (f.mode === t.id ? ' on' : '') + (t.ok ? '' : ' off') + '" role="tab" aria-selected="' + (f.mode === t.id) + '" '
+      + SIMGV_A((t.ok ? 'mode:' : 'modewhy:') + t.id) + (t.ok ? '' : ' aria-disabled="true"') + (t.why ? ' title="' + esc(t.why) + '"' : '') + '>' + esc(t.label) + '</button>').join('')
     + '</div>'
-    + '<div class="st-hint">' + ic('info') + '<span>' + esc(SIMG_MODE_HINT[f.mode] || '')
-      + (note ? ' ' + esc(note) + (simgModels(IM.catalog).some((m) => m.group === 'local') ? ' <button class="st-link" ' + SIMGV_A('pop:model') + '>Pick one</button>' : '') : '')
-    + '</span></div></div>');
+    + '<div class="st-hint" role="status">' + ic('info') + '<span>' + (whyTab ? '' : esc(SIMG_MODE_HINT[f.mode] || '') + (note ? ' ' : ''))
+      + esc(note) + pick + '</span></div></div>');
   if (f.mode !== 'create') {
     parts.push('<div><div class="st-lbl">' + (f.mode === 'reference' ? 'Main reference' : 'Source image') + ' <span class="r">drop or paste</span></div>'
       + simgvSource(IM, 'source', 'Add a picture', 'PNG, JPEG or WebP') + '</div>');
