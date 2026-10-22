@@ -47,6 +47,21 @@ describe("toolLogFields", () => {
     expect(toolLogFields(undefined, result())).toEqual({});
   });
 
+  it("skips the compressor's key: signature so a later quoted line stays out", () => {
+    const fields = toolLogFields(
+      { path: "a.py" },
+      result({
+        tool: "os.fs.edit",
+        status: "error",
+        summary:
+          'key: Nearest text in the file, as JSON: "error: TOKEN"\nos.fs.edit: `oldString` was not found in the target file.\nNearest text in the file, as JSON: "error: TOKEN"',
+      }),
+    );
+    expect(fields.reason).toBe(
+      "os.fs.edit: `oldString` was not found in the target file.",
+    );
+  });
+
   it("logs no path or reason for tools outside os.fs, only the error name", () => {
     const fields = toolLogFields(
       { path: "https://api.example.com/x?token=SECRET", from: "me@example.com" },

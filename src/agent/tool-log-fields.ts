@@ -56,11 +56,17 @@ function pathOf(
   return undefined;
 }
 
+/**
+ * The first non-blank line of the error, skipping the compressor's
+ * `key: ` signature: that is a copy of whichever later line looked like
+ * an error, which for an os.fs.edit miss can be the quoted file text on
+ * its second line.
+ */
 function firstLine(text: string): string | undefined {
   const line = text
     .split("\n")
     .map((part) => part.trim())
-    .find((part) => part !== "");
+    .find((part) => part !== "" && !part.startsWith("key: "));
   return line === undefined ? undefined : clip(line);
 }
 
