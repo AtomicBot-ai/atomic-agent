@@ -5,7 +5,7 @@
  * bold only when the turn ends, and the layout does not jump.
  *
  * Only the last block can still be growing, so only the text after the
- * last blank line is touched. Inside an unclosed ``` fence nothing is
+ * last blank line (and after the last closed code fence) is touched. Inside an unclosed ``` fence nothing is
  * touched: the lexer already treats the rest of the text as code.
  *
  * What is repaired, at the end of that block:
@@ -26,10 +26,19 @@ const FENCE = /^ {0,3}(```|~~~)/gm;
 
 export function closeStreamingMarkdown(text: string): string {
   if (text.length === 0) return text;
-  if ((text.match(FENCE) ?? []).length % 2 === 1) return text;
+  const fences = [...text.matchAll(FENCE)];
+  if (fences.length % 2 === 1) return text;
   const cut = text.lastIndexOf("\n\n");
-  const head = cut === -1 ? "" : text.slice(0, cut + 2);
-  const tail = cut === -1 ? text : text.slice(cut + 2);
+  let start = cut === -1 ? 0 : cut + 2;
+  // A closed fence above the last blank line must not leak into the
+  // tail: its code (`*args`, `**kwargs`, the ``` lines) is not markup.
+  const lastFence = fences[fences.length - 1];
+  if (lastFence?.index !== undefined) {
+    const eol = text.indexOf("\n", lastFence.index);
+    start = Math.max(start, eol === -1 ? text.length : eol + 1);
+  }
+  const head = text.slice(0, start);
+  const tail = text.slice(start);
   return head + repairTail(dropPartialLink(tail));
 }
 
@@ -77,22 +86,27 @@ function repairTail(tail: string): string {
         i += 1;
         continue;
       }
-      const markers =
+      // A `***` run is `**` plus `*`, each at its own offset so the drop
+      // pass can remove them one by one; it closes whichever of the two
+      // is innermost first.
+      const markers: Opener[] =
         ch === "~"
           ? run >= 2
-            ? ["~~"]
+            ? [{ marker: "~~", at: i }]
             : []
           : run >= 3
-            ? ["**", "*"]
-            : [ch.repeat(run)];
-      for (const marker of markers) {
+            ? stack[stack.length - 1]?.marker === "*"
+              ? [{ marker: "*", at: i }, { marker: "**", at: i + 1 }]
+              : [{ marker: "**", at: i }, { marker: "*", at: i + 2 }]
+            : [{ marker: ch.repeat(run), at: i }];
+      for (const { marker, at } of markers) {
         const top = stack[stack.length - 1];
         if (top?.marker === marker && !isSpace(tail[i - 1])) {
           stack.pop();
         } else if (i + run === tail.length || !isSpace(tail[i + run])) {
           // At the very end it may still become an opener: keep it on
           // the stack so the drop pass below removes it.
-          stack.push({ marker, at: i });
+          stack.push({ marker, at });
         }
       }
       i += run;

@@ -45,6 +45,20 @@ describe("closeStreamingMarkdown", () => {
     );
   });
 
+  it("handles a *** run as ** plus * on both ends", () => {
+    expect(closeStreamingMarkdown("hello ***")).toBe("hello ");
+    expect(closeStreamingMarkdown("***bi*** more text")).toBe("***bi*** more text");
+    expect(closeStreamingMarkdown("***a* b")).toBe("***a* b**");
+  });
+
+  it("does not read a closed code fence above as markup", () => {
+    // The blank line inside the block puts the code into the last block;
+    // `*args` and the closing ``` must not be "closed" after `Done`.
+    const head = "```py\ndef f():\n\n    return f(*args, **kw)\n```\n";
+    expect(closeStreamingMarkdown(`${head}Done`)).toBe(`${head}Done`);
+    expect(closeStreamingMarkdown(`${head}Done **x`)).toBe(`${head}Done **x**`);
+  });
+
   it("does not touch the inside of an open code fence", () => {
     const text = "Here:\n\n```js\nconst a = '**';\nconst b = `x";
     expect(closeStreamingMarkdown(text)).toBe(text);
