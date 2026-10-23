@@ -385,6 +385,7 @@
       pickerOpen: false, pickerQuery: '', libraryOpen: false, library: [], libThumbs: {},
       outDir: null, busy: false, notice: null,
       focusPath: null,   // "Open in Studio" waiting for the gallery's first page
+      recent: typeof g.studioRecentLoad === 'function' ? g.studioRecentLoad(KIND) : [], recentOpen: false,   // ATO-809: prompts sent before (recent-prompts.js)
     };
     let priceTimer = null, estTimer = null;
 
@@ -665,6 +666,7 @@
       if (!r || !r.ok) { S.jobError = r ? r.error : { code: 'FAILED', message: 'Could not start the clip.' }; paint(); return; }
       S.job = Object.assign({}, r.data.job, { id: r.data.jobId || r.data.job.id, startedAt: Date.now(), label: summaryLine(m) });
       S.result = null;
+      if (typeof g.studioRecentRemember === 'function' && req.prompt) { S.recent = g.studioRecentRemember(KIND, S.recent, req.prompt); S.recentOpen = false; }
       paint();
     }
 
@@ -868,6 +870,16 @@
         case 'pick-library': openLibrary(); break;
         case 'lib-item': { const it = S.library.find((x) => x.id === v); S.libraryOpen = false; if (it) setFirstFrameFromPath(it.path, it.path.split('/').pop(), 'from your images'); break; }
         case 'clear-frame': f.firstFrame = null; saveForm(); paint('form'); paint('foot'); break;
+        case 'recent': S.recentOpen = !S.recentOpen; paint('form'); break;
+        case 'recent-use': {
+          const t = S.recent[Number(v)];
+          S.recentOpen = false;
+          if (typeof t === 'string') { f.prompt = t; S.notice = null; saveForm(); }
+          paint('form'); paint('foot');
+          const ta = S.root && S.root.querySelector('[data-vfield="prompt"]');
+          if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+          break;
+        }
         case 'generate': generate(); break;
         case 'stop': stop(); break;
         case 'dismiss': S.jobError = null; S.notice = null; paint('stage'); paint('foot'); break;
@@ -951,6 +963,7 @@
       let h = '';
       h += '<label class="studio-lbl" for="sv-prompt">Prompt</label>'
         + '<textarea id="sv-prompt" class="studio-ta" data-vfield="prompt" rows="4" placeholder="' + (f.mode === 'image' ? 'What happens next (optional)' : 'A fox closes a book and smiles at the camera. Slow push-in.') + '">' + escHtml(f.prompt) + '</textarea>';
+      if (typeof g.studioRecentHTML === 'function') h += g.studioRecentHTML(S.recent, S.recentOpen, (v, a) => 'data-vact="' + v + '"' + (a ? ' data-v="' + escHtml(a) + '"' : ''));
       if (m && m.negativePrompt) {
         h += '<label class="studio-lbl" for="sv-neg">Leave out</label>'
           + '<input id="sv-neg" class="studio-input" data-vfield="negative" placeholder="blur, text, watermark" value="' + escHtml(f.negativePrompt) + '">';
