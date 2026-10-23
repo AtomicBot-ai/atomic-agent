@@ -9429,12 +9429,27 @@ function turnFailure(ev) {
 /** ATO-869: a local server that answered 404 or 405 is up, but it is not a
     model server or has no model loaded (often another program on the old
     port). '' for anything else. */
-function localWrongServerLine(ev, id) {
+function localWrongServerLine(ev, picked) {
+  // No `llm` block: the agent runs on its synthesized local-llama.
+  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
   if (!id || !waitIsLocalServer(id)) return '';
   if (!/\b(?:returned http|answered) 40[45]\b|\(40[45]\)/.test(String((ev && ev.error) || ''))) return '';
-  const host = providerHost((selProviders() || []).find((p) => p.id === id));
-  return (host ? 'The server at ' + host : 'The local server') + ' is not a model server, or no model is loaded there.'
+  const host = localServerHost(id);
+  return (host ?'The server at ' + host : 'The local server') + ' is not a model server, or no model is loaded there.'
     + ' Check the address in Settings › Models.';
+}
+/** The host a llama-server entry talks to, or ''. Its address is `url`
+    (its `baseUrl` is the embeddings server), and selProviders() leaves
+    these entries out; a local-llama with no `url` uses localModels, as the
+    agent does (config-schema.ts). */
+function localServerHost(id) {
+  const entry = llmProvider(id);
+  const lm = llmLocalModels();
+  const raw = (entry && entry.url) || (id === 'local-llama'
+    ? (lm.mode === 'managed' ? 'http://127.0.0.1:' + ((lm.managed && lm.managed.port) || 19091) : (lm.url || ''))
+    : '');
+  if (!raw) return '';
+  try { return new URL(raw).host; } catch (e) { return String(raw); }
 }
 
 /** ATO-771/772: a turn that failed because the managed local model is not
