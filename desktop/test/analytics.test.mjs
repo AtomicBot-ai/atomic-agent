@@ -16,6 +16,7 @@ const C = require("../out/main/analytics/classify.js");
 const T = require("../out/main/analytics/chat-turns.js");
 const E = require("../out/main/analytics/environment.js");
 const S = require("../out/main/sentry/scrub.js");
+const CV = require("../out/main/analytics/catalog-values.js");
 
 /* ---- validator ---- */
 
@@ -30,9 +31,20 @@ test("the renderer may only send UI-owned events", () => {
   assert.ok(V.validateEvent("slash_command_used", { command: "help" }, "ui"));
 });
 
+test("the window names only setup finishing; anything else it sends is a manual restart (ATO-274)", () => {
+  assert.equal(CV.restartTriggerFromWindow("setup_finished"), "setup_finished");
+  assert.equal(CV.restartTriggerFromWindow(undefined), "manual");
+  assert.equal(CV.restartTriggerFromWindow("import"), "manual");
+  assert.equal(CV.restartTriggerFromWindow({}), "manual");
+});
+
 test("enum values outside the list become `other`, or the prop's fallback, or are dropped", () => {
   assert.deepEqual(V.validateEvent("message_action", { action: "nope" }, "ui").props, {});
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "weird" }, "main").props, { trigger: "other" });
+  // ATO-274: setup, a workspace change and an import are not manual restarts.
+  for (const trigger of ["setup_finished", "workspace_change", "import"]) {
+    assert.deepEqual(V.validateEvent("agent_restarted", { trigger }, "main").props, { trigger });
+  }
   // ATO-767: the automatic restart after an unexpected exit keeps its own trigger.
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "auto" }, "main").props, { trigger: "auto" });
   assert.deepEqual(V.validateEvent("slash_command_used", { command: "/rm -rf" }, "ui").props, { command: "unknown" });

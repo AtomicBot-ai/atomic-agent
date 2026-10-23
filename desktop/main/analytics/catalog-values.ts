@@ -117,3 +117,16 @@ export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
 export function cleanLocale(l: string): string | undefined {
   return LOCALE_RE.test(l) ? l : undefined;
 }
+
+/**
+ * `agent_restarted.trigger` (ATO-274). `manual` is the person's own restart
+ * (Settings, the palette); finishing setup, a new workspace folder and a
+ * data import restart the agent too and are told apart, so `manual` can be
+ * read as "something felt stuck".
+ */
+export const RESTART_TRIGGERS = ["manual", "switch", "auto", "other", "setup_finished", "workspace_change", "import"] as const;
+export type RestartTrigger = (typeof RESTART_TRIGGERS)[number];
+/** The window's `agent:restart` says why only for setup; anything else it sends is a manual restart. */
+export function restartTriggerFromWindow(reason: unknown): RestartTrigger {
+  return reason === "setup_finished" ? "setup_finished" : "manual";
+}
