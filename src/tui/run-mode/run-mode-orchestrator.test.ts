@@ -290,6 +290,51 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
   });
 
+  it("skips an embedding-only entry when it picks the cloud leg (ATO-386)", async () => {
+    seed({
+      ...BOTH_LEGS,
+      providers: [
+        BOTH_LEGS!.providers[0]!,
+        {
+          id: "embed-only",
+          kind: "openai-compatible",
+          baseUrl: "https://a.invalid",
+          apiKey: "sk-test",
+          defaultEmbeddingModel: "nomic-embed-text",
+        },
+        BOTH_LEGS!.providers[1]!,
+      ],
+    });
+    const app = harness();
+    await app.orchestrator.setMode("fusion");
+    expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
+    expect(app.setActive).toHaveBeenCalledWith("openrouter");
+  });
+
+  it("refuses a mode whose leg has no chat model before writing anything (ATO-386)", async () => {
+    seed({
+      ...BOTH_LEGS,
+      providers: [
+        BOTH_LEGS!.providers[0]!,
+        {
+          id: "embed-only",
+          kind: "openai-compatible",
+          baseUrl: "https://a.invalid",
+          defaultEmbeddingModel: "nomic-embed-text",
+        },
+      ],
+    });
+    const app = harness();
+    await app.orchestrator.setMode("cloud");
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    expect(app.setActive).not.toHaveBeenCalled();
+    expect(
+      app.actions.some(
+        (a) => a.type === "composer_notice" && /has no chat model/.test(a.text),
+      ),
+    ).toBe(true);
+  });
+
   it("introduces the mode in chat on the way in, once", async () => {
     seed(BOTH_LEGS);
     const app = harness();
