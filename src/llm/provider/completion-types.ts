@@ -122,6 +122,15 @@ export interface CompletionRequest {
    * fan-out for its workers.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Ask the server to skip the reasoning channel for this request
+   * (`chat_template_kwargs: { enable_thinking: false }`). Sent only to an
+   * OpenAI-compatible server on a local or private-network address, where
+   * the field is the chat template's own; strict cloud APIs reject
+   * unknown fields, so every other provider ignores it. Never serialized
+   * under this name. Context compaction sets it.
+   */
+  disableThinking?: boolean;
   seed?: number;
   repeatPenalty?: number;
   repeatLastN?: number;

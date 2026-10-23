@@ -394,8 +394,11 @@ export async function createAgentRuntime(
   const compactionRoute = (id: string, pin?: string) => {
     const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
     const slice = resolveActiveLlmSlice(providerId);
+    // The entry's explicit output ceiling: a summary call's reasoning reserve stays under it.
+    const outputCap = resolveLlmConfig(getConfig()).providers.find((p) => p.id === slice.provider.id)?.maxOutputTokens;
     return {
       providerId, transport: slice.transport, local: slice.isLlamaServer,
+      ...(outputCap !== undefined ? { maxOutputTokens: outputCap } : {}),
       ...(slice.isLlamaServer ? { prefixReuse: connectedLocal.getLiveProfile().prefixReuse ?? "partial" } : {}),
       contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
       serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,

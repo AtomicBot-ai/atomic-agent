@@ -50,6 +50,13 @@ export interface OpenAiBodyOptions {
   messageShape?: "native" | "flat";
   /** The adapter's tool-name escape, for the history's `tool_calls`. */
   nameEscape?: (qualifiedName: string) => string;
+  /**
+   * The server renders the chat template itself and takes its
+   * arguments as `chat_template_kwargs` (a local OpenAI-compatible
+   * server; see `local-server-url.ts`). Only then does a request's
+   * `disableThinking` reach the wire. Absent, it is dropped.
+   */
+  templateKwargs?: boolean;
 }
 
 /** The wire layout `buildOpenAiChatBody` chose for a request. */
@@ -144,6 +151,13 @@ export function buildOpenAiChatBody(
       body,
       reasoningEffortField(options.providerKind, filtered.reasoningEffort),
     );
+  }
+  // The template's thinking switch, for a request that asked for none
+  // (context compaction). Only a local server gets it: OpenAI and other
+  // strict APIs answer an unknown field with a 400. `extraBody` and the
+  // model's own parameters are merged later and still win.
+  if (filtered.disableThinking && options.templateKwargs) {
+    body.chat_template_kwargs = { enable_thinking: false };
   }
   if (stream) {
     // Ask for the usage block on the stream's last chunk. Without it
