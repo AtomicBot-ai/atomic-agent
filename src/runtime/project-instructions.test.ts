@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createProjectInstructionsCache, DEFAULT_INSTRUCTION_BYTES, instructionByteBudget, instructionImports, loadProjectInstructions, runGitInWorkspace } from "./project-instructions.js";
+import { createProjectInstructionsCache, cursorRuleAlwaysApplies, DEFAULT_INSTRUCTION_BYTES, instructionByteBudget, instructionImports, loadProjectInstructions, runGitInWorkspace } from "./project-instructions.js";
 
 describe("cloud project instructions", () => {
   let base: string;
@@ -222,6 +222,62 @@ describe("cloud project instructions", () => {
     rmSync(join(root, "AGENTS.md")); expect(cached(root).instructions.map(r => r.body)).not.toContain("second, longer");
     // A different window is a different budget, so it is a separate entry.
     cached(root, undefined, { contextWindow: 100 }); expect(loads).toBe(6);
+  });
+
+  it.each([true, false])("loads root rules written for other tools last, at the lowest priority (Git=%s)", git => {
+    if (git) execFileSync("git", ["init", "-q", root]);
+    put("AGENTS.md", "OWN"); put("GEMINI.md", "GEMINI @imported.md"); put("imported.md", "NOT IMPORTED");
+    put(".cursorrules", "LEGACY CURSOR"); put(".github/copilot-instructions.md", "COPILOT");
+    put(".cursor/rules/b-always.mdc", "---\ndescription: style\nalwaysApply: true\n---\nALWAYS");
+    put(".cursor/rules/a-plain.md", "PLAIN CURSOR");
+    put(".cursor/rules/c-globs.mdc", "---\nglobs: src/**/*.ts\nalwaysApply: false\n---\nTS ONLY");
+    put(".cursor/rules/notes.txt", "NOT A RULE"); put(".cursor/rules/nested/deep.mdc", "NESTED RULE");
+    put("pkg/GEMINI.md", "NESTED GEMINI"); put("pkg/.github/copilot-instructions.md", "NESTED COPILOT");
+    const result = loadProjectInstructions(root);
+    // Own rules first, then other tools' files in path order; imports are not expanded.
+    expect(result.instructions.map(r => r.body.split("\n").pop())).toEqual(["OWN", "PLAIN CURSOR", "ALWAYS", "LEGACY CURSOR", "COPILOT", "GEMINI @imported.md"]);
+    expect(result.instructions.every(r => r.scope === ".")).toBe(true);
+    expect(result.instructions.filter(r => r.body !== "OWN").every(r => r.priority === 0)).toBe(true);
+    expect(result.instructions.find(r => r.body === "COPILOT")?.path).toBe(join(root, ".github/copilot-instructions.md"));
+    expect(result.diagnostics.join("\n")).toMatch(/Cursor rules that apply only to matching files or on request: \.cursor\/rules\/c-globs\.mdc/);
+  });
+
+  it("caps Cursor rule files by name and drops other-tool rules before own root rules", () => {
+    for (let i = 0; i < 18; i++) put(`.cursor/rules/r${String(i).padStart(2, "0")}.mdc`, `R${i}`);
+    put("CLAUDE.md", "OWN");
+    const all = loadProjectInstructions(root);
+    expect(all.instructions).toHaveLength(17);
+    expect(all.instructions.map(r => r.body)).not.toContain("R16");
+    expect(all.diagnostics.join("\n")).toMatch(/Cursor rules exceed 16 files; later files were not loaded: \.cursor\/rules\/r16\.mdc, \.cursor\/rules\/r17\.mdc/);
+    const tight = loadProjectInstructions(root, undefined, { maxBytes: 5 });
+    expect(tight.instructions.map(r => r.body)).toEqual(["OWN", "R0"]);
+  });
+
+  it("loads a rule file once when another tool's file links to an own root rule", () => {
+    put("AGENTS.md", "SHARED"); symlinkSync(join(root, "AGENTS.md"), join(root, "GEMINI.md"));
+    const result = loadProjectInstructions(root);
+    expect(result.instructions.map(r => [r.body, r.priority])).toEqual([["SHARED", 4]]);
+  });
+
+  it("notices a new Cursor rule through the watched rules folder", () => {
+    put("AGENTS.md", "OWN"); mkdirSync(join(root, ".cursor/rules"), { recursive: true });
+    let loads = 0;
+    const cached = createProjectInstructionsCache({ ttlMs: 60_000, now: () => 0, load: (...args) => { loads++; return loadProjectInstructions(...args); } });
+    expect(cached(root).instructions.map(r => r.body)).toEqual(["OWN"]);
+    put(".cursor/rules/new.mdc", "NEW RULE");
+    expect(cached(root).instructions.map(r => r.body)).toEqual(["OWN", "NEW RULE"]);
+    expect(loads).toBe(2);
+  });
+
+  it("reads Cursor frontmatter: only alwaysApply true or no frontmatter is always on", () => {
+    expect(cursorRuleAlwaysApplies("plain rule")).toBe(true);
+    expect(cursorRuleAlwaysApplies("---\nalwaysApply: true\n---\nbody")).toBe(true);
+    expect(cursorRuleAlwaysApplies("\uFEFF---\r\nglobs:\r\nalwaysApply: \"true\"\r\n---\r\nbody")).toBe(true);
+    expect(cursorRuleAlwaysApplies("---\nalwaysApply: false\n---\nbody")).toBe(false);
+    expect(cursorRuleAlwaysApplies("---\nglobs: \"*.ts\"\n---\nbody")).toBe(false);
+    expect(cursorRuleAlwaysApplies("---\ndescription: when editing docs\n---\nbody")).toBe(false);
+    expect(cursorRuleAlwaysApplies("---\n---\nbody")).toBe(false);
+    expect(cursorRuleAlwaysApplies("text\n---\nalwaysApply: true\n---")).toBe(true);
   });
 
   it("reflects edits and removals without a cache", () => {

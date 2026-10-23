@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { readWorkspaceFile, isWithinWorkspace } from "../skills/workspace-files.js";
@@ -34,6 +34,12 @@ const MIN_TRUNCATED_BYTES = 256;
 const truncatedMarker = "\n[... truncated: project instruction budget reached]";
 const maxWatched = 2048;
 const rootNames = ["AGENTS.md", "AGENT.md", "CLAUDE.md", ".claude/CLAUDE.md"];
+/** Rules written for other tools: root only, lowest priority, never expanded for imports. */
+const foreignRootNames = ["GEMINI.md", ".cursorrules", ".github/copilot-instructions.md"];
+const cursorRulesDir = ".cursor/rules";
+/** Only this many Cursor rule files (sorted by name) are considered, so a large folder stays bounded. */
+const maxCursorRules = 16;
+const FOREIGN_PRIORITY = 0;
 const excluded = new Set([".git", "node_modules"]);
 // Imports never pull credentials into the prompt, ignored by Git or not.
 const sensitiveName = /^(\.env(\..*)?|\.npmrc|\.netrc|\.pgpass|\.pypirc|\.git-credentials|credentials\.json|id_(rsa|dsa|ecdsa|ed25519)(\..*)?|.*\.(pem|key|p12|pfx|tfvars|kdbx))$/i;
@@ -166,8 +172,9 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
   // Outside Git (or at home) nothing below the workspace root is walked: a folder such
   // as ~ holds unrelated projects and privacy-protected directories.
   // Root names are checked directly, even if ignored; absent ones take no file slot.
-  for (const name of rootNames) watch(join(root, name));
-  paths.push(...rootNames.filter(p => existsSync(join(root, p))));
+  for (const name of [...rootNames, ...foreignRootNames, cursorRulesDir]) watch(join(root, name));
+  paths.push(...[...rootNames, ...foreignRootNames].filter(p => existsSync(join(root, p))));
+  paths.push(...listCursorRules(root, diagnostics));
   paths = [...new Set(paths)].filter(p => !p.split(/[\\/]/).some(part => excluded.has(part)));
   if (paths.length > maxFiles) {
     // Shallower scopes are the most general rules; keep those.
@@ -261,6 +268,10 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
     }
     if (!file) return;
     if (file.content.includes("\0")) { diagnostics.add("Skipped binary instruction", rel(actual)); return; }
+    if (depth === 0 && isCursorRule(path) && !cursorRuleAlwaysApplies(file.content)) {
+      diagnostics.add("Skipped Cursor rules that apply only to matching files or on request", rel(actual));
+      return;
+    }
     let body = file.content;
     const size = Buffer.byteLength(body);
     if (budgetHit || bytes + size > maxBytes || instructions.length >= maxFiles) {
@@ -290,6 +301,7 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
   // (and their imports); within a scope, higher precedence first, which also
   // determines the label of a deduplicated import.
   const scopeOf = (path: string) => {
+    if (isForeign(path)) return ".";
     const dir = dirname(path);
     return (basename(path) === "CLAUDE.md" && basename(dir) === ".claude" ? dirname(dir) : dir).split("\\").join("/");
   };
@@ -306,7 +318,50 @@ function truncateUtf8(text: string, maxBytes: number): string {
   return cut.endsWith("\uFFFD") && !text.startsWith(cut) ? cut.slice(0, -1) : cut;
 }
 
+/** Root-relative path with forward slashes. */
+function slashed(path: string): string { return path.split("\\").join("/"); }
+
+function isCursorRule(path: string): boolean {
+  const parts = slashed(path).split("/");
+  return parts.length >= 3 && parts.slice(-3, -1).join("/") === cursorRulesDir;
+}
+
+function isForeign(path: string): boolean {
+  return foreignRootNames.includes(slashed(path)) || isCursorRule(path);
+}
+
+/**
+ * Top-level `.cursor/rules/*.mdc` and `*.md` files, sorted by name and capped.
+ * The folder is listed only when it resolves inside the workspace.
+ */
+function listCursorRules(root: string, diagnostics: Diagnostics): string[] {
+  const dir = join(root, cursorRulesDir);
+  let names: string[];
+  try {
+    const actual = realpathSync(dir);
+    if (!isWithinWorkspace(root, actual) || !statSync(actual).isDirectory()) return [];
+    names = readdirSync(actual).filter(name => /\.(mdc|md)$/i.test(name) && !name.startsWith(".")).sort();
+  } catch { return []; }
+  if (names.length > maxCursorRules) {
+    for (const dropped of names.slice(maxCursorRules)) diagnostics.add(`Cursor rules exceed ${maxCursorRules} files; later files were not loaded`, `${cursorRulesDir}/${dropped}`);
+    names = names.slice(0, maxCursorRules);
+  }
+  return names.map(name => `${cursorRulesDir}/${name}`);
+}
+
+/**
+ * Cursor applies a rule on every request only with `alwaysApply: true`; rules
+ * scoped by `globs`, chosen by `description` or attached by hand are not
+ * loaded. A plain file without frontmatter is treated as always on.
+ */
+export function cursorRuleAlwaysApplies(content: string): boolean {
+  const match = /^\uFEFF?---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/.exec(content);
+  if (!match) return true;
+  return /^alwaysApply:\s*["']?true["']?\s*$/im.test(match[1] ?? "");
+}
+
 function priorityOf(path: string): number {
+  if (isForeign(path)) return FOREIGN_PRIORITY;
   return basename(path) === "AGENTS.md" ? 4 : basename(path) === "AGENT.md" ? 3 : basename(dirname(path)) === ".claude" ? 1 : 2;
 }
 
