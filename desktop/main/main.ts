@@ -3875,7 +3875,10 @@ async function smokeTest(): Promise<void> {
     // item 4: a reopened session carries the trace's durations for every card
     // (the TUI shows 0ms here; the desktop shows the agent's number). A trace can
     // legitimately say 0ms, so the only ms > 0 assertion is on the os.fs.list
-    // turn this run itself made. Known-data check (api-7a8e32e75a4f9298 →
+    // turn this run itself made. ATO-827: and even there a call can finish
+    // inside a millisecond ("2ms, 0ms"), so every card must carry the trace's
+    // own number (0 included) and at least one of them must be above 0. A card
+    // with no trace duration still fails: its source is not "trace". Known-data check (api-7a8e32e75a4f9298 →
     // 9,8,10,71,111,434,17,56,86,668,15) is a manual step, not a smoke assertion.
     // Reopened here, before the fold checks, so those run on a transcript that
     // is known to carry cards instead of inheriting the tool turn's outcome.
@@ -3890,12 +3893,14 @@ async function smokeTest(): Promise<void> {
       `${traced.length}/${reopened.length} cards from the trace in ${sid}`,
     );
     const listed = reopened.filter((c) => c.name === "os.fs.list");
+    const timed = (c: (typeof reopened)[number]): boolean => c.source === "trace" && Number.isFinite(c.ms) && c.ms >= 0;
+    const listedTimed = listed.length > 0 && listed.every(timed) && listed.some((c) => c.ms > 0);
     check(
       "reopened os.fs.list turn is timed",
-      listed.length > 0 && listed.every((c) => c.ms > 0),
-      listed.map((c) => c.ms + "ms").join(", ") || "no os.fs.list card",
+      listedTimed,
+      listed.map((c) => c.ms + "ms" + (c.source === "trace" ? "" : ` (${c.source ?? "no source"})`)).join(", ") || "no os.fs.list card",
     );
-    if (traced.length !== reopened.length || !listed.every((c) => c.ms > 0)) {
+    if (traced.length !== reopened.length || !listedTimed) {
       process.stdout.write(`DIAG reopened=${JSON.stringify(reopened)}\n`);
     }
     // Every finished duration cell reads in words (ATO-237: "850 ms", "4.9 s", "1 min 42 s") or is empty.
@@ -11388,9 +11393,11 @@ async function onboardingTest(
        returns immediately during the gap between Enter and that step — and
        Enter here starts async work (the stamp write, then the close). The
        race is invisible on a quiet machine and cost a red run on a busy one.
-       If it genuinely never closes, this still fails, just after 10s. */
+       ATO-827: the close waits for two `atag config get` in a row (obSettle),
+       and on a loaded machine that took longer than 20 s, so the wait is 45 s.
+       If it genuinely never closes, this still fails, just later. */
     let nothing = await settled();
-    for (let i = 0; i < 40 && nothing.open; i += 1) {
+    for (let i = 0; i < 180 && nothing.open; i += 1) {
       await new Promise((r) => setTimeout(r, 250));
       nothing = await js<ObState>("window.__ob()");
     }
