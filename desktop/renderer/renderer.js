@@ -22015,7 +22015,9 @@ function tkStatusClass(status) {
    search. The auto-refresh readout lives in the Settings window's status
    line beside Done now (Д26). */
 function tkFilterBar(visibleCount) {
-  const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
+  // ATO-519 (U-85): with no tasks at all, filters and search have nothing to act on; only Refresh and New task stay.
+  const none = !TK.rows.length;
+  const seg = none ? '' : '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
     + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
     + '</div>';
   const search = TK.searchOpen
@@ -22031,10 +22033,10 @@ function tkFilterBar(visibleCount) {
         + '<button class="iconbtn sm" data-act="tasks:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
         + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
       + '</span></div>'
-    + '<div class="set-tbrow">' + search
+    + (none ? '' : '<div class="set-tbrow">' + search
       + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
       + tkReadoutHTML(visibleCount)
-    + '</div></div>';
+    + '</div>') + '</div>';
 }
 /* Д26: what stands where the auto-refresh readout stood — how many tasks
    show, "12 tasks" or "3 of 12". Its "auto · refreshed …" part is the
@@ -22078,6 +22080,7 @@ function tkListHTML() {
       + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('tasks') + '</span>'
       + '<h4>' + (TK.rows.length ? 'No ' + esc(what) + (TK.search ? ' match “' + esc(TK.search) + '”' : ' match the current filter') : 'No tasks yet') + '</h4>'
       + '<p>A task sends a message to the agent on a schedule.</p>'
+      + (TK.rows.length ? '' : '<p class="set-cap">' + esc(TASK_EMPTY_HINT) + '</p>')
       + '</div>';
   } else {
     // tasks-list.tsx:37-41: window the rows around the cursor (row-window.ts
@@ -22145,13 +22148,15 @@ function tkDetailHTML() {
     + '</div>';
 }
 function tkNewForm() {
-  return {kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
+  // ATO-519: `manual` false is the plain-words step (`ask`); true is the cron / interval / at form.
+  return {manual:false, ask:'', kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
           preview:{ok:false, error:null, nextFirings:[]}, submitting:false, error:null, timer:null};
 }
 /* ST-03: kind as a segmented control, labelled fields, the next five
    firings beside them, and Create task disabled until the schedule parses. */
 function tkFormHTML() {
   const f = TK.form || (TK.form = tkNewForm());
+  if (!f.manual) return tkAskHTML(f);
   const field = (l, name, value, placeholder, help, mono) =>
     '<label class="tk-field tkrow"><span class="tk-lbl">' + esc(l) + '</span>'
     + '<input class="tk-inp' + (mono ? ' mono' : '') + '" data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false">'
@@ -22167,8 +22172,8 @@ function tkFormHTML() {
         + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
           + ['cron','interval','at'].map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '">' + k + '</button>').join('')
         + '</div></div>'
-        // ATO-519: in chat the agent turns a plain sentence into a schedule through its tasks.cron tool.
-        + '<p class="set-cap">Or just tell the agent in chat, for example: every weekday at 9, send me a summary.</p>'
+        // ATO-519: the way back to the plain-words step.
+        + '<p class="set-cap">Or <button class="set-linkbtn" data-act="tasks:plain">describe it in words</button> and the agent sets the schedule.</p>'
         + expr
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
         // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
@@ -22185,11 +22190,52 @@ function tkFormHTML() {
     + '</div>'
     + '</div>';
 }
+/* ATO-519: the first step of a new task. One sentence, sent to the agent in
+   a new chat, where its task tools turn it into a schedule (task-ask.js);
+   Set up manually opens the cron / interval / at form. */
+function tkAskHTML(f) {
+  const can = !!taskAskMessage(f.ask);
+  return '<div class="set-pane set-form set-askform">'
+    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + 'All tasks</button></div>'
+    + '<div class="set-formcol">'
+      + '<label class="tk-field tkrow"><span class="tk-lbl">What should the agent do, and when?</span>'
+        + '<input class="tk-inp" data-tk-field="ask" value="' + esc(f.ask) + '" placeholder="' + esc(TASK_ASK_PLACEHOLDER) + '" autocomplete="off" spellcheck="true">'
+        + '<span class="tk-help">The agent opens a new chat, sets up the schedule and tells you when it runs next.</span></label>'
+      + '<div class="set-chips set-askex" role="group" aria-label="Examples">'
+        + TASK_ASK_EXAMPLES.map((ex, i) => '<button class="tk-chip tk-chip--sm set-askchip" data-act="tasks:example:' + i + '">' + esc(ex) + '</button>').join('')
+      + '</div>'
+    + '</div>'
+    + '<div class="set-formfoot">'
+      + '<button class="btn btn-g" data-act="tasks:manual">Set up manually</button>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-g" data-act="tasks:back">Cancel</button>'
+      + '<button class="btn btn-p set-submit" data-act="tasks:ask"' + (can ? '' : ' disabled') + ' title="Enter send">Ask the agent</button>'
+    + '</div>'
+    + '</div>';
+}
+/* ATO-519: the sentence goes out as the first message of a new chat, through
+   the composer's own submit(), as a message typed there would. It is sent
+   `plain`: files waiting in the composer stay for a message of the person's
+   own (as Continue and the plan hand-off do), and a draft that was in the
+   box carries into the new chat, as ⌘ N carries it, instead of being lost. */
+function tkAsk() {
+  const f = TK.form;
+  const text = f ? taskAskMessage(f.ask) : '';
+  if (!text) return {ok:false, error:'nothing to send'};
+  TK.mode = 'list'; TK.form = null;
+  const kept = S.draft || '';
+  act('session:new');
+  S.draft = text;
+  const e = $('#entry'); if (e) { e.value = text; autosize(e); }
+  submit(undefined, {plain:true});
+  if (kept && !S.draft) { S.draft = kept; const box = $('#entry'); if (box) { box.value = kept; autosize(box); } }
+  return {ok:true, text};
+}
 function tkPreviewHTML(f) {
-  const head = '<div class="set-prevh"><b>Next firings</b></div>';
-  if (f.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
-  if (f.preview.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
-  if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next firings</b></div><div class="set-cap">(preview unavailable)</div>';
+  const head = '<div class="set-prevh"><b>Next runs</b></div>';
+  if (f.error) return '<div class="set-prevh"><b>Next runs</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
+  if (f.preview.error) return '<div class="set-prevh"><b>Next runs</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
+  if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next runs</b></div><div class="set-cap">' + esc(TASK_PREVIEW_EMPTY) + '</div>';
   return head
     + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>';
   // ATO-193: no 0.5.4 caveat under a one-shot any more. Since ATO-133 `atag task create --at`
@@ -22198,6 +22244,8 @@ function tkPreviewHTML(f) {
 function tkFieldInput(name, value) {
   const f = TK.form || (TK.form = tkNewForm());
   f[name] = value; f.error = null;
+  // ATO-519: the plain-words field has no schedule to preview; only Ask the agent follows what is typed.
+  if (name === 'ask') { const b = document.querySelector('[data-act="tasks:ask"]'); if (b) b.disabled = !taskAskMessage(value); return; }
   clearTimeout(f.timer);
   f.timer = setTimeout(() => tkPreview(), 250);
 }
@@ -22217,6 +22265,7 @@ async function tkPreview() {
    on 0.5.4 takes no schedule). Success line is the TUI's runtime_info. */
 async function tkSubmit() {
   const f = TK.form; if (!f || !BR || f.submitting) return {ok:false, error:'no form'};
+  if (!f.manual) return tkAsk();   // ATO-519: Ctrl+Enter on the plain-words step sends it to the agent
   f.error = null;
   const v = await tkPreview();
   if (!v || v.ok === false || !v.schedule) return {ok:false, error:(f.preview && f.preview.error) || 'invalid'};
@@ -22273,6 +22322,10 @@ function tasksAct(what) {
   const arg = rest.join(':');
   const sel = () => arg || (TK.mode === 'detail' ? TK.detailId : (tkSelected() || {}).id);
   if (verb === 'new') { if (!S.settings && S.room !== 'tasks') { S.settings = 1; S.settingsPane = 'tasks'; } TK.mode = 'create'; TK.form = tkNewForm(); TK.msg = null; render(); return; }
+  // ATO-519: the plain-words step and the manual form, both ways, and an example into the field.
+  if (verb === 'manual' || verb === 'plain') { const f = TK.form || (TK.form = tkNewForm()); f.manual = verb === 'manual'; f.error = null; render(); return; }
+  if (verb === 'example') { const f = TK.form || (TK.form = tkNewForm()); const ex = TASK_ASK_EXAMPLES[Number(arg)]; if (ex) f.ask = ex; render(); const n = document.querySelector('[data-tk-field="ask"]'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
+  if (verb === 'ask') { tkAsk(); return; }
   if (verb === 'kind') { const f = TK.form || (TK.form = tkNewForm()); f.kind = arg; f.error = null; render(); tkPreview(); return; }
   if (verb === 'submit') { tkSubmit(); return; }
   if (verb === 'back') { TK.mode = 'list'; TK.form = null; TK.cancel = null; render(); return; }
@@ -22312,6 +22365,7 @@ function tasksKey(e, k, inText) {
     return false;
   }
   if (tkField && (e.metaKey || e.ctrlKey) && k === 'Enter') { e.preventDefault(); tkSubmit(); return true; }
+  if (tkField === 'ask' && k === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); tkAsk(); return true; }   // ATO-519: one line, so Enter sends it
   if (e.target.id === 'tk-search' && k === 'Enter') { e.preventDefault(); TK.searchOpen = false; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -22454,7 +22508,7 @@ if (typeof window !== 'undefined') {
   window.__tasksMsg = () => TK.msg || '';
   window.__tasksRefresh = () => tasksRefresh();
   window.__tasksAct = (what) => { tasksAct(what); return {cancel: TK.cancel ? Object.assign({}, TK.cancel) : null, mode: TK.mode, msg: TK.msg || ''}; };
-  window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); return tkSubmit(); };
+  window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), {manual:true}, fields); render(); return tkSubmit(); };
   window.__privacy = () => ({analyticsEnabled: privacyEffective(), fromConfig: !!(LIVE_CONFIG && LIVE_CONFIG.analytics && typeof LIVE_CONFIG.analytics.enabled === 'boolean')}); // effective value, as the TUI shows it
   window.__chordPending = () => CHORD.pending;
   window.__tasksNote = () => TK.note || '';
@@ -22476,7 +22530,7 @@ if (typeof window !== 'undefined') {
   window.__menuActivate = (id) => { menuActivate(id); return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null, inspector: S.inspector, inspTab: S.inspTab, overlay: S.overlay}; };
   window.__diag = () => ({line: diagLine(), session: S.agentSession, toolsFor: SET.toolsFor, health: SET.health});
   window.__skillCount = () => (SK.rows ? SK.rows.length : null);
-  window.__taskPreviewForm = async (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); await tkPreview(); return TK.form ? TK.form.preview : null; };
+  window.__taskPreviewForm = async (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), {manual:true}, fields); render(); await tkPreview(); return TK.form ? TK.form.preview : null; };
 }
 
 /* Hook for --smoke (harness: the tool-card turn runs in a fresh session).

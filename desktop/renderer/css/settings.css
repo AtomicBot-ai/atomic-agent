@@ -227,6 +227,13 @@ button.set-search:hover{border-color:var(--bd)}
    caret is in the form; an ink pill keeps its paper label. */
 .set-submit{color:var(--paper)!important}
 .set-submit[disabled]{color:var(--ink-3)!important}
+/* ATO-519: a new task starts as one sentence to the agent; the form above is Set up manually. */
+.set-askform .set-formcol{max-width:640px}
+.set-askex{gap:6px}
+.set-askchip{height:auto;min-height:24px;padding:3px 10px;border:0;cursor:pointer;font:inherit;font-size:12.5px;line-height:1.35;text-align:left;white-space:normal}
+.set-askchip:hover{background:var(--hover);color:var(--ink)}
+.set-linkbtn{padding:0;border:0;background:none;color:var(--brand);font:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.set-linkbtn:hover{color:var(--ink)}
 
 /* ---------------- Skills (ST-06…11) ---------------- */
 /* The list's toolbar: where the tabs and the two buttons do not fit one line (a narrow window, long

@@ -237,7 +237,7 @@ async function memory(js: Js, check: Check): Promise<void> {
 async function tasks(js: Js, check: Check): Promise<void> {
   const win = appWindow();
   if (!win) { check("T49 (Д40): Tasks' actions sit beside its filters", false, "no app window"); return; }
-  type Bar = { sameRow: boolean; level: number; pairLevel: number; rightGap: number; inside: boolean; width: number };
+  type Bar = { sameRow: boolean; level: number; pairLevel: number; rightGap: number; inside: boolean; width: number; empty?: boolean; emptyOk?: boolean };
   const MEASURE = `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     const saved = {mode: TK.mode, searchOpen: TK.searchOpen};
@@ -247,6 +247,8 @@ async function tasks(js: Js, check: Check): Promise<void> {
       const bar = document.querySelector('#settings .setbody .set-toolbar');
       const seg = bar && bar.querySelector('.set-seg');
       const nw = bar && bar.querySelector('[data-act="tasks:new"]'), rf = bar && bar.querySelector('[data-act="tasks:refresh"]');
+      // ATO-519 (U-85): with no tasks the filters and search are not drawn; Refresh and New task stay.
+      if (bar && !TK.rows.length) return {empty: true, emptyOk: !seg && !!nw && !!rf && !bar.querySelector('.set-search')};
       if (!seg || !nw || !rf) return {err: 'the toolbar, its filters or its buttons are not drawn'};
       const r = (e) => e.getBoundingClientRect(), mid = (e) => (r(e).top + r(e).bottom) / 2;
       return {sameRow: seg.closest('.set-tbrow') === nw.closest('.set-tbrow') && rf.closest('.set-tbrow') === nw.closest('.set-tbrow'),
@@ -261,7 +263,7 @@ async function tasks(js: Js, check: Check): Promise<void> {
     const wide = await safe<Bar>(js, MEASURE);
     check(
       "T49 (Д40): on the default-width window, Refresh and New task stand at the right end of the filters' row — no hole beside the filters",
-      !wide.err && wide.sameRow && wide.level <= 3 && wide.pairLevel <= 3 && wide.rightGap <= 1 && wide.inside,
+      !wide.err && (wide.empty ? !!wide.emptyOk : wide.sameRow && wide.level <= 3 && wide.pairLevel <= 3 && wide.rightGap <= 1 && wide.inside),
       wide.err ?? show(wide),
     );
     win.setContentSize(940, size[1]!);
@@ -269,7 +271,7 @@ async function tasks(js: Js, check: Check): Promise<void> {
     const narrow = await safe<Bar>(js, MEASURE);
     check(
       "T49 (Д40): on the narrowest window the pair stays together, on the right, inside the toolbar",
-      !narrow.err && narrow.sameRow && narrow.pairLevel <= 3 && narrow.rightGap <= 1 && narrow.inside,
+      !narrow.err && (narrow.empty ? !!narrow.emptyOk : narrow.sameRow && narrow.pairLevel <= 3 && narrow.rightGap <= 1 && narrow.inside),
       narrow.err ?? show(narrow),
     );
   } finally {

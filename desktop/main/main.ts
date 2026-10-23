@@ -5677,7 +5677,7 @@ async function settingsTest(
   // The create form's preview (form path: tkPreview → app:taskPreview) is the agent's own cron-parser port.
   const preview = await js<{ cron: number; every: number; at: number; bad: string; shown: boolean }>(
     "(async () => { const cron = await window.__taskPreviewForm({kind:'cron', cronExpression:'0 * * * *', message:'x'});"
-    + " const shown = window.__settingsBody().includes('Next firings') && document.querySelectorAll('#settings .setbody #tk-preview .set-firings li').length === 5;"
+    + " const shown = window.__settingsBody().includes('Next runs') && document.querySelectorAll('#settings .setbody #tk-preview .set-firings li').length === 5;"
     + " const every = await window.__taskPreviewForm({kind:'interval', intervalSeconds:'300', message:'x'});"
     + " const at = await window.__taskPreviewForm({kind:'at', atIsoOrMs:'2030-01-01T09:00:00Z', message:'x'});"
     + " const bad = await window.__taskPreviewForm({kind:'cron', cronExpression:'not a cron', message:'x'});"
