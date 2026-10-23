@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "../config-validation-error.js";
-import { parseBool, parsePositiveInt, parseHalfOpenUnitInterval } from "../config-primitives.js";
+import { parseBool, parseNonNegativeInt, parsePositiveInt, parseHalfOpenUnitInterval } from "../config-primitives.js";
 
 /**
  * How a checkpoint summary is made. `model` asks the active model;
@@ -15,6 +15,14 @@ export interface CompactionConfig {
   triggerRatio: number;
   targetRatio: number;
   summaryMaxTokens: number;
+  /**
+   * Output tokens a summary call may spend on reasoning on top of
+   * `summaryMaxTokens`. A thinking model writes its reasoning out of the
+   * same reply allowance; without room for it the summary is cut off.
+   * The summary itself is still held to `summaryMaxTokens`. Small windows
+   * get less (see `compactionReplyBudget`); `0` sends no reserve.
+   */
+  reasoningReserveTokens: number;
   /** Timeout of one summary call; the total budget scales with chunk count. */
   timeoutMs: number;
   maxTotalTimeoutMs: number;
@@ -29,7 +37,7 @@ export interface CompactionConfig {
 
 export function createCompactionDefaults(): CompactionConfig {
   return { auto: true, mode: "auto", triggerRatio: 0.9, targetRatio: 0.65, summaryMaxTokens: 2048,
-    timeoutMs: 600_000, maxTotalTimeoutMs: 600_000, background: true };
+    reasoningReserveTokens: 4096, timeoutMs: 600_000, maxTotalTimeoutMs: 600_000, background: true };
 }
 
 function parseCompactionMode(raw: unknown): CompactionMode {
@@ -49,6 +57,7 @@ export function parseCompactionConfig(raw: unknown, defaults: CompactionConfig):
     triggerRatio: parseHalfOpenUnitInterval(input.triggerRatio ?? defaults.triggerRatio, "agent.compaction.triggerRatio"),
     targetRatio: parseHalfOpenUnitInterval(input.targetRatio ?? defaults.targetRatio, "agent.compaction.targetRatio"),
     summaryMaxTokens: parsePositiveInt(input.summaryMaxTokens ?? defaults.summaryMaxTokens, "agent.compaction.summaryMaxTokens"),
+    reasoningReserveTokens: parseNonNegativeInt(input.reasoningReserveTokens ?? defaults.reasoningReserveTokens, "agent.compaction.reasoningReserveTokens"),
     timeoutMs: parsePositiveInt(input.timeoutMs ?? defaults.timeoutMs, "agent.compaction.timeoutMs"),
     maxTotalTimeoutMs: parsePositiveInt(input.maxTotalTimeoutMs ?? defaults.maxTotalTimeoutMs, "agent.compaction.maxTotalTimeoutMs"),
     background: parseBool(input.background ?? defaults.background ?? true, "agent.compaction.background"),

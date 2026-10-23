@@ -78,9 +78,9 @@ completion of a manual operation never replaces the running loop's live state.
 
 Defaults are owned by [compaction-config.ts](../../config/agent/compaction-config.ts):
 `auto=true`, `mode="auto"`, `triggerRatio=0.9`, `targetRatio=0.65`, `summaryMaxTokens=2048`,
-`timeoutMs=600000`, `maxTotalTimeoutMs=600000`, `background=true` (optional; absent means on).
-Validation requires `0 < targetRatio < triggerRatio < 1` and a known mode.
-Older configs receive these defaults; adding `mode` and `background` did not change the config version.
+`reasoningReserveTokens=4096`, `timeoutMs=600000`, `maxTotalTimeoutMs=600000`, `background=true` (optional; absent means on).
+Validation requires `0 < targetRatio < triggerRatio < 1`, a known mode and a non-negative reserve.
+Older configs receive these defaults; adding `mode`, `background` and `reasoningReserveTokens` did not change the config version.
 
 The pure planner checks projected history **before** mechanical trimming against
 the prompt builder's remaining history budget, including non-history sections
@@ -116,6 +116,24 @@ Each fragment identifies the original record it starts in and, for a tool result
 the owning call and recorded path/URL. This metadata is budgeted too, so a result
 continued across requests keeps its source rather than borrowing a filename
 from the user request.
+
+Each call's reply allowance is the summary target plus a reasoning reserve.
+A thinking model writes its reasoning out of the same allowance, so a cap equal
+to the summary target let it think until it was cut off, and every model summary
+fell back to the extractive one. The prompt still asks for at most the summary
+target, and a longer summary is still rejected as oversized. The input budget
+gives up the reserve so the request fits the window; the reserve is at most a
+quarter of the room left after the summary target and a 1024-token margin, so a
+small window shrinks it rather than leaving too little input to compact. The
+4096-token default covers what reasoning models typically spend on a summary
+at low effort; it is a ceiling, not a cost, and `0` sends no reserve. Calls ask
+for low reasoning effort, and a local or private-network OpenAI-compatible
+server also receives `chat_template_kwargs: { enable_thinking: false }` (a
+server-templated llama-server route already sends the same switch). Strict cloud
+APIs reject unknown fields and never receive it; an entry's own `extraBody` or
+model parameters still win. A failed reply names its cause: tool calls, a cut at
+the reply allowance (including one spent entirely on thinking), an empty or
+thinking-only reply, or an oversized summary.
 
 Every piece also includes the original conversation request, current task opening
 request and latest user correction verbatim, with duplicates removed and counted
