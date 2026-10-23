@@ -433,6 +433,10 @@ export const MENU: readonly MenuNode[] = [
     slash: { name: "compact", description: "summarize older context; show displays the saved summary", rank: 44 },
   },
   {
+    kind: "action", id: "session.enhance", label: "Enhance prompt", group: "session",
+    slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
+  },
+  {
     kind: "action",
     id: "session.context",
     label: "Context window",

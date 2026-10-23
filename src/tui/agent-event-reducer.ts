@@ -366,6 +366,26 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         inputHistoryDraft: null,
       };
     }
+    case "composer_draft_replaced":
+      if (state.inputValue !== action.expected) {
+        return {
+          ...state,
+          composerNotice:
+            state.inputValue.trim().length === 0
+              ? "Enhanced prompt not applied: the draft was sent or cleared while it ran."
+              : "Enhanced prompt not applied: the draft changed while it ran.",
+        };
+      }
+      return {
+        ...state,
+        inputValue: action.value,
+        inputHistoryCursor: null,
+        inputHistoryDraft: null,
+        composerNotice:
+          action.value === action.expected
+            ? "The prompt already reads clearly; nothing changed."
+            : "Enhanced prompt is in the composer. Review it, then press Enter to send.",
+      };
     case "message_waiting_for_model":
       if (action.sessionId !== state.session.sessionId) return state;
       return { ...appendUserMessage(state, action.text), pendingModelMessage: { sessionId: action.sessionId, text: action.text } };
