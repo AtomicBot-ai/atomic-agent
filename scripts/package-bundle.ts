@@ -197,11 +197,20 @@ async function archiveZip(sourceDir: string, destFile: string): Promise<void> {
     : ["-r", destFile, "."];
   const cwd = isWindowsHost ? ROOT : sourceDir;
   await new Promise<void>((resolveZip, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit" });
+    // Not `stdio: "inherit"`: on Windows CI a process left behind by
+    // powershell kept the runner's own stdout open, so the step never ended
+    // after "bundle ready" (ATO-897). With pipes only our own pipe can be
+    // held, the output is forwarded, and we settle on "exit", not "close".
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout?.on("data", (chunk: Buffer) => stdout.write(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderr.write(chunk));
     child.once("error", reject);
-    child.once("exit", (code) =>
-      code === 0 ? resolveZip() : reject(new Error(`${command} exited with code ${code}`)),
-    );
+    child.once("exit", (code) => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      if (code === 0) resolveZip();
+      else reject(new Error(`${command} exited with code ${code}`));
+    });
   });
 }
 
