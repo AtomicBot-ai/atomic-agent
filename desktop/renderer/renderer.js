@@ -2904,6 +2904,21 @@ function replyRetryAsk(m) {
   }
   return null;
 }
+/* ATO-862: whether the reply's own turn acted, read the same way as
+   replyRetryAsk: a tool card (the Exa key card rides on one) or an approval
+   between the reply and its question. false when a later message follows the
+   reply, for the same reason replyRetryAsk gives up there. */
+function replyTurnActed(m) {
+  const at = S.log.findIndex((x) => x.id === m.id);
+  if (at < 0 || S.log.slice(at + 1).some((x) => x.k === 'user')) return false;
+  for (let i = at - 1; i >= 0; i--) {
+    const x = S.log[i];
+    if (x.k === 'tool' || x.k === 'approval') return true;
+    if (x.k === 'user' && !x.steered) return false;
+  }
+  return false;
+}
+const ACTED_RETRY_HINT = 'Repeating this turn could create or delete files a second time';
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2932,11 +2947,19 @@ function msgActs(m) {
        sends the question once more through the same data-resend path as the
        user bubble's retry (resendUser). A turn that ran a tool or asked for an
        approval did something, and repeating it is not a harmless re-ask, so
-       no button there. Never while a turn runs, never under a placeholder. */
-    const ask = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy ? replyRetryAsk(m) : null;
+       no button there. Never while a turn runs, never under a placeholder.
+       ATO-862: in its place a turn that acted shows a muted retry icon that
+       only explains why: no data-resend and no data-act, so a click reaches
+       no handler and sends nothing; aria-disabled for assistive tech and
+       tabindex -1 so Tab does not stop on a control that does nothing. */
+    const last = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy;
+    const ask = last ? replyRetryAsk(m) : null;
     const again = ask
       ? '<button class="msgact" data-resend="' + esc(ask.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>'
-      : '';
+      : last && replyTurnActed(m)
+        ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" title="' + ACTED_RETRY_HINT
+          + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
+        : '';
     return '<div class="' + cls + '">' + again + copy + '</div>';
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
@@ -29830,7 +29853,7 @@ if (typeof window !== 'undefined') {
             anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
-            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : '?'),
+            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.classList.contains('msgact-off') ? 'hint' : '?'),
             titles: btns.map((b) => b.getAttribute('title')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
             right: Math.round(br.right),
@@ -29849,9 +29872,13 @@ if (typeof window !== 'undefined') {
       const t = Array.from(document.querySelectorAll('.turn')).filter((r) => r.querySelector(real ? '.prose:not(.usr):not(.tk-ph)' : '.prose:not(.usr)')).pop();
       const box = t ? t.querySelector('.msgacts') : null;
       if (!box) return null;
+      /* ATO-862: the muted hint reads as hint:<aria-disabled>:<title>; one
+         that gained a data-resend or data-act would read as resend or '?'. */
       return Array.from(box.querySelectorAll('button')).map((b) => b.dataset.resend
         ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
-        : b.dataset.copy ? 'copy' : '?');
+        : b.dataset.copy ? 'copy'
+          : b.classList.contains('msgact-off') && !b.dataset.act && b.getAttribute('aria-label') === b.getAttribute('title')
+            ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('title') : '?');
     };
     const drawn = (log, busy, real) => { S.log = log; S.busy = !!busy; S.streamId = null; render(); return lastActs(real); };
     const tool = {id: 'rr-t', k: 'tool', name: 'os.fs.list_dir', arg: '~', where: 'local', ms: 4, ok: true, open: false, out: 'a.txt'};
@@ -29871,9 +29898,19 @@ if (typeof window !== 'undefined') {
         stopped: drawn([{id: 'rr-u0', k: 'user', text: 'hello'}, {id: 'rr-a0', k: 'assistant', text: 'hi'},
                         {id: 'rr-u', k: 'user', text: 'write a long story'}, {id: 'rr-a', k: 'assistant', text: '(stopped)', placeholder: true}], false, true),
       };
+      /* ATO-862: clicking the muted hint under the tool turn reaches no
+         handler. Drawn again, clicked for real, and every resend counted. */
+      drawn([{id: 'rr-u', k: 'user', text: 'list my files'}, tool, {id: 'rr-a', k: 'assistant', text: 'one file'}]);
+      const hint = document.querySelector('.msgacts-last .msgact-off');
+      const realResend = resendUser, logLen = S.log.length;
+      let resends = 0;
+      resendUser = function () { resends++; };
+      try { if (hint) hint.click(); } finally { resendUser = realResend; }
+      out.toolClick = {found: !!hint, resends, logSame: S.log.length === logLen, focusable: hint ? hint.tabIndex >= 0 : null};
       S.log = [{id: 'rr-u', k: 'user', text: 'delete the old logs'}, {id: 'rr-p', k: 'approval', state: 'approved'},
                {id: 'rr-a', k: 'assistant', text: 'done'}];
       out.approval = replyRetryAsk(S.log[2]);
+      out.approvalActed = replyTurnActed(S.log[2]);
       return out;
     } finally {
       S.log = keep.log; S.busy = keep.busy; S.streamId = keep.streamId; render();
