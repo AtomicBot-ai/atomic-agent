@@ -144,6 +144,20 @@ describe("MCP server configuration and shared values", () => {
     }
   });
 
+  it("keeps per-tool enable and disable lists and omits them when absent or null", () => {
+    expect(
+      parsedServer({ name: "github", transport: STDIO, enabledTools: ["get_issue", "list_issues"], disabledTools: ["delete_repo"] }),
+    ).toMatchObject({ enabledTools: ["get_issue", "list_issues"], disabledTools: ["delete_repo"] });
+    expect(parsedServer({ name: "github", transport: STDIO, enabledTools: [] }).enabledTools).toEqual([]);
+    const plain = parsedServer({ name: "github", transport: STDIO, enabledTools: null });
+    expect("enabledTools" in plain).toBe(false);
+    expect("disabledTools" in plain).toBe(false);
+    expect(thrownError(() => parsedServer({ name: "github", transport: STDIO, disabledTools: ["ok", ""] }))).toMatchObject({
+      message: expect.stringContaining("mcp.servers[0].disabledTools[1]"),
+    });
+    expect(thrownError(() => parsedServer({ name: "github", transport: STDIO, enabledTools: "get_issue" }))).toBeInstanceOf(ConfigValidationError);
+  });
+
   it("wraps an indexed parser error through the existing add-server command", () => {
     const error = thrownError(() => parseAddServerJson(JSON.stringify({
       name: "args-fixture",
