@@ -4,13 +4,23 @@
  * bookkeeping mirrors turn-notify.ts (a named error frame only fails the
  * turn when no work came after it). Only counts, durations, enums and
  * built-in tool names are kept — never text.
+ *
+ * ATO-275: a turn the agent stopped before it finished (`finish` with
+ * reason `length`, the runtime's `max_steps`) is `stopped_early`, not
+ * `completed`. `max_steps` is every early stop, not only the step ceiling
+ * (src/agent: TaskStopCause step_ceiling / time_ceiling / no_progress /
+ * credit_exhausted, and a step error recovery gave up on), and the stream
+ * does not say which, so the outcome does not claim one.
+ * The desktop's own transport failures (an HTTP error from the agent's
+ * server, a fetch that broke: AgentClient marks them `transport`) carry
+ * `error_category: "transport"` and the HTTP status when there was one.
  */
 
 import { ERROR_CATEGORIES } from "./catalog.js";
 import { toolBucket } from "./validate.js";
 
 export interface TurnSummary {
-  outcome: "completed" | "failed" | "cancelled";
+  outcome: "completed" | "stopped_early" | "failed" | "cancelled";
   ms_to_first_token: number | null;
   ms_total: number;
   queue_wait_ms: number;
@@ -19,6 +29,7 @@ export interface TurnSummary {
   tool_calls: number;
   tools_used: string[];
   error_category: string | null;
+  http_status: number | null;
   coding_mode: string | null;
 }
 
@@ -36,6 +47,8 @@ interface Turn {
   heldError: boolean;
   workAfterError: boolean;
   category: string | null;
+  httpStatus: number | null;
+  stoppedEarly: boolean;
 }
 
 // `tool_update`: a long call (video.generate) still working, so a held error was not the end.
@@ -74,6 +87,8 @@ export class ChatTurnTracker {
       heldError: false,
       workAfterError: false,
       category: null,
+      httpStatus: null,
+      stoppedEarly: false,
     });
   }
 
@@ -95,7 +110,10 @@ export class ChatTurnTracker {
     }
   }
 
-  observe(ev: { turnId?: unknown; kind?: unknown; category?: unknown; payload?: unknown }): void {
+  observe(ev: {
+    turnId?: unknown; kind?: unknown; category?: unknown; payload?: unknown;
+    reason?: unknown; transport?: unknown; httpStatus?: unknown;
+  }): void {
     if (typeof ev?.turnId !== "string" || typeof ev.kind !== "string") return;
     const t = this.turns.get(ev.turnId);
     if (!t) return; // a turn this window did not start through agent:chat
@@ -104,6 +122,7 @@ export class ChatTurnTracker {
     if (kind === "session_id" && typeof payload.session_id === "string") t.sessionId = payload.session_id;
     if (kind === "delta" && t.firstTokenAt === null) t.firstTokenAt = this.now();
     if (kind === "steer_applied") t.steers += 1;
+    if (kind === "finish" && ev.reason === "length") t.stoppedEarly = true;
     if (kind === "tool_progress") {
       t.toolCalls += 1;
       if (typeof payload.session_id === "string") t.sessionId = payload.session_id;
@@ -125,8 +144,11 @@ export class ChatTurnTracker {
     if (kind === "aborted") outcome = "cancelled";
     else if (kind === "error") {
       outcome = "failed";
-      t.category = categoryOf(ev.category) ?? t.category;
-    } else if (kind === "done") outcome = t.heldError && !t.workAfterError ? "failed" : "completed";
+      t.category = categoryOf(ev.category) ?? (ev.transport === true ? "transport" : null) ?? t.category;
+      if (typeof ev.httpStatus === "number" && Number.isInteger(ev.httpStatus)) t.httpStatus = ev.httpStatus;
+    } else if (kind === "done") {
+      outcome = t.heldError && !t.workAfterError ? "failed" : t.stoppedEarly ? "stopped_early" : "completed";
+    }
     if (!outcome) return;
     this.turns.delete(ev.turnId);
     const end = this.now();
@@ -140,6 +162,7 @@ export class ChatTurnTracker {
       tool_calls: t.toolCalls,
       tools_used: t.tools,
       error_category: outcome === "failed" ? t.category : null,
+      http_status: outcome === "failed" ? t.httpStatus : null,
       coding_mode: this.codingMode,
     });
   }

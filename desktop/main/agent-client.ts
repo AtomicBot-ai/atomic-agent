@@ -1298,7 +1298,8 @@ export class AgentClient extends EventEmitter {
       });
       if (!res.ok || !res.body) {
         const detail = res.ok ? "no response body" : `HTTP ${res.status}`;
-        this.emit("chat", { turnId, kind: "error", error: detail });
+        // ATO-275: `transport` / `httpStatus` are for the turn's analytics (chat-turns.ts); the window reads `error`.
+        this.emit("chat", { turnId, kind: "error", error: detail, transport: true, ...(res.ok ? {} : { httpStatus: res.status }) });
         return;
       }
       const completionId = res.headers.get("x-atomic-completion-id");
@@ -1388,6 +1389,8 @@ export class AgentClient extends EventEmitter {
         turnId,
         kind: aborted ? "aborted" : "error",
         error: aborted ? null : err instanceof Error ? err.message : String(err),
+        // ATO-275: the stream broke under the turn (analytics only, see above).
+        ...(aborted ? {} : { transport: true }),
       });
     } finally {
       const ended = this.turns.delete(turnId);
