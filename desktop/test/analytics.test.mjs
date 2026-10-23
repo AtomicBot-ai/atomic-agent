@@ -285,3 +285,8 @@ test("messages are dropped unless allowlisted; type names are kept when identifi
   assert.equal(S.safeType("Error: /Users/alice"), "Error");
   assert.ok(S.sanitizeStack(Array.from({ length: 50 }, (_, i) => `    at f${i} (/a/b.js:${i + 1}:1)`).join("\n")).length <= S.MAX_FRAMES);
 });
+
+test("app_opened carries whether the mac app runs from Applications (ATO-370)", () => {
+  assert.deepEqual(V.validateEvent("app_opened", { launch_kind: "cold", in_applications: false }, "main").props,
+    { launch_kind: "cold", in_applications: false });
+});
