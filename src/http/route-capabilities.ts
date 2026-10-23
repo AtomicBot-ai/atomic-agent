@@ -1,5 +1,6 @@
 import { sendJson, sendError, type HttpHandler } from "./request-context.js";
 import { openaiError } from "./openai-errors.js";
+import { APPROVAL_DECISIONS } from "./route-approval.js";
 
 /**
  * `GET /api/capabilities` — summary of the host environment and
@@ -67,6 +68,10 @@ export function createCapabilitiesHandler(): HttpHandler {
         // "on for some categories, off for others"; only `approvalLevel`
         // carries that, which is why this field is deprecated.
         approvalRequired: runtime.getApprovalLevel() < 5,
+        // What `POST /api/approval/resolve` accepts. A client draws the
+        // "allow in this chat" answer only when `allow-in-chat` is listed:
+        // an older agent answers it with a 400.
+        approvalDecisions: [...APPROVAL_DECISIONS],
       },
       tools: runtime.toolRegistry
         .list()
