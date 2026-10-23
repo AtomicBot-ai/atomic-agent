@@ -179,3 +179,28 @@ test('renderer: the box reads through mcp-smart-add.js and index.html loads it f
   assert.ok(!/^function mcpParseAddJson/m.test(src), 'the JSON parser lives in mcp-smart-add.js only');
   assert.ok(src.includes("e.target.id === 'mcp-name'"));
 });
+
+test('command: a ~ in the command itself is spelled out too', () => {
+  const r = M.mcpParseAddInput('~/bin/notes-server --verbose', {home:HOME});
+  assert.equal(r.server.transport.command, HOME + '/bin/notes-server');
+});
+
+test('claude mcp add-json reads the JSON; other claude mcp lines are refused, never added as a command', () => {
+  const j = M.mcpParseAddInput(`claude mcp add-json weather '{"type":"stdio","command":"npx","args":["-y","weather-mcp"]}'`);
+  assert.equal(j.ok, true);
+  assert.equal(j.server.name, 'weather');
+  assert.deepEqual(j.server.transport, {kind:'stdio', command:'npx', args:['-y', 'weather-mcp']});
+  assert.equal(j.server.type, undefined);
+  for (const line of ['claude mcp list', 'claude mcp remove github', 'claude mcp add-from-claude-desktop']) {
+    const r = M.mcpParseAddInput(line);
+    assert.equal(r.ok, false, line);
+    assert.match(r.error, /claude mcp/);
+  }
+});
+
+test('claude mcp add: --client-id and --callback-port take a value, not the name', () => {
+  const r = M.mcpParseAddInput('claude mcp add --transport http --client-id abc --callback-port 8080 linear https://mcp.linear.app/mcp');
+  assert.equal(r.ok, true);
+  assert.equal(r.server.name, 'linear');
+  assert.equal(r.server.transport.url, 'https://mcp.linear.app/mcp');
+});

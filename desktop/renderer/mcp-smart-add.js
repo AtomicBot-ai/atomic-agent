@@ -184,7 +184,7 @@ function mcpTakeEnv(tokens) {
 
 function mcpStdioServer(name, tokens, env, home) {
   if (!tokens.length) return {ok:false, error:'There is no command to run after the settings.'};
-  const command = tokens[0];
+  const command = mcpExpandHome(tokens[0], home);
   const args = tokens.slice(1).map((a) => mcpExpandHome(a, home));
   const server = {name: name || mcpNameFromCommand(command, args), transport:{kind:'stdio', command}};
   if (args.length) server.transport.args = args;
@@ -215,7 +215,7 @@ function mcpParseClaudeAdd(tokens, home) {
     const [flag, inline] = t.startsWith('--') && t.includes('=') ? [t.slice(0, t.indexOf('=')), t.slice(t.indexOf('=') + 1)] : [t, null];
     const value = () => (inline !== null ? inline : tokens[++i]);
     if (flag === '-t' || flag === '--transport') { transport = value(); continue; }
-    if (flag === '-s' || flag === '--scope') { value(); continue; }
+    if (flag === '-s' || flag === '--scope' || flag === '--client-id' || flag === '--callback-port') { value(); continue; }
     if (flag === '-e' || flag === '--env') {
       const kv = String(value() || ''); const eq = kv.indexOf('=');
       if (eq > 0 && MCP_ENV_RE.test(kv.slice(0, eq))) env[kv.slice(0, eq)] = kv.slice(eq + 1);
@@ -241,6 +241,18 @@ function mcpParseClaudeAdd(tokens, home) {
     return r;
   }
   return mcpStdioServer(nm, rest, env, home);
+}
+
+/* `claude mcp add-json <name> '<json>'`: the JSON is the server, the name is
+   given in front of it. Claude's `"type": "stdio"` has no counterpart here. */
+function mcpParseClaudeAddJson(tokens) {
+  const name = tokens[3], body = tokens[4];
+  if (!name || name.startsWith('-') || body === undefined) return {ok:false, error:'This `claude mcp add-json` line needs a name and the server JSON.'};
+  let obj;
+  try { obj = JSON.parse(body); } catch (e) { return {ok:false, error:'The JSON in this `claude mcp add-json` line isn\u2019t valid.'}; }
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return {ok:false, error:'Paste one server config: a JSON object in { } braces.'};
+  if (obj.type === 'stdio') { obj = Object.assign({}, obj); delete obj.type; }
+  return mcpParseAddJson(JSON.stringify(Object.assign({}, obj, {name: mcpSlug(name) || name})));
 }
 
 /* ---------------- the one entry point ---------------- */
@@ -271,6 +283,9 @@ function mcpParseAddInput(raw, opts) {
     if (!split.ok) return {ok:false, kind, error:split.error};
     const tokens = split.tokens;
     if (tokens[0] === 'claude' && tokens[1] === 'mcp' && tokens[2] === 'add') r = mcpParseClaudeAdd(tokens, o.home);
+    else if (tokens[0] === 'claude' && tokens[1] === 'mcp' && tokens[2] === 'add-json') r = mcpParseClaudeAddJson(tokens);
+    // Any other `claude mcp …` line (list, remove, add-from-claude-desktop) is a command for that CLI, not a server to start.
+    else if (tokens[0] === 'claude' && tokens[1] === 'mcp') return {ok:false, kind, error:'This is a `claude mcp` command, not a server. Paste the server\u2019s own command, address or JSON.'};
     else { const {env, rest} = mcpTakeEnv(tokens); r = mcpStdioServer('', rest, env, o.home); }
   }
   if (!r.ok) return Object.assign({kind}, r);
