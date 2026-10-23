@@ -259,3 +259,55 @@ test('a clip opened from a chat gets an in-memory poster; Core is not asked to k
   await new Promise((r) => setTimeout(r, 30));
   assert.equal(made.length, 1);
 });
+
+test('gallery: "Load more" reads older clips; the Pinned tab finds a pinned clip past the first page (ATO-856)', async () => {
+  // 130 clips, newest first; only the oldest is pinned. Core pages by offset/limit, no pinned filter.
+  const clips = Array.from({ length: 130 }, (_, i) => ({ id: 'clip-' + i, path: '/v/clip-' + i + '.mp4', thumbnailPath: null, pinned: i === 129, createdAtMs: 1e6 - i }));
+  const calls = [];
+  const studio = {
+    catalog: async () => ({ ok: false, error: { code: 'X', message: 'no catalog here' } }),
+    gallery: async (kind, { offset = 0, limit = 50 } = {}) => {
+      calls.push([kind, offset, limit]);
+      return { ok: true, data: { items: clips.slice(offset, offset + limit), total: clips.length, hasMore: offset + limit < clips.length } };
+    },
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; } } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  // index.html loads images-logic.js before video.js; the Pinned tab reuses its simgFindPinned.
+  vm.runInContext(readFileSync(new URL('../renderer/studio/images-logic.js', import.meta.url), 'utf8'), ctx, { filename: 'images-logic.js' });
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+
+  const gal = { innerHTML: '' };
+  const on = {};
+  const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true, querySelector: (q) => (q === '[data-vregion="gallery"]' ? gal : null) };
+  const click = (act, v) => on.click({ target: { closest: () => ({ disabled: false, getAttribute: (n) => (n === 'data-vact' ? act : n === 'data-v' ? v : null) }) }, preventDefault() {} });
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  page.render(root);
+  await settle();
+  const S = page._state;
+  assert.equal(S.gallery.length, 60);
+  assert.match(gal.innerHTML, /data-vact="more"/, 'All shows Load more while Core has older clips');
+
+  click('filter', 'pinned');
+  await settle();
+  assert.deepEqual([...S.pinnedMore.map((x) => x.id)], ['clip-129'], 'the pinned clip beyond the first page is found');
+  assert.match(gal.innerHTML, /data-v="clip-129"/);
+  assert.match(gal.innerHTML, /Pinned · 1/);
+  assert.doesNotMatch(gal.innerHTML, /data-vact="more"/, 'no Load more on the Pinned tab');
+  assert.deepEqual(calls[1], ['video', 60, 200], 'pinned search starts after the loaded page, 200 at a time');
+
+  click('filter', 'all');
+  click('more');
+  await settle();
+  assert.equal(S.gallery.length, 120);
+  assert.deepEqual(calls.at(-1), ['video', 60, 60]);
+  click('more');
+  await settle();
+  assert.equal(S.gallery.length, 130);
+  assert.equal(S.gallery.at(-1).id, 'clip-129');
+  assert.deepEqual([...S.pinnedMore.map((x) => x.id)], [], 'a loaded page folds the found pinned clip back in');
+  assert.doesNotMatch(gal.innerHTML, /data-vact="more"/, 'no Load more once every clip is loaded');
+});

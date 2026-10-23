@@ -148,6 +148,7 @@
 .studio-video .studio-gal-h { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
 .studio-video .studio-gal-h h4 { margin:0; font-size:var(--fs-cap); }
 .studio-video .studio-gal-h .ct { color:var(--ink-3); font-size:var(--fs-label); }
+.studio-video .studio-gal .loadmore { margin-top:8px; }
 .studio-video .studio-thumbs { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; }
 .studio-video .studio-th { position:relative; flex:none; width:136px; aspect-ratio:16/9; border-radius:var(--r-well); background:var(--panel-2); overflow:hidden; }
 .studio-video .studio-th.on { box-shadow:0 0 0 2px var(--brand); }

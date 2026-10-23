@@ -379,6 +379,8 @@
       job: null, jobError: null, armed: false,
       result: null, playError: false, videoSrc: '',
       gallery: [], galleryTotal: 0, galleryFilter: 'all', galleryError: null, thumbs: {},
+      galleryHasMore: false, galleryLoading: false,
+      pinnedMore: [], pinnedLoading: false, pinnedPartial: false, pinnedReady: false,   // pinned clips beyond the loaded pages (Pinned tab)
       delArmed: null,
       pickerOpen: false, pickerQuery: '', libraryOpen: false, library: [], libThumbs: {},
       outDir: null, busy: false, notice: null,
@@ -424,16 +426,52 @@
       paint(); refreshQuote();
     }
 
-    async function loadGallery() {
+    /* The gallery is read by page; "Load more" (more = true) asks for the next one.
+       A fresh first page wins over a "Load more" still on its way. */
+    const PAGE = 60;
+    let gallerySeq = 0;
+    async function loadGallery(more) {
       const br = BR();
-      if (!br) return;
-      const res = await br.gallery(KIND, { offset: 0, limit: 60 });
+      if (!br || (more && S.galleryLoading)) return;
+      const seq = more ? gallerySeq : ++gallerySeq;
+      S.galleryLoading = true;
+      if (more) paint('gallery');
+      const res = await Promise.resolve(br.gallery(KIND, { offset: more ? S.gallery.length : 0, limit: PAGE })).catch(() => null);
+      if (seq !== gallerySeq) return;
+      S.galleryLoading = false;
       if (!res || !res.ok) { S.galleryError = errorText(res && res.error); paint('gallery'); return; }
-      S.gallery = res.data.items || []; S.galleryTotal = res.data.total || S.gallery.length; S.galleryError = null;
+      const got = res.data.items || [];
+      S.gallery = more ? S.gallery.concat(got.filter((x) => !S.gallery.some((y) => y.id === x.id))) : got;
+      S.galleryTotal = res.data.total || S.gallery.length; S.galleryError = null;
+      S.galleryHasMore = !!res.data.hasMore;
+      if (more) S.pinnedMore = S.pinnedMore.filter((x) => !S.gallery.some((y) => y.id === x.id));
+      else { pinnedSeq++; S.pinnedMore = []; S.pinnedPartial = false; S.pinnedReady = false; S.pinnedLoading = false; if (S.galleryFilter === 'pinned') loadPinned(); }
       if (S.focusPath) { const p = S.focusPath; S.focusPath = null; showResult(S.gallery.find((x) => x.path === p) || fromChatItem(p)); }
       paint('gallery');
-      for (const it of S.gallery) loadThumb(it);
+      for (const it of got) loadThumb(it);
     }
+
+    /* The Pinned tab: Core has no pinned filter, so read the pages not loaded yet
+       with the Images page's simgFindPinned (images-logic.js, loaded first; same cap). */
+    let pinnedSeq = 0;
+    function loadPinned() {
+      const br = BR();
+      const find = g.simgFindPinned;
+      if (!br || typeof find !== 'function' || !S.galleryHasMore) { S.pinnedLoading = false; S.pinnedReady = true; return; }
+      const seq = ++pinnedSeq;
+      S.pinnedLoading = true;
+      paint('gallery');
+      find((offset, limit) => br.gallery(KIND, { offset, limit }), S.gallery.length).then((r) => {
+        if (seq !== pinnedSeq) return;
+        S.pinnedLoading = false;
+        S.pinnedMore = r.items.filter((x) => !S.gallery.some((y) => y.id === x.id));
+        S.pinnedPartial = !r.complete;
+        S.pinnedReady = r.ok;   // a failed page is tried again on the next visit to the tab
+        paint('gallery');
+        for (const it of S.pinnedMore) loadThumb(it);
+      }, () => { if (seq === pinnedSeq) { S.pinnedLoading = false; paint('gallery'); } });
+    }
+    const findClip = (id) => S.gallery.find((x) => x.id === id) || S.pinnedMore.find((x) => x.id === id);
 
     /* Posters the window rendered or gave up on this session (CONTRACT.md "Video posters"). */
     const posterTried = {};
@@ -770,6 +808,7 @@
       const r = await br.pin(KIND, id, on);
       if (r && r.ok && r.data) {
         S.gallery = S.gallery.map((x) => (x.id === id ? r.data : x));
+        S.pinnedMore = S.pinnedMore.map((x) => (x.id === id ? r.data : x));
         if (S.result && S.result.id === id) S.result = r.data;
         paint('gallery');
       }
@@ -783,6 +822,7 @@
       const r = await br.galleryDelete(KIND, [id]);
       if (r && r.ok) {
         S.gallery = S.gallery.filter((x) => x.id !== id);
+        S.pinnedMore = S.pinnedMore.filter((x) => x.id !== id);
         S.galleryTotal = Math.max(0, S.galleryTotal - 1);
         if (S.result && S.result.id === id) S.result = null;
       } else S.galleryError = errorText(r && r.error);
@@ -836,9 +876,10 @@
         case 'copy-path': S.result && copyPath(S.result.path); break;
         case 'restore': S.result && restore(S.result); break;
         case 'send': S.result && sendToChat(S.result); break;
-        case 'filter': S.galleryFilter = v; paint('gallery'); break;
-        case 'open-item': { const it = S.gallery.find((x) => x.id === v); if (it) showResult(it); break; }
-        case 'pin': { const it = S.gallery.find((x) => x.id === v); if (it) pin(v, !it.pinned); break; }
+        case 'filter': S.galleryFilter = v; if (v === 'pinned' && !S.pinnedReady && !S.pinnedLoading) loadPinned(); paint('gallery'); break;
+        case 'more': loadGallery(true); break;
+        case 'open-item': { const it = findClip(v); if (it) showResult(it); break; }
+        case 'pin': { const it = findClip(v); if (it) pin(v, !it.pinned); break; }
         case 'del': del(v); break;
         case 'out-dir': chooseDir(); break;
         case 'retry-catalog': loadCatalog(); break;
@@ -1134,7 +1175,8 @@
     }
 
     function viewGallery() {
-      const pinned = S.gallery.filter((x) => x.pinned);
+      /* Loaded pages first; pinnedMore holds only older clips, so newest-first holds. */
+      const pinned = S.gallery.filter((x) => x.pinned).concat(S.pinnedMore.filter((x) => x.pinned));
       const items = S.galleryFilter === 'pinned' ? pinned : S.gallery;
       let h = '<div class="studio-gal-h"><h4>Clips</h4><span class="ct">' + S.galleryTotal + (S.galleryTotal === 1 ? ' clip' : ' clips') + '</span><span class="studio-sp"></span>'
         + '<div class="studio-seg">' + segBtn('filter', 'all', 'All', S.galleryFilter !== 'pinned') + segBtn('filter', 'pinned', 'Pinned' + (pinned.length ? ' · ' + pinned.length : ''), S.galleryFilter === 'pinned') + '</div></div>';
@@ -1155,8 +1197,12 @@
             : '<button class="studio-iconbtn" data-vact="del" data-v="' + escHtml(it.id) + '" aria-label="Delete">' + icon('trash') + '</button>')
           + '</span></div>';
       }
-      if (!items.length && !running()) h += '<div class="studio-video-ds">' + (S.galleryFilter === 'pinned' ? 'Nothing pinned yet.' : 'No clips yet.') + '</div>';
-      return h + '</div>';
+      const onPinned = S.galleryFilter === 'pinned';
+      if (!items.length && !running()) h += '<div class="studio-video-ds">' + (!onPinned ? 'No clips yet.' : S.pinnedLoading ? 'Looking for pinned clips…' : S.pinnedPartial ? 'Nothing pinned among the newest clips. Load more under All to find older ones.' : 'Nothing pinned yet.') + '</div>';
+      h += '</div>';
+      if (onPinned && items.length && S.pinnedPartial && !S.pinnedLoading) h += '<div class="studio-video-ds">Older pinned clips may be missing here. Load more under All to find them.</div>';
+      if (!onPinned && S.galleryHasMore) h += '<button class="loadmore" data-vact="more"' + (S.galleryLoading ? ' disabled' : '') + '>Load more</button>';
+      return h;
     }
 
     function shell() {
