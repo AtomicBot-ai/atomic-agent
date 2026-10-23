@@ -159,6 +159,19 @@ start two task schedulers against the same cron jobs.
   (`agent:liveTurns`, `agent:replayApprovals`). At most two reloads a minute
   per window; a third crash in that minute asks instead ("The window keeps
   crashing": Reload or Quit). Smoke task 765 crashes the page on purpose.
+- A right-click on text the page does not handle itself opens the ordinary
+  edit menu (`main/edit-context-menu.ts`, ATO-668): Cut, Copy, Paste and
+  Select All in a field, Copy on selected text, and spelling suggestions plus
+  Add to Dictionary on a misspelled word. The chat row, file chip and mic menus
+  cancel the event in the page, so main never sees those right-clicks.
+  Spellcheck is on (system spellchecker) on macOS and Windows and off on Linux,
+  where Chromium would download Hunspell dictionaries; fields for keys, URLs
+  and paths carry `spellcheck="false"`.
+- View has Actual Size, Zoom In and Zoom Out (`menu.ts zoomItems`, ATO-544):
+  ⌘ = and ⌘ + zoom in, ⌘ - zooms out. ⌘ 0 stays Toggle Sidebar, so Actual
+  Size is ⇧ ⌘ 0 on macOS and Ctrl+Numpad 0 on Windows and Linux (Ctrl ⇧ 0 is
+  Toggle Inspector there). The zoom level is Chromium's own and is not saved
+  by the app.
 
 ## What is real and what is not
 
@@ -1624,6 +1637,7 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
+  main/edit-context-menu.ts  the right-click edit menu and spellcheck switch
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)

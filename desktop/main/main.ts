@@ -35,6 +35,7 @@ import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
+import { spellcheckEnabled, wireEditContextMenu } from "./edit-context-menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
@@ -874,7 +875,9 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
-      spellcheck: false,
+      // ATO-668: on for text fields (edit-context-menu.ts spellcheckEnabled);
+      // fields of keys, URLs and paths opt out with spellcheck="false".
+      spellcheck: spellcheckEnabled(process.platform),
       /* Backlog 03: the first-run latch rides in with the window, so the
          renderer opens the wizard before its first paint instead of after a
          round trip (preload.ts freshAtBoot) — on a fresh install the chat
@@ -890,6 +893,7 @@ function createWindow(): BrowserWindow {
     },
   });
   if (freshHere) FRESH_WINDOW.id = window.webContents.id;
+  wireEditContextMenu(window.webContents);
   /* ATO-765: a crashed page is loaded again (render-recovery.ts). Registered
      before the error reporting so its report can say whether it recovered. */
   const recovery = new RenderRecovery();
