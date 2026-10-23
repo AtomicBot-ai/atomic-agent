@@ -24,7 +24,10 @@ import {
  * differ somewhere: table rows, CSV lines and similar functions carry
  * different values, names or numbers, and the match must be exact. What
  * still trips it is output that really is one block copied 8+ times (or
- * one character 256 times); that costs one retried step.
+ * one character 256 times), e.g. a 9x9 grid of identical zero rows or a
+ * long run of `=`. A local step gets one truncation retry, so when the
+ * retry writes the same block again the step fails and the turn ends
+ * with the repetition message.
  */
 
 /** A block must repeat this many times in a row before the stream is cut. */
