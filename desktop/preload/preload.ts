@@ -74,7 +74,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
   start: () => ipcRenderer.invoke("agent:start"),
-  restart: () => ipcRenderer.invoke("agent:restart"),
+  /** ATO-274: `reason` is "setup_finished" when setup closing asks; analytics only. */
+  restart: (reason?: "setup_finished") => ipcRenderer.invoke("agent:restart", reason),
   onStatus: (cb: (payload: unknown) => void) => on("agent:status", cb),
   onLog: (cb: (payload: unknown) => void) => on("agent:log", cb),
   /** ATO-767: the automatic restarts after an unexpected exit (agent-auto-restart.ts). */

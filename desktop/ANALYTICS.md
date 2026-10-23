@@ -72,7 +72,7 @@ send `ui` events.
 
 | Group | Main process | Renderer |
 |---|---|---|
-| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
+| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
 | Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out), `custom_endpoint_tested` |
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `engine_recovery_shown`, `backend_switched`, `fusion_configured` | |
 | Chat | `chat_turn_ui` | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |

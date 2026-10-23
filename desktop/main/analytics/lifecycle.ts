@@ -9,6 +9,7 @@
  * the agent's side and also counts when it lands before `app_opened`.
  */
 
+import type { RestartTrigger } from "./catalog-values.js";
 import { flagsStore, refreshRunMode, shutdownAnalytics, track } from "./core.js";
 
 /** Process start, as near as Node can tell. */
@@ -25,7 +26,7 @@ const L = {
   readySent: false,
   turns: 0,
   lastAgentStart: null as number | null,
-  restartTrigger: null as "manual" | "switch" | "auto" | "other" | null,
+  restartTrigger: null as RestartTrigger | null,
   connectedOnce: false,
   closedSent: false,
 };
@@ -82,8 +83,8 @@ function maybeReady(): void {
   });
 }
 
-/** `agent:restart` (manual), a switch's restart, or an automatic one after a crash (ATO-767), said just before the start. */
-export function agentRestarting(trigger: "manual" | "switch" | "auto" | "other"): void {
+/** `agent:restart` (manual, or setup finishing), a switch's restart, an automatic one after a crash (ATO-767), a workspace change or an import (ATO-274), said just before the start. */
+export function agentRestarting(trigger: RestartTrigger): void {
   L.restartTrigger = trigger;
 }
 

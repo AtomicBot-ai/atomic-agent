@@ -25,7 +25,7 @@ import { curatedMetaIds } from "../model-catalog.js";
 import {
   APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
-  NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
+  NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RESTART_TRIGGERS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SUPERVISOR_KINDS, SWITCH_REFUSALS, uiActionOk, UI_VIA,
 } from "./catalog-values.js";
 
@@ -90,7 +90,7 @@ export const EVENTS: Record<string, EventSpec> = {
       ms,
     },
   },
-  agent_restarted: { owner: "main", props: { trigger: en(["manual", "switch", "auto", "other"]) } },
+  agent_restarted: { owner: "main", props: { trigger: en(RESTART_TRIGGERS) } },
   window_crashed: {
     owner: "main",
     props: {

@@ -15364,7 +15364,8 @@ async function obSettle() {
   if (!obClosingToastCarried(outcome)) toast(toastTitle, toastLine);
   render();
   if (OB.restarted) { refreshLiveConfig(); return; }
-  BR.restart().then(applyStatus);
+  // ATO-274: a restart setup asks for, not one the person pressed.
+  BR.restart('setup_finished').then(applyStatus);
 }
 
 /** Backlog 18: whether the download card already says what the closing toast would. */

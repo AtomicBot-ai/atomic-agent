@@ -1267,8 +1267,9 @@ function wireIpc(client: AgentClient): void {
 
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
-  ipcMain.handle("agent:restart", async () => {
-    A.agentRestarting("manual");
+  // ATO-274: the window names setup finishing; every other restart from it is the person's own.
+  ipcMain.handle("agent:restart", async (_event, reason: unknown) => {
+    A.agentRestarting(A.restartTriggerFromWindow(reason));
     await client.stop();
     return client.start();
   });
@@ -1512,6 +1513,7 @@ function wireIpc(client: AgentClient): void {
     client.status.workingDir = dir;
     // #680: and the next launch starts here too, not back in the home folder.
     writeWorkspace(app.getPath("userData"), dir);
+    A.agentRestarting("workspace_change");   // ATO-274
     await client.stop();
     void client.start();
     return dir;
@@ -2761,7 +2763,8 @@ function wireIpc(client: AgentClient): void {
     };
     return importFromTui(flags, {
       stopAgent: () => client.stop(),
-      startAgent: () => client.start(),
+      // ATO-274: the database arm's restart is the import's, not a manual one.
+      startAgent: () => { A.agentRestarting("import"); return client.start(); },
     }).then((res) => (A.tuiImportDone({ ...flags }, res), res));
   });
 
