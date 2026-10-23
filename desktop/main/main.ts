@@ -2989,11 +2989,15 @@ function wireIpc(client: AgentClient): void {
 function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
   return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
+/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
   navrows: number;
   skillsRow: boolean;
+  /** ATO-457: the standing section rows under New chat, by label. */
+  nav?: string[];
   subtitles: number;
   onRows: number;
   counter: string;
@@ -3040,17 +3044,20 @@ async function smokeTest(): Promise<void> {
   const tuiSnapshot = TUI_BASELINE ?? snapshotTuiState();
 
   await new Promise((r) => setTimeout(r, 1500));
-  // Item 6: the sidebar is two headed lists, so there are no nav rows left to
-  // count. This is still the "render() finished without a TDZ ReferenceError"
-  // canary that the .navrow count used to be.
+  // Item 6: the sidebar is two headed lists, so there are no old .navrow rows
+  // left to count. This is still the "render() finished without a TDZ
+  // ReferenceError" canary that the .navrow count used to be. ATO-457: the
+  // Tasks and Skills section rows under New chat are the owner's standing
+  // entries for ⌘ 2 / ⌘ 3, asserted by label.
   const sb0 = await js<Sb | null>("window.__sidebar ? window.__sidebar() : null");
   check(
     "renderer painted",
     // Calm (S1): Chats first; Tasks is drawn only when the agent holds tasks.
     !!sb0 && sb0.navrows === 0
       && JSON.stringify(sb0.headers) === sidebarHeadersExpected(sb0)
-      && sb0.subtitles === 0 && !sb0.skillsRow,
-    sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
+      && sb0.subtitles === 0 && !sb0.skillsRow
+      && JSON.stringify(sb0.nav) === SIDEBAR_NAV_EXPECTED,
+    sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}, section rows ${JSON.stringify(sb0.nav)}` : "no __sidebar hook",
   );
   // Calm (S1): the toolbar names the open chat; nothing is open at boot, and
   // chat review Д15 took the "New chat" it said then away (the sidebar's New
@@ -4924,10 +4931,11 @@ async function sidebarTest(
     let sb = await js<Sb>("window.__sidebar()");
     check(
       // Calm (S1): Chats first, Tasks under it and only when there are tasks.
-      "sidebar is Pinned when anything is pinned, Chats, then Tasks when there are any, with no nav rows",
+      "sidebar is Tasks and Skills rows, Pinned when anything is pinned, Chats, then Tasks when there are any",
       JSON.stringify(sb.headers) === sidebarHeadersExpected(sb)
-        && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
-      `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
+        && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0
+        && JSON.stringify(sb.nav) === SIDEBAR_NAV_EXPECTED,
+      `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}, section rows ${JSON.stringify(sb.nav)}`,
     );
     // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
     // class. This measures the row the user asked for — 30 px, one text line,
@@ -12208,8 +12216,9 @@ async function chromeTest(
   type SbToggle = {
     on: boolean; pressed: string; title: string; state: string; rail: boolean;
     narrow: boolean; expanded: boolean; width: number; bg: string; fg: string; accentText: string;
-    /* review fix (item 2): the control is disabled on a narrow window. */
-    disabled: boolean;
+    /* review fix (item 2): the control was disabled on a narrow window; since
+       ATO-538 it stays live there and opens the sidebar as a drawer. */
+    disabled: boolean; drawer?: boolean;
   };
   type SetBtn = {
     text: string; act: string; title: string; aria: string | null;
@@ -12292,25 +12301,32 @@ async function chromeTest(
       check(
         "item 2: the glow tracks the responsive rail, not just the class",
         !narrow.on && narrow.narrow && !narrow.expanded && narrow.state === "open"
-          && !narrow.rail && narrow.width === 52
-          && narrow.disabled && narrow.title === "The sidebar is a rail on a narrow window",
+          && !narrow.rail && narrow.width === 52 && !narrow.drawer
+          && !narrow.disabled && narrow.title === "Show sidebar (⌘ 0)",
         JSON.stringify(narrow),
       );
-      /* r5 review fix — the control used to stay live and do nothing here: the
-         media query pins 52px whatever `.rail` says, so a click flipped the
-         flag with no visual change and aria-pressed read "false" either way.
-         The button is disabled (asserted above) and the chord, which does not
-         go through the button, refuses in words instead of flipping a dead
-         flag. Restores the toasts it reads. */
+      /* ATO-538 (U-106): between the 940px minimum and 1000px the button used
+         to be disabled and ⌘ 0 refused with a toast, so the chat list could
+         not be opened at all. Now the chord (the same verb as the button)
+         opens the full sidebar as a drawer over the content, lights the
+         button, leaves the kept collapse alone, and closes it again. */
       await js<unknown>("window.__clearToasts()");
-      const chord = await js<{ toasts: Array<[string, string, string]>; state: string }>(
-        "(function(){window.__rail();return {toasts:window.__toasts(),state:window.__sbToggle().state};})()",
-      );
+      await js<unknown>("window.__rail()");
+      const opened = await js<SbToggle>("window.__sbToggle()");
+      const toastsAfter = await js<Array<[string, string, string]>>("window.__toasts()");
       check(
-        "item 2: the ⌘ 0 chord refuses on a narrow window instead of flipping a dead flag",
-        chord.state === "open" && chord.toasts.length === 1
-          && chord.toasts[0]![0] === "The sidebar is a rail on a narrow window",
-        JSON.stringify(chord),
+        "item 2: on a narrow window ⌘ 0 opens the sidebar as a drawer",
+        opened.drawer && opened.on && opened.pressed === "true" && opened.width === 260
+          && opened.state === "open" && !opened.rail && opened.title === "Hide sidebar (⌘ 0)"
+          && toastsAfter.length === 0,
+        JSON.stringify([opened, toastsAfter]),
+      );
+      await js<unknown>("window.__rail()");
+      const shut = await js<SbToggle>("window.__sbToggle()");
+      check(
+        "item 2: ⌘ 0 again closes the drawer back to the rail",
+        !shut.drawer && !shut.on && shut.width === 52 && shut.state === "open",
+        JSON.stringify(shut),
       );
       await js<unknown>("window.__clearToasts()");
       /* r5 review fix (item 8 coverage) — styles.css duplicates the four rail
@@ -12510,7 +12526,7 @@ async function chromeTest(
       // its menu offers Mark as unread.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
       await wait(1200);
-      type Ctl = { present: boolean; vis: string; railDisplay: string; dot: string; label: string | null; verb: string | null };
+      type Ctl = { present: boolean; vis: string; railDisplay: string; glyph?: string; dataGlyph?: string; dot: string; label: string | null; verb: string | null };
       const readRow = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
         "item 3: a read row's menu offers Mark as unread, and the open chat's row shows its \"…\"",
@@ -12599,9 +12615,12 @@ async function chromeTest(
       );
       await js<unknown>("window.__rail()");
       const inRail = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      // ATO-538: the rail row is not an anonymous dot any more: it paints its
+      // title's glyph, the dot riding it as a badge, and still hides the "…".
       check(
-        "item 3: the collapsed rail keeps only the dot",
-        inRail.present && inRail.railDisplay === "none",
+        "item 3: the collapsed rail keeps the row's glyph and dot, not its \"…\"",
+        inRail.present && inRail.railDisplay === "none"
+          && (inRail.dataGlyph === "" || inRail.glyph === inRail.dataGlyph),
         JSON.stringify(inRail),
       );
       await js<unknown>("window.__rail()");

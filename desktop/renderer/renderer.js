@@ -1175,24 +1175,48 @@ const MENUFOCUS = { want: false };
 const NARROW = typeof window !== 'undefined' && window.matchMedia
   ? window.matchMedia('(max-width:1000px)') : {matches:false, addEventListener(){}};
 function sidebarExpanded() { return S.sidebar !== 'rail' && !NARROW.matches; }
-/* r5 review fix (item 2) — below 1000px the toggle was a live control that did
-   nothing. styles.css pins `#sidebar{width:52px}` inside
-   `@media (max-width:1000px)` at the same specificity as `#sidebar{width:260px}`
-   and later in the file, so the `.rail` class cannot win there: clicking the
-   button flipped S.sidebar between 'open' and 'rail' with no visual change at
-   all, and because the glow is the conjunction, aria-pressed stayed "false" in
-   both positions — a screen-reader user got no feedback that the button had
-   done anything. The button is now honestly disabled on a narrow window, with
-   a tooltip that says why, and the ⌘ 0 chord (which does not go through the
-   button) answers with the same sentence instead of flipping a dead flag. */
+/* ATO-538 (U-106): below 1000px the width forces the rail, and the toggle used
+   to be disabled there (r5 review fix: the media query pinned 52px whatever
+   `.rail` said, so a click changed nothing). Between the 940px minimum window
+   and 1000px that left no way to see the chat list at all. Now the toggle and
+   ⌘ 0 open the full sidebar as a drawer over the content on a narrow window
+   (sidebar-nav.js toggleSidebar); S.sidebar, the collapse kept for a wide
+   window, is left alone. The drawer closes on a pick inside it, a click
+   outside it, Escape, or the window growing past 1000px. */
+const SBDRAWER = { open: false };
+function sidebarDrawerOpen() { return SBDRAWER.open && NARROW.matches; }
 function sidebarToggleHTML() {
-  const narrow = NARROW.matches, open = sidebarExpanded();
-  const title = narrow ? 'The sidebar is a rail on a narrow window'
-    : kbdText(open ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)');
-  return '<button class="iconbtn sidebtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
-    + (narrow ? ' disabled' : '')
-    + ' aria-pressed="' + open + '"'
+  const view = sidebarToggleView({narrow: NARROW.matches, sidebar: S.sidebar, drawer: sidebarDrawerOpen()});
+  const title = kbdText(view.label);
+  return '<button class="iconbtn sidebtn' + (view.open ? ' on' : '') + '" data-act="toggle:sidebar"'
+    + ' aria-pressed="' + view.open + '"'
     + ' title="' + title + '" aria-label="' + title + '">' + ic('sidebar') + '</button>';
+}
+function closeSidebarDrawer() {
+  if (!SBDRAWER.open) return;
+  SBDRAWER.open = false;
+  renderToolbar(); renderSidebar();
+}
+if (typeof document !== 'undefined') {
+  // A click outside the drawer closes it (the toggle runs its own verb). A pick
+  // inside it (a chat, a task, a section row, New chat, Settings) closes it as
+  // well; the workspace chip, Load more and a row's "…" menu keep it, their
+  // menus hang off it. Where the click landed is read in the capture phase,
+  // before a handler repaints the sidebar under it; the close itself waits
+  // until that handler has run on the DOM it clicked.
+  document.addEventListener('click', (e) => {
+    if (!sidebarDrawerOpen() || S.overlay) return;   // a menu up (the chip's, a row's) takes this click first
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
+    const inside = !!t.closest('#sidebar');
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-more], input, textarea')) return;
+    if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !sidebarDrawerOpen() || S.overlay || S.settings) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    closeSidebarDrawer();
+  }, true);
 }
 /* 13.10 (owner's review): Search is a magnifier button beside the sidebar
    toggle, not a pill at the right of the toolbar. Same verb, same chord in the
@@ -2216,6 +2240,10 @@ function renderToolbar() {
    about tasks that have already executed. Skills leaves the sidebar only —
    ⌘3, the palette rows and View › Skills still reach it (they open Settings ›
    Skills on this tree).
+   ATO-457 (U-24, owner's decision 15.10): Tasks and Skills came back as two
+   standing section rows under New chat (sidebarNavHTML), so the places ⌘ 2
+   and ⌘ 3 lead to are visible. They are not the old nav rows: no headers, no
+   counts, and the Tasks list below still shows the tasks themselves.
    ============================================================ */
 function renderSidebar() {
   const tk = sidebarTasks(), ch = sidebarChats();
@@ -2225,7 +2253,11 @@ function renderSidebar() {
   const keepScroll = prevLists ? prevLists.scrollTop : 0;
   // r5 item 2: the class is derived from S.sidebar on every render, applied
   // BEFORE the innerHTML write — the geometry hooks measure in the same tick.
-  $('#sidebar').classList.toggle('rail', S.sidebar === 'rail');
+  // ATO-538: the drawer (a narrow window, opened by the toggle) is the full
+  // sidebar over the content, so it never carries the kept rail's class.
+  const drawer = sidebarDrawerOpen();
+  $('#sidebar').classList.toggle('rail', S.sidebar === 'rail' && !drawer);
+  $('#sidebar').classList.toggle('drawer', drawer);
   /* Calm (S1): workspace chip, New chat, Chats, then Tasks only when the
      agent holds any, and Settings at the bottom. The Chats header lost its
      plus to the New chat button (one way to do one thing); the Tasks header
@@ -2241,6 +2273,7 @@ function renderSidebar() {
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
     + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
+    + sidebarNavHTML()
     // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
     + (window.STUDIO ? STUDIO.sidebarHTML(S.room) : '')
     + '<div class="sb-lists">'
@@ -2283,6 +2316,23 @@ function renderSidebar() {
     if (lists) lists.scrollTop = keepScroll;
   }
   queuesKeep();   // ATO-135
+}
+
+/* ATO-457: the Tasks and Skills section rows. They reuse the New chat row's
+   shape (.sb-new: icon and word, the icon alone in the rail) and open their
+   Settings tab through act('room:…'), the same verb as ⌘ 2 / ⌘ 3; the row
+   whose tab is on screen is lit. */
+function sidebarNavHTML() {
+  const pane = S.settings ? settingsPaneId(S.settingsPane) : null;
+  return '<div class="sb-nav" role="group" aria-label="Sections">'
+    + sidebarNavItems(pane).map((n) => {
+      const title = kbdText(n.label + ' (' + n.chord + ')');
+      return '<button class="sb-new sb-nav-row' + (n.on ? ' on' : '') + '" data-act="' + n.act + '" data-nav="' + n.id + '"'
+        + (n.on ? ' aria-current="page"' : '')
+        + ' title="' + title + '" aria-label="' + esc(n.label) + '">'
+        + '<span class="sb-new-ic">' + ic(n.icon) + '</span><span class="sb-new-lb">' + esc(n.label) + '</span></button>';
+    }).join('')
+    + '</div>';
 }
 
 /** The workspace chip's label: the folder's own name, not the whole path
@@ -2403,8 +2453,9 @@ function taskMeta(t) {
 function taskRow(t) {
   const [state, tip, tone] = taskDot(t);
   const meta = taskMeta(t);
+  const glyph = railGlyph(t.t);   // ATO-538: what the rail paints in place of an anonymous dot
   return '<button class="sesrow" data-task="' + esc(t.id) + '" title="' + esc(t.t + ' · ' + tip) + '"'
-    + (meta ? ' data-m="' + esc(meta) + '"' : '') + '>'
+    + (meta ? ' data-m="' + esc(meta) + '"' : '') + (glyph ? ' data-g="' + esc(glyph) + '"' : '') + '>'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(t.t) + '</span></button>';
 }
@@ -2414,9 +2465,12 @@ function chatRow(s) {
   const pinned = PREFS.pinned.includes(s.id);
   // ATO-135: a chat with messages waiting for its turn to end says so on its row, as a task row says its schedule.
   const queued = chatQueuedCount(s.id);
+  // ATO-538: the rail paints this glyph (the title's first letter or emoji) with the dot as its badge.
+  const glyph = railGlyph(s.t);
   // Studio: no chat is "open" while a Studio page is on screen.
   return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
     + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
+    + (glyph ? ' data-g="' + esc(glyph) + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
@@ -6454,13 +6508,13 @@ function act(a) {
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
-  // Review fix (item 2): ⌘ 0 does not go through the button, so the chord gets
-  // the same honest refusal the disabled button gives — below 1000px the
-  // sidebar is a rail whatever S.sidebar says (sidebarToggleHTML).
-  if (k === 'toggle' && v === 'sidebar' && NARROW.matches) {
-    close(); toast('The sidebar is a rail on a narrow window', 'widen the window past 1000px to open it', 'bad'); return;
-  }
-  if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
+  // ATO-538: below 1000px the button and ⌘ 0 open or close the drawer instead
+  // (sidebar-nav.js toggleSidebar); S.sidebar keeps the wide window's collapse.
+  if (k === 'toggle')    { close();
+                           if (v === 'sidebar') {
+                             const next = toggleSidebar({narrow: NARROW.matches, sidebar: S.sidebar, drawer: sidebarDrawerOpen()});
+                             S.sidebar = next.sidebar; SBDRAWER.open = next.drawer;
+                           }
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
@@ -8571,7 +8625,8 @@ setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
    rebuild the composer on every drag pixel. */
 // 13.10: the toggle and Search move between the sidebar's top row and the
 // toolbar on this crossing, so both are repainted (still no #content write).
-if (NARROW.addEventListener) NARROW.addEventListener('change', () => { renderToolbar(); renderSidebar(); });
+// ATO-538: a window that grows past 1000px drops the drawer; the full sidebar (or the kept rail) takes over.
+if (NARROW.addEventListener) NARROW.addEventListener('change', () => { if (!NARROW.matches) SBDRAWER.open = false; renderToolbar(); renderSidebar(); });
 // 14: the inspector is not rebuilt while the window is too narrow to show it,
 // so widening the window past 1180px repaints it.
 if (INSP_NARROW.addEventListener) INSP_NARROW.addEventListener('change', () => renderInspector());
@@ -27398,6 +27453,8 @@ if (typeof window !== 'undefined') {
     pinnedRows: document.querySelectorAll('#sidebar [data-list="pinned"] .sesrow').length,   // ATO-165
     navrows: document.querySelectorAll('.navrow').length,
     skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),
+    // ATO-457: the standing section rows under New chat, by label.
+    nav: [...document.querySelectorAll('#sidebar .sb-nav [data-nav]')].map((n) => (n.querySelector('.sb-new-lb') || n).textContent),
     subtitles: document.querySelectorAll('#sidebar .sesrow .t2').length,
     onRows: document.querySelectorAll('#sidebar .sesrow.on').length,
     counter: (document.querySelector('[data-list="tasks"] .ct') || {}).textContent || '',
@@ -29232,8 +29289,8 @@ if (typeof window !== 'undefined') {
     if (!b || !sb) return null;
     const cs = getComputedStyle(b);
     return {on: b.classList.contains('on'), pressed: b.getAttribute('aria-pressed'),
-            // Review fix (item 2): the narrow window disables the control.
-            disabled: !!b.disabled,
+            // ATO-538: the control stays live on a narrow window; it opens the drawer there.
+            disabled: !!b.disabled, drawer: sb.classList.contains('drawer'),
             title: b.getAttribute('title'), state: S.sidebar, rail: sb.classList.contains('rail'),
             narrow: NARROW.matches, expanded: sidebarExpanded(),
             width: Math.round(sb.getBoundingClientRect().width),
@@ -29249,8 +29306,13 @@ if (typeof window !== 'undefined') {
   window.__unreadCtl = (id) => {
     const s = SESSIONS.find((x) => x.id === id);
     const el = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
+    const row = el ? el.closest('.sesrow') : null;
+    const glyph = row ? getComputedStyle(row, '::before').content : '';
     const out = {present: !!el, vis: el ? getComputedStyle(el).visibility : '',
                  railDisplay: el ? getComputedStyle(el).display : '',
+                 // ATO-538: what the row's ::before paints ('none' outside the rail), and the glyph it carries.
+                 glyph: glyph && glyph !== 'none' && glyph !== 'normal' ? glyph.replace(/^"|"$/g, '') : '',
+                 dataGlyph: row ? (row.dataset.g || '') : '',
                  dot: chatDot(s)[0], label: null, verb: null};
     if (el && out.railDisplay !== 'none') {
       el.click();

@@ -17,7 +17,7 @@
 .sb-studio-row.on .sb-new-ic{color:var(--accent)}
 .sb-studio-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);flex:none;margin-left:auto;animation:st-pulse 1.4s infinite}
 #sidebar.rail .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
-@media (max-width:999px){#sidebar .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}}
+@media (max-width:999px){#sidebar:not(.drawer) .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}}
 @keyframes st-pulse{50%{opacity:.35}}
 
 /* chat: under a reply's pictures that Studio made */
